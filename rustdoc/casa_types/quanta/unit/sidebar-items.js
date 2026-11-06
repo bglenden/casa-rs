@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Unit"]};
+window.SIDEBAR_ITEMS = {"fn":["normalize_casa_unit_name"],"struct":["Unit"]};

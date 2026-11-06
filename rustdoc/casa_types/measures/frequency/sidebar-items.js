@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["FrequencyRef"],"struct":["MFrequency","MFrequencyConverter"]};
+window.SIDEBAR_ITEMS = {"enum":["CasaFrequencyFrame","FrequencyRef"],"struct":["MFrequency","MFrequencyConverter"]};

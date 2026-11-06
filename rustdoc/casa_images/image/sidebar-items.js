@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AnyPagedImage","ImagePixelType"],"fn":["add_image_history","image_pixel_type"],"struct":["PagedImage"],"trait":["ImageInterface","ImagePixel","MutableImageInterface"],"type":["Image"]};
+window.SIDEBAR_ITEMS = {"enum":["AnyPagedImage","ImagePixelType"],"fn":["add_image_history","image_history_entries","image_pixel_type"],"struct":["ImageHistoryEntry","PagedImage"],"trait":["ImageInterface","ImagePixel","MutableImageInterface"],"type":["Image"]};

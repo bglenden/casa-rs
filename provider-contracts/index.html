@@ -1069,7 +1069,12 @@ reviewing those version bumps; the normal architecture gate is check-only.</p>
 <p>The human interchange format is versioned sparse TOML. The <code>[casars]</code> table
 identifies format version, surface ID, surface kind (always <code>task</code>), and
 contract version. The <code>[parameters]</code> table contains required values and
-normalized semantic differences from current defaults.</p>
+normalized semantic differences from current defaults.
+Values containing non-finite floats, complex or NumPy scalars, explicitly typed
+empty arrays, or zero-dimensional arrays are instead stored in an optional
+<code>[typed_parameters]</code> table, as JSON strings containing recursively tagged
+parameter values. This keeps complex values distinct from ordinary records
+and allows profiles to round-trip them without reserving any record key.</p>
 <p>This makes additive evolution cheap: a newly added optional parameter receives
 its current default without adding an override to a saved file. A surface may
 publish explicit ordered migrations for older contracts, including warnings for
@@ -1137,7 +1142,12 @@ command was run, before it enters. A <code>--json-run</code> runs where its call
 started it.</p>
 <p><code>--json-run SOURCE</code> takes a <code>TaskRunRequest</code>, <code>{"surface": ..., "values":
 {...}}</code> with the CASA-named values the caller set, and resolves it against the
-surface's contract inside the binary. It writes one <code>TaskReply</code> to stdout:</p>
+surface's contract inside the binary. For values JSON cannot express directly,
+the request may also contain a
+<code>typed_values</code> map of recursively tagged parameter values. A parameter may
+occur in only one of <code>values</code> and <code>typed_values</code>; typed inputs are accepted
+only for variant parameters and pass the same validation as plain inputs.
+The binary writes one <code>TaskReply</code> to stdout:</p>
 <ul>
 <li><code>{"status": "succeeded", "surface", "value", "result"}</code>, where <code>value</code> is
   what CASA's task returns (<code>null</code> for <code>None</code>), kept ahead of the provider's
@@ -1174,9 +1184,10 @@ value the contract refuses when Python resolves the call raises <code>ValueError
 before anything starts, or <code>TypeError</code> for a value of the wrong type.</p>
 <p>A succeeded reply's <code>value</code> is CASA's return value as a tagged <code>CasaValue</code>
 (<code>casa-provider-contracts</code>): <code>none</code>, <code>bool</code>, <code>int</code>, <code>float</code> (non-finite
-values as <code>"nan"</code>, <code>"inf"</code> and <code>"-inf"</code>), <code>string</code>, <code>list</code>, an ordered
+values as <code>"nan"</code>, <code>"-nan"</code>, <code>"inf"</code> and <code>"-inf"</code>), <code>complex</code> (with real and imaginary
+components in the same float representation), <code>string</code>, <code>list</code>, an ordered
 <code>dict</code> whose keys are strings or integers, and typed arrays (<code>bool_array</code>,
-<code>int_array</code> with dtype <code>int32</code> or <code>int64</code>, <code>float_array</code> with <code>float32</code> or
+<code>int_array</code> with dtype <code>int32</code> or <code>int64</code>, <code>uint64_array</code>, <code>float_array</code> with <code>float32</code> or
 <code>float64</code>, <code>complex_array</code>, <code>str_array</code>) that carry their shape and their
 data in column-major (Fortran) order. <code>casars._core</code> rebuilds Python's
 types and NumPy arrays from it, so a CASA-signature wrapper returns what

@@ -273,681 +273,715 @@
 <a href=#273 id=273 data-nosnippet>273</a>            output_direction.direction_ref()
 <a href=#274 id=274 data-nosnippet>274</a>        )));
 <a href=#275 id=275 data-nosnippet>275</a>    }
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="prelude-val">Ok</span>(AxesPlan {
-<a href=#277 id=277 data-nosnippet>277</a>        input: (input_direction, in_axis),
-<a href=#278 id=278 data-nosnippet>278</a>        output: (output_direction, out_axis),
-<a href=#279 id=279 data-nosnippet>279</a>        spectral,
-<a href=#280 id=280 data-nosnippet>280</a>        coordinates,
-<a href=#281 id=281 data-nosnippet>281</a>        template_coordinates,
-<a href=#282 id=282 data-nosnippet>282</a>    })
-<a href=#283 id=283 data-nosnippet>283</a>}
-<a href=#284 id=284 data-nosnippet>284</a>
-<a href=#285 id=285 data-nosnippet>285</a><span class="doccomment">/// `ImageRegrid::findScaleFactor`: the output-to-input pixel area for a
-<a href=#286 id=286 data-nosnippet>286</a>/// Jy/pixel image, 1 otherwise.
-<a href=#287 id=287 data-nosnippet>287</a></span><span class="kw">fn </span>jy_per_pixel_scale(
-<a href=#288 id=288 data-nosnippet>288</a>    units: <span class="kw-2">&amp;</span>str,
-<a href=#289 id=289 data-nosnippet>289</a>    input: <span class="kw-2">&amp;</span>DirectionCoordinate,
-<a href=#290 id=290 data-nosnippet>290</a>    output: <span class="kw-2">&amp;</span>DirectionCoordinate,
-<a href=#291 id=291 data-nosnippet>291</a>) -&gt; f64 {
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">if </span>!units.eq_ignore_ascii_case(<span class="string">"Jy/pixel"</span>) {
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">return </span><span class="number">1.0</span>;
-<a href=#294 id=294 data-nosnippet>294</a>    }
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">let </span>(inc_in, inc_out) = (input.increment(), output.increment());
-<a href=#296 id=296 data-nosnippet>296</a>    (inc_out[<span class="number">0</span>] * inc_out[<span class="number">1</span>] / inc_in[<span class="number">0</span>] / inc_in[<span class="number">1</span>]).abs()
-<a href=#297 id=297 data-nosnippet>297</a>}
-<a href=#298 id=298 data-nosnippet>298</a>
-<a href=#299 id=299 data-nosnippet>299</a><span class="doccomment">/// Whether two direction coordinates share their tangent plane: the same
-<a href=#300 id=300 data-nosnippet>300</a>/// reference direction, projection, PC matrix and native poles, so that
-<a href=#301 id=301 data-nosnippet>301</a>/// their pixels differ only by reference pixel and increment.
-<a href=#302 id=302 data-nosnippet>302</a></span><span class="kw">fn </span>same_tangent_plane(a: <span class="kw-2">&amp;</span>DirectionCoordinate, b: <span class="kw-2">&amp;</span>DirectionCoordinate) -&gt; bool {
-<a href=#303 id=303 data-nosnippet>303</a>    a.reference_value() == b.reference_value()
-<a href=#304 id=304 data-nosnippet>304</a>        &amp;&amp; a.projection() == b.projection()
-<a href=#305 id=305 data-nosnippet>305</a>        &amp;&amp; a.pc_matrix() == b.pc_matrix()
-<a href=#306 id=306 data-nosnippet>306</a>        &amp;&amp; a.longpole() == b.longpole()
-<a href=#307 id=307 data-nosnippet>307</a>        &amp;&amp; a.latpole() == b.latpole()
-<a href=#308 id=308 data-nosnippet>308</a>}
-<a href=#309 id=309 data-nosnippet>309</a>
-<a href=#310 id=310 data-nosnippet>310</a><span class="doccomment">/// Whether every output pixel of an `[nx, ny]` plane has a sky position,
-<a href=#311 id=311 data-nosnippet>311</a>/// shown by its four corners, for a zenithal projection with the identity
-<a href=#312 id=312 data-nosnippet>312</a>/// PC matrix. Those projections are valid on a disk about the reference
-<a href=#313 id=313 data-nosnippet>313</a>/// point in the intermediate plane, which the identity PC maps to the pixel
-<a href=#314 id=314 data-nosnippet>314</a>/// grid by an axis-aligned affine map: the grid's rectangle lies in the
-<a href=#315 id=315 data-nosnippet>315</a>/// disk when its corners do.
-<a href=#316 id=316 data-nosnippet>316</a></span><span class="kw">fn </span>corners_cover_the_plane(output: <span class="kw-2">&amp;</span>DirectionCoordinate, [nx, ny]: [usize; <span class="number">2</span>]) -&gt; bool {
-<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">let </span>zenithal = <span class="macro">matches!</span>(
-<a href=#318 id=318 data-nosnippet>318</a>        output.projection().projection_type(),
-<a href=#319 id=319 data-nosnippet>319</a>        ProjectionType::SIN
-<a href=#320 id=320 data-nosnippet>320</a>            | ProjectionType::TAN
-<a href=#321 id=321 data-nosnippet>321</a>            | ProjectionType::ARC
-<a href=#322 id=322 data-nosnippet>322</a>            | ProjectionType::ZEA
-<a href=#323 id=323 data-nosnippet>323</a>            | ProjectionType::STG
-<a href=#324 id=324 data-nosnippet>324</a>    ) &amp;&amp; output.projection().parameters().iter().all(|p| <span class="kw-2">*</span>p == <span class="number">0.0</span>);
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">let </span>(last_x, last_y) = (nx <span class="kw">as </span>f64 - <span class="number">1.0</span>, ny <span class="kw">as </span>f64 - <span class="number">1.0</span>);
-<a href=#326 id=326 data-nosnippet>326</a>    zenithal
-<a href=#327 id=327 data-nosnippet>327</a>        &amp;&amp; [[<span class="number">0.0</span>, <span class="number">0.0</span>], [last_x, <span class="number">0.0</span>], [<span class="number">0.0</span>, last_y], [last_x, last_y]]
-<a href=#328 id=328 data-nosnippet>328</a>            .iter()
-<a href=#329 id=329 data-nosnippet>329</a>            .all(|corner| {
-<a href=#330 id=330 data-nosnippet>330</a>                output
-<a href=#331 id=331 data-nosnippet>331</a>                    .to_world(corner)
-<a href=#332 id=332 data-nosnippet>332</a>                    .is_ok_and(|world| world.iter().all(|v| v.is_finite()))
-<a href=#333 id=333 data-nosnippet>333</a>            })
-<a href=#334 id=334 data-nosnippet>334</a>}
-<a href=#335 id=335 data-nosnippet>335</a>
-<a href=#336 id=336 data-nosnippet>336</a><span class="doccomment">/// For each output pixel of the direction plane (first axis fastest), the
-<a href=#337 id=337 data-nosnippet>337</a>/// input pixel at its world position, or `None` where the conversion fails.
-<a href=#338 id=338 data-nosnippet>338</a>///
-<a href=#339 id=339 data-nosnippet>339</a>/// On a shared tangent plane with the identity PC matrix, the intermediate
-<a href=#340 id=340 data-nosnippet>340</a>/// world coordinates are the same, so the mapping is exactly affine on each
-<a href=#341 id=341 data-nosnippet>341</a>/// axis: `crpix_in + (p − crpix_out) × cdelt_out / cdelt_in`. That is the
-<a href=#342 id=342 data-nosnippet>342</a>/// `simanalyze` and `simalma` total-power regrid, which keeps the reference
-<a href=#343 id=343 data-nosnippet>343</a>/// direction. It is taken where the projection's domain is known to cover the
-<a href=#344 id=344 data-nosnippet>344</a>/// output ([`corners_cover_the_plane`]), so no pixel without a sky position
-<a href=#345 id=345 data-nosnippet>345</a>/// is sampled.
-<a href=#346 id=346 data-nosnippet>346</a></span><span class="kw">fn </span>positions(
-<a href=#347 id=347 data-nosnippet>347</a>    input: <span class="kw-2">&amp;</span>DirectionCoordinate,
-<a href=#348 id=348 data-nosnippet>348</a>    output: <span class="kw-2">&amp;</span>DirectionCoordinate,
-<a href=#349 id=349 data-nosnippet>349</a>    [nx, ny]: [usize; <span class="number">2</span>],
-<a href=#350 id=350 data-nosnippet>350</a>) -&gt; Vec&lt;<span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;&gt; {
-<a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">if </span>same_tangent_plane(input, output)
-<a href=#352 id=352 data-nosnippet>352</a>        &amp;&amp; <span class="kw-2">*</span>input.pc_matrix() == ndarray::Array2::&lt;f64&gt;::eye(<span class="number">2</span>)
-<a href=#353 id=353 data-nosnippet>353</a>        &amp;&amp; corners_cover_the_plane(output, [nx, ny])
-<a href=#354 id=354 data-nosnippet>354</a>    {
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">let </span>(in_pix, out_pix) = (input.reference_pixel(), output.reference_pixel());
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span>(in_inc, out_inc) = (input.increment(), output.increment());
-<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">let </span>ratio = [out_inc[<span class="number">0</span>] / in_inc[<span class="number">0</span>], out_inc[<span class="number">1</span>] / in_inc[<span class="number">1</span>]];
-<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw">return </span>(<span class="number">0</span>..ny)
-<a href=#359 id=359 data-nosnippet>359</a>            .flat_map(|j| (<span class="number">0</span>..nx).map(<span class="kw">move </span>|i| (i, j)))
-<a href=#360 id=360 data-nosnippet>360</a>            .map(|(i, j)| {
-<a href=#361 id=361 data-nosnippet>361</a>                <span class="prelude-val">Some</span>([
-<a href=#362 id=362 data-nosnippet>362</a>                    in_pix[<span class="number">0</span>] + (i <span class="kw">as </span>f64 - out_pix[<span class="number">0</span>]) * ratio[<span class="number">0</span>],
-<a href=#363 id=363 data-nosnippet>363</a>                    in_pix[<span class="number">1</span>] + (j <span class="kw">as </span>f64 - out_pix[<span class="number">1</span>]) * ratio[<span class="number">1</span>],
-<a href=#364 id=364 data-nosnippet>364</a>                ])
-<a href=#365 id=365 data-nosnippet>365</a>            })
-<a href=#366 id=366 data-nosnippet>366</a>            .collect();
-<a href=#367 id=367 data-nosnippet>367</a>    }
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">let </span><span class="kw-2">mut </span>grid = Vec::with_capacity(nx * ny);
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">for </span>j <span class="kw">in </span><span class="number">0</span>..ny {
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..nx {
-<a href=#371 id=371 data-nosnippet>371</a>            <span class="kw">let </span>position = output
-<a href=#372 id=372 data-nosnippet>372</a>                .to_world(<span class="kw-2">&amp;</span>[i <span class="kw">as </span>f64, j <span class="kw">as </span>f64])
-<a href=#373 id=373 data-nosnippet>373</a>                .and_then(|world| input.to_pixel(<span class="kw-2">&amp;</span>world))
-<a href=#374 id=374 data-nosnippet>374</a>                .ok()
-<a href=#375 id=375 data-nosnippet>375</a>                .filter(|pixel| pixel.iter().all(|value| value.is_finite()))
-<a href=#376 id=376 data-nosnippet>376</a>                .map(|pixel| [pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]]);
-<a href=#377 id=377 data-nosnippet>377</a>            grid.push(position);
-<a href=#378 id=378 data-nosnippet>378</a>        }
-<a href=#379 id=379 data-nosnippet>379</a>    }
-<a href=#380 id=380 data-nosnippet>380</a>    grid
-<a href=#381 id=381 data-nosnippet>381</a>}
-<a href=#382 id=382 data-nosnippet>382</a>
-<a href=#383 id=383 data-nosnippet>383</a><span class="doccomment">/// Whether an image of `coordinates` and `shape` can be regridded onto
-<a href=#384 id=384 data-nosnippet>384</a>/// `template`: [`regrid`]'s check of the axes, without reading pixels.
-<a href=#385 id=385 data-nosnippet>385</a>///
-<a href=#386 id=386 data-nosnippet>386</a>/// # Errors
-<a href=#387 id=387 data-nosnippet>387</a>///
-<a href=#388 id=388 data-nosnippet>388</a>/// What [`regrid`] refuses before it reads the input: axes other than the
-<a href=#389 id=389 data-nosnippet>389</a>/// direction that differ where they have more than one pixel, or another
-<a href=#390 id=390 data-nosnippet>390</a>/// direction frame.
-<a href=#391 id=391 data-nosnippet>391</a></span><span class="kw">pub fn </span>check_regrid(
-<a href=#392 id=392 data-nosnippet>392</a>    coordinates: <span class="kw-2">&amp;</span>CoordinateSystem,
-<a href=#393 id=393 data-nosnippet>393</a>    shape: <span class="kw-2">&amp;</span>[usize],
-<a href=#394 id=394 data-nosnippet>394</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
-<a href=#395 id=395 data-nosnippet>395</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ImageError&gt; {
-<a href=#396 id=396 data-nosnippet>396</a>    plan_axes(<span class="bool-val">false</span>, coordinates, shape, template).map(drop)
-<a href=#397 id=397 data-nosnippet>397</a>}
-<a href=#398 id=398 data-nosnippet>398</a>
-<a href=#399 id=399 data-nosnippet>399</a><span class="doccomment">/// Whether [`regrid_along_frequency`] can regrid an image of `coordinates`
-<a href=#400 id=400 data-nosnippet>400</a>/// and `shape` onto `template`, without reading a pixel: `true` when it
-<a href=#401 id=401 data-nosnippet>401</a>/// would regrid the spectral axis too, `false` for the direction axes alone.
-<a href=#402 id=402 data-nosnippet>402</a>///
-<a href=#403 id=403 data-nosnippet>403</a>/// # Errors
-<a href=#404 id=404 data-nosnippet>404</a>///
-<a href=#405 id=405 data-nosnippet>405</a>/// As [`regrid_along_frequency`], for all but reading.
-<a href=#406 id=406 data-nosnippet>406</a></span><span class="kw">pub fn </span>check_regrid_along_frequency(
-<a href=#407 id=407 data-nosnippet>407</a>    coordinates: <span class="kw-2">&amp;</span>CoordinateSystem,
-<a href=#408 id=408 data-nosnippet>408</a>    shape: <span class="kw-2">&amp;</span>[usize],
-<a href=#409 id=409 data-nosnippet>409</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
-<a href=#410 id=410 data-nosnippet>410</a>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, ImageError&gt; {
-<a href=#411 id=411 data-nosnippet>411</a>    plan_axes(<span class="bool-val">true</span>, coordinates, shape, template).map(|plan| plan.spectral.is_some())
-<a href=#412 id=412 data-nosnippet>412</a>}
-<a href=#413 id=413 data-nosnippet>413</a>
-<a href=#414 id=414 data-nosnippet>414</a><span class="doccomment">/// Regrid `input`'s direction axes onto `template` by `method`.
-<a href=#415 id=415 data-nosnippet>415</a>///
-<a href=#416 id=416 data-nosnippet>416</a>/// # Errors
-<a href=#417 id=417 data-nosnippet>417</a>///
-<a href=#418 id=418 data-nosnippet>418</a>/// A template whose axes other than the direction differ from the input's,
-<a href=#419 id=419 data-nosnippet>419</a>/// where they have more than one pixel, or whose direction frame does, and a
-<a href=#420 id=420 data-nosnippet>420</a>/// failure to read the input.
-<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">pub fn </span>regrid&lt;T, I&gt;(
-<a href=#422 id=422 data-nosnippet>422</a>    input: <span class="kw-2">&amp;</span>I,
-<a href=#423 id=423 data-nosnippet>423</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
-<a href=#424 id=424 data-nosnippet>424</a>    method: RegridMethod,
-<a href=#425 id=425 data-nosnippet>425</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Regridded&lt;T&gt;, ImageError&gt;
-<a href=#426 id=426 data-nosnippet>426</a><span class="kw">where
-<a href=#427 id=427 data-nosnippet>427</a>    </span>T: ImagePixel + Into&lt;f64&gt; + From&lt;f32&gt; + Copy,
-<a href=#428 id=428 data-nosnippet>428</a>    I: ImageInterface&lt;T&gt;,
-<a href=#429 id=429 data-nosnippet>429</a>{
-<a href=#430 id=430 data-nosnippet>430</a>    regrid_with(<span class="bool-val">false</span>, input, template, method)
-<a href=#431 id=431 data-nosnippet>431</a>}
-<a href=#432 id=432 data-nosnippet>432</a>
-<a href=#433 id=433 data-nosnippet>433</a><span class="doccomment">/// Regrid `input`'s direction axes onto `template` by `method`, and its
-<a href=#434 id=434 data-nosnippet>434</a>/// spectral axis linearly where the template's differs, as
-<a href=#435 id=435 data-nosnippet>435</a>/// `SIImageStore::regridToModelImage` regrids a tclean start model.
-<a href=#436 id=436 data-nosnippet>436</a>///
-<a href=#437 id=437 data-nosnippet>437</a>/// # Errors
-<a href=#438 id=438 data-nosnippet>438</a>///
-<a href=#439 id=439 data-nosnippet>439</a>/// A template whose axes other than the direction and spectral ones differ
-<a href=#440 id=440 data-nosnippet>440</a>/// from the input's, where they have more than one pixel, whose direction
-<a href=#441 id=441 data-nosnippet>441</a>/// or spectral frame does, whose single channel a cube would be regridded
-<a href=#442 id=442 data-nosnippet>442</a>/// onto or whose channels a single channel would (casacore refuses the one
-<a href=#443 id=443 data-nosnippet>443</a>/// and reads past its array on the other), and a failure to read the input.
-<a href=#444 id=444 data-nosnippet>444</a></span><span class="kw">pub fn </span>regrid_along_frequency&lt;T, I&gt;(
-<a href=#445 id=445 data-nosnippet>445</a>    input: <span class="kw-2">&amp;</span>I,
-<a href=#446 id=446 data-nosnippet>446</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
-<a href=#447 id=447 data-nosnippet>447</a>    method: RegridMethod,
-<a href=#448 id=448 data-nosnippet>448</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Regridded&lt;T&gt;, ImageError&gt;
-<a href=#449 id=449 data-nosnippet>449</a><span class="kw">where
-<a href=#450 id=450 data-nosnippet>450</a>    </span>T: ImagePixel + Into&lt;f64&gt; + From&lt;f32&gt; + Copy,
-<a href=#451 id=451 data-nosnippet>451</a>    I: ImageInterface&lt;T&gt;,
-<a href=#452 id=452 data-nosnippet>452</a>{
-<a href=#453 id=453 data-nosnippet>453</a>    regrid_with(<span class="bool-val">true</span>, input, template, method)
-<a href=#454 id=454 data-nosnippet>454</a>}
-<a href=#455 id=455 data-nosnippet>455</a>
-<a href=#456 id=456 data-nosnippet>456</a><span class="kw">fn </span>regrid_with&lt;T, I&gt;(
-<a href=#457 id=457 data-nosnippet>457</a>    along_frequency: bool,
-<a href=#458 id=458 data-nosnippet>458</a>    input: <span class="kw-2">&amp;</span>I,
-<a href=#459 id=459 data-nosnippet>459</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
-<a href=#460 id=460 data-nosnippet>460</a>    method: RegridMethod,
-<a href=#461 id=461 data-nosnippet>461</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Regridded&lt;T&gt;, ImageError&gt;
-<a href=#462 id=462 data-nosnippet>462</a><span class="kw">where
-<a href=#463 id=463 data-nosnippet>463</a>    </span>T: ImagePixel + Into&lt;f64&gt; + From&lt;f32&gt; + Copy,
-<a href=#464 id=464 data-nosnippet>464</a>    I: ImageInterface&lt;T&gt;,
-<a href=#465 id=465 data-nosnippet>465</a>{
-<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>input_shape = input.shape().to_vec();
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span>plan = plan_axes(along_frequency, input.coordinates(), <span class="kw-2">&amp;</span>input_shape, template)<span class="question-mark">?</span>;
-<a href=#468 id=468 data-nosnippet>468</a>    <span class="kw">let </span>((input_direction, in_axis), (output_direction, out_axis)) = (plan.input, plan.output);
-<a href=#469 id=469 data-nosnippet>469</a>    <span class="kw">let </span>scale = jy_per_pixel_scale(input.units(), input_direction, output_direction);
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="kw">let </span>in_plane = [input_shape[in_axis], input_shape[in_axis + <span class="number">1</span>]];
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">let </span>out_plane = [template.shape[out_axis], template.shape[out_axis + <span class="number">1</span>]];
-<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">let </span>grid = positions(input_direction, output_direction, out_plane);
-<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">let </span>data = input.get()<span class="question-mark">?</span>;
-<a href=#474 id=474 data-nosnippet>474</a>    <span class="kw">let </span>mask = input.default_mask()<span class="question-mark">?</span>;
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="comment">// The direction pass keeps the input's channels; the spectral pass
-<a href=#476 id=476 data-nosnippet>476</a>    // takes them to the template's.
-<a href=#477 id=477 data-nosnippet>477</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>direction_shape = input_shape.clone();
-<a href=#478 id=478 data-nosnippet>478</a>    direction_shape[out_axis..out_axis + <span class="number">2</span>].copy_from_slice(<span class="kw-2">&amp;</span>out_plane);
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_data = ArrayD::&lt;T&gt;::from_elem(IxDyn(<span class="kw-2">&amp;</span>direction_shape).f(), T::from(<span class="number">0.0</span>));
-<a href=#480 id=480 data-nosnippet>480</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_mask = ArrayD::&lt;bool&gt;::from_elem(IxDyn(<span class="kw-2">&amp;</span>direction_shape).f(), <span class="bool-val">false</span>);
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="kw">let </span><span class="kw-2">mut </span>plane = <span class="macro">vec!</span>[<span class="number">0.0f64</span>; in_plane[<span class="number">0</span>] * in_plane[<span class="number">1</span>]];
-<a href=#482 id=482 data-nosnippet>482</a>    <span class="kw">let </span><span class="kw-2">mut </span>plane_mask = mask.as_ref().map(|<span class="kw">_</span>| <span class="macro">vec!</span>[<span class="bool-val">true</span>; plane.len()]);
-<a href=#483 id=483 data-nosnippet>483</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_values = <span class="macro">vec!</span>[<span class="number">0.0f64</span>; out_plane[<span class="number">0</span>] * out_plane[<span class="number">1</span>]];
-<a href=#484 id=484 data-nosnippet>484</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_valid = <span class="macro">vec!</span>[<span class="bool-val">false</span>; out_values.len()];
-<a href=#485 id=485 data-nosnippet>485</a>    <span class="kw">let </span>planes = PlaneIndex::new(<span class="kw-2">&amp;</span>input_shape, in_axis);
-<a href=#486 id=486 data-nosnippet>486</a>    <span class="kw">let </span>out_planes = PlaneIndex::new(<span class="kw-2">&amp;</span>direction_shape, out_axis);
-<a href=#487 id=487 data-nosnippet>487</a>    <span class="kw">for </span>plane_number <span class="kw">in </span><span class="number">0</span>..planes.count {
-<a href=#488 id=488 data-nosnippet>488</a>        planes.read(plane_number, <span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;mut </span>plane, |v| (<span class="kw-2">*</span>v).into());
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">if let </span>(<span class="prelude-val">Some</span>(values), <span class="prelude-val">Some</span>(mask)) = (plane_mask.as_mut(), mask.as_ref()) {
-<a href=#490 id=490 data-nosnippet>490</a>            planes.read(plane_number, mask, values, |v| <span class="kw-2">*</span>v);
-<a href=#491 id=491 data-nosnippet>491</a>        }
-<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>view = Plane {
-<a href=#493 id=493 data-nosnippet>493</a>            data: <span class="kw-2">&amp;</span>plane,
-<a href=#494 id=494 data-nosnippet>494</a>            mask: plane_mask.as_deref(),
-<a href=#495 id=495 data-nosnippet>495</a>            shape: in_plane,
-<a href=#496 id=496 data-nosnippet>496</a>        };
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">for </span>(k, at) <span class="kw">in </span>grid.iter().enumerate() {
-<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">let </span>sampled = at.and_then(|at| view.sample(method, at));
-<a href=#499 id=499 data-nosnippet>499</a>            out_values[k] = sampled.map_or(<span class="number">0.0</span>, |value| scale * value);
-<a href=#500 id=500 data-nosnippet>500</a>            out_valid[k] = sampled.is_some();
-<a href=#501 id=501 data-nosnippet>501</a>        }
-<a href=#502 id=502 data-nosnippet>502</a>        out_planes.write(plane_number, <span class="kw-2">&amp;</span>out_values, <span class="kw-2">&amp;mut </span>out_data, |v| {
-<a href=#503 id=503 data-nosnippet>503</a>            T::from(v <span class="kw">as </span>f32)
-<a href=#504 id=504 data-nosnippet>504</a>        });
-<a href=#505 id=505 data-nosnippet>505</a>        out_planes.write(plane_number, <span class="kw-2">&amp;</span>out_valid, <span class="kw-2">&amp;mut </span>out_mask, |v| v);
-<a href=#506 id=506 data-nosnippet>506</a>    }
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(spectral) = <span class="kw-2">&amp;</span>plan.spectral {
-<a href=#508 id=508 data-nosnippet>508</a>        (out_data, out_mask) = spectral.apply(<span class="kw-2">&amp;</span>out_data, <span class="kw-2">&amp;</span>out_mask, <span class="kw-2">&amp;</span>template.shape);
-<a href=#509 id=509 data-nosnippet>509</a>    }
-<a href=#510 id=510 data-nosnippet>510</a>    <span class="prelude-val">Ok</span>(Regridded {
-<a href=#511 id=511 data-nosnippet>511</a>        data: out_data,
-<a href=#512 id=512 data-nosnippet>512</a>        mask: out_mask,
-<a href=#513 id=513 data-nosnippet>513</a>        coordinates: plan.coordinates,
-<a href=#514 id=514 data-nosnippet>514</a>        template_coordinates: plan.template_coordinates,
-<a href=#515 id=515 data-nosnippet>515</a>        scale,
-<a href=#516 id=516 data-nosnippet>516</a>    })
-<a href=#517 id=517 data-nosnippet>517</a>}
-<a href=#518 id=518 data-nosnippet>518</a>
-<a href=#519 id=519 data-nosnippet>519</a><span class="doccomment">/// The direction planes of an array with its direction axes at
-<a href=#520 id=520 data-nosnippet>520</a>/// `axis, axis + 1`, numbered by the other axes (the first fastest), read and
-<a href=#521 id=521 data-nosnippet>521</a>/// written first axis fastest. A Fortran-ordered array with the direction
-<a href=#522 id=522 data-nosnippet>522</a>/// axes first, as images are, holds each plane contiguously.
-<a href=#523 id=523 data-nosnippet>523</a></span><span class="kw">struct </span>PlaneIndex&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#524 id=524 data-nosnippet>524</a>    shape: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[usize],
-<a href=#525 id=525 data-nosnippet>525</a>    axis: usize,
-<a href=#526 id=526 data-nosnippet>526</a>    others: Vec&lt;usize&gt;,
-<a href=#527 id=527 data-nosnippet>527</a>    count: usize,
-<a href=#528 id=528 data-nosnippet>528</a>}
-<a href=#529 id=529 data-nosnippet>529</a>
-<a href=#530 id=530 data-nosnippet>530</a><span class="kw">impl</span>&lt;<span class="lifetime">'s</span>&gt; PlaneIndex&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#531 id=531 data-nosnippet>531</a>    <span class="kw">fn </span>new(shape: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[usize], axis: usize) -&gt; <span class="self">Self </span>{
-<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span>others: Vec&lt;usize&gt; = (<span class="number">0</span>..shape.len())
-<a href=#533 id=533 data-nosnippet>533</a>            .filter(|a| <span class="kw-2">*</span>a != axis &amp;&amp; <span class="kw-2">*</span>a != axis + <span class="number">1</span>)
-<a href=#534 id=534 data-nosnippet>534</a>            .collect();
-<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">let </span>count = others.iter().map(|a| shape[<span class="kw-2">*</span>a]).product();
-<a href=#536 id=536 data-nosnippet>536</a>        <span class="self">Self </span>{
-<a href=#537 id=537 data-nosnippet>537</a>            shape,
-<a href=#538 id=538 data-nosnippet>538</a>            axis,
-<a href=#539 id=539 data-nosnippet>539</a>            others,
-<a href=#540 id=540 data-nosnippet>540</a>            count,
-<a href=#541 id=541 data-nosnippet>541</a>        }
-<a href=#542 id=542 data-nosnippet>542</a>    }
-<a href=#543 id=543 data-nosnippet>543</a>
-<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">fn </span>plane_len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#545 id=545 data-nosnippet>545</a>        <span class="self">self</span>.shape[<span class="self">self</span>.axis] * <span class="self">self</span>.shape[<span class="self">self</span>.axis + <span class="number">1</span>]
-<a href=#546 id=546 data-nosnippet>546</a>    }
-<a href=#547 id=547 data-nosnippet>547</a>
-<a href=#548 id=548 data-nosnippet>548</a>    <span class="doccomment">/// The plane's elements in memory order, when they are contiguous there.
-<a href=#549 id=549 data-nosnippet>549</a>    </span><span class="kw">fn </span>contiguous&lt;<span class="lifetime">'a</span>, A&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, plane: usize, array: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;A&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[A]&gt; {
-<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">let </span>len = <span class="self">self</span>.plane_len();
-<a href=#551 id=551 data-nosnippet>551</a>        (<span class="self">self</span>.axis == <span class="number">0</span>)
-<a href=#552 id=552 data-nosnippet>552</a>            .then(|| array.as_slice_memory_order())
-<a href=#553 id=553 data-nosnippet>553</a>            .flatten()
-<a href=#554 id=554 data-nosnippet>554</a>            .filter(|<span class="kw">_</span>| array.t().is_standard_layout())
-<a href=#555 id=555 data-nosnippet>555</a>            .map(|all| <span class="kw-2">&amp;</span>all[plane * len..(plane + <span class="number">1</span>) * len])
-<a href=#556 id=556 data-nosnippet>556</a>    }
-<a href=#557 id=557 data-nosnippet>557</a>
-<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">fn </span>index(<span class="kw-2">&amp;</span><span class="self">self</span>, plane: usize) -&gt; Vec&lt;usize&gt; {
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span><span class="kw-2">mut </span>index = <span class="macro">vec!</span>[<span class="number">0usize</span>; <span class="self">self</span>.shape.len()];
-<a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">let </span><span class="kw-2">mut </span>rest = plane;
-<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">for </span>a <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.others {
-<a href=#562 id=562 data-nosnippet>562</a>            index[<span class="kw-2">*</span>a] = rest % <span class="self">self</span>.shape[<span class="kw-2">*</span>a];
-<a href=#563 id=563 data-nosnippet>563</a>            rest /= <span class="self">self</span>.shape[<span class="kw-2">*</span>a];
-<a href=#564 id=564 data-nosnippet>564</a>        }
-<a href=#565 id=565 data-nosnippet>565</a>        index
-<a href=#566 id=566 data-nosnippet>566</a>    }
-<a href=#567 id=567 data-nosnippet>567</a>
-<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">fn </span>read&lt;A, B&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, plane: usize, array: <span class="kw-2">&amp;</span>ArrayD&lt;A&gt;, into: <span class="kw-2">&amp;mut </span>[B], f: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>A) -&gt; B) {
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(values) = <span class="self">self</span>.contiguous(plane, array) {
-<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">for </span>(out, value) <span class="kw">in </span>into.iter_mut().zip(values) {
-<a href=#571 id=571 data-nosnippet>571</a>                <span class="kw-2">*</span>out = f(value);
-<a href=#572 id=572 data-nosnippet>572</a>            }
-<a href=#573 id=573 data-nosnippet>573</a>            <span class="kw">return</span>;
-<a href=#574 id=574 data-nosnippet>574</a>        }
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">let </span><span class="kw-2">mut </span>index = <span class="self">self</span>.index(plane);
-<a href=#576 id=576 data-nosnippet>576</a>        <span class="kw">let </span>nx = <span class="self">self</span>.shape[<span class="self">self</span>.axis];
-<a href=#577 id=577 data-nosnippet>577</a>        <span class="kw">for </span>(k, out) <span class="kw">in </span>into.iter_mut().enumerate() {
-<a href=#578 id=578 data-nosnippet>578</a>            index[<span class="self">self</span>.axis] = k % nx;
-<a href=#579 id=579 data-nosnippet>579</a>            index[<span class="self">self</span>.axis + <span class="number">1</span>] = k / nx;
-<a href=#580 id=580 data-nosnippet>580</a>            <span class="kw-2">*</span>out = f(<span class="kw-2">&amp;</span>array[IxDyn(<span class="kw-2">&amp;</span>index)]);
-<a href=#581 id=581 data-nosnippet>581</a>        }
-<a href=#582 id=582 data-nosnippet>582</a>    }
-<a href=#583 id=583 data-nosnippet>583</a>
-<a href=#584 id=584 data-nosnippet>584</a>    <span class="kw">fn </span>write&lt;A: Copy, B&gt;(
-<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#586 id=586 data-nosnippet>586</a>        plane: usize,
-<a href=#587 id=587 data-nosnippet>587</a>        values: <span class="kw-2">&amp;</span>[A],
-<a href=#588 id=588 data-nosnippet>588</a>        array: <span class="kw-2">&amp;mut </span>ArrayD&lt;B&gt;,
-<a href=#589 id=589 data-nosnippet>589</a>        f: <span class="kw">impl </span>Fn(A) -&gt; B,
-<a href=#590 id=590 data-nosnippet>590</a>    ) {
-<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">let </span>len = <span class="self">self</span>.plane_len();
-<a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">if </span><span class="self">self</span>.axis == <span class="number">0 </span>&amp;&amp; array.t().is_standard_layout() {
-<a href=#593 id=593 data-nosnippet>593</a>            <span class="kw">let </span>all = array
-<a href=#594 id=594 data-nosnippet>594</a>                .as_slice_memory_order_mut()
-<a href=#595 id=595 data-nosnippet>595</a>                .expect(<span class="string">"a standard-layout array is contiguous"</span>);
-<a href=#596 id=596 data-nosnippet>596</a>            <span class="kw">for </span>(out, value) <span class="kw">in </span>all[plane * len..(plane + <span class="number">1</span>) * len].iter_mut().zip(values) {
-<a href=#597 id=597 data-nosnippet>597</a>                <span class="kw-2">*</span>out = f(<span class="kw-2">*</span>value);
-<a href=#598 id=598 data-nosnippet>598</a>            }
-<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw">return</span>;
-<a href=#600 id=600 data-nosnippet>600</a>        }
-<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">let </span><span class="kw-2">mut </span>index = <span class="self">self</span>.index(plane);
-<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">let </span>nx = <span class="self">self</span>.shape[<span class="self">self</span>.axis];
-<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">for </span>(k, value) <span class="kw">in </span>values.iter().enumerate() {
-<a href=#604 id=604 data-nosnippet>604</a>            index[<span class="self">self</span>.axis] = k % nx;
-<a href=#605 id=605 data-nosnippet>605</a>            index[<span class="self">self</span>.axis + <span class="number">1</span>] = k / nx;
-<a href=#606 id=606 data-nosnippet>606</a>            array[IxDyn(<span class="kw-2">&amp;</span>index)] = f(<span class="kw-2">*</span>value);
-<a href=#607 id=607 data-nosnippet>607</a>        }
-<a href=#608 id=608 data-nosnippet>608</a>    }
-<a href=#609 id=609 data-nosnippet>609</a>}
-<a href=#610 id=610 data-nosnippet>610</a>
-<a href=#611 id=611 data-nosnippet>611</a><span class="doccomment">/// One direction plane of the input, first axis fastest, with its mask
-<a href=#612 id=612 data-nosnippet>612</a>/// (true where good) when it has one.
-<a href=#613 id=613 data-nosnippet>613</a></span><span class="kw">struct </span>Plane&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#614 id=614 data-nosnippet>614</a>    data: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f64],
-<a href=#615 id=615 data-nosnippet>615</a>    mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[bool]&gt;,
-<a href=#616 id=616 data-nosnippet>616</a>    shape: [usize; <span class="number">2</span>],
-<a href=#617 id=617 data-nosnippet>617</a>}
-<a href=#618 id=618 data-nosnippet>618</a>
-<a href=#619 id=619 data-nosnippet>619</a><span class="kw">impl </span>Plane&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#620 id=620 data-nosnippet>620</a>    <span class="kw">fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, i: usize, j: usize) -&gt; f64 {
-<a href=#621 id=621 data-nosnippet>621</a>        <span class="self">self</span>.data[i + j * <span class="self">self</span>.shape[<span class="number">0</span>]]
-<a href=#622 id=622 data-nosnippet>622</a>    }
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">if </span>input_direction.conversion_direction_ref() != output_direction.conversion_direction_ref() {
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(refuse(
+<a href=#278 id=278 data-nosnippet>278</a>            <span class="string">"input and template direction conversion frames differ"</span>.into(),
+<a href=#279 id=279 data-nosnippet>279</a>        ));
+<a href=#280 id=280 data-nosnippet>280</a>    }
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="prelude-val">Ok</span>(AxesPlan {
+<a href=#282 id=282 data-nosnippet>282</a>        input: (input_direction, in_axis),
+<a href=#283 id=283 data-nosnippet>283</a>        output: (output_direction, out_axis),
+<a href=#284 id=284 data-nosnippet>284</a>        spectral,
+<a href=#285 id=285 data-nosnippet>285</a>        coordinates,
+<a href=#286 id=286 data-nosnippet>286</a>        template_coordinates,
+<a href=#287 id=287 data-nosnippet>287</a>    })
+<a href=#288 id=288 data-nosnippet>288</a>}
+<a href=#289 id=289 data-nosnippet>289</a>
+<a href=#290 id=290 data-nosnippet>290</a><span class="doccomment">/// `ImageRegrid::findScaleFactor`: the output-to-input pixel area for a
+<a href=#291 id=291 data-nosnippet>291</a>/// Jy/pixel image, 1 otherwise.
+<a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">fn </span>jy_per_pixel_scale(
+<a href=#293 id=293 data-nosnippet>293</a>    units: <span class="kw-2">&amp;</span>str,
+<a href=#294 id=294 data-nosnippet>294</a>    input: <span class="kw-2">&amp;</span>DirectionCoordinate,
+<a href=#295 id=295 data-nosnippet>295</a>    output: <span class="kw-2">&amp;</span>DirectionCoordinate,
+<a href=#296 id=296 data-nosnippet>296</a>) -&gt; f64 {
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">if </span>!units.eq_ignore_ascii_case(<span class="string">"Jy/pixel"</span>) {
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">return </span><span class="number">1.0</span>;
+<a href=#299 id=299 data-nosnippet>299</a>    }
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>(inc_in, inc_out) = (input.increment(), output.increment());
+<a href=#301 id=301 data-nosnippet>301</a>    (inc_out[<span class="number">0</span>] * inc_out[<span class="number">1</span>] / inc_in[<span class="number">0</span>] / inc_in[<span class="number">1</span>]).abs()
+<a href=#302 id=302 data-nosnippet>302</a>}
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a><span class="doccomment">/// Whether two direction coordinates share their tangent plane: the same
+<a href=#305 id=305 data-nosnippet>305</a>/// reference direction, projection, PC matrix and native poles, so that
+<a href=#306 id=306 data-nosnippet>306</a>/// their pixels differ only by reference pixel and increment.
+<a href=#307 id=307 data-nosnippet>307</a></span><span class="kw">fn </span>same_tangent_plane(a: <span class="kw-2">&amp;</span>DirectionCoordinate, b: <span class="kw-2">&amp;</span>DirectionCoordinate) -&gt; bool {
+<a href=#308 id=308 data-nosnippet>308</a>    a.reference_value() == b.reference_value()
+<a href=#309 id=309 data-nosnippet>309</a>        &amp;&amp; a.projection() == b.projection()
+<a href=#310 id=310 data-nosnippet>310</a>        &amp;&amp; a.pc_matrix() == b.pc_matrix()
+<a href=#311 id=311 data-nosnippet>311</a>        &amp;&amp; a.longpole() == b.longpole()
+<a href=#312 id=312 data-nosnippet>312</a>        &amp;&amp; a.latpole() == b.latpole()
+<a href=#313 id=313 data-nosnippet>313</a>}
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a><span class="doccomment">/// Whether every output pixel of an `[nx, ny]` plane has a sky position,
+<a href=#316 id=316 data-nosnippet>316</a>/// shown by its four corners, for a zenithal projection with the identity
+<a href=#317 id=317 data-nosnippet>317</a>/// PC matrix. Those projections are valid on a disk about the reference
+<a href=#318 id=318 data-nosnippet>318</a>/// point in the intermediate plane, which the identity PC maps to the pixel
+<a href=#319 id=319 data-nosnippet>319</a>/// grid by an axis-aligned affine map: the grid's rectangle lies in the
+<a href=#320 id=320 data-nosnippet>320</a>/// disk when its corners do.
+<a href=#321 id=321 data-nosnippet>321</a></span><span class="kw">fn </span>corners_cover_the_plane(output: <span class="kw-2">&amp;</span>DirectionCoordinate, [nx, ny]: [usize; <span class="number">2</span>]) -&gt; bool {
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">let </span>zenithal = <span class="macro">matches!</span>(
+<a href=#323 id=323 data-nosnippet>323</a>        output.projection().projection_type(),
+<a href=#324 id=324 data-nosnippet>324</a>        ProjectionType::SIN
+<a href=#325 id=325 data-nosnippet>325</a>            | ProjectionType::TAN
+<a href=#326 id=326 data-nosnippet>326</a>            | ProjectionType::ARC
+<a href=#327 id=327 data-nosnippet>327</a>            | ProjectionType::ZEA
+<a href=#328 id=328 data-nosnippet>328</a>            | ProjectionType::STG
+<a href=#329 id=329 data-nosnippet>329</a>    ) &amp;&amp; output.projection().parameters().iter().all(|p| <span class="kw-2">*</span>p == <span class="number">0.0</span>);
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">let </span>(last_x, last_y) = (nx <span class="kw">as </span>f64 - <span class="number">1.0</span>, ny <span class="kw">as </span>f64 - <span class="number">1.0</span>);
+<a href=#331 id=331 data-nosnippet>331</a>    zenithal
+<a href=#332 id=332 data-nosnippet>332</a>        &amp;&amp; [[<span class="number">0.0</span>, <span class="number">0.0</span>], [last_x, <span class="number">0.0</span>], [<span class="number">0.0</span>, last_y], [last_x, last_y]]
+<a href=#333 id=333 data-nosnippet>333</a>            .iter()
+<a href=#334 id=334 data-nosnippet>334</a>            .all(|corner| {
+<a href=#335 id=335 data-nosnippet>335</a>                output
+<a href=#336 id=336 data-nosnippet>336</a>                    .to_world(corner)
+<a href=#337 id=337 data-nosnippet>337</a>                    .is_ok_and(|world| world.iter().all(|v| v.is_finite()))
+<a href=#338 id=338 data-nosnippet>338</a>            })
+<a href=#339 id=339 data-nosnippet>339</a>}
+<a href=#340 id=340 data-nosnippet>340</a>
+<a href=#341 id=341 data-nosnippet>341</a><span class="doccomment">/// For each output pixel of the direction plane (first axis fastest), the
+<a href=#342 id=342 data-nosnippet>342</a>/// input pixel at its world position, or `None` where the conversion fails.
+<a href=#343 id=343 data-nosnippet>343</a>///
+<a href=#344 id=344 data-nosnippet>344</a>/// On a shared tangent plane with the identity PC matrix, the intermediate
+<a href=#345 id=345 data-nosnippet>345</a>/// world coordinates are the same, so the mapping is exactly affine on each
+<a href=#346 id=346 data-nosnippet>346</a>/// axis: `crpix_in + (p − crpix_out) × cdelt_out / cdelt_in`. That is the
+<a href=#347 id=347 data-nosnippet>347</a>/// `simanalyze` and `simalma` total-power regrid, which keeps the reference
+<a href=#348 id=348 data-nosnippet>348</a>/// direction. It is taken where the projection's domain is known to cover the
+<a href=#349 id=349 data-nosnippet>349</a>/// output ([`corners_cover_the_plane`]), so no pixel without a sky position
+<a href=#350 id=350 data-nosnippet>350</a>/// is sampled.
+<a href=#351 id=351 data-nosnippet>351</a></span><span class="kw">fn </span>positions(
+<a href=#352 id=352 data-nosnippet>352</a>    input: <span class="kw-2">&amp;</span>DirectionCoordinate,
+<a href=#353 id=353 data-nosnippet>353</a>    output: <span class="kw-2">&amp;</span>DirectionCoordinate,
+<a href=#354 id=354 data-nosnippet>354</a>    [nx, ny]: [usize; <span class="number">2</span>],
+<a href=#355 id=355 data-nosnippet>355</a>) -&gt; Vec&lt;<span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;&gt; {
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">if </span>same_tangent_plane(input, output)
+<a href=#357 id=357 data-nosnippet>357</a>        &amp;&amp; <span class="kw-2">*</span>input.pc_matrix() == ndarray::Array2::&lt;f64&gt;::eye(<span class="number">2</span>)
+<a href=#358 id=358 data-nosnippet>358</a>        &amp;&amp; corners_cover_the_plane(output, [nx, ny])
+<a href=#359 id=359 data-nosnippet>359</a>    {
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">let </span>(in_pix, out_pix) = (input.reference_pixel(), output.reference_pixel());
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">let </span>(in_inc, out_inc) = (input.increment(), output.increment());
+<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span>ratio = [out_inc[<span class="number">0</span>] / in_inc[<span class="number">0</span>], out_inc[<span class="number">1</span>] / in_inc[<span class="number">1</span>]];
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="kw">return </span>(<span class="number">0</span>..ny)
+<a href=#364 id=364 data-nosnippet>364</a>            .flat_map(|j| (<span class="number">0</span>..nx).map(<span class="kw">move </span>|i| (i, j)))
+<a href=#365 id=365 data-nosnippet>365</a>            .map(|(i, j)| {
+<a href=#366 id=366 data-nosnippet>366</a>                <span class="prelude-val">Some</span>([
+<a href=#367 id=367 data-nosnippet>367</a>                    in_pix[<span class="number">0</span>] + (i <span class="kw">as </span>f64 - out_pix[<span class="number">0</span>]) * ratio[<span class="number">0</span>],
+<a href=#368 id=368 data-nosnippet>368</a>                    in_pix[<span class="number">1</span>] + (j <span class="kw">as </span>f64 - out_pix[<span class="number">1</span>]) * ratio[<span class="number">1</span>],
+<a href=#369 id=369 data-nosnippet>369</a>                ])
+<a href=#370 id=370 data-nosnippet>370</a>            })
+<a href=#371 id=371 data-nosnippet>371</a>            .collect();
+<a href=#372 id=372 data-nosnippet>372</a>    }
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">let </span><span class="kw-2">mut </span>grid = Vec::with_capacity(nx * ny);
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">for </span>j <span class="kw">in </span><span class="number">0</span>..ny {
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..nx {
+<a href=#376 id=376 data-nosnippet>376</a>            <span class="kw">let </span>position = output
+<a href=#377 id=377 data-nosnippet>377</a>                .to_world(<span class="kw-2">&amp;</span>[i <span class="kw">as </span>f64, j <span class="kw">as </span>f64])
+<a href=#378 id=378 data-nosnippet>378</a>                .and_then(|world| input.to_pixel(<span class="kw-2">&amp;</span>world))
+<a href=#379 id=379 data-nosnippet>379</a>                .ok()
+<a href=#380 id=380 data-nosnippet>380</a>                .filter(|pixel| pixel.iter().all(|value| value.is_finite()))
+<a href=#381 id=381 data-nosnippet>381</a>                .map(|pixel| [pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]]);
+<a href=#382 id=382 data-nosnippet>382</a>            grid.push(position);
+<a href=#383 id=383 data-nosnippet>383</a>        }
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>    grid
+<a href=#386 id=386 data-nosnippet>386</a>}
+<a href=#387 id=387 data-nosnippet>387</a>
+<a href=#388 id=388 data-nosnippet>388</a><span class="doccomment">/// Whether an image of `coordinates` and `shape` can be regridded onto
+<a href=#389 id=389 data-nosnippet>389</a>/// `template`: [`regrid`]'s check of the axes, without reading pixels.
+<a href=#390 id=390 data-nosnippet>390</a>///
+<a href=#391 id=391 data-nosnippet>391</a>/// # Errors
+<a href=#392 id=392 data-nosnippet>392</a>///
+<a href=#393 id=393 data-nosnippet>393</a>/// What [`regrid`] refuses before it reads the input: axes other than the
+<a href=#394 id=394 data-nosnippet>394</a>/// direction that differ where they have more than one pixel, or another
+<a href=#395 id=395 data-nosnippet>395</a>/// direction frame.
+<a href=#396 id=396 data-nosnippet>396</a></span><span class="kw">pub fn </span>check_regrid(
+<a href=#397 id=397 data-nosnippet>397</a>    coordinates: <span class="kw-2">&amp;</span>CoordinateSystem,
+<a href=#398 id=398 data-nosnippet>398</a>    shape: <span class="kw-2">&amp;</span>[usize],
+<a href=#399 id=399 data-nosnippet>399</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
+<a href=#400 id=400 data-nosnippet>400</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ImageError&gt; {
+<a href=#401 id=401 data-nosnippet>401</a>    plan_axes(<span class="bool-val">false</span>, coordinates, shape, template).map(drop)
+<a href=#402 id=402 data-nosnippet>402</a>}
+<a href=#403 id=403 data-nosnippet>403</a>
+<a href=#404 id=404 data-nosnippet>404</a><span class="doccomment">/// Whether [`regrid_along_frequency`] can regrid an image of `coordinates`
+<a href=#405 id=405 data-nosnippet>405</a>/// and `shape` onto `template`, without reading a pixel: `true` when it
+<a href=#406 id=406 data-nosnippet>406</a>/// would regrid the spectral axis too, `false` for the direction axes alone.
+<a href=#407 id=407 data-nosnippet>407</a>///
+<a href=#408 id=408 data-nosnippet>408</a>/// # Errors
+<a href=#409 id=409 data-nosnippet>409</a>///
+<a href=#410 id=410 data-nosnippet>410</a>/// As [`regrid_along_frequency`], for all but reading.
+<a href=#411 id=411 data-nosnippet>411</a></span><span class="kw">pub fn </span>check_regrid_along_frequency(
+<a href=#412 id=412 data-nosnippet>412</a>    coordinates: <span class="kw-2">&amp;</span>CoordinateSystem,
+<a href=#413 id=413 data-nosnippet>413</a>    shape: <span class="kw-2">&amp;</span>[usize],
+<a href=#414 id=414 data-nosnippet>414</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
+<a href=#415 id=415 data-nosnippet>415</a>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, ImageError&gt; {
+<a href=#416 id=416 data-nosnippet>416</a>    plan_axes(<span class="bool-val">true</span>, coordinates, shape, template).map(|plan| plan.spectral.is_some())
+<a href=#417 id=417 data-nosnippet>417</a>}
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a><span class="doccomment">/// Regrid `input`'s direction axes onto `template` by `method`.
+<a href=#420 id=420 data-nosnippet>420</a>///
+<a href=#421 id=421 data-nosnippet>421</a>/// # Errors
+<a href=#422 id=422 data-nosnippet>422</a>///
+<a href=#423 id=423 data-nosnippet>423</a>/// A template whose axes other than the direction differ from the input's,
+<a href=#424 id=424 data-nosnippet>424</a>/// where they have more than one pixel, or whose direction frame does, and a
+<a href=#425 id=425 data-nosnippet>425</a>/// failure to read the input.
+<a href=#426 id=426 data-nosnippet>426</a></span><span class="kw">pub fn </span>regrid&lt;T, I&gt;(
+<a href=#427 id=427 data-nosnippet>427</a>    input: <span class="kw-2">&amp;</span>I,
+<a href=#428 id=428 data-nosnippet>428</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
+<a href=#429 id=429 data-nosnippet>429</a>    method: RegridMethod,
+<a href=#430 id=430 data-nosnippet>430</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Regridded&lt;T&gt;, ImageError&gt;
+<a href=#431 id=431 data-nosnippet>431</a><span class="kw">where
+<a href=#432 id=432 data-nosnippet>432</a>    </span>T: ImagePixel + Into&lt;f64&gt; + From&lt;f32&gt; + Copy,
+<a href=#433 id=433 data-nosnippet>433</a>    I: ImageInterface&lt;T&gt;,
+<a href=#434 id=434 data-nosnippet>434</a>{
+<a href=#435 id=435 data-nosnippet>435</a>    regrid_with(<span class="bool-val">false</span>, input, template, method)
+<a href=#436 id=436 data-nosnippet>436</a>}
+<a href=#437 id=437 data-nosnippet>437</a>
+<a href=#438 id=438 data-nosnippet>438</a><span class="doccomment">/// Regrid `input`'s direction axes onto `template` by `method`, and its
+<a href=#439 id=439 data-nosnippet>439</a>/// spectral axis linearly where the template's differs, as
+<a href=#440 id=440 data-nosnippet>440</a>/// `SIImageStore::regridToModelImage` regrids a tclean start model.
+<a href=#441 id=441 data-nosnippet>441</a>///
+<a href=#442 id=442 data-nosnippet>442</a>/// # Errors
+<a href=#443 id=443 data-nosnippet>443</a>///
+<a href=#444 id=444 data-nosnippet>444</a>/// A template whose axes other than the direction and spectral ones differ
+<a href=#445 id=445 data-nosnippet>445</a>/// from the input's, where they have more than one pixel, whose direction
+<a href=#446 id=446 data-nosnippet>446</a>/// or spectral frame does, whose single channel a cube would be regridded
+<a href=#447 id=447 data-nosnippet>447</a>/// onto or whose channels a single channel would (casacore refuses the one
+<a href=#448 id=448 data-nosnippet>448</a>/// and reads past its array on the other), and a failure to read the input.
+<a href=#449 id=449 data-nosnippet>449</a></span><span class="kw">pub fn </span>regrid_along_frequency&lt;T, I&gt;(
+<a href=#450 id=450 data-nosnippet>450</a>    input: <span class="kw-2">&amp;</span>I,
+<a href=#451 id=451 data-nosnippet>451</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
+<a href=#452 id=452 data-nosnippet>452</a>    method: RegridMethod,
+<a href=#453 id=453 data-nosnippet>453</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Regridded&lt;T&gt;, ImageError&gt;
+<a href=#454 id=454 data-nosnippet>454</a><span class="kw">where
+<a href=#455 id=455 data-nosnippet>455</a>    </span>T: ImagePixel + Into&lt;f64&gt; + From&lt;f32&gt; + Copy,
+<a href=#456 id=456 data-nosnippet>456</a>    I: ImageInterface&lt;T&gt;,
+<a href=#457 id=457 data-nosnippet>457</a>{
+<a href=#458 id=458 data-nosnippet>458</a>    regrid_with(<span class="bool-val">true</span>, input, template, method)
+<a href=#459 id=459 data-nosnippet>459</a>}
+<a href=#460 id=460 data-nosnippet>460</a>
+<a href=#461 id=461 data-nosnippet>461</a><span class="kw">fn </span>regrid_with&lt;T, I&gt;(
+<a href=#462 id=462 data-nosnippet>462</a>    along_frequency: bool,
+<a href=#463 id=463 data-nosnippet>463</a>    input: <span class="kw-2">&amp;</span>I,
+<a href=#464 id=464 data-nosnippet>464</a>    template: <span class="kw-2">&amp;</span>RegridTemplate,
+<a href=#465 id=465 data-nosnippet>465</a>    method: RegridMethod,
+<a href=#466 id=466 data-nosnippet>466</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Regridded&lt;T&gt;, ImageError&gt;
+<a href=#467 id=467 data-nosnippet>467</a><span class="kw">where
+<a href=#468 id=468 data-nosnippet>468</a>    </span>T: ImagePixel + Into&lt;f64&gt; + From&lt;f32&gt; + Copy,
+<a href=#469 id=469 data-nosnippet>469</a>    I: ImageInterface&lt;T&gt;,
+<a href=#470 id=470 data-nosnippet>470</a>{
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">let </span>input_shape = input.shape().to_vec();
+<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">let </span>plan = plan_axes(along_frequency, input.coordinates(), <span class="kw-2">&amp;</span>input_shape, template)<span class="question-mark">?</span>;
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">let </span>((input_direction, in_axis), (output_direction, out_axis)) = (plan.input, plan.output);
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="kw">let </span>scale = jy_per_pixel_scale(input.units(), input_direction, output_direction);
+<a href=#475 id=475 data-nosnippet>475</a>    <span class="kw">let </span>in_plane = [input_shape[in_axis], input_shape[in_axis + <span class="number">1</span>]];
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="kw">let </span>out_plane = [template.shape[out_axis], template.shape[out_axis + <span class="number">1</span>]];
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="kw">let </span>grid = positions(input_direction, output_direction, out_plane);
+<a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">let </span>data = input.get()<span class="question-mark">?</span>;
+<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">let </span>mask = input.default_mask()<span class="question-mark">?</span>;
+<a href=#480 id=480 data-nosnippet>480</a>    <span class="comment">// The direction pass keeps the input's channels; the spectral pass
+<a href=#481 id=481 data-nosnippet>481</a>    // takes them to the template's.
+<a href=#482 id=482 data-nosnippet>482</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>direction_shape = input_shape.clone();
+<a href=#483 id=483 data-nosnippet>483</a>    direction_shape[out_axis..out_axis + <span class="number">2</span>].copy_from_slice(<span class="kw-2">&amp;</span>out_plane);
+<a href=#484 id=484 data-nosnippet>484</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_data = ArrayD::&lt;T&gt;::from_elem(IxDyn(<span class="kw-2">&amp;</span>direction_shape).f(), T::from(<span class="number">0.0</span>));
+<a href=#485 id=485 data-nosnippet>485</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_mask = ArrayD::&lt;bool&gt;::from_elem(IxDyn(<span class="kw-2">&amp;</span>direction_shape).f(), <span class="bool-val">false</span>);
+<a href=#486 id=486 data-nosnippet>486</a>    <span class="kw">let </span><span class="kw-2">mut </span>plane = <span class="macro">vec!</span>[<span class="number">0.0f64</span>; in_plane[<span class="number">0</span>] * in_plane[<span class="number">1</span>]];
+<a href=#487 id=487 data-nosnippet>487</a>    <span class="kw">let </span><span class="kw-2">mut </span>plane_mask = mask.as_ref().map(|<span class="kw">_</span>| <span class="macro">vec!</span>[<span class="bool-val">true</span>; plane.len()]);
+<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_values = <span class="macro">vec!</span>[<span class="number">0.0f64</span>; out_plane[<span class="number">0</span>] * out_plane[<span class="number">1</span>]];
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="kw">let </span><span class="kw-2">mut </span>out_valid = <span class="macro">vec!</span>[<span class="bool-val">false</span>; out_values.len()];
+<a href=#490 id=490 data-nosnippet>490</a>    <span class="kw">let </span>planes = PlaneIndex::new(<span class="kw-2">&amp;</span>input_shape, in_axis);
+<a href=#491 id=491 data-nosnippet>491</a>    <span class="kw">let </span>out_planes = PlaneIndex::new(<span class="kw-2">&amp;</span>direction_shape, out_axis);
+<a href=#492 id=492 data-nosnippet>492</a>    <span class="kw">for </span>plane_number <span class="kw">in </span><span class="number">0</span>..planes.count {
+<a href=#493 id=493 data-nosnippet>493</a>        planes.read(plane_number, <span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;mut </span>plane, |v| (<span class="kw-2">*</span>v).into());
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">if let </span>(<span class="prelude-val">Some</span>(values), <span class="prelude-val">Some</span>(mask)) = (plane_mask.as_mut(), mask.as_ref()) {
+<a href=#495 id=495 data-nosnippet>495</a>            planes.read(plane_number, mask, values, |v| <span class="kw-2">*</span>v);
+<a href=#496 id=496 data-nosnippet>496</a>        }
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>view = Plane {
+<a href=#498 id=498 data-nosnippet>498</a>            data: <span class="kw-2">&amp;</span>plane,
+<a href=#499 id=499 data-nosnippet>499</a>            mask: plane_mask.as_deref(),
+<a href=#500 id=500 data-nosnippet>500</a>            shape: in_plane,
+<a href=#501 id=501 data-nosnippet>501</a>        };
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">for </span>(k, at) <span class="kw">in </span>grid.iter().enumerate() {
+<a href=#503 id=503 data-nosnippet>503</a>            <span class="kw">let </span>sampled = at.and_then(|at| view.sample(method, at));
+<a href=#504 id=504 data-nosnippet>504</a>            out_values[k] = sampled.map_or(<span class="number">0.0</span>, |value| scale * value);
+<a href=#505 id=505 data-nosnippet>505</a>            out_valid[k] = sampled.is_some();
+<a href=#506 id=506 data-nosnippet>506</a>        }
+<a href=#507 id=507 data-nosnippet>507</a>        out_planes.write(plane_number, <span class="kw-2">&amp;</span>out_values, <span class="kw-2">&amp;mut </span>out_data, |v| {
+<a href=#508 id=508 data-nosnippet>508</a>            T::from(v <span class="kw">as </span>f32)
+<a href=#509 id=509 data-nosnippet>509</a>        });
+<a href=#510 id=510 data-nosnippet>510</a>        out_planes.write(plane_number, <span class="kw-2">&amp;</span>out_valid, <span class="kw-2">&amp;mut </span>out_mask, |v| v);
+<a href=#511 id=511 data-nosnippet>511</a>    }
+<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(spectral) = <span class="kw-2">&amp;</span>plan.spectral {
+<a href=#513 id=513 data-nosnippet>513</a>        (out_data, out_mask) = spectral.apply(<span class="kw-2">&amp;</span>out_data, <span class="kw-2">&amp;</span>out_mask, <span class="kw-2">&amp;</span>template.shape);
+<a href=#514 id=514 data-nosnippet>514</a>    }
+<a href=#515 id=515 data-nosnippet>515</a>    <span class="prelude-val">Ok</span>(Regridded {
+<a href=#516 id=516 data-nosnippet>516</a>        data: out_data,
+<a href=#517 id=517 data-nosnippet>517</a>        mask: out_mask,
+<a href=#518 id=518 data-nosnippet>518</a>        coordinates: plan.coordinates,
+<a href=#519 id=519 data-nosnippet>519</a>        template_coordinates: plan.template_coordinates,
+<a href=#520 id=520 data-nosnippet>520</a>        scale,
+<a href=#521 id=521 data-nosnippet>521</a>    })
+<a href=#522 id=522 data-nosnippet>522</a>}
+<a href=#523 id=523 data-nosnippet>523</a>
+<a href=#524 id=524 data-nosnippet>524</a><span class="doccomment">/// The direction planes of an array with its direction axes at
+<a href=#525 id=525 data-nosnippet>525</a>/// `axis, axis + 1`, numbered by the other axes (the first fastest), read and
+<a href=#526 id=526 data-nosnippet>526</a>/// written first axis fastest. A Fortran-ordered array with the direction
+<a href=#527 id=527 data-nosnippet>527</a>/// axes first, as images are, holds each plane contiguously.
+<a href=#528 id=528 data-nosnippet>528</a></span><span class="kw">struct </span>PlaneIndex&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#529 id=529 data-nosnippet>529</a>    shape: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[usize],
+<a href=#530 id=530 data-nosnippet>530</a>    axis: usize,
+<a href=#531 id=531 data-nosnippet>531</a>    others: Vec&lt;usize&gt;,
+<a href=#532 id=532 data-nosnippet>532</a>    count: usize,
+<a href=#533 id=533 data-nosnippet>533</a>}
+<a href=#534 id=534 data-nosnippet>534</a>
+<a href=#535 id=535 data-nosnippet>535</a><span class="kw">impl</span>&lt;<span class="lifetime">'s</span>&gt; PlaneIndex&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#536 id=536 data-nosnippet>536</a>    <span class="kw">fn </span>new(shape: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[usize], axis: usize) -&gt; <span class="self">Self </span>{
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">let </span>others: Vec&lt;usize&gt; = (<span class="number">0</span>..shape.len())
+<a href=#538 id=538 data-nosnippet>538</a>            .filter(|a| <span class="kw-2">*</span>a != axis &amp;&amp; <span class="kw-2">*</span>a != axis + <span class="number">1</span>)
+<a href=#539 id=539 data-nosnippet>539</a>            .collect();
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">let </span>count = others.iter().map(|a| shape[<span class="kw-2">*</span>a]).product();
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="self">Self </span>{
+<a href=#542 id=542 data-nosnippet>542</a>            shape,
+<a href=#543 id=543 data-nosnippet>543</a>            axis,
+<a href=#544 id=544 data-nosnippet>544</a>            others,
+<a href=#545 id=545 data-nosnippet>545</a>            count,
+<a href=#546 id=546 data-nosnippet>546</a>        }
+<a href=#547 id=547 data-nosnippet>547</a>    }
+<a href=#548 id=548 data-nosnippet>548</a>
+<a href=#549 id=549 data-nosnippet>549</a>    <span class="kw">fn </span>plane_len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="self">self</span>.shape[<span class="self">self</span>.axis] * <span class="self">self</span>.shape[<span class="self">self</span>.axis + <span class="number">1</span>]
+<a href=#551 id=551 data-nosnippet>551</a>    }
+<a href=#552 id=552 data-nosnippet>552</a>
+<a href=#553 id=553 data-nosnippet>553</a>    <span class="doccomment">/// The plane's elements in memory order, when they are contiguous there.
+<a href=#554 id=554 data-nosnippet>554</a>    </span><span class="kw">fn </span>contiguous&lt;<span class="lifetime">'a</span>, A&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, plane: usize, array: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ArrayD&lt;A&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[A]&gt; {
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>len = <span class="self">self</span>.plane_len();
+<a href=#556 id=556 data-nosnippet>556</a>        (<span class="self">self</span>.axis == <span class="number">0</span>)
+<a href=#557 id=557 data-nosnippet>557</a>            .then(|| array.as_slice_memory_order())
+<a href=#558 id=558 data-nosnippet>558</a>            .flatten()
+<a href=#559 id=559 data-nosnippet>559</a>            .filter(|<span class="kw">_</span>| array.t().is_standard_layout())
+<a href=#560 id=560 data-nosnippet>560</a>            .map(|all| <span class="kw-2">&amp;</span>all[plane * len..(plane + <span class="number">1</span>) * len])
+<a href=#561 id=561 data-nosnippet>561</a>    }
+<a href=#562 id=562 data-nosnippet>562</a>
+<a href=#563 id=563 data-nosnippet>563</a>    <span class="kw">fn </span>index(<span class="kw-2">&amp;</span><span class="self">self</span>, plane: usize) -&gt; Vec&lt;usize&gt; {
+<a href=#564 id=564 data-nosnippet>564</a>        <span class="kw">let </span><span class="kw-2">mut </span>index = <span class="macro">vec!</span>[<span class="number">0usize</span>; <span class="self">self</span>.shape.len()];
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">let </span><span class="kw-2">mut </span>rest = plane;
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">for </span>a <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.others {
+<a href=#567 id=567 data-nosnippet>567</a>            index[<span class="kw-2">*</span>a] = rest % <span class="self">self</span>.shape[<span class="kw-2">*</span>a];
+<a href=#568 id=568 data-nosnippet>568</a>            rest /= <span class="self">self</span>.shape[<span class="kw-2">*</span>a];
+<a href=#569 id=569 data-nosnippet>569</a>        }
+<a href=#570 id=570 data-nosnippet>570</a>        index
+<a href=#571 id=571 data-nosnippet>571</a>    }
+<a href=#572 id=572 data-nosnippet>572</a>
+<a href=#573 id=573 data-nosnippet>573</a>    <span class="kw">fn </span>read&lt;A, B&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, plane: usize, array: <span class="kw-2">&amp;</span>ArrayD&lt;A&gt;, into: <span class="kw-2">&amp;mut </span>[B], f: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>A) -&gt; B) {
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(values) = <span class="self">self</span>.contiguous(plane, array) {
+<a href=#575 id=575 data-nosnippet>575</a>            <span class="kw">for </span>(out, value) <span class="kw">in </span>into.iter_mut().zip(values) {
+<a href=#576 id=576 data-nosnippet>576</a>                <span class="kw-2">*</span>out = f(value);
+<a href=#577 id=577 data-nosnippet>577</a>            }
+<a href=#578 id=578 data-nosnippet>578</a>            <span class="kw">return</span>;
+<a href=#579 id=579 data-nosnippet>579</a>        }
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">let </span><span class="kw-2">mut </span>index = <span class="self">self</span>.index(plane);
+<a href=#581 id=581 data-nosnippet>581</a>        <span class="kw">let </span>nx = <span class="self">self</span>.shape[<span class="self">self</span>.axis];
+<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">for </span>(k, out) <span class="kw">in </span>into.iter_mut().enumerate() {
+<a href=#583 id=583 data-nosnippet>583</a>            index[<span class="self">self</span>.axis] = k % nx;
+<a href=#584 id=584 data-nosnippet>584</a>            index[<span class="self">self</span>.axis + <span class="number">1</span>] = k / nx;
+<a href=#585 id=585 data-nosnippet>585</a>            <span class="kw-2">*</span>out = f(<span class="kw-2">&amp;</span>array[IxDyn(<span class="kw-2">&amp;</span>index)]);
+<a href=#586 id=586 data-nosnippet>586</a>        }
+<a href=#587 id=587 data-nosnippet>587</a>    }
+<a href=#588 id=588 data-nosnippet>588</a>
+<a href=#589 id=589 data-nosnippet>589</a>    <span class="kw">fn </span>write&lt;A: Copy, B&gt;(
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#591 id=591 data-nosnippet>591</a>        plane: usize,
+<a href=#592 id=592 data-nosnippet>592</a>        values: <span class="kw-2">&amp;</span>[A],
+<a href=#593 id=593 data-nosnippet>593</a>        array: <span class="kw-2">&amp;mut </span>ArrayD&lt;B&gt;,
+<a href=#594 id=594 data-nosnippet>594</a>        f: <span class="kw">impl </span>Fn(A) -&gt; B,
+<a href=#595 id=595 data-nosnippet>595</a>    ) {
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="kw">let </span>len = <span class="self">self</span>.plane_len();
+<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">if </span><span class="self">self</span>.axis == <span class="number">0 </span>&amp;&amp; array.t().is_standard_layout() {
+<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw">let </span>all = array
+<a href=#599 id=599 data-nosnippet>599</a>                .as_slice_memory_order_mut()
+<a href=#600 id=600 data-nosnippet>600</a>                .expect(<span class="string">"a standard-layout array is contiguous"</span>);
+<a href=#601 id=601 data-nosnippet>601</a>            <span class="kw">for </span>(out, value) <span class="kw">in </span>all[plane * len..(plane + <span class="number">1</span>) * len].iter_mut().zip(values) {
+<a href=#602 id=602 data-nosnippet>602</a>                <span class="kw-2">*</span>out = f(<span class="kw-2">*</span>value);
+<a href=#603 id=603 data-nosnippet>603</a>            }
+<a href=#604 id=604 data-nosnippet>604</a>            <span class="kw">return</span>;
+<a href=#605 id=605 data-nosnippet>605</a>        }
+<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span><span class="kw-2">mut </span>index = <span class="self">self</span>.index(plane);
+<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">let </span>nx = <span class="self">self</span>.shape[<span class="self">self</span>.axis];
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">for </span>(k, value) <span class="kw">in </span>values.iter().enumerate() {
+<a href=#609 id=609 data-nosnippet>609</a>            index[<span class="self">self</span>.axis] = k % nx;
+<a href=#610 id=610 data-nosnippet>610</a>            index[<span class="self">self</span>.axis + <span class="number">1</span>] = k / nx;
+<a href=#611 id=611 data-nosnippet>611</a>            array[IxDyn(<span class="kw-2">&amp;</span>index)] = f(<span class="kw-2">*</span>value);
+<a href=#612 id=612 data-nosnippet>612</a>        }
+<a href=#613 id=613 data-nosnippet>613</a>    }
+<a href=#614 id=614 data-nosnippet>614</a>}
+<a href=#615 id=615 data-nosnippet>615</a>
+<a href=#616 id=616 data-nosnippet>616</a><span class="doccomment">/// One direction plane of the input, first axis fastest, with its mask
+<a href=#617 id=617 data-nosnippet>617</a>/// (true where good) when it has one.
+<a href=#618 id=618 data-nosnippet>618</a></span><span class="kw">struct </span>Plane&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#619 id=619 data-nosnippet>619</a>    data: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f64],
+<a href=#620 id=620 data-nosnippet>620</a>    mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[bool]&gt;,
+<a href=#621 id=621 data-nosnippet>621</a>    shape: [usize; <span class="number">2</span>],
+<a href=#622 id=622 data-nosnippet>622</a>}
 <a href=#623 id=623 data-nosnippet>623</a>
-<a href=#624 id=624 data-nosnippet>624</a>    <span class="kw">fn </span>good(<span class="kw-2">&amp;</span><span class="self">self</span>, i: usize, j: usize) -&gt; bool {
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="self">self</span>.mask.is_none_or(|mask| mask[i + j * <span class="self">self</span>.shape[<span class="number">0</span>]])
-<a href=#626 id=626 data-nosnippet>626</a>    }
-<a href=#627 id=627 data-nosnippet>627</a>
-<a href=#628 id=628 data-nosnippet>628</a>    <span class="kw">fn </span>sample(<span class="kw-2">&amp;</span><span class="self">self</span>, method: RegridMethod, at: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
-<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">match </span>method {
-<a href=#630 id=630 data-nosnippet>630</a>            RegridMethod::Nearest =&gt; <span class="self">self</span>.nearest(at),
-<a href=#631 id=631 data-nosnippet>631</a>            RegridMethod::Linear =&gt; <span class="self">self</span>.linear(at),
-<a href=#632 id=632 data-nosnippet>632</a>            RegridMethod::Cubic =&gt; <span class="self">self</span>.cubic(at),
-<a href=#633 id=633 data-nosnippet>633</a>        }
-<a href=#634 id=634 data-nosnippet>634</a>    }
-<a href=#635 id=635 data-nosnippet>635</a>
-<a href=#636 id=636 data-nosnippet>636</a>    <span class="doccomment">/// `Interpolate2D::interpNearest`.
-<a href=#637 id=637 data-nosnippet>637</a>    </span><span class="kw">fn </span>nearest(<span class="kw-2">&amp;</span><span class="self">self</span>, [wi, wj]: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
-<a href=#638 id=638 data-nosnippet>638</a>        <span class="kw">const </span>HALF: f64 = <span class="number">0.5001</span>;
-<a href=#639 id=639 data-nosnippet>639</a>        <span class="kw">let </span>nearest = |w: f64, n: usize| -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-<a href=#640 id=640 data-nosnippet>640</a>            <span class="kw">let </span>max = n <span class="kw">as </span>f64 - <span class="number">1.0</span>;
-<a href=#641 id=641 data-nosnippet>641</a>            <span class="kw">if </span>n == <span class="number">0 </span>|| w &lt; -HALF || w &gt; max + HALF {
-<a href=#642 id=642 data-nosnippet>642</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#643 id=643 data-nosnippet>643</a>            }
-<a href=#644 id=644 data-nosnippet>644</a>            <span class="prelude-val">Some</span>(<span class="kw">if </span>w &lt;= <span class="number">0.0 </span>{
-<a href=#645 id=645 data-nosnippet>645</a>                <span class="number">0
-<a href=#646 id=646 data-nosnippet>646</a>            </span>} <span class="kw">else if </span>w &gt;= max {
-<a href=#647 id=647 data-nosnippet>647</a>                n - <span class="number">1
-<a href=#648 id=648 data-nosnippet>648</a>            </span>} <span class="kw">else </span>{
-<a href=#649 id=649 data-nosnippet>649</a>                (w + <span class="number">0.5</span>) <span class="kw">as </span>usize
-<a href=#650 id=650 data-nosnippet>650</a>            })
-<a href=#651 id=651 data-nosnippet>651</a>        };
-<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span>i = nearest(wi, <span class="self">self</span>.shape[<span class="number">0</span>])<span class="question-mark">?</span>;
-<a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">let </span>j = nearest(wj, <span class="self">self</span>.shape[<span class="number">1</span>])<span class="question-mark">?</span>;
-<a href=#654 id=654 data-nosnippet>654</a>        <span class="self">self</span>.good(i, j).then(|| <span class="self">self</span>.at(i, j))
-<a href=#655 id=655 data-nosnippet>655</a>    }
-<a href=#656 id=656 data-nosnippet>656</a>
-<a href=#657 id=657 data-nosnippet>657</a>    <span class="doccomment">/// `Interpolate2D::interpLinear`: the position truncated toward zero,
-<a href=#658 id=658 data-nosnippet>658</a>    /// moved back by one at the far edge.
-<a href=#659 id=659 data-nosnippet>659</a>    </span><span class="kw">fn </span>linear(<span class="kw-2">&amp;</span><span class="self">self</span>, [wi, wj]: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
-<a href=#660 id=660 data-nosnippet>660</a>        <span class="kw">let </span>start = |w: f64, n: usize| -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-<a href=#661 id=661 data-nosnippet>661</a>            <span class="comment">// casacore's `uInt(Int(w))`: a negative start wraps and fails.
-<a href=#662 id=662 data-nosnippet>662</a>            </span><span class="kw">let </span>truncated = w <span class="kw">as </span>i64;
-<a href=#663 id=663 data-nosnippet>663</a>            <span class="kw">if </span>truncated &lt; <span class="number">0 </span>|| n &lt; <span class="number">2 </span>{
-<a href=#664 id=664 data-nosnippet>664</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#665 id=665 data-nosnippet>665</a>            }
-<a href=#666 id=666 data-nosnippet>666</a>            <span class="kw">let </span>last = n - <span class="number">1</span>;
-<a href=#667 id=667 data-nosnippet>667</a>            <span class="kw">let </span><span class="kw-2">mut </span>i = usize::try_from(truncated).ok()<span class="question-mark">?</span>;
-<a href=#668 id=668 data-nosnippet>668</a>            <span class="kw">if </span>i == last {
-<a href=#669 id=669 data-nosnippet>669</a>                i -= <span class="number">1</span>;
+<a href=#624 id=624 data-nosnippet>624</a><span class="kw">impl </span>Plane&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#625 id=625 data-nosnippet>625</a>    <span class="kw">fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, i: usize, j: usize) -&gt; f64 {
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="self">self</span>.data[i + j * <span class="self">self</span>.shape[<span class="number">0</span>]]
+<a href=#627 id=627 data-nosnippet>627</a>    }
+<a href=#628 id=628 data-nosnippet>628</a>
+<a href=#629 id=629 data-nosnippet>629</a>    <span class="kw">fn </span>good(<span class="kw-2">&amp;</span><span class="self">self</span>, i: usize, j: usize) -&gt; bool {
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="self">self</span>.mask.is_none_or(|mask| mask[i + j * <span class="self">self</span>.shape[<span class="number">0</span>]])
+<a href=#631 id=631 data-nosnippet>631</a>    }
+<a href=#632 id=632 data-nosnippet>632</a>
+<a href=#633 id=633 data-nosnippet>633</a>    <span class="kw">fn </span>sample(<span class="kw-2">&amp;</span><span class="self">self</span>, method: RegridMethod, at: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#634 id=634 data-nosnippet>634</a>        <span class="kw">match </span>method {
+<a href=#635 id=635 data-nosnippet>635</a>            RegridMethod::Nearest =&gt; <span class="self">self</span>.nearest(at),
+<a href=#636 id=636 data-nosnippet>636</a>            RegridMethod::Linear =&gt; <span class="self">self</span>.linear(at),
+<a href=#637 id=637 data-nosnippet>637</a>            RegridMethod::Cubic =&gt; <span class="self">self</span>.cubic(at),
+<a href=#638 id=638 data-nosnippet>638</a>        }
+<a href=#639 id=639 data-nosnippet>639</a>    }
+<a href=#640 id=640 data-nosnippet>640</a>
+<a href=#641 id=641 data-nosnippet>641</a>    <span class="doccomment">/// `Interpolate2D::interpNearest`.
+<a href=#642 id=642 data-nosnippet>642</a>    </span><span class="kw">fn </span>nearest(<span class="kw-2">&amp;</span><span class="self">self</span>, [wi, wj]: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="kw">const </span>HALF: f64 = <span class="number">0.5001</span>;
+<a href=#644 id=644 data-nosnippet>644</a>        <span class="kw">let </span>nearest = |w: f64, n: usize| -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#645 id=645 data-nosnippet>645</a>            <span class="kw">let </span>max = n <span class="kw">as </span>f64 - <span class="number">1.0</span>;
+<a href=#646 id=646 data-nosnippet>646</a>            <span class="kw">if </span>n == <span class="number">0 </span>|| w &lt; -HALF || w &gt; max + HALF {
+<a href=#647 id=647 data-nosnippet>647</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#648 id=648 data-nosnippet>648</a>            }
+<a href=#649 id=649 data-nosnippet>649</a>            <span class="prelude-val">Some</span>(<span class="kw">if </span>w &lt;= <span class="number">0.0 </span>{
+<a href=#650 id=650 data-nosnippet>650</a>                <span class="number">0
+<a href=#651 id=651 data-nosnippet>651</a>            </span>} <span class="kw">else if </span>w &gt;= max {
+<a href=#652 id=652 data-nosnippet>652</a>                n - <span class="number">1
+<a href=#653 id=653 data-nosnippet>653</a>            </span>} <span class="kw">else </span>{
+<a href=#654 id=654 data-nosnippet>654</a>                (w + <span class="number">0.5</span>) <span class="kw">as </span>usize
+<a href=#655 id=655 data-nosnippet>655</a>            })
+<a href=#656 id=656 data-nosnippet>656</a>        };
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">let </span>i = nearest(wi, <span class="self">self</span>.shape[<span class="number">0</span>])<span class="question-mark">?</span>;
+<a href=#658 id=658 data-nosnippet>658</a>        <span class="kw">let </span>j = nearest(wj, <span class="self">self</span>.shape[<span class="number">1</span>])<span class="question-mark">?</span>;
+<a href=#659 id=659 data-nosnippet>659</a>        <span class="self">self</span>.good(i, j).then(|| <span class="self">self</span>.at(i, j))
+<a href=#660 id=660 data-nosnippet>660</a>    }
+<a href=#661 id=661 data-nosnippet>661</a>
+<a href=#662 id=662 data-nosnippet>662</a>    <span class="doccomment">/// `Interpolate2D::interpLinear`: the position truncated toward zero,
+<a href=#663 id=663 data-nosnippet>663</a>    /// moved back by one at the far edge.
+<a href=#664 id=664 data-nosnippet>664</a>    </span><span class="kw">fn </span>linear(<span class="kw-2">&amp;</span><span class="self">self</span>, [wi, wj]: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span>start = |w: f64, n: usize| -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#666 id=666 data-nosnippet>666</a>            <span class="comment">// casacore's `uInt(Int(w))`: a negative start wraps and fails.
+<a href=#667 id=667 data-nosnippet>667</a>            </span><span class="kw">let </span>truncated = w <span class="kw">as </span>i64;
+<a href=#668 id=668 data-nosnippet>668</a>            <span class="kw">if </span>truncated &lt; <span class="number">0 </span>|| n &lt; <span class="number">2 </span>{
+<a href=#669 id=669 data-nosnippet>669</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
 <a href=#670 id=670 data-nosnippet>670</a>            }
-<a href=#671 id=671 data-nosnippet>671</a>            (i &lt; last).then_some(i)
-<a href=#672 id=672 data-nosnippet>672</a>        };
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>i = start(wi, <span class="self">self</span>.shape[<span class="number">0</span>])<span class="question-mark">?</span>;
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>j = start(wj, <span class="self">self</span>.shape[<span class="number">1</span>])<span class="question-mark">?</span>;
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">if </span>!(<span class="self">self</span>.good(i, j)
-<a href=#676 id=676 data-nosnippet>676</a>            &amp;&amp; <span class="self">self</span>.good(i + <span class="number">1</span>, j)
-<a href=#677 id=677 data-nosnippet>677</a>            &amp;&amp; <span class="self">self</span>.good(i, j + <span class="number">1</span>)
-<a href=#678 id=678 data-nosnippet>678</a>            &amp;&amp; <span class="self">self</span>.good(i + <span class="number">1</span>, j + <span class="number">1</span>))
-<a href=#679 id=679 data-nosnippet>679</a>        {
-<a href=#680 id=680 data-nosnippet>680</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#681 id=681 data-nosnippet>681</a>        }
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span>tt = wi - i <span class="kw">as </span>f64;
-<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>uu = wj - j <span class="kw">as </span>f64;
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="prelude-val">Some</span>(
-<a href=#685 id=685 data-nosnippet>685</a>            (<span class="number">1.0 </span>- tt) * (<span class="number">1.0 </span>- uu) * <span class="self">self</span>.at(i, j)
-<a href=#686 id=686 data-nosnippet>686</a>                + tt * (<span class="number">1.0 </span>- uu) * <span class="self">self</span>.at(i + <span class="number">1</span>, j)
-<a href=#687 id=687 data-nosnippet>687</a>                + tt * uu * <span class="self">self</span>.at(i + <span class="number">1</span>, j + <span class="number">1</span>)
-<a href=#688 id=688 data-nosnippet>688</a>                + (<span class="number">1.0 </span>- tt) * uu * <span class="self">self</span>.at(i, j + <span class="number">1</span>),
-<a href=#689 id=689 data-nosnippet>689</a>        )
-<a href=#690 id=690 data-nosnippet>690</a>    }
-<a href=#691 id=691 data-nosnippet>691</a>
-<a href=#692 id=692 data-nosnippet>692</a>    <span class="doccomment">/// `Interpolate2D::interpCubic`: bicubic on the 4 × 4 pixels from
-<a href=#693 id=693 data-nosnippet>693</a>    /// `[i−1, j−1]`, linear within a pixel of an edge.
-<a href=#694 id=694 data-nosnippet>694</a>    </span><span class="kw">fn </span>cubic(<span class="kw-2">&amp;</span><span class="self">self</span>, at: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
-<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>(i, j) = (at[<span class="number">0</span>] <span class="kw">as </span>i64, at[<span class="number">1</span>] <span class="kw">as </span>i64);
-<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>(nx, ny) = (<span class="self">self</span>.shape[<span class="number">0</span>] <span class="kw">as </span>i64, <span class="self">self</span>.shape[<span class="number">1</span>] <span class="kw">as </span>i64);
-<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">if </span>i &lt;= <span class="number">0 </span>|| i &gt;= nx - <span class="number">2 </span>|| j &lt;= <span class="number">0 </span>|| j &gt;= ny - <span class="number">2 </span>{
-<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">return </span><span class="self">self</span>.linear(at);
-<a href=#699 id=699 data-nosnippet>699</a>        }
-<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span>(i, j) = (i <span class="kw">as </span>usize, j <span class="kw">as </span>usize);
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">for </span>jj <span class="kw">in </span>j - <span class="number">1</span>..=j + <span class="number">2 </span>{
-<a href=#702 id=702 data-nosnippet>702</a>            <span class="kw">for </span>ii <span class="kw">in </span>i - <span class="number">1</span>..=i + <span class="number">2 </span>{
-<a href=#703 id=703 data-nosnippet>703</a>                <span class="kw">if </span>!<span class="self">self</span>.good(ii, jj) {
-<a href=#704 id=704 data-nosnippet>704</a>                    <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#705 id=705 data-nosnippet>705</a>                }
-<a href=#706 id=706 data-nosnippet>706</a>            }
-<a href=#707 id=707 data-nosnippet>707</a>        }
-<a href=#708 id=708 data-nosnippet>708</a>        <span class="kw">let </span>d =
-<a href=#709 id=709 data-nosnippet>709</a>            |di: isize, dj: isize| <span class="self">self</span>.at(i.wrapping_add_signed(di), j.wrapping_add_signed(dj));
-<a href=#710 id=710 data-nosnippet>710</a>        <span class="comment">// Points 0..3 are [i, j], [i+1, j], [i+1, j+1] and [i, j+1].
-<a href=#711 id=711 data-nosnippet>711</a>        </span><span class="kw">let </span>y = [d(<span class="number">0</span>, <span class="number">0</span>), d(<span class="number">1</span>, <span class="number">0</span>), d(<span class="number">1</span>, <span class="number">1</span>), d(<span class="number">0</span>, <span class="number">1</span>)];
-<a href=#712 id=712 data-nosnippet>712</a>        <span class="kw">let </span>y1 = [
-<a href=#713 id=713 data-nosnippet>713</a>            (d(<span class="number">1</span>, <span class="number">0</span>) - d(-<span class="number">1</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
-<a href=#714 id=714 data-nosnippet>714</a>            (d(<span class="number">2</span>, <span class="number">0</span>) - d(<span class="number">0</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
-<a href=#715 id=715 data-nosnippet>715</a>            (d(<span class="number">2</span>, <span class="number">1</span>) - d(<span class="number">0</span>, <span class="number">1</span>)) / <span class="number">2.0</span>,
-<a href=#716 id=716 data-nosnippet>716</a>            (d(<span class="number">1</span>, <span class="number">1</span>) - d(-<span class="number">1</span>, <span class="number">1</span>)) / <span class="number">2.0</span>,
-<a href=#717 id=717 data-nosnippet>717</a>        ];
-<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span>y2 = [
-<a href=#719 id=719 data-nosnippet>719</a>            (d(<span class="number">0</span>, <span class="number">1</span>) - d(<span class="number">0</span>, -<span class="number">1</span>)) / <span class="number">2.0</span>,
-<a href=#720 id=720 data-nosnippet>720</a>            (d(<span class="number">1</span>, <span class="number">1</span>) - d(<span class="number">1</span>, -<span class="number">1</span>)) / <span class="number">2.0</span>,
-<a href=#721 id=721 data-nosnippet>721</a>            (d(<span class="number">1</span>, <span class="number">2</span>) - d(<span class="number">1</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
-<a href=#722 id=722 data-nosnippet>722</a>            (d(<span class="number">0</span>, <span class="number">2</span>) - d(<span class="number">0</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
-<a href=#723 id=723 data-nosnippet>723</a>        ];
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">let </span>y12 = [
-<a href=#725 id=725 data-nosnippet>725</a>            (d(<span class="number">1</span>, <span class="number">1</span>) + d(-<span class="number">1</span>, -<span class="number">1</span>) - d(-<span class="number">1</span>, <span class="number">1</span>) - d(<span class="number">1</span>, -<span class="number">1</span>)) / <span class="number">4.0</span>,
-<a href=#726 id=726 data-nosnippet>726</a>            (d(<span class="number">2</span>, <span class="number">1</span>) + d(<span class="number">0</span>, -<span class="number">1</span>) - d(<span class="number">0</span>, <span class="number">1</span>) - d(<span class="number">2</span>, -<span class="number">1</span>)) / <span class="number">4.0</span>,
-<a href=#727 id=727 data-nosnippet>727</a>            (d(<span class="number">2</span>, <span class="number">2</span>) + d(<span class="number">0</span>, <span class="number">0</span>) - d(<span class="number">0</span>, <span class="number">2</span>) - d(<span class="number">2</span>, <span class="number">0</span>)) / <span class="number">4.0</span>,
-<a href=#728 id=728 data-nosnippet>728</a>            (d(<span class="number">1</span>, <span class="number">2</span>) + d(-<span class="number">1</span>, <span class="number">0</span>) - d(-<span class="number">1</span>, <span class="number">2</span>) - d(<span class="number">1</span>, <span class="number">0</span>)) / <span class="number">4.0</span>,
-<a href=#729 id=729 data-nosnippet>729</a>        ];
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">let </span>c = bicubic_coefficients(<span class="kw-2">&amp;</span>y, <span class="kw-2">&amp;</span>y1, <span class="kw-2">&amp;</span>y2, <span class="kw-2">&amp;</span>y12);
-<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span>tt = at[<span class="number">0</span>] - i <span class="kw">as </span>f64;
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">let </span>uu = at[<span class="number">1</span>] - j <span class="kw">as </span>f64;
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="number">0.0</span>;
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">for </span>row <span class="kw">in </span>c.iter().rev() {
-<a href=#735 id=735 data-nosnippet>735</a>            result = tt * result + ((row[<span class="number">3</span>] * uu + row[<span class="number">2</span>]) * uu + row[<span class="number">1</span>]) * uu + row[<span class="number">0</span>];
-<a href=#736 id=736 data-nosnippet>736</a>        }
-<a href=#737 id=737 data-nosnippet>737</a>        <span class="prelude-val">Some</span>(result)
-<a href=#738 id=738 data-nosnippet>738</a>    }
-<a href=#739 id=739 data-nosnippet>739</a>}
-<a href=#740 id=740 data-nosnippet>740</a>
-<a href=#741 id=741 data-nosnippet>741</a><span class="doccomment">/// Numerical Recipes' `bcucof` (3.6), as casacore's `Interpolate2D::bcucof`
-<a href=#742 id=742 data-nosnippet>742</a>/// tabulates it.
-<a href=#743 id=743 data-nosnippet>743</a></span><span class="kw">fn </span>bicubic_coefficients(
-<a href=#744 id=744 data-nosnippet>744</a>    y: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
-<a href=#745 id=745 data-nosnippet>745</a>    y1: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
-<a href=#746 id=746 data-nosnippet>746</a>    y2: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
-<a href=#747 id=747 data-nosnippet>747</a>    y12: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
-<a href=#748 id=748 data-nosnippet>748</a>) -&gt; [[f64; <span class="number">4</span>]; <span class="number">4</span>] {
-<a href=#749 id=749 data-nosnippet>749</a>    <span class="attr">#[rustfmt::skip]
-<a href=#750 id=750 data-nosnippet>750</a>    </span><span class="kw">const </span>WT: [[f64; <span class="number">16</span>]; <span class="number">16</span>] = [
-<a href=#751 id=751 data-nosnippet>751</a>        [<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#752 id=752 data-nosnippet>752</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#753 id=753 data-nosnippet>753</a>        [-<span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#754 id=754 data-nosnippet>754</a>        [<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#755 id=755 data-nosnippet>755</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#756 id=756 data-nosnippet>756</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#757 id=757 data-nosnippet>757</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">1.</span>],
-<a href=#758 id=758 data-nosnippet>758</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>],
-<a href=#759 id=759 data-nosnippet>759</a>        [-<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#760 id=760 data-nosnippet>760</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#761 id=761 data-nosnippet>761</a>        [<span class="number">9.</span>, -<span class="number">9.</span>, <span class="number">9.</span>, -<span class="number">9.</span>, <span class="number">6.</span>, <span class="number">3.</span>, -<span class="number">3.</span>, -<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">6.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">4.</span>, <span class="number">2.</span>, <span class="number">1.</span>, <span class="number">2.</span>],
-<a href=#762 id=762 data-nosnippet>762</a>        [-<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">4.</span>, -<span class="number">2.</span>, <span class="number">2.</span>, <span class="number">4.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">3.</span>, -<span class="number">3.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, -<span class="number">1.</span>, -<span class="number">2.</span>],
-<a href=#763 id=763 data-nosnippet>763</a>        [<span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#764 id=764 data-nosnippet>764</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
-<a href=#765 id=765 data-nosnippet>765</a>        [-<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">3.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">3.</span>, -<span class="number">4.</span>, <span class="number">4.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, -<span class="number">1.</span>],
-<a href=#766 id=766 data-nosnippet>766</a>        [<span class="number">4.</span>, -<span class="number">4.</span>, <span class="number">4.</span>, -<span class="number">4.</span>, <span class="number">2.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">2.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">1.</span>],
-<a href=#767 id=767 data-nosnippet>767</a>    ];
-<a href=#768 id=768 data-nosnippet>768</a>    <span class="kw">let </span><span class="kw-2">mut </span>x = [<span class="number">0.0</span>; <span class="number">16</span>];
-<a href=#769 id=769 data-nosnippet>769</a>    x[..<span class="number">4</span>].copy_from_slice(y);
-<a href=#770 id=770 data-nosnippet>770</a>    x[<span class="number">4</span>..<span class="number">8</span>].copy_from_slice(y1);
-<a href=#771 id=771 data-nosnippet>771</a>    x[<span class="number">8</span>..<span class="number">12</span>].copy_from_slice(y2);
-<a href=#772 id=772 data-nosnippet>772</a>    x[<span class="number">12</span>..].copy_from_slice(y12);
-<a href=#773 id=773 data-nosnippet>773</a>    <span class="kw">let </span><span class="kw-2">mut </span>c = [[<span class="number">0.0</span>; <span class="number">4</span>]; <span class="number">4</span>];
-<a href=#774 id=774 data-nosnippet>774</a>    <span class="kw">for </span>(l, weights) <span class="kw">in </span>WT.iter().enumerate() {
-<a href=#775 id=775 data-nosnippet>775</a>        c[l / <span class="number">4</span>][l % <span class="number">4</span>] = weights.iter().zip(<span class="kw-2">&amp;</span>x).map(|(w, v)| w * v).sum();
-<a href=#776 id=776 data-nosnippet>776</a>    }
-<a href=#777 id=777 data-nosnippet>777</a>    c
-<a href=#778 id=778 data-nosnippet>778</a>}
-<a href=#779 id=779 data-nosnippet>779</a>
-<a href=#780 id=780 data-nosnippet>780</a><span class="attr">#[cfg(test)]
-<a href=#781 id=781 data-nosnippet>781</a></span><span class="kw">mod </span>tests {
-<a href=#782 id=782 data-nosnippet>782</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#783 id=783 data-nosnippet>783</a>
-<a href=#784 id=784 data-nosnippet>784</a>    <span class="kw">fn </span>plane(data: <span class="kw-2">&amp;</span>[f64], shape: [usize; <span class="number">2</span>]) -&gt; Plane&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#785 id=785 data-nosnippet>785</a>        Plane {
-<a href=#786 id=786 data-nosnippet>786</a>            data,
-<a href=#787 id=787 data-nosnippet>787</a>            mask: <span class="prelude-val">None</span>,
-<a href=#788 id=788 data-nosnippet>788</a>            shape,
-<a href=#789 id=789 data-nosnippet>789</a>        }
-<a href=#790 id=790 data-nosnippet>790</a>    }
-<a href=#791 id=791 data-nosnippet>791</a>
-<a href=#792 id=792 data-nosnippet>792</a>    <span class="attr">#[test]
-<a href=#793 id=793 data-nosnippet>793</a>    </span><span class="kw">fn </span>positions_on_a_shared_tangent_plane_are_those_of_the_full_conversion() {
-<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">use </span>casa_coordinates::{Projection, ProjectionType};
-<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
-<a href=#796 id=796 data-nosnippet>796</a>        <span class="kw">let </span>arcsec = std::f64::consts::PI / <span class="number">648_000.0</span>;
-<a href=#797 id=797 data-nosnippet>797</a>        <span class="kw">let </span>input = DirectionCoordinate::new(
-<a href=#798 id=798 data-nosnippet>798</a>            DirectionRef::J2000,
-<a href=#799 id=799 data-nosnippet>799</a>            Projection::new(ProjectionType::SIN),
-<a href=#800 id=800 data-nosnippet>800</a>            [<span class="number">5.2</span>, -<span class="number">0.4</span>],
-<a href=#801 id=801 data-nosnippet>801</a>            [-<span class="number">2.0 </span>* arcsec, <span class="number">2.0 </span>* arcsec],
-<a href=#802 id=802 data-nosnippet>802</a>            [<span class="number">10.0</span>, <span class="number">10.0</span>],
-<a href=#803 id=803 data-nosnippet>803</a>        );
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw">let </span>output = input
-<a href=#805 id=805 data-nosnippet>805</a>            .clone()
-<a href=#806 id=806 data-nosnippet>806</a>            .with_reference_pixel([<span class="number">30.0</span>, <span class="number">32.5</span>])
-<a href=#807 id=807 data-nosnippet>807</a>            .with_increment([-<span class="number">0.5 </span>* arcsec, <span class="number">0.5 </span>* arcsec]);
-<a href=#808 id=808 data-nosnippet>808</a>        <span class="macro">assert!</span>(same_tangent_plane(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>output));
-<a href=#809 id=809 data-nosnippet>809</a>        <span class="kw">let </span>affine = positions(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>output, [<span class="number">60</span>, <span class="number">64</span>]);
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">for </span>(k, at) <span class="kw">in </span>affine.iter().enumerate() {
-<a href=#811 id=811 data-nosnippet>811</a>            <span class="kw">let </span>(i, j) = ((k % <span class="number">60</span>) <span class="kw">as </span>f64, (k / <span class="number">60</span>) <span class="kw">as </span>f64);
-<a href=#812 id=812 data-nosnippet>812</a>            <span class="kw">let </span>world = output.to_world(<span class="kw-2">&amp;</span>[i, j]).unwrap();
-<a href=#813 id=813 data-nosnippet>813</a>            <span class="kw">let </span>full = input.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
-<a href=#814 id=814 data-nosnippet>814</a>            <span class="kw">let </span>at = at.unwrap();
-<a href=#815 id=815 data-nosnippet>815</a>            <span class="macro">assert!</span>((at[<span class="number">0</span>] - full[<span class="number">0</span>]).abs() &lt; <span class="number">1e-9 </span>&amp;&amp; (at[<span class="number">1</span>] - full[<span class="number">1</span>]).abs() &lt; <span class="number">1e-9</span>);
-<a href=#816 id=816 data-nosnippet>816</a>        }
-<a href=#817 id=817 data-nosnippet>817</a>    }
-<a href=#818 id=818 data-nosnippet>818</a>
-<a href=#819 id=819 data-nosnippet>819</a>    <span class="attr">#[test]
-<a href=#820 id=820 data-nosnippet>820</a>    </span><span class="kw">fn </span>a_shared_tangent_plane_past_the_projections_domain_is_not_sampled() {
-<a href=#821 id=821 data-nosnippet>821</a>        <span class="comment">// The #941 review's case: SIN at 0.05 rad a pixel, so the corners of
-<a href=#822 id=822 data-nosnippet>822</a>        // a 33 × 33 grid lie beyond the projection's disk and have no sky
-<a href=#823 id=823 data-nosnippet>823</a>        // position. The affine map would give them one; they stay unsampled.
-<a href=#824 id=824 data-nosnippet>824</a>        </span><span class="kw">use </span>casa_coordinates::{Projection, ProjectionType};
-<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
-<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>input = DirectionCoordinate::new(
-<a href=#827 id=827 data-nosnippet>827</a>            DirectionRef::J2000,
-<a href=#828 id=828 data-nosnippet>828</a>            Projection::new(ProjectionType::SIN),
-<a href=#829 id=829 data-nosnippet>829</a>            [<span class="number">1.0</span>, <span class="number">0.3</span>],
-<a href=#830 id=830 data-nosnippet>830</a>            [-<span class="number">0.05</span>, <span class="number">0.05</span>],
-<a href=#831 id=831 data-nosnippet>831</a>            [<span class="number">16.0</span>, <span class="number">16.0</span>],
-<a href=#832 id=832 data-nosnippet>832</a>        );
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span>output = input.clone().with_reference_pixel([<span class="number">16.1</span>, <span class="number">16.0</span>]);
-<a href=#834 id=834 data-nosnippet>834</a>        <span class="macro">assert!</span>(output.to_world(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">0.0</span>]).is_err());
-<a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">let </span>grid = positions(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>output, [<span class="number">33</span>, <span class="number">33</span>]);
-<a href=#836 id=836 data-nosnippet>836</a>        <span class="macro">assert!</span>(grid[<span class="number">0</span>].is_none(), <span class="string">"{:?}"</span>, grid[<span class="number">0</span>]);
-<a href=#837 id=837 data-nosnippet>837</a>        <span class="macro">assert!</span>(grid[<span class="number">16 </span>+ <span class="number">16 </span>* <span class="number">33</span>].is_some());
-<a href=#838 id=838 data-nosnippet>838</a>    }
-<a href=#839 id=839 data-nosnippet>839</a>
-<a href=#840 id=840 data-nosnippet>840</a>    <span class="kw">fn </span>image_with_stokes(stokes: <span class="kw-2">&amp;</span>[casa_coordinates::StokesType]) -&gt; <span class="kw">crate</span>::TempImage&lt;f32&gt; {
-<a href=#841 id=841 data-nosnippet>841</a>        <span class="kw">use </span>casa_coordinates::{Projection, ProjectionType, StokesCoordinate};
-<a href=#842 id=842 data-nosnippet>842</a>        <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
-<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#844 id=844 data-nosnippet>844</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#845 id=845 data-nosnippet>845</a>            DirectionRef::J2000,
-<a href=#846 id=846 data-nosnippet>846</a>            Projection::new(ProjectionType::SIN),
-<a href=#847 id=847 data-nosnippet>847</a>            [<span class="number">1.0</span>, <span class="number">0.3</span>],
-<a href=#848 id=848 data-nosnippet>848</a>            [-<span class="number">1e-5</span>, <span class="number">1e-5</span>],
-<a href=#849 id=849 data-nosnippet>849</a>            [<span class="number">2.0</span>, <span class="number">2.0</span>],
-<a href=#850 id=850 data-nosnippet>850</a>        ));
-<a href=#851 id=851 data-nosnippet>851</a>        coordinates.add_coordinate(StokesCoordinate::new(stokes.to_vec()));
-<a href=#852 id=852 data-nosnippet>852</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = <span class="kw">crate</span>::TempImage::&lt;f32&gt;::new(
-<a href=#853 id=853 data-nosnippet>853</a>            <span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">4</span>, stokes.len()],
-<a href=#854 id=854 data-nosnippet>854</a>            coordinates,
-<a href=#855 id=855 data-nosnippet>855</a>            casa_lattices::TempStoragePolicy::Auto {
-<a href=#856 id=856 data-nosnippet>856</a>                memory_budget_bytes: <span class="number">1 </span>&lt;&lt; <span class="number">20</span>,
-<a href=#857 id=857 data-nosnippet>857</a>                scratch: casa_lattices::ScratchSpace::SystemTemp,
-<a href=#858 id=858 data-nosnippet>858</a>            },
-<a href=#859 id=859 data-nosnippet>859</a>        )
-<a href=#860 id=860 data-nosnippet>860</a>        .unwrap();
-<a href=#861 id=861 data-nosnippet>861</a>        <span class="kw">let </span>data = ArrayD::from_elem(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">4</span>, <span class="number">4</span>, stokes.len()]).f(), <span class="number">42.0f32</span>);
-<a href=#862 id=862 data-nosnippet>862</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
-<a href=#863 id=863 data-nosnippet>863</a>        image
-<a href=#864 id=864 data-nosnippet>864</a>    }
-<a href=#865 id=865 data-nosnippet>865</a>
-<a href=#866 id=866 data-nosnippet>866</a>    <span class="attr">#[test]
-<a href=#867 id=867 data-nosnippet>867</a>    </span><span class="kw">fn </span>a_template_relabelling_a_stokes_plane_is_refused() {
-<a href=#868 id=868 data-nosnippet>868</a>        <span class="comment">// The #941 review's case: [I, Q] onto a template of [I, U] would put
-<a href=#869 id=869 data-nosnippet>869</a>        // Q's pixels in U's plane.
-<a href=#870 id=870 data-nosnippet>870</a>        </span><span class="kw">use </span>casa_coordinates::StokesType;
-<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">let </span>input = image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::I, StokesType::Q]);
-<a href=#872 id=872 data-nosnippet>872</a>        <span class="kw">let </span>template = RegridTemplate::of(<span class="kw-2">&amp;</span>image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::I, StokesType::U]));
-<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>error = regrid(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>template, RegridMethod::Linear).unwrap_err();
-<a href=#874 id=874 data-nosnippet>874</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"Stokes axes differ"</span>), <span class="string">"{error}"</span>);
-<a href=#875 id=875 data-nosnippet>875</a>        <span class="comment">// The same axes regrid, onto the template's coordinates.
-<a href=#876 id=876 data-nosnippet>876</a>        </span><span class="kw">let </span>same = RegridTemplate::of(<span class="kw-2">&amp;</span>input);
-<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">let </span>regridded = regrid(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>same, RegridMethod::Linear).unwrap();
-<a href=#878 id=878 data-nosnippet>878</a>        <span class="macro">assert!</span>(regridded.template_coordinates);
-<a href=#879 id=879 data-nosnippet>879</a>    }
-<a href=#880 id=880 data-nosnippet>880</a>
-<a href=#881 id=881 data-nosnippet>881</a>    <span class="attr">#[test]
-<a href=#882 id=882 data-nosnippet>882</a>    </span><span class="kw">fn </span>a_one_plane_axis_keeps_the_inputs_coordinate_as_casa_does() {
-<a href=#883 id=883 data-nosnippet>883</a>        <span class="comment">// CASA 6.7.6 regrids an I plane onto a template labelled Q and keeps
-<a href=#884 id=884 data-nosnippet>884</a>        // I; casa-rs keeps the input's coordinate too, rather than relabel.
-<a href=#885 id=885 data-nosnippet>885</a>        </span><span class="kw">use </span>casa_coordinates::StokesType;
-<a href=#886 id=886 data-nosnippet>886</a>        <span class="kw">let </span>input = image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::I]);
-<a href=#887 id=887 data-nosnippet>887</a>        <span class="kw">let </span>template = RegridTemplate::of(<span class="kw-2">&amp;</span>image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::Q]));
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>regridded = regrid(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>template, RegridMethod::Linear).unwrap();
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="macro">assert!</span>(!regridded.template_coordinates);
-<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">let </span>CoordinateModel::Stokes(stokes) = regridded.coordinates.coordinate(<span class="number">1</span>) <span class="kw">else </span>{
-<a href=#891 id=891 data-nosnippet>891</a>            <span class="macro">panic!</span>(<span class="string">"a Stokes coordinate"</span>)
-<a href=#892 id=892 data-nosnippet>892</a>        };
-<a href=#893 id=893 data-nosnippet>893</a>        <span class="macro">assert_eq!</span>(stokes.stokes(), <span class="kw-2">&amp;</span>[StokesType::I]);
-<a href=#894 id=894 data-nosnippet>894</a>    }
-<a href=#895 id=895 data-nosnippet>895</a>
-<a href=#896 id=896 data-nosnippet>896</a>    <span class="attr">#[test]
-<a href=#897 id=897 data-nosnippet>897</a>    </span><span class="kw">fn </span>methods_are_read_by_their_first_letter_as_casacore_reads_them() {
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="macro">assert_eq!</span>(
-<a href=#899 id=899 data-nosnippet>899</a>            RegridMethod::from_casa(<span class="string">"cubic"</span>).unwrap(),
-<a href=#900 id=900 data-nosnippet>900</a>            RegridMethod::Cubic
-<a href=#901 id=901 data-nosnippet>901</a>        );
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="macro">assert_eq!</span>(
-<a href=#903 id=903 data-nosnippet>903</a>            RegridMethod::from_casa(<span class="string">"LIN"</span>).unwrap(),
-<a href=#904 id=904 data-nosnippet>904</a>            RegridMethod::Linear
-<a href=#905 id=905 data-nosnippet>905</a>        );
-<a href=#906 id=906 data-nosnippet>906</a>        <span class="macro">assert_eq!</span>(RegridMethod::from_casa(<span class="string">"n"</span>).unwrap(), RegridMethod::Nearest);
-<a href=#907 id=907 data-nosnippet>907</a>        <span class="macro">assert!</span>(RegridMethod::from_casa(<span class="string">"lanczos"</span>).is_err());
-<a href=#908 id=908 data-nosnippet>908</a>        <span class="macro">assert!</span>(RegridMethod::from_casa(<span class="string">"spline"</span>).is_err());
-<a href=#909 id=909 data-nosnippet>909</a>    }
-<a href=#910 id=910 data-nosnippet>910</a>
-<a href=#911 id=911 data-nosnippet>911</a>    <span class="attr">#[test]
-<a href=#912 id=912 data-nosnippet>912</a>    </span><span class="kw">fn </span>linear_accepts_a_pixel_beyond_each_edge_as_casacore_does() {
-<a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">let </span>data: Vec&lt;f64&gt; = (<span class="number">0</span>..<span class="number">12</span>).map(f64::from).collect();
-<a href=#914 id=914 data-nosnippet>914</a>        <span class="kw">let </span>p = plane(<span class="kw-2">&amp;</span>data, [<span class="number">4</span>, <span class="number">3</span>]);
-<a href=#915 id=915 data-nosnippet>915</a>        <span class="comment">// Inside: the bilinear value of the ramp i + 4j.
-<a href=#916 id=916 data-nosnippet>916</a>        </span><span class="macro">assert!</span>((p.linear([<span class="number">1.25</span>, <span class="number">0.5</span>]).unwrap() - <span class="number">3.25</span>).abs() &lt; <span class="number">1e-12</span>);
-<a href=#917 id=917 data-nosnippet>917</a>        <span class="comment">// Within a pixel before the first and after the last: extrapolated.
-<a href=#918 id=918 data-nosnippet>918</a>        </span><span class="macro">assert!</span>((p.linear([-<span class="number">0.5</span>, <span class="number">0.0</span>]).unwrap() + <span class="number">0.5</span>).abs() &lt; <span class="number">1e-12</span>);
-<a href=#919 id=919 data-nosnippet>919</a>        <span class="macro">assert!</span>((p.linear([<span class="number">3.5</span>, <span class="number">1.0</span>]).unwrap() - <span class="number">7.5</span>).abs() &lt; <span class="number">1e-12</span>);
-<a href=#920 id=920 data-nosnippet>920</a>        <span class="comment">// A pixel or more before the first, or past the last plus one.
-<a href=#921 id=921 data-nosnippet>921</a>        </span><span class="macro">assert!</span>(p.linear([-<span class="number">1.0</span>, <span class="number">0.0</span>]).is_none());
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="macro">assert!</span>(p.linear([<span class="number">4.0</span>, <span class="number">1.0</span>]).is_none());
-<a href=#923 id=923 data-nosnippet>923</a>    }
-<a href=#924 id=924 data-nosnippet>924</a>
-<a href=#925 id=925 data-nosnippet>925</a>    <span class="attr">#[test]
-<a href=#926 id=926 data-nosnippet>926</a>    </span><span class="kw">fn </span>cubic_reproduces_a_quadratic_inside_and_is_linear_at_the_edges() {
-<a href=#927 id=927 data-nosnippet>927</a>        <span class="kw">let </span>shape = [<span class="number">6</span>, <span class="number">6</span>];
-<a href=#928 id=928 data-nosnippet>928</a>        <span class="kw">let </span>f = |i: f64, j: f64| <span class="number">0.5 </span>* i * i - <span class="number">0.25 </span>* j + <span class="number">0.1 </span>* i * j;
-<a href=#929 id=929 data-nosnippet>929</a>        <span class="kw">let </span>data: Vec&lt;f64&gt; = (<span class="number">0</span>..<span class="number">36</span>).map(|k| f((k % <span class="number">6</span>) <span class="kw">as </span>f64, (k / <span class="number">6</span>) <span class="kw">as </span>f64)).collect();
-<a href=#930 id=930 data-nosnippet>930</a>        <span class="kw">let </span>p = plane(<span class="kw-2">&amp;</span>data, shape);
-<a href=#931 id=931 data-nosnippet>931</a>        <span class="comment">// Central differences are exact for a quadratic, and so is bicubic.
-<a href=#932 id=932 data-nosnippet>932</a>        </span><span class="macro">assert!</span>((p.cubic([<span class="number">2.3</span>, <span class="number">2.6</span>]).unwrap() - f(<span class="number">2.3</span>, <span class="number">2.6</span>)).abs() &lt; <span class="number">1e-12</span>);
-<a href=#933 id=933 data-nosnippet>933</a>        <span class="comment">// At i = 0 the linear value of the corner pixels.
-<a href=#934 id=934 data-nosnippet>934</a>        </span><span class="macro">assert_eq!</span>(p.cubic([<span class="number">0.4</span>, <span class="number">2.5</span>]), p.linear([<span class="number">0.4</span>, <span class="number">2.5</span>]));
-<a href=#935 id=935 data-nosnippet>935</a>    }
-<a href=#936 id=936 data-nosnippet>936</a>
-<a href=#937 id=937 data-nosnippet>937</a>    <span class="attr">#[test]
-<a href=#938 id=938 data-nosnippet>938</a>    </span><span class="kw">fn </span>a_masked_pixel_in_the_neighbourhood_masks_the_sample() {
-<a href=#939 id=939 data-nosnippet>939</a>        <span class="kw">let </span>data = <span class="macro">vec!</span>[<span class="number">1.0</span>; <span class="number">36</span>];
-<a href=#940 id=940 data-nosnippet>940</a>        <span class="kw">let </span><span class="kw-2">mut </span>mask = <span class="macro">vec!</span>[<span class="bool-val">true</span>; <span class="number">36</span>];
-<a href=#941 id=941 data-nosnippet>941</a>        mask[<span class="number">1 </span>+ <span class="number">6</span>] = <span class="bool-val">false</span>; <span class="comment">// [1, 1]
-<a href=#942 id=942 data-nosnippet>942</a>        </span><span class="kw">let </span>p = Plane {
-<a href=#943 id=943 data-nosnippet>943</a>            data: <span class="kw-2">&amp;</span>data,
-<a href=#944 id=944 data-nosnippet>944</a>            mask: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>mask),
-<a href=#945 id=945 data-nosnippet>945</a>            shape: [<span class="number">6</span>, <span class="number">6</span>],
-<a href=#946 id=946 data-nosnippet>946</a>        };
-<a href=#947 id=947 data-nosnippet>947</a>        <span class="comment">// Cubic at [2.5, 2.5] needs [1..=4, 1..=4], linear only [2..=3, 2..=3].
-<a href=#948 id=948 data-nosnippet>948</a>        </span><span class="macro">assert!</span>(p.cubic([<span class="number">2.5</span>, <span class="number">2.5</span>]).is_none());
-<a href=#949 id=949 data-nosnippet>949</a>        <span class="macro">assert_eq!</span>(p.linear([<span class="number">2.5</span>, <span class="number">2.5</span>]), <span class="prelude-val">Some</span>(<span class="number">1.0</span>));
-<a href=#950 id=950 data-nosnippet>950</a>        <span class="macro">assert!</span>(p.nearest([<span class="number">1.2</span>, <span class="number">0.9</span>]).is_none());
-<a href=#951 id=951 data-nosnippet>951</a>    }
-<a href=#952 id=952 data-nosnippet>952</a>}
+<a href=#671 id=671 data-nosnippet>671</a>            <span class="kw">let </span>last = n - <span class="number">1</span>;
+<a href=#672 id=672 data-nosnippet>672</a>            <span class="kw">let </span><span class="kw-2">mut </span>i = usize::try_from(truncated).ok()<span class="question-mark">?</span>;
+<a href=#673 id=673 data-nosnippet>673</a>            <span class="kw">if </span>i == last {
+<a href=#674 id=674 data-nosnippet>674</a>                i -= <span class="number">1</span>;
+<a href=#675 id=675 data-nosnippet>675</a>            }
+<a href=#676 id=676 data-nosnippet>676</a>            (i &lt; last).then_some(i)
+<a href=#677 id=677 data-nosnippet>677</a>        };
+<a href=#678 id=678 data-nosnippet>678</a>        <span class="kw">let </span>i = start(wi, <span class="self">self</span>.shape[<span class="number">0</span>])<span class="question-mark">?</span>;
+<a href=#679 id=679 data-nosnippet>679</a>        <span class="kw">let </span>j = start(wj, <span class="self">self</span>.shape[<span class="number">1</span>])<span class="question-mark">?</span>;
+<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">if </span>!(<span class="self">self</span>.good(i, j)
+<a href=#681 id=681 data-nosnippet>681</a>            &amp;&amp; <span class="self">self</span>.good(i + <span class="number">1</span>, j)
+<a href=#682 id=682 data-nosnippet>682</a>            &amp;&amp; <span class="self">self</span>.good(i, j + <span class="number">1</span>)
+<a href=#683 id=683 data-nosnippet>683</a>            &amp;&amp; <span class="self">self</span>.good(i + <span class="number">1</span>, j + <span class="number">1</span>))
+<a href=#684 id=684 data-nosnippet>684</a>        {
+<a href=#685 id=685 data-nosnippet>685</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#686 id=686 data-nosnippet>686</a>        }
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="kw">let </span>tt = wi - i <span class="kw">as </span>f64;
+<a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">let </span>uu = wj - j <span class="kw">as </span>f64;
+<a href=#689 id=689 data-nosnippet>689</a>        <span class="prelude-val">Some</span>(
+<a href=#690 id=690 data-nosnippet>690</a>            (<span class="number">1.0 </span>- tt) * (<span class="number">1.0 </span>- uu) * <span class="self">self</span>.at(i, j)
+<a href=#691 id=691 data-nosnippet>691</a>                + tt * (<span class="number">1.0 </span>- uu) * <span class="self">self</span>.at(i + <span class="number">1</span>, j)
+<a href=#692 id=692 data-nosnippet>692</a>                + tt * uu * <span class="self">self</span>.at(i + <span class="number">1</span>, j + <span class="number">1</span>)
+<a href=#693 id=693 data-nosnippet>693</a>                + (<span class="number">1.0 </span>- tt) * uu * <span class="self">self</span>.at(i, j + <span class="number">1</span>),
+<a href=#694 id=694 data-nosnippet>694</a>        )
+<a href=#695 id=695 data-nosnippet>695</a>    }
+<a href=#696 id=696 data-nosnippet>696</a>
+<a href=#697 id=697 data-nosnippet>697</a>    <span class="doccomment">/// `Interpolate2D::interpCubic`: bicubic on the 4 × 4 pixels from
+<a href=#698 id=698 data-nosnippet>698</a>    /// `[i−1, j−1]`, linear within a pixel of an edge.
+<a href=#699 id=699 data-nosnippet>699</a>    </span><span class="kw">fn </span>cubic(<span class="kw-2">&amp;</span><span class="self">self</span>, at: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span>(i, j) = (at[<span class="number">0</span>] <span class="kw">as </span>i64, at[<span class="number">1</span>] <span class="kw">as </span>i64);
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>(nx, ny) = (<span class="self">self</span>.shape[<span class="number">0</span>] <span class="kw">as </span>i64, <span class="self">self</span>.shape[<span class="number">1</span>] <span class="kw">as </span>i64);
+<a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">if </span>i &lt;= <span class="number">0 </span>|| i &gt;= nx - <span class="number">2 </span>|| j &lt;= <span class="number">0 </span>|| j &gt;= ny - <span class="number">2 </span>{
+<a href=#703 id=703 data-nosnippet>703</a>            <span class="kw">return </span><span class="self">self</span>.linear(at);
+<a href=#704 id=704 data-nosnippet>704</a>        }
+<a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span>(i, j) = (i <span class="kw">as </span>usize, j <span class="kw">as </span>usize);
+<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">for </span>jj <span class="kw">in </span>j - <span class="number">1</span>..=j + <span class="number">2 </span>{
+<a href=#707 id=707 data-nosnippet>707</a>            <span class="kw">for </span>ii <span class="kw">in </span>i - <span class="number">1</span>..=i + <span class="number">2 </span>{
+<a href=#708 id=708 data-nosnippet>708</a>                <span class="kw">if </span>!<span class="self">self</span>.good(ii, jj) {
+<a href=#709 id=709 data-nosnippet>709</a>                    <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#710 id=710 data-nosnippet>710</a>                }
+<a href=#711 id=711 data-nosnippet>711</a>            }
+<a href=#712 id=712 data-nosnippet>712</a>        }
+<a href=#713 id=713 data-nosnippet>713</a>        <span class="kw">let </span>d =
+<a href=#714 id=714 data-nosnippet>714</a>            |di: isize, dj: isize| <span class="self">self</span>.at(i.wrapping_add_signed(di), j.wrapping_add_signed(dj));
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="comment">// Points 0..3 are [i, j], [i+1, j], [i+1, j+1] and [i, j+1].
+<a href=#716 id=716 data-nosnippet>716</a>        </span><span class="kw">let </span>y = [d(<span class="number">0</span>, <span class="number">0</span>), d(<span class="number">1</span>, <span class="number">0</span>), d(<span class="number">1</span>, <span class="number">1</span>), d(<span class="number">0</span>, <span class="number">1</span>)];
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>y1 = [
+<a href=#718 id=718 data-nosnippet>718</a>            (d(<span class="number">1</span>, <span class="number">0</span>) - d(-<span class="number">1</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
+<a href=#719 id=719 data-nosnippet>719</a>            (d(<span class="number">2</span>, <span class="number">0</span>) - d(<span class="number">0</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
+<a href=#720 id=720 data-nosnippet>720</a>            (d(<span class="number">2</span>, <span class="number">1</span>) - d(<span class="number">0</span>, <span class="number">1</span>)) / <span class="number">2.0</span>,
+<a href=#721 id=721 data-nosnippet>721</a>            (d(<span class="number">1</span>, <span class="number">1</span>) - d(-<span class="number">1</span>, <span class="number">1</span>)) / <span class="number">2.0</span>,
+<a href=#722 id=722 data-nosnippet>722</a>        ];
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>y2 = [
+<a href=#724 id=724 data-nosnippet>724</a>            (d(<span class="number">0</span>, <span class="number">1</span>) - d(<span class="number">0</span>, -<span class="number">1</span>)) / <span class="number">2.0</span>,
+<a href=#725 id=725 data-nosnippet>725</a>            (d(<span class="number">1</span>, <span class="number">1</span>) - d(<span class="number">1</span>, -<span class="number">1</span>)) / <span class="number">2.0</span>,
+<a href=#726 id=726 data-nosnippet>726</a>            (d(<span class="number">1</span>, <span class="number">2</span>) - d(<span class="number">1</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
+<a href=#727 id=727 data-nosnippet>727</a>            (d(<span class="number">0</span>, <span class="number">2</span>) - d(<span class="number">0</span>, <span class="number">0</span>)) / <span class="number">2.0</span>,
+<a href=#728 id=728 data-nosnippet>728</a>        ];
+<a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>y12 = [
+<a href=#730 id=730 data-nosnippet>730</a>            (d(<span class="number">1</span>, <span class="number">1</span>) + d(-<span class="number">1</span>, -<span class="number">1</span>) - d(-<span class="number">1</span>, <span class="number">1</span>) - d(<span class="number">1</span>, -<span class="number">1</span>)) / <span class="number">4.0</span>,
+<a href=#731 id=731 data-nosnippet>731</a>            (d(<span class="number">2</span>, <span class="number">1</span>) + d(<span class="number">0</span>, -<span class="number">1</span>) - d(<span class="number">0</span>, <span class="number">1</span>) - d(<span class="number">2</span>, -<span class="number">1</span>)) / <span class="number">4.0</span>,
+<a href=#732 id=732 data-nosnippet>732</a>            (d(<span class="number">2</span>, <span class="number">2</span>) + d(<span class="number">0</span>, <span class="number">0</span>) - d(<span class="number">0</span>, <span class="number">2</span>) - d(<span class="number">2</span>, <span class="number">0</span>)) / <span class="number">4.0</span>,
+<a href=#733 id=733 data-nosnippet>733</a>            (d(<span class="number">1</span>, <span class="number">2</span>) + d(-<span class="number">1</span>, <span class="number">0</span>) - d(-<span class="number">1</span>, <span class="number">2</span>) - d(<span class="number">1</span>, <span class="number">0</span>)) / <span class="number">4.0</span>,
+<a href=#734 id=734 data-nosnippet>734</a>        ];
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>c = bicubic_coefficients(<span class="kw-2">&amp;</span>y, <span class="kw-2">&amp;</span>y1, <span class="kw-2">&amp;</span>y2, <span class="kw-2">&amp;</span>y12);
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>tt = at[<span class="number">0</span>] - i <span class="kw">as </span>f64;
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>uu = at[<span class="number">1</span>] - j <span class="kw">as </span>f64;
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="number">0.0</span>;
+<a href=#739 id=739 data-nosnippet>739</a>        <span class="kw">for </span>row <span class="kw">in </span>c.iter().rev() {
+<a href=#740 id=740 data-nosnippet>740</a>            result = tt * result + ((row[<span class="number">3</span>] * uu + row[<span class="number">2</span>]) * uu + row[<span class="number">1</span>]) * uu + row[<span class="number">0</span>];
+<a href=#741 id=741 data-nosnippet>741</a>        }
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="prelude-val">Some</span>(result)
+<a href=#743 id=743 data-nosnippet>743</a>    }
+<a href=#744 id=744 data-nosnippet>744</a>}
+<a href=#745 id=745 data-nosnippet>745</a>
+<a href=#746 id=746 data-nosnippet>746</a><span class="doccomment">/// Numerical Recipes' `bcucof` (3.6), as casacore's `Interpolate2D::bcucof`
+<a href=#747 id=747 data-nosnippet>747</a>/// tabulates it.
+<a href=#748 id=748 data-nosnippet>748</a></span><span class="kw">fn </span>bicubic_coefficients(
+<a href=#749 id=749 data-nosnippet>749</a>    y: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
+<a href=#750 id=750 data-nosnippet>750</a>    y1: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
+<a href=#751 id=751 data-nosnippet>751</a>    y2: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
+<a href=#752 id=752 data-nosnippet>752</a>    y12: <span class="kw-2">&amp;</span>[f64; <span class="number">4</span>],
+<a href=#753 id=753 data-nosnippet>753</a>) -&gt; [[f64; <span class="number">4</span>]; <span class="number">4</span>] {
+<a href=#754 id=754 data-nosnippet>754</a>    <span class="attr">#[rustfmt::skip]
+<a href=#755 id=755 data-nosnippet>755</a>    </span><span class="kw">const </span>WT: [[f64; <span class="number">16</span>]; <span class="number">16</span>] = [
+<a href=#756 id=756 data-nosnippet>756</a>        [<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#757 id=757 data-nosnippet>757</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#758 id=758 data-nosnippet>758</a>        [-<span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#759 id=759 data-nosnippet>759</a>        [<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#760 id=760 data-nosnippet>760</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#761 id=761 data-nosnippet>761</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#762 id=762 data-nosnippet>762</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">1.</span>],
+<a href=#763 id=763 data-nosnippet>763</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>],
+<a href=#764 id=764 data-nosnippet>764</a>        [-<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#765 id=765 data-nosnippet>765</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">0.</span>, <span class="number">0.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#766 id=766 data-nosnippet>766</a>        [<span class="number">9.</span>, -<span class="number">9.</span>, <span class="number">9.</span>, -<span class="number">9.</span>, <span class="number">6.</span>, <span class="number">3.</span>, -<span class="number">3.</span>, -<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">6.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">4.</span>, <span class="number">2.</span>, <span class="number">1.</span>, <span class="number">2.</span>],
+<a href=#767 id=767 data-nosnippet>767</a>        [-<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">4.</span>, -<span class="number">2.</span>, <span class="number">2.</span>, <span class="number">4.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">3.</span>, -<span class="number">3.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, -<span class="number">1.</span>, -<span class="number">2.</span>],
+<a href=#768 id=768 data-nosnippet>768</a>        [<span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#769 id=769 data-nosnippet>769</a>        [<span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">0.</span>, <span class="number">0.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">0.</span>, <span class="number">0.</span>],
+<a href=#770 id=770 data-nosnippet>770</a>        [-<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">6.</span>, <span class="number">6.</span>, -<span class="number">3.</span>, -<span class="number">3.</span>, <span class="number">3.</span>, <span class="number">3.</span>, -<span class="number">4.</span>, <span class="number">4.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">1.</span>, -<span class="number">1.</span>],
+<a href=#771 id=771 data-nosnippet>771</a>        [<span class="number">4.</span>, -<span class="number">4.</span>, <span class="number">4.</span>, -<span class="number">4.</span>, <span class="number">2.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">2.</span>, -<span class="number">2.</span>, -<span class="number">2.</span>, <span class="number">2.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">1.</span>, <span class="number">1.</span>],
+<a href=#772 id=772 data-nosnippet>772</a>    ];
+<a href=#773 id=773 data-nosnippet>773</a>    <span class="kw">let </span><span class="kw-2">mut </span>x = [<span class="number">0.0</span>; <span class="number">16</span>];
+<a href=#774 id=774 data-nosnippet>774</a>    x[..<span class="number">4</span>].copy_from_slice(y);
+<a href=#775 id=775 data-nosnippet>775</a>    x[<span class="number">4</span>..<span class="number">8</span>].copy_from_slice(y1);
+<a href=#776 id=776 data-nosnippet>776</a>    x[<span class="number">8</span>..<span class="number">12</span>].copy_from_slice(y2);
+<a href=#777 id=777 data-nosnippet>777</a>    x[<span class="number">12</span>..].copy_from_slice(y12);
+<a href=#778 id=778 data-nosnippet>778</a>    <span class="kw">let </span><span class="kw-2">mut </span>c = [[<span class="number">0.0</span>; <span class="number">4</span>]; <span class="number">4</span>];
+<a href=#779 id=779 data-nosnippet>779</a>    <span class="kw">for </span>(l, weights) <span class="kw">in </span>WT.iter().enumerate() {
+<a href=#780 id=780 data-nosnippet>780</a>        c[l / <span class="number">4</span>][l % <span class="number">4</span>] = weights.iter().zip(<span class="kw-2">&amp;</span>x).map(|(w, v)| w * v).sum();
+<a href=#781 id=781 data-nosnippet>781</a>    }
+<a href=#782 id=782 data-nosnippet>782</a>    c
+<a href=#783 id=783 data-nosnippet>783</a>}
+<a href=#784 id=784 data-nosnippet>784</a>
+<a href=#785 id=785 data-nosnippet>785</a><span class="attr">#[cfg(test)]
+<a href=#786 id=786 data-nosnippet>786</a></span><span class="kw">mod </span>tests {
+<a href=#787 id=787 data-nosnippet>787</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#788 id=788 data-nosnippet>788</a>
+<a href=#789 id=789 data-nosnippet>789</a>    <span class="attr">#[test]
+<a href=#790 id=790 data-nosnippet>790</a>    </span><span class="kw">fn </span>regrid_rejects_distinct_direction_conversion_frames() {
+<a href=#791 id=791 data-nosnippet>791</a>        <span class="kw">use </span>casa_coordinates::{Projection, ProjectionType};
+<a href=#792 id=792 data-nosnippet>792</a>        <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
+<a href=#793 id=793 data-nosnippet>793</a>        <span class="kw">let </span>direction = DirectionCoordinate::new(
+<a href=#794 id=794 data-nosnippet>794</a>            DirectionRef::J2000,
+<a href=#795 id=795 data-nosnippet>795</a>            Projection::new(ProjectionType::SIN),
+<a href=#796 id=796 data-nosnippet>796</a>            [<span class="number">1.0</span>, <span class="number">0.3</span>],
+<a href=#797 id=797 data-nosnippet>797</a>            [-<span class="number">1e-4</span>, <span class="number">1e-4</span>],
+<a href=#798 id=798 data-nosnippet>798</a>            [<span class="number">2.0</span>, <span class="number">2.0</span>],
+<a href=#799 id=799 data-nosnippet>799</a>        );
+<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span><span class="kw-2">mut </span>input = CoordinateSystem::new();
+<a href=#801 id=801 data-nosnippet>801</a>        input.add_coordinate(direction.clone());
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span><span class="kw-2">mut </span>output = CoordinateSystem::new();
+<a href=#803 id=803 data-nosnippet>803</a>        output.add_coordinate(
+<a href=#804 id=804 data-nosnippet>804</a>            direction
+<a href=#805 id=805 data-nosnippet>805</a>                .with_reference_pixel([<span class="number">2.5</span>, <span class="number">2.0</span>])
+<a href=#806 id=806 data-nosnippet>806</a>                .with_conversion_direction_ref(DirectionRef::GALACTIC),
+<a href=#807 id=807 data-nosnippet>807</a>        );
+<a href=#808 id=808 data-nosnippet>808</a>        <span class="kw">let </span>template = RegridTemplate {
+<a href=#809 id=809 data-nosnippet>809</a>            coordinates: output,
+<a href=#810 id=810 data-nosnippet>810</a>            shape: <span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">4</span>],
+<a href=#811 id=811 data-nosnippet>811</a>        };
+<a href=#812 id=812 data-nosnippet>812</a>        <span class="kw">let </span>error = plan_axes(<span class="bool-val">false</span>, <span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>[<span class="number">4</span>, <span class="number">4</span>], <span class="kw-2">&amp;</span>template)
+<a href=#813 id=813 data-nosnippet>813</a>            .err()
+<a href=#814 id=814 data-nosnippet>814</a>            .expect(<span class="string">"frame mismatch"</span>);
+<a href=#815 id=815 data-nosnippet>815</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"conversion frames differ"</span>));
+<a href=#816 id=816 data-nosnippet>816</a>    }
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>    <span class="kw">fn </span>plane(data: <span class="kw-2">&amp;</span>[f64], shape: [usize; <span class="number">2</span>]) -&gt; Plane&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#819 id=819 data-nosnippet>819</a>        Plane {
+<a href=#820 id=820 data-nosnippet>820</a>            data,
+<a href=#821 id=821 data-nosnippet>821</a>            mask: <span class="prelude-val">None</span>,
+<a href=#822 id=822 data-nosnippet>822</a>            shape,
+<a href=#823 id=823 data-nosnippet>823</a>        }
+<a href=#824 id=824 data-nosnippet>824</a>    }
+<a href=#825 id=825 data-nosnippet>825</a>
+<a href=#826 id=826 data-nosnippet>826</a>    <span class="attr">#[test]
+<a href=#827 id=827 data-nosnippet>827</a>    </span><span class="kw">fn </span>positions_on_a_shared_tangent_plane_are_those_of_the_full_conversion() {
+<a href=#828 id=828 data-nosnippet>828</a>        <span class="kw">use </span>casa_coordinates::{Projection, ProjectionType};
+<a href=#829 id=829 data-nosnippet>829</a>        <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
+<a href=#830 id=830 data-nosnippet>830</a>        <span class="kw">let </span>arcsec = std::f64::consts::PI / <span class="number">648_000.0</span>;
+<a href=#831 id=831 data-nosnippet>831</a>        <span class="kw">let </span>input = DirectionCoordinate::new(
+<a href=#832 id=832 data-nosnippet>832</a>            DirectionRef::J2000,
+<a href=#833 id=833 data-nosnippet>833</a>            Projection::new(ProjectionType::SIN),
+<a href=#834 id=834 data-nosnippet>834</a>            [<span class="number">5.2</span>, -<span class="number">0.4</span>],
+<a href=#835 id=835 data-nosnippet>835</a>            [-<span class="number">2.0 </span>* arcsec, <span class="number">2.0 </span>* arcsec],
+<a href=#836 id=836 data-nosnippet>836</a>            [<span class="number">10.0</span>, <span class="number">10.0</span>],
+<a href=#837 id=837 data-nosnippet>837</a>        );
+<a href=#838 id=838 data-nosnippet>838</a>        <span class="kw">let </span>output = input
+<a href=#839 id=839 data-nosnippet>839</a>            .clone()
+<a href=#840 id=840 data-nosnippet>840</a>            .with_reference_pixel([<span class="number">30.0</span>, <span class="number">32.5</span>])
+<a href=#841 id=841 data-nosnippet>841</a>            .with_increment([-<span class="number">0.5 </span>* arcsec, <span class="number">0.5 </span>* arcsec]);
+<a href=#842 id=842 data-nosnippet>842</a>        <span class="macro">assert!</span>(same_tangent_plane(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>output));
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw">let </span>affine = positions(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>output, [<span class="number">60</span>, <span class="number">64</span>]);
+<a href=#844 id=844 data-nosnippet>844</a>        <span class="kw">for </span>(k, at) <span class="kw">in </span>affine.iter().enumerate() {
+<a href=#845 id=845 data-nosnippet>845</a>            <span class="kw">let </span>(i, j) = ((k % <span class="number">60</span>) <span class="kw">as </span>f64, (k / <span class="number">60</span>) <span class="kw">as </span>f64);
+<a href=#846 id=846 data-nosnippet>846</a>            <span class="kw">let </span>world = output.to_world(<span class="kw-2">&amp;</span>[i, j]).unwrap();
+<a href=#847 id=847 data-nosnippet>847</a>            <span class="kw">let </span>full = input.to_pixel(<span class="kw-2">&amp;</span>world).unwrap();
+<a href=#848 id=848 data-nosnippet>848</a>            <span class="kw">let </span>at = at.unwrap();
+<a href=#849 id=849 data-nosnippet>849</a>            <span class="macro">assert!</span>((at[<span class="number">0</span>] - full[<span class="number">0</span>]).abs() &lt; <span class="number">1e-9 </span>&amp;&amp; (at[<span class="number">1</span>] - full[<span class="number">1</span>]).abs() &lt; <span class="number">1e-9</span>);
+<a href=#850 id=850 data-nosnippet>850</a>        }
+<a href=#851 id=851 data-nosnippet>851</a>    }
+<a href=#852 id=852 data-nosnippet>852</a>
+<a href=#853 id=853 data-nosnippet>853</a>    <span class="attr">#[test]
+<a href=#854 id=854 data-nosnippet>854</a>    </span><span class="kw">fn </span>a_shared_tangent_plane_past_the_projections_domain_is_not_sampled() {
+<a href=#855 id=855 data-nosnippet>855</a>        <span class="comment">// The #941 review's case: SIN at 0.05 rad a pixel, so the corners of
+<a href=#856 id=856 data-nosnippet>856</a>        // a 33 × 33 grid lie beyond the projection's disk and have no sky
+<a href=#857 id=857 data-nosnippet>857</a>        // position. The affine map would give them one; they stay unsampled.
+<a href=#858 id=858 data-nosnippet>858</a>        </span><span class="kw">use </span>casa_coordinates::{Projection, ProjectionType};
+<a href=#859 id=859 data-nosnippet>859</a>        <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">let </span>input = DirectionCoordinate::new(
+<a href=#861 id=861 data-nosnippet>861</a>            DirectionRef::J2000,
+<a href=#862 id=862 data-nosnippet>862</a>            Projection::new(ProjectionType::SIN),
+<a href=#863 id=863 data-nosnippet>863</a>            [<span class="number">1.0</span>, <span class="number">0.3</span>],
+<a href=#864 id=864 data-nosnippet>864</a>            [-<span class="number">0.05</span>, <span class="number">0.05</span>],
+<a href=#865 id=865 data-nosnippet>865</a>            [<span class="number">16.0</span>, <span class="number">16.0</span>],
+<a href=#866 id=866 data-nosnippet>866</a>        );
+<a href=#867 id=867 data-nosnippet>867</a>        <span class="kw">let </span>output = input.clone().with_reference_pixel([<span class="number">16.1</span>, <span class="number">16.0</span>]);
+<a href=#868 id=868 data-nosnippet>868</a>        <span class="macro">assert!</span>(output.to_world(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">0.0</span>]).is_err());
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">let </span>grid = positions(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>output, [<span class="number">33</span>, <span class="number">33</span>]);
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="macro">assert!</span>(grid[<span class="number">0</span>].is_none(), <span class="string">"{:?}"</span>, grid[<span class="number">0</span>]);
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="macro">assert!</span>(grid[<span class="number">16 </span>+ <span class="number">16 </span>* <span class="number">33</span>].is_some());
+<a href=#872 id=872 data-nosnippet>872</a>    }
+<a href=#873 id=873 data-nosnippet>873</a>
+<a href=#874 id=874 data-nosnippet>874</a>    <span class="kw">fn </span>image_with_stokes(stokes: <span class="kw-2">&amp;</span>[casa_coordinates::StokesType]) -&gt; <span class="kw">crate</span>::TempImage&lt;f32&gt; {
+<a href=#875 id=875 data-nosnippet>875</a>        <span class="kw">use </span>casa_coordinates::{Projection, ProjectionType, StokesCoordinate};
+<a href=#876 id=876 data-nosnippet>876</a>        <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
+<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#878 id=878 data-nosnippet>878</a>        coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#879 id=879 data-nosnippet>879</a>            DirectionRef::J2000,
+<a href=#880 id=880 data-nosnippet>880</a>            Projection::new(ProjectionType::SIN),
+<a href=#881 id=881 data-nosnippet>881</a>            [<span class="number">1.0</span>, <span class="number">0.3</span>],
+<a href=#882 id=882 data-nosnippet>882</a>            [-<span class="number">1e-5</span>, <span class="number">1e-5</span>],
+<a href=#883 id=883 data-nosnippet>883</a>            [<span class="number">2.0</span>, <span class="number">2.0</span>],
+<a href=#884 id=884 data-nosnippet>884</a>        ));
+<a href=#885 id=885 data-nosnippet>885</a>        coordinates.add_coordinate(StokesCoordinate::new(stokes.to_vec()));
+<a href=#886 id=886 data-nosnippet>886</a>        <span class="kw">let </span><span class="kw-2">mut </span>image = <span class="kw">crate</span>::TempImage::&lt;f32&gt;::new(
+<a href=#887 id=887 data-nosnippet>887</a>            <span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">4</span>, stokes.len()],
+<a href=#888 id=888 data-nosnippet>888</a>            coordinates,
+<a href=#889 id=889 data-nosnippet>889</a>            casa_lattices::TempStoragePolicy::Auto {
+<a href=#890 id=890 data-nosnippet>890</a>                memory_budget_bytes: <span class="number">1 </span>&lt;&lt; <span class="number">20</span>,
+<a href=#891 id=891 data-nosnippet>891</a>                scratch: casa_lattices::ScratchSpace::SystemTemp,
+<a href=#892 id=892 data-nosnippet>892</a>            },
+<a href=#893 id=893 data-nosnippet>893</a>        )
+<a href=#894 id=894 data-nosnippet>894</a>        .unwrap();
+<a href=#895 id=895 data-nosnippet>895</a>        <span class="kw">let </span>data = ArrayD::from_elem(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">4</span>, <span class="number">4</span>, stokes.len()]).f(), <span class="number">42.0f32</span>);
+<a href=#896 id=896 data-nosnippet>896</a>        image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]).unwrap();
+<a href=#897 id=897 data-nosnippet>897</a>        image
+<a href=#898 id=898 data-nosnippet>898</a>    }
+<a href=#899 id=899 data-nosnippet>899</a>
+<a href=#900 id=900 data-nosnippet>900</a>    <span class="attr">#[test]
+<a href=#901 id=901 data-nosnippet>901</a>    </span><span class="kw">fn </span>a_template_relabelling_a_stokes_plane_is_refused() {
+<a href=#902 id=902 data-nosnippet>902</a>        <span class="comment">// The #941 review's case: [I, Q] onto a template of [I, U] would put
+<a href=#903 id=903 data-nosnippet>903</a>        // Q's pixels in U's plane.
+<a href=#904 id=904 data-nosnippet>904</a>        </span><span class="kw">use </span>casa_coordinates::StokesType;
+<a href=#905 id=905 data-nosnippet>905</a>        <span class="kw">let </span>input = image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::I, StokesType::Q]);
+<a href=#906 id=906 data-nosnippet>906</a>        <span class="kw">let </span>template = RegridTemplate::of(<span class="kw-2">&amp;</span>image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::I, StokesType::U]));
+<a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span>error = regrid(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>template, RegridMethod::Linear).unwrap_err();
+<a href=#908 id=908 data-nosnippet>908</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"Stokes axes differ"</span>), <span class="string">"{error}"</span>);
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="comment">// The same axes regrid, onto the template's coordinates.
+<a href=#910 id=910 data-nosnippet>910</a>        </span><span class="kw">let </span>same = RegridTemplate::of(<span class="kw-2">&amp;</span>input);
+<a href=#911 id=911 data-nosnippet>911</a>        <span class="kw">let </span>regridded = regrid(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>same, RegridMethod::Linear).unwrap();
+<a href=#912 id=912 data-nosnippet>912</a>        <span class="macro">assert!</span>(regridded.template_coordinates);
+<a href=#913 id=913 data-nosnippet>913</a>    }
+<a href=#914 id=914 data-nosnippet>914</a>
+<a href=#915 id=915 data-nosnippet>915</a>    <span class="attr">#[test]
+<a href=#916 id=916 data-nosnippet>916</a>    </span><span class="kw">fn </span>a_one_plane_axis_keeps_the_inputs_coordinate_as_casa_does() {
+<a href=#917 id=917 data-nosnippet>917</a>        <span class="comment">// CASA 6.7.6 regrids an I plane onto a template labelled Q and keeps
+<a href=#918 id=918 data-nosnippet>918</a>        // I; casa-rs keeps the input's coordinate too, rather than relabel.
+<a href=#919 id=919 data-nosnippet>919</a>        </span><span class="kw">use </span>casa_coordinates::StokesType;
+<a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">let </span>input = image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::I]);
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">let </span>template = RegridTemplate::of(<span class="kw-2">&amp;</span>image_with_stokes(<span class="kw-2">&amp;</span>[StokesType::Q]));
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span>regridded = regrid(<span class="kw-2">&amp;</span>input, <span class="kw-2">&amp;</span>template, RegridMethod::Linear).unwrap();
+<a href=#923 id=923 data-nosnippet>923</a>        <span class="macro">assert!</span>(!regridded.template_coordinates);
+<a href=#924 id=924 data-nosnippet>924</a>        <span class="kw">let </span>CoordinateModel::Stokes(stokes) = regridded.coordinates.coordinate(<span class="number">1</span>) <span class="kw">else </span>{
+<a href=#925 id=925 data-nosnippet>925</a>            <span class="macro">panic!</span>(<span class="string">"a Stokes coordinate"</span>)
+<a href=#926 id=926 data-nosnippet>926</a>        };
+<a href=#927 id=927 data-nosnippet>927</a>        <span class="macro">assert_eq!</span>(stokes.stokes(), <span class="kw-2">&amp;</span>[StokesType::I]);
+<a href=#928 id=928 data-nosnippet>928</a>    }
+<a href=#929 id=929 data-nosnippet>929</a>
+<a href=#930 id=930 data-nosnippet>930</a>    <span class="attr">#[test]
+<a href=#931 id=931 data-nosnippet>931</a>    </span><span class="kw">fn </span>methods_are_read_by_their_first_letter_as_casacore_reads_them() {
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="macro">assert_eq!</span>(
+<a href=#933 id=933 data-nosnippet>933</a>            RegridMethod::from_casa(<span class="string">"cubic"</span>).unwrap(),
+<a href=#934 id=934 data-nosnippet>934</a>            RegridMethod::Cubic
+<a href=#935 id=935 data-nosnippet>935</a>        );
+<a href=#936 id=936 data-nosnippet>936</a>        <span class="macro">assert_eq!</span>(
+<a href=#937 id=937 data-nosnippet>937</a>            RegridMethod::from_casa(<span class="string">"LIN"</span>).unwrap(),
+<a href=#938 id=938 data-nosnippet>938</a>            RegridMethod::Linear
+<a href=#939 id=939 data-nosnippet>939</a>        );
+<a href=#940 id=940 data-nosnippet>940</a>        <span class="macro">assert_eq!</span>(RegridMethod::from_casa(<span class="string">"n"</span>).unwrap(), RegridMethod::Nearest);
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="macro">assert!</span>(RegridMethod::from_casa(<span class="string">"lanczos"</span>).is_err());
+<a href=#942 id=942 data-nosnippet>942</a>        <span class="macro">assert!</span>(RegridMethod::from_casa(<span class="string">"spline"</span>).is_err());
+<a href=#943 id=943 data-nosnippet>943</a>    }
+<a href=#944 id=944 data-nosnippet>944</a>
+<a href=#945 id=945 data-nosnippet>945</a>    <span class="attr">#[test]
+<a href=#946 id=946 data-nosnippet>946</a>    </span><span class="kw">fn </span>linear_accepts_a_pixel_beyond_each_edge_as_casacore_does() {
+<a href=#947 id=947 data-nosnippet>947</a>        <span class="kw">let </span>data: Vec&lt;f64&gt; = (<span class="number">0</span>..<span class="number">12</span>).map(f64::from).collect();
+<a href=#948 id=948 data-nosnippet>948</a>        <span class="kw">let </span>p = plane(<span class="kw-2">&amp;</span>data, [<span class="number">4</span>, <span class="number">3</span>]);
+<a href=#949 id=949 data-nosnippet>949</a>        <span class="comment">// Inside: the bilinear value of the ramp i + 4j.
+<a href=#950 id=950 data-nosnippet>950</a>        </span><span class="macro">assert!</span>((p.linear([<span class="number">1.25</span>, <span class="number">0.5</span>]).unwrap() - <span class="number">3.25</span>).abs() &lt; <span class="number">1e-12</span>);
+<a href=#951 id=951 data-nosnippet>951</a>        <span class="comment">// Within a pixel before the first and after the last: extrapolated.
+<a href=#952 id=952 data-nosnippet>952</a>        </span><span class="macro">assert!</span>((p.linear([-<span class="number">0.5</span>, <span class="number">0.0</span>]).unwrap() + <span class="number">0.5</span>).abs() &lt; <span class="number">1e-12</span>);
+<a href=#953 id=953 data-nosnippet>953</a>        <span class="macro">assert!</span>((p.linear([<span class="number">3.5</span>, <span class="number">1.0</span>]).unwrap() - <span class="number">7.5</span>).abs() &lt; <span class="number">1e-12</span>);
+<a href=#954 id=954 data-nosnippet>954</a>        <span class="comment">// A pixel or more before the first, or past the last plus one.
+<a href=#955 id=955 data-nosnippet>955</a>        </span><span class="macro">assert!</span>(p.linear([-<span class="number">1.0</span>, <span class="number">0.0</span>]).is_none());
+<a href=#956 id=956 data-nosnippet>956</a>        <span class="macro">assert!</span>(p.linear([<span class="number">4.0</span>, <span class="number">1.0</span>]).is_none());
+<a href=#957 id=957 data-nosnippet>957</a>    }
+<a href=#958 id=958 data-nosnippet>958</a>
+<a href=#959 id=959 data-nosnippet>959</a>    <span class="attr">#[test]
+<a href=#960 id=960 data-nosnippet>960</a>    </span><span class="kw">fn </span>cubic_reproduces_a_quadratic_inside_and_is_linear_at_the_edges() {
+<a href=#961 id=961 data-nosnippet>961</a>        <span class="kw">let </span>shape = [<span class="number">6</span>, <span class="number">6</span>];
+<a href=#962 id=962 data-nosnippet>962</a>        <span class="kw">let </span>f = |i: f64, j: f64| <span class="number">0.5 </span>* i * i - <span class="number">0.25 </span>* j + <span class="number">0.1 </span>* i * j;
+<a href=#963 id=963 data-nosnippet>963</a>        <span class="kw">let </span>data: Vec&lt;f64&gt; = (<span class="number">0</span>..<span class="number">36</span>).map(|k| f((k % <span class="number">6</span>) <span class="kw">as </span>f64, (k / <span class="number">6</span>) <span class="kw">as </span>f64)).collect();
+<a href=#964 id=964 data-nosnippet>964</a>        <span class="kw">let </span>p = plane(<span class="kw-2">&amp;</span>data, shape);
+<a href=#965 id=965 data-nosnippet>965</a>        <span class="comment">// Central differences are exact for a quadratic, and so is bicubic.
+<a href=#966 id=966 data-nosnippet>966</a>        </span><span class="macro">assert!</span>((p.cubic([<span class="number">2.3</span>, <span class="number">2.6</span>]).unwrap() - f(<span class="number">2.3</span>, <span class="number">2.6</span>)).abs() &lt; <span class="number">1e-12</span>);
+<a href=#967 id=967 data-nosnippet>967</a>        <span class="comment">// At i = 0 the linear value of the corner pixels.
+<a href=#968 id=968 data-nosnippet>968</a>        </span><span class="macro">assert_eq!</span>(p.cubic([<span class="number">0.4</span>, <span class="number">2.5</span>]), p.linear([<span class="number">0.4</span>, <span class="number">2.5</span>]));
+<a href=#969 id=969 data-nosnippet>969</a>    }
+<a href=#970 id=970 data-nosnippet>970</a>
+<a href=#971 id=971 data-nosnippet>971</a>    <span class="attr">#[test]
+<a href=#972 id=972 data-nosnippet>972</a>    </span><span class="kw">fn </span>a_masked_pixel_in_the_neighbourhood_masks_the_sample() {
+<a href=#973 id=973 data-nosnippet>973</a>        <span class="kw">let </span>data = <span class="macro">vec!</span>[<span class="number">1.0</span>; <span class="number">36</span>];
+<a href=#974 id=974 data-nosnippet>974</a>        <span class="kw">let </span><span class="kw-2">mut </span>mask = <span class="macro">vec!</span>[<span class="bool-val">true</span>; <span class="number">36</span>];
+<a href=#975 id=975 data-nosnippet>975</a>        mask[<span class="number">1 </span>+ <span class="number">6</span>] = <span class="bool-val">false</span>; <span class="comment">// [1, 1]
+<a href=#976 id=976 data-nosnippet>976</a>        </span><span class="kw">let </span>p = Plane {
+<a href=#977 id=977 data-nosnippet>977</a>            data: <span class="kw-2">&amp;</span>data,
+<a href=#978 id=978 data-nosnippet>978</a>            mask: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>mask),
+<a href=#979 id=979 data-nosnippet>979</a>            shape: [<span class="number">6</span>, <span class="number">6</span>],
+<a href=#980 id=980 data-nosnippet>980</a>        };
+<a href=#981 id=981 data-nosnippet>981</a>        <span class="comment">// Cubic at [2.5, 2.5] needs [1..=4, 1..=4], linear only [2..=3, 2..=3].
+<a href=#982 id=982 data-nosnippet>982</a>        </span><span class="macro">assert!</span>(p.cubic([<span class="number">2.5</span>, <span class="number">2.5</span>]).is_none());
+<a href=#983 id=983 data-nosnippet>983</a>        <span class="macro">assert_eq!</span>(p.linear([<span class="number">2.5</span>, <span class="number">2.5</span>]), <span class="prelude-val">Some</span>(<span class="number">1.0</span>));
+<a href=#984 id=984 data-nosnippet>984</a>        <span class="macro">assert!</span>(p.nearest([<span class="number">1.2</span>, <span class="number">0.9</span>]).is_none());
+<a href=#985 id=985 data-nosnippet>985</a>    }
+<a href=#986 id=986 data-nosnippet>986</a>}
 </code></pre></div></section></main></body></html>

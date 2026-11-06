@@ -160,63 +160,100 @@
 <a href=#160 id=160 data-nosnippet>160</a>    <span class="prelude-val">None
 <a href=#161 id=161 data-nosnippet>161</a></span>}
 <a href=#162 id=162 data-nosnippet>162</a>
-<a href=#163 id=163 data-nosnippet>163</a><span class="doccomment">/// The observation information of an image CASA makes from a shape
-<a href=#164 id=164 data-nosnippet>164</a>/// (`CoordinateUtil::makeCoordinateSystem`): ALMA, observed by "Karl
-<a href=#165 id=165 data-nosnippet>165</a>/// Jansky" at 2000-01-01T00:00:00.0001 UTC.
-<a href=#166 id=166 data-nosnippet>166</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>shape_obs_info() -&gt; ObsInfo {
-<a href=#167 id=167 data-nosnippet>167</a>    ObsInfo::new(<span class="string">"ALMA"</span>)
-<a href=#168 id=168 data-nosnippet>168</a>        .with_observer(<span class="string">"Karl Jansky"</span>)
-<a href=#169 id=169 data-nosnippet>169</a>        .with_date(MEpoch::from_mjd(
-<a href=#170 id=170 data-nosnippet>170</a>            <span class="number">51_544.0 </span>+ <span class="number">1.0e-4 </span>/ <span class="number">86_400.0</span>,
-<a href=#171 id=171 data-nosnippet>171</a>            EpochRef::UTC,
-<a href=#172 id=172 data-nosnippet>172</a>        ))
-<a href=#173 id=173 data-nosnippet>173</a>}
-<a href=#174 id=174 data-nosnippet>174</a>
-<a href=#175 id=175 data-nosnippet>175</a><span class="doccomment">/// `projection` as casacore holds it: a SIN projection given no parameters
-<a href=#176 id=176 data-nosnippet>176</a>/// has its two, zero (`Projection(Projection::SIN)`).
-<a href=#177 id=177 data-nosnippet>177</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>casacore_projection(projection: <span class="kw-2">&amp;</span>Projection) -&gt; Projection {
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">if </span>projection.projection_type() == ProjectionType::SIN &amp;&amp; projection.parameters().is_empty() {
-<a href=#179 id=179 data-nosnippet>179</a>        Projection::with_parameters(ProjectionType::SIN, <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>])
-<a href=#180 id=180 data-nosnippet>180</a>    } <span class="kw">else </span>{
-<a href=#181 id=181 data-nosnippet>181</a>        projection.clone()
-<a href=#182 id=182 data-nosnippet>182</a>    }
-<a href=#183 id=183 data-nosnippet>183</a>}
-<a href=#184 id=184 data-nosnippet>184</a>
-<a href=#185 id=185 data-nosnippet>185</a><span class="doccomment">/// Remove whatever is at `path`, as `ia.fromshape(..., overwrite=True)`
-<a href=#186 id=186 data-nosnippet>186</a>/// replaces it.
-<a href=#187 id=187 data-nosnippet>187</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>remove_existing(path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;(), SkyModelError&gt; {
-<a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">let </span>removed = <span class="kw">if </span>path.is_dir() {
-<a href=#189 id=189 data-nosnippet>189</a>        std::fs::remove_dir_all(path)
-<a href=#190 id=190 data-nosnippet>190</a>    } <span class="kw">else if </span>path.exists() {
-<a href=#191 id=191 data-nosnippet>191</a>        std::fs::remove_file(path)
-<a href=#192 id=192 data-nosnippet>192</a>    } <span class="kw">else </span>{
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#194 id=194 data-nosnippet>194</a>    };
-<a href=#195 id=195 data-nosnippet>195</a>    removed.map_err(|source| SkyModelError::Io {
-<a href=#196 id=196 data-nosnippet>196</a>        path: path.to_path_buf(),
-<a href=#197 id=197 data-nosnippet>197</a>        source,
-<a href=#198 id=198 data-nosnippet>198</a>    })
-<a href=#199 id=199 data-nosnippet>199</a>}
-<a href=#200 id=200 data-nosnippet>200</a>
-<a href=#201 id=201 data-nosnippet>201</a><span class="doccomment">/// Write `pixels` as a new single-precision CASA image at `path`, replacing
-<a href=#202 id=202 data-nosnippet>202</a>/// what is there.
-<a href=#203 id=203 data-nosnippet>203</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>write_image(
-<a href=#204 id=204 data-nosnippet>204</a>    path: <span class="kw-2">&amp;</span>Path,
-<a href=#205 id=205 data-nosnippet>205</a>    pixels: <span class="kw-2">&amp;</span>ArrayD&lt;f32&gt;,
-<a href=#206 id=206 data-nosnippet>206</a>    coordinates: CoordinateSystem,
-<a href=#207 id=207 data-nosnippet>207</a>    units: <span class="kw-2">&amp;</span>str,
-<a href=#208 id=208 data-nosnippet>208</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), SkyModelError&gt; {
-<a href=#209 id=209 data-nosnippet>209</a>    remove_existing(path)<span class="question-mark">?</span>;
-<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">let </span>shape = pixels.shape().to_vec();
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path)<span class="question-mark">?</span>;
-<a href=#212 id=212 data-nosnippet>212</a>    image.put_slice(pixels, <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0</span>; shape.len()])<span class="question-mark">?</span>;
-<a href=#213 id=213 data-nosnippet>213</a>    image.set_units(units)<span class="question-mark">?</span>;
-<a href=#214 id=214 data-nosnippet>214</a>    image.save()<span class="question-mark">?</span>;
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="prelude-val">Ok</span>(())
-<a href=#216 id=216 data-nosnippet>216</a>}
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a><span class="doccomment">/// A zeroed array of `shape` in Fortran order, as images hold their pixels.
-<a href=#219 id=219 data-nosnippet>219</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>zeros(shape: <span class="kw-2">&amp;</span>[usize]) -&gt; ArrayD&lt;f32&gt; {
-<a href=#220 id=220 data-nosnippet>220</a>    ArrayD::zeros(IxDyn(shape).f())
-<a href=#221 id=221 data-nosnippet>221</a>}
+<a href=#163 id=163 data-nosnippet>163</a><span class="kw">fn </span>require_native_direction_frame(
+<a href=#164 id=164 data-nosnippet>164</a>    coordinate: <span class="kw-2">&amp;</span>casa_coordinates::DirectionCoordinate,
+<a href=#165 id=165 data-nosnippet>165</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), SkyModelError&gt; {
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">if </span>coordinate.direction_ref() != coordinate.conversion_direction_ref() {
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(
+<a href=#168 id=168 data-nosnippet>168</a>            <span class="string">"direction conversion frames are unsupported (#977)"</span>.into(),
+<a href=#169 id=169 data-nosnippet>169</a>        ));
+<a href=#170 id=170 data-nosnippet>170</a>    }
+<a href=#171 id=171 data-nosnippet>171</a>    <span class="prelude-val">Ok</span>(())
+<a href=#172 id=172 data-nosnippet>172</a>}
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a><span class="doccomment">/// The observation information of an image CASA makes from a shape
+<a href=#175 id=175 data-nosnippet>175</a>/// (`CoordinateUtil::makeCoordinateSystem`): ALMA, observed by "Karl
+<a href=#176 id=176 data-nosnippet>176</a>/// Jansky" at 2000-01-01T00:00:00.0001 UTC.
+<a href=#177 id=177 data-nosnippet>177</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>shape_obs_info() -&gt; ObsInfo {
+<a href=#178 id=178 data-nosnippet>178</a>    ObsInfo::new(<span class="string">"ALMA"</span>)
+<a href=#179 id=179 data-nosnippet>179</a>        .with_observer(<span class="string">"Karl Jansky"</span>)
+<a href=#180 id=180 data-nosnippet>180</a>        .with_date(MEpoch::from_mjd(
+<a href=#181 id=181 data-nosnippet>181</a>            <span class="number">51_544.0 </span>+ <span class="number">1.0e-4 </span>/ <span class="number">86_400.0</span>,
+<a href=#182 id=182 data-nosnippet>182</a>            EpochRef::UTC,
+<a href=#183 id=183 data-nosnippet>183</a>        ))
+<a href=#184 id=184 data-nosnippet>184</a>}
+<a href=#185 id=185 data-nosnippet>185</a>
+<a href=#186 id=186 data-nosnippet>186</a><span class="doccomment">/// `projection` as casacore holds it: a SIN projection given no parameters
+<a href=#187 id=187 data-nosnippet>187</a>/// has its two, zero (`Projection(Projection::SIN)`).
+<a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>casacore_projection(projection: <span class="kw-2">&amp;</span>Projection) -&gt; Projection {
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">if </span>projection.projection_type() == ProjectionType::SIN &amp;&amp; projection.parameters().is_empty() {
+<a href=#190 id=190 data-nosnippet>190</a>        Projection::with_parameters(ProjectionType::SIN, <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>])
+<a href=#191 id=191 data-nosnippet>191</a>    } <span class="kw">else </span>{
+<a href=#192 id=192 data-nosnippet>192</a>        projection.clone()
+<a href=#193 id=193 data-nosnippet>193</a>    }
+<a href=#194 id=194 data-nosnippet>194</a>}
+<a href=#195 id=195 data-nosnippet>195</a>
+<a href=#196 id=196 data-nosnippet>196</a><span class="doccomment">/// Remove whatever is at `path`, as `ia.fromshape(..., overwrite=True)`
+<a href=#197 id=197 data-nosnippet>197</a>/// replaces it.
+<a href=#198 id=198 data-nosnippet>198</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>remove_existing(path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;(), SkyModelError&gt; {
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>removed = <span class="kw">if </span>path.is_dir() {
+<a href=#200 id=200 data-nosnippet>200</a>        std::fs::remove_dir_all(path)
+<a href=#201 id=201 data-nosnippet>201</a>    } <span class="kw">else if </span>path.exists() {
+<a href=#202 id=202 data-nosnippet>202</a>        std::fs::remove_file(path)
+<a href=#203 id=203 data-nosnippet>203</a>    } <span class="kw">else </span>{
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#205 id=205 data-nosnippet>205</a>    };
+<a href=#206 id=206 data-nosnippet>206</a>    removed.map_err(|source| SkyModelError::Io {
+<a href=#207 id=207 data-nosnippet>207</a>        path: path.to_path_buf(),
+<a href=#208 id=208 data-nosnippet>208</a>        source,
+<a href=#209 id=209 data-nosnippet>209</a>    })
+<a href=#210 id=210 data-nosnippet>210</a>}
+<a href=#211 id=211 data-nosnippet>211</a>
+<a href=#212 id=212 data-nosnippet>212</a><span class="doccomment">/// Write `pixels` as a new single-precision CASA image at `path`, replacing
+<a href=#213 id=213 data-nosnippet>213</a>/// what is there.
+<a href=#214 id=214 data-nosnippet>214</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>write_image(
+<a href=#215 id=215 data-nosnippet>215</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#216 id=216 data-nosnippet>216</a>    pixels: <span class="kw-2">&amp;</span>ArrayD&lt;f32&gt;,
+<a href=#217 id=217 data-nosnippet>217</a>    coordinates: CoordinateSystem,
+<a href=#218 id=218 data-nosnippet>218</a>    units: <span class="kw-2">&amp;</span>str,
+<a href=#219 id=219 data-nosnippet>219</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), SkyModelError&gt; {
+<a href=#220 id=220 data-nosnippet>220</a>    remove_existing(path)<span class="question-mark">?</span>;
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">let </span>shape = pixels.shape().to_vec();
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path)<span class="question-mark">?</span>;
+<a href=#223 id=223 data-nosnippet>223</a>    image.put_slice(pixels, <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0</span>; shape.len()])<span class="question-mark">?</span>;
+<a href=#224 id=224 data-nosnippet>224</a>    image.set_units(units)<span class="question-mark">?</span>;
+<a href=#225 id=225 data-nosnippet>225</a>    image.save()<span class="question-mark">?</span>;
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="prelude-val">Ok</span>(())
+<a href=#227 id=227 data-nosnippet>227</a>}
+<a href=#228 id=228 data-nosnippet>228</a>
+<a href=#229 id=229 data-nosnippet>229</a><span class="doccomment">/// A zeroed array of `shape` in Fortran order, as images hold their pixels.
+<a href=#230 id=230 data-nosnippet>230</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>zeros(shape: <span class="kw-2">&amp;</span>[usize]) -&gt; ArrayD&lt;f32&gt; {
+<a href=#231 id=231 data-nosnippet>231</a>    ArrayD::zeros(IxDyn(shape).f())
+<a href=#232 id=232 data-nosnippet>232</a>}
+<a href=#233 id=233 data-nosnippet>233</a>
+<a href=#234 id=234 data-nosnippet>234</a><span class="attr">#[cfg(test)]
+<a href=#235 id=235 data-nosnippet>235</a></span><span class="kw">mod </span>frame_tests {
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">use </span>casa_coordinates::DirectionCoordinate;
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">use </span>casa_types::measures::direction::DirectionRef;
+<a href=#239 id=239 data-nosnippet>239</a>
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="attr">#[test]
+<a href=#241 id=241 data-nosnippet>241</a>    </span><span class="kw">fn </span>sky_model_refuses_a_distinct_direction_conversion_frame() {
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>direction = DirectionCoordinate::new(
+<a href=#243 id=243 data-nosnippet>243</a>            DirectionRef::J2000,
+<a href=#244 id=244 data-nosnippet>244</a>            Projection::new(ProjectionType::SIN),
+<a href=#245 id=245 data-nosnippet>245</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#246 id=246 data-nosnippet>246</a>            [-<span class="number">1e-5</span>, <span class="number">1e-5</span>],
+<a href=#247 id=247 data-nosnippet>247</a>            [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#248 id=248 data-nosnippet>248</a>        );
+<a href=#249 id=249 data-nosnippet>249</a>        <span class="macro">assert!</span>(require_native_direction_frame(<span class="kw-2">&amp;</span>direction).is_ok());
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">let </span>converted = direction.with_conversion_direction_ref(DirectionRef::GALACTIC);
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="macro">assert!</span>(
+<a href=#252 id=252 data-nosnippet>252</a>            require_native_direction_frame(<span class="kw-2">&amp;</span>converted)
+<a href=#253 id=253 data-nosnippet>253</a>                .unwrap_err()
+<a href=#254 id=254 data-nosnippet>254</a>                .to_string()
+<a href=#255 id=255 data-nosnippet>255</a>                .contains(<span class="string">"#977"</span>)
+<a href=#256 id=256 data-nosnippet>256</a>        );
+<a href=#257 id=257 data-nosnippet>257</a>    }
+<a href=#258 id=258 data-nosnippet>258</a>}
 </code></pre></div></section></main></body></html>
