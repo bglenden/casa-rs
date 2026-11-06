@@ -255,6 +255,166 @@ impl MvcModelChannel<'_> {
     }
 }
 
+/// The two admitted views and Taylor model used to form a cube model (#1069).
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC cleaning handoff is in #1069")
+)]
+pub(crate) struct MvcModelProjectionInputs<'a> {
+    pub(crate) cube_problem: &'a CompiledProblem,
+    pub(crate) cube: &'a MajorCycleCompletion,
+    pub(crate) cube_lifecycle: &'a ModelLifecycle,
+    pub(crate) taylor_problem: &'a CompiledProblem,
+    pub(crate) taylor_model: &'a casa_imaging_deconvolution::ModelGeneration,
+    pub(crate) mean_pb: &'a [f32],
+    pub(crate) expansion_reference_hz: f64,
+    pub(crate) controls: ContinuumProductControls,
+    pub(crate) centres: Option<&'a PrimaryBeamCentres>,
+}
+
+/// Form one complete cube model in its lifecycle's bounded storage. At most
+/// one cube channel's PB and projection are present alongside the Taylor
+/// terms. The caller retains the cube normal and common PB under their own
+/// admissions until this returned model's reservation is released.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC cleaning handoff is in #1069")
+)]
+pub(crate) fn project_mvc_model(
+    inputs: MvcModelProjectionInputs<'_>,
+    (host, policy, cancel): (&HostResources, &ResourcePolicy, &Cancel),
+) -> Result<Admitted<casa_imaging_deconvolution::ModelGeneration>, NativeError> {
+    use casa_imaging_model::ModelSupport;
+    use casa_imaging_products::read_mvc_cube_primary_beam;
+
+    if cancel.is_cancelled() {
+        return Err(Cancelled.into());
+    }
+    let MvcModelProjectionInputs {
+        cube_problem,
+        cube,
+        cube_lifecycle,
+        taylor_problem,
+        taylor_model,
+        mean_pb,
+        expansion_reference_hz,
+        controls,
+        centres,
+    } = inputs;
+    let invalid = || other(std::io::Error::other("invalid MVC model views"));
+    let shape = cube.normal_state().shape();
+    let cells = shape[0]
+        .checked_mul(shape[1])
+        .ok_or(ProductsError::ResourceDemandOverflow("MVC model cells"))?;
+    if cells == 0
+        || cube_problem.observation() != taylor_problem.observation()
+        || cube_lifecycle.contract() != cube_problem.model_lifecycle()
+        || taylor_model.shape() != taylor_problem.model_lifecycle().target()
+        || taylor_problem.geometry().domains().len() != 1
+        || taylor_problem.geometry().domains()[0].shape().pixels() != shape
+        || taylor_problem.reconstruction().basis() != (ReconstructionBasis::Taylor { terms: 2 })
+        || taylor_model.shape().polarizations() != 1
+        || mean_pb.len() != cells
+    {
+        return Err(invalid());
+    }
+    let channels = cube_problem.geometry().spectral().output_channels();
+    if cube_lifecycle.contract().target().coefficients() != channels
+        || cube_lifecycle.contract().target().polarizations() != 1
+        || cube_lifecycle.contract().target().domains().len() != 1
+        || cube_lifecycle.contract().target().domains()[0].pixels() != shape
+    {
+        return Err(invalid());
+    }
+    let demand = model_projection_demand(shape, cube_lifecycle)?;
+    let reservation = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "MVC cube model projection",
+            memory: demand,
+        },
+    )?;
+    let read_term = |term| -> Result<Vec<f32>, NativeError> {
+        let samples = taylor_model.read_plane(0, term, 0)?;
+        let mut values = Vec::with_capacity(cells);
+        for sample in &samples {
+            if sample.support() != ModelSupport::Valid {
+                return Err(invalid());
+            }
+            values.push(sample.value().value() as f32);
+        }
+        Ok(values)
+    };
+    let terms = [read_term(0)?, read_term(1)?];
+    let mut cube_inputs = ContinuumProductInputs::from_major_cycle(cube_problem, cube);
+    if let Some(centres) = centres {
+        cube_inputs = cube_inputs.with_primary_beam_centres(centres);
+    }
+    let planned = PlannedContinuumGeneration::new(&cube_inputs, &controls)?;
+    let mut output = vec![0.0_f32; cells];
+    let mut loaded_channel = None;
+    let model = cube_lifecycle.initial_from_fn::<NativeError>(|index| {
+        if index.is_multiple_of(1 << 16) && cancel.is_cancelled() {
+            return Err(Cancelled.into());
+        }
+        let channel = index / cells;
+        if loaded_channel != Some(channel) {
+            let pb = read_mvc_cube_primary_beam(&planned, &cube_inputs, channel)?;
+            let frequency = cube_problem
+                .geometry()
+                .spectral()
+                .channel_centre_hz(channel)
+                .ok_or_else(invalid)?;
+            MvcModelChannel {
+                terms: [&terms[0], &terms[1]],
+                channel_pb: &pb.pixels,
+                mean_pb,
+                channel_hz: frequency,
+                reference_hz: expansion_reference_hz,
+                cutoff: cube_problem.products().validity().primary_beam().cutoff(),
+            }
+            .evaluate(&mut output)?;
+            loaded_channel = Some(channel);
+        }
+        Ok(output[index % cells])
+    })?;
+    Ok(Admitted {
+        value: model,
+        reservation,
+    })
+}
+
+/// A conservative live bound for model construction and one PB channel.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC cleaning handoff is in #1069")
+)]
+fn model_projection_demand(
+    shape: [usize; 2],
+    lifecycle: &ModelLifecycle,
+) -> Result<u64, NativeError> {
+    let overflow = || ProductsError::ResourceDemandOverflow("MVC model projection");
+    let cells = u64::try_from(shape[0].checked_mul(shape[1]).ok_or_else(overflow)?)
+        .map_err(|_| overflow())?;
+    let planes = cells
+        .checked_mul((6 * size_of::<f32>() + size_of::<ModelSample>()) as u64)
+        .ok_or_else(overflow)?;
+    let model_samples =
+        u64::try_from(lifecycle.contract().target().sample_count()).map_err(|_| overflow())?;
+    let window = model_samples
+        .min(1 << 16)
+        .checked_mul(size_of::<ModelSample>() as u64)
+        .ok_or_else(overflow)?;
+    let cube_window = normal_state_window_residency_bytes(shape, 1, 1).map_err(other)?;
+    planes
+        .checked_add(window)
+        .and_then(|n| n.checked_add(cube_window))
+        .and_then(|n| n.checked_add(lifecycle.resident_bytes()))
+        .and_then(|n| n.checked_add(64 * 1024))
+        .ok_or_else(|| other(overflow()))
+}
+
 #[cfg(test)]
 mod model_channel_tests {
     use super::MvcModelChannel;

@@ -95,6 +95,12 @@ impl From<ApplicationError> for NativeError {
     }
 }
 
+impl From<casa_imaging_deconvolution::ModelLifecycleError> for NativeError {
+    fn from(error: casa_imaging_deconvolution::ModelLifecycleError) -> Self {
+        Self::Other(Box::new(error))
+    }
+}
+
 impl From<ImagingError> for NativeError {
     fn from(error: ImagingError) -> Self {
         match error {

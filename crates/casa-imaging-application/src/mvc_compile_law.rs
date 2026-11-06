@@ -484,3 +484,134 @@ fn mvc_native_run_publishes_both_families() {
     }
     assert_eq!(outcome.summary.products.len(), names.len());
 }
+
+/// The cube model owner receives canonical channel planes formed from the
+/// Taylor model and each channel's real PB. Its separate admission remains
+/// held with the resulting model (#1069).
+#[test]
+fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
+    use casa_imaging_deconvolution::{ModelLifecycle, ModelStoragePlan};
+    use casa_imaging_model::{ProblemInput, compile, compile_observation};
+    use casa_imaging_products::{
+        AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
+        PlannedContinuumGeneration, read_mvc_cube_primary_beam,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let ms = synthetic_observation::observation(root.path(), 6);
+    let mut request = crate::request::tests::request(json!({
+        "vis": ms, "imagename": root.path().join("mvc-model"),
+        "specmode": "mfs", "deconvolver": "mtmfs", "nterms": 2,
+        "reffreq": "45GHz", "niter": 0, "backend": "cpu", "imsize": 64,
+        "cell": "0.3arcsec", "write_pb": true,
+    }));
+    request.mvc_output_channels = std::num::NonZeroUsize::new(3);
+    let context = RunContext {
+        host: HostResources::detect().unwrap(),
+        policy: request.resource_policy(),
+        cancel: Cancel::default(),
+        summary: None,
+    };
+    let prepared = crate::compile::prepare(&request, &context).unwrap();
+    let view = prepared.mvc_taylor.unwrap();
+    let snapshot = compile_observation(prepared.snapshot).unwrap();
+    let cube = compile(ProblemInput::new(
+        prepared.specification,
+        prepared.geometry,
+        snapshot.clone(),
+        prepared.model_lifecycle,
+    ))
+    .unwrap();
+    let taylor = compile(ProblemInput::new(
+        view.specification,
+        view.geometry,
+        snapshot,
+        view.model_lifecycle,
+    ))
+    .unwrap();
+    let cube_lifecycle = ModelLifecycle::new(&cube, ModelStoragePlan::resident(1 << 16).unwrap());
+    let empty = cube_lifecycle
+        .prepare_final_model(cube_lifecycle.initial_empty().unwrap(), [])
+        .unwrap();
+    let scene = synthetic_pass::Scene::new(&cube).with_point(0, [32, 32], &[1.0, 1.0, 1.0]);
+    let cube_completion = scene.reconcile_initial(&cube, empty);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand);
+    let taylor_completion = crate::mvc::assemble_taylor_completion(
+        crate::mvc::TaylorAssemblyInputs {
+            cube_problem: &cube,
+            cube: &cube_completion,
+            taylor_problem: &taylor,
+            expansion_reference_hz: view.expansion_reference_hz,
+            controls,
+            centres: None,
+        },
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    let cells = 64 * 64;
+    let points = [32 * 64 + 32, 10 * 64 + 20];
+    let mut coefficients = vec![0.0_f32; 2 * cells];
+    for &point in &points {
+        coefficients[point] = 1.25;
+        coefficients[cells + point] = -0.75;
+    }
+    let taylor_lifecycle = ModelLifecycle::new(&taylor, ModelStoragePlan::resident(cells).unwrap());
+    let taylor_model = taylor_lifecycle
+        .initial_from_start_model(&coefficients)
+        .unwrap();
+    let projection_inputs = || crate::mvc::MvcModelProjectionInputs {
+        cube_problem: &cube,
+        cube: &cube_completion,
+        cube_lifecycle: &cube_lifecycle,
+        taylor_problem: &taylor,
+        taylor_model: &taylor_model,
+        mean_pb: &taylor_completion.value.primary_beam,
+        expansion_reference_hz: view.expansion_reference_hz,
+        controls,
+        centres: None,
+    };
+    let projected = crate::mvc::project_mvc_model(
+        projection_inputs(),
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    assert!(projected.reservation.memory() >= projected.value.resident_bytes());
+    let inputs = ContinuumProductInputs::from_major_cycle(&cube, &cube_completion);
+    let planned = PlannedContinuumGeneration::new(&inputs, &controls).unwrap();
+    for channel in 0..3 {
+        let pb = read_mvc_cube_primary_beam(&planned, &inputs, channel).unwrap();
+        let freq = cube
+            .geometry()
+            .spectral()
+            .channel_centre_hz(channel)
+            .unwrap();
+        let factor = (freq - 45e9) / 45e9;
+        for &point in &points {
+            let polynomial = (1.25_f64 + factor * -0.75_f64) as f32;
+            let expected =
+                polynomial * pb.pixels[point] / taylor_completion.value.primary_beam[point];
+            let index = channel * cells + point;
+            let actual = projected.value.read_samples(index..index + 1).unwrap()[0]
+                .value()
+                .value() as f32;
+            assert_eq!(actual, expected, "channel {channel}, pixel {point}");
+        }
+    }
+    let tight = casa_imaging_runtime::ResourcePolicy::Explicit {
+        workers: 1,
+        memory: 1,
+    };
+    assert!(matches!(
+        crate::mvc::project_mvc_model(
+            projection_inputs(),
+            (&context.host, &tight, &context.cancel)
+        ),
+        Err(crate::native::NativeError::Admission(_))
+    ));
+    let cancelled = Cancel::default();
+    cancelled.cancel();
+    assert!(matches!(
+        crate::mvc::project_mvc_model(projection_inputs(), (&context.host, &tight, &cancelled)),
+        Err(crate::native::NativeError::Cancelled(_))
+    ));
+}
