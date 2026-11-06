@@ -67,6 +67,7 @@ pub(super) fn reconstruction_algorithm(request: &ImagingRequest) -> Reconstructi
         Deconvolver::Hogbom => ReconstructionAlgorithm::Hogbom,
         Deconvolver::Clark => ReconstructionAlgorithm::Clark,
         Deconvolver::ClarkStokes => ReconstructionAlgorithm::ClarkStokes,
+        Deconvolver::Mem => ReconstructionAlgorithm::Mem,
         Deconvolver::Multiscale => ReconstructionAlgorithm::Multiscale {
             scales_px: scales_px(request),
             small_scale_bias: request.smallscalebias,

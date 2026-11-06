@@ -507,6 +507,7 @@ impl ModelPredictor {
             flags: row.flags,
             row_flag: row.row_flag,
             context: RowContext {
+                native_frequency_ratio: 1.0,
                 original_uvw_m: None,
                 time_s: 0.0,
                 antennas: row.antennas,

@@ -30,6 +30,7 @@ pub(super) fn spread<T: GridScalar, const COMPENSATED: bool>(
     mueller: u8,
     conjugate: bool,
     gradient: [f32; 2],
+    origin_shift: u8,
     value: Complex<T>,
 ) {
     match *taps {
@@ -95,7 +96,11 @@ pub(super) fn spread<T: GridScalar, const COMPENSATED: bool>(
                 taps: tile_taps,
                 conjugate,
             };
-            match PointingRamp::new(gradient, fine_fraction(location, oversampling), [sx, sy]) {
+            match PointingRamp::new(
+                gradient,
+                fine_fraction(location, oversampling, origin_shift),
+                [sx, sy],
+            ) {
                 Some(ramp) => {
                     spread_dense::<T, true, COMPENSATED>(grid, correction, &block, ramp, value)
                 }
@@ -124,7 +129,7 @@ pub(super) fn spread_clipped<T: GridScalar, const COMPENSATED: bool>(
     (tile, cells): (Tile, CellBox),
     location: CellLocation,
     taps: &TapLayout<'_>,
-    (mueller, conjugate, gradient): (u8, bool, [f32; 2]),
+    (mueller, conjugate, gradient, origin_shift): (u8, bool, [f32; 2], u8),
     value: Complex<T>,
     scratch: &mut Vec<Complex<T>>,
 ) {
@@ -146,6 +151,7 @@ pub(super) fn spread_clipped<T: GridScalar, const COMPENSATED: bool>(
         mueller,
         conjugate,
         gradient,
+        origin_shift,
         value,
     );
     // The cells taps may land on, tile-relative.
@@ -186,7 +192,7 @@ pub(super) fn gather<T: GridScalar>(
     taps: &TapLayout<'_>,
     mueller: u8,
     conjugate: bool,
-    gradient: [f32; 2],
+    (gradient, origin_shift): ([f32; 2], u8),
 ) -> Complex64 {
     match *taps {
         TapLayout::SeparableReal {
@@ -229,7 +235,11 @@ pub(super) fn gather<T: GridScalar>(
                 taps: tile_taps,
                 conjugate,
             };
-            match PointingRamp::new(gradient, fine_fraction(location, oversampling), [sx, sy]) {
+            match PointingRamp::new(
+                gradient,
+                fine_fraction(location, oversampling, origin_shift),
+                [sx, sy],
+            ) {
                 Some(ramp) => gather_dense::<T, true>(grid, &block, ramp),
                 None => gather_dense::<T, false>(grid, &block, PointingRamp::NONE),
             }
@@ -492,13 +502,14 @@ fn dense_tile_index(
         + usize::from(mueller)
 }
 
-/// The sample's offset from its cell in cells, `(off − s/2)/s` per axis,
-/// from its fine rows: the pointing ramp is anchored at the sample itself
-/// (CASA reads the ramped kernel at `ix·sampling + off`), so every mode,
-/// the PSF and weight image included, carries the same per-sample phase.
-fn fine_fraction(location: CellLocation, oversampling: u16) -> [f64; 2] {
+/// The ramp's fine fraction `(off − s/2 − origin_shift)/s` per axis.
+/// CASA reads the ramp at `ix·sampling + off` relative to its array
+/// centre; the odd AW gradient array starts one fine pixel later.
+fn fine_fraction(location: CellLocation, oversampling: u16, origin_shift: u8) -> [f64; 2] {
     let half = f64::from(oversampling) / 2.0;
-    let fraction = |offset: u16| (f64::from(offset) - half) / f64::from(oversampling);
+    let fraction = |offset: u16| {
+        (f64::from(offset) - half - f64::from(origin_shift)) / f64::from(oversampling)
+    };
     [fraction(location.ox), fraction(location.oy)]
 }
 
@@ -766,6 +777,7 @@ mod tests {
     fn ramp_case<T: GridScalar>(
         (support, gradient, offsets, conjugate): ([usize; 2], [f32; 2], [u16; 2], bool),
         spread_tolerance: f64,
+        origin_shift: u8,
     ) {
         let oversampling = 4_u16;
         let [sx, sy] = support;
@@ -796,8 +808,10 @@ mod tests {
             + usize::from(offsets[0]))
             * sx
             * sy;
-        let [fx, fy] = offsets
-            .map(|o| (f64::from(o) - f64::from(oversampling) / 2.0) / f64::from(oversampling));
+        let [fx, fy] = offsets.map(|o| {
+            (f64::from(o) - f64::from(oversampling) / 2.0 - f64::from(origin_shift))
+                / f64::from(oversampling)
+        });
         let direct = |ix: usize, iy: usize| {
             let stored = data[first + iy * sx + ix];
             let sign = if conjugate { -1.0 } else { 1.0 };
@@ -824,6 +838,7 @@ mod tests {
             0,
             conjugate,
             gradient,
+            origin_shift,
             value,
         );
         for (ix, iy) in (0..sy).flat_map(|iy| (0..sx).map(move |ix| (ix, iy))) {
@@ -853,7 +868,15 @@ mod tests {
                 direct(ix, iy).conj() * Complex64::new(cell.re.into_f64(), cell.im.into_f64())
             })
             .fold(Complex64::default(), |sum, term| sum + term);
-        let got = gather::<T>(&grid, tile, location, &taps, 0, conjugate, gradient);
+        let got = gather::<T>(
+            &grid,
+            tile,
+            location,
+            &taps,
+            0,
+            conjugate,
+            (gradient, origin_shift),
+        );
         if gradient == [0.0, 0.0] {
             assert!(got == expected, "{label}: gather changed");
         } else {
@@ -887,11 +910,20 @@ mod tests {
             ([9, 5], [0.0, 0.0], [1, 4], false),
         ];
         for case in cases {
-            ramp_case::<f64>(case, 1e-12);
-            ramp_case::<f32>(case, 1e-6);
+            ramp_case::<f64>(case, 1e-12, 0);
+            ramp_case::<f32>(case, 1e-6, 0);
         }
         assert!(PointingRamp::new([0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
         assert!(PointingRamp::new([-0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
+    }
+
+    /// Odd CASA AW phase arrays are read one fine pixel before their
+    /// construction origin, in both spreading and prediction (#1070).
+    #[test]
+    fn odd_aw_phase_origin_is_used_by_spread_and_gather() {
+        let case = ([7, 5], [0.37_f32, -0.21], [1_u16, 3], true);
+        ramp_case::<f64>(case, 1e-12, 1);
+        ramp_case::<f32>(case, 1e-6, 1);
     }
 
     /// A dense cell's norm read from its tiles' sums (#449) is the sum of

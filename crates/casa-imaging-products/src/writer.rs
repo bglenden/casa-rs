@@ -45,6 +45,7 @@ use crate::{PlannedContinuumGeneration, PlannedMember, ProductsError, RestoringB
 pub struct CasaImageWriter {
     domains: Arc<BTreeMap<ImageDomainRole, CasaImageDomainOutput>>,
     alternate_coordinates: Option<Vec<(ImageDomainRole, CoordinateSystem)>>,
+    mem_alpha: Option<f32>,
     staged: Arc<Mutex<Vec<StagedImage>>>,
 }
 
@@ -153,6 +154,7 @@ impl CasaImageWriter {
         Self {
             domains: Arc::new(outputs),
             alternate_coordinates: None,
+            mem_alpha: None,
             staged: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -185,6 +187,7 @@ impl CasaImageWriter {
         Self {
             domains: Arc::clone(&self.domains),
             alternate_coordinates: Some(coordinates),
+            mem_alpha: self.mem_alpha,
             staged: Arc::clone(&self.staged),
         }
     }
@@ -201,6 +204,20 @@ impl CasaImageWriter {
             }
             None => &self.output(role).coordinates,
         }
+    }
+
+    /// Save the last CASA MEM entropy multiplier in the model image's
+    /// existing misc-info record, alongside its zero flux multiplier.
+    ///
+    /// # Errors
+    ///
+    /// If `alpha` is not finite.
+    pub fn set_mem_alpha(&mut self, alpha: f32) -> Result<(), ProductsError> {
+        if !alpha.is_finite() {
+            return Err(ProductsError::InvalidControls);
+        }
+        self.mem_alpha = Some(alpha);
+        Ok(())
     }
 
     fn output(&self, role: &ImageDomainRole) -> &CasaImageDomainOutput {
@@ -394,6 +411,18 @@ impl CasaImageWriter {
             RecordField::new("mpiprocs", Value::Scalar(ScalarValue::Int32(1))),
             RecordField::new("chnchnks", Value::Scalar(ScalarValue::Int32(1))),
         ];
+        if matches!(member.role(), ProductRole::Model(_))
+            && let Some(alpha) = self.mem_alpha
+        {
+            miscinfo.push(RecordField::new(
+                "ALPHA",
+                Value::Scalar(ScalarValue::Float32(alpha)),
+            ));
+            miscinfo.push(RecordField::new(
+                "BETA",
+                Value::Scalar(ScalarValue::Float32(0.0)),
+            ));
+        }
         // CASA tools read `.sumwt`'s `useweightimage` to learn whether the
         // residual was divided by a weight image (`SIImageStore`
         // `getUseWeightImage`).

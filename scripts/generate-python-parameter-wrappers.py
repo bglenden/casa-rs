@@ -157,6 +157,8 @@ def literal_annotation(values: list[str]) -> str:
 
 def domain_annotation(domain: dict[str, Any]) -> str:
     kind = domain.get("kind")
+    if kind == "variant":
+        return "ParameterData"
     if kind == "bool":
         return "bool"
     if kind == "integer":

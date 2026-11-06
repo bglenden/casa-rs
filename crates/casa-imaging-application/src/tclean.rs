@@ -114,6 +114,9 @@ impl ImagingRequest {
                 request.mvc_output_channels = Some(count);
             }
         }
+        request
+            .validate_mem_scope()
+            .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
         Ok(request)
     }
 }
@@ -361,9 +364,9 @@ impl<'a> Tclean<'a> {
         let deconvolver = self.text("deconvolver")?;
         if !matches!(
             deconvolver,
-            "hogbom" | "clark" | "clarkstokes" | "multiscale" | "mtmfs"
+            "hogbom" | "clark" | "clarkstokes" | "mem" | "multiscale" | "mtmfs"
         ) {
-            // `asp` is #223's; mem is #1060's.
+            // Experimental choices beyond MEM are tracked separately.
             let issue = if deconvolver == "asp" { 223 } else { 1060 };
             return Err(TcleanRefusal::not_yet(
                 "deconvolver",

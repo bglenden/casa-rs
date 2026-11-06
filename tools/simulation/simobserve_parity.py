@@ -180,6 +180,10 @@ CASES = [
             CORE, setpointings=False, ptgfile="inputs/flatone.single.ptg.txt", integration="2s", totaltime="60s"
         ),
     },
+    # Non-default frequency reference codes, checked in the output MS as
+    # well as through the visibility comparison.
+    {"name": "frame_topo", "params": dict(CORE, outframe="TOPO")},
+    {"name": "frame_bary", "params": dict(CORE, outframe="BARY")},
     # A model whose 4″ cells the configuration cannot sample: both refuse
     # with CASA's message, and remove the flat model.
     {
@@ -503,6 +507,32 @@ def scenarios(t, case: dict, casa: str, casars: str, links: str) -> list[dict]:
     return found
 
 
+def compare_frequency_frames(tb, casa: str, casars: str, details=None) -> list[str]:
+    """Compare the output spectral-window reference codes and channels."""
+    def read(path):
+        tb.open(os.path.join(path, "SPECTRAL_WINDOW"))
+        try:
+            return [(int(tb.getcell("MEAS_FREQ_REF", row)),
+                     np.asarray(tb.getcell("CHAN_FREQ", row))) for row in range(tb.nrows())]
+        finally:
+            tb.close()
+
+    a, b = read(casa), read(casars)
+    if details is not None:
+        for name, windows in (("CASA", a), ("casa-rs", b)):
+            details[name] = [{"reference": reference, "channels_hz": frequencies.tolist()}
+                             for reference, frequencies in windows]
+    if len(a) != len(b):
+        return [f"spectral windows: CASA {len(a)} against casa-rs {len(b)}"]
+    differences = []
+    for row, ((ref_a, freq_a), (ref_b, freq_b)) in enumerate(zip(a, b)):
+        if ref_a != ref_b:
+            differences.append(f"spectral window {row}: frequency frame {ref_a} against {ref_b}")
+        if freq_a.shape != freq_b.shape or not np.allclose(freq_a, freq_b, rtol=0, atol=1e-3):
+            differences.append(f"spectral window {row}: channel frequencies differ")
+    return differences
+
+
 def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     report = {"name": case["name"], "differences": []}
     differ = report["differences"].append
@@ -522,6 +552,10 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     a, b = stem_of(casa, ".cal.cclist"), stem_of(casars, ".cal.cclist")
     if a and b:
         report["differences"].extend(compare_components(t, a, b))
+    a, b = stem_of(casa, ".ms"), stem_of(casars, ".ms")
+    if a and b:
+        report["spectral_windows"] = {}
+        report["differences"].extend(compare_frequency_frames(t["tb"], a, b, report["spectral_windows"]))
     compare = os.path.join(out, "compare", case["name"])
     shutil.rmtree(compare, ignore_errors=True)
     links = os.path.join(compare, "casars")
@@ -539,10 +573,18 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     return report
 
 
-def copy_inputs(casatestdata: str, out: str) -> None:
+def copy_inputs(casatestdata: str, out: str, cases=None) -> None:
+    """Copy the inputs used by the selected cases, or all known inputs."""
     inputs = os.path.join(out, "inputs")
     os.makedirs(inputs, exist_ok=True)
+    needed = set(INPUTS)
+    if cases is not None:
+        needed = {value.removeprefix("inputs/") for case in cases
+                  for value in case["params"].values()
+                  if isinstance(value, str) and value.startswith("inputs/")}
     for name, path in INPUTS.items():
+        if name not in needed:
+            continue
         target = os.path.join(inputs, name)
         if os.path.exists(target):
             continue
@@ -563,12 +605,11 @@ def main() -> int:
     parser.add_argument("--skip-casa", action="store_true", help="reuse OUT/casa")
     args = parser.parse_args()
     out = os.path.abspath(args.out)
-    copy_inputs(args.casatestdata, out)
+    selected = [case for case in CASES if not args.only or case["name"] in args.only]
+    copy_inputs(args.casatestdata, out, selected)
     t = tools()
     reports = []
-    for case in CASES:
-        if args.only and case["name"] not in args.only:
-            continue
+    for case in selected:
         casa = os.path.join(out, "casa", case["name"])
         error_file = casa + ".error"
         casa_s = None

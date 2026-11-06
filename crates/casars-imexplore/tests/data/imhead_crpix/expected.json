@@ -1,0 +1,1401 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          5.5,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": 5.5,
+      "history": [
+        "Modified crpix1 from 2 to 5.5",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix1\", hdvalue=5.5, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix1",
+      "return": null,
+      "value": 5.5
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          -3.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": -3.0,
+      "history": [
+        "Modified crpix2 from 2 to -3",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix2\", hdvalue=-3, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix2",
+      "return": null,
+      "value": -3
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          0.25
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": 0.25,
+      "history": [
+        "Modified crpix4 from 1 to 0.25",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix4\", hdvalue=0.25, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix4",
+      "return": null,
+      "value": 0.25
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          3.25,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": 3.25,
+      "history": [
+        "Modified crpix1 from 2 to \"3.25\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix1\", hdvalue=\"3.25\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix1",
+      "return": null,
+      "value": "3.25"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "fromString failure for string ' 3.25 '",
+      "image": "normal",
+      "key": "crpix1",
+      "value": " 3.25 "
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "For crpix, value must be numeric, not Bool",
+      "image": "normal",
+      "key": "crpix1",
+      "value": true
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "fromString failure for string 'bad'",
+      "image": "normal",
+      "key": "crpix1",
+      "value": "bad"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: A polarization axis cannot have a reference pixel.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "image": "normal",
+      "key": "crpix3",
+      "value": 5
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: The FITS convention is that axes are 1-based. Therefore, crpix0 is not a valid FITS keyword specification.\n... thrown by casacore::uInt casa::ImageMetaDataBase<T>::_getAxisNumber(const casacore::String&) const [with T = float; casacore::uInt = unsigned int]",
+      "image": "normal",
+      "key": "crpix0",
+      "value": 1
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: This image only has 4 axes..\n... thrown by casacore::uInt casa::ImageMetaDataBase<T>::_getAxisNumber(const casacore::String&) const [with T = float; casacore::uInt = unsigned int]",
+      "image": "normal",
+      "key": "crpix5",
+      "value": 1
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          4.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": 4.0,
+      "history": [
+        "Modified crpix1x from 2 to 4",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix1x\", hdvalue=4, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix1x",
+      "return": null,
+      "value": 4
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          4.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": 4.0,
+      "history": [
+        "Modified crpix001foo from 2 to 4",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix001foo\", hdvalue=4, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix001foo",
+      "return": null,
+      "value": 4
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          4.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": 4.0,
+      "history": [
+        "Modified crpix1.0 from 2 to 4",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix1.0\", hdvalue=4, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix1.0",
+      "return": null,
+      "value": 4
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          4.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": 4.0,
+      "history": [
+        "Modified crpix1 2 from 2 to 4",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix1 2\", hdvalue=4, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crpix1 2",
+      "return": null,
+      "value": 4
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Unsupported key crpix+1",
+      "image": "normal",
+      "key": "crpix+1",
+      "value": 4
+    },
+    {
+      "after": {
+        "axisnames": [
+          "longitude",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": "longitude",
+      "history": [
+        "Modified ctype1 from \"Right Ascension\" to \"longitude\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype1\", hdvalue=\"longitude\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "ctype1",
+      "return": null,
+      "value": "longitude"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "DEC",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": "DEC",
+      "history": [
+        "Modified ctype2 from \"Declination\" to \"DEC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype2\", hdvalue=\"DEC\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "ctype2",
+      "return": null,
+      "value": "DEC"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "polarization",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": "polarization",
+      "history": [
+        "Modified ctype3 from \"Stokes\" to \"polarization\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype3\", hdvalue=\"polarization\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "ctype3",
+      "return": null,
+      "value": "polarization"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "velocity"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": "velocity",
+      "history": [
+        "Modified ctype4 from \"Frequency\" to \"velocity\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype4\", hdvalue=\"velocity\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "ctype4",
+      "return": null,
+      "value": "velocity"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": "",
+      "history": [
+        "Modified ctype1 from \"Right Ascension\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype1\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "ctype1",
+      "return": null,
+      "value": ""
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: ctype1value must be a string.\n... thrown by casacore::String casa::ImageMetaDataRW<T>::_getString(const casacore::String&, const casacore::ValueHolder&) const [with T = float]",
+      "image": "normal",
+      "key": "ctype1",
+      "value": 23
+    },
+    {
+      "after": {
+        "axisnames": [
+          "RA---SIN",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": "RA---SIN",
+      "history": [
+        "Modified ctype1x from \"Right Ascension\" to \"RA---SIN\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype1x\", hdvalue=\"RA---SIN\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "ctype1x",
+      "return": null,
+      "value": "RA---SIN"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "pol",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": "pol",
+      "history": [
+        "Modified ctype1 from \"Stokes\" to \"pol\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype1\", hdvalue=\"pol\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "ctype1",
+      "return": null,
+      "value": "pol"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": "frequency",
+      "history": [
+        "Modified ctype2 from \"Frequency\" to \"frequency\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype2\", hdvalue=\"frequency\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "ctype2",
+      "return": null,
+      "value": "frequency"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "lon",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": "lon",
+      "history": [
+        "Modified ctype3 from \"Right Ascension\" to \"lon\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"ctype3\", hdvalue=\"lon\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "ctype3",
+      "return": null,
+      "value": "lon"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          0.75,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": 0.75,
+      "history": [
+        "Modified crpix2 from 1 to 0.75",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix2\", hdvalue=0.75, verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "crpix2",
+      "return": null,
+      "value": 0.75
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          3.5,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": 3.5,
+      "history": [
+        "Modified crpix3 from 2 to 3.5",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix3\", hdvalue=3.5, verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "crpix3",
+      "return": null,
+      "value": 3.5
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          -2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": -2.0,
+      "history": [
+        "Modified crpix4 from 2 to -2",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crpix4\", hdvalue=-2.0, verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "crpix4",
+      "return": null,
+      "value": -2.0
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "error": "Exception: A polarization axis cannot have a reference pixel.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "image": "transposed",
+      "key": "crpix1",
+      "value": 1
+    }
+  ]
+}

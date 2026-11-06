@@ -121,11 +121,13 @@ impl SkyModel {
         // Rows and pointings are J2000; other frames need a conversion this
         // predictor does not make yet.
         if let CoordinateModel::Direction(direction) = coordinates.coordinate(0)
-            && direction.direction_ref() != DirectionRef::J2000
+            && (direction.direction_ref() != DirectionRef::J2000
+                || direction.conversion_direction_ref() != DirectionRef::J2000)
         {
             return unsupported(format!(
-                "the direction frame is {:?}, not J2000",
-                direction.direction_ref()
+                "the native and conversion direction frames must both be J2000 (got {:?} and {:?})",
+                direction.direction_ref(),
+                direction.conversion_direction_ref()
             ));
         }
         let spectral_unit = coordinates.coordinate(2).axis_units()[0].clone();

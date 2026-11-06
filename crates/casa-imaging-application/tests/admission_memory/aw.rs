@@ -16,6 +16,20 @@ fn an_aw_cube_stays_within_its_admission() {
     if !alone("aw::an_aw_cube_stays_within_its_admission") {
         return;
     }
+    check_aw_cube_admission("0:0", "linear");
+}
+
+/// #1121: a nearest-channel AW cube's live heap stays within its combined
+/// admission when a selected window contains more than one channel.
+#[test]
+fn a_multichannel_nearest_aw_cube_stays_within_its_admission() {
+    if !alone("aw::a_multichannel_nearest_aw_cube_stays_within_its_admission") {
+        return;
+    }
+    check_aw_cube_admission("0", "nearest");
+}
+
+fn check_aw_cube_admission(spw: &str, interpolation: &str) {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = evla_observation(root.path());
     let surface = evla_surface(root.path());
@@ -25,8 +39,9 @@ fn an_aw_cube_stays_within_its_admission() {
         "imagename": root.path().join("aw-cube"),
         "imsize": 1024,
         "cell": "10arcsec",
-        "spw": "0:0",
+        "spw": spw,
         "specmode": "cube",
+        "interpolation": interpolation,
         "deconvolver": "hogbom",
         "weighting": "natural",
         "niter": 200,

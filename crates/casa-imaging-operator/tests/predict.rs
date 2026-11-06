@@ -25,6 +25,7 @@ const UVW_M: [f64; 3] = [37.0, -21.0, 4.0];
 
 fn context() -> RowContext {
     RowContext {
+        native_frequency_ratio: 1.0,
         original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1],

@@ -71,21 +71,27 @@ const METHODS: &[Method] = &[
             LOG,
         ],
         R::Int,
-        No,
+        Yes,
     ),
     method("close", &[LOG], R::Bool, Yes),
-    method(
-        "concatenate",
-        &[param("list", K::Any, Empty), WHICH_ALL, LOG],
-        R::Bool,
-        No,
-    ),
-    method(
-        "convertfluxpol",
-        &[WHICH, param("polarization", K::Text, Text("Stokes"))],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "concatenate",
+            &[param("list", K::Any, Empty), WHICH_ALL, LOG],
+            R::Bool,
+            Yes,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method(
+            "convertfluxpol",
+            &[WHICH, param("polarization", K::Text, Text("Stokes"))],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "convertfluxunit",
         &[WHICH, param("unit", K::Text, Text("Jy"))],
@@ -98,12 +104,15 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method(
-        "convertrefdir",
-        &[WHICH, param("frame", K::Text, Required)],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "convertrefdir",
+            &[WHICH, param("frame", K::Text, Required)],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "convertshape",
         &[
@@ -211,7 +220,7 @@ const METHODS: &[Method] = &[
         "replace",
         &[WHICH, param("list", K::Record, Required), WHICH_ALL_ONES],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "sample",
@@ -226,19 +235,22 @@ const METHODS: &[Method] = &[
     ),
     method("select", &[param("which", K::Ints, Required)], R::Bool, Yes),
     method("selected", &[], R::Ints, Yes),
-    method(
-        "setflux",
-        &[
-            WHICH,
-            param("value", K::Any, Empty),
-            param("unit", K::Text, Text("Jy")),
-            param("polarization", K::Text, Text("Stokes")),
-            param("error", K::Any, Empty),
-            LOG,
-        ],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setflux",
+            &[
+                WHICH,
+                param("value", K::Any, Empty),
+                param("unit", K::Text, Text("Jy")),
+                param("polarization", K::Text, Text("Stokes")),
+                param("error", K::Any, Empty),
+                LOG,
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "setfreq",
         &[
@@ -262,77 +274,95 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method(
-        "setrefdir",
-        &[
-            param("which", K::Int, Int(1)),
-            param("ra", K::Any, Empty),
-            param("dec", K::Any, Empty),
-            LOG,
-        ],
-        R::Bool,
-        No,
-    ),
-    method(
-        "setrefdirframe",
-        &[WHICH, param("frame", K::Text, Required), LOG],
-        R::Bool,
-        No,
-    ),
-    method(
-        "setshape",
-        &[
-            WHICH,
-            param("type", K::Text, Text("Point")),
-            param("majoraxis", K::Any, Empty),
-            param("minoraxis", K::Any, Empty),
-            param("positionangle", K::Any, Empty),
-            param("majoraxiserror", K::Any, Empty),
-            param("minoraxiserror", K::Any, Empty),
-            param("positionangleerror", K::Any, Empty),
-            param("optionalparms", K::Floats, Floats(&[0.0])),
-            LOG,
-        ],
-        R::Bool,
-        No,
-    ),
-    method(
-        "setspectrum",
-        &[
-            WHICH,
-            param("type", K::Text, Text("spectral index")),
-            param("index", K::Any, Empty),
-            TABULAR_FREQS,
-            param("tabularflux", K::Floats, Floats(&[1.0])),
-            param("tabularframe", K::Text, Text("LSRK")),
-        ],
-        R::Bool,
-        No,
-    ),
-    method(
-        "setstokesspectrum",
-        &[
-            WHICH,
-            param("type", K::Text, Text("spectral index")),
-            param("index", K::Floats, Floats(&[0.0])),
-            TABULAR_FREQS,
-            param("tabulari", K::Floats, Floats(&[1.0])),
-            param("tabularq", K::Floats, Floats(&[0.0])),
-            param("tabularu", K::Floats, Floats(&[0.0])),
-            param("tabularv", K::Floats, Floats(&[0.0])),
-            param("reffreq", K::Any, Empty),
-            param("frame", K::Text, Text("LSRK")),
-        ],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setrefdir",
+            &[
+                param("which", K::Int, Int(1)),
+                param("ra", K::Any, Empty),
+                param("dec", K::Any, Empty),
+                LOG,
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method(
+            "setrefdirframe",
+            &[WHICH, param("frame", K::Text, Required), LOG],
+            R::Bool,
+            Yes,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method(
+            "setshape",
+            &[
+                WHICH,
+                param("type", K::Text, Text("Point")),
+                param("majoraxis", K::Any, Empty),
+                param("minoraxis", K::Any, Empty),
+                param("positionangle", K::Any, Empty),
+                param("majoraxiserror", K::Any, Empty),
+                param("minoraxiserror", K::Any, Empty),
+                param("positionangleerror", K::Any, Empty),
+                param("optionalparms", K::Floats, Floats(&[0.0])),
+                LOG,
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method(
+            "setspectrum",
+            &[
+                WHICH,
+                param("type", K::Text, Text("spectral index")),
+                param("index", K::Any, Empty),
+                TABULAR_FREQS,
+                param("tabularflux", K::Floats, Floats(&[1.0])),
+                param("tabularframe", K::Text, Text("LSRK")),
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method(
+            "setstokesspectrum",
+            &[
+                WHICH,
+                param("type", K::Text, Text("spectral index")),
+                param("index", K::Floats, Floats(&[0.0])),
+                TABULAR_FREQS,
+                param("tabulari", K::Floats, Floats(&[1.0])),
+                param("tabularq", K::Floats, Floats(&[0.0])),
+                param("tabularu", K::Floats, Floats(&[0.0])),
+                param("tabularv", K::Floats, Floats(&[0.0])),
+                param("reffreq", K::Any, Empty),
+                param("frame", K::Text, Text("LSRK")),
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
     of_one("shapetype", R::Text, Yes),
-    method(
-        "simulate",
-        &[param("howmany", K::Int, Int(1)), LOG],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "simulate",
+            &[param("howmany", K::Int, Int(1)), LOG],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "sort",
         &[param("criteria", K::Text, Text("Flux")), LOG],

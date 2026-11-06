@@ -115,8 +115,9 @@ static inline float2 tap_value(Table t, device const float *rows, device const f
     }
     if (s.gradient.x != 0.0f || s.gradient.y != 0.0f) {
         float mid = float(t.oversampling) * 0.5f;
-        float kx = float(int(ix) - int(sx / 2)) + (float(s.fine.x) - mid) / float(t.oversampling);
-        float ky = float(int(iy) - int(sy / 2)) + (float(s.fine.y) - mid) / float(t.oversampling);
+        float shift = (s.flags & (1u << 3)) != 0 ? 1.0f : 0.0f;
+        float kx = float(int(ix) - int(sx / 2)) + (float(s.fine.x) - mid - shift) / float(t.oversampling);
+        float ky = float(int(iy) - int(sy / 2)) + (float(s.fine.y) - mid - shift) / float(t.oversampling);
         float phase = kx * s.gradient.x + ky * s.gradient.y;
         tap = cmul(tap, float2(precise::cos(phase), precise::sin(phase)));
     }

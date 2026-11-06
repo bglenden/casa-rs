@@ -440,6 +440,9 @@ impl MuellerRouting {
 /// Per-row context a kernel set keys its cells on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RowContext {
+    /// Ratio of the native channel frequency to the frequency presented to
+    /// the resampler, for selecting AW cells in the observing frame.
+    pub native_frequency_ratio: f64,
     /// The row's MeasurementSet `UVW` in metres before the phase-centre
     /// rotation, when the source rotated the row; `None` when the row's
     /// uvw are the MeasurementSet's. The AW set keys its prediction cell
@@ -649,6 +652,13 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// (`Placement::gradient`): the kernels encode a pointing offset from
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
+
+    /// Whether CASA's pointing-gradient origin is one fine pixel after the
+    /// array centre for this cell. Weight includes PSF and sensitivity
+    /// taps; prediction uses imaging taps. Other sets centre the ramp.
+    fn pointing_origin_shift(&self, _key: CfKey, _weight: bool) -> bool {
+        false
+    }
 
     /// The taps of every cell the set can lend, imaging and weight: their
     /// bytes, the bytes of the norms a backend tabulates for each, and

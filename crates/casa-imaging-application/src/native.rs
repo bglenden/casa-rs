@@ -453,6 +453,7 @@ pub(crate) fn run(
                         scientific: outcome.scientific,
                         masks: outcome.masks,
                         facet_sum_weights: outcome.facet_sum_weights,
+                        mem_alpha: outcome.mem_alpha,
                         saved_psf_beams,
                         vla_selection_hz,
                         mvc_beam: None,
@@ -619,6 +620,7 @@ struct ProductSource<'a> {
     scientific: MajorCycleCompletion,
     masks: Option<ReconstructionMaskSet>,
     facet_sum_weights: FacetSumWeights,
+    mem_alpha: Option<f32>,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     vla_selection_hz: Option<f64>,
     /// A separately admitted common PB, borrowed until the family is staged.
@@ -648,11 +650,14 @@ fn publish_products(
     problem: &CompiledProblem,
     source: ProductSource<'_>,
     runtime: &ApplicationRuntime,
-    publication: ApplicationPublication,
+    mut publication: ApplicationPublication,
     team: &WorkerTeam,
     published: &mut Vec<String>,
     lanes: &mut (usize, Option<String>),
 ) -> Result<Products, NativeError> {
+    if let Some(alpha) = source.mem_alpha {
+        publication.writer.set_mem_alpha(alpha)?;
+    }
     let (products, held) =
         stage_products(problem, source, runtime, &publication, team, lanes, false)?;
     if runtime.cancel.is_cancelled() {
@@ -733,6 +738,7 @@ fn publish_mvc_products(
         scientific,
         masks,
         facet_sum_weights,
+        mem_alpha: _,
         saved_psf_beams,
         vla_selection_hz,
         mvc_beam: _,
@@ -749,6 +755,7 @@ fn publish_mvc_products(
             scientific,
             masks: None,
             facet_sum_weights,
+            mem_alpha: None,
             saved_psf_beams,
             vla_selection_hz,
             mvc_beam: Some(MvcProductBeam::Cube(&primary_beam)),
@@ -765,6 +772,7 @@ fn publish_mvc_products(
             scientific: taylor_science,
             masks,
             facet_sum_weights: Default::default(),
+            mem_alpha: None,
             saved_psf_beams: None,
             vla_selection_hz: None,
             mvc_beam: Some(MvcProductBeam::Taylor(&primary_beam)),
@@ -831,6 +839,7 @@ fn stage_products(
         scientific,
         masks: reconstruction_masks,
         facet_sum_weights,
+        mem_alpha: _,
         saved_psf_beams,
         vla_selection_hz,
         mvc_beam,

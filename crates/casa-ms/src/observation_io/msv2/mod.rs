@@ -272,7 +272,7 @@ impl Msv2Observation {
         let time_scale = catalogue::time_scale(main)?;
         let read = 2 * tables + catalogue::setups_bytes(&ms)?;
         grant(read)?;
-        let setups = catalogue::spectral_setups(&ms)?;
+        let setups = catalogue::spectral_setups(&ms, options.visibility_frequency_frame)?;
         let modes = catalogue::read_state_modes(&ms)?;
         let spectral_sigmas = has_content(main, "SIGMA_SPECTRUM", 0)?;
         let mut indexed = 0;

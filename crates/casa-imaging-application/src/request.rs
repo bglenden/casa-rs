@@ -417,6 +417,8 @@ pub enum Deconvolver {
     Clark,
     /// Clark point components on each polarization separately.
     ClarkStokes,
+    /// Image-plane maximum entropy.
+    Mem,
     /// Multiscale components.
     Multiscale,
     /// Multi-term multi-frequency synthesis.
@@ -768,6 +770,7 @@ impl ImagingRequest {
                 "nterms is at least one, and more than one only with deconvolver = mtmfs",
             );
         }
+        self.validate_mem_scope()?;
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
             return invalid("deconvolver, specmode", "mtmfs images a continuum (mfs)");
         }
@@ -834,6 +837,33 @@ impl ImagingRequest {
         }
         if let Gridder::Awproject(aw) = &self.gridder {
             aw.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Guard the tested MEM subset at both the CASA reader and typed request.
+    pub(crate) fn validate_mem_scope(&self) -> Result<(), InvalidRequest> {
+        if self.deconvolver == Deconvolver::Mem
+            && (self.specmode != SpecMode::Mfs
+                || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
+                || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
+                || self.weighting != Weighting::Natural
+                || self.vis.len() != 1
+                || self.outlierfile.is_some()
+                || self.has_start_model()
+                || self.tclean_restart
+                || !self.calcpsf
+                || !self.calcres
+                || self.usemask != UseMask::User
+                || self.mask_image.is_some()
+                || self.pbmask != 0.0
+                || self.nsigma != 0.0
+                || self.savemodel != SaveModel::None)
+        {
+            return Err(InvalidRequest {
+                parameters: "deconvolver",
+                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural weighting and a user box mask; continuation and model-column writes wait for #1060",
+            });
         }
         Ok(())
     }

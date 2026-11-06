@@ -159,7 +159,7 @@ impl AddComponent {
 /// it is longer than an arcminute, so that order decides which axis is
 /// reported; then `setPA` refuses an angle outside ±2π. `DiskShape` asserts
 /// its axes, taking two within 1e-17 rad as equal, and takes any angle.
-fn constructor_error(
+pub(super) fn constructor_error(
     shape: ShapeType,
     major: f64,
     minor: f64,

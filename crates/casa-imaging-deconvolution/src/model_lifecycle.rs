@@ -8,7 +8,35 @@ use casa_imaging_model::{
 };
 use thiserror::Error;
 
-use crate::model_storage::{ModelSampleUpdate, ModelSamples, ModelStoragePlan};
+use crate::model_storage::{ModelSampleUpdate, ModelSamples, ModelStoragePlan, add_with_precision};
+
+/// A dense model increment for one plane, in x-major deconvolution order.
+#[derive(Debug)]
+pub struct DenseModelPlane {
+    domain: usize,
+    coefficient: usize,
+    polarization: usize,
+    values: Vec<f64>,
+}
+
+impl DenseModelPlane {
+    /// Bind an x-major increment to one model plane. Its length is checked
+    /// against the compiled model when the lifecycle applies it.
+    #[must_use]
+    pub const fn new(
+        domain: usize,
+        coefficient: usize,
+        polarization: usize,
+        values: Vec<f64>,
+    ) -> Self {
+        Self {
+            domain,
+            coefficient,
+            polarization,
+            values,
+        }
+    }
+}
 
 /// One generation of a run's model.
 ///
@@ -244,6 +272,99 @@ impl ModelLifecycle {
                 self.contract.arithmetic_precision(),
                 self.contract.bounds().max_absolute_model_value(),
             )?;
+        }
+        self.restore_later_domain_overlap(&mut base)?;
+        Ok(PreparedFinalModel { generation: base })
+    }
+
+    /// Apply dense plane increments in canonical plane order using bounded
+    /// model windows, then restore ownership of overlapping domains. Values
+    /// inside each plane use x-major deconvolution order; storage is y-major.
+    /// Zero increments leave a sample unchanged. All nonzero increments obey
+    /// the same support, value, count and precision rules as sparse terms.
+    ///
+    /// # Panics
+    ///
+    /// If `base` does not belong to this lifecycle's model space.
+    ///
+    /// # Errors
+    ///
+    /// If a plane or its samples violate the model contract or storage fails.
+    pub fn prepare_final_dense_model(
+        &self,
+        mut base: ModelGeneration,
+        planes: impl IntoIterator<Item = DenseModelPlane>,
+    ) -> Result<PreparedFinalModel, ModelLifecycleError> {
+        self.validate_generation(&base)?;
+        let mut previous_end = 0;
+        let mut terms = 0_usize;
+        for plane in planes {
+            let shape = self.contract.target();
+            let [width, height] = shape
+                .domains()
+                .get(plane.domain)
+                .ok_or(ModelLifecycleError::CellOutsideShape)?
+                .pixels();
+            let length = width
+                .checked_mul(height)
+                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+            if plane.values.len() != length {
+                return Err(ModelLifecycleError::SampleCountMismatch {
+                    expected: length,
+                    actual: plane.values.len(),
+                });
+            }
+            let start = shape
+                .flat_index(ModelCell::new(
+                    plane.domain,
+                    plane.coefficient,
+                    plane.polarization,
+                    [0, 0],
+                ))
+                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+            if start < previous_end {
+                return Err(ModelLifecycleError::NonCanonicalDelta);
+            }
+            previous_end = start
+                .checked_add(length)
+                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+            for offset in (0..length).step_by(base.samples.window_samples()) {
+                let end = offset
+                    .saturating_add(base.samples.window_samples())
+                    .min(length);
+                let mut window = base.samples.read(start + offset..start + end)?;
+                for (local, sample) in window.iter_mut().enumerate() {
+                    let position = offset + local;
+                    let x = position % width;
+                    let y = position / width;
+                    let increment = plane.values[x * height + y];
+                    if increment == 0.0 {
+                        continue;
+                    }
+                    terms += 1;
+                    let bound = self.contract.bounds().max_delta_terms();
+                    if terms > bound {
+                        return Err(ModelLifecycleError::DeltaTermBoundExceeded { terms, bound });
+                    }
+                    let increment = ModelValue::new(increment)?;
+                    validate_model_value(
+                        increment,
+                        self.contract.bounds().max_absolute_delta_value(),
+                    )
+                    .map_err(|_| ModelLifecycleError::DeltaValueBoundExceeded)?;
+                    if sample.support() != ModelSupport::Valid {
+                        return Err(ModelLifecycleError::DeltaOutsideValidSupport);
+                    }
+                    let value = ModelValue::new(add_with_precision(
+                        self.contract.arithmetic_precision(),
+                        sample.value().value(),
+                        increment.value(),
+                    ))?;
+                    validate_model_value(value, self.contract.bounds().max_absolute_model_value())?;
+                    *sample = ModelSample::valid(value);
+                }
+                base.samples.write(start + offset, &window)?;
+            }
         }
         self.restore_later_domain_overlap(&mut base)?;
         Ok(PreparedFinalModel { generation: base })

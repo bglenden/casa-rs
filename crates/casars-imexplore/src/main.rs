@@ -4,19 +4,26 @@
 //! surface (`imexplore imhead ...`, `imexplore imstat ...`); `imhead` runs
 //! otherwise.
 
+use std::ffi::OsString;
 use std::fmt::{Display, Write as _};
 use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_list_record,
-    imhead_put, imhead_summary_record, imstat, imstat_record,
+    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete,
+    imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
 };
+use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
-    image_task_front_end("imexplore", &["imhead", "imstat"], run).main(
-        std::env::args_os().skip(1),
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let default_logging = !casa_task_runtime::CasaLoggingConfig::output_was_configured(&args);
+    image_task_front_end("imexplore", &["imhead", "imstat"], move |task| {
+        run(task, default_logging)
+    })
+    .main(
+        args,
         casa_task_runtime::CasaLoggingConfig::from_env(),
         std::env::set_current_dir,
         &mut std::io::stdout(),
@@ -24,52 +31,274 @@ fn main() -> ExitCode {
     )
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+fn run(task: &TaskInvocation<'_>, default_logging: bool) -> Result<TaskSuccess, TaskFailure> {
     match task.surface() {
         "imstat" => run_imstat(task),
-        _ => run_imhead(task),
+        _ => run_imhead(task, default_logging),
     }
 }
 
 /// CASA's `imhead` returns its header record for `summary` and `list`, and
 /// `None` for `put`; `imstat` returns its statistics record.
-fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+fn run_imhead(
+    task: &TaskInvocation<'_>,
+    default_logging: bool,
+) -> Result<TaskSuccess, TaskFailure> {
+    let operation_value = task
+        .value("hdvalue")
+        .map(casa_provider_contracts::casa_numpy_scalar_root)
+        .transpose()
+        .map_err(|error| TaskFailure::validation(error).at("hdvalue"))?;
     let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
-    let summary = match mode.as_str() {
-        "summary" | "list" => imhead(&path).map_err(|error| image_error("imhead", &path, error))?,
-        "put" => {
+    if mode == "history" {
+        // Open the image first, just as CASA does, even if there is no logtable.
+        casa_images::analysis::validate_imhead_image(&path)
+            .map_err(|error| image_error("imhead", &path, error))?;
+        let entries = casa_images::image::image_history_entries(&path)
+            .map_err(|error| image_error("imhead", &path, error))?;
+        let mut result = TaskSuccess::new(CasaValue::None, &())?;
+        for entry in entries {
+            result = result.with_replayed_info(
+                entry.time_mjd_seconds,
+                &entry.replay_location(),
+                &entry.message,
+                default_logging,
+            );
+        }
+        return Ok(result);
+    }
+    let mut summary = match mode.as_str() {
+        "summary" | "list" | "get" => {
+            imhead(&path).map_err(|error| image_error("imhead", &path, error))?
+        }
+        "add" | "del" | "put" => {
+            if path.is_file() {
+                casa_images::analysis::validate_imhead_writable(&path)
+                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+            }
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
             })?;
-            if !hdkey.eq_ignore_ascii_case("bunit") {
+            let key = hdkey.to_ascii_lowercase();
+            let reference_pixel = mode == "put" && key.starts_with("crpix");
+            let axis_name = mode == "put" && key.starts_with("ctype");
+            let axis_unit = mode == "put" && key.starts_with("cunit");
+            let rest_frequency = (mode == "put" || mode == "add") && key == "restfreq";
+            let observation_date = mode == "put" && ["date-obs", "epoch"].contains(&key.as_str());
+            let spectral_reference = mode == "put" && key == "reffreqtype";
+            let direction_reference = mode == "put" && key == "equinox";
+            let projection = mode == "put" && key == "projection";
+            let beam_key =
+                ["beammajor", "beamminor", "beampa", "bmaj", "bmin", "bpa"].contains(&key.as_str());
+            let axis_quantity =
+                mode == "put" && (key.starts_with("cdelt") || key.starts_with("crval"));
+            if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())
+                && !(mode == "put" && key == "imtype")
+                && !reference_pixel
+                && !axis_name
+                && !axis_unit
+                && !rest_frequency
+                && !observation_date
+                && !spectral_reference
+                && !direction_reference
+                && !projection
+                && !beam_key
+                && !axis_quantity
+                && !casa_images::analysis::imhead_is_custom_key(&hdkey)
+            {
                 return Err(TaskFailure::validation(format!(
-                    "imhead put of hdkey {hdkey:?} is not implemented by casa-rs yet (#977); \
-                     it puts bunit"
+                    "imhead {mode} of hdkey {hdkey:?} is not implemented by casa-rs yet (#977)"
                 ))
                 .at("hdkey"));
             }
             // CASA's default '' is a value here: it clears the key, as
             // `hdkey='bunit', hdvalue=''` clears the brightness unit.
-            let hdvalue = task.text("hdvalue")?.unwrap_or_default();
-            imhead_put(&path, &hdkey, &hdvalue)
-                .map_err(|error| image_error("imhead", &path, error))?
+            let hdvalue = task
+                .value("hdvalue")
+                .cloned()
+                .unwrap_or_else(|| ParameterValue::String(String::new()));
+            let value = operation_value.as_ref().unwrap_or(&hdvalue);
+            let mut write_task_history = true;
+            let summary = if beam_key {
+                casa_images::analysis::imhead_change_beam(&path, &mode, &hdkey, value).map(
+                    |(summary, write_history)| {
+                        write_task_history = write_history;
+                        summary
+                    },
+                )
+            } else if reference_pixel {
+                casa_images::analysis::imhead_put_reference_pixel(&path, &hdkey, value)
+            } else if axis_name {
+                casa_images::analysis::imhead_put_axis_name(&path, &hdkey, value)
+            } else if axis_unit {
+                casa_images::analysis::imhead_put_axis_unit(&path, &hdkey, value)
+            } else if rest_frequency {
+                if mode == "add" {
+                    casa_images::analysis::imhead_add_rest_frequency(&path, value)
+                } else {
+                    casa_images::analysis::imhead_put_rest_frequency(&path, value)
+                }
+            } else if observation_date {
+                casa_images::analysis::imhead_put_observation_date(&path, &hdkey, value)
+            } else if spectral_reference {
+                casa_images::analysis::imhead_put_spectral_reference(&path, &hdkey, value)
+            } else if direction_reference {
+                casa_images::analysis::imhead_put_direction_reference(&path, &hdkey, value)
+            } else if projection {
+                casa_images::analysis::imhead_put_projection(&path, &hdkey, value)
+            } else if axis_quantity {
+                casa_images::analysis::imhead_put_axis_quantity(&path, &hdkey, value)
+            } else if casa_images::analysis::imhead_is_custom_key(&hdkey) {
+                casa_images::analysis::imhead_custom_value_change(&path, &mode, &hdkey, value)
+            } else if mode == "del" {
+                imhead_add_delete(&path, &mode, &hdkey, "")
+            } else if let ParameterValue::String(value) = value {
+                if mode == "put" {
+                    imhead_put(&path, &hdkey, value)
+                } else {
+                    imhead_add_delete(&path, &mode, &hdkey, value)
+                }
+            } else {
+                return Err(TaskFailure::execution(format!(
+                    "{hdkey} value must be a string"
+                )));
+            }
+            .map_err(|error| image_error("imhead", &path, error))?;
+            let verbose = if task.flag("verbose")? {
+                "True"
+            } else {
+                "False"
+            };
+            let given_path = task
+                .session()
+                .given("imagename")
+                .map(|value| value.to_plain_json());
+            let imagename = given_path
+                .as_ref()
+                .and_then(|value| value.as_str())
+                .unwrap_or_else(|| path.to_str().unwrap_or(""));
+            let history = [
+                format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
+                format!(
+                    "imhead(imagename={}, mode={}, hdkey={}, hdvalue={}, verbose={verbose})",
+                    history_string(imagename),
+                    history_string(&mode),
+                    history_string(&hdkey),
+                    history_value(&hdvalue)
+                ),
+            ];
+            if write_task_history
+                && let Err(error) = casa_images::image::add_image_history(&path, "imhead", &history)
+            {
+                tracing::warn!("imhead could not write task history: {error}");
+            }
+            summary
         }
         other => {
             return Err(TaskFailure::validation(format!(
-                "unsupported imhead mode {other:?}; expected summary, list, or put"
+                "unsupported imhead mode {other:?}; expected summary, list, get, add, del, put, or history"
             ))
             .at("mode"));
         }
     };
+    let hdkey = task.text("hdkey")?.unwrap_or_default();
+    if mode == "list"
+        || (mode == "get"
+            && [
+                "datamin",
+                "datamax",
+                "minpixpos",
+                "maxpixpos",
+                "minpos",
+                "maxpos",
+            ]
+            .contains(&hdkey.to_ascii_lowercase().as_str()))
+    {
+        summary.extrema = imhead_extrema(&path)
+            .map_err(|error| image_error("imhead", &path, error))?
+            .map(Box::new);
+    }
     let value = match mode.as_str() {
         "summary" => imhead_summary_record(&summary),
         "list" => imhead_list_record(&summary),
+        "get" => {
+            casa_images::imhead_get_value(&summary, &path, &hdkey).map_err(|error| match error {
+                casa_images::ImheadGetError::UnsupportedKey(_) => {
+                    TaskFailure::validation(error.to_string()).at("hdkey")
+                }
+                casa_images::ImheadGetError::Execution(message) => TaskFailure::execution(message),
+                casa_images::ImheadGetError::Image(error) => image_error("imhead", &path, error),
+            })?
+        }
         // CASA's put returns None.
         _ => CasaValue::None,
     };
-    let text = header_text(&summary);
-    Ok(TaskSuccess::new(value, &summary)?.with_text(text))
+    let result = TaskSuccess::new(value, &summary)?;
+    // The front end prints the complete returned value for read modes. The
+    // separate replayed log provides the human-oriented coordinate summary.
+    let result = if matches!(mode.as_str(), "summary" | "list" | "get") {
+        result
+    } else {
+        result.with_text(summary.format_text())
+    };
+    emit_header_log(result, task, &path, &mode, &summary, default_logging)
+}
+
+fn emit_header_log(
+    mut result: TaskSuccess,
+    task: &TaskInvocation<'_>,
+    path: &Path,
+    mode: &str,
+    summary: &ImageHeaderSummary,
+    default_logging: bool,
+) -> Result<TaskSuccess, TaskFailure> {
+    if mode == "list" || mode == "summary" {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+        let mjd_seconds = seconds + 40_587.0 * 86_400.0;
+        let (location, messages) = if mode == "list" {
+            (
+                "ImageMetaDataBase::_toLog",
+                casa_images::analysis::imhead_list_log(summary),
+            )
+        } else {
+            (
+                "ImageMetaData::summary",
+                casa_images::analysis::imhead_summary_log(path, summary, task.flag("verbose")?)
+                    .map_err(|error| image_error("imhead", path, error))?,
+            )
+        };
+        for message in messages {
+            result = result.with_replayed_info(mjd_seconds, location, &message, default_logging);
+        }
+    }
+    Ok(result)
+}
+
+fn history_string(value: &str) -> String {
+    if value.chars().count() > 300 {
+        "...".to_string()
+    } else {
+        format!("\"{value}\"")
+    }
+}
+
+fn history_value(value: &ParameterValue) -> String {
+    match value {
+        ParameterValue::String(value) => history_string(value),
+        ParameterValue::Bool(value) => if *value { "True" } else { "False" }.to_string(),
+        ParameterValue::Integer(value) => value.to_string(),
+        ParameterValue::Float(value) => casa_provider_contracts::python_float(*value),
+        ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. }
+        | ParameterValue::ScalarArray(_)
+        | ParameterValue::NumpyScalar { .. } => casa_provider_contracts::python_repr(value),
+        ParameterValue::Array(_) | ParameterValue::Table(_) => {
+            casa_provider_contracts::python_repr(value)
+        }
+    }
 }
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -91,37 +320,6 @@ fn image_error(operation: &str, path: &Path, error: impl Display) -> TaskFailure
         "{operation}: cannot open or read CASA image '{}': {error}",
         path.display()
     ))
-}
-
-fn header_text(summary: &ImageHeaderSummary) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "Image name       : {}", summary.imagename);
-    let _ = writeln!(out, "Image type       : {}", summary.image_type);
-    let _ = writeln!(out, "Pixel type       : {}", summary.pixel_type);
-    let _ = writeln!(out, "Image units      : {}", summary.units);
-    let _ = writeln!(out, "Shape            : {:?}", summary.shape);
-    if let Some(beam) = &summary.restoring_beam {
-        let _ = writeln!(
-            out,
-            "Restoring Beam   : {:.6} arcsec, {:.6} arcsec, {:.6} deg",
-            beam.major_arcsec, beam.minor_arcsec, beam.position_angle_deg
-        );
-    }
-    for axis in &summary.axes {
-        let _ = writeln!(
-            out,
-            "Axis {} {:<12} {:<18} shape={} refpix={:.3} crval={:.12e} cdelt={:.12e} {}",
-            axis.axis,
-            axis.coordinate_type,
-            axis.name,
-            axis.shape,
-            axis.reference_pixel,
-            axis.reference_value,
-            axis.increment,
-            axis.unit
-        );
-    }
-    out
 }
 
 fn statistics_text(summary: &ImageStatisticsSummary) -> String {

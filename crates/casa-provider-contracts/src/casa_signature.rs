@@ -27,11 +27,14 @@
 
 use std::collections::BTreeSet;
 
+#[cfg(test)]
+use super::SurfaceContractBundle;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ContractValidationError, DefaultSpec, ParameterValue, Predicate, SurfaceContractBundle,
+    ContractValidationError, DefaultSpec, ParameterValue, Predicate, SurfaceContractRef,
     SurfaceDefinition,
 };
 
@@ -132,7 +135,16 @@ pub fn python_repr(value: &ParameterValue) -> String {
         ParameterValue::Bool(true) => "True".into(),
         ParameterValue::Bool(false) => "False".into(),
         ParameterValue::Integer(value) => value.to_string(),
-        ParameterValue::Float(value) => format!("{value:?}"),
+        ParameterValue::Float(value) => python_float(*value),
+        ParameterValue::Complex([real, imag]) => format!("({}{:+}j)", real.0, imag.0),
+        ParameterValue::EmptyArray { dtype, shape } => {
+            format!("array([], shape={shape:?}, dtype={dtype:?})")
+        }
+        ParameterValue::ScalarArray(value) => format!("array({})", python_repr(value)),
+        ParameterValue::NumpyScalar { dtype, value } => {
+            let name = format!("{dtype:?}").to_ascii_lowercase();
+            format!("np.{name}({})", python_repr(value))
+        }
         ParameterValue::String(value) => {
             format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
         }
@@ -153,6 +165,64 @@ pub fn python_repr(value: &ParameterValue) -> String {
                 .join(", ")
         ),
     }
+}
+
+/// Python's shortest round-trip spelling of a floating point number.
+pub fn python_float(value: f64) -> String {
+    if !value.is_finite() {
+        return if value.is_nan() {
+            if value.is_sign_negative() {
+                "-nan"
+            } else {
+                "nan"
+            }
+        } else if value.is_sign_negative() {
+            "-inf"
+        } else {
+            "inf"
+        }
+        .to_string();
+    }
+    if value == 0.0 {
+        return if value.is_sign_negative() {
+            "-0.0"
+        } else {
+            "0.0"
+        }
+        .to_string();
+    }
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific.split_once('e').expect("Rust writes an exponent");
+    let exponent: i32 = exponent.parse().expect("Rust writes an integer exponent");
+    let (sign, mantissa) = mantissa
+        .strip_prefix('-')
+        .map_or(("", mantissa), |rest| ("-", rest));
+    let digits: String = mantissa.chars().filter(|ch| *ch != '.').collect();
+    if !(-4..16).contains(&exponent) {
+        let fraction = if digits.len() == 1 {
+            String::new()
+        } else {
+            format!(".{}", &digits[1..])
+        };
+        return format!(
+            "{sign}{}{fraction}e{}{:02}",
+            &digits[..1],
+            if exponent < 0 { '-' } else { '+' },
+            exponent.abs()
+        );
+    }
+    let point = exponent + 1;
+    let fixed = if point <= 0 {
+        format!("0.{}{digits}", "0".repeat(point.unsigned_abs() as usize))
+    } else {
+        let point = point as usize;
+        if digits.len() <= point {
+            format!("{digits}{}.0", "0".repeat(point - digits.len()))
+        } else {
+            format!("{}.{}", &digits[..point], &digits[point..])
+        }
+    };
+    format!("{sign}{fixed}")
 }
 
 /// Check the CASA-signature rules of `surface`.
@@ -231,7 +301,7 @@ pub(super) fn validate_casa_signature(
 /// defaults of its concept's type and an `applies_when` over the surface's
 /// parameters (`known`).
 pub(super) fn validate_unimplemented(
-    bundle: &SurfaceContractBundle,
+    bundle: &SurfaceContractRef<'_>,
     known: &BTreeSet<String>,
     errors: &mut Vec<ContractValidationError>,
 ) {
@@ -475,7 +545,7 @@ mod tests {
         .unwrap();
         let known = ["mode", "sigma"].map(String::from).into();
         let mut errors = Vec::new();
-        validate_unimplemented(&bundle, &known, &mut errors);
+        validate_unimplemented(&SurfaceContractRef::from(&bundle), &known, &mut errors);
         let codes = errors
             .iter()
             .map(|error| error.code.as_str())

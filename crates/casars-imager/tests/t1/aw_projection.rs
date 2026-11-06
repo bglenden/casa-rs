@@ -493,10 +493,8 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
     );
 }
 
-/// A window of several channels interpolates onto a cube's axis, where
-/// CASA's `AWVisResampler` reads a native channel's frequency: that has no
-/// CASA comparison, so it is refused naming its issue, and its one-channel
-/// selection runs.
+/// Linear multi-channel AW cubes and tracked TOPO nearest cubes remain
+/// refused naming their issue; a one-channel selection runs (#1121).
 #[test]
 fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
     let setup = Setup {
@@ -521,7 +519,51 @@ fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
         .err()
         .expect("a window of two channels");
     assert!(refused.contains("#1121"), "{refused}");
+    let mut tracked = controls("0");
+    let fields = tracked.as_object_mut().expect("controls");
+    fields.insert("interpolation".into(), json!("nearest"));
+    fields.insert("outframe".into(), json!("TOPO"));
+    let refused = observation
+        .try_image("aw-tracked-two-channels", tracked)
+        .err()
+        .expect("tracked TOPO AW cubes remain unsupported");
+    assert!(refused.contains("#1121"), "{refused}");
     observation.image("aw-one-channel", controls("0:0"));
+}
+
+/// A multi-channel AW window with nearest interpolation places both native
+/// channels on the cube, rather than refusing the run or losing a plane (#1121).
+#[test]
+fn an_aw_cube_nearest_samples_a_multichannel_window() {
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 2,
+            ..lband_window("t1-lband-two-nearest", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut controls = cached_clean("0", &observation.scratch("two-cf"), &surface);
+    let fields = controls.as_object_mut().expect("controls");
+    fields.insert("niter".into(), json!(0));
+    fields.insert("specmode".into(), json!("cube"));
+    fields.insert("nchan".into(), json!(2));
+    fields.insert("interpolation".into(), json!("nearest"));
+    let (_, products) = observation.image("aw-two-nearest", controls);
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 2);
+    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
+    for channel in 0..2 {
+        let peak = products
+            .get(".psf")
+            .plane(channel)
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max);
+        assert!((peak - 1.0).abs() < 1.0e-6, "channel {channel}: {peak}");
+    }
 }
 
 /// A row off the grid still weighs in the sensitivity:

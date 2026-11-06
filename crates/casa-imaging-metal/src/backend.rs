@@ -1210,6 +1210,7 @@ impl MetalBackend<'_> {
             .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
         let targets = Targets {
             kind,
+            weight_origin: mode != Mode::Data,
             adjoint: Some((layout, terms)),
             model: None,
         };
@@ -1243,6 +1244,7 @@ impl MetalBackend<'_> {
         let buffer = self.model_copy(model)?;
         let targets = Targets {
             kind: TapsKind::Imaging,
+            weight_origin: false,
             adjoint: None,
             model: Some(model.layout()),
         };
@@ -1287,6 +1289,7 @@ impl MetalBackend<'_> {
         }
         let targets = Targets {
             kind: TapsKind::Imaging,
+            weight_origin: false,
             adjoint: None,
             model: Some(grids.layout()),
         };
@@ -1358,6 +1361,7 @@ impl MetalBackend<'_> {
             .expect("residual gridding needs the data terms");
         let targets = Targets {
             kind: TapsKind::Imaging,
+            weight_origin: false,
             adjoint: Some((layout, terms)),
             model: None,
         };
@@ -1392,6 +1396,7 @@ impl MetalBackend<'_> {
             .expect("residual gridding needs the data terms");
         let targets = Targets {
             kind: TapsKind::Imaging,
+            weight_origin: false,
             adjoint: Some((layout, terms)),
             model: Some(model.layout()),
         };

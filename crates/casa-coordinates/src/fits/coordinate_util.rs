@@ -71,8 +71,27 @@ const DEG_TO_RAD: f64 = PI / 180.0;
 ///
 /// # Panics
 ///
-/// Panics if `shape.len()` does not match `cs.n_pixel_axes()`.
+/// Panics if `shape.len()` does not match `cs.n_pixel_axes()` or a spectral
+/// coordinate cannot be converted to FITS frequency units. Use
+/// [`try_to_fits_header`] to handle a spectral conversion failure.
 pub fn to_fits_header(cs: &CoordinateSystem, shape: &[usize]) -> FitsHeader {
+    try_to_fits_header(cs, shape).expect("coordinate system cannot be represented as FITS")
+}
+
+/// Convert a coordinate system to FITS WCS, returning spectral conversion errors.
+///
+/// # Errors
+///
+/// Returns an error if a spectral unit or reference-frame conversion cannot
+/// be expressed in Hz.
+///
+/// # Panics
+///
+/// Panics if `shape.len()` does not match `cs.n_pixel_axes()`.
+pub fn try_to_fits_header(
+    cs: &CoordinateSystem,
+    shape: &[usize],
+) -> Result<FitsHeader, CoordinateError> {
     assert_eq!(
         shape.len(),
         cs.n_pixel_axes(),
@@ -97,7 +116,7 @@ pub fn to_fits_header(cs: &CoordinateSystem, shape: &[usize]) -> FitsHeader {
                 axis += 2;
             }
             CoordinateType::Spectral => {
-                emit_spectral(coord, &mut h, axis);
+                emit_spectral(coord, &mut h, axis)?;
                 axis += 1;
             }
             CoordinateType::Stokes => {
@@ -126,7 +145,7 @@ pub fn to_fits_header(cs: &CoordinateSystem, shape: &[usize]) -> FitsHeader {
         h.set("TIMESYS", FitsValue::String(timesys));
     }
 
-    h
+    Ok(h)
 }
 
 /// Emits FITS keywords for a [`DirectionCoordinate`].
@@ -147,6 +166,7 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let (lon_prefix, lat_prefix) = match dir_ref_str.as_str() {
         "GALACTIC" => ("GLON", "GLAT"),
         "SUPERGAL" => ("SLON", "SLAT"),
+        "ECLIPTIC" => ("ELON", "ELAT"),
         _ => ("RA--", "DEC-"),
     };
 
@@ -202,14 +222,22 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     }
 
     // RADESYS, EQUINOX
-    let (radesys, equinox) = match dir_ref_str.as_str() {
-        "J2000" => ("FK5", 2000.0),
-        "B1950" => ("FK4", 1950.0),
-        "ICRS" => ("ICRS", 2000.0),
-        _ => ("FK5", 2000.0),
-    };
-    h.set("RADESYS", FitsValue::String(radesys.into()));
-    h.set("EQUINOX", FitsValue::Float(equinox));
+    match dir_ref_str.as_str() {
+        "J2000" => {
+            h.set("RADESYS", FitsValue::String("FK5".into()));
+            h.set("EQUINOX", FitsValue::Float(2000.0));
+        }
+        "B1950" => {
+            h.set("RADESYS", FitsValue::String("FK4".into()));
+            h.set("EQUINOX", FitsValue::Float(1950.0));
+        }
+        "ICRS" => h.set("RADESYS", FitsValue::String("ICRS".into())),
+        "GALACTIC" | "SUPERGAL" | "ECLIPTIC" => {}
+        _ => {
+            h.set("RADESYS", FitsValue::String("FK5".into()));
+            h.set("EQUINOX", FitsValue::Float(2000.0));
+        }
+    }
 
     // LONPOLE, LATPOLE (in degrees)
     h.set("LONPOLE", FitsValue::Float(longpole * RAD_TO_DEG));
@@ -217,33 +245,39 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
 }
 
 /// Emits FITS keywords for a [`SpectralCoordinate`].
-fn emit_spectral(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
+fn emit_spectral(
+    coord: &CoordinateModel,
+    h: &mut FitsHeader,
+    axis: usize,
+) -> Result<(), CoordinateError> {
     let CoordinateModel::Spectral(spectral) = coord else {
-        return;
+        return Ok(());
     };
-    let crval = coord.reference_value();
-    let crpix = coord.reference_pixel();
-    let cdelt = coord.increment();
-    let units = coord.axis_units();
+    let (crpix, crval_hz, cdelt_hz) = spectral.fits_linearized_axis_hz()?;
 
     h.set(format!("CTYPE{axis}"), FitsValue::String("FREQ".into()));
-    h.set(format!("CRVAL{axis}"), FitsValue::Float(crval[0]));
-    h.set(format!("CRPIX{axis}"), FitsValue::Float(crpix[0] + 1.0));
-    h.set(format!("CDELT{axis}"), FitsValue::Float(cdelt[0]));
-    h.set(
-        format!("CUNIT{axis}"),
-        FitsValue::String(units.first().cloned().unwrap_or_default()),
-    );
+    h.set(format!("CRVAL{axis}"), FitsValue::Float(crval_hz));
+    h.set(format!("CRPIX{axis}"), FitsValue::Float(crpix + 1.0));
+    h.set(format!("CDELT{axis}"), FitsValue::Float(cdelt_hz));
+    h.set(format!("CUNIT{axis}"), FitsValue::String("Hz".into()));
 
-    let frequency_ref = spectral.frequency_ref();
-    let specsys = match frequency_ref.as_str() {
-        "LSRK" => "LSRK",
-        "BARY" => "BARYCENT",
-        "TOPO" => "TOPOCENT",
-        other => other,
-    };
-    h.set("SPECSYS", FitsValue::String(specsys.into()));
-    h.set("RESTFRQ", FitsValue::Float(spectral.rest_frequency()));
+    if !spectral.has_undefined_frame() {
+        let frequency_ref = spectral.world_frequency_ref();
+        let specsys = match frequency_ref.as_str() {
+            "LSRK" => "LSRK",
+            "BARY" => "BARYCENT",
+            "TOPO" => "TOPOCENT",
+            "GEO" => "GEOCENTR",
+            "GALACTO" => "GALACTOC",
+            "LGROUP" => "LOCALGRP",
+            "CMB" => "CMBDIPOL",
+            "REST" => "SOURCE",
+            other => other,
+        };
+        h.set("SPECSYS", FitsValue::String(specsys.into()));
+    }
+    h.set("RESTFRQ", FitsValue::Float(spectral.rest_frequency_hz()?));
+    Ok(())
 }
 
 /// Emits FITS keywords for a [`StokesCoordinate`].
@@ -272,7 +306,13 @@ fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
         let a = axis + i;
         h.set(
             format!("CTYPE{a}"),
-            FitsValue::String(names.get(i).cloned().unwrap_or_default()),
+            FitsValue::String(
+                names
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_default()
+                    .to_ascii_uppercase(),
+            ),
         );
         h.set(format!("CRVAL{a}"), FitsValue::Float(crval[i]));
         h.set(format!("CRPIX{a}"), FitsValue::Float(crpix[i] + 1.0));
@@ -314,9 +354,9 @@ fn emit_linear(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
 /// # Axis identification
 ///
 /// Each axis is identified by its `CTYPEn` keyword:
-/// - `RA--`, `DEC-`, `GLON`, `GLAT`, `SLON`, `SLAT` with a projection suffix
+/// - `RA--`, `DEC-`, `GLON`, `GLAT`, `SLON`, `SLAT`, `ELON`, `ELAT` with a projection suffix
 ///   become a [`DirectionCoordinate`].
-/// - `FREQ` or `VELO` becomes a [`SpectralCoordinate`].
+/// - `FREQ`, `VRAD` or `VELO` becomes a [`SpectralCoordinate`].
 /// - `STOKES` becomes a [`StokesCoordinate`].
 /// - Anything else becomes a [`LinearCoordinate`].
 ///
@@ -366,7 +406,7 @@ pub fn from_fits_header(
         let ctype = &ctypes[i];
         let upper = ctype.to_uppercase();
 
-        if upper.starts_with("FREQ") || upper.starts_with("VELO") {
+        if upper.starts_with("FREQ") || upper.starts_with("VRAD") || upper.starts_with("VELO") {
             let coord = parse_spectral(header, i + 1)?;
             cs.add_coordinate(coord);
         } else if upper == "STOKES" {
@@ -416,12 +456,14 @@ fn identify_direction_pair(
         match dir_ref {
             DirectionRef::GALACTIC => "GLAT",
             DirectionRef::SUPERGAL => "SLAT",
+            DirectionRef::ECLIPTIC => "ELAT",
             _ => "DEC-",
         }
     } else {
         match dir_ref {
             DirectionRef::GALACTIC => "GLON",
             DirectionRef::SUPERGAL => "SLON",
+            DirectionRef::ECLIPTIC => "ELON",
             _ => "RA--",
         }
     };
@@ -468,6 +510,8 @@ fn parse_direction_ctype(ctype: &str) -> Option<(bool, String, DirectionRef)> {
         "GLAT" => (false, DirectionRef::GALACTIC),
         "SLON" => (true, DirectionRef::SUPERGAL),
         "SLAT" => (false, DirectionRef::SUPERGAL),
+        "ELON" => (true, DirectionRef::ECLIPTIC),
+        "ELAT" => (false, DirectionRef::ECLIPTIC),
         _ => return None,
     };
 
@@ -511,7 +555,9 @@ fn parse_direction(
     let (cdelt_lon, cdelt_lat, pc) = read_linear_transform_2d(h, a1, a2, lon_scale, lat_scale)?;
 
     // Direction reference from RADESYS
-    let dir_ref = if let Some(radesys) = h.get_string("RADESYS") {
+    let dir_ref = if default_dir_ref == DirectionRef::J2000
+        && let Some(radesys) = h.get_string("RADESYS")
+    {
         match radesys.to_uppercase().as_str() {
             "FK5" => DirectionRef::J2000,
             "FK4" => DirectionRef::B1950,
@@ -652,18 +698,78 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
             "LSRK" => FrequencyRef::LSRK,
             "BARYCENT" | "BARY" => FrequencyRef::BARY,
             "TOPOCENT" | "TOPO" => FrequencyRef::TOPO,
+            "LSRD" => FrequencyRef::LSRD,
+            "GEOCENTR" | "GEO" => FrequencyRef::GEO,
+            "GALACTOC" | "GALACTO" => FrequencyRef::GALACTO,
+            "LOCALGRP" | "LGROUP" => FrequencyRef::LGROUP,
+            "CMBDIPOL" | "CMB" => FrequencyRef::CMB,
+            "SOURCE" | "REST" => FrequencyRef::REST,
             _ => FrequencyRef::TOPO,
         }
     } else {
         FrequencyRef::TOPO
     };
 
+    let radio_velocity = h
+        .get_string(&format!("CTYPE{axis}"))
+        .is_some_and(|ctype| ctype.to_ascii_uppercase().starts_with("VRAD"));
     let unit = h
         .get_string(&format!("CUNIT{axis}"))
-        .unwrap_or("Hz")
+        .unwrap_or(if radio_velocity { "m/s" } else { "Hz" })
         .to_string();
 
-    Ok(SpectralCoordinate::new(freq_ref, crval, cdelt, crpix, rest_freq).with_unit(unit))
+    if radio_velocity {
+        let velocity_unit = casa_types::quanta::Unit::new(&unit)
+            .map_err(|error| CoordinateError::InvalidRecord(error.to_string()))?;
+        let metres_per_second =
+            casa_types::quanta::Unit::new("m/s").expect("built-in velocity unit");
+        if !velocity_unit.conformant(&metres_per_second) {
+            return Err(CoordinateError::InvalidRecord(
+                "radio velocity axis needs a velocity unit".into(),
+            ));
+        }
+        let scale = velocity_unit.val().factor / metres_per_second.val().factor;
+        if rest_freq <= 0.0 {
+            // Casacore keeps the numerical axis in SI units when it cannot
+            // convert a velocity without a rest frequency.
+            return Ok(SpectralCoordinate::new(
+                freq_ref,
+                crval * scale,
+                cdelt * scale,
+                crpix,
+                rest_freq,
+            ));
+        }
+        let speed_of_light = 299_792_458.0;
+        let reference_hz = rest_freq * (1.0 - crval * scale / speed_of_light);
+        let increment_hz = -rest_freq * cdelt * scale / speed_of_light;
+        return Ok(SpectralCoordinate::new(
+            freq_ref,
+            reference_hz,
+            increment_hz,
+            crpix,
+            rest_freq,
+        ));
+    }
+
+    let coordinate =
+        SpectralCoordinate::new(freq_ref, crval, cdelt, crpix, rest_freq).with_unit(unit);
+    // FITS RESTFRQ is always Hz. As casacore does, normalize a frequency
+    // axis itself to Hz too; the FITS axis unit can supply a scaling factor.
+    // Preserve the existing velocity-axis reader when the unit is not a frequency.
+    if let (Ok(reference_hz), Ok(increment_hz)) =
+        (coordinate.value_in_hz(crval), coordinate.value_in_hz(cdelt))
+    {
+        Ok(SpectralCoordinate::new(
+            freq_ref,
+            reference_hz,
+            increment_hz,
+            crpix,
+            rest_freq,
+        ))
+    } else {
+        Ok(coordinate)
+    }
 }
 
 /// Parses a Stokes coordinate from the FITS header.
@@ -927,6 +1033,43 @@ mod tests {
     }
 
     #[test]
+    fn undefined_spectral_frame_does_not_claim_a_fits_reference_frame() {
+        let mut cs = CoordinateSystem::new();
+        cs.add_coordinate(
+            SpectralCoordinate::new(FrequencyRef::TOPO, 1.5e9, 1e6, 0., 1.4e9)
+                .with_undefined_frame(),
+        );
+        let header = to_fits_header(&cs, &[8]);
+        assert!(header.get("SPECSYS").is_none());
+        assert_eq!(header.get_float("RESTFRQ"), Some(1.4e9));
+    }
+
+    #[test]
+    fn spectral_reference_frames_use_casa_fits_names_and_roundtrip() {
+        for (reference, name) in [
+            (FrequencyRef::LSRK, "LSRK"),
+            (FrequencyRef::LSRD, "LSRD"),
+            (FrequencyRef::BARY, "BARYCENT"),
+            (FrequencyRef::TOPO, "TOPOCENT"),
+            (FrequencyRef::GEO, "GEOCENTR"),
+            (FrequencyRef::GALACTO, "GALACTOC"),
+            (FrequencyRef::LGROUP, "LOCALGRP"),
+            (FrequencyRef::CMB, "CMBDIPOL"),
+            (FrequencyRef::REST, "SOURCE"),
+        ] {
+            let mut cs = CoordinateSystem::new();
+            cs.add_coordinate(SpectralCoordinate::new(reference, 1.5e9, 1e6, 0., 1.4e9));
+            let header = to_fits_header(&cs, &[8]);
+            assert_eq!(header.get_string("SPECSYS"), Some(name));
+            let restored = from_fits_header(&header, &[8]).unwrap();
+            let CoordinateModel::Spectral(spectral) = restored.coordinate(0) else {
+                panic!("not spectral")
+            };
+            assert_eq!(spectral.frequency_ref(), reference);
+        }
+    }
+
+    #[test]
     fn missing_crval_error() {
         let cards = [
             "NAXIS   =                    1",
@@ -1142,6 +1285,34 @@ mod tests {
         let crval = dir2.reference_value();
         assert!((crval[0] - 0.5).abs() < 1e-8);
         assert!((crval[1] - 0.3).abs() < 1e-8);
+    }
+
+    #[test]
+    fn non_equatorial_fits_axes_are_not_overridden_by_radesys() {
+        for (frame, lon, lat) in [
+            (DirectionRef::GALACTIC, "GLON-SIN", "GLAT-SIN"),
+            (DirectionRef::SUPERGAL, "SLON-SIN", "SLAT-SIN"),
+            (DirectionRef::ECLIPTIC, "ELON-SIN", "ELAT-SIN"),
+        ] {
+            let mut system = CoordinateSystem::new();
+            system.add_coordinate(DirectionCoordinate::new(
+                frame,
+                Projection::new(ProjectionType::SIN),
+                [0.5, 0.3],
+                [-1e-3, 1e-3],
+                [2.0, 2.0],
+            ));
+            let mut header = to_fits_header(&system, &[4, 4]);
+            assert_eq!(header.get_string("CTYPE1"), Some(lon));
+            assert_eq!(header.get_string("CTYPE2"), Some(lat));
+            assert_eq!(header.get_string("RADESYS"), None);
+            header.set("RADESYS", FitsValue::String("ICRS".into()));
+            let restored = from_fits_header(&header, &[4, 4]).unwrap();
+            let CoordinateModel::Direction(direction) = restored.coordinate(0) else {
+                panic!("direction")
+            };
+            assert_eq!(direction.direction_ref(), frame);
+        }
     }
 
     #[test]

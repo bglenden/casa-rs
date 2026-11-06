@@ -24,6 +24,7 @@ fn repeated(taps: &TapLayout<'_>, gradient: [f32; 2]) {
             0,
             true,
             gradient,
+            0,
             Complex32::new(0.3, -0.2),
         );
         spread::<f64, false>(
@@ -35,6 +36,7 @@ fn repeated(taps: &TapLayout<'_>, gradient: [f32; 2]) {
             0,
             true,
             gradient,
+            0,
             Complex64::new(f64::from(0.3_f32), f64::from(-0.2_f32)),
         );
     }
