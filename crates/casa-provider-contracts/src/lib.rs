@@ -40,7 +40,7 @@ pub use semantic::{
 };
 pub use value_conversion::{
     casa_variant_integer, casacore_value_to_casa, empty_parameter_array, parameter_array_to_casa,
-    parameter_value_to_casacore,
+    parameter_value_to_casacore, scalar_parameter_array,
 };
 
 #[cfg(test)]

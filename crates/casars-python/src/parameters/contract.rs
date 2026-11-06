@@ -54,6 +54,9 @@ pub(crate) enum TaggedValue {
         dtype: casa_provider_contracts::EmptyArrayType,
         shape: Vec<usize>,
     },
+    ScalarArray {
+        value: Box<TaggedValue>,
+    },
     String {
         value: String,
     },
@@ -84,6 +87,9 @@ impl From<&ParameterValue> for TaggedValue {
             ParameterValue::EmptyArray { dtype, shape } => Self::EmptyArray {
                 dtype: *dtype,
                 shape: shape.clone(),
+            },
+            ParameterValue::ScalarArray(value) => Self::ScalarArray {
+                value: Box::new(Self::from(value.as_ref())),
             },
             ParameterValue::String(value) => Self::String {
                 value: value.clone(),

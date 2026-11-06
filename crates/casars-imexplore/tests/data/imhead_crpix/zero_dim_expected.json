@@ -1,0 +1,55 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "input_dtype": "bool",
+      "input": true,
+      "dtype": "bool",
+      "shape": [
+        0
+      ],
+      "values": []
+    },
+    {
+      "input_dtype": "int64",
+      "input": 4,
+      "dtype": "int64",
+      "shape": [
+        0
+      ],
+      "values": []
+    },
+    {
+      "input_dtype": "float64",
+      "input": 1.5,
+      "dtype": "float64",
+      "shape": [
+        0
+      ],
+      "values": []
+    },
+    {
+      "input_dtype": "complex128",
+      "input": [
+        1,
+        2
+      ],
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "values": []
+    },
+    {
+      "input_dtype": "U3",
+      "input": "abc",
+      "dtype": "<U3",
+      "shape": [
+        1
+      ],
+      "values": [
+        "abc"
+      ]
+    }
+  ]
+}

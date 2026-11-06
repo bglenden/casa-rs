@@ -87,7 +87,13 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
         if converted.is(value) || converted.get_type().is(value.get_type()) {
             return Err(PyTypeError::new_err("unsupported NumPy parameter dtype"));
         }
-        return parameter_value(&converted);
+        let converted = parameter_value(&converted)?;
+        if value.is_instance(&py.import("numpy")?.getattr("ndarray")?)?
+            && value.getattr("ndim")?.extract::<usize>()? == 0
+        {
+            return Ok(ParameterValue::ScalarArray(Box::new(converted)));
+        }
+        return Ok(converted);
     }
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
         return value
@@ -135,6 +141,7 @@ impl Serialize for NativeValue<'_> {
             ParameterValue::Float(value) => serializer.serialize_f64(*value),
             ParameterValue::Complex(value) => value.serialize(serializer),
             ParameterValue::EmptyArray { .. } => serializer.serialize_seq(Some(0))?.end(),
+            ParameterValue::ScalarArray(value) => NativeValue(value).serialize(serializer),
             ParameterValue::String(value) => serializer.serialize_str(value),
             ParameterValue::Array(values) => {
                 let mut sequence = serializer.serialize_seq(Some(values.len()))?;
@@ -176,6 +183,9 @@ pub(crate) fn value_to_python<'py>(
             py.import("numpy")?
                 .call_method("empty", (shape.clone(),), Some(&kwargs))?
         }
+        ParameterValue::ScalarArray(value) => py
+            .import("numpy")?
+            .call_method1("array", (value_to_python(py, value)?,))?,
         ParameterValue::Array(values) => {
             let list = PyList::empty(py);
             for value in values {

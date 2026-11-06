@@ -137,6 +137,7 @@ pub fn python_repr(value: &ParameterValue) -> String {
         ParameterValue::EmptyArray { dtype, shape } => {
             format!("array([], shape={shape:?}, dtype={dtype:?})")
         }
+        ParameterValue::ScalarArray(value) => format!("array({})", python_repr(value)),
         ParameterValue::String(value) => {
             format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
         }

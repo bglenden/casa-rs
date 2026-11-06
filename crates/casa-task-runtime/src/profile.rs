@@ -533,6 +533,7 @@ fn required_value_is_complete(value: &ParameterValue) -> bool {
             !values.is_empty() && values.values().all(required_value_is_complete)
         }
         ParameterValue::EmptyArray { .. } => false,
+        ParameterValue::ScalarArray(value) => required_value_is_complete(value),
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -662,9 +663,11 @@ fn render_toml_value(value: &ParameterValue) -> Result<String, ProfileError> {
         ParameterValue::Float(_) => Err(ProfileError::Contract(
             "cannot render non-finite profile value".to_string(),
         )),
-        ParameterValue::Complex(_) | ParameterValue::EmptyArray { .. } => Err(
-            ProfileError::Contract("this value requires typed parameter encoding".into()),
-        ),
+        ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. }
+        | ParameterValue::ScalarArray(_) => Err(ProfileError::Contract(
+            "this value requires typed parameter encoding".into(),
+        )),
         ParameterValue::String(value) => Ok(quote_string(value)),
         ParameterValue::Array(values) => values
             .iter()

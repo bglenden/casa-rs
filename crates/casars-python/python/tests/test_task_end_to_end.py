@@ -454,6 +454,45 @@ def test_imhead_delete_ignores_compound_value(tmp_path: Path, key: str, ignored:
     assert tasks.imhead(str(image), mode="get", hdkey=key) == ""
 
 
+def test_imhead_zero_dim_numpy_record_values_match_casa(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    oracle = json.loads((root / "zero_dim_expected.json").read_text())
+    for index, case in enumerate(oracle["cases"]):
+        image = tmp_path / f"zero-dim-{index}.im"
+        shutil.copytree(root / "normal.im", image)
+        value = complex(*case["input"]) if case["input_dtype"] == "complex128" else case["input"]
+        input_array = np.array(value, dtype=case["input_dtype"])
+        assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue={"value": input_array}) is None
+        actual = tasks.imhead(str(image), mode="get", hdkey="custom")["value"]
+        assert actual.dtype == np.dtype(case["dtype"])
+        assert actual.shape == tuple(case["shape"])
+        assert actual.tolist() == case["values"]
+        params = TaskParameters("imhead", workspace=tmp_path)
+        params.set_many({"imagename": str(image), "hdvalue": {"value": input_array}})
+        snapshot = params["hdvalue"]["value"]
+        assert isinstance(snapshot, np.ndarray) and snapshot.shape == () and snapshot.item() == value
+        profile = params.save(tmp_path / f"zero-dim-{index}.toml")
+        restored = TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"]["value"]
+        assert isinstance(restored, np.ndarray) and restored.shape == () and restored.item() == value
+
+
+@pytest.mark.parametrize("value", [True, 4, 1.5, "abc"])
+def test_imhead_zero_dim_direct_array_matches_casa_error_on_get(tmp_path: Path, value: object) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    source = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "zero-dim-direct.im"
+    shutil.copytree(source, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=np.array(value)) is None
+    with pytest.raises(tasks.TaskExecutionError, match="Unhandled data type Array"):
+        tasks.imhead(str(image), mode="get", hdkey="custom")
+
+
 def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:
     import numpy as np
 

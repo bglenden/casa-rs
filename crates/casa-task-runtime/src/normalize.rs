@@ -47,6 +47,9 @@ fn number_as_text(value: &ParameterValue) -> ParameterValue {
         ParameterValue::Array(values) => {
             ParameterValue::Array(values.iter().map(number_as_text).collect())
         }
+        ParameterValue::ScalarArray(value) => {
+            ParameterValue::ScalarArray(Box::new(number_as_text(value)))
+        }
         other => other.clone(),
     }
 }
@@ -90,6 +93,7 @@ fn reject_forbidden_strings(
                 reject_forbidden_strings(value, project)?;
             }
         }
+        ParameterValue::ScalarArray(value) => reject_forbidden_strings(value, project)?,
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -126,6 +130,17 @@ fn normalize_domain(
     value: &ParameterValue,
     domain: &ParameterType,
 ) -> Result<ParameterValue, NormalizationError> {
+    if matches!(value, ParameterValue::ScalarArray(_)) {
+        validate_parameter_value(value, &ParameterType::Variant)
+            .map_err(NormalizationError::Type)?;
+    }
+    if !matches!(
+        domain,
+        ParameterType::Variant | ParameterType::Optional { .. }
+    ) && let ParameterValue::ScalarArray(scalar) = value
+    {
+        return normalize_domain(scalar, domain);
+    }
     match domain {
         ParameterType::Variant => {
             validate_parameter_value(value, domain).map_err(NormalizationError::Type)?;
@@ -261,6 +276,9 @@ fn normalize_domain(
         } => match value {
             ParameterValue::String(value) if states.contains(value) => {
                 Ok(ParameterValue::String(value.clone()))
+            }
+            ParameterValue::ScalarArray(value) if matches!(value.as_ref(), ParameterValue::String(state) if states.contains(state)) => {
+                Ok(value.as_ref().clone())
             }
             // CASA spells the empty value of a parameter of several types
             // both '' and [] (flagdata's timedev): where '' is an absence
@@ -657,6 +675,7 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
             .unwrap_or_default(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
+        ParameterValue::ScalarArray(value) => numeric_values(value),
         ParameterValue::Bool(_)
         | ParameterValue::Complex(_)
         | ParameterValue::EmptyArray { .. } => Vec::new(),
@@ -690,6 +709,9 @@ fn values_semantically_equal(left: &ParameterValue, right: &ParameterValue) -> b
                         && right.is_finite()
                         && (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1.0e-12)
             })
+        }
+        (ParameterValue::ScalarArray(left), ParameterValue::ScalarArray(right)) => {
+            values_semantically_equal(left, right)
         }
         (
             ParameterValue::EmptyArray {
@@ -779,6 +801,34 @@ impl NormalizationError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn zero_dimensional_optional_states_keep_their_original_meaning() {
+        use casa_provider_contracts::{ParameterType, ParameterValue};
+        let domain = ParameterType::Optional {
+            value: Box::new(ParameterType::Float),
+            states: vec!["auto".into()],
+        };
+        let scalar = ParameterValue::ScalarArray(Box::new(ParameterValue::String("auto".into())));
+        assert_eq!(
+            super::normalize_domain(&scalar, &domain).unwrap(),
+            ParameterValue::String("auto".into())
+        );
+        let number = ParameterValue::ScalarArray(Box::new(ParameterValue::Float(3.0)));
+        assert_eq!(
+            super::normalize_domain(&number, &domain).unwrap(),
+            ParameterValue::Float(3.0)
+        );
+        let malformed = ParameterValue::ScalarArray(Box::new(ParameterValue::Array(vec![
+            ParameterValue::Integer(16),
+            ParameterValue::Integer(32),
+        ])));
+        assert!(super::normalize_domain(&malformed, &domain).is_err());
+        let nested = ParameterValue::ScalarArray(Box::new(ParameterValue::ScalarArray(Box::new(
+            ParameterValue::Integer(16),
+        ))));
+        assert!(super::normalize_domain(&nested, &ParameterType::Integer).is_err());
+    }
+
     #[test]
     fn complex_semantic_equality_handles_nested_and_nonfinite_components() {
         use casa_provider_contracts::{CasaFloat, ParameterValue};

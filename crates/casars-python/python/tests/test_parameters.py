@@ -13,6 +13,23 @@ from casars.parameters import ParameterOrigin, TaskParameters
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
+@pytest.mark.parametrize(
+    ("surface", "name", "state"),
+    [("flagdata", "timedev", ""), ("flagdata", "timedev", "none"),
+     ("tclean", "cf_resident_mb", "auto")],
+)
+def test_zero_dimensional_optional_values_match_scalar_states(
+    tmp_path: Path, surface: str, name: str, state: str,
+) -> None:
+    import numpy as np
+
+    plain = TaskParameters.defaults(surface, workspace=tmp_path)
+    array = TaskParameters.defaults(surface, workspace=tmp_path)
+    plain[name] = state
+    array[name] = np.array(state)
+    assert array[name] == plain[name]
+
+
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
     assert len(catalog["surfaces"]) == 27

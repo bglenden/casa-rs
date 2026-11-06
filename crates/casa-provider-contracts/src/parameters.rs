@@ -119,6 +119,8 @@ pub enum ParameterValue {
         dtype: EmptyArrayType,
         shape: Vec<usize>,
     },
+    /// A zero-dimensional NumPy array, retaining its scalar value.
+    ScalarArray(Box<ParameterValue>),
     String(String),
     Array(Vec<ParameterValue>),
     Table(BTreeMap<String, ParameterValue>),
@@ -153,6 +155,7 @@ impl ParameterValue {
                 serde_json::to_value(value).expect("complex components are serializable")
             }
             Self::EmptyArray { .. } => Value::Array(Vec::new()),
+            Self::ScalarArray(value) => value.to_plain_json(),
             Self::String(value) => Value::String(value.clone()),
             Self::Array(values) => Value::Array(values.iter().map(Self::to_plain_json).collect()),
             Self::Table(values) => Value::Object(
@@ -167,7 +170,7 @@ impl ParameterValue {
     /// Whether this value requires typed rather than plain JSON transport.
     pub fn requires_typed_transport(&self) -> bool {
         match self {
-            Self::Complex(_) | Self::EmptyArray { .. } => true,
+            Self::Complex(_) | Self::EmptyArray { .. } | Self::ScalarArray(_) => true,
             Self::Float(value) if !value.is_finite() => true,
             Self::Array(values) => values.iter().any(Self::requires_typed_transport),
             Self::Table(values) => values.values().any(Self::requires_typed_transport),
@@ -180,6 +183,7 @@ impl ParameterValue {
         match self {
             Self::Array(values) => 1 + values.iter().map(Self::nesting_depth).max().unwrap_or(0),
             Self::Table(values) => 1 + values.values().map(Self::nesting_depth).max().unwrap_or(0),
+            Self::ScalarArray(value) => 1 + value.nesting_depth(),
             _ => 0,
         }
     }
@@ -479,6 +483,7 @@ fn collect_selector_capabilities(
                 collect_selector_capabilities(grammar, value, used);
             }
         }
+        ParameterValue::ScalarArray(value) => collect_selector_capabilities(grammar, value, used),
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -1690,6 +1695,11 @@ fn validate_variant_value(value: &ParameterValue) -> Result<(), String> {
     }
     fn validate(value: &ParameterValue) -> Result<(), String> {
         match value {
+            ParameterValue::ScalarArray(value)
+                if !matches!(value.as_ref(), ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) | ParameterValue::Complex(_) | ParameterValue::String(_)) =>
+            {
+                Err("zero-dimensional array must contain a scalar (#977)".into())
+            }
             ParameterValue::EmptyArray { shape, .. }
                 if shape.is_empty() || shape.len() > 32 || !shape.contains(&0) || shape.iter().any(|&size| i32::try_from(size).is_err()) =>
             {
@@ -2009,6 +2019,7 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
         ParameterValue::String(value) => quantity_number(value).into_iter().collect(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
+        ParameterValue::ScalarArray(value) => numeric_values(value),
         ParameterValue::Bool(_)
         | ParameterValue::Complex(_)
         | ParameterValue::EmptyArray { .. } => Vec::new(),

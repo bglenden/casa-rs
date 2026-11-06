@@ -15,6 +15,24 @@ use crate::{
     CasaFloat, CasaValue, ComplexDtype, EmptyArrayType, FloatDtype, IntDtype, ParameterValue,
 };
 
+/// Convert a zero-dimensional NumPy array as CASA's variant bridge does.
+/// Numeric values become empty arrays; a string becomes a one-element array.
+///
+/// # Errors
+/// Returns an error if the supplied value is not a supported scalar.
+pub fn scalar_parameter_array(value: &ParameterValue) -> Result<ArrayValue, &'static str> {
+    Ok(match value {
+        ParameterValue::Bool(_) => ArrayValue::from_bool_vec(vec![]),
+        ParameterValue::Integer(_) => ArrayValue::from_i32_vec(vec![]),
+        ParameterValue::Float(_) => ArrayValue::from_f64_vec(vec![]),
+        ParameterValue::Complex(_) => ArrayValue::from_complex64_vec(vec![]),
+        ParameterValue::String(value) if !value.contains('\0') => {
+            ArrayValue::from_string_vec(vec![value.clone()])
+        }
+        _ => return Err("zero-dimensional array must contain a supported scalar (#977)"),
+    })
+}
+
 /// Construct an empty casacore array while retaining its shape and type.
 ///
 /// # Errors
@@ -83,6 +101,7 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
                     array => Value::Array(array),
                 }
             }
+            ParameterValue::ScalarArray(value) => Value::Array(scalar_parameter_array(value)?),
             ParameterValue::String(value) if !value.contains('\0') => {
                 Value::Scalar(ScalarValue::String(value.clone()))
             }

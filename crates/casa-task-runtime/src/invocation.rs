@@ -65,6 +65,10 @@ pub fn project_provider_invocation_with_originals(
             });
             let sent = given
                 .filter(|_| is_quantity(session, name))
+                .map(|given| match given {
+                    ParameterValue::ScalarArray(value) => value.as_ref(),
+                    other => other,
+                })
                 .or(path_original)
                 .unwrap_or(value);
             Some((name.clone(), sent.clone()))
@@ -144,6 +148,33 @@ mod tests {
     fn request(session: &ParameterSession) -> TaskRunRequest {
         let invocation = project_provider_invocation(session).unwrap();
         serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn zero_dimensional_values_preserve_variant_and_unwrap_quantity() {
+        let scalar = ParameterValue::ScalarArray(Box::new(ParameterValue::Float(0.001)));
+        let mut imhead =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        imhead
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        imhead.set("hdvalue", scalar.clone()).unwrap();
+        assert_eq!(request(&imhead).typed_values.get("hdvalue"), Some(&scalar));
+        let profile = imhead.render_sparse().unwrap();
+        assert_eq!(
+            crate::parse_profile(&profile)
+                .unwrap()
+                .parameters
+                .get("hdvalue"),
+            Some(&scalar)
+        );
+
+        let mut tclean =
+            ParameterSession::defaults(builtin_surface_bundle("tclean").unwrap()).unwrap();
+        tclean.set("threshold", scalar).unwrap();
+        let projected = request(&tclean);
+        assert_eq!(projected.values["threshold"], serde_json::json!(0.001));
+        assert!(!projected.typed_values.contains_key("threshold"));
     }
 
     #[test]
