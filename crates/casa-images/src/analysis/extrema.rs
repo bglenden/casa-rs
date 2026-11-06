@@ -5,27 +5,9 @@ use std::path::Path;
 
 use casa_lattices::{Lattice, StatsElement, TraversalCursorIter, TraversalSpec};
 use ndarray::{ArrayD, Dimension};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
+use super::ImageExtrema;
 use crate::{AnyPagedImage, ImageError, ImagePixel, PagedImage};
-
-/// Global extrema and zero-based pixel positions, over unmasked pixels.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImageExtrema {
-    /// Minimum pixel value.
-    pub min: f64,
-    /// Maximum pixel value.
-    pub max: f64,
-    /// Location of the first minimum in casacore pixel order.
-    pub min_position: Vec<usize>,
-    /// Location of the first maximum in casacore pixel order.
-    pub max_position: Vec<usize>,
-    /// CASA-formatted world coordinate of the first minimum.
-    pub min_world: String,
-    /// CASA-formatted world coordinate of the first maximum.
-    pub max_world: String,
-}
 
 /// Read only bounded pixel and mask chunks to find an image's extrema.
 ///

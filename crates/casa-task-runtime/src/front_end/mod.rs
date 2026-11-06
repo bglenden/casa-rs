@@ -41,13 +41,13 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use casa_provider_contracts::{
     CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
-    SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas, TaskProviderContract, TaskReply,
-    TaskRunRequest,
+    ProviderProtocolDescriptor, SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas,
+    TaskProviderContract, TaskReply, TaskRunRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -277,10 +277,22 @@ impl FrontEndOutput {
 /// The front end of one task binary.
 pub struct TaskFrontEnd<F> {
     program: String,
-    contract: Value,
+    contract: ContractDocument,
     protocol: Value,
     surfaces: Vec<SurfaceContractBundle>,
     execute: F,
+}
+
+enum ContractDocument {
+    Eager(Value),
+    Deferred {
+        contract: Box<TaskProviderContract>,
+        value: OnceLock<Result<Value, String>>,
+    },
+    Compiled {
+        document: &'static str,
+        value: OnceLock<Result<Value, String>>,
+    },
 }
 
 /// The one action a command line asks for.
@@ -305,9 +317,85 @@ where
     /// first runs when the command line's first word names none.
     pub fn new<E: Serialize>(
         program: impl Into<String>,
+        contract: TaskProviderContract<E>,
+        surfaces: &[&str],
+        execute: F,
+    ) -> Result<Self, String> {
+        Self::construct(program, contract, surfaces, execute, |contract| {
+            serde_json::to_value(&contract)
+                .map(ContractDocument::Eager)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Construct a front end for a standard task contract, deferring its
+    /// machine-readable schema document until it is requested.
+    ///
+    /// Contract validation and a serialization check still run immediately;
+    /// task parameter validation is unchanged. The concrete standard contract
+    /// contains only owned, deterministic values, so later schema rendering
+    /// preserves the output of [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same contract, surface or serialization errors as
+    /// [`Self::new`].
+    pub fn new_with_deferred_schema(
+        program: impl Into<String>,
+        contract: TaskProviderContract,
+        surfaces: &[&str],
+        execute: F,
+    ) -> Result<Self, String> {
+        Self::construct(program, contract, surfaces, execute, |contract| {
+            serde_json::to_writer(std::io::sink(), &contract).map_err(|error| error.to_string())?;
+            Ok(ContractDocument::Deferred {
+                contract: Box::new(contract),
+                value: OnceLock::new(),
+            })
+        })
+    }
+
+    /// Construct a front end from a provider contract validated at build time.
+    ///
+    /// `document` must be the JSON projection of the validated provider after
+    /// its front-end schema is installed. `hosted` must contain the requested
+    /// surfaces from that same provider. Callers must use the ordinary
+    /// constructor when build and target metadata may differ. User-provided
+    /// parameters are still resolved and validated on every invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no surface is hosted or the protocol cannot be
+    /// serialized.
+    #[doc(hidden)]
+    pub fn new_with_compiled_contract(
+        program: impl Into<String>,
+        protocol: ProviderProtocolDescriptor,
+        hosted: Vec<SurfaceContractBundle>,
+        document: &'static str,
+        execute: F,
+    ) -> Result<Self, String> {
+        if hosted.is_empty() {
+            return Err("a task front end hosts at least one surface".to_string());
+        }
+        Ok(Self {
+            program: program.into(),
+            contract: ContractDocument::Compiled {
+                document,
+                value: OnceLock::new(),
+            },
+            protocol: serde_json::to_value(protocol).map_err(|error| error.to_string())?,
+            surfaces: hosted,
+            execute,
+        })
+    }
+
+    fn construct<E: Serialize>(
+        program: impl Into<String>,
         mut contract: TaskProviderContract<E>,
         surfaces: &[&str],
         execute: F,
+        document: impl FnOnce(TaskProviderContract<E>) -> Result<ContractDocument, String>,
     ) -> Result<Self, String> {
         contract.validate().map_err(|errors| {
             errors
@@ -335,7 +423,7 @@ where
             .front_end
             .get_or_insert_with(TaskFrontEndSchemas::default);
         let protocol = serde_json::to_value(&contract.protocol).map_err(|e| e.to_string())?;
-        let contract = serde_json::to_value(&contract).map_err(|e| e.to_string())?;
+        let contract = document(contract)?;
         Ok(Self {
             program: program.into(),
             contract,
@@ -499,7 +587,31 @@ where
             Action::Help => {
                 FrontEndOutput::print(help::render_help(&self.program, &self.surfaces, bundle))
             }
-            Action::JsonSchema => pretty(&self.contract),
+            Action::JsonSchema => match &self.contract {
+                ContractDocument::Eager(value) => pretty(value),
+                ContractDocument::Deferred { contract, value } => {
+                    match value.get_or_init(|| {
+                        serde_json::to_value(contract.as_ref()).map_err(|error| error.to_string())
+                    }) {
+                        Ok(value) => pretty(value),
+                        Err(error) => FrontEndOutput::error(
+                            EXIT_EXECUTION_FAILED,
+                            format!("failed to serialize the task schema: {error}"),
+                        ),
+                    }
+                }
+                ContractDocument::Compiled { document, value } => {
+                    match value.get_or_init(|| {
+                        serde_json::from_str(document).map_err(|error| error.to_string())
+                    }) {
+                        Ok(value) => pretty(value),
+                        Err(error) => FrontEndOutput::error(
+                            EXIT_EXECUTION_FAILED,
+                            format!("failed to deserialize the task schema: {error}"),
+                        ),
+                    }
+                }
+            },
             Action::ProtocolInfo => pretty(&self.protocol),
             Action::JsonRun(source) => self.run_json(bundle, &source),
             Action::Template => match render_documented_template(bundle) {

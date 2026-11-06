@@ -50,7 +50,7 @@ pub const CALIBRATION_SURFACES: [&str; 6] = [
 /// [`CALIBRATION_SURFACES`].
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "calibrate",
         calibration_task_schema_bundle(),
         &CALIBRATION_SURFACES,

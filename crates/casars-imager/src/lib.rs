@@ -140,7 +140,7 @@ fn run_with_return(
 /// The front end of the `casars-imager` binary, which hosts `tclean`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "casars-imager",
         imager_task_schema_bundle(),
         &["tclean"],
