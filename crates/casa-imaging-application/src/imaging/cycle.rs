@@ -1095,6 +1095,22 @@ impl<'a> Run<'a> {
         if self.kept_weights.is_none() {
             self.kept_weights = self.keep_weights(residency);
         }
+        if self.domains.len() > 1
+            && self
+                .problem
+                .science()
+                .measurement_equation()
+                .w_projection()
+                .is_some()
+        {
+            for domain in &self.domains {
+                tracing::debug!(
+                    target: "casa_imaging_application::w_kernel_in_pass",
+                    reserved_bytes = domain.retained_kernel_bytes(),
+                    "W-facet kernel retained during pass"
+                );
+            }
+        }
         let team = self.teams.streaming();
         let domains = pass_domains(&self.domains, team.workers(), self.row_work(modes));
         let charts = &self.charts;

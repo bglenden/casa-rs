@@ -610,7 +610,7 @@ fn specification_inputs(
         force_primary_beam: false,
         force_model: false,
         w_projection: match &request.gridder {
-            Gridder::Wproject { wprojplanes } => Some(specification::w_projection(
+            Gridder::Wproject { wprojplanes, .. } => Some(specification::w_projection(
                 *wprojplanes,
                 frequency_range(),
                 w,

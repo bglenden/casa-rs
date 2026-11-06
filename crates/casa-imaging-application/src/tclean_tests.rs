@@ -258,7 +258,10 @@ fn casa_values_become_the_request_casa_rs_runs() {
     );
     assert_eq!(
         request(json!({ "gridder": "widefield", "wprojplanes": -1 })).gridder,
-        Gridder::Wproject { wprojplanes: None }
+        Gridder::Wproject {
+            facets: NonZeroUsize::MIN,
+            wprojplanes: None
+        }
     );
     // CASA's wproject and widefield with tclean's one w-plane are gridft.
     assert_eq!(
@@ -276,6 +279,7 @@ fn casa_values_become_the_request_casa_rs_runs() {
     assert_eq!(
         request(json!({ "gridder": "wproject", "wprojplanes": 8 })).gridder,
         Gridder::Wproject {
+            facets: NonZeroUsize::MIN,
             wprojplanes: NonZeroUsize::new(8)
         }
     );
@@ -990,6 +994,74 @@ fn a_crtf_range_limits_its_own_region() {
         let error = refusal(json!({ "mask": mask }));
         assert_eq!(error.parameter, "mask", "{mask}");
         assert!(error.message.contains("#980"), "{mask}: {}", error.message);
+    }
+}
+
+/// W facets admit only the measured scalar continuum modes; the remaining
+/// combinations keep their explicit #1063 refusal.
+#[test]
+fn w_facets_keep_their_count_and_refuse_unverified_modes() {
+    for weighting in ["natural", "uniform"] {
+        let image = request(json!({"gridder":"wproject", "wprojplanes":4,
+                                   "facets":2, "weighting":weighting}));
+        assert_eq!(
+            image.gridder,
+            Gridder::Wproject {
+                facets: NonZeroUsize::new(2).unwrap(),
+                wprojplanes: NonZeroUsize::new(4),
+            }
+        );
+        image.validate().expect("measured W-facet mode");
+    }
+    for extra in [
+        json!({"specmode":"cube"}),
+        json!({"deconvolver":"mtmfs", "nterms":2}),
+        json!({"weighting":"briggs"}),
+        json!({"stokes":"IV"}),
+        json!({"wprojplanes":-1}),
+    ] {
+        let mut args = json!({"gridder":"wproject", "wprojplanes":4, "facets":2});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        assert!(refusal(args).to_string().contains("#1063"));
+    }
+}
+
+/// Typed requests cannot bypass the W-facet scope by avoiding tclean's
+/// text-to-request conversion (#1063).
+#[test]
+fn w_facets_typed_requests_refuse_unverified_modes() {
+    let supported = request(json!({"gridder":"wproject", "wprojplanes":4, "facets":2}));
+    supported.validate().expect("measured mode");
+    let mut cube = supported.clone();
+    cube.specmode = SpecMode::Cube;
+    let mut taylor = supported.clone();
+    taylor.deconvolver = Deconvolver::Mtmfs;
+    taylor.nterms = 2;
+    let mut briggs = supported.clone();
+    briggs.weighting = crate::Weighting::Briggs;
+    let mut polarized = supported.clone();
+    polarized
+        .stokes
+        .push(casa_imaging_model::PolarizationCoordinate::StokesV);
+    let mut automatic = supported.clone();
+    automatic.gridder = Gridder::Wproject {
+        facets: NonZeroUsize::new(2).unwrap(),
+        wprojplanes: None,
+    };
+    let mut outlier = supported;
+    outlier.outlierfile = Some("outlier.txt".into());
+    for (label, image) in [
+        ("cube", cube),
+        ("taylor", taylor),
+        ("briggs", briggs),
+        ("polarized", polarized),
+        ("automatic", automatic),
+        ("outlier", outlier),
+    ] {
+        let error = image.validate().expect_err(label).to_string();
+        assert!(error.contains("#1063"), "{label}: {error}");
     }
 }
 

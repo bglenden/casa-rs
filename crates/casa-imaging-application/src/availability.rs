@@ -6,9 +6,9 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, FrequencyFrame, InstrumentResponse, PolarizationCoordinate, ProductKind,
-    ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability, SpectralFrameAnchor,
-    SpectralKernel, WeightingScheme,
+    CompiledProblem, DensityCells, FrequencyFrame, InstrumentResponse, PolarizationCoordinate,
+    ProductKind, ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability,
+    SpectralFrameAnchor, SpectralKernel, WeightingScheme,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -43,9 +43,11 @@ pub enum Unsupported {
     /// images, which wait for a CASA comparison, and a cube's density rule
     /// would see each facet's rotated uvw.
     FacetedBasis,
-    /// Facets grid with the standard kernel set. CASA refuses AW and mosaic
-    /// facets; W-projection facets wait for a per-facet W set.
+    /// Facets grid with the standard or W-projection kernel set; AW and
+    /// mosaic facets remain unsupported (#1063, #1070).
     FacetedKernelSet,
+    /// W-facet modes outside the verified scalar continuum scope (#1063).
+    FacetedWMode,
     /// Multi-channel AW cubes use nearest sampling in the data or LSRK
     /// frame. Tracked TOPO/BARY, rest, linear and cubic modes wait for #1121.
     MultiChannelWindowAwCube,
@@ -87,8 +89,12 @@ impl fmt::Display for Unsupported {
                 formatter.write_str("facets image a single-term MFS image (specmode mfs; #1063)")
             }
             Self::FacetedKernelSet => {
-                formatter.write_str("facets grid with the standard gridder only (#1063)")
+                formatter.write_str("facets grid with standard or W projection only (#1063)")
             }
+            Self::FacetedWMode => formatter.write_str(
+                "W-projection facets need Stokes I, Högbom or dirty MFS, natural or uniform \
+                 weighting, explicit W planes and one image domain (#1063)",
+            ),
             Self::MultiChannelWindowAwCube => formatter.write_str(
                 "AW projection of a multi-channel window needs nearest interpolation in \
                  the data or LSRK frame; other cube modes wait for #1121",
@@ -250,8 +256,31 @@ pub fn check(
         ) {
             unsupported.push(Unsupported::FacetedBasis);
         }
-        if !crate::imaging::standard_kernel_set(problem) {
+        let equation = problem.science().measurement_equation();
+        if !crate::imaging::standard_kernel_set(problem) && equation.w_projection().is_none() {
             unsupported.push(Unsupported::FacetedKernelSet);
+        }
+        if let Some(w) = equation.w_projection()
+            && matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::Constant
+            )
+            && (equation.instrument_response() != InstrumentResponse::Scalar
+                || problem.reconstruction().polarization().coordinates()
+                    != [PolarizationCoordinate::StokesI]
+                || !matches!(
+                    problem.reconstruction().algorithm(),
+                    ReconstructionAlgorithm::Dirty | ReconstructionAlgorithm::Hogbom
+                )
+                || !matches!(
+                    problem.weighting().scheme(),
+                    WeightingScheme::Natural | WeightingScheme::Uniform
+                )
+                || matches!(problem.weighting().density_cells(), DensityCells::Box(_))
+                || w.planes().is_none_or(|planes| planes.get() < 2)
+                || problem.geometry().domains().len() != 1)
+        {
+            unsupported.push(Unsupported::FacetedWMode);
         }
     }
     if matches!(

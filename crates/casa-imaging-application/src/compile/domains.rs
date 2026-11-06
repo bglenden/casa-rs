@@ -133,10 +133,12 @@ pub(super) fn prepare_domains(
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
     let facets = match request.gridder {
-        Gridder::Standard { facets } if facets.get() > 1 => FacetLayout::Regular {
-            columns: facets.get(),
-            rows: facets.get(),
-        },
+        Gridder::Standard { facets } | Gridder::Wproject { facets, .. } if facets.get() > 1 => {
+            FacetLayout::Regular {
+                columns: facets.get(),
+                rows: facets.get(),
+            }
+        }
         _ => FacetLayout::Single,
     };
     let mut domains = vec![PreparedImageDomain {
