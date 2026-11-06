@@ -183,3 +183,175 @@ fn taylor_demand(shape: [usize; 2], model_samples: usize) -> Result<u64, NativeE
 fn other(error: impl std::error::Error + Send + Sync + 'static) -> NativeError {
     NativeError::Other(Box::new(error))
 }
+
+/// The Taylor model and two primary beams for one cube channel (#1069).
+/// Every slice is one equally sized, x-major plane; the caller owns and
+/// admits both input planes, both beams and the output window.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC cleaning handoff is in #1069")
+)]
+pub(crate) struct MvcModelChannel<'a> {
+    pub(crate) terms: [&'a [f32]; 2],
+    pub(crate) channel_pb: &'a [f32],
+    pub(crate) mean_pb: &'a [f32],
+    pub(crate) channel_hz: f64,
+    pub(crate) reference_hz: f64,
+    pub(crate) cutoff: f32,
+}
+
+impl MvcModelChannel<'_> {
+    /// Evaluate CASA's Float Taylor model and its frequency-dependent PB
+    /// adjustment into one caller-owned cube plane.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "MVC cleaning handoff is in #1069")
+    )]
+    pub(crate) fn evaluate(&self, output: &mut [f32]) -> Result<(), NativeError> {
+        let invalid = || other(std::io::Error::other("invalid MVC model channel"));
+        let cells = output.len();
+        if cells == 0
+            || self.terms.iter().any(|term| term.len() != cells)
+            || self.channel_pb.len() != cells
+            || self.mean_pb.len() != cells
+            || !self.channel_hz.is_finite()
+            || self.channel_hz <= 0.0
+            || !self.reference_hz.is_finite()
+            || self.reference_hz <= 0.0
+            || !self.cutoff.is_finite()
+            || self.cutoff < 0.0
+            || self
+                .terms
+                .iter()
+                .copied()
+                .flatten()
+                .any(|value| !value.is_finite())
+            || self
+                .channel_pb
+                .iter()
+                .chain(self.mean_pb)
+                .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return Err(invalid());
+        }
+        let channel_max = self.channel_pb.iter().copied().fold(0.0_f32, f32::max);
+        let mean_max = self.mean_pb.iter().copied().fold(0.0_f32, f32::max);
+        let offset = (self.channel_hz - self.reference_hz) / self.reference_hz;
+        for (index, value) in output.iter_mut().enumerate() {
+            let model = self.terms[0][index] + (offset * f64::from(self.terms[1][index])) as f32;
+            *value = if channel_max <= 0.0 || mean_max <= 0.0 {
+                model
+            } else if self.channel_pb[index] > self.cutoff {
+                model * self.channel_pb[index] / self.mean_pb[index]
+            } else {
+                0.0
+            };
+            if !value.is_finite() {
+                return Err(invalid());
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod model_channel_tests {
+    use super::MvcModelChannel;
+
+    /// Values captured from CASA's real three-channel clean MVC model at
+    /// the source pixel after the first and third minor cycles (#1069).
+    #[test]
+    fn taylor_model_projects_to_casas_frequency_dependent_cube_model() {
+        let frequencies = [44.0e9, 44.128e9, 44.256e9];
+        let beams = [0.962_401_7_f32, 0.962_034_17, 0.961_665];
+        for (terms, expected) in [
+            (
+                [0.481_774_9_f32, -0.441_601_57],
+                [0.491_723_6_f32, 0.490_279_85, 0.488_836_23],
+            ),
+            (
+                [1.305_975_3_f32, -1.178_515_7],
+                [1.332_531_3_f32, 1.328_670_6, 1.324_810_1],
+            ),
+        ] {
+            for channel in 0..3 {
+                let mut output = [0.0];
+                MvcModelChannel {
+                    terms: [&terms[0..1], &terms[1..2]],
+                    channel_pb: &beams[channel..channel + 1],
+                    mean_pb: &[0.962_136_8],
+                    channel_hz: frequencies[channel],
+                    reference_hz: 45.0e9,
+                    cutoff: 0.1,
+                }
+                .evaluate(&mut output)
+                .unwrap();
+                assert!((output[0] - expected[channel]).abs() < 1.0e-6);
+            }
+        }
+    }
+
+    /// CASA preserves a polynomial plane when either whole PB is blank;
+    /// otherwise its per-pixel cutoff is strictly greater than pblimit.
+    #[test]
+    fn model_pb_blank_planes_and_cutoff_follow_casa() {
+        let evaluate = |pb: &[f32], mean: &[f32], output: &mut [f32]| {
+            MvcModelChannel {
+                terms: [&[2.0, 3.0], &[1.0, 1.0]],
+                channel_pb: pb,
+                mean_pb: mean,
+                channel_hz: 110.0,
+                reference_hz: 100.0,
+                cutoff: 0.1,
+            }
+            .evaluate(output)
+            .unwrap();
+        };
+        let mut output = [0.0; 2];
+        evaluate(&[0.0, 0.0], &[1.0, 1.0], &mut output);
+        assert_eq!(output, [2.1, 3.1]);
+        evaluate(&[0.5, 0.5], &[0.0, 0.0], &mut output);
+        assert_eq!(output, [2.1, 3.1]);
+        evaluate(&[0.1, 0.5], &[0.5, 0.25], &mut output);
+        assert_eq!(output, [0.0, 6.2]);
+    }
+
+    #[test]
+    fn model_projection_rejects_invalid_shapes_and_nonfinite_values() {
+        let mut output = [0.0; 2];
+        let mut input = MvcModelChannel {
+            terms: [&[1.0, 2.0], &[1.0, 2.0]],
+            channel_pb: &[0.5, 0.5],
+            mean_pb: &[0.5, 0.5],
+            channel_hz: 100.0,
+            reference_hz: 100.0,
+            cutoff: 0.1,
+        };
+        input.channel_pb = &[0.5];
+        assert!(input.evaluate(&mut output).is_err());
+        input.channel_pb = &[0.5, f32::NAN];
+        assert!(input.evaluate(&mut output).is_err());
+        input.channel_pb = &[0.5, 0.5];
+        input.mean_pb = &[0.0, 0.5];
+        assert!(input.evaluate(&mut output).is_err());
+        input.mean_pb = &[0.5, 0.5];
+        input.reference_hz = 0.0;
+        output = [17.0; 2];
+        assert!(input.evaluate(&mut output).is_err());
+        assert_eq!(output, [17.0; 2]);
+        input.reference_hz = 100.0;
+        input.channel_hz = 0.0;
+        assert!(input.evaluate(&mut output).is_err());
+        input.channel_hz = 100.0;
+        input.cutoff = -0.1;
+        assert!(input.evaluate(&mut output).is_err());
+        input.cutoff = 0.1;
+        input.channel_pb = &[-0.5, 0.5];
+        assert!(input.evaluate(&mut output).is_err());
+        input.channel_pb = &[0.5, 0.5];
+        input.terms = [&[1.0, f32::NAN], &[1.0, 2.0]];
+        output = [17.0; 2];
+        assert!(input.evaluate(&mut output).is_err());
+        assert_eq!(output, [17.0; 2]);
+    }
+}
