@@ -1595,7 +1595,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 53 | 3 | 5 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 54 | 3 | 4 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 6 | 18 | 0 | 0 | 0 |
@@ -1612,13 +1612,13 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 53, Partial: 3, Not implemented: 5, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 54, Partial: 3, Not implemented: 4, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
 | `add` | `thecomponent, iknow=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `addcomponent` | `flux=[], fluxunit='Jy', polarization='Stokes', dir=[], shape='point', majoraxis=[], minoraxis=[], positionangle=[], freq=[], spectrumtype='constant', index=[], optionalparms=[0.0], label=''` | Implemented | Adds point, Gaussian and disk components with constant or spectral-index spectra, call by call as CASA 6.7.6.14 does (`casa_componentlist_tool.json`); shapes CASA cannot construct raise and add nothing. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `asciitocomponentlist` | `filename, asciifile, refer='J2000', format='ST', direction={}, spectrum={}, flux={}, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `asciitocomponentlist` | `filename, asciifile, refer='J2000', format='ST', direction={}, spectrum={}, flux={}, log=True` | Implemented (#1053) | Matches CASA's placeholder: validates arguments, warns and returns zero without reading a file, creating a table or changing the list. Cyclic records are handled safely. | [signature](#componentlist-evidence-signature), [ascii-placeholder-casa](#componentlist-evidence-ascii-placeholder-casa) |
 | `close` | `log=True` | Implemented | Writes the list to its table and empties the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `concatenate` | `list=[], which=[-1], log=True` | Partial (#1053) | Appends selected components from readable component-list tables, preserving the destination and requested rows. Record input is not yet implemented. Corrects CASA wrong-row and failed-index mutations. | [signature](#componentlist-evidence-signature), [concatenate-casa](#componentlist-evidence-concatenate-casa) |
 | `convertfluxpol` | `which, polarization='Stokes'` | Implemented (#1053) | Converts complex flux values between Stokes, linear and circular bases for one or all components, preserving units and stored error values. As in CASA, warns that unchanged nonzero errors may not describe the new basis. Rejects empty-list and failed-index cases before unsafe mutation. | [signature](#componentlist-evidence-signature), [convertfluxpol-casa](#componentlist-evidence-convertfluxpol-casa) |
@@ -2162,6 +2162,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz](https://github.com/bglenden/casa-rs/blob/5a3fb213684683baa61766c828d559a5a88d15a5/crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz)
 - [crates/casars-python/python/tests/test_componentlist_setstokesspectrum.py](https://github.com/bglenden/casa-rs/blob/5a3fb213684683baa61766c828d559a5a88d15a5/crates/casars-python/python/tests/test_componentlist_setstokesspectrum.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/5a3fb213684683baa61766c828d559a5a88d15a5/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-ascii-placeholder-casa"></a>
+##### ascii-placeholder-casa
+
+**CASA-recorded values — measured.** 57 CASA 6.7.6-14 calls cover empty, populated and closed lists, accepted and rejected arguments, and integer overflow. An isolated cyclic-record probe crashes CASA; casa-rs safely returns the placeholder result. componentlist.asciitocomponentlist placeholder behavior and Python argument conversion.
+
+- [tools/simulation/componentlist_ascii_oracle.py](https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/tools/simulation/componentlist_ascii_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_ascii.json](https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/crates/casars-python/python/tests/data/casa_componentlist_ascii.json)
+- [crates/casars-python/python/tests/test_componentlist_ascii.py](https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/crates/casars-python/python/tests/test_componentlist_ascii.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 
