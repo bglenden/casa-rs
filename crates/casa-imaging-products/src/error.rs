@@ -62,6 +62,29 @@ pub enum ProductsError {
     /// implement.
     #[error("the compiled problem asks for a product rule the products do not implement")]
     UnsupportedProblem,
+    /// A supplied Taylor primary beam is invalid or does not belong to a Taylor family.
+    #[error(
+        "a supplied Taylor primary beam must be finite, non-negative, and belong to a Taylor family"
+    )]
+    InvalidTaylorPrimaryBeam,
+    /// The supplied cube correction beam or its normal state is invalid.
+    #[error(
+        "a cube Taylor primary beam needs a finite non-negative plane and a single-domain, single-polarization cube"
+    )]
+    InvalidCubeTaylorPrimaryBeam,
+    /// A supplied Taylor residual normalization divisor is invalid.
+    #[error("Taylor residual normalization needs a positive finite divisor and a Taylor family")]
+    InvalidTaylorResidualSumWeight,
+    /// A cube-to-Taylor image reduction received invalid data.
+    #[error(
+        "Taylor moment reduction needs valid matching planes, frequencies, weights and positive support"
+    )]
+    InvalidTaylorMomentReduction,
+    /// A cube-to-Taylor primary-beam reduction received invalid data.
+    #[error(
+        "Taylor primary-beam reduction needs matching finite non-negative planes and weights and a positive finite total"
+    )]
+    InvalidTaylorBeamReduction,
     /// A PB product or PB-masked member was planned without a primary-beam
     /// model in the controls.
     #[error("a primary-beam product or mask needs a primary-beam model")]

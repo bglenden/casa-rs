@@ -141,7 +141,7 @@ fn evla_dish(
 /// (`survey`), in increasing CF frequency.
 fn frequency_groups(
     (store, survey): (usize, &Survey),
-    spectral: &PreparedSpectralAxis,
+    spectral: &PreparedSpectralAxis<'_>,
 ) -> Vec<NativeAwFrequencyGroup> {
     let mut frequencies = survey
         .spectral_windows

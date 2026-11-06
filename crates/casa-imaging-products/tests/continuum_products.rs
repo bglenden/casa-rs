@@ -10,6 +10,10 @@ use std::mem::size_of;
 #[path = "continuum_products/beam_grid.rs"]
 mod beam_grid;
 mod common;
+#[path = "continuum_products/mvc.rs"]
+mod mvc;
+#[path = "continuum_products/mvc_reads.rs"]
+mod mvc_reads;
 #[path = "continuum_products/real_plane.rs"]
 mod real_plane;
 use common::continuum::{

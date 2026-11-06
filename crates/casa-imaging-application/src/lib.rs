@@ -13,6 +13,11 @@ mod compile;
 mod imaging;
 #[doc(hidden)]
 pub mod mask_image_law;
+mod mvc;
+#[cfg(test)]
+mod mvc_compile_law;
+#[doc(hidden)]
+pub mod mvc_view_law;
 mod native;
 #[doc(hidden)]
 pub mod product_law;
@@ -174,6 +179,10 @@ pub struct ImagingOutcome {
     pub planned_products: PlannedContinuumGeneration,
     /// Payload-free authorized generation retained after publication.
     pub products: PublishedContinuumGeneration,
+    /// The separately published MVC Taylor-family suffixes.
+    mvc_taylor_names: Vec<String>,
+    /// MVC's reported deconvolution plane is the single Taylor image.
+    mvc_run: bool,
     /// The charge of the memory `scientific` holds resident, released when
     /// the outcome drops.
     _retained: casa_imaging_runtime::Reservation,
@@ -203,6 +212,7 @@ impl ImagingOutcome {
             .members()
             .iter()
             .map(|member| member.name().to_string())
+            .chain(self.mvc_taylor_names.iter().cloned())
             .collect()
     }
 
@@ -211,6 +221,9 @@ impl ImagingOutcome {
     /// its Stokes planes, as CASA's `summaryminor` keys them.
     #[must_use]
     pub fn plane_layout(&self) -> [usize; 3] {
+        if self.mvc_run {
+            return [1, 1, 1];
+        }
         let reconstruction = self.problem.reconstruction();
         let channels = match reconstruction.basis() {
             casa_imaging_model::ReconstructionBasis::ChannelLocal { channels } => channels,
@@ -475,6 +488,7 @@ fn compile_run(
         .deploy(backend)
         .map_err(ApplicationDispatchError::Preparation)?;
     let input = NativeInput {
+        mvc_taylor: prepared.mvc_taylor,
         observation: prepared.observation,
         write_model_column: prepared.write_model_column,
         predicts_final_model: prepared.predicts_final_model,

@@ -32,7 +32,7 @@ pub type PrimaryBeamCentres = BTreeMap<ImageDomainRole, Vec<[f64; 2]>>;
 /// final normal state and model it carries come from the same reconciliation.
 /// Binding them checks once that they have the problem's shape; product
 /// generation then indexes them without checking again.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ContinuumProductInputs<'a> {
     problem: &'a CompiledProblem,
     normal_state: &'a FinalNormalState,
@@ -40,6 +40,9 @@ pub struct ContinuumProductInputs<'a> {
     reconstruction_mask: Option<&'a ReconstructionMask>,
     domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
     primary_beam_centres: Option<&'a PrimaryBeamCentres>,
+    taylor_primary_beam: Option<&'a [f32]>,
+    taylor_residual_sum_weight: Option<f64>,
+    cube_taylor_primary_beam: Option<&'a [f32]>,
     vla_selection_hz: Option<f64>,
     facet_sum_weights: Option<&'a FacetSumWeights>,
     saved_psf_beams: Option<&'a [RestoringBeam]>,
@@ -112,10 +115,131 @@ impl<'a> ContinuumProductInputs<'a> {
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
             primary_beam_centres: None,
+            taylor_primary_beam: None,
+            taylor_residual_sum_weight: None,
+            cube_taylor_primary_beam: None,
             vla_selection_hz: None,
             facet_sum_weights: None,
             saved_psf_beams: None,
         }
+    }
+
+    /// Bind a precomputed primary beam for a Taylor family, in x-major order.
+    ///
+    /// This is the already-normalized beam for the one Taylor image domain,
+    /// such as a sumweight-weighted mean of the published cube-channel PB
+    /// planes. CASA MVC retains its values below the PB cutoff while masking
+    /// those pixels. The caller retains and accounts for the borrowed plane
+    /// until generation ends.
+    ///
+    /// # Errors
+    ///
+    /// The completion is not a Taylor family, the plane has the wrong size,
+    /// or it contains a negative or non-finite value.
+    pub fn with_taylor_primary_beam(
+        mut self,
+        beam: &'a [f32],
+    ) -> Result<Self, crate::ProductsError> {
+        if self.normal_state.basis() != NormalBasis::Taylor {
+            return Err(crate::ProductsError::InvalidTaylorPrimaryBeam);
+        }
+        let [width, height] = self.normal_state.shape();
+        let expected =
+            width
+                .checked_mul(height)
+                .ok_or(crate::ProductsError::ResourceDemandOverflow(
+                    "Taylor primary-beam plane",
+                ))?;
+        if beam.len() != expected {
+            return Err(crate::ProductsError::PayloadLengthMismatch {
+                expected,
+                actual: beam.len(),
+            });
+        }
+        if beam.iter().any(|value| !value.is_finite() || *value < 0.0) {
+            return Err(crate::ProductsError::InvalidTaylorPrimaryBeam);
+        }
+        self.taylor_primary_beam = Some(beam);
+        Ok(self)
+    }
+
+    /// Bind MVC's weighted Taylor beam for adjusting a cube's residual.
+    ///
+    /// The caller owns and admits the x-major plane until generation ends.
+    /// Its channel PB and the PB cutoff adjust only the cube residual, as
+    /// `SynthesisUtilMethods::removeFreqDepPB` does before Taylor reduction.
+    ///
+    /// # Errors
+    ///
+    /// The completion is not a single-domain, single-polarization cube, or
+    /// the beam's size or values are invalid.
+    pub fn with_cube_taylor_primary_beam(
+        mut self,
+        beam: &'a [f32],
+    ) -> Result<Self, crate::ProductsError> {
+        if !supports_cube_taylor_beam(
+            self.normal_state.basis(),
+            self.normal_state.domain_count(),
+            self.normal_state.polarization_count(),
+        ) {
+            return Err(crate::ProductsError::InvalidCubeTaylorPrimaryBeam);
+        }
+        let [width, height] = self.normal_state.shape();
+        let expected =
+            width
+                .checked_mul(height)
+                .ok_or(crate::ProductsError::ResourceDemandOverflow(
+                    "cube Taylor primary-beam plane",
+                ))?;
+        if beam.len() != expected {
+            return Err(crate::ProductsError::PayloadLengthMismatch {
+                expected,
+                actual: beam.len(),
+            });
+        }
+        if beam.iter().any(|value| !value.is_finite() || *value < 0.0) {
+            return Err(crate::ProductsError::InvalidCubeTaylorPrimaryBeam);
+        }
+        self.cube_taylor_primary_beam = Some(beam);
+        Ok(self)
+    }
+
+    pub(crate) fn cube_taylor_primary_beam(&self) -> Option<&'a [f32]> {
+        self.cube_taylor_primary_beam
+    }
+
+    /// Bind the divisor for an already-normalized Taylor residual family.
+    ///
+    /// CASA MVC's cube-to-Taylor conversion produces normalized residual
+    /// planes while retaining its distinct published sum-weight moments.
+    /// Supplying `1.0` preserves those Float pixels without multiplying and
+    /// dividing them; published sum weights remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// The completion is not Taylor-based, or the divisor is nonpositive or
+    /// nonfinite.
+    pub fn with_taylor_residual_sum_weight(
+        mut self,
+        divisor: f64,
+    ) -> Result<Self, crate::ProductsError> {
+        if self.normal_state.basis() != NormalBasis::Taylor
+            || !divisor.is_finite()
+            || divisor <= 0.0
+        {
+            return Err(crate::ProductsError::InvalidTaylorResidualSumWeight);
+        }
+        self.taylor_residual_sum_weight = Some(divisor);
+        Ok(self)
+    }
+
+    pub(crate) fn taylor_residual_sum_weight(&self) -> Option<f64> {
+        self.taylor_residual_sum_weight
+    }
+
+    /// The supplied, already-normalized beam of the Taylor domain.
+    pub(crate) fn taylor_primary_beam(&self) -> Option<&'a [f32]> {
+        self.taylor_primary_beam
     }
 
     /// Bind the complete PSF beam grid retained from an earlier run.
@@ -344,5 +468,29 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn domain_reconstruction_masks(&self) -> Option<&ImageDomainReconstructionMasks> {
         self.domain_reconstruction_masks
+    }
+}
+
+/// The current MVC conversion owns one common beam for one domain and Stokes
+/// plane; accepting other shapes would silently reuse it for unrelated planes.
+pub(crate) fn supports_cube_taylor_beam(
+    basis: NormalBasis,
+    domains: usize,
+    polarizations: usize,
+) -> bool {
+    basis == NormalBasis::ChannelLocal && domains == 1 && polarizations == 1
+}
+
+#[cfg(test)]
+mod mvc_beam_shape_tests {
+    use super::{NormalBasis, supports_cube_taylor_beam};
+
+    #[test]
+    fn cube_taylor_beam_is_bound_only_to_its_one_domain_and_stokes_plane() {
+        assert!(supports_cube_taylor_beam(NormalBasis::ChannelLocal, 1, 1));
+        assert!(!supports_cube_taylor_beam(NormalBasis::Constant, 1, 1));
+        assert!(!supports_cube_taylor_beam(NormalBasis::Taylor, 1, 1));
+        assert!(!supports_cube_taylor_beam(NormalBasis::ChannelLocal, 2, 1));
+        assert!(!supports_cube_taylor_beam(NormalBasis::ChannelLocal, 1, 2));
     }
 }

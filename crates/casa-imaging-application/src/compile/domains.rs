@@ -113,6 +113,15 @@ impl PreparedImageDomain {
     }
 }
 
+/// Whether a domain's masking is needed by the run or only its geometry is used.
+#[derive(Clone, Copy)]
+pub(super) enum MaskPreparation {
+    /// Build the run's mask as requested.
+    ForRun,
+    /// A secondary coordinate view does not own a separate mask.
+    GeometryOnly,
+}
+
 /// The main domain and the outlier file's, ordered by role, each writing
 /// to its own output.
 pub(super) fn prepare_domains(
@@ -120,6 +129,7 @@ pub(super) fn prepare_domains(
     centre: &Centre,
     (spectral, channels): (&ImageSpectralCoordinate, usize),
     (observation, object_name): (&ObsInfo, &str),
+    mask_preparation: MaskPreparation,
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
     let facets = match request.gridder {
@@ -143,7 +153,10 @@ pub(super) fn prepare_domains(
             spectral,
             observation,
         ),
-        mask: request_mask(request, spectral, channels)?,
+        mask: match mask_preparation {
+            MaskPreparation::ForRun => request_mask(request, spectral, channels)?,
+            MaskPreparation::GeometryOnly => DomainMask::FullPlane,
+        },
         facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
@@ -173,7 +186,10 @@ pub(super) fn prepare_domains(
                 ),
                 object_name: object_name.to_owned(),
                 telescope: observation.telescope.clone(),
-                mask: outlier.mask,
+                mask: match mask_preparation {
+                    MaskPreparation::ForRun => outlier.mask,
+                    MaskPreparation::GeometryOnly => DomainMask::FullPlane,
+                },
                 facets: FacetLayout::Single,
             });
         }

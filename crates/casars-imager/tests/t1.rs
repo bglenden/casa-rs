@@ -35,6 +35,8 @@ mod mosaic_evla;
 mod msv4;
 #[path = "t1/mtmfs.rs"]
 mod mtmfs;
+#[path = "t1/mvc.rs"]
+mod mvc;
 #[path = "t1/non_square.rs"]
 mod non_square;
 #[path = "t1/pb_default.rs"]

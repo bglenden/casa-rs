@@ -1190,7 +1190,9 @@ impl ObservationSnapshotInput {
 /// The selected observation data of one imaging problem.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSnapshot {
-    sources: Vec<ObservationSource>,
+    // The immutable manifest is shared by compiled views and owns each
+    // source and its provenance once; selections are already shared inside.
+    sources: Arc<Vec<ObservationSource>>,
 }
 
 // Compilation rejects non-finite ranges, so snapshot equality is reflexive.
@@ -1330,5 +1332,7 @@ pub fn compile_observation(
     if !has_selected_samples {
         return Err(CompileObservationError::EmptySelection);
     }
-    Ok(ObservationSnapshot { sources })
+    Ok(ObservationSnapshot {
+        sources: Arc::new(sources),
+    })
 }

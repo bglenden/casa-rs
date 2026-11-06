@@ -363,6 +363,66 @@ fn a_start_model_seeds_the_main_domain_and_zeroes_the_others() {
     );
 }
 
+/// A generated model is streamed in canonical order through the admitted
+/// storage window, and source/validation errors stop construction.
+#[test]
+fn generated_model_reads_canonical_samples_without_a_whole_model_window() {
+    let compiled = problem(
+        1,
+        5,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let owner = ModelLifecycle::new(&compiled, ModelStoragePlan::resident(2).unwrap());
+    let mut seen = Vec::new();
+    let model = owner
+        .initial_from_fn::<ModelLifecycleError>(|index| {
+            seen.push(index);
+            Ok(index as f32 - 2.0)
+        })
+        .unwrap();
+    assert_eq!(seen, [0, 1, 2, 3, 4]);
+    assert!(model.read_samples(0..5).is_err());
+    let values: Vec<_> = (0..5)
+        .map(|index| {
+            model.read_samples(index..index + 1).unwrap()[0]
+                .value()
+                .value()
+        })
+        .collect();
+    assert_eq!(values, [-2.0, -1.0, 0.0, 1.0, 2.0]);
+    let mut failed_at = Vec::new();
+    let failed = owner.initial_from_fn::<ModelLifecycleError>(|index| {
+        failed_at.push(index);
+        if index == 2 {
+            Err(ModelLifecycleError::Storage("source sentinel".into()))
+        } else {
+            Ok(0.0)
+        }
+    });
+    assert!(
+        matches!(failed, Err(ModelLifecycleError::Storage(message)) if message == "source sentinel")
+    );
+    assert_eq!(failed_at, [0, 1, 2]);
+    assert!(
+        owner
+            .initial_from_fn::<ModelLifecycleError>(|index| Ok(if index == 3 {
+                f32::NAN
+            } else {
+                0.0
+            }))
+            .is_err()
+    );
+    assert!(matches!(
+        owner.initial_from_fn::<ModelLifecycleError>(|index| Ok(if index == 4 {
+            1.0e31
+        } else {
+            0.0
+        })),
+        Err(ModelLifecycleError::ModelValueBoundExceeded)
+    ));
+}
+
 #[test]
 fn final_model_restores_highest_ordinal_domain_across_overlaps() {
     let compiled = problem_with_geometry(

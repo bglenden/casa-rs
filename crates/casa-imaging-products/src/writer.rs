@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, OsString};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use casa_coordinates::CoordinateSystem;
@@ -43,9 +43,10 @@ use crate::{PlannedContinuumGeneration, PlannedMember, ProductsError, RestoringB
 
 /// The CASA image member set of one run, staged until [`Self::publish`].
 pub struct CasaImageWriter {
-    domains: BTreeMap<ImageDomainRole, CasaImageDomainOutput>,
-    staged: Mutex<Vec<StagedImage>>,
+    domains: Arc<BTreeMap<ImageDomainRole, CasaImageDomainOutput>>,
+    alternate_coordinates: Option<Vec<(ImageDomainRole, CoordinateSystem)>>,
     mem_alpha: Option<f32>,
+    staged: Arc<Mutex<Vec<StagedImage>>>,
 }
 
 /// Where one compiled image domain's members are written, and their
@@ -151,9 +152,57 @@ impl CasaImageWriter {
             "compiled image domains include the main domain"
         );
         Self {
-            domains: outputs,
-            staged: Mutex::new(Vec::new()),
+            domains: Arc::new(outputs),
+            alternate_coordinates: None,
             mem_alpha: None,
+            staged: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Bind alternate coordinates to the same output domains and staging.
+    ///
+    /// Product families with different coordinate systems may be generated
+    /// sequentially with the returned writer and this writer. Publishing from
+    /// either publishes their combined staging; dropping one leaves the
+    /// staging alive while the other remains. A failed generation discards
+    /// only the members it staged.
+    ///
+    /// # Panics
+    ///
+    /// If the coordinates do not name each bound domain exactly once.
+    #[must_use]
+    pub fn with_coordinates(&self, coordinates: Vec<(ImageDomainRole, CoordinateSystem)>) -> Self {
+        assert_eq!(
+            coordinates.len(),
+            self.domains.len(),
+            "coordinates name every domain"
+        );
+        for (index, (role, _)) in coordinates.iter().enumerate() {
+            assert!(self.domains.contains_key(role), "a bound domain");
+            assert!(
+                coordinates[..index].iter().all(|(prior, _)| prior != role),
+                "each domain is named once"
+            );
+        }
+        Self {
+            domains: Arc::clone(&self.domains),
+            alternate_coordinates: Some(coordinates),
+            mem_alpha: self.mem_alpha,
+            staged: Arc::clone(&self.staged),
+        }
+    }
+
+    /// The coordinate binding of this family, or the original binding.
+    fn coordinates_for(&self, role: &ImageDomainRole) -> &CoordinateSystem {
+        match &self.alternate_coordinates {
+            Some(coordinates) => {
+                &coordinates
+                    .iter()
+                    .find(|(candidate, _)| candidate == role)
+                    .expect("coordinates name every bound domain")
+                    .1
+            }
+            None => &self.output(role).coordinates,
         }
     }
 
@@ -194,9 +243,9 @@ impl CasaImageWriter {
         const IMAGE_ENVELOPE_BYTES: u64 = 64 * 1024;
         const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
         let overflow = || ProductsError::ResourceDemandOverflow("CASA image writer");
-        let coordinate_bytes = self.domains.values().try_fold(0_u64, |maximum, output| {
-            let bytes = output
-                .coordinates
+        let coordinate_bytes = self.domains.keys().try_fold(0_u64, |maximum, role| {
+            let bytes = self
+                .coordinates_for(role)
                 .to_record()
                 .retained_heap_bytes()
                 .and_then(|bytes| bytes.checked_mul(4))
@@ -325,7 +374,7 @@ impl CasaImageWriter {
         let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
             layout.shape().to_vec(),
             tile.to_vec(),
-            output.coordinates.clone(),
+            self.coordinates_for(member.axes().domain()).clone(),
             &staging,
             layout.maximum_values() * size_of::<f32>(),
         )
@@ -723,6 +772,26 @@ mod tests {
         );
         let writer = CasaImageWriter::for_domains([main, outlier]);
         assert_eq!(writer.domains.len(), 2);
+    }
+
+    #[test]
+    fn alternate_coordinates_name_every_domain_once() {
+        let writer = CasaImageWriter::new("main".into(), CoordinateSystem::new());
+        let check = |coordinates| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                writer.with_coordinates(coordinates)
+            }))
+            .is_err()
+        };
+        assert!(check(Vec::new()));
+        assert!(check(vec![(
+            ImageDomainRole::Outlier("north".into()),
+            CoordinateSystem::new()
+        )]));
+        assert!(check(vec![
+            (ImageDomainRole::Main, CoordinateSystem::new()),
+            (ImageDomainRole::Main, CoordinateSystem::new()),
+        ]));
     }
 
     #[test]

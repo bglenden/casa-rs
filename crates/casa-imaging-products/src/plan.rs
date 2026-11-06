@@ -226,6 +226,23 @@ impl PlannedContinuumGeneration {
         })
     }
 
+    /// Omit the channel-basis cube model that MVC has not created when its
+    /// initial convergence check stops before the first minor cycle. Other
+    /// product roles and the order and identifiers of retained members stay
+    /// unchanged.
+    #[must_use]
+    pub fn without_uncreated_mvc_cube_model(mut self) -> Self {
+        let mut members = self.members.into_vec();
+        members.retain(|member| {
+            !matches!(
+                member.role,
+                ProductRole::Model(casa_imaging_model::ProductTerm::Single)
+            )
+        });
+        self.members = members.into_boxed_slice();
+        self
+    }
+
     /// Return planned members in exact publication order.
     #[must_use]
     pub const fn members(&self) -> &[PlannedMember] {

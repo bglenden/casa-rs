@@ -378,7 +378,7 @@ pub(crate) fn product_plane_validity(
     }
 }
 
-fn primary_beam_plane(
+pub(crate) fn primary_beam_plane(
     model: Option<AnalyticPrimaryBeamModel>,
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &ImageDomainRole,

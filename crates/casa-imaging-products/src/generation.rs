@@ -18,7 +18,7 @@ use crate::plan::{
     PublishedContinuumGeneration,
 };
 use crate::plane::{
-    PlaneMemberRequest, apparent_model, model_real_plane, produce_plane_member,
+    PlaneMemberRequest, apparent_model, model_real_plane, primary_beam_plane, produce_plane_member,
     product_plane_validity, psf_normalizes, psf_real_plane, reconstruction_support_plane,
     scatter_image_polarization_plane, scatter_polarization_plane_state, zero_invalid_plane_values,
 };
@@ -46,6 +46,9 @@ pub fn produce_continuum_members(
     execution: &impl ProductWindowExecutor,
     output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
+    if inputs.cube_taylor_primary_beam().is_some() && planned.primary_beam_model.is_none() {
+        return Err(ProductsError::MissingPrimaryBeamModel);
+    }
     let kept = output.staged_count();
     let produced = if inputs.normal_state().basis() == NormalBasis::Taylor {
         produce_taylor_members(planned, inputs, storage_plan, output)
@@ -424,6 +427,24 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             primary_beam_model: self.planned.primary_beam_model,
             fft_threads: self.fft_threads,
         })?;
+        if matches!(self.member.role, ProductRole::Residual(ProductTerm::Single))
+            && let Some(mean_pb) = self.inputs.cube_taylor_primary_beam()
+        {
+            let channel_pb = primary_beam_plane(
+                self.planned.primary_beam_model,
+                self.inputs,
+                self.member.axes().domain(),
+                &plane,
+            )?;
+            let cutoff = self
+                .inputs
+                .problem()
+                .products()
+                .validity()
+                .primary_beam()
+                .cutoff();
+            adjust_cube_residual(&mut values, mean_pb, &channel_pb, cutoff)?;
+        }
         let validity = |rule| {
             product_plane_validity(
                 rule,
@@ -457,6 +478,30 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
     }
 }
 
+/// CASA leaves an entire cube residual plane untouched when its published PB
+/// is blank. Otherwise its common/channel PB ratio applies only above the
+/// channel PB cutoff (`SynthesisUtilMethods::removeFreqDepPB`).
+pub(crate) fn adjust_cube_residual(
+    values: &mut [f32],
+    mean_pb: &[f32],
+    channel_pb: &[f32],
+    cutoff: f32,
+) -> Result<(), ProductsError> {
+    if channel_pb.iter().any(|&value| value > cutoff) {
+        for ((value, &common), &channel) in values.iter_mut().zip(mean_pb).zip(channel_pb) {
+            *value = if channel > cutoff {
+                common * *value / channel
+            } else {
+                0.0
+            };
+            if !value.is_finite() {
+                return Err(ProductsError::GeneratedNonfinite);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn produce_taylor_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
@@ -484,9 +529,13 @@ fn produce_taylor_members(
     };
     for member in &planned.members {
         let mut payload = products.payload(member.role)?;
-        // As for one plane: a member with a validity rule is zero outside it,
-        // as `SIImageStore::makePBImage` leaves `.pb.tt0` at pblimit.
-        if member.validity != ProductValidityRule::All {
+        // An ordinary Taylor PB is formed at one frequency and zeroed by
+        // `makePBImage`. MVC's supplied PB is the weighted cube PB: CASA
+        // preserves its values below pblimit while marking those pixels
+        // invalid. The other products still blank outside their support.
+        let supplied_pb = inputs.taylor_primary_beam().is_some()
+            && member.role == ProductRole::PrimaryBeam(ProductTerm::Taylor(0));
+        if member.validity != ProductValidityRule::All && !supplied_pb {
             zero_invalid_plane_values(&mut payload, &products.validity(member.validity)?);
         }
         let validity = match member.storage.pixel_mask() {
@@ -516,4 +565,22 @@ fn produce_taylor_members(
         writer.finish()?;
     }
     Ok(planned.published(fitted_beams, restoring_beams))
+}
+
+#[cfg(test)]
+mod mvc_adjustment_tests {
+    use super::adjust_cube_residual;
+
+    #[test]
+    fn residual_correction_uses_strict_channel_support_and_skips_a_blank_plane() {
+        let mut residual = [1.0, 2.0, 3.0, 4.0];
+        let common = [0.5, 0.6, 0.7, 0.8];
+        adjust_cube_residual(&mut residual, &common, &[0.1, 0.2, 0.4, 1.0], 0.2).unwrap();
+        assert_eq!(residual, [0.0, 0.0, 0.7 * 3.0 / 0.4, 0.8 * 4.0]);
+        let mut blank = [1.0, 2.0, 3.0, 4.0];
+        adjust_cube_residual(&mut blank, &common, &[0.0, 0.1, 0.2, 0.0], 0.2).unwrap();
+        assert_eq!(blank, [1.0, 2.0, 3.0, 4.0]);
+        let mut overflow = [f32::MAX];
+        assert!(adjust_cube_residual(&mut overflow, &[f32::MAX], &[1.0], 0.2).is_err());
+    }
 }

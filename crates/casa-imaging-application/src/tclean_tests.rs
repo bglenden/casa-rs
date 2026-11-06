@@ -35,6 +35,7 @@ fn modes() -> Vec<Value> {
             "native_cf_maximum_cells": 64,
         }),
         json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": [0, 3] }),
+        json!({ "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2, "nchan": 3 }),
         json!({ "usemask": "auto-multithresh" }),
         json!({ "usemask": "auto-multithresh", "pbmask": 0.2 }),
         json!({ "usemask": "pb", "pbmask": 0.3 }),
@@ -989,6 +990,30 @@ fn a_crtf_range_limits_its_own_region() {
         let error = refusal(json!({ "mask": mask }));
         assert_eq!(error.parameter, "mask", "{mask}");
         assert!(error.message.contains("#980"), "{mask}: {}", error.message);
+    }
+}
+
+/// MVC's output depth is independent of input channel selection, and all
+/// nonpositive nchan values use CASA's automatic bandwidth rule.
+#[test]
+fn mvc_reads_output_depth_separately_from_input_selection() {
+    let explicit = request(json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "channel_start": 1, "channel_count": 4,
+    }));
+    assert_eq!(explicit.specmode, SpecMode::Mfs);
+    assert_eq!(explicit.mvc_output_channels.unwrap().get(), 3);
+    assert!(!explicit.mvc_auto_channels);
+    assert_eq!(explicit.channel_start, Some(1));
+    assert_eq!(explicit.channel_count, Some(4));
+    for nchan in [-2, -1, 0] {
+        let auto = request(json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": nchan, "channel_count": 4,
+        }));
+        assert!(auto.mvc_output_channels.is_none());
+        assert!(auto.mvc_auto_channels);
+        assert_eq!(auto.channel_count, Some(4));
     }
 }
 
