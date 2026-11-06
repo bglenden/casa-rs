@@ -4104,3 +4104,19 @@ spectrum before raising `SystemError`; casa-rs preserves the original.
 its maximum if it reaches the requested count. Signed overflow is undefined,
 and the request is liable to exhaust memory first. casa-rs refuses counts
 outside the loop's valid range before changing the component list.
+
+## Stokes spectrum errors can alter existing components
+
+- Date noted: 2026-11-06
+- Status: CASA can discard an error or leave a partial spectrum update; casa-rs preserves existing data (#1053).
+- Owner decision: Correct CASA crashes, out-of-bounds reads and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setstokesspectrum_oracle.py` and `casa_componentlist_setstokesspectrum.json`; CASA's `componentlist::setstokesspectrum` reads `index[0]` without checking its length.
+
+`setstokesspectrum` can change a reference frequency before returning false
+for a power-log polynomial, or before raising `SystemError` for a failed
+vector conversion. A tabulation in TOPO for an LSRK reference can replace the
+spectrum before raising a frame-conversion error. CASA also accepts a length
+as a reference frequency and silently treats its numeric value as hertz; and
+an empty index is read out of bounds. casa-rs validates inputs and preserves
+the old component on these failures. Like `setspectrum`, replacing the model
+preserves an existing frequency error instead of resetting it to zero.

@@ -25,7 +25,7 @@ pub(super) struct Request {
 
 /// Convert a binding double-vector in column-major order; retain failed
 /// Python conversions so no component is changed while an error is pending.
-fn vector(value: Option<Bound<'_, PyAny>>, default: f64) -> PyResult<(VectorArg, bool)> {
+pub(super) fn vector(value: Option<Bound<'_, PyAny>>, default: f64) -> PyResult<(VectorArg, bool)> {
     let Some(value) = value else {
         return Ok((
             VectorArg {
@@ -85,7 +85,7 @@ fn vector(value: Option<Bound<'_, PyAny>>, default: f64) -> PyResult<(VectorArg,
     Ok((VectorArg { values, invalid }, pending))
 }
 
-fn text(value: Option<Bound<'_, PyAny>>, default: &str, name: &str) -> PyResult<String> {
+pub(super) fn text(value: Option<Bound<'_, PyAny>>, default: &str, name: &str) -> PyResult<String> {
     let string: String = match value {
         None => default.to_string(),
         Some(value) if value.is_instance_of::<PyString>() => value.extract()?,

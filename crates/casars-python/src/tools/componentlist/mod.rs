@@ -34,6 +34,7 @@ mod setflux;
 mod setrefdir_args;
 mod setshape;
 mod setspectrum;
+mod setstokesspectrum;
 pub(crate) mod surface;
 
 use std::ffi::CString;
@@ -1343,28 +1344,6 @@ impl PyComponentList {
             ));
         }
         Ok(result)
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(
-        signature = (which, r#type = None, index = None, tabularfreqs = None, tabulari = None, tabularq = None, tabularu = None, tabularv = None, reffreq = None, frame = None),
-        text_signature = "($self, which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK')"
-    )]
-    #[allow(clippy::too_many_arguments)]
-    fn setstokesspectrum(
-        &self,
-        which: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        index: Option<&Bound<'_, PyAny>>,
-        tabularfreqs: Option<&Bound<'_, PyAny>>,
-        tabulari: Option<&Bound<'_, PyAny>>,
-        tabularq: Option<&Bound<'_, PyAny>>,
-        tabularu: Option<&Bound<'_, PyAny>>,
-        tabularv: Option<&Bound<'_, PyAny>>,
-        reffreq: Option<&Bound<'_, PyAny>>,
-        frame: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setstokesspectrum")
     }
 
     /// Component `which`'s shape name (`Point`, `Gaussian`, `Disk`,

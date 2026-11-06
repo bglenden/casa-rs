@@ -62,6 +62,58 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Replace a spectrum only after preparing every supplied value.
+    pub(crate) fn setstokesspectrum(
+        &mut self,
+        which: i64,
+        request: &super::setstokesspectrum::Request,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let Some(plan) = super::setstokesspectrum::prepare(request)? else {
+            lines.push(LogLine::error(
+                "Could not translate or parse the spectral type; spectrum not changed",
+            ));
+            return Ok(false);
+        };
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        if plan.refused {
+            lines.push(LogLine::error(
+                "Could not parse the spectral parameters; spectrum not changed",
+            ));
+            return Ok(false);
+        }
+        if let SpectralKind::Tabular(table) = &plan.kind
+            && table
+                .reference_frequency_in_frame(component.spectrum().reference_frequency())
+                .is_err()
+        {
+            return Err(ConvertError::runtime(format!(
+                "Cannot transform frequency from {} to {}",
+                table.frame().as_str(),
+                component.spectrum().reference_frequency().refer().as_str()
+            )));
+        }
+        if pending {
+            return Ok(false);
+        }
+        let spectrum = component.spectrum_mut();
+        if let Some((hz, frame)) = plan.reference {
+            spectrum
+                .set_frequency_unit(Unit::new("GHz").expect("GHz is a unit"))
+                .map_err(|e| ConvertError::runtime(e.to_string()))?;
+            spectrum.set_reference_frequency(MFrequency::new(hz, frame));
+        }
+        *spectrum.kind_mut() = plan.kind;
+        Ok(true)
+    }
+
     /// Convert one component's reference direction, preserving its errors.
     pub(crate) fn convertrefdir(&mut self, which: i64, frame: DirectionRef) -> ConvertResult<bool> {
         if which < 0 {
@@ -1074,7 +1126,7 @@ fn absolute(filename: &str) -> ConvertResult<PathBuf> {
 
 /// CASA accepts an unambiguous prefix or a name beginning with a complete
 /// frame name, including the Undefined extra reference.
-fn frequency_frame(name: &str) -> Option<FrequencyRef> {
+pub(super) fn frequency_frame(name: &str) -> Option<FrequencyRef> {
     if name.is_empty() {
         return None;
     }
