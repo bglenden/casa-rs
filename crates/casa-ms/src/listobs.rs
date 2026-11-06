@@ -25,7 +25,6 @@ use std::path::Path;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::quanta::{MvAngle, MvTime};
 use casa_types::{ArrayValue, ScalarValue};
@@ -1278,6 +1277,7 @@ fn build_spectral_windows(
 
     let spw = ms.spectral_window()?;
     let mut summaries = Vec::with_capacity(spw.row_count());
+    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(spw.table());
     for row in 0..spw.row_count() {
         let linked_dds = dd_by_spw.get(&(row as i32)).cloned().unwrap_or_default();
         if linked_dds.is_empty() {
@@ -1308,7 +1308,10 @@ fn build_spectral_windows(
             spectral_window_id: row,
             name: spw.name(row)?,
             num_channels: spw.num_chan(row)?,
-            frame: frequency_reference_name(spw.meas_freq_ref(row)?),
+            frame: frequency_refs
+                .frequency_reference(row)
+                .ok()
+                .map(|reference| reference.as_str().to_string()),
             first_channel_frequency_hz: chan_freq.first().copied().unwrap_or(0.0),
             channel_width_hz: chan_width.first().copied().unwrap_or(0.0),
             reference_frequency_hz: spw.ref_frequency(row)?,
@@ -2167,10 +2170,6 @@ fn format_elapsed(value: Option<f64>) -> String {
         Some(seconds) => format!("{seconds:.0} seconds"),
         None => "unknown".to_string(),
     }
-}
-
-fn frequency_reference_name(code: i32) -> Option<String> {
-    FrequencyRef::from_casacore_code(code).map(|reference| reference.as_str().to_string())
 }
 
 fn mean_or_zero(values: &[f64]) -> f64 {
