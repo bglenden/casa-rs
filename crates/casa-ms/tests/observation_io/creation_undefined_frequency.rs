@@ -153,3 +153,45 @@ fn frequency_references_without_mapping_keywords_match_casa_and_survive_creation
         assert_eq!(reference.hz(), observed.hz());
     }
 }
+
+#[test]
+fn an_incomplete_frequency_descriptor_keeps_the_visibility_measurement_frame() {
+    use casa_ms::observation_io::Msv2Observation;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    let root = tempfile::tempdir().unwrap();
+    let input = edited(root.path(), "incomplete", 0..0, |ms| {
+        let spw = ms.subtable_mut(SubtableId::SpectralWindow).unwrap();
+        for row in 0..spw.row_count() {
+            spw.cell_accessor_mut(row, "MEAS_FREQ_REF")
+                .unwrap()
+                .set(Value::Scalar(ScalarValue::Int32(5)))
+                .unwrap();
+        }
+        for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+            let mut keywords = spw.column_keywords(column).unwrap().clone();
+            let Some(Value::Record(info)) = keywords.get_mut("MEASINFO") else {
+                panic!("MEASINFO")
+            };
+            for key in ["Ref", "VarRefCol", "TabRefTypes", "TabRefCodes"] {
+                info.remove(key);
+            }
+            spw.set_column_keywords(column, keywords);
+        }
+    });
+    let ms = MeasurementSet::open(&input).unwrap();
+    let spw = ms.subtable(SubtableId::SpectralWindow).unwrap();
+    let column = casa_ms::columns::frequency_columns::ChanFreqColumn::new(spw);
+    assert_eq!(
+        column.get_frequencies(0).unwrap()[0].refer(),
+        FrequencyRef::REST
+    );
+    drop(ms);
+    let observation = Msv2Observation::open(&input).unwrap();
+    assert_eq!(
+        observation.catalogue().partitions[0].frequency_frame,
+        FrequencyRef::TOPO
+    );
+    let namespace = casa_ms::observation_io::NamespaceRows::read(&input).unwrap();
+    assert_eq!(namespace.spectral_windows[0].frame, FrequencyRef::TOPO);
+}

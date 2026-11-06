@@ -689,7 +689,7 @@ pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>,
             let polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)?)
                 .map_err(|_| invalid("negative POLARIZATION_ID"))?;
             let frequency_frame = frequency_refs
-                .frequency_reference(window)
+                .visibility_frequency_reference(window)
                 .map_err(storage)?;
             let correlations = polarizations
                 .corr_type(polarization)

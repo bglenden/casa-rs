@@ -330,7 +330,9 @@ fn windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
         .map(|row| {
             Ok(NamespaceWindow {
                 name: string(table, row, "NAME")?,
-                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
+                frame: frequency_refs
+                    .visibility_frequency_reference(row)
+                    .map_err(storage)?,
                 frequencies_hz: floats(table, row, "CHAN_FREQ")?,
                 widths_hz: floats(table, row, "CHAN_WIDTH")?,
             })
