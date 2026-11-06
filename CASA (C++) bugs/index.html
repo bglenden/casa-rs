@@ -4785,6 +4785,21 @@ otherwise warns and returns <code>False</code>. casa-rs detects record cycles an
 the placeholder result; for cyclic or non-finite index arguments it raises a
 catchable <code>ValueError</code>, as for component selection (#1176). No component is
 changed.</p>
+<h2 id="invalid-component-direction-frames-use-an-uninitialized-reference">Invalid component direction frames use an uninitialized reference<a class="headerlink" href="#invalid-component-direction-frames-use-an-uninitialized-reference" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA uses an uninitialized frame after a parse failure; casa-rs rejects it before mutation (#1053).</li>
+<li>Owner decision: Correct CASA crashes and corruption as a class; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/simulation/componentlist_setrefdirframe_invalid_oracle.py</code> and <code>crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json</code>, CASA 6.7.6-14 on the Mac mini.</li>
+</ul>
+<p><code>componentlist.setrefdirframe(0, "bad")</code> logs that the direction frame was
+not changed, but the C++ code continues with <code>newFrame</code> uninitialized after
+<code>MDirection::getType</code> fails. On the tested CASA build, four invalid names and
+an invalid byte string each raise an <code>MDirection</code> assertion and leave the
+direction unchanged; an uninitialized value can behave differently in another
+build. casa-rs logs the
+parse failure and raises a predictable <code>RuntimeError</code> before changing the
+component. The error text differs from the observed CASA assertion.</p>
 <h2 id="casa-discards-zero-dimensional-floating-quantity-record-values">CASA discards zero-dimensional floating quantity-record values<a class="headerlink" href="#casa-discards-zero-dimensional-floating-quantity-record-values" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
