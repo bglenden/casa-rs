@@ -114,6 +114,7 @@ fn describe(value: &CasaValue) -> Value {
             shape,
         ),
         CasaValue::ComplexArray { shape, .. } => array("complex", shape),
+        CasaValue::UInt64Array { shape, .. } => array("uint64", shape),
         CasaValue::StrArray { shape, .. } => array("str", shape),
     }
 }

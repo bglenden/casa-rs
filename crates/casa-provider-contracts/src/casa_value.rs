@@ -44,6 +44,9 @@ pub enum CasaValue {
         shape: Vec<usize>,
         data: Vec<i64>,
     },
+    /// A NumPy array of unsigned 64-bit integers.
+    #[serde(rename = "uint64_array")]
+    UInt64Array { shape: Vec<usize>, data: Vec<u64> },
     /// A NumPy array of floats.
     FloatArray {
         dtype: FloatDtype,
@@ -295,6 +298,7 @@ impl CasaValue {
             ),
             Self::BoolArray { shape, data } => nest(shape, data, |value| Value::Bool(*value)),
             Self::IntArray { shape, data, .. } => nest(shape, data, |value| Value::from(*value)),
+            Self::UInt64Array { shape, data } => nest(shape, data, |value| Value::from(*value)),
             Self::FloatArray { shape, data, .. } => nest(shape, data, |value| plain_float(*value)),
             Self::ComplexArray { shape, data, .. } => nest(shape, data, |[re, im]| {
                 Value::Array(vec![plain_float(*re), plain_float(*im)])
@@ -313,6 +317,7 @@ impl CasaValue {
             Self::Dict { entries } => entries.iter().all(|entry| entry.value.is_consistent()),
             Self::BoolArray { shape, data } => fits(shape, data.len()),
             Self::IntArray { shape, data, .. } => fits(shape, data.len()),
+            Self::UInt64Array { shape, data } => fits(shape, data.len()),
             Self::FloatArray { shape, data, .. } => fits(shape, data.len()),
             Self::ComplexArray { shape, data, .. } => fits(shape, data.len()),
             Self::StrArray { shape, data } => fits(shape, data.len()),

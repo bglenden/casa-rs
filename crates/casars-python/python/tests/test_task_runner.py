@@ -473,6 +473,7 @@ def test_a_reply_value_decodes_to_casas_numpy_types(
     fake("CASARS_FLAGMANAGER_BIN")
     floats = {"kind": "float_array", "dtype": "float64", "shape": [3], "data": ["inf", "-inf", "nan"]}
     entries = {
+        "uint64": {"kind": "uint64_array", "shape": [2], "data": [0, 18446744073709551615]},
         "complex_scalar": {"kind": "complex", "real": "nan", "imag": "inf"},
         "int32": {"kind": "int_array", "dtype": "int32", "shape": [2],
                   "data": [2147483647, -2147483648]},
@@ -492,6 +493,8 @@ def test_a_reply_value_decodes_to_casas_numpy_types(
     record = tasks.run("flagmanager", workspace=tmp_path, vis="a.ms").value
 
     assert record["int32"].dtype == numpy.int32
+    assert record["uint64"].dtype == numpy.uint64
+    assert record["uint64"].tolist() == [0, 18446744073709551615]
     assert type(record["complex_scalar"]) is complex
     assert numpy.isnan(record["complex_scalar"].real) and record["complex_scalar"].imag == numpy.inf
     assert record["int32"].tolist() == [2147483647, -2147483648]
@@ -514,6 +517,7 @@ def test_a_reply_value_decodes_to_casas_numpy_types(
     "item",
     [
         {"kind": "int_array", "dtype": "int32", "shape": [1], "data": [2147483648]},
+        {"kind": "uint64_array", "shape": [2], "data": [1]},
         {"kind": "float_array", "dtype": "float64", "shape": [2, 2], "data": [1.0, 2.0, 3.0]},
         {"kind": "str_array", "shape": [3], "data": ["a"]},
     ],

@@ -222,6 +222,7 @@ fn describe(value: &CasaValue) -> Value {
             shape,
         ),
         CasaValue::ComplexArray { shape, .. } => array("complex", shape),
+        CasaValue::UInt64Array { shape, .. } => array("uint64", shape),
         // The width Python decodes it with, casatools' (`<U15`).
         CasaValue::StrArray { shape, data } => array(&CasaValue::str_dtype(data), shape),
     }

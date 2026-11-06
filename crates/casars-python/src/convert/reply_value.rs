@@ -57,6 +57,7 @@ pub(crate) fn reply_value(py: Python<'_>, value: &CasaValue) -> PyResult<Py<PyAn
             }
             IntDtype::Int64 => array(py, shape, data.clone())?,
         },
+        CasaValue::UInt64Array { shape, data } => array(py, shape, data.clone())?,
         CasaValue::FloatArray { dtype, shape, data } => match dtype {
             FloatDtype::Float32 => {
                 array(py, shape, data.iter().map(|value| value.0 as f32).collect())?

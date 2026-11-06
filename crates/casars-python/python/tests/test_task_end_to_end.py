@@ -422,6 +422,21 @@ def test_imhead_reads_casa_created_nonfinite_record(tmp_path: Path) -> None:
     np.testing.assert_array_equal(actual["words"], expected["words"])
 
 
+def test_imhead_unsigned_record_array_uses_casa_dtype(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / "unsigned.im"
+    shutil.copytree(root / "custom_uint32.im", image)
+    expected = json.loads((root / "custom_uint32_expected.json").read_text())
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")["value"]
+    assert actual.dtype == np.dtype(expected["dtype"])
+    assert actual.shape == tuple(expected["shape"])
+    np.testing.assert_array_equal(actual, expected["value"])
+
+
 def test_complex_profile_nesting_is_bounded_before_it_is_saved(tmp_path: Path) -> None:
     params = TaskParameters.defaults("imhead", workspace=tmp_path)
     params["imagename"] = "image.im"

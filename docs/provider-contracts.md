@@ -371,7 +371,7 @@ A succeeded reply's `value` is CASA's return value as a tagged `CasaValue`
 values as `"nan"`, `"-nan"`, `"inf"` and `"-inf"`), `complex` (with real and imaginary
 components in the same float representation), `string`, `list`, an ordered
 `dict` whose keys are strings or integers, and typed arrays (`bool_array`,
-`int_array` with dtype `int32` or `int64`, `float_array` with `float32` or
+`int_array` with dtype `int32` or `int64`, `uint64_array`, `float_array` with `float32` or
 `float64`, `complex_array`, `str_array`) that carry their shape and their
 data in column-major (Fortran) order. `casars._core` rebuilds Python's
 types and NumPy arrays from it, so a CASA-signature wrapper returns what

@@ -166,6 +166,16 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
                 shape: values.shape().to_vec(),
                 data: values.view().reversed_axes().iter().copied().collect(),
             },
+            Value::Array(ArrayValue::UInt32(values)) => CasaValue::UInt64Array {
+                shape: values.shape().to_vec(),
+                data: values
+                    .view()
+                    .reversed_axes()
+                    .iter()
+                    .copied()
+                    .map(u64::from)
+                    .collect(),
+            },
             Value::Array(ArrayValue::Float32(values)) => CasaValue::FloatArray {
                 dtype: FloatDtype::Float64,
                 shape: values.shape().to_vec(),
@@ -503,11 +513,23 @@ mod tests {
                 data: vec![[CasaFloat(1.5), CasaFloat(-2.0)]]
             }
         );
-        let unsigned = Value::Array(ArrayValue::from_u32_vec(vec![1, 2]));
-        assert!(
-            casacore_value_to_casa(&unsigned)
-                .unwrap_err()
-                .contains("#977")
+        let unsigned = Value::Array(ArrayValue::from_u32_vec(vec![1, u32::MAX]));
+        assert_eq!(
+            casacore_value_to_casa(&unsigned).unwrap(),
+            CasaValue::UInt64Array {
+                shape: vec![2],
+                data: vec![1, u64::from(u32::MAX)],
+            }
+        );
+        let unsigned_matrix =
+            casa_types::ArrayD::from_shape_vec(vec![2, 3], vec![1_u32, 2, 3, 4, 5, u32::MAX])
+                .unwrap();
+        assert_eq!(
+            casacore_value_to_casa(&Value::Array(ArrayValue::UInt32(unsigned_matrix))).unwrap(),
+            CasaValue::UInt64Array {
+                shape: vec![2, 3],
+                data: vec![1, 4, 2, 5, 3, u64::from(u32::MAX)],
+            }
         );
     }
 

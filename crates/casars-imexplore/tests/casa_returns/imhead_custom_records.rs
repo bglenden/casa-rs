@@ -166,6 +166,33 @@ fn casa_created_record_returns_complex_scalars() {
 }
 
 #[test]
+fn unsigned_record_array_matches_casa() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value = serde_json::from_slice(
+        &std::fs::read(fixture.join("custom_uint32_expected.json")).unwrap(),
+    )
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("unsigned.im");
+    copy_tree(&fixture.join("custom_uint32.im"), &path);
+    let value = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode":"get", "hdkey":"custom"}),
+    );
+    let array = entry(&value, "value");
+    assert_eq!(
+        array,
+        &CasaValue::UInt64Array {
+            shape: vec![2],
+            data: vec![1, u64::from(u32::MAX)]
+        }
+    );
+    assert_eq!(array.to_plain_json(), oracle["value"]);
+    assert_eq!(oracle["dtype"], "uint64");
+}
+
+#[test]
 fn invalid_typed_requests_do_not_modify_the_image() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
     let workspace = tempfile::tempdir().unwrap();
