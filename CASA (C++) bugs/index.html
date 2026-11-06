@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#component-removal-can-lose-data-or-crash">duplicate and empty component removals</a>,
 <a href="#casa-accepts-component-labels-it-cannot-return">component labels containing invalid UTF-8</a>,
 <a href="#cyclic-component-list-type-checks-crash-casa">cyclic component-list type checks</a>,
 <a href="#casa-discards-the-values-of-bare-complex-quantity-arrays">complex quantity-array values</a>,
@@ -4687,6 +4688,19 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises <code>Wrong QuantumHolder to convert
 asQuantumDouble</code> rather than silently discarding them.</p>
+<h2 id="component-removal-can-lose-data-or-crash">Component removal can lose data or crash<a class="headerlink" href="#component-removal-can-lose-data-or-crash" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA loses a component on duplicate indices and crashes on an empty list; casa-rs preserves values and reports a catchable error (#1053).</li>
+<li>Owner decision: Correct CASA crashes and data corruption as classes; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/casa-compat/componentlist_removal_oracle.py</code>, CASA 6.7.6-14 on the Mac mini; empty-list calls run in isolated processes with core dumps disabled.</li>
+</ul>
+<p>With four components labeled <code>0</code>, <code>1</code>, <code>2</code>, <code>3</code>, CASA's
+<code>cl.remove([1, 1])</code> leaves <code>0</code>, <code>3</code>; <code>cl.recover()</code> appends two copies of
+<code>1</code>, so component <code>2</code> is lost. casa-rs treats repeated indices as one:
+it leaves <code>0</code>, <code>2</code>, <code>3</code> and recovers <code>1</code> once. On an empty list, CASA's
+<code>cl.remove()</code> and <code>cl.remove([-1])</code> both terminate the process with SIGSEGV;
+casa-rs raises a catchable <code>RuntimeError</code> without changing the list.</p>
 <h2 id="casa-accepts-component-labels-it-cannot-return">CASA accepts component labels it cannot return<a class="headerlink" href="#casa-accepts-component-labels-it-cannot-return" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
