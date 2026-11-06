@@ -16,6 +16,10 @@ def main():
         [('add', 'lower', 'one'), ('get', 'LOWER', ''), ('add', 'LOWER', 'two'), ('del', 'LOWER', ''), ('get', 'lower', '')],
         [('put', 'My Key', ''), ('get', 'My Key', ''), ('add', 'My Key', 'again')],
         [('put', '', 'empty name'), ('get', '', ''), ('del', '', '')],
+        [('put', 'counter', 42), ('get', 'counter', ''), ('put', 'counter', 13), ('get', 'counter', ''), ('put', 'counter', 3.5), ('get', 'counter', '')],
+        [('add', 'real', 3.25), ('get', 'real', ''), ('put', 'real', -0.75), ('get', 'real', '')],
+        [('put', 'flag', True), ('get', 'flag', ''), ('put', 'flag', False), ('del', 'flag', 123)],
+        [('put', 'precise', 1.23456789), ('put', 'precise', 1e-7), ('put', 'precise', 1e20), ('put', 'precise', -0.0), ('put', 'precise', 1e-4), ('put', 'precise', 1e16), ('put', 'precise', 1e-5)],
     ]
     with tempfile.TemporaryDirectory(prefix='imhead-custom-oracle-') as tmp:
         for index, actions in enumerate(cases):

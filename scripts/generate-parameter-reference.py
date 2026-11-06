@@ -120,7 +120,7 @@ def format_predicate(predicate: dict[str, Any], context: str) -> str:
 
 def format_domain(domain: dict[str, Any], context: str) -> str:
     kind = required(domain, "kind", context)
-    if kind in {"bool", "float", "integer", "string"}:
+    if kind in {"bool", "float", "integer", "string", "variant"}:
         return str(kind)
     if kind == "choice":
         values = require_list(required(domain, "values", context), f"{context}.values")

@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from casatasks import imhead
-from casatools import image, version_string
+from casatools import image, table, version_string
 
 
 def main():
@@ -76,7 +76,11 @@ def main():
                                         input=json.dumps(request), text=True, capture_output=True)
                 assert (result.returncode != 0) == ("error" in case), (case, result.stderr)
                 if "error" not in case and case["mode"] in ("add", "put"):
-                    assert imhead(str(path), mode="get", hdkey=case["key"]) == case["value"], case
+                    tool = table()
+                    tool.open(str(path))
+                    stored = tool.getkeyword("miscinfo")[case["key"]]
+                    tool.close()
+                    assert stored == case["value"], (case, stored)
                 if "error" not in case and case["mode"] != "get":
                     tool = image()
                     tool.open(str(path))

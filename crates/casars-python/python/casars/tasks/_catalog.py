@@ -350,7 +350,7 @@ def imhead(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     mode: Literal['add', 'del', 'get', 'history', 'list', 'put', 'summary'] = 'summary',
     hdkey: str = '',
-    hdvalue: str = '',
+    hdvalue: ParameterData = '',
     verbose: bool = False,
 ) -> Any:
     """Inspect or update CASA image header metadata.

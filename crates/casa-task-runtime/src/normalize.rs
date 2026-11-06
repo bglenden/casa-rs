@@ -123,6 +123,10 @@ fn normalize_domain(
     domain: &ParameterType,
 ) -> Result<ParameterValue, NormalizationError> {
     match domain {
+        ParameterType::Variant => {
+            validate_parameter_value(value, domain).map_err(NormalizationError::Type)?;
+            Ok(value.clone())
+        }
         ParameterType::Bool => match value {
             ParameterValue::Bool(value) => Ok(ParameterValue::Bool(*value)),
             _ => type_error(value, domain),
@@ -914,6 +918,41 @@ mod tests {
         let normalized = normalize_value(&value, concept)?;
         validate_value(&normalized, concept, &[])?;
         Ok(normalized)
+    }
+
+    #[test]
+    fn imhead_variant_preserves_types_and_rejects_nested_nonfinite_numbers() {
+        let catalog = builtin_surface_catalog().unwrap();
+        let concept = catalog
+            .catalog
+            .concepts
+            .iter()
+            .find(|concept| concept.id.as_str() == "parameter.hdvalue")
+            .unwrap();
+        let values = [
+            ParameterValue::String("  literal  ".into()),
+            ParameterValue::Bool(true),
+            ParameterValue::Integer(42),
+            ParameterValue::Float(3.25),
+            ParameterValue::Array(vec![
+                ParameterValue::Integer(2),
+                ParameterValue::String("x".into()),
+            ]),
+            ParameterValue::Table(BTreeMap::from([
+                ("unit".into(), ParameterValue::String("Hz".into())),
+                ("value".into(), ParameterValue::Float(1.5)),
+            ])),
+        ];
+        for value in values {
+            assert_eq!(accepted(value.clone(), concept).unwrap(), value);
+        }
+        assert!(
+            accepted(
+                ParameterValue::Array(vec![ParameterValue::Float(f64::NAN)]),
+                concept
+            )
+            .is_err()
+        );
     }
 
     #[test]

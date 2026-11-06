@@ -191,6 +191,7 @@ fn value_kind(domain: &ParameterType) -> &'static str {
 
 fn parameter_type_name(domain: &ParameterType) -> &'static str {
     match domain {
+        ParameterType::Variant => "variant",
         ParameterType::Bool => "boolean",
         ParameterType::Integer => "integer",
         ParameterType::Float => "number",

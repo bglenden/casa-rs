@@ -21,7 +21,7 @@ use migration::validate_migrations;
 pub use migration::{MigrationStep, MigrationTransform, SurfaceMigration};
 pub use migration_list::ListElement;
 
-pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_repr};
+pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_float, python_repr};
 
 /// Current schema version for the catalog and surface-definition model.
 pub const PARAMETER_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -222,6 +222,8 @@ pub enum UnitDimension {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParameterType {
+    /// A CASA variant: any finite scalar, list, or string-keyed record.
+    Variant,
     Bool,
     Integer,
     Float,
@@ -1533,6 +1535,7 @@ pub fn validate_parameter_value(
     domain: &ParameterType,
 ) -> Result<(), String> {
     match (value, domain) {
+        (value, ParameterType::Variant) => validate_variant_value(value),
         (ParameterValue::Bool(_), ParameterType::Bool)
         | (ParameterValue::Integer(_), ParameterType::Integer)
         | (ParameterValue::String(_), ParameterType::String)
@@ -1617,6 +1620,17 @@ pub fn validate_parameter_value(
     }
 }
 
+fn validate_variant_value(value: &ParameterValue) -> Result<(), String> {
+    match value {
+        ParameterValue::Float(value) if !value.is_finite() => {
+            Err("non-finite numbers are forbidden".to_string())
+        }
+        ParameterValue::Array(values) => values.iter().try_for_each(validate_variant_value),
+        ParameterValue::Table(values) => values.values().try_for_each(validate_variant_value),
+        _ => Ok(()),
+    }
+}
+
 fn validate_parameter_domain(domain: &ParameterType) -> Result<(), String> {
     match domain {
         ParameterType::Quantity {
@@ -1633,7 +1647,8 @@ fn validate_parameter_domain(domain: &ParameterType) -> Result<(), String> {
             }
             Ok(())
         }
-        ParameterType::Bool
+        ParameterType::Variant
+        | ParameterType::Bool
         | ParameterType::Integer
         | ParameterType::Float
         | ParameterType::String

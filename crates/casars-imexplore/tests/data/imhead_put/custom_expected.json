@@ -156,6 +156,210 @@
           "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"\", hdvalue=\"\", verbose=False)"
         ]
       }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "counter",
+        "value": 42,
+        "return": null,
+        "history": [
+          "Added counter = 42",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"counter\", hdvalue=42, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "counter",
+        "value": "",
+        "return": 42
+      },
+      {
+        "mode": "put",
+        "key": "counter",
+        "value": 13,
+        "return": null,
+        "history": [
+          "Added counter = 13",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"counter\", hdvalue=13, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "counter",
+        "value": "",
+        "return": 13
+      },
+      {
+        "mode": "put",
+        "key": "counter",
+        "value": 3.5,
+        "error": "TableRecordRep::defineDataField - incorrect data type used for field counter"
+      },
+      {
+        "mode": "get",
+        "key": "counter",
+        "value": "",
+        "return": 13
+      }
+    ],
+    [
+      {
+        "mode": "add",
+        "key": "real",
+        "value": 3.25,
+        "return": null,
+        "history": [
+          "Added real = 3.25",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"real\", hdvalue=3.25, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "real",
+        "value": "",
+        "return": 3.25
+      },
+      {
+        "mode": "put",
+        "key": "real",
+        "value": -0.75,
+        "return": null,
+        "history": [
+          "Added real = -0.75",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"real\", hdvalue=-0.75, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "real",
+        "value": "",
+        "return": -0.75
+      }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "flag",
+        "value": true,
+        "return": null,
+        "history": [
+          "Added flag = 1",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"flag\", hdvalue=True, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "flag",
+        "value": "",
+        "error": "Unhandled data type Bool for user defined type. Send us a bug report"
+      },
+      {
+        "mode": "put",
+        "key": "flag",
+        "value": false,
+        "return": null,
+        "history": [
+          "Added flag = 0",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"flag\", hdvalue=False, verbose=False)"
+        ]
+      },
+      {
+        "mode": "del",
+        "key": "flag",
+        "value": 123,
+        "return": null,
+        "history": [
+          "Removed user-defined keyword flag",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"flag\", hdvalue=123, verbose=False)"
+        ]
+      }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1.23456789,
+        "return": null,
+        "history": [
+          "Added precise = 1.23456789",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1.23456789, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e-07,
+        "return": null,
+        "history": [
+          "Added precise = 1e-07",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e-07, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e+20,
+        "return": null,
+        "history": [
+          "Added precise = 1e+20",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e+20, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": -0.0,
+        "return": null,
+        "history": [
+          "Added precise = -0",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=-0.0, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 0.0001,
+        "return": null,
+        "history": [
+          "Added precise = 0.0001",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=0.0001, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e+16,
+        "return": null,
+        "history": [
+          "Added precise = 1e+16",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e+16, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e-05,
+        "return": null,
+        "history": [
+          "Added precise = 1e-05",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e-05, verbose=False)"
+        ]
+      }
     ]
   ],
   "numeric": {

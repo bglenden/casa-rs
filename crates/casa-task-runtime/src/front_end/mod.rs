@@ -653,6 +653,60 @@ where
         };
         let mut overrides = ResolutionPatch::default();
         for (name, value) in &request.values {
+            let Some(binding) = bundle
+                .surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == *name)
+            else {
+                return refuse(
+                    &request.surface,
+                    format!("unknown {} parameter {name:?}", request.surface),
+                    Some(name.clone()),
+                );
+            };
+            let is_variant = bundle
+                .catalog
+                .concept(&binding.concept)
+                .is_some_and(|concept| {
+                    matches!(
+                        concept.value_domain,
+                        casa_provider_contracts::ParameterType::Variant
+                    )
+                });
+            let variant_value = if is_variant {
+                #[derive(Deserialize)]
+                struct RawValues<'a> {
+                    #[serde(borrow, default)]
+                    values: BTreeMap<String, &'a RawValue>,
+                }
+                let parsed = serde_json::from_str::<RawValues<'_>>(&text)
+                    .ok()
+                    .and_then(|raw| {
+                        raw.values
+                            .get(name)
+                            .map(|raw| crate::casa_type_diagnostics::parse_variant_json(raw.get()))
+                    });
+                match parsed {
+                    Some(Ok(value)) => Some(value),
+                    Some(Err(error)) => {
+                        return refuse(
+                            &request.surface,
+                            format!("parameter {name:?}: {error}"),
+                            Some(name.clone()),
+                        );
+                    }
+                    None => {
+                        return refuse(
+                            &request.surface,
+                            format!("parameter {name:?} is missing from the request"),
+                            Some(name.clone()),
+                        );
+                    }
+                }
+            } else {
+                None
+            };
             // serde_json represents an out-of-range JSON integer as a float.
             // Inspect its original spelling only on this error path: CASA
             // accepts the integer, so it must not get a CASA cInt type error.
@@ -680,7 +734,8 @@ where
                     );
                 }
             }
-            let Some(value) = ParameterValue::from_plain_json(value) else {
+            let Some(value) = variant_value.or_else(|| ParameterValue::from_plain_json(value))
+            else {
                 return refuse(
                     &request.surface,
                     format!("parameter {name:?} is null; leave it out to take its default"),
@@ -688,18 +743,6 @@ where
                 );
             };
             // Checked here, so that a value the surface refuses is named.
-            let Some(binding) = bundle
-                .surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == *name)
-            else {
-                return refuse(
-                    &request.surface,
-                    format!("unknown {} parameter {name:?}", request.surface),
-                    Some(name.clone()),
-                );
-            };
             if let Err(error) = crate::cli::checked_value(bundle, binding, &value) {
                 return refuse(&request.surface, error, Some(name.clone()));
             }

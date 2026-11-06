@@ -207,6 +207,21 @@ def test_a_missing_input_image_is_a_parameter_error(
     assert completion.returncode == 2
 
 
+def test_imhead_preserves_python_scalar_header_types(
+    image: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_executables("imhead")
+    monkeypatch.chdir(image.parent)
+    assert tasks.imhead(image.name, mode="put", hdkey="count", hdvalue=42) is None
+    assert tasks.imhead(image.name, mode="put", hdkey="real", hdvalue=1.25) is None
+    assert tasks.imhead(image.name, mode="put", hdkey="literal", hdvalue="  42  ") is None
+    count = tasks.imhead(image.name, mode="get", hdkey="count")
+    real = tasks.imhead(image.name, mode="get", hdkey="real")
+    assert type(count) is int and count == 42
+    assert type(real) is float and real == 1.25
+    assert tasks.imhead(image.name, mode="get", hdkey="literal") == "  42  "
+
+
 def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -11,7 +11,7 @@ use casa_coordinates::{
 use casa_fft::Fft2;
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
 use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    NoAdditionalProviderSchemas, ParameterValue, ProviderCliMachineActions, ProviderCliProjection,
     ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
     TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
     builtin_surface_bundle, merged_components,
@@ -1222,6 +1222,12 @@ pub fn imhead_is_custom_key(key: &str) -> bool {
 }
 
 /// Read a user-defined scalar field, preserving its stored casacore type.
+/// CASA checks the exact field name first and then its lowercase spelling.
+///
+/// # Errors
+///
+/// Returns an error for a missing field, a type CASA cannot read, an
+/// unsupported field type, or an unreadable image.
 pub fn imhead_custom_value(
     path: impl AsRef<Path>,
     key: &str,
@@ -1242,6 +1248,9 @@ pub fn imhead_custom_value(
                 value: i64::from(*value),
             }),
             Value::Scalar(ScalarValue::Float64(value)) => Ok(CasaValue::float(*value)),
+            Value::Scalar(ScalarValue::Bool(_)) => Err(ImageError::InvalidMetadata(
+                "Unhandled data type Bool for user defined type. Send us a bug report".into(),
+            )),
             _ => Err(ImageError::InvalidMetadata(format!(
                 "Reading this user-defined value is not implemented (#977): {key}"
             ))),
@@ -1256,17 +1265,66 @@ pub fn imhead_custom_value(
     }
 }
 
-fn imhead_change_custom_string(
-    path: &Path,
+/// Write or remove a user-defined scalar metadata field.
+///
+/// `mode` is `"add"`, `"put"`, or `"del"`. Adds refuse an existing field;
+/// puts preserve its existing type. Values may be strings, booleans, 32-bit
+/// integers, or finite doubles. Deleting a field ignores `value`.
+///
+/// # Errors
+///
+/// Returns an error for a reserved key, unsupported value, duplicate add,
+/// missing delete, incompatible existing field, or image I/O failure. The
+/// metadata may already be updated if appending image history fails, as in
+/// CASA's metadata writer.
+pub fn imhead_custom_scalar(
+    path: impl AsRef<Path>,
     mode: &str,
     key: &str,
-    value: &str,
+    value: &ParameterValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    if !imhead_is_custom_key(key) || !["add", "put", "del"].contains(&mode) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Unsupported custom metadata operation {mode:?} for {key:?} (#977)"
+        )));
+    }
+    let (stored, rendered) = if mode == "del" {
+        (ScalarValue::String(String::new()), String::new())
+    } else {
+        match value {
+            ParameterValue::String(value) => {
+                (ScalarValue::String(value.clone()), format!("\"{value}\""))
+            }
+            ParameterValue::Integer(value) => (
+                ScalarValue::Int32(i32::try_from(*value).map_err(|_| {
+                    ImageError::InvalidMetadata(
+                        "User-defined integer is outside the supported 32-bit range (#977)".into(),
+                    )
+                })?),
+                value.to_string(),
+            ),
+            ParameterValue::Float(value) if value.is_finite() => (
+                ScalarValue::Float64(*value),
+                self::projection_header::cpp_number_precision(*value, 12),
+            ),
+            ParameterValue::Bool(value) => (
+                ScalarValue::Bool(*value),
+                if *value { "1" } else { "0" }.to_string(),
+            ),
+            _ => {
+                return Err(ImageError::InvalidMetadata(
+                    "This user-defined value type is not implemented (#977)".into(),
+                ));
+            }
+        }
+    };
     fn change<T: ImagePixel>(
         image: &mut PagedImage<T>,
         mode: &str,
         key: &str,
-        value: &str,
+        value: &ScalarValue,
+        rendered: &str,
     ) -> Result<String, ImageError> {
         let mut info = image.misc_info();
         let lower = key.to_ascii_lowercase();
@@ -1291,16 +1349,18 @@ fn imhead_change_custom_string(
                 format!("Removed user-defined keyword {name}")
             }
             _ => {
-                if info
-                    .get(key)
-                    .is_some_and(|value| !matches!(value, Value::Scalar(ScalarValue::String(_))))
-                {
+                if info.get(key).is_some_and(|old| match old {
+                    Value::Scalar(old) => {
+                        std::mem::discriminant(old) != std::mem::discriminant(value)
+                    }
+                    _ => true,
+                }) {
                     return Err(ImageError::InvalidMetadata(format!(
-                        "Changing the type of a user-defined field is not implemented (#977): {key}"
+                        "incorrect data type used for field {key}"
                     )));
                 }
-                info.upsert(key, Value::Scalar(ScalarValue::String(value.to_string())));
-                format!("Added {key} = \"{value}\"")
+                info.upsert(key, Value::Scalar(value.clone()));
+                format!("Added {key} = {rendered}")
             }
         };
         image.set_misc_info(info)?;
@@ -1308,10 +1368,10 @@ fn imhead_change_custom_string(
     }
     let mut image = AnyPagedImage::open(path)?;
     let message = match &mut image {
-        AnyPagedImage::Float32(image) => change(image, mode, key, value)?,
-        AnyPagedImage::Float64(image) => change(image, mode, key, value)?,
-        AnyPagedImage::Complex32(image) => change(image, mode, key, value)?,
-        AnyPagedImage::Complex64(image) => change(image, mode, key, value)?,
+        AnyPagedImage::Float32(image) => change(image, mode, key, &stored, &rendered)?,
+        AnyPagedImage::Float64(image) => change(image, mode, key, &stored, &rendered)?,
+        AnyPagedImage::Complex32(image) => change(image, mode, key, &stored, &rendered)?,
+        AnyPagedImage::Complex64(image) => change(image, mode, key, &stored, &rendered)?,
     };
     image.save()?;
     drop(image);
@@ -1332,7 +1392,12 @@ fn imhead_change_string(
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     if imhead_is_custom_key(hdkey) {
-        return imhead_change_custom_string(path, mode, hdkey, hdvalue);
+        return imhead_custom_scalar(
+            path,
+            mode,
+            hdkey,
+            &ParameterValue::String(hdvalue.to_string()),
+        );
     }
     let key = hdkey.to_ascii_lowercase();
     if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())

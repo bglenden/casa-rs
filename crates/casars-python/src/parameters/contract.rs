@@ -80,6 +80,7 @@ impl From<&ParameterValue> for TaggedValue {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum TypeView {
+    Variant,
     Bool,
     Integer,
     Float,
@@ -119,6 +120,7 @@ pub(crate) struct TypeFieldView {
 impl From<&ParameterType> for TypeView {
     fn from(value: &ParameterType) -> Self {
         match value {
+            ParameterType::Variant => Self::Variant,
             ParameterType::Bool => Self::Bool,
             ParameterType::Integer => Self::Integer,
             ParameterType::Float => Self::Float,

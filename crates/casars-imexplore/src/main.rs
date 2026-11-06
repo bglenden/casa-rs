@@ -12,6 +12,7 @@ use casa_images::{
     ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete,
     imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
 };
+use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
@@ -80,11 +81,32 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             }
             // CASA's default '' is a value here: it clears the key, as
             // `hdkey='bunit', hdvalue=''` clears the brightness unit.
-            let hdvalue = task.text("hdvalue")?.unwrap_or_default();
-            let summary = if mode == "put" {
-                imhead_put(&path, &hdkey, &hdvalue)
+            let hdvalue = task
+                .value("hdvalue")
+                .cloned()
+                .unwrap_or_else(|| ParameterValue::String(String::new()));
+            if matches!(hdvalue, ParameterValue::Array(_) | ParameterValue::Table(_))
+                && mode == "del"
+            {
+                return Err(TaskFailure::validation(
+                    "imhead del with an array or record hdvalue is not implemented (#977)",
+                )
+                .at("hdvalue"));
+            }
+            let summary = if casa_images::analysis::imhead_is_custom_key(&hdkey) {
+                casa_images::analysis::imhead_custom_scalar(&path, &mode, &hdkey, &hdvalue)
+            } else if mode == "del" {
+                imhead_add_delete(&path, &mode, &hdkey, "")
+            } else if let ParameterValue::String(value) = &hdvalue {
+                if mode == "put" {
+                    imhead_put(&path, &hdkey, value)
+                } else {
+                    imhead_add_delete(&path, &mode, &hdkey, value)
+                }
             } else {
-                imhead_add_delete(&path, &mode, &hdkey, &hdvalue)
+                return Err(TaskFailure::execution(format!(
+                    "{hdkey} value must be a string"
+                )));
             }
             .map_err(|error| image_error("imhead", &path, error))?;
             let verbose = if task.flag("verbose")? {
@@ -107,7 +129,7 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                     history_string(imagename),
                     history_string(&mode),
                     history_string(&hdkey),
-                    history_string(&hdvalue)
+                    history_value(&hdvalue)
                 ),
             ];
             if let Err(error) = casa_images::image::add_image_history(&path, "imhead", &history) {
@@ -155,6 +177,16 @@ fn history_string(value: &str) -> String {
         "...".to_string()
     } else {
         format!("\"{value}\"")
+    }
+}
+
+fn history_value(value: &ParameterValue) -> String {
+    match value {
+        ParameterValue::String(value) => history_string(value),
+        ParameterValue::Bool(value) => if *value { "True" } else { "False" }.to_string(),
+        ParameterValue::Integer(value) => value.to_string(),
+        ParameterValue::Float(value) => casa_provider_contracts::python_float(*value),
+        _ => "...".to_string(),
     }
 }
 

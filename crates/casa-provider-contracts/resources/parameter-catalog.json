@@ -557,7 +557,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Header operation mode.",
-        "details": "get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports string-valued brightness unit, image type, object, observer and telescope. add and del support brightness unit, object, observer and telescope. history replays the image log when an INFO log sink is configured; otherwise it is refused. String-valued user-defined keys and scalar integer and floating-point reads are supported; the remaining values and operations are unimplemented (#977).",
+        "details": "get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports string-valued brightness unit, image type, object, observer and telescope. add and del support brightness unit, object, observer and telescope. history replays the image log when an INFO log sink is configured; otherwise it is refused. User-defined keys support string, boolean, 32-bit integer, and floating-point writes, and string, integer, and floating-point reads; other values and operations are unimplemented (#977).",
         "examples": [
           "summary"
         ]
@@ -3714,10 +3714,10 @@
     },
     {
       "id": "parameter.hdvalue",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "hdvalue",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -3726,7 +3726,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Header value to write when mode is put.",
+        "summary": "Header value to write for add or put.",
         "details": null,
         "examples": []
       },
