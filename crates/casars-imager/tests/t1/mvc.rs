@@ -554,6 +554,45 @@ fn mvc_clean_refreshes_the_cube_from_the_taylor_model() {
     }
 }
 
+/// CASA copies the common Taylor PB support onto MVC's restored and
+/// residual Taylor images when pblimit is positive, while cleaning the
+/// source through repeated cube-major cycles (#1069).
+#[test]
+fn mvc_clean_with_positive_pblimit_uses_casa_taylor_support() {
+    let observation = weighted_observation();
+    for (iterations, model) in [
+        (1, [0.481_774_9_f32, -0.441_406_25]),
+        (3, [1.305_981_4_f32, -1.177_929_6]),
+    ] {
+        let (summary, products) = observation.image(
+            &format!("mvc-clean-positive-pb-{iterations}"),
+            json!({
+                "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+                "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+                "niter": iterations, "cycleniter": 1, "write_pb": true, "pblimit": 0.8,
+            }),
+        );
+        assert_eq!(summary.actual_minor_iterations, iterations);
+        assert_eq!(summary.major_cycles, iterations + 1);
+        for (term, expected) in model.into_iter().enumerate() {
+            let actual = products.get(&format!(".model.tt{term}")).pixels[[152, 144]];
+            assert!(
+                (actual - expected).abs() <= 0.001 * expected.abs(),
+                "iterations {iterations}, term {term}: native {actual}, CASA {expected}"
+            );
+        }
+        let pb_mask = products.get(".pb.tt0").mask().expect("Taylor PB mask");
+        assert_eq!(pb_mask.iter().filter(|value| **value).count(), 10_437);
+        for suffix in [".residual.tt0", ".residual.tt1", ".image.tt0", ".image.tt1"] {
+            assert_eq!(
+                products.get(suffix).mask().as_ref(),
+                Some(&pb_mask),
+                "{suffix}"
+            );
+        }
+    }
+}
+
 /// CASA does not create a cube model when the initial threshold check
 /// stops before any minor cycle, but does publish the Taylor models (#1069).
 #[test]
