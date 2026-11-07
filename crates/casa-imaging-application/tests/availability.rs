@@ -404,9 +404,8 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
     check(&mosaic, asked, None, &host(true)).expect("mosaic on Metal");
 }
 
-/// Facets (#664) run with the standard kernel set and a constant basis, on
-/// the CPU and on Metal; a Taylor basis or a W, mosaic or AW set is refused,
-/// each with its own reason.
+/// Facets (#664, #1063) run with the standard or W kernel set and a
+/// constant basis; Taylor bases and AW kernel sets stay refused.
 #[test]
 fn facets_run_with_the_standard_set_and_a_constant_basis() {
     let faceted = || ProblemFixture {
@@ -435,10 +434,147 @@ fn facets_run_with_the_standard_set_and_a_constant_basis() {
     .compile();
     assert_exactly_unsupported(on_cpu(&taylor), [Unsupported::FacetedBasis]);
     let mut w = faceted();
+    w.measurement_equation = w.measurement_equation.with_w_projection(
+        WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).expect("W contract"),
+    );
+    on_cpu(&w.compile()).expect("W-projection facets on CPU");
+    let mut aw = faceted().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1);
+    aw.measurement_equation = aw.measurement_equation.with_aw_projection(
+        AwProjectionContract::new(
+            12_500.0,
+            std::num::NonZeroUsize::new(32).unwrap(),
+            true,
+            false,
+            true,
+            true,
+            false,
+            [300.0, 30.0],
+            5.0,
+            5.0,
+        )
+        .unwrap(),
+    );
+    aw.products.push(ProductKind::Weight);
+    assert_exactly_unsupported(on_cpu(&aw.compile()), [Unsupported::FacetedKernelSet]);
+}
+
+/// The public compiled capability report has the same W-facet scope as
+/// the validated application request (#1063).
+#[test]
+fn w_facet_availability_refuses_unverified_compiled_modes() {
+    let base = || {
+        let mut fixture = ProblemFixture {
+            facets: FacetLayout::Regular {
+                columns: 2,
+                rows: 2,
+            },
+            ..ProblemFixture::standard()
+        };
+        fixture.measurement_equation = fixture.measurement_equation.with_w_projection(
+            WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).unwrap(),
+        );
+        fixture
+    };
+    on_cpu(&base().compile()).expect("natural W facets");
+    let mut uniform = base();
+    uniform.weighting = WeightingScheme::Uniform;
+    on_cpu(&uniform.compile()).expect("uniform W facets");
+    let mut superuniform = base();
+    superuniform.weighting = WeightingScheme::Uniform;
+    superuniform.density_cells =
+        casa_imaging_model::DensityCells::Box(std::num::NonZeroUsize::new(3).unwrap());
+    assert_exactly_unsupported(on_cpu(&superuniform.compile()), [Unsupported::FacetedWMode]);
+    let mut response = base();
+    response.instrument_model =
+        Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+    response.measurement_equation =
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products())
+            .with_w_projection(
+                WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).unwrap(),
+            );
+    assert_exactly_unsupported(on_cpu(&response.compile()), [Unsupported::FacetedWMode]);
+    let mut automatic = base();
+    automatic.measurement_equation =
+        MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products())
+            .with_w_projection(WProjectionContract::new(100.0, None).unwrap());
+    assert_exactly_unsupported(on_cpu(&automatic.compile()), [Unsupported::FacetedWMode]);
+    let mut clark = base();
+    clark.algorithm = ReconstructionAlgorithm::Clark;
+    assert_exactly_unsupported(on_cpu(&clark.compile()), [Unsupported::FacetedWMode]);
+    let mut briggs = base();
+    briggs.weighting = WeightingScheme::Briggs { robust: 0.5 };
+    assert_exactly_unsupported(on_cpu(&briggs.compile()), [Unsupported::FacetedWMode]);
+    let mut polarized = base();
+    polarized
+        .polarizations
+        .push(PolarizationCoordinate::StokesV);
+    assert_exactly_unsupported(on_cpu(&polarized.compile()), [Unsupported::FacetedWMode]);
+    let mut outlier = base();
+    outlier.outlier = true;
+    assert_exactly_unsupported(on_cpu(&outlier.compile()), [Unsupported::FacetedWMode]);
+}
+
+#[test]
+fn mem_compiled_scope_cannot_bypass_the_task_guard() {
+    let mem = || ProblemFixture {
+        algorithm: ReconstructionAlgorithm::Mem,
+        ..ProblemFixture::standard()
+    };
+    on_cpu(&mem().compile()).expect("standard Stokes I MEM is available");
+    on_cpu(
+        &ProblemFixture {
+            polarizations: vec![PolarizationCoordinate::StokesQ],
+            ..ProblemFixture::standard()
+        }
+        .compile(),
+    )
+    .expect("other reconstruction algorithms retain their scope");
+    let mut w = mem();
     w.measurement_equation = w
         .measurement_equation
-        .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
-    assert_exactly_unsupported(on_cpu(&w.compile()), [Unsupported::FacetedKernelSet]);
+        .with_w_projection(WProjectionContract::new(100.0, None).unwrap());
+    let cases = [
+        ProblemFixture {
+            basis: ReconstructionBasis::ChannelLocal { channels: 1 },
+            ..mem()
+        },
+        ProblemFixture {
+            polarizations: vec![PolarizationCoordinate::StokesQ],
+            ..mem()
+        },
+        ProblemFixture {
+            outlier: true,
+            ..mem()
+        },
+        ProblemFixture {
+            facets: FacetLayout::Regular {
+                columns: 2,
+                rows: 2,
+            },
+            ..mem()
+        },
+        ProblemFixture {
+            weighting: WeightingScheme::Uniform,
+            ..mem()
+        },
+        ProblemFixture {
+            sources: 2,
+            ..mem()
+        },
+        ProblemFixture {
+            model_column_write: ModelColumnWrite::SelectedSamples,
+            ..mem()
+        },
+        mem().with_primary_beam(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
+        w,
+    ];
+    for fixture in cases {
+        let result = on_cpu(&fixture.compile()).expect_err("unsupported MEM problem");
+        assert!(
+            result.unsupported().contains(&Unsupported::MemScope),
+            "{result:?}"
+        );
+    }
 }
 
 /// One compiled-problem fixture; [`ProblemFixture::standard`] is a dirty
@@ -447,6 +583,9 @@ struct ProblemFixture {
     phase_centre: PhaseCentreLaw,
     basis: ReconstructionBasis,
     algorithm: ReconstructionAlgorithm,
+    weighting: WeightingScheme,
+    density_cells: casa_imaging_model::DensityCells,
+    sources: usize,
     polarizations: Vec<PolarizationCoordinate>,
     uvw: UvwCoordinateLaw,
     facets: FacetLayout,
@@ -469,6 +608,9 @@ impl ProblemFixture {
             )),
             basis: ReconstructionBasis::Constant,
             algorithm: ReconstructionAlgorithm::Dirty,
+            weighting: WeightingScheme::Natural,
+            density_cells: casa_imaging_model::DensityCells::Image,
+            sources: 1,
             polarizations: vec![PolarizationCoordinate::StokesI],
             uvw: UvwCoordinateLaw::PhaseTrackingCentre,
             facets: FacetLayout::Single,
@@ -500,6 +642,11 @@ impl ProblemFixture {
     fn request(self) -> ProblemInput {
         let iteration_budget =
             usize::from(!matches!(self.algorithm, ReconstructionAlgorithm::Dirty));
+        let density_scope = if self.weighting.uses_density() {
+            WeightDensityScope::GlobalSelection
+        } else {
+            WeightDensityScope::NotApplicable
+        };
         let ([nx, ny], [cell_x, cell_y]) = self.image;
         let direction = DirectionCoordinateSpec::new(
             Projection::Sin,
@@ -593,7 +740,8 @@ impl ProblemFixture {
                     ReconstructionControls::new(iteration_budget, 1.0, 0.0),
                     PolarizationContract::new(self.polarizations),
                 ),
-                WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+                WeightingContract::new(self.weighting, density_scope)
+                    .with_density_cells(self.density_cells),
                 ProductRequirements::new(
                     self.products,
                     ProductNormalization::UnitResponse,
@@ -604,10 +752,47 @@ impl ProblemFixture {
                 numerics,
             ),
             geometry,
-            common::observation(),
+            observation_with_sources(self.sources),
             common::model_lifecycle(),
         )
     }
+}
+
+fn observation_with_sources(count: usize) -> casa_imaging_model::ObservationSnapshot {
+    if count == 1 {
+        return common::observation();
+    }
+    use casa_imaging_model::{
+        CorrelationProduct, FlagPolicy, IdSelection, IntentSelection, ObservationSelection,
+        ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance, PartitionId,
+        PartitionSelection, RowSelection, SelectedColumns, SpectralWindowSelection, UvSelection,
+        VisibilityColumn, WeightColumn, compile_observation,
+    };
+    let selection = ObservationSelection::new(
+        1,
+        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+        vec![PartitionSelection::new(
+            PartitionId(0),
+            0,
+            vec![CorrelationProduct::new(0, casa_types::Correlation::I)],
+        )],
+        vec![SpectralWindowSelection::new(0, vec![0])],
+    );
+    let sources = (0..count)
+        .map(|index| {
+            ObservationSourceInput::new(
+                ObservationSourceProvenance::new(format!("fixture://store-{index}.ms")),
+                selection.clone(),
+                SelectedColumns::new(
+                    VisibilityColumn::Data,
+                    FlagPolicy::FlagOrFlagRow,
+                    WeightColumn::Weight,
+                ),
+                false,
+            )
+        })
+        .collect();
+    compile_observation(ObservationSnapshotInput::new(sources)).unwrap()
 }
 
 fn inner_products() -> DeclaredInnerProducts {

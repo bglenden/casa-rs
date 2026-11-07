@@ -138,6 +138,10 @@ fn projected_value(value: &ParameterValue) -> String {
         ParameterValue::Bool(value) => value.to_string(),
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => value.to_string(),
+        ParameterValue::Complex([real, imag]) => format!("({}{:+}j)", real.0, imag.0),
+        ParameterValue::EmptyArray { .. } => "[]".into(),
+        ParameterValue::ScalarArray(value) => projected_value(value),
+        ParameterValue::NumpyScalar { value, .. } => projected_value(value),
         ParameterValue::String(value) => value.clone(),
         ParameterValue::Array(values) => values
             .iter()
@@ -191,6 +195,7 @@ fn value_kind(domain: &ParameterType) -> &'static str {
 
 fn parameter_type_name(domain: &ParameterType) -> &'static str {
     match domain {
+        ParameterType::Variant => "variant",
         ParameterType::Bool => "boolean",
         ParameterType::Integer => "integer",
         ParameterType::Float => "number",

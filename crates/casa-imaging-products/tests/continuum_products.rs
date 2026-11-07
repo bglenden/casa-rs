@@ -14,6 +14,8 @@ mod common;
 mod mvc;
 #[path = "continuum_products/mvc_reads.rs"]
 mod mvc_reads;
+#[path = "continuum_products/real_plane.rs"]
+mod real_plane;
 use common::continuum::{
     SHAPE, TWO_DOMAIN_PRODUCTS, axes, continuum_problem,
     continuum_problem_with_domains_and_reconstruction, continuum_problem_with_policy,

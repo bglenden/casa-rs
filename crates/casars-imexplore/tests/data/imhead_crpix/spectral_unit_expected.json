@@ -1,0 +1,395 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "axis": 4,
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "GHz"
+      ],
+      "fits": {
+        "CDELT": 1000.0,
+        "CRVAL": 1415000000.0,
+        "CTYPE": "FREQ",
+        "CUNIT": "Hz",
+        "RESTFRQ": 1420405751.786,
+        "SPECSYS": "LSRK"
+      },
+      "image": "normal",
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1.0000000000000002e-06
+      ],
+      "pixel": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1.4150000000000005
+      ],
+      "restfreq": {
+        "unit": "GHz",
+        "value": 1.4204057517860003
+      },
+      "roundtrip_pixel": [
+        -7.562839243746566e-13,
+        -7.567280135845067e-13,
+        0.0,
+        1.0
+      ],
+      "unit": "GHz",
+      "velocity_fits": {
+        "CDELT": -211.0611405314,
+        "CRVAL": 1140944.137423,
+        "CTYPE": "VRAD",
+        "CUNIT": "m/s",
+        "RESTFRQ": 1420405751.786,
+        "SPECSYS": "LSRK"
+      },
+      "world": [
+        2.0000004512859832,
+        -2.0000001128220406,
+        1.0,
+        1.4150000000000005
+      ]
+    },
+    {
+      "axis": 4,
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "MHz"
+      ],
+      "fits": {
+        "CDELT": 1000.0,
+        "CRVAL": 1415000000.0,
+        "CTYPE": "FREQ",
+        "CUNIT": "Hz",
+        "RESTFRQ": 1420405751.786,
+        "SPECSYS": "LSRK"
+      },
+      "image": "normal",
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        0.001
+      ],
+      "pixel": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1415.0
+      ],
+      "restfreq": {
+        "unit": "MHz",
+        "value": 1420.405751786
+      },
+      "roundtrip_pixel": [
+        -7.562839243746566e-13,
+        -7.567280135845067e-13,
+        0.0,
+        1.0
+      ],
+      "unit": "MHz",
+      "velocity_fits": {
+        "CDELT": -211.0611405314,
+        "CRVAL": 1140944.137423,
+        "CTYPE": "VRAD",
+        "CUNIT": "m/s",
+        "RESTFRQ": 1420405751.786,
+        "SPECSYS": "LSRK"
+      },
+      "world": [
+        2.0000004512859832,
+        -2.0000001128220406,
+        1.0,
+        1415.0
+      ]
+    },
+    {
+      "axis": 4,
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "MHz"
+      ],
+      "fits": {
+        "CDELT": 1000.0,
+        "CRVAL": 1415000000.0,
+        "CTYPE": "FREQ",
+        "CUNIT": "Hz",
+        "RESTFRQ": 1400000000.0,
+        "SPECSYS": "LSRK"
+      },
+      "image": "ghz",
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        0.0010000000000000002
+      ],
+      "pixel": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1415.0000000000007
+      ],
+      "restfreq": {
+        "unit": "MHz",
+        "value": 1400.0000000000002
+      },
+      "roundtrip_pixel": [
+        -7.562839243746566e-13,
+        -7.567280135845067e-13,
+        0.0,
+        1.0
+      ],
+      "unit": "MHz",
+      "velocity_fits": {
+        "CDELT": -214.1374699539,
+        "CRVAL": -3212062.05,
+        "CTYPE": "VRAD",
+        "CUNIT": "m/s",
+        "RESTFRQ": 1400000000.0,
+        "SPECSYS": "LSRK"
+      },
+      "world": [
+        2.0000004512859832,
+        -2.0000001128220406,
+        1.0,
+        1415.0000000000007
+      ]
+    },
+    {
+      "axis": 4,
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "fits": {
+        "CDELT": 1000.0,
+        "CRVAL": 1415000000.0,
+        "CTYPE": "FREQ",
+        "CUNIT": "Hz",
+        "RESTFRQ": 1400000000.0,
+        "SPECSYS": "LSRK"
+      },
+      "image": "ghz",
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0000000000002
+      ],
+      "pixel": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1415000000.0000007
+      ],
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1400000000.0000002
+      },
+      "roundtrip_pixel": [
+        -7.562839243746566e-13,
+        -7.567280135845067e-13,
+        0.0,
+        1.0
+      ],
+      "unit": "Hz",
+      "velocity_fits": {
+        "CDELT": -214.1374699539,
+        "CRVAL": -3212062.05,
+        "CTYPE": "VRAD",
+        "CUNIT": "m/s",
+        "RESTFRQ": 1400000000.0,
+        "SPECSYS": "LSRK"
+      },
+      "world": [
+        2.0000004512859832,
+        -2.0000001128220406,
+        1.0,
+        1415000000.0000007
+      ]
+    },
+    {
+      "axis": 2,
+      "axisunits": [
+        "",
+        "GHz",
+        "'",
+        "'"
+      ],
+      "fits": {
+        "error": "Exception: Unknown error copying image to FITS file.\n... thrown by static void casa::ImageFactory::toFITS(casa::SPCIIF, const casacore::String&, casacore::Bool, casacore::Bool, casacore::Int, casacore::Double, casacore::Double, const casacore::Record&, const casacore::String&, casacore::Bool, casacore::Bool, casacore::Bool, casacore::Bool, casacore::Bool, casacore::Bool, casacore::Bool, const casacore::String&, casacore::Bool, casacore::Bool)"
+      },
+      "image": "transposed",
+      "incr": [
+        1.0,
+        1.0000000000000002e-06,
+        -1.0,
+        1.0
+      ],
+      "pixel": [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      "refpix": [
+        0.0,
+        1.0,
+        2.0,
+        2.0
+      ],
+      "refval": [
+        1.0,
+        1.4150000000000005,
+        0.0,
+        0.0
+      ],
+      "restfreq": {
+        "unit": "GHz",
+        "value": 1.4204057517860003
+      },
+      "roundtrip_pixel": [
+        0.0,
+        1.0,
+        -7.562839243746566e-13,
+        -7.567280135845067e-13
+      ],
+      "unit": "GHz",
+      "velocity_fits": null,
+      "world": [
+        1.0,
+        1.4150000000000005,
+        2.0000004512859832,
+        -2.0000001128220406
+      ]
+    },
+    {
+      "axis": 4,
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "GHz"
+      ],
+      "fits": {
+        "CDELT": 1000.033361673,
+        "CRVAL": 1415047206.809,
+        "CTYPE": "FREQ",
+        "CUNIT": "Hz",
+        "RESTFRQ": 1420405751.786,
+        "SPECSYS": "BARYCENT"
+      },
+      "image": "conversion",
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1.0000000000000002e-06
+      ],
+      "pixel": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        1.0
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1.4150000000000005
+      ],
+      "restfreq": {
+        "unit": "GHz",
+        "value": 1.4204057517860003
+      },
+      "roundtrip_pixel": [
+        -7.562839243746566e-13,
+        -7.567280135845067e-13,
+        0.0,
+        1.0
+      ],
+      "unit": "GHz",
+      "velocity_fits": {
+        "CDELT": -211.0681818873,
+        "CRVAL": 1130980.614427,
+        "CTYPE": "VRAD",
+        "CUNIT": "m/s",
+        "RESTFRQ": 1420405751.786,
+        "SPECSYS": "BARYCENT"
+      },
+      "world": [
+        2.0000004512859832,
+        -2.0000001128220406,
+        1.0,
+        1.4150472068092241
+      ]
+    }
+  ]
+}

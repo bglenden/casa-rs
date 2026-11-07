@@ -220,7 +220,7 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
 /// The front end of the `simobserve` binary, which hosts `simobserve`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "simobserve",
         simobserve_task_schema_bundle(),
         &["simobserve"],

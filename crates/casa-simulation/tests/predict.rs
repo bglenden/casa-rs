@@ -451,3 +451,24 @@ fn a_model_without_direction_stokes_and_spectral_axes_is_refused() {
         Err(PredictError::UnsupportedModel(_))
     ));
 }
+
+#[test]
+fn a_model_with_a_non_j2000_conversion_frame_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = Model::points(&[(1, 1, 1.0)]).write(dir.path());
+    let mut image = PagedImage::<f32>::open(&path).unwrap();
+    let mut coordinates = image.coordinates().clone();
+    let casa_coordinates::CoordinateModel::Direction(direction) = coordinates.coordinate(0) else {
+        panic!("direction")
+    };
+    let changed = direction
+        .clone()
+        .with_conversion_direction_ref(DirectionRef::GALACTIC);
+    coordinates.replace_coordinate(0, changed);
+    image.set_coordinates(coordinates).unwrap();
+    image.save().unwrap();
+    drop(image);
+    assert!(
+        matches!(SkyModel::open(&path), Err(PredictError::UnsupportedModel(reason)) if reason.contains("conversion"))
+    );
+}

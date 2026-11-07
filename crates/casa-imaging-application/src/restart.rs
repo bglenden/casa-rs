@@ -167,7 +167,9 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
     };
     let unsupported = match &request.gridder {
         _ if request.outlierfile.is_some() => Some("with outlier fields"),
-        Gridder::Standard { facets } if facets.get() > 1 => Some("with facets"),
+        Gridder::Standard { facets } | Gridder::Wproject { facets, .. } if facets.get() > 1 => {
+            Some("with facets")
+        }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
         Gridder::Mosaic { .. } => Some("with the mosaic gridder"),
         Gridder::Awproject(_) => Some("with A-projection"),
@@ -468,6 +470,12 @@ mod tests {
         );
         let refusal = check(&mosaic).unwrap_err().to_string();
         assert!(refusal.contains("mosaic gridder"), "{refusal}");
+        let w_facets = request(
+            &prefix,
+            serde_json::json!({"calcpsf": false, "gridder": "wproject", "wprojplanes": 4, "facets": 2}),
+        );
+        let refusal = check(&w_facets).unwrap_err().to_string();
+        assert!(refusal.contains("with facets"), "{refusal}");
     }
 
     #[test]

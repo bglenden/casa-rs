@@ -272,7 +272,7 @@ impl Msv2Observation {
         let time_scale = catalogue::time_scale(main)?;
         let read = 2 * tables + catalogue::setups_bytes(&ms)?;
         grant(read)?;
-        let setups = catalogue::spectral_setups(&ms)?;
+        let setups = catalogue::spectral_setups(&ms, options.visibility_frequency_frame)?;
         let modes = catalogue::read_state_modes(&ms)?;
         let spectral_sigmas = has_content(main, "SIGMA_SPECTRUM", 0)?;
         let mut indexed = 0;
@@ -614,6 +614,27 @@ impl Msv2Observation {
         let baseline = grid.baselines.binary_search(&baseline).ok()?;
         let row = grid.cells[time * grid.baselines.len() + baseline];
         (row != index::NO_ROW).then_some(row)
+    }
+
+    /// The lowest physical MAIN row at `time_s` in partition `id`, or
+    /// `None` when the partition has no such time. This borrows the opened
+    /// row index and allocates no storage.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn first_main_row_at_time(&self, id: PartitionId, time_s: f64) -> Option<u32> {
+        let grid = &self.partitions[id.0 as usize].grid;
+        let time = grid
+            .times_s
+            .binary_search_by(|stored| stored.total_cmp(&time_s))
+            .ok()?;
+        grid.cells(time..time + 1)
+            .iter()
+            .copied()
+            .filter(|row| *row != index::NO_ROW)
+            .min()
     }
 
     /// Whether the MAIN row partition `id` holds at `time_s` on `baseline`

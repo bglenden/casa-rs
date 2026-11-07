@@ -12,6 +12,10 @@ use ndarray::{IxDyn, ShapeBuilder};
 
 use crate::{GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType};
 
+mod beams;
+mod history;
+pub(crate) use history::{history_entries, read_cards};
+
 /// A FITS image read into memory ([`read_fits_image`]).
 #[derive(Debug, Clone)]
 pub struct FitsImage {
@@ -46,8 +50,12 @@ pub fn read_fits_image(fitsimage: impl AsRef<Path>) -> Result<FitsImage, ImageEr
     let pixels = ArrayD::from_shape_vec(IxDyn(&primary.shape).f(), data).map_err(|error| {
         ImageError::InvalidMetadata(format!("invalid FITS image shape: {error}"))
     })?;
+    let mut image_info = image_info_from_fits_header(&primary.header);
+    if let Some((beams, _)) = beams::read_beams(&mut primary)? {
+        image_info.beam_set = beams;
+    }
     Ok(FitsImage {
-        image_info: image_info_from_fits_header(&primary.header),
+        image_info,
         units: primary.header.get_string("BUNIT").unwrap_or("").to_string(),
         shape: primary.shape,
         coordinates: primary.coordinates,
@@ -94,6 +102,49 @@ impl PrimaryHdu {
             coordinates,
         })
     }
+
+    /// Read a bounded, linear block and its FITS null flags.
+    pub(crate) fn read_pixels(
+        &mut self,
+        start: usize,
+        count: usize,
+    ) -> Result<(Vec<f32>, Vec<bool>), ImageError> {
+        self.fits
+            .primary_hdu()
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        let start = i64::try_from(start)
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| ImageError::InvalidMetadata("FITS pixel offset is too large".into()))?;
+        let length = i64::try_from(count)
+            .map_err(|_| ImageError::InvalidMetadata("FITS pixel chunk is too large".into()))?;
+        let mut pixels = vec![0.0_f32; count];
+        let mut nulls = vec![0 as std::ffi::c_char; count];
+        let mut any_null = 0;
+        let mut status = 0;
+        // SAFETY: the file is open on the primary HDU and the buffers are
+        // writable for `count` elements of the types requested from CFITSIO.
+        unsafe {
+            fitsio::sys::ffgpf(
+                self.fits.as_raw(),
+                fitsio::sys::TFLOAT as i32,
+                start,
+                length,
+                pixels.as_mut_ptr().cast(),
+                nulls.as_mut_ptr(),
+                &mut any_null,
+                &mut status,
+            );
+        }
+        fitsio::errors::check_status(status).map_err(|error| ImageError::Io(error.to_string()))?;
+        Ok((pixels, nulls.into_iter().map(|null| null == 0).collect()))
+    }
+
+    pub(crate) fn beam_set(
+        &mut self,
+    ) -> Result<Option<(ImageBeamSet, casa_types::RecordValue)>, ImageError> {
+        beams::read_beams(self)
+    }
 }
 
 pub(crate) fn image_info_from_fits_header(header: &FitsHeader) -> ImageInfo {
@@ -136,21 +187,40 @@ fn read_primary_fits_header(
         );
     }
     for key in [
-        "RADESYS", "CUNIT1", "CUNIT2", "CUNIT3", "CUNIT4", "CTYPE1", "CTYPE2", "CTYPE3", "CTYPE4",
-        "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
+        "RADESYS", "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
     ] {
         if let Some(value) = read_optional_key::<String>(fits, hdu, key)? {
             header.set(key, FitsValue::String(value.trim_end().to_string()));
         }
     }
     for key in [
-        "EQUINOX", "CRVAL1", "CRVAL2", "CRVAL3", "CRVAL4", "CRPIX1", "CRPIX2", "CRPIX3", "CRPIX4",
-        "CDELT1", "CDELT2", "CDELT3", "CDELT4", "RESTFRQ", "BMAJ", "BMIN", "BPA", "IMTYPE",
-        "LONPOLE", "LATPOLE", "CROTA2",
+        "EQUINOX", "RESTFRQ", "BMAJ", "BMIN", "BPA", "LONPOLE", "LATPOLE", "CROTA2",
     ] {
         if let Some(value) = read_optional_key::<f64>(fits, hdu, key)? {
             header.set(key, FitsValue::Float(value));
         }
+    }
+    for axis in 1..=shape.len() {
+        for prefix in ["CUNIT", "CTYPE"] {
+            let key = format!("{prefix}{axis}");
+            if let Some(value) = read_optional_key::<String>(fits, hdu, &key)? {
+                header.set(key, FitsValue::String(value.trim_end().to_string()));
+            }
+        }
+        for prefix in ["CRVAL", "CRPIX", "CDELT"] {
+            let key = format!("{prefix}{axis}");
+            if let Some(value) = read_optional_key::<f64>(fits, hdu, &key)? {
+                header.set(key, FitsValue::Float(value));
+            }
+        }
+    }
+    for key in ["IMTYPE", "BLANK"] {
+        if let Some(value) = read_optional_key::<i64>(fits, hdu, key)? {
+            header.set(key, FitsValue::Integer(value));
+        }
+    }
+    if let Some(value) = read_optional_key::<bool>(fits, hdu, "CASAMBM")? {
+        header.set("CASAMBM", FitsValue::Logical(value));
     }
     // The observation date (#1017). A date card with no value (`MJD-OBS =`,
     // FITS's way to say it is unknown) or one of another type is left out,

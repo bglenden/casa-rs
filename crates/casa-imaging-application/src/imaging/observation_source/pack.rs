@@ -272,6 +272,25 @@ impl<'b> Arrays<'b> {
     }
 }
 
+/// Recover the stored channel frequency from the resampler's frame. Each
+/// conversion hop scales every channel linearly. At most eight hops per
+/// channel, one division and one multiplication bound the relative error by
+/// gamma_18 (about 2e-15) for positive, normal, finite intermediates; a cell
+/// can differ only at a rounding-near tie.
+fn stored_frequency_ratio(
+    batch: &VisibilityBatch<'_>,
+    layout: &Layout,
+    scratch: &PackScratch,
+) -> f64 {
+    layout
+        .channels
+        .first()
+        .zip(scratch.frequencies_hz.first())
+        .map_or(1.0, |(channel, frequency)| {
+            batch.frequency.hz()[*channel] / frequency
+        })
+}
+
 impl Packer<'_> {
     /// The physically selected channels at a batch's sole time. An empty
     /// selection contributes no block or write.
@@ -473,7 +492,7 @@ impl Packer<'_> {
                 );
             }
         }
-        let mut packed_time = None;
+        let (mut packed_time, mut native_frequency_ratio) = (None, 1.0);
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
             if packed_time != Some(time) {
@@ -484,6 +503,7 @@ impl Packer<'_> {
                     (bands, prediction, keep_in_band),
                     scratch,
                 )?;
+                native_frequency_ratio = stored_frequency_ratio(batch, layout, scratch);
                 packed_time = Some(time);
             }
             let row = Row {
@@ -521,6 +541,7 @@ impl Packer<'_> {
             let header = NativeRowHeader {
                 row_flag: flagged || nonfinite_uvw,
                 context: RowContext {
+                    native_frequency_ratio,
                     original_uvw_m: Some(uvw.metres_at(sample)),
                     time_s: row.time_s,
                     antennas: [baseline.antenna1.0, baseline.antenna2.0],

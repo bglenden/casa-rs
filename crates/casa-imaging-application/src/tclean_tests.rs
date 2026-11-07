@@ -258,7 +258,10 @@ fn casa_values_become_the_request_casa_rs_runs() {
     );
     assert_eq!(
         request(json!({ "gridder": "widefield", "wprojplanes": -1 })).gridder,
-        Gridder::Wproject { wprojplanes: None }
+        Gridder::Wproject {
+            facets: NonZeroUsize::MIN,
+            wprojplanes: None
+        }
     );
     // CASA's wproject and widefield with tclean's one w-plane are gridft.
     assert_eq!(
@@ -276,6 +279,7 @@ fn casa_values_become_the_request_casa_rs_runs() {
     assert_eq!(
         request(json!({ "gridder": "wproject", "wprojplanes": 8 })).gridder,
         Gridder::Wproject {
+            facets: NonZeroUsize::MIN,
             wprojplanes: NonZeroUsize::new(8)
         }
     );
@@ -351,7 +355,6 @@ fn an_automatic_mask_of_a_cube_or_stokes_planes_is_read() {
 fn values_casa_rs_cannot_honour_are_refused() {
     for (overrides, parameter, issue) in [
         (json!({ "specmode": "mvc" }), "specmode", "#1069"),
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
@@ -994,6 +997,74 @@ fn a_crtf_range_limits_its_own_region() {
     }
 }
 
+/// W facets admit only the measured scalar continuum modes; the remaining
+/// combinations keep their explicit #1063 refusal.
+#[test]
+fn w_facets_keep_their_count_and_refuse_unverified_modes() {
+    for weighting in ["natural", "uniform"] {
+        let image = request(json!({"gridder":"wproject", "wprojplanes":4,
+                                   "facets":2, "weighting":weighting}));
+        assert_eq!(
+            image.gridder,
+            Gridder::Wproject {
+                facets: NonZeroUsize::new(2).unwrap(),
+                wprojplanes: NonZeroUsize::new(4),
+            }
+        );
+        image.validate().expect("measured W-facet mode");
+    }
+    for extra in [
+        json!({"specmode":"cube"}),
+        json!({"deconvolver":"mtmfs", "nterms":2}),
+        json!({"weighting":"briggs"}),
+        json!({"stokes":"IV"}),
+        json!({"wprojplanes":-1}),
+    ] {
+        let mut args = json!({"gridder":"wproject", "wprojplanes":4, "facets":2});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        assert!(refusal(args).to_string().contains("#1063"));
+    }
+}
+
+/// Typed requests cannot bypass the W-facet scope by avoiding tclean's
+/// text-to-request conversion (#1063).
+#[test]
+fn w_facets_typed_requests_refuse_unverified_modes() {
+    let supported = request(json!({"gridder":"wproject", "wprojplanes":4, "facets":2}));
+    supported.validate().expect("measured mode");
+    let mut cube = supported.clone();
+    cube.specmode = SpecMode::Cube;
+    let mut taylor = supported.clone();
+    taylor.deconvolver = Deconvolver::Mtmfs;
+    taylor.nterms = 2;
+    let mut briggs = supported.clone();
+    briggs.weighting = crate::Weighting::Briggs;
+    let mut polarized = supported.clone();
+    polarized
+        .stokes
+        .push(casa_imaging_model::PolarizationCoordinate::StokesV);
+    let mut automatic = supported.clone();
+    automatic.gridder = Gridder::Wproject {
+        facets: NonZeroUsize::new(2).unwrap(),
+        wprojplanes: None,
+    };
+    let mut outlier = supported;
+    outlier.outlierfile = Some("outlier.txt".into());
+    for (label, image) in [
+        ("cube", cube),
+        ("taylor", taylor),
+        ("briggs", briggs),
+        ("polarized", polarized),
+        ("automatic", automatic),
+        ("outlier", outlier),
+    ] {
+        let error = image.validate().expect_err(label).to_string();
+        assert!(error.contains("#1063"), "{label}: {error}");
+    }
+}
+
 /// MVC's output depth is independent of input channel selection, and all
 /// nonpositive nchan values use CASA's automatic bandwidth rule.
 #[test]
@@ -1016,4 +1087,47 @@ fn mvc_reads_output_depth_separately_from_input_selection() {
         assert!(auto.mvc_auto_channels);
         assert_eq!(auto.channel_count, Some(4));
     }
+}
+
+#[test]
+fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
+    let accepted = request(json!({ "deconvolver": "mem", "niter": 1 }));
+    accepted.validate().expect("standard Stokes I MFS MEM");
+    request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
+        .validate()
+        .expect("other solvers retain their scope");
+    for overrides in [
+        json!({"stokes":"IQUV"}),
+        json!({"specmode":"cube", "nchan":2}),
+        json!({"gridder":"wproject", "wprojplanes":4}),
+        json!({"facets":2}),
+        json!({"weighting":"uniform"}),
+        json!({"usemask":"auto-multithresh"}),
+        json!({"pbmask":0.2}),
+        json!({"nsigma":2.0}),
+        json!({"calcpsf":false}),
+        json!({"calcres":false}),
+        json!({"savemodel":"modelcolumn"}),
+        json!({"vis":["a.ms","b.ms"]}),
+        json!({"outlierfile":"outliers.txt"}),
+        json!({"startmodel":"start.im"}),
+        json!({"mask":"mask.im"}),
+    ] {
+        let mut values = json!({"deconvolver":"mem", "niter":1});
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        let refusal = refusal(values.clone());
+        assert_eq!(refusal.parameter, "deconvolver", "{values}: {refusal}");
+        assert!(refusal.message.contains("#1060"));
+    }
+    let mut typed = accepted;
+    typed
+        .stokes
+        .push(casa_imaging_model::PolarizationCoordinate::StokesQ);
+    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
+    typed.stokes.pop();
+    typed.tclean_restart = true;
+    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
 }

@@ -236,7 +236,10 @@ fn validated_cli_value(
         && (matches!(concept.value_domain, ParameterType::String) || one_selector)
         && matches!(&binding.default,
             DefaultSpec::Literal { value: ParameterValue::String(value) } if value.is_empty());
-    if text.trim().is_empty() && !exact_empty_default {
+    if text.trim().is_empty()
+        && !exact_empty_default
+        && !matches!(concept.value_domain, ParameterType::Variant)
+    {
         return Err(format!("parameter {:?} has no typed value", binding.name));
     }
     let parsed = if one_selector {

@@ -26,6 +26,7 @@ pub struct ChanFreqColumn<'a> {
 enum FrequencyReference {
     Missing,
     Invalid,
+    Incomplete,
     Present(TableMeasDesc),
 }
 
@@ -42,11 +43,7 @@ impl FrequencyReference {
         {
             // casacore gives a frequency measure with no Ref its code-zero
             // default (REST); it does not consult MEAS_FREQ_REF in this case.
-            Self::Present(TableMeasDesc::new_fixed(
-                column,
-                MeasureType::Frequency,
-                "REST",
-            ))
+            Self::Incomplete
         } else if table
             .column_keywords(column)
             .is_some_and(|keywords| keywords.get("MEASINFO").is_some())
@@ -118,6 +115,23 @@ impl<'a> ChanFreqColumn<'a> {
         )
     }
 
+    /// The visibility frame for a channel column whose frequency measure
+    /// descriptor lacks a reference. CASA's visibility iterator reads the
+    /// measurement-frame column in that case, while the measure accessor's
+    /// default remains REST.
+    pub(crate) fn visibility_frequency_reference(&self, row: usize) -> MsResult<FrequencyRef> {
+        if matches!(
+            self.channels_reference.or(&self.centre_reference),
+            FrequencyReference::Incomplete
+        ) {
+            let code = get_i32(self.table, row, "MEAS_FREQ_REF")?;
+            FrequencyRef::from_casacore_code(code)
+                .ok_or_else(|| invalid_code("MEAS_FREQ_REF", code))
+        } else {
+            self.frequency_reference(row)
+        }
+    }
+
     /// Resolve the reference-frequency column's frame, which can be distinct
     /// from the channel-frequency column's frame.
     ///
@@ -142,6 +156,9 @@ impl<'a> ChanFreqColumn<'a> {
             return Err(MsError::Table(casa_tables::TableError::Storage(format!(
                 "invalid MEASINFO for SPECTRAL_WINDOW.{column}"
             ))));
+        }
+        if matches!(reference, FrequencyReference::Incomplete) {
+            return Ok(FrequencyRef::REST);
         }
         if let FrequencyReference::Present(desc) = reference {
             if desc.measure_type() != MeasureType::Frequency {

@@ -241,6 +241,11 @@
            "kind": {
             "str": null
            }
+          },
+          "dict[variant](kind)": {
+           "kind": {
+            "str": null
+           }
           }
          },
          "unit_dimension": {
@@ -444,7 +449,8 @@
                "str": null
               },
               "type_hint": {
-               "null": null
+               "null": null,
+               "str": null
               }
              }
             },
@@ -643,7 +649,8 @@
             "str": null
            },
            "type_hint": {
-            "null": null
+            "null": null,
+            "str": null
            }
           }
          },
@@ -844,7 +851,8 @@
               "str": null
              },
              "type_hint": {
-              "null": null
+              "null": null,
+              "str": null
              }
             }
            },
@@ -1104,6 +1112,11 @@
            }
           },
           "dict[string](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[variant](kind)": {
            "kind": {
             "str": null
            }

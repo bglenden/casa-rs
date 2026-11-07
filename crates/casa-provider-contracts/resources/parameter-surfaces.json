@@ -8538,7 +8538,7 @@
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "The standard gridder with a constant-basis MFS image; other spectral bases fail closed. casa-rs's wproject takes one facet.",
+          "surface_note": "The standard gridder supports facets with a constant-basis MFS image. W projection also supports facets for Stokes I dirty or Hogbom MFS with natural or uniform weighting, non-box density cells, explicit W-plane counts of at least two, and one image domain; other W-facet modes fail closed.",
           "projections": {
             "cli": {"flags": ["--facets"], "metavar": "N"},
             "provider": {"field": "facets", "adapter": "identity"},
@@ -11856,7 +11856,7 @@
     {
       "kind": "task",
       "id": "imhead",
-      "contract_version": 5,
+      "contract_version": 40,
       "display_name": "Image Header",
       "category": "Images",
       "summary": "Inspect or update CASA image header metadata.",
@@ -11885,10 +11885,6 @@
             "provider": {"field": "verbose"},
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}
           }
         },
         {
@@ -11943,7 +11939,7 @@
           "name": "mode",
           "concept": {
             "id": "imhead.mode",
-            "semantic_revision": 1
+            "semantic_revision": 34
           },
           "order": 1,
           "default": {
@@ -11996,7 +11992,7 @@
           "name": "hdkey",
           "concept": {
             "id": "parameter.hdkey",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
@@ -12026,7 +12022,7 @@
             },
             "provider": {
               "field": "hdkey",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "hdkey",
@@ -12046,7 +12042,7 @@
           "name": "hdvalue",
           "concept": {
             "id": "parameter.hdvalue",
-            "semantic_revision": 1
+            "semantic_revision": 3
           },
           "order": 3,
           "default": {
@@ -12076,11 +12072,11 @@
             },
             "provider": {
               "field": "hdvalue",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "hdvalue",
-              "type_hint": null
+              "type_hint": "str | bool | int | float | dict[str, ParameterData] | list[ParameterData]"
             },
             "presentation": {
               "label": "Header Value",
@@ -12117,6 +12113,216 @@
           "to_contract": 5,
           "steps": [],
           "changed_defaults": ["hdkey", "hdvalue"]
+        },
+        {
+          "from_contract": 5,
+          "to_contract": 6,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 6,
+          "to_contract": 7,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 7,
+          "to_contract": 8,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 8,
+          "to_contract": 9,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 9,
+          "to_contract": 10,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 10,
+          "to_contract": 11,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 11,
+          "to_contract": 12,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 12,
+          "to_contract": 13,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 13,
+          "to_contract": 14,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 14,
+          "to_contract": 15,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 15,
+          "to_contract": 16,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 16,
+          "to_contract": 17,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 17,
+          "to_contract": 18,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 18,
+          "to_contract": 19,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 19,
+          "to_contract": 20,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 20,
+          "to_contract": 21,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 21,
+          "to_contract": 22,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 22,
+          "to_contract": 23,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 23,
+          "to_contract": 24,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 24,
+          "to_contract": 25,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 25,
+          "to_contract": 26,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 26,
+          "to_contract": 27,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 27,
+          "to_contract": 28,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 28,
+          "to_contract": 29,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 29,
+          "to_contract": 30,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 30,
+          "to_contract": 31,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 31,
+          "to_contract": 32,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 32,
+          "to_contract": 33,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 33,
+          "to_contract": 34,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 34,
+          "to_contract": 35,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 35,
+          "to_contract": 36,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 36,
+          "to_contract": 37,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 37,
+          "to_contract": 38,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 38,
+          "to_contract": 39,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 39,
+          "to_contract": 40,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },

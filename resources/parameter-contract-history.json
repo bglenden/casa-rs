@@ -517,6 +517,171 @@
       "fingerprint": "8dfee4c5d6d89c30017dc16a2e15ca138a77632cd3cbbfe873db21ef0cda9171"
     },
     {
+      "id": "imhead.mode",
+      "semantic_revision": 2,
+      "fingerprint": "b3e7cff742a706648352aa1f3451c9276abc344097ebcb290c34066e9d15e4ae"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 3,
+      "fingerprint": "224e3c0aa5c68e47a672bf5ec470c8e90e59bb765c6e52973d242ffb612c87a7"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 4,
+      "fingerprint": "cca5fd8eff440101c1c5ef05c219274fe0ebe15c3eacc9b2a80bc65bd7da6679"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 5,
+      "fingerprint": "b0b18e5a5447145ac15cd9d3d489878567a655ef42024161bdf537efadb53631"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 6,
+      "fingerprint": "3235f27023ae5d5235049b0b9c7b2459ad79189aeb3400d74ff12dc247b0bc53"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 7,
+      "fingerprint": "bee98779edf15b22477e65e66342d9f01ca73ab2bf01d4585bb02c7c79a8e087"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 8,
+      "fingerprint": "c3a9aa033405a92371a8b1033440ee18b7b9587c78e147d03089acdeed69eac5"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 9,
+      "fingerprint": "a28b168928a01e66af685451735e109a89005f39a01d356daf619c9ca59787f7"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 10,
+      "fingerprint": "cd7c8c761ef6c9ba31a07cad4dacb05cd08e79f3c913fb14523104488c8fcf70"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 11,
+      "fingerprint": "04d9a1dcb48a91db1c64dcb3a8b321562066bf73b7f7d677e41b0d5e2beb821c"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 12,
+      "fingerprint": "7bb66cf2d7a4a13db0d62d72577894bb1523d3ea005efc39b6eb1976c0bf2d82"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 13,
+      "fingerprint": "d183f1ddee3a318b107f1b67cd26e719d149cef9594e08947d790710e4e3e12a"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 14,
+      "fingerprint": "0dd0a1b28f8a10f7207f9f7fec7fa6165543a7b136a52ec6c2988b66afca0251"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 15,
+      "fingerprint": "19642068e2dfb586477a0bec6155c8913473350f732fc16dbe638de8fa092c47"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 16,
+      "fingerprint": "92f9ee3373430b403f7d19368c3eb5b6e0742905fa83dd523f9a68bf2892c621"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 17,
+      "fingerprint": "73469e702970956458aec4e6f71b899111395c282d4a65b34be27fcd433b5421"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 18,
+      "fingerprint": "9f2e568ea35a4d0672fa41d00cbb1c36db0e602fc1f2e92026bf4cb4ca5746f4"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 19,
+      "fingerprint": "dbca680ae8a71b18e84be9a7ee880274521541645ebb54f1676be81dc68bdef7"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 20,
+      "fingerprint": "477f30e6a183e7600ab97472bf83eedb3aa15bfc9e71df9d9c6f13aa6931a99c"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 21,
+      "fingerprint": "c7c0f318989eb5467dd558e5d09eb97be15b2c4d0ac5303df0e13ef357841dd6"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 22,
+      "fingerprint": "b981aa99f949ede7b438829966576362037902180f6379ac3376fa763f8c5875"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 23,
+      "fingerprint": "a1f00a9179e6df0b3a6889b7bade9b9efc3e290ff26e6e30dffe610c78fd8bcc"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 24,
+      "fingerprint": "d6315c75b9a958222daef6acaecb1a0cdb346be7c66a7610b4c44c53ae55c3f9"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 25,
+      "fingerprint": "be8b238fe7cff0d7ac9b75b876b3db6d3833883a51c8056537de83987daae221"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 26,
+      "fingerprint": "665a4b78047426e59945b08b80c17aab05baf021be96374fca8cd207c1e66d5d"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 27,
+      "fingerprint": "8e6b0655cf6535b83909e9c32a691532597b509b442a685951216bdf075e98d6"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 28,
+      "fingerprint": "0f2cc3656ea3a94170937de679f5dfc60d72b5f01322e862386cccd94c4c6e29"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 29,
+      "fingerprint": "d5b91b24ab3ff23bc6ef258c7311c6d71bb08d3ceded3ddef1cf04ddac09b5e0"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 30,
+      "fingerprint": "cc08649dae7707c82bf3e52ebd9740c599c95d71b00f410927763f1644fd31cc"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 31,
+      "fingerprint": "9346f00a291c3ab9211567b29e930a95b1adbfba382ff3dc7a5f295bbfad9a6b"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 32,
+      "fingerprint": "82e9579ec3572278e03c861c80d471033fed759919735b2c62fd6fe7ede68179"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 33,
+      "fingerprint": "37fb1b18d35988238d1444f5e790805e6786a2b0d522e2118cfd6ac5a224f4cd"
+    },
+    {
+      "id": "imhead.mode",
+      "semantic_revision": 34,
+      "fingerprint": "c7784bd7c1d678d35551935154943ab3a8a17b99d02e4be7f4e3bd1b2032597f"
+    },
+    {
       "id": "immath.imagemd",
       "semantic_revision": 1,
       "fingerprint": "fe00bb9fd217fd7efbd69da74f9d8724f73189369970e9d5995d3fe11745a1ff"
@@ -1727,9 +1892,24 @@
       "fingerprint": "63a60c1756b331448c24f03647a0e116f0828e4fc34ca42ba4b991bbad97a983"
     },
     {
+      "id": "parameter.hdkey",
+      "semantic_revision": 2,
+      "fingerprint": "241a2270a1c22b444371af1675ba404a64da6eb9ddb9d8b87dfed77e97b56a3c"
+    },
+    {
       "id": "parameter.hdvalue",
       "semantic_revision": 1,
       "fingerprint": "ca5958b8b3c1ff884438a1b8d0399e74177336c70871da7cd99c7a1a1fe1e591"
+    },
+    {
+      "id": "parameter.hdvalue",
+      "semantic_revision": 2,
+      "fingerprint": "b75c018be3eaa9034122d796757225c02d07535d244c074ea403d8b291ed8893"
+    },
+    {
+      "id": "parameter.hdvalue",
+      "semantic_revision": 3,
+      "fingerprint": "5a98f06328d6a58bc9ced24e8fd553b312d102877e029690b3399dd13df032f5"
     },
     {
       "id": "parameter.headeritems",
@@ -4217,6 +4397,181 @@
       "id": "imhead",
       "contract_version": 5,
       "fingerprint": "6bdb3d05425a3fe777fbe6c9c8defa146cf4c22f3a4b18ba8e9d628cba5a35cb"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 6,
+      "fingerprint": "0e0c5e5d1f910394263a6d1096348825f6e5c67c489c435d741a9d593dda2d06"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 7,
+      "fingerprint": "268cfac0d481777dbf9a1bf05e30c17ce4a3da8d18bf2c74d50a7244f9edba53"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 8,
+      "fingerprint": "8b1352d924bb443a1fabab7ddb6278c1caf4cf6fbbd441f09852868476532806"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 9,
+      "fingerprint": "08c152d893be97c1dd747a3baec40a041c62f0e599baf6bf33ae81b5fc1b3c17"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 10,
+      "fingerprint": "f745faa03a0f7839ef4de91f7b5acef10d13aa5f3dbe5caed785939d472f0a8b"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 11,
+      "fingerprint": "0a1b4f0d5b1e97972f777350e25f7a45425244324f436b14bcfe9b49db78e0cd"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 12,
+      "fingerprint": "c1445f4d63e78257e68589a561f8c45390a94480f6b1d2d0c609a6e1bd9db0d3"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 13,
+      "fingerprint": "2f501f41c01ad005ac4d7a20fbd2908502e764ce983c40fff4699a9576eea583"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 14,
+      "fingerprint": "5c2429a2c2b95de109266ee6c803593bbee156e2bee29afc232467d2d3cbb839"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 15,
+      "fingerprint": "ba680e4865c9ff569f099f65402af561b6a91f688ad1d5fc7583af56e2120855"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 16,
+      "fingerprint": "1c732eb972f3b1adedbcb860acb5a520e5465edecf570f9f34ef93b925c83b82"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 17,
+      "fingerprint": "1964542eda46fd080762e59571301dfbeee1e8796bf2dd3b34ebb6b08dbe100c"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 18,
+      "fingerprint": "42bbee1ea48e55c445eff8e2fbeb24756acad9a404b4e13e52676578add1030c"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 19,
+      "fingerprint": "d83682708095cfe2892bc0228a30b5bc64950c0e28c6fa3edb07fffae423d5f7"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 20,
+      "fingerprint": "0c0be70333415c9ca8de5def983de5a56afbedf1fc3530ae012754f478863bca"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 21,
+      "fingerprint": "53523631287ddeba41bb78adfa520b0bfd9e633d97c0ade60df2ddc29168d80c"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 22,
+      "fingerprint": "a9f33a3a254a416d7cb524a9a5de5c6bc3d3108a1573eb41ec4d36eefea630cf"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 23,
+      "fingerprint": "b4ff3f97e7b82fc5bba6239a9cc5411f90499d6fdc0adba81b77eafde544d9e2"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 24,
+      "fingerprint": "6f40a1355dc564225a6ced8360e95e063ad852994d1cee7a75b474a1638cd164"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 25,
+      "fingerprint": "a796a405d4e50e0d844fe1713b7a885577409fc7d789e59d49f28b865f99b156"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 26,
+      "fingerprint": "2c796a087d1c9ac570a0d2dae7ae4c078ef4b1d65aad346898984005cecd50ae"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 27,
+      "fingerprint": "5825302be3e9254cde8cb3add561e3edadce04a8045d60a7873d7e318823d4d3"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 28,
+      "fingerprint": "a281ae7a87abcb7e2e9a3f62ebc294ff35f022a9450f028056f1785cbc6d564f"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 29,
+      "fingerprint": "0aca85708e7580959b7841ea2b79e3e994b62d28d8d258c16afb7543c760ac8d"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 30,
+      "fingerprint": "8bec2cc7edabc7aee2a0bb8c07af0736966c63f3fb92dcb0571664fb5f4f5e1b"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 31,
+      "fingerprint": "a803e11522b2b919834cda5a681995bee763f315a35c75936a4e9886a21fa52c"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 32,
+      "fingerprint": "37948fba8b09819c605a48a1b2509a37ffd4a83d5c58f257d598b435905507a3"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 33,
+      "fingerprint": "b55c1965ddacd920af849e2c0a0c7bc69600bc93c02d3c9c1f0cd8a7bef7effa"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 34,
+      "fingerprint": "9013566fa6352120fd6fa8c3fa81470ac551427ec2c5fad0fa8fa308153cbb78"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 35,
+      "fingerprint": "a7c3a66ff2fff7b66472f3b7284e1bf4c723731f5c0cfe0f4de74ebb0c1b39c1"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 36,
+      "fingerprint": "5a02658dbdab1abf1b2b2fed2bae29e96aaf1ae8d73d49848355d56767619557"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 37,
+      "fingerprint": "17ab91415739b5cf16c44c2a497fdc0c7e0b3dabca606709ee49c978bba2e789"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 38,
+      "fingerprint": "ba2b5c2a8a84704af888ab7623450b437744a820dd8f2d9a32e26d70271532c4"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 39,
+      "fingerprint": "b964d705be95fcd4cfd9aa12ec411542ae488828f04a70110f818da9c6a71735"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 40,
+      "fingerprint": "6e03fc0f18323d9015f8813ea21f11bd5703b0f69af046e980eaa946b8b44869"
     },
     {
       "id": "immath",

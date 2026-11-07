@@ -91,7 +91,11 @@ impl Run<'_> {
             (false, true) => {
                 self.measure_row_work()?;
                 let read = self.read_existing()?;
-                return self.refresh(read.completion, (Vec::new(), Reservation::none()), last);
+                return self.refresh(
+                    read.completion,
+                    (Vec::new(), Vec::new(), Reservation::none()),
+                    last,
+                );
             }
             (false, false) => return self.read_existing(),
         }

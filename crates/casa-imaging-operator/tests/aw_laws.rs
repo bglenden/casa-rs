@@ -7,6 +7,8 @@
 //! normalisation; and the bounded cache that keeps a held cell alive.
 
 mod common;
+#[path = "aw_laws/pointing_origin.rs"]
+mod pointing_origin;
 
 use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
@@ -112,6 +114,7 @@ fn indexing(conjugate_beams: bool) -> AwIndexing {
 
 fn context(pa_deg: f64, spectral_window: u32) -> RowContext {
     RowContext {
+        native_frequency_ratio: 1.0,
         original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1],
@@ -381,6 +384,27 @@ fn a_co_planar_narrowband_spheroidal_catalog_selects_its_one_cell() {
     assert!(catalog.weight_taps(key, &mut weight).is_some());
 }
 
+/// Frequency-frame conversion changes gridding coordinates, not the AW
+/// cell selected by the native channel frequency (#1121).
+#[test]
+fn aw_cells_use_native_frequency_across_a_frame_conversion() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), false, usize::MAX);
+    let native = 1.500_01e9;
+    let converted = 1.499_99e9;
+    let original = context(17.0, 0);
+    let converted_row = RowContext {
+        native_frequency_ratio: native / converted,
+        ..original
+    };
+    let expected = catalog.key(&original, native, 0.0);
+    let actual = catalog.key(&converted_row, converted, 0.0);
+    assert_eq!(
+        actual, expected,
+        "both gridding and prediction cells follow the native channel"
+    );
+}
+
 #[test]
 fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
     let root = tempfile::tempdir().expect("cache directory");
@@ -396,6 +420,7 @@ fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
         (-700.0, 700.0, 1, 1),
     ] {
         let row = RowContext {
+            native_frequency_ratio: 1.0,
             original_uvw_m: Some([0.0, 0.0, original_w / scale]),
             ..context(17.0, 0)
         };
@@ -418,6 +443,7 @@ fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
         flags: &[false; 2],
         row_flag: false,
         context: RowContext {
+            native_frequency_ratio: 1.0,
             original_uvw_m: Some([0.0, 0.0, -1.0 / scale]),
             ..context(17.0, 0)
         },

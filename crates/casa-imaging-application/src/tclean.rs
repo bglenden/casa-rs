@@ -114,6 +114,9 @@ impl ImagingRequest {
                 request.mvc_output_channels = Some(count);
             }
         }
+        request
+            .validate_mem_scope()
+            .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
         Ok(request)
     }
 }
@@ -361,9 +364,9 @@ impl<'a> Tclean<'a> {
         let deconvolver = self.text("deconvolver")?;
         if !matches!(
             deconvolver,
-            "hogbom" | "clark" | "clarkstokes" | "multiscale" | "mtmfs"
+            "hogbom" | "clark" | "clarkstokes" | "mem" | "multiscale" | "mtmfs"
         ) {
-            // `asp` is #223's; mem is #1060's.
+            // Experimental choices beyond MEM are tracked separately.
             let issue = if deconvolver == "asp" { 223 } else { 1060 };
             return Err(TcleanRefusal::not_yet(
                 "deconvolver",
@@ -706,8 +709,23 @@ impl<'a> Tclean<'a> {
             self.set("usepointing", usepointing);
         }
         let facets = self.integer("facets")?;
+        let planes = self.integer("wprojplanes")?;
+        if modes.gridder == "wproject"
+            && facets != 1
+            && (modes.cube
+                || modes.deconvolver != "hogbom"
+                || !matches!(modes.weighting.as_str(), "natural" | "uniform")
+                || self.text("stokes")? != "I"
+                || planes < 2)
+        {
+            return Err(TcleanRefusal::not_yet(
+                "facets",
+                "with these W-projection controls",
+                1063,
+            ));
+        }
         match modes.gridder {
-            "standard" => self.set("facets", facets),
+            "standard" | "wproject" => self.set("facets", facets),
             "mosaic" if facets != 1 => {
                 return Err(TcleanRefusal::new(
                     "facets",
@@ -715,22 +733,15 @@ impl<'a> Tclean<'a> {
                      as CASA's tclean refuses it",
                 ));
             }
-            "wproject" | "awproject" if facets != 1 => {
-                // W facets are #1063's, AW facets #1070's.
-                let issue = if modes.gridder == "awproject" {
-                    1070
-                } else {
-                    1063
-                };
+            "awproject" if facets != 1 => {
                 return Err(TcleanRefusal::not_yet(
                     "facets",
                     format!("{facets} with gridder='{}'", modes.gridder),
-                    issue,
+                    1070,
                 ));
             }
             _ => {}
         }
-        let planes = self.integer("wprojplanes")?;
         match (modes.gridder, planes) {
             ("wproject" | "awproject", -1) => self.set("wprojplanes", "none"),
             ("wproject" | "awproject", n) if n >= 1 => self.set("wprojplanes", n),

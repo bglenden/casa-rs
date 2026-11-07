@@ -170,6 +170,7 @@ pub(super) fn run(
         let scientific = outcome.scientific;
         let major = run_phase(name, &cancel, diagnostics, summary, || {
             if let Some(state) = mvc.as_mut() {
+                assert!(minor.dense.is_empty(), "MVC uses sparse Taylor updates");
                 Ok(Major {
                     completion: state.refresh(
                         &mut run,
@@ -180,7 +181,7 @@ pub(super) fn run(
                     visibility: None,
                 })
             } else {
-                run.refresh(scientific, (minor.terms, minor.results), last)
+                run.refresh(scientific, (minor.terms, minor.dense, minor.results), last)
             }
         })?;
         controller.end_major_cycle();

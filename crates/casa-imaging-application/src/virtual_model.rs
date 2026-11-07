@@ -225,12 +225,13 @@ fn image_frequencies(
     let Some(index) = coordinates.find_coordinate(CoordinateType::Spectral) else {
         return Err("the image has no spectral axis".into());
     };
-    let spectral = coordinates.coordinate(index);
+    let CoordinateModel::Spectral(spectral) = coordinates.coordinate(index) else {
+        unreachable!("the coordinate found is a spectral coordinate");
+    };
     (0..channels)
         .map(|channel| {
             spectral
-                .to_world(&[channel as f64])
-                .map(|world| world[0])
+                .world_frequency_hz(channel as f64)
                 .map_err(|error| error.to_string().into())
         })
         .collect()

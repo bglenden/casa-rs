@@ -68,7 +68,7 @@ const THREAD_BYTES: usize = 4 * BATCH_BYTES;
 /// The front end of the `msconvert` binary, which hosts `msconvert`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "msconvert",
         msconvert_task_schema_bundle(),
         &["msconvert"],
