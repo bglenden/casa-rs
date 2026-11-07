@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>    }
 <a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span>field_id = usize::try_from(selected_field).expect(<span class="string">"a surveyed field is a FIELD row"</span>);
 <a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span><span class="kw-2">mut </span>stored_phase = catalogue.fields[field_id].phase_centre.clone();
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span>anchor_time = survey.first_time_mjd_seconds;
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span>anchor_time = survey.image_time_mjd_seconds;
 <a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">let </span>ephemeris_direction = |name: <span class="kw-2">&amp;</span>str, ephemeris: <span class="kw-2">&amp;</span>PhaseCentreEphemeris| {
 <a href=#69 id=69 data-nosnippet>69</a>        <span class="kw">let </span>direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)<span class="question-mark">?</span>;
 <a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">let </span>(longitude, latitude) = direction.as_angles();
@@ -201,7 +201,7 @@
 <a href=#201 id=201 data-nosnippet>201</a>                    pointing.clone()
 <a href=#202 id=202 data-nosnippet>202</a>                } <span class="kw">else </span>{
 <a href=#203 id=203 data-nosnippet>203</a>                    <span class="kw">let </span>measures = engine.spectral_frame_observatory_direction(
-<a href=#204 id=204 data-nosnippet>204</a>                        survey.first_time_mjd_seconds,
+<a href=#204 id=204 data-nosnippet>204</a>                        survey.image_time_mjd_seconds,
 <a href=#205 id=205 data-nosnippet>205</a>                        pointing.clone(),
 <a href=#206 id=206 data-nosnippet>206</a>                    )<span class="question-mark">?</span>;
 <a href=#207 id=207 data-nosnippet>207</a>                    pointing.convert_to(frame, <span class="kw-2">&amp;</span>measures)<span class="question-mark">?
@@ -264,7 +264,7 @@
 <a href=#264 id=264 data-nosnippet>264</a>    (name, ephemeris): (<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>PhaseCentreEphemeris),
 <a href=#265 id=265 data-nosnippet>265</a>    engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
 <a href=#266 id=266 data-nosnippet>266</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(usize, MDirection)&gt;, PrepareError&gt; {
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">let </span>image_epoch = survey.first_time_mjd_seconds;
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">let </span>image_epoch = survey.image_time_mjd_seconds;
 <a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">let </span>(origin_longitude, origin_latitude) = engine
 <a href=#269 id=269 data-nosnippet>269</a>        .ephemeris_direction_j2000(image_epoch, centre.field_id, name, ephemeris)<span class="question-mark">?
 <a href=#270 id=270 data-nosnippet>270</a>        </span>.as_angles();
@@ -477,7 +477,7 @@
 <a href=#477 id=477 data-nosnippet>477</a>    <span class="prelude-val">Ok</span>(ObsInfo::new(telescope_name)
 <a href=#478 id=478 data-nosnippet>478</a>        .with_observer(observer)
 <a href=#479 id=479 data-nosnippet>479</a>        .with_date(MEpoch::from_mjd(
-<a href=#480 id=480 data-nosnippet>480</a>            survey.first_time_mjd_seconds / <span class="number">86_400.0</span>,
+<a href=#480 id=480 data-nosnippet>480</a>            survey.image_time_mjd_seconds / <span class="number">86_400.0</span>,
 <a href=#481 id=481 data-nosnippet>481</a>            engine.time_reference(),
 <a href=#482 id=482 data-nosnippet>482</a>        ))
 <a href=#483 id=483 data-nosnippet>483</a>        .with_telescope_position(engine.observatory_position().clone())
