@@ -64,7 +64,7 @@ pub(super) fn resolve_centre(
     }
     let field_id = usize::try_from(selected_field).expect("a surveyed field is a FIELD row");
     let mut stored_phase = catalogue.fields[field_id].phase_centre.clone();
-    let anchor_time = survey.first_time_mjd_seconds;
+    let anchor_time = survey.image_time_mjd_seconds;
     let ephemeris_direction = |name: &str, ephemeris: &PhaseCentreEphemeris| {
         let direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)?;
         let (longitude, latitude) = direction.as_angles();
@@ -201,7 +201,7 @@ pub(super) fn primary_beam_centres(
                     pointing.clone()
                 } else {
                     let measures = engine.spectral_frame_observatory_direction(
-                        survey.first_time_mjd_seconds,
+                        survey.image_time_mjd_seconds,
                         pointing.clone(),
                     )?;
                     pointing.convert_to(frame, &measures)?
@@ -264,7 +264,7 @@ fn moving_pointings(
     (name, ephemeris): (&str, &PhaseCentreEphemeris),
     engine: &casa_ms::derived::engine::MsCalEngine,
 ) -> Result<Vec<(usize, MDirection)>, PrepareError> {
-    let image_epoch = survey.first_time_mjd_seconds;
+    let image_epoch = survey.image_time_mjd_seconds;
     let (origin_longitude, origin_latitude) = engine
         .ephemeris_direction_j2000(image_epoch, centre.field_id, name, ephemeris)?
         .as_angles();
@@ -477,7 +477,7 @@ pub(super) fn observation_info(
     Ok(ObsInfo::new(telescope_name)
         .with_observer(observer)
         .with_date(MEpoch::from_mjd(
-            survey.first_time_mjd_seconds / 86_400.0,
+            survey.image_time_mjd_seconds / 86_400.0,
             engine.time_reference(),
         ))
         .with_telescope_position(engine.observatory_position().clone())

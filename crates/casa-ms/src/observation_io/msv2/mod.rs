@@ -616,6 +616,27 @@ impl Msv2Observation {
         (row != index::NO_ROW).then_some(row)
     }
 
+    /// The lowest physical MAIN row at `time_s` in partition `id`, or
+    /// `None` when the partition has no such time. This borrows the opened
+    /// row index and allocates no storage.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn first_main_row_at_time(&self, id: PartitionId, time_s: f64) -> Option<u32> {
+        let grid = &self.partitions[id.0 as usize].grid;
+        let time = grid
+            .times_s
+            .binary_search_by(|stored| stored.total_cmp(&time_s))
+            .ok()?;
+        grid.cells(time..time + 1)
+            .iter()
+            .copied()
+            .filter(|row| *row != index::NO_ROW)
+            .min()
+    }
+
     /// Whether the MAIN row partition `id` holds at `time_s` on `baseline`
     /// ([`Self::main_row`]) is row-flagged (`FLAG_ROW`); `None` where no
     /// row fills the cell. The batches fold `FLAG_ROW` into every value's
