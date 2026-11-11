@@ -144,5 +144,23 @@
    "architecture": "only unchanged imaging-operator/tests/resample.rs file-length violation (#1253); all preceding architecture checks pass",
    "baseline_failures": "Two unchanged main MVC assertions (#1262), independently reproduced on unchanged main imaging-application sources."
   }
+ },
+ "relative_project_followup": {
+  "revision": "ca11bbddc581ab9f7efb22c6a09bfe03b309bf55",
+  "source_revision": "ca11bbddc581ab9f7efb22c6a09bfe03b309bf55",
+  "native_test_binary_sha256": "96d498854f70f2b6edd04209ae03f5b621c0d3b4e4a6e46211fe14c27ab9ae51",
+  "reason": "The real Python task path found that relative project names mixed an absolute tempfile stage and relative publication target. Both must name the same containing directory for atomic replacement.",
+  "fix": "Make the publication target absolute; preserve the task product path convention.",
+  "regression": "a_relative_project_publishes_its_quick_psf runs the real simulation in a child process with a relative project; fails before the fix with product staging must be private to the output directory, passes after it. The ignored helper is executed by its parent, so the test never changes its own process working directory.",
+  "command": "RUST_TEST_THREADS=1 CASA_RS_QUICK_PSF_DEBUG_DIR=TARGET/quick-relative-verified cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; all-target Clippy for the four touched crates; CASAPY tools/simulation/check_quick_psf_casa.py --native TARGET/quick-relative-verified --reference FIXTURE --out OUT",
+  "result": {
+   "passed": 3,
+   "ignored_subprocess_helpers": 1,
+   "all_target_clippy": "passed",
+   "cpp_readback_passed": 4,
+   "max_data_nrms": 6.626962628684081e-07,
+   "metal_session_max_relative": 0.0
+  },
+  "verification_applicability": "The earlier full touched-crate run is retained at d10248c92. This follow-up changes path normalization only; all numerical controls, mode gates, repeat overwrite and current-source C++ readback were rerun."
  }
 }

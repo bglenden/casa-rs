@@ -455,7 +455,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "quick-psf-20261111"
+    "quick-psf-20261111",
+    "quick-psf-relative-project-20261111"
    ],
    "behaviors": [
     "outputs"
@@ -566,7 +567,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "quick-psf-20261111"
+    "quick-psf-20261111",
+    "quick-psf-relative-project-20261111"
    ]
   }
  ],
@@ -824,6 +826,22 @@
    "revision": "d10248c92b218b1ca1a713d256972c7884f66527",
    "source_revision": "d10248c92b218b1ca1a713d256972c7884f66527",
    "command": "CASAPY tools/simulation/simobserve_graphics_oracle.py --out OUT; RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/check_quick_psf_casa.py --native DIR --reference FIXTURE --out OUT",
+   "receipt": "resources/casa-compat/evidence/simobserve-quick-psf-20261111.json"
+  },
+  "quick-psf-relative-project-20261111": {
+   "kind": "Relative-project publication regression and current-source CASA readback",
+   "state": "passed",
+   "result": "Relative-project simulation reproduces the publication failure before the fix and passes afterward. All three quick-PSF tests pass (one ignored helper is run by its parent); all-target Clippy passes; CASA reads four current-source PSFs at maximum DATA NRMS 6.63e-7.",
+   "scope": "Relative project names and unchanged numerical quick-PSF/mode/overwrite controls; PNG host paths are tested separately.",
+   "links": [
+    "crates/casa-simulation/src/simobserve/quick_psf.rs",
+    "crates/casa-simulation/tests/simobserve_quick_psf.rs",
+    "tools/simulation/check_quick_psf_casa.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "ca11bbddc581ab9f7efb22c6a09bfe03b309bf55",
+   "source_revision": "ca11bbddc581ab9f7efb22c6a09bfe03b309bf55",
+   "command": "RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/check_quick_psf_casa.py --native DIR --reference FIXTURE --out OUT",
    "receipt": "resources/casa-compat/evidence/simobserve-quick-psf-20261111.json"
   }
  }
