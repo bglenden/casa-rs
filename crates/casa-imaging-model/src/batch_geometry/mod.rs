@@ -541,6 +541,15 @@ impl GeometryPlan {
         self.output_in_lsrk
     }
 
+    /// Convert a frequency on the resampler's grid into the frequency
+    /// used for gridder UVW. For an anchored TOPO or BARY cube this takes
+    /// the grid's coordinate into LSRK, and is also used with the
+    /// unrotated W in AW prediction.
+    #[must_use]
+    pub const fn gridding_frequency_scale(&self) -> f64 {
+        self.grid_in_lsrk
+    }
+
     /// Whether [`Self::apply`] needs the batch's pointing samples.
     #[must_use]
     pub fn reads_pointing(&self) -> bool {
@@ -720,7 +729,7 @@ impl GeometryPlan {
             }
             let machines = &reprojections.as_ref().expect("reprojections formed").1;
             // Convert the grid's coordinate to LSRK wavelengths.
-            let in_lsrk = self.grid_in_lsrk;
+            let in_lsrk = self.gridding_frequency_scale();
             for sample in context.row_samples() {
                 let raw = uvw.metres_at(sample);
                 for (chart, machine) in machines.iter().enumerate() {
