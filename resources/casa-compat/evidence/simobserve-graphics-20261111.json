@@ -281,5 +281,23 @@
    "failed": 0
   },
   "applicability": "Rust and numerical renderer sources are unchanged from the recorded reviewed implementation; wheel and sdist results above retain their exact earlier source revisions."
+ },
+ "repaired_main_integration": {
+  "revision": "9dc2965254f5a5d697f1c9c6c9ca21f33ea9df87",
+  "main_revision": "2097720482c08093531d12b70b4480ef71a161ac",
+  "source": "Complete tracked-source archive with refreshed mtimes in the private renderer checkout; its native source is unchanged by the subsequent metadata-only parent merge.",
+  "verification": {
+   "python_binding_rust_passed": 61,
+   "quick_psf_and_figure_tests_passed": 4,
+   "ignored_parent_invoked_helper": 1,
+   "full_python_passed": 1177,
+   "python_skipped": 13,
+   "failed": 0,
+   "all_target_clippy": "passed for all five touched crates",
+   "fmt": "passed",
+   "docs": "passed",
+   "architecture": "passed; main blockers #1253 and #1262 are repaired by #1270"
+  },
+  "applicability": "Earlier full Rust, native artist, C++ readback and package receipts retain their exact source revisions. This rebuild verifies the integration with repaired main and the current task process/host behavior."
  }
 }
