@@ -327,7 +327,7 @@ impl CasaImageWriter {
                 source,
             };
             carry_history(&image.target, &image.staging).map_err(failed)?;
-            promote_atomically(&image.staging, &image.target).map_err(failed)?;
+            publish_staged_image(&image.staging, &image.target).map_err(failed)?;
             published(&image.target);
         }
         Ok(())
@@ -656,7 +656,17 @@ const fn role_label(role: ProductRole) -> &'static str {
     }
 }
 
-fn promote_atomically(staging: &Path, target: &Path) -> std::io::Result<()> {
+/// Publish a complete image from a private staging directory inside the
+/// target's parent. An existing target is exchanged atomically; its old
+/// contents remain at `staging` for the caller's staging guard to remove.
+/// Both containing directories are synced before success is returned.
+///
+/// # Errors
+///
+/// Invalid staging placement, unsupported directory exchange or an I/O error.
+/// A failed exchange leaves the previous target intact; a sync error after
+/// publication can report failure with the complete new image already visible.
+pub fn publish_staged_image(staging: &Path, target: &Path) -> std::io::Result<()> {
     let parent = target.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -885,11 +895,11 @@ mod tests {
         let staged = private.path().join("image");
         std::fs::create_dir(&staged).unwrap();
         std::fs::write(staged.join("pixels"), b"new").unwrap();
-        super::promote_atomically(&staged, &target).unwrap();
+        super::publish_staged_image(&staged, &target).unwrap();
         assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
         assert_eq!(std::fs::read(staged.join("pixels")).unwrap(), b"old");
         let missing = private.path().join("missing");
-        assert!(super::promote_atomically(&missing, &target).is_err());
+        assert!(super::publish_staged_image(&missing, &target).is_err());
         assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
     }
 }

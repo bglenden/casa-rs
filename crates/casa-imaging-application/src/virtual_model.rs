@@ -341,6 +341,7 @@ fn write_machine(
         BackendChoice::Cpu,
         Some(GridPrecision::F64),
         None,
+        None,
         &imaging::StoreKeys::single(),
         KernelAdmission {
             host: &runtime.host,

@@ -370,7 +370,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `seed` | `11111` | `11111`; `seed` → `seed` | Implemented | The random seed; casa-rs's draws differ from CASA's. [noise](#simobserve-behavior-noise)<br>Catalog domain: `integer` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [noise-seeds-20261103](#simobserve-evidence-noise-seeds-20261103), [refusals-1099-20261104](#simobserve-evidence-refusals-1099-20261104) |
 | `leakage` | `0.0` | `0.0`; `leakage` → `leakage` | Implemented | Polarization leakage through setleakage. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `correlator` | `''` | `''`; `correlator` → `correlator` | Implemented | The correlator efficiency passed to noisetemp. [noise](#simobserve-behavior-noise)<br>Catalog domain: ``, `ACA`, `ACASpec`, `BLC`, `BLC_4x4bit` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
-| `graphics` | `'both'` | `'both'`; `graphics` → `graphics` | Partial | Accepted; writes no .skymodel.png, .observe.png or .quick.psf yet and warns, naming #1025. CASA's default 'both' writes them. [outputs](#simobserve-behavior-outputs)<br>Catalog domain: ``, `both`, `file`, `none`, `screen` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `graphics` | `'both'` | `'both'`; `graphics` → `graphics` | Partial | Interferometric file/screen/both writes the numerical .quick.psf before corruption, using legacy single-field padding 1.0. PNG rendering remains unfinished and warns (#1025); none and single-dish do not write a quick PSF. [outputs](#simobserve-behavior-outputs)<br>Catalog domain: ``, `both`, `file`, `none`, `screen` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [quick-psf-20261111](#simobserve-evidence-quick-psf-20261111), [quick-psf-relative-project-20261111](#simobserve-evidence-quick-psf-relative-project-20261111) |
 | `verbose` | `False` | `False`; `verbose` → `verbose` | Implemented | More messages. [outputs](#simobserve-behavior-outputs)<br>Catalog domain: `bool` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `overwrite` | `True` | `True`; `overwrite` → `overwrite` | Implemented | Replaces the project's products; without it an existing MeasurementSet is refused with CASA's message. [outputs](#simobserve-behavior-outputs)<br>Catalog domain: `bool` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 
@@ -435,9 +435,9 @@ Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simo
 
 **Partial** — CASA's file names under the project, overwrite, verbose and graphics.
 
-graphics writes no .skymodel.png, .observe.png or .quick.psf yet and warns (#1025). An empty project and wrongly typed comp_nchan or sdant are refused, but not in CASA's words (#1053).
+PNG rendering (.skymodel.png and .observe.png) remains unfinished and warns (#1025). Numerical interferometric .quick.psf is implemented; broader graphics and task acceptance remain open (#1053).
 
-Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103).
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103), [quick-psf-20261111](#simobserve-evidence-quick-psf-20261111), [quick-psf-relative-project-20261111](#simobserve-evidence-quick-psf-relative-project-20261111).
 
 #### simobserve deviations and unfinished work
 
@@ -631,6 +631,31 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `54a3ef4961ace31269764c9f4f0818c028bbdd0c`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
 - Command: `CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata LOCAL_COPY --only frame_topo frame_bary (bg-mac-mini, CPU)`.
 - Receipt: `resources/casa-compat/evidence/simobserve-frequency-frames-20261106.json`.
+
+<a id="simobserve-evidence-quick-psf-20261111"></a>
+##### quick-psf-20261111
+
+**Independent CASA numerical quick PSFs and ordinary tclean control — passed.** Image- and component-model PSFs agree at DATA NRMS 6.63e-7 and 2.07e-7. One/three CPU workers and actual Metal-session predictions agree; the diagnostic itself uses CPU/f64. Ordinary tclean 1.2-padding control agrees at 1.23e-7 with sumwt checked. Repeat overwrite and padding-scope regressions pass; CASA reads four native images. Numerical interferometric .quick.psf for file/screen/both, not PNG rendering; none and single-dish gating.
+
+- [tools/simulation/simobserve_graphics_oracle.py](https://github.com/bglenden/casa-rs/blob/d10248c92b218b1ca1a713d256972c7884f66527/tools/simulation/simobserve_graphics_oracle.py)
+- [tools/simulation/check_quick_psf_casa.py](https://github.com/bglenden/casa-rs/blob/d10248c92b218b1ca1a713d256972c7884f66527/tools/simulation/check_quick_psf_casa.py)
+- [crates/casa-simulation/tests/simobserve_quick_psf.rs](https://github.com/bglenden/casa-rs/blob/d10248c92b218b1ca1a713d256972c7884f66527/crates/casa-simulation/tests/simobserve_quick_psf.rs)
+- [crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz](https://github.com/bglenden/casa-rs/blob/d10248c92b218b1ca1a713d256972c7884f66527/crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz)
+- Revision: `d10248c92b218b1ca1a713d256972c7884f66527`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
+- Command: `CASAPY tools/simulation/simobserve_graphics_oracle.py --out OUT; RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/check_quick_psf_casa.py --native DIR --reference FIXTURE --out OUT`.
+- Receipt: `resources/casa-compat/evidence/simobserve-quick-psf-20261111.json`.
+
+<a id="simobserve-evidence-quick-psf-relative-project-20261111"></a>
+##### quick-psf-relative-project-20261111
+
+**Relative-project publication regression and current-source CASA readback — passed.** Relative-project simulation reproduces the publication failure before the fix and passes afterward. All three quick-PSF tests pass (one ignored helper is run by its parent); all-target Clippy passes; CASA reads four current-source PSFs at maximum DATA NRMS 6.63e-7. Relative project names and unchanged numerical quick-PSF/mode/overwrite controls; PNG host paths are tested separately.
+
+- [crates/casa-simulation/src/simobserve/quick_psf.rs](https://github.com/bglenden/casa-rs/blob/ca11bbddc581ab9f7efb22c6a09bfe03b309bf55/crates/casa-simulation/src/simobserve/quick_psf.rs)
+- [crates/casa-simulation/tests/simobserve_quick_psf.rs](https://github.com/bglenden/casa-rs/blob/ca11bbddc581ab9f7efb22c6a09bfe03b309bf55/crates/casa-simulation/tests/simobserve_quick_psf.rs)
+- [tools/simulation/check_quick_psf_casa.py](https://github.com/bglenden/casa-rs/blob/ca11bbddc581ab9f7efb22c6a09bfe03b309bf55/tools/simulation/check_quick_psf_casa.py)
+- Revision: `ca11bbddc581ab9f7efb22c6a09bfe03b309bf55`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
+- Command: `RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/check_quick_psf_casa.py --native DIR --reference FIXTURE --out OUT`.
+- Receipt: `resources/casa-compat/evidence/simobserve-quick-psf-20261111.json`.
 
 ### split
 
