@@ -43,6 +43,7 @@ cargo build -q -p casa-ms --bin flagmanager --bin flagdata -p casa-calibration -
 cargo build -q -p casa-images --bin immath
 cargo build -q -p casars-imexplore --bin imexplore
 cargo build -q -p casars-msconvert --bin msconvert
+cargo build -q -p casars-simulation --bin simobserve
 export CASARS_REQUIRE_TASK_BINARIES=1
 
 editable_venv="$tmp_root/editable-venv"

@@ -280,6 +280,22 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// primary beam of it, the pointings centred on their median direction and
 /// shifted by its offset from the model's centre.
 fn overlaps(pointings: &[String], sky: &Sky, beam_arcsec: f64) -> Result<bool, SimobserveError> {
+    let offsets = relative_offsets(pointings, sky)?;
+    let margin = beam_arcsec * RELATIVE_MARGIN / 3600.;
+    let half = |size: &Quantity| -> Result<f64, SimobserveError> {
+        Ok(qa::value_in(size, "deg")? * 0.5 + margin)
+    };
+    let (x_max, y_max) = (half(&sky.model.size[0])?, half(&sky.model.size[1])?);
+    Ok(offsets
+        .iter()
+        .any(|offset| offset[0].abs() < x_max && offset[1].abs() < y_max))
+}
+
+/// Offsets in degrees, preserving CASA's median centre and RA wrapping.
+pub(super) fn relative_offsets(
+    pointings: &[String],
+    sky: &Sky,
+) -> Result<Vec<[f64; 2]>, SimobserveError> {
     let centred = median_direction(pointings)?;
     let centre = split_direction(&centred.centre)?;
     let model = split_direction(&sky.model.refdir)?;
@@ -307,15 +323,11 @@ fn overlaps(pointings: &[String], sky: &Sky, beam_arcsec: f64) -> Result<bool, S
         dec.value() - model_dec,
     ];
     tracing::info!("center = {}", centred.centre);
-    let margin = beam_arcsec * RELATIVE_MARGIN / 3600.;
-    let half = |size: &Quantity| -> Result<f64, SimobserveError> {
-        Ok(qa::value_in(size, "deg")? * 0.5 + margin)
-    };
-    let (x_max, y_max) = (half(&sky.model.size[0])?, half(&sky.model.size[1])?);
     Ok(centred
         .offsets
-        .iter()
-        .any(|offset| (offset[0] + shift[0]).abs() < x_max && (offset[1] + shift[1]).abs() < y_max))
+        .into_iter()
+        .map(|[x, y]| [x + shift[0], y + shift[1]])
+        .collect())
 }
 
 #[cfg(test)]

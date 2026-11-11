@@ -1,0 +1,127 @@
+"""Draw native plot documents; all scientific preparation belongs to Rust."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+import numpy as np
+
+
+def array_view(payload: Any, descriptor: Mapping[str, Any]) -> np.ndarray:
+    """Map a Rust-validated little-endian view without copying its bytes."""
+
+    dtype = {"f32_le": np.dtype("<f4"), "f64_le": np.dtype("<f8")}[descriptor["dtype"]]
+    return np.ndarray(
+        tuple(descriptor["shape"]),
+        dtype=dtype,
+        buffer=payload,
+        offset=descriptor["offset_bytes"],
+        strides=tuple(descriptor["strides_bytes"]) or None,
+    )
+
+
+def render_document(document: Mapping[str, Any], *, payload: Any = None, figure: Any = None, use_native_limits: bool = True):
+    """Return editable Matplotlib figures from native-prepared artists."""
+
+    from matplotlib import pyplot as plt
+
+    panels = document["panels"] or [document]
+    layout = document.get("layout") or {}
+    rows, columns = layout.get("rows", len(panels)), layout.get("columns", 1)
+    if figure is None:
+        figure = plt.figure()
+    axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
+    for panel, axis in zip(panels, axes, strict=True):
+        for layer in panel["layers"]:
+            _draw_layer(figure, axis, layer, payload)
+        for annotation in panel.get("annotations", ()):
+            style = annotation.get("style") or {}
+            kwargs = {}
+            if style.get("axes_relative"):
+                kwargs["transform"] = axis.transAxes
+            for field, keyword in (("horizontal_alignment", "ha"), ("vertical_alignment", "va"), ("font_size", "fontsize")):
+                if style.get(field) is not None:
+                    kwargs[keyword] = style[field]
+            if style.get("background"):
+                kwargs["bbox"] = {"facecolor": style["background"], "alpha": 0.7}
+            axis.text(annotation["x"], annotation["y"], annotation["text"], **kwargs)
+        font = {} if layout.get("font_size") is None else {"fontsize": layout["font_size"]}
+        axis.set_title(panel.get("title", ""), **font)
+        if panel.get("frame_visible") is not None:
+            axis.set_frame_on(panel["frame_visible"])
+        if font:
+            axis.tick_params(labelsize=layout["font_size"])
+        if panel.get("axes"):
+            x = panel["axes"][0]
+            axis.set_xlabel(x["label"], **font)
+            if use_native_limits:
+                axis.set_xlim(x["lower"], x["upper"])
+            axis.set_xscale(x.get("scale", "linear"))
+        if len(panel.get("axes", ())) > 1:
+            y = panel["axes"][1]
+            axis.set_ylabel(y["label"], **font)
+            if use_native_limits:
+                axis.set_ylim(y["lower"], y["upper"])
+            axis.set_yscale(y.get("scale", "linear"))
+        aspect = panel.get("aspect") or layout.get("aspect")
+        if aspect == "equal_data_limits":
+            axis.set_aspect("equal", adjustable="datalim")
+        elif aspect:
+            axis.set_aspect(aspect)
+        if document["show_legend"] and len(panel["layers"]) > 1:
+            axis.legend()
+    figure.suptitle(document.get("title", ""))
+    if layout.get("margins"):
+        left, right, bottom, top, wspace, hspace = layout["margins"]
+        figure.subplots_adjust(left=left, right=right, bottom=bottom, top=top, wspace=wspace, hspace=hspace)
+    return figure, axes[0] if len(axes) == 1 else axes
+
+
+def _draw_layer(figure, axis, layer, payload):
+    from matplotlib.patches import Circle
+
+    data = layer.get("data")
+    style = layer.get("style") or {}
+    color = style.get("color")
+    if data and data["kind"] == "image":
+        image = axis.imshow(
+            array_view(payload, data["pixels"]), extent=data["extent"],
+            vmin=data["range"][0], vmax=data["range"][1], cmap=data["color_map"],
+            interpolation=data["interpolation"], origin=data["origin"],
+        )
+        if data["color_bar"]:
+            figure.colorbar(image, ax=axis, pad=0)
+        return
+    if data:
+        x, y = array_view(payload, data["x"]), array_view(payload, data["y"])
+    else:
+        x, y = layer["x_values"], layer["y_values"]
+    if data and data["kind"] == "circles":
+        radii = array_view(payload, data["radii"])
+        box = None
+        if data.get("anchored"):
+            from matplotlib.offsetbox import AnchoredOffsetbox, AuxTransformBox
+
+            box = AuxTransformBox(axis.transData)
+        for xc, yc, radius in zip(x, y, radii, strict=True):
+            circle = Circle((xc, yc), radius=radius, fill=data["filled"], color=color)
+            if box is None:
+                axis.add_patch(circle)
+            else:
+                box.add_artist(circle)
+        if box is not None:
+            axis.add_artist(AnchoredOffsetbox(loc=3, pad=0.2, borderpad=0, child=box, frameon=False))
+        return
+    if layer["kind"] == "interval":
+        for start, end, lane in zip(layer["interval_x_start"], layer["interval_x_end"], layer["interval_y"], strict=True):
+            axis.plot([start, end], [lane, lane], color=color, linewidth=layer["line_width"])
+    elif data or layer["kind"] == "line":
+        axis.plot(
+            x, y, label=layer["title"], color=color,
+            marker=style.get("marker") or "None",
+            linestyle=style.get("line_style") or ("-" if layer["kind"] == "line" else "None"),
+            linewidth=layer["line_width"], alpha=layer["opacity"],
+        )
+    else:
+        axis.scatter(x, y, label=layer["title"], s=layer["symbol_size"], color=color, alpha=layer["opacity"])

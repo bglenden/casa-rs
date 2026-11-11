@@ -159,7 +159,7 @@ fn product_from_artifact(
     workspace: &Path,
 ) -> RunProductReference {
     let path = resolve_product_path(workspace, &artifact.path);
-    let exists = artifact.exists && path.exists();
+    let exists = (artifact.exists || artifact.render_pending) && path.exists();
     RunProductReference {
         id: format!("{}:{}", descriptor.id, artifact.kind),
         role: descriptor.role,
@@ -287,6 +287,10 @@ struct ArtifactWire {
     label: String,
     path: String,
     exists: bool,
+    /// A native producer prepared the figure; the calling host renders it
+    /// before decoding completion. Never count it as present without the file.
+    #[serde(default)]
+    render_pending: bool,
     /// Its kind when it differs from the descriptor's (simobserve writes
     /// images, tables and files beside its MeasurementSets).
     #[serde(default)]
@@ -381,6 +385,31 @@ mod tests {
                 (RunProductKind::File, true)
             ]
         );
+    }
+
+    #[test]
+    fn a_prepared_renderer_product_exists_only_after_the_host_writes_it() {
+        let root = tempdir().unwrap();
+        let stdout = serde_json::json!({
+            "request": {}, "run": {"stem": "p", "elapsed_ns": 1},
+            "artifacts": [{"kind":"skymodel.png","label":"Model","path":"p.png",
+                "exists":false,"render_pending":true,"resource_kind":"file"}]
+        })
+        .to_string();
+        let decode = || {
+            decode_task_completion(
+                &builtin_surface_bundle("simobserve").unwrap(),
+                &stdout,
+                root.path(),
+                &[],
+            )
+            .unwrap()
+        };
+        assert!(!decode().products[0].exists);
+        fs::write(root.path().join("p.png"), b"rendered").unwrap();
+        assert!(decode().products[0].exists);
+        fs::remove_file(root.path().join("p.png")).unwrap();
+        assert!(!decode().products[0].exists);
     }
 
     #[test]

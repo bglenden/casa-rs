@@ -125,7 +125,10 @@ pub(super) fn prepare(run: &mut Run<'_>, sky: &Sky) -> Result<(), SimobserveErro
     drop(psf);
     let target = run.file(".quick.psf");
     make_way(&target)?;
-    casa_imaging_products::publish_staged_image(&source, &target).map_err(failure)?;
+    // tempfile's staging path is absolute, including for a relative project.
+    // The publisher compares their containing directories before exchange.
+    let absolute_target = std::path::absolute(&target).map_err(failure)?;
+    casa_imaging_products::publish_staged_image(&source, &absolute_target).map_err(failure)?;
     run.wrote(&target);
     Ok(())
 }

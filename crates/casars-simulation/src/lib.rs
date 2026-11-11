@@ -21,7 +21,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use casa_provider_contracts::{RunProductKind, SurfaceContractBundle};
-use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
+use casa_simulation::simobserve::{
+    SimobserveParameters, SimobserveRequest, simobserve, simobserve_with_plots,
+};
 use casa_simulation::simutil::direction::Directions;
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use casa_task_runtime::{
@@ -171,7 +173,24 @@ pub fn run(
         data_roots: data_roots()?,
         options: SimulatorOptions::from_system(resources).map_err(|error| error.to_string())?,
     };
-    let outcome = simobserve(&request).map_err(|error| error.to_string())?;
+    let outcome = match std::env::var_os("CASARS_PLOT_PAYLOAD") {
+        Some(path) => simobserve_with_plots(&request, Path::new(&path)),
+        None => simobserve(&request),
+    }
+    .map_err(|error| error.to_string())?;
+    let mut artifacts: Vec<_> = outcome
+        .products
+        .iter()
+        .map(|path| artifact(&outcome.stem, path))
+        .collect();
+    for plot in &outcome.plots {
+        if let Some(path) = &plot.output_file {
+            let mut product = artifact(&outcome.stem, path);
+            product.exists = false;
+            product.render_pending = true;
+            artifacts.push(product);
+        }
+    }
     Ok(SimobserveRunTaskResult {
         request: parameters,
         run: SimobserveRunReport {
@@ -180,11 +199,8 @@ pub fn run(
             warnings: outcome.warnings.clone(),
             elapsed_ns: u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
         },
-        artifacts: outcome
-            .products
-            .iter()
-            .map(|path| artifact(&outcome.stem, path))
-            .collect(),
+        artifacts,
+        plots: outcome.plots,
     })
 }
 
@@ -207,7 +223,7 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
         || kind == "quick.psf"
     {
         RunProductKind::CasaImage
-    } else if kind.ends_with(".txt") {
+    } else if kind.ends_with(".txt") || kind.ends_with(".png") {
         RunProductKind::File
     } else {
         RunProductKind::CasaTable
@@ -217,6 +233,7 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
         kind,
         path: path.display().to_string(),
         exists: path.exists(),
+        render_pending: false,
         resource_kind,
     }
 }

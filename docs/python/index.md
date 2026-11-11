@@ -100,6 +100,15 @@ Matplotlib by `casars.data.plot_matplotlib(...)`. `casars.imexplore` reads
 image planes as NumPy arrays (`casars.imexplore.data(...)`) and draws them with
 Matplotlib (`casars.imexplore.imshow(...)`).
 
+Install `casa-rs-python[plot]` for simulation graphics. `tasks.simobserve`
+honours `graphics='file'`, `'screen'`, `'both'` and `'none'`: it saves the
+model/pointing and observation figures, displays them, does both, or skips
+graphics. Figures include the complete model and UV samples. The
+interferometric quick PSF is a CASA image beside the MeasurementSet.
+The generic `tasks.run('simobserve', ...)` completion lists PNG files after
+they have been rendered. Displaying figures uses the Python session's
+Matplotlib backend.
+
 See [Task Parameter Profiles](../task-parameters.md) for sparse TOML,
 managed Last paths, source precedence, and examples.
 

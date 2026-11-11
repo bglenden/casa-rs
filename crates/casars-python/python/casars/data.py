@@ -131,32 +131,28 @@ def plot_matplotlib(
     """Render MeasurementSet plot data into editable Matplotlib objects."""
 
     try:
-        from matplotlib import pyplot as plt
+        import matplotlib.pyplot  # noqa: F401
     except ImportError as error:  # pragma: no cover - environment dependent
         raise ImportError(
             "Matplotlib plotting requires `pip install casa-rs-python[plot]`"
         ) from error
-    panel_count = max(1, len(plot_data.panels))
-    if figure is None:
-        figure, axes = plt.subplots(panel_count, 1, squeeze=False)
-        resolved_axes = list(axes[:, 0])
-    else:
-        resolved_axes = [
-            figure.add_subplot(panel_count, 1, index + 1)
-            for index in range(panel_count)
-        ]
-    for panel, axis in zip(plot_data.panels, resolved_axes, strict=True):
-        for series in panel.series:
-            axis.scatter(series.x, series.y, label=series.label, s=9)
-        axis.set_title(panel.title)
-        if panel.axes:
-            axis.set_xlabel(panel.axes[0].label)
-        if len(panel.axes) > 1:
-            axis.set_ylabel(panel.axes[1].label)
-        if plot_data.show_legend and len(panel.series) > 1:
-            axis.legend()
-    figure.suptitle(plot_data.title)
-    return figure, resolved_axes[0] if len(resolved_axes) == 1 else resolved_axes
+    from ._plot_document import render_document
+
+    document = {
+        "title": plot_data.title, "show_legend": plot_data.show_legend,
+        "panels": [{
+            "title": panel.title,
+            "axes": [{"label": axis.label, "lower": axis.lower, "upper": axis.upper} for axis in panel.axes],
+            "layers": [{
+                "kind": "scatter", "title": series.label,
+                "x_values": series.x, "y_values": series.y,
+                "symbol_size": 9, "opacity": 1,
+            } for series in panel.series],
+        } for panel in plot_data.panels],
+    }
+    if not document["panels"]:
+        document["panels"] = [{"title": "", "axes": [], "layers": []}]
+    return render_document(document, figure=figure, use_native_limits=False)
 
 
 def _measurement_set_plot_data(result: dict[str, Any]) -> MeasurementSetPlotData:

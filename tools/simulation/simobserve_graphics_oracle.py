@@ -63,9 +63,10 @@ def artists(figure):
         panels.append({
             "title": axis.get_title(), "xlabel": axis.get_xlabel(), "ylabel": axis.get_ylabel(),
             "xlim": list(axis.get_xlim()), "ylim": list(axis.get_ylim()), "aspect": axis.get_aspect(),
+            "frame_on": axis.get_frame_on(),
             "lines": [{"x": line.get_xdata().tolist(), "y": line.get_ydata().tolist(),
                        "color": line.get_color(), "marker": line.get_marker(),
-                       "linestyle": line.get_linestyle()} for line in axis.lines],
+                       "linestyle": line.get_linestyle(), "line_width": line.get_linewidth()} for line in axis.lines],
             "images": [{"pixels": np.asarray(im.get_array()).tolist(), "extent": list(im.get_extent()),
                         "clim": list(im.get_clim()), "origin": im.origin,
                         "interpolation": im.get_interpolation(), "cmap": im.get_cmap().name}
