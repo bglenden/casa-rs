@@ -184,6 +184,11 @@ CASES = [
     # well as through the visibility comparison.
     {"name": "frame_topo", "params": dict(CORE, outframe="TOPO")},
     {"name": "frame_bary", "params": dict(CORE, outframe="BARY")},
+    {"name": "frame_lsrd", "params": dict(CORE, outframe="LSRD", totaltime="60s")},
+    {"name": "frame_geo", "params": dict(CORE, outframe="GEO", totaltime="60s")},
+    {"name": "frame_galacto", "params": dict(CORE, outframe="GALACTO", totaltime="60s")},
+    {"name": "frame_lgroup", "params": dict(CORE, outframe="LGROUP", totaltime="60s")},
+    {"name": "frame_cmb", "params": dict(CORE, outframe="CMB", totaltime="60s")},
     # Non-transit scheduling across dates with different TAI-UTC offsets.
     # A time suffix in refdate is discarded in favor of hourangle.
     {
