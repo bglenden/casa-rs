@@ -17,7 +17,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1050,6 +1050,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>,
 <a href="#an-unflagged-non-finite-sample-turns-the-image-to-nan">an unflagged non-finite sample</a>,
 <a href="#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones">a tuned cube's frequency selection</a>,
+<a href="#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history">a TOPO cube's cache-dependent endpoint selection</a>,
 <a href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane">a cube's fine frequency grid at a whole ratio</a>,
 <a href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind">the <code>.gridwt</code> a cube leaves</a>,
 <a href="#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre">multiscale on an off-centre PSF</a>,
@@ -4252,6 +4253,31 @@ test suite reaches either difference: the one tuned cube with channels
 narrower than the shift, <code>test_cube_D2</code>, images in LSRK, where casa-rs and
 CASA select the same channels at every time (its edge plane keeps 2460.56 of
 5020.51 in both).</p>
+<h2 id="a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history">A TOPO cube can gain or lose an endpoint with CASA's aberration cache history<a class="headerlink" href="#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, the image's TOPO spectral coordinate has an LSRK conversion
+layer. <code>FTMachine::initMaps</code> evaluates image-plane frequencies through that
+layer and <code>FTMachine::interpolateFrequencyTogrid</code> applies strict interpolation
+bounds to the resulting frequencies and the row's LSRK channels.</p>
+<p>The <code>GEO_BARY</code> hop evaluates <code>Aberration</code> with coefficients from the shared
+<code>MeasTable::theirMulAber</code> cache. <code>MeasTableMul::getArray</code> may reuse the
+coefficients of a nearby epoch. Pre-populating that cache before an identical
+<code>tclean</code> run moves the converted grid by a few floating-point steps. In the
+original out-of-order-row VLA fixture, the last plane's sum of weights changed
+from 16,697.6055 to zero. Two nearby frequency grids also flipped a whole
+plane, in opposite directions. A separate fresh-coefficients probe reproduced
+the flips. <a href="https://github.com/bglenden/casa-rs/issues/1198#issuecomment-6800135096">Reproduction and measurements in #1198</a>.</p>
+<p>For a channel-index TOPO cube in the standard gridder that spans one LSRK
+spectral window at unit width with natural weighting, casa-rs can compare in
+the source coordinate when the rounded terminal centre coincides with the
+stored edge. It compares the exact requested span <code>(n - 1) * d</code> to the exact
+span between the stored endpoint centres. This distinguishes an in-band
+terminal centre from a genuinely out-of-band one even when both round to
+the stored edge. Saved controls fall 7/32 of a representable step inside
+and 3/8 of a step outside. The source proof retains the former and excludes
+the latter from gridding.</p>
+<p>The ordinary strict row bounds and flag rules still apply. The full TOPO
+image coordinate, primary-beam calculation and prediction basis retain
+all requested channels.</p>
 <h2 id="a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane">A cube's fine frequency grid lets rounding choose one or two samples per plane<a class="headerlink" href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-03</li>
@@ -5073,7 +5099,7 @@ explicitly unimplemented (#1053).</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
