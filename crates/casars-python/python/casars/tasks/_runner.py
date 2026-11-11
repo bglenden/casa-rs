@@ -231,10 +231,16 @@ def _signature_defaults(wrapper: Callable[..., Any]) -> dict[str, Any]:
     }
 
 
+def _require_plotting() -> None:
+    """Fail before creating scientific products when plotting is unavailable."""
+
+    from matplotlib import pyplot as _plt  # noqa: F401
+
+
 def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
     if task == "simobserve" and resolved.get("graphics") in {"file", "screen", "both"}:
         # Import the renderer before the task creates scientific products.
-        from matplotlib import pyplot as _plt  # noqa: F401
+        _require_plotting()
 
         with tempfile.TemporaryDirectory(prefix="casars-plots-") as directory:
             payload = Path(directory) / "arrays.bin"

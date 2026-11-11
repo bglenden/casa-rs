@@ -270,5 +270,16 @@
   "Rendering requires the Python host and plot extra. A direct headless task without the caller payload still warns that PNG rendering needs the host.",
   "Public simutil plotting methods, other simulation mode/parameter combinations and full #1053 acceptance remain open.",
   "Debug correctness runs do not establish performance or whole-task memory acceptance."
- ]
+ ],
+ "ci_optional_plot_followup": {
+  "revision": "252993ae9f280355ac314512d834b56244e6a388",
+  "cause": "The core-only CI environment has no Matplotlib. Two signature-only fake-provider tests hit the intentional plotting preflight introduced by this change.",
+  "resolution": "Isolate the optional presentation dependency in those argument-only fakes. A new regression blocks Matplotlib import and proves the real preflight fails before starting the task or writing any product. Package CI now uses --plot, so actual graphics comparisons execute.",
+  "validation": {
+   "full_source_python_passed": 1177,
+   "skipped": 13,
+   "failed": 0
+  },
+  "applicability": "Rust and numerical renderer sources are unchanged from the recorded reviewed implementation; wheel and sdist results above retain their exact earlier source revisions."
+ }
 }
