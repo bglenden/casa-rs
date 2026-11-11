@@ -461,8 +461,8 @@
 <a href=#461 id=461 data-nosnippet>461</a>        <span class="kw">let </span>uvw = batch.group.uvw.ok_or(<span class="string">"the batch carries no UVW"</span>)<span class="question-mark">?</span>;
 <a href=#462 id=462 data-nosnippet>462</a>        <span class="comment">// A pass reads a time's channels as CASA's frequency selection does:
 <a href=#463 id=463 data-nosnippet>463</a>        // tuned to the image for one that images, and for a density over the
-<a href=#464 id=464 data-nosnippet>464</a>        // whole selection its untuned bands. A density per plane reads every
-<a href=#465 id=465 data-nosnippet>465</a>        // selected channel.
+<a href=#464 id=464 data-nosnippet>464</a>        // whole selection its untuned bands. The per-plane density's layout
+<a href=#465 id=465 data-nosnippet>465</a>        // is already compacted to the time's imaging bands.
 <a href=#466 id=466 data-nosnippet>466</a>        </span><span class="kw">let </span>bands = <span class="kw">if </span>values {
 <a href=#467 id=467 data-nosnippet>467</a>            partition.frequency_bands.as_ref()
 <a href=#468 id=468 data-nosnippet>468</a>        } <span class="kw">else </span>{
