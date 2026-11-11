@@ -18,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
 [non-frequency component frequency units](#a-non-frequency-component-unit-corrupts-casas-spectrum),
 [nonconforming component flux conversion](#component-flux-conversion-can-relabel-incompatible-units-or-crash),
 [duplicate and empty component removals](#component-removal-can-lose-data-or-crash),
@@ -544,6 +545,29 @@ does any image's planes under `'common'`, and records that one beam. The
 two agree because `ToStokesPSF` gives every Stokes plane the first
 correlation's PSF, so every plane fits the same beam. A beam the request
 gives is recorded once in the same way.
+
+## A Gaussian beam fit to collinear PSF samples is unstable
+
+- Date noted: 2026-11-11
+- Status: CASA 6.7.6.14 instability, with a deterministic failed-fit treatment in casa-rs ([#1140](https://github.com/bglenden/casa-rs/issues/1140#issuecomment-6802113024)).
+- Affected code: `synthesis/TransformMachines/StokesImageUtil.cc` (`FitGaussianPSF`),
+  `synthesis/ImagerObjects/SIImageStore.cc` (`makeImageBeamSet`, `getPSFSidelobeLevel`).
+
+In a 64-square, two-channel Clark restart at 8 arcsec per pixel, the saved
+unit-peak PSF of one channel is a one-pixel-wide line. Changing one
+off-peak sample by one Float step, about 5.96e-8, moves CASA's fitted
+position angle from 10.3232° to 0.0017° or −56.3750°, and the reported
+sidelobe from 0.585933 to 0.156330 or 0.900000. All three PSFs have the
+same collinear fit support. That support constrains one directional width,
+leaving the two-dimensional ellipse underdetermined.
+
+casa-rs checks the selected fit samples on their integer grid and retries
+with the existing lower cutoffs. When every attempt with enough samples
+is collinear, the plane uses the ordinary failed-fit beam for its domain.
+That is the largest fitted beam by area, or a circular 1e-6 arcsec beam
+when the domain has no fitted beam. Restoration, the minor-cycle patch,
+and the sidelobe calculation use the same beam. Two-dimensional fits and
+saved beam metadata retain their existing treatment.
 
 ## The analytic PB ignores a failed `toPixel`
 

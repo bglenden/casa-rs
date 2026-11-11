@@ -343,6 +343,110 @@ fn tclean_weak_saved_psf_keeps_its_image_sidelobe() {
     assert!((actual - expected).abs() < 1e-13, "{actual} != {expected}");
 }
 
+/// A line constrains only one Gaussian width. A ridge uses the largest
+/// fitted beam in the domain for restoration and for the controller (#1140).
+#[test]
+fn a_collinear_psf_uses_its_domain_beam_stably() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let level = 0.9_f32;
+    let expected_sidelobe = f64::from(level) - (-2.0_f64).exp();
+    for axis in [0, 1] {
+        for bits in [level.to_bits() - 1, level.to_bits(), level.to_bits() + 1] {
+            let (beams, sidelobe) = restore_with_ridge(
+                &observation,
+                &format!("ridge-{axis}-{bits}"),
+                axis,
+                f32::from_bits(bits),
+                true,
+            );
+            let donor = beams[0];
+            assert!((donor.major_in("arcsec").unwrap() - 0.452123).abs() < 1e-5);
+            assert_beam(beams[1], donor, "the ridge takes the fitted domain beam");
+            assert!((sidelobe - expected_sidelobe).abs() < 2e-5, "{sidelobe}");
+        }
+    }
+}
+
+/// A domain with only collinear fits uses CASA's ordinary no-fit beam.
+#[test]
+fn all_collinear_psfs_use_the_tiny_beam() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let (beams, sidelobe) = restore_with_ridge(&observation, "all-ridges", 0, 0.9, false);
+    for beam in beams {
+        assert_beam(
+            beam,
+            GaussianBeam {
+                major: 1e-6 * ARCSEC,
+                minor: 1e-6 * ARCSEC,
+                position_angle: 0.0,
+            },
+            "all-ridge domain",
+        );
+    }
+    assert_eq!(sidelobe, f64::from(0.9_f32));
+}
+
+fn restore_with_ridge(
+    observation: &Observation,
+    name: &str,
+    axis: usize,
+    adjacent: f32,
+    with_donor: bool,
+) -> ([GaussianBeam; 2], f64) {
+    use casa_images::PagedImage;
+    use casa_provider_contracts::TaskReply;
+
+    let (directory, mut values) = seed_weak_psf_restart(observation, name, 1.0, false);
+    let mut psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
+    let mut data = psf.get().unwrap();
+    data.fill(0.0);
+    for chan in 0..2 {
+        if chan == 0 && with_donor {
+            for x in 0..64 {
+                for y in 0..64 {
+                    let dx = x as f32 - 32.0;
+                    let dy = y as f32 - 32.0;
+                    data[[x, y, 0, chan]] = (-(dx * dx + dy * dy) / 512.0).exp();
+                }
+            }
+        } else {
+            for i in 0..64 {
+                let mut pixel = [32, 32, 0, chan];
+                pixel[axis] = i;
+                data[pixel] = match i {
+                    32 => 1.0,
+                    31 => adjacent,
+                    _ => 0.9,
+                };
+            }
+        }
+    }
+    psf.put_slice(&data, &[0; 4]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+
+    values["restoration"] = json!(true);
+    let result = super::casa_return::json_run(&directory, values);
+    let TaskReply::Succeeded { value, .. } = result else {
+        panic!("{result:?}");
+    };
+    let [psf_beams, image_beams] = ["psf", "image"].map(|product| {
+        let beams = PagedImage::<f32>::open(directory.join(format!("image.{product}")))
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set;
+        [*beams.beam(0, 0), *beams.beam(1, 0)]
+    });
+    for channel in 0..2 {
+        assert_beam(psf_beams[channel], image_beams[channel], "PSF and image");
+    }
+    (
+        image_beams,
+        super::casa_return::scalar(&value, "maxpsfsidelobe"),
+    )
+}
+
 fn seed_weak_psf_restart(
     observation: &Observation,
     name: &str,
