@@ -3512,10 +3512,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Independent CASA golden DATA and corrected-behavior laws — passed.** 14 cases pass with one and three CPU workers; 12 applicable cases also pass on the actual Metal device. DATA NRMS is at most 2.55e-6 (limit 1e-3); Metal/CPU maximum relative error is at most 3.16e-7 (limit 1e-4). Eleven cases use raw CASA, two mosaic cases use independent CASA image sums, and SD compares CASA autocorrelations plus exact zero cross-correlations. Later admission failure preserves the old plan and releases temporary reservations. Multiple image sizes and spectral planes, duplicates, replacement, incremental, zero first image, components, setvp, GridFT, WProjectFT, mosaic and SDGrid. Raw CASA mosaic ordering and SDGrid cross-correlation defects are preserved; does not claim all image layouts or FT machines.
 
-- [tools/simulation/sm_multiple_models_oracle.py](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/tools/simulation/sm_multiple_models_oracle.py)
-- [crates/casa-simulation/tests/predict_multiple_models.rs](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/crates/casa-simulation/tests/predict_multiple_models.rs)
-- [crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz)
-- Revision: `98a907c6c5d4f766e556de9b69b328952ef4330d`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- [tools/simulation/sm_multiple_models_oracle.py](https://github.com/bglenden/casa-rs/blob/459122e01bb25fbb57c5002a1b09726e4e791389/tools/simulation/sm_multiple_models_oracle.py)
+- [crates/casa-simulation/tests/predict_multiple_models.rs](https://github.com/bglenden/casa-rs/blob/459122e01bb25fbb57c5002a1b09726e4e791389/crates/casa-simulation/tests/predict_multiple_models.rs)
+- [crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz](https://github.com/bglenden/casa-rs/blob/459122e01bb25fbb57c5002a1b09726e4e791389/crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz)
+- Revision: `459122e01bb25fbb57c5002a1b09726e4e791389`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
 - Command: `CASAPY tools/simulation/sm_multiple_models_oracle.py --out OUT --fixture FIXTURE; cargo test -p casa-simulation --test predict_multiple_models -- --nocapture (bg-mac-mini, CPU one and three workers, Metal three workers)`.
 - Receipt: `resources/casa-compat/evidence/sm-multiple-models-20261111.json`.
 

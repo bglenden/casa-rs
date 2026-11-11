@@ -2,13 +2,13 @@
  "schema": "sm-multiple-models-receipt/1",
  "work_issue": 1053,
  "date": "2026-11-11",
- "native_revision": "98a907c6c5d4f766e556de9b69b328952ef4330d",
+ "native_revision": "459122e01bb25fbb57c5002a1b09726e4e791389",
  "oracle": "casatools 6.7.6-14, casatasks 6.7.6.14",
  "host": "bg-mac-mini, macOS arm64, CPU (one and three workers) and Metal (three workers)",
  "commands": {
   "oracle": "CASAPY tools/simulation/sm_multiple_models_oracle.py --out target/oracle-final --fixture target/fixture-final.json.gz",
   "feature": "cargo test -p casa-simulation --test predict_multiple_models -- --nocapture",
-  "crate": "RUST_TEST_THREADS=1 cargo test -p casa-simulation",
+  "crate": "RUST_TEST_THREADS=1 cargo test -p casa-simulation -- --nocapture",
   "lint": "cargo clippy -p casa-simulation --all-targets -- -D warnings"
  },
  "fixture": "crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz",
@@ -216,7 +216,7 @@
     1,
     3
    ],
-   "data_nrms": 2.208405759e-06,
+   "data_nrms": 2.208566196e-06,
    "limit": 0.001,
    "reference": "raw CASA DATA",
    "casa_cleanup": "not returned",
@@ -296,7 +296,7 @@
  },
  "atomicity": "A second 4096-square image exceeds a 256 MiB session budget after a first image is prepared. Replacement and incremental calls both refuse, preserve the existing duplicate-image plan, and restore reserved_memory exactly; closing still matches the independent CASA duplicate-image reference.",
  "limits": "Tests cover supported Stokes I/J2000 image layouts, CPU and the actual Metal device for twelve applicable cases. WProjectFT remains CPU-only and SDGrid samples on the host. This does not establish every image layout, FT machine or polarization. Mosaic joint raw CASA outputs and SD cross-correlations deliberately differ under documented corrections. Debug binaries establish correctness, not performance acceptance.",
- "test_binary_sha256": "89a2798fa6dc747a5c208885aeec32643d534705f4352a0fe386d3485ab0a352",
+ "test_binary_sha256": "d413b389b6437ebd178b29e02a5d574b8b0bdecd1a06fb9fb76876487c35c699",
  "validation": {
   "crate": {
    "state": "passed",
@@ -304,11 +304,11 @@
    "failed": 0,
    "ignored": 1,
    "ignored_reason": "counting-law helper invoked by its parent tests",
-   "revision": "d2737a7b3d267325b1f68847958213ba843b2c32"
+   "revision": "459122e01bb25fbb57c5002a1b09726e4e791389"
   },
   "feature": {
    "state": "passed",
-   "revision": "98a907c6c5d4f766e556de9b69b328952ef4330d",
+   "revision": "459122e01bb25fbb57c5002a1b09726e4e791389",
    "cpu_cases": 14,
    "cpu_workers": [
     1,
@@ -320,8 +320,8 @@
   "clippy": {
    "state": "passed",
    "flags": "-p casa-simulation --all-targets -- -D warnings",
-   "revision": "a1b7586e2d46fc4271fca1057fab67dc837d2b7a"
+   "revision": "459122e01bb25fbb57c5002a1b09726e4e791389"
   },
-  "applicability": "After the full crate run, only the feature test was extended for actual Metal and the bug reproduction prose corrected. The final feature test passes; Clippy includes the extended test. Runtime source is unchanged across these revisions."
+  "applicability": "Full crate tests, including the final multi-image CPU/Metal feature test, and all-target Clippy pass together after integrating main 5fd27b58de85ebb1b584b588c9b890433515584a (shared spectral/geometry changes). Counts exclude subprocess helper summaries already represented by their parent tests."
  }
 }

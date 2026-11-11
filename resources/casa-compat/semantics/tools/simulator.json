@@ -1305,9 +1305,10 @@
     "crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz"
    ],
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
-   "revision": "98a907c6c5d4f766e556de9b69b328952ef4330d",
+   "revision": "459122e01bb25fbb57c5002a1b09726e4e791389",
    "command": "CASAPY tools/simulation/sm_multiple_models_oracle.py --out OUT --fixture FIXTURE; cargo test -p casa-simulation --test predict_multiple_models -- --nocapture (bg-mac-mini, CPU one and three workers, Metal three workers)",
-   "receipt": "resources/casa-compat/evidence/sm-multiple-models-20261111.json"
+   "receipt": "resources/casa-compat/evidence/sm-multiple-models-20261111.json",
+   "source_revision": "459122e01bb25fbb57c5002a1b09726e4e791389"
   }
  }
 }
