@@ -303,7 +303,7 @@ pub(crate) fn domain_operator(
     correlations: &[Correlation],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
-    aw_catalog: Option<&AwCatalogDeployment>,
+    aw_catalog: Option<(&AwCatalogDeployment, f64)>,
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
@@ -399,7 +399,7 @@ fn kernel_set(
     problem: &CompiledProblem,
     kind: KernelSetKind,
     (geometry, polarization): (&GridGeometry, &PolarizationRouting),
-    aw_catalog: Option<&AwCatalogDeployment>,
+    aw_catalog: Option<(&AwCatalogDeployment, f64)>,
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<(Box<dyn ConvolutionFunctionSet>, Kernels), ImagingError> {
@@ -478,16 +478,18 @@ fn kernel_set(
             (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
         KernelSetKind::Aw => {
-            let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
-                reason: "an A-projection run needs its convolution-function catalog",
-            })?;
+            let (deployment, gridding_frequency_scale) =
+                aw_catalog.ok_or(ImagingError::Unsupported {
+                    reason: "an A-projection run needs its convolution-function catalog",
+                })?;
             let catalog = AwCatalog::open_casa(
                 &deployment.root,
                 deployment.indexing,
                 geometry,
                 polarization,
                 deployment.resident_bytes,
-            )?;
+            )?
+            .with_prediction_frequency_scale(gridding_frequency_scale);
             let kernels = Kernels::Catalog {
                 charge: catalog.cache_charge(),
                 bound: catalog.cache_bound(),

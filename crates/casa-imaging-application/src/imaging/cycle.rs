@@ -527,6 +527,11 @@ impl<'a> Run<'a> {
         let correlations = selected_correlations(problem)?;
         let route = inputs.source;
         let keys = route.keys();
+        // Availability restricts AW to a single MeasurementSet.
+        let aw_catalog = inputs
+            .aw_catalog
+            .as_ref()
+            .map(|catalog| (catalog, route.stores[0].plan.gridding_frequency_scale()));
         let (host, policy) = (inputs.host, inputs.policy);
         // The passes' workers hold the kernels: at most the policy's.
         let ceiling = policy.cores(&host);
@@ -547,7 +552,7 @@ impl<'a> Run<'a> {
                     &correlations,
                     backend,
                     inputs.grid_precision,
-                    inputs.aw_catalog.as_ref(),
+                    aw_catalog,
                     &keys,
                     admission,
                 )
