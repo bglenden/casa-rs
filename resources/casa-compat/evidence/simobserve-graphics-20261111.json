@@ -1,0 +1,274 @@
+{
+ "schema": "simobserve-graphics-receipt/1",
+ "work_issue": 1053,
+ "graphics_issue": 1025,
+ "date": "2026-11-11",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "source_revision": "117d49965afae282afce55806d8feedddcb9e42f",
+ "producer_revision": "454689adbd7d671b182e9935efb1ec88306f37a4",
+ "consumer_revision": "117d49965afae282afce55806d8feedddcb9e42f",
+ "packaging_script_revision": "b588162080bffe04f6d4ec2b03c5245cfca0ad06",
+ "native_test_binary_sha256": "1e5a4a8e55ca339643850a3f7baf29137e19addd0acd900245c463da80982184",
+ "build": "macOS arm64, Rust 1.99.0, private worktree target, debug without incremental compilation or debug info; source overlays refresh mtimes. Python artist consumer also verified on Linux.",
+ "design": "https://github.com/bglenden/casa-rs/issues/841#issuecomment-6468635804",
+ "fixture": {
+  "path": "crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz",
+  "sha256": "408204e2e9547604379d7a45c422ea4901cc04bcbdfe0a5c2aa9fa482d93b300",
+  "inputs": "Synthetic two-point 64x64 image and independent 1-Jy component model; eight 12-m ALMA pads; 230 GHz, 1 GHz width, four 10-second integrations. Dense hexagonal 16-arcsec map at 1-arcsec spacing has 279 pointings. Single-dish image control included. The committed recipe records actual installed CASA Matplotlib artists."
+ },
+ "commands": [
+  "CASAPY tools/simulation/simobserve_graphics_oracle.py --out OUT",
+  "RUST_TEST_THREADS=1 CASA_RS_GRAPHICS_DEBUG_DIR=OUT cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture",
+  "python tools/simulation/check_simobserve_rendering.py --native PAYLOAD_DIR --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT",
+  "CASAPY tools/simulation/check_quick_psf_casa.py --native NATIVE_DIR --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT",
+  "cargo clippy -p casa-ms -p casa-task-runtime -p casa-simulation -p casars-simulation -p casars-python --all-targets -- -D warnings",
+  "RUST_TEST_THREADS=1 cargo test -p casa-ms -p casa-task-runtime -p casa-simulation -p casars-simulation -p casars-python --no-fail-fast",
+  "pytest -q crates/casars-python/python/tests"
+ ],
+ "comparison": {
+  "coverage": "One and three CPU workers for all four cases; every line sample, image pixel, circle, anchored beam legend, annotation, limits and checked visible style. All 279 dense pointings retained; no thinning.",
+  "coordinate_absolute_limit_in_display_units": 0.001,
+  "full_image_nrms_limit": 0.001,
+  "image_extent_absolute_limit": 1e-09,
+  "color_limits_absolute_limit": 1e-05,
+  "visible_color_absolute_limit": 1e-12,
+  "exact": "Panel/artist counts, titles and axis labels, aspect, frame visibility, marker/line style and width, image origin/interpolation/colormap, circle fill/width, annotation text.",
+  "transport": "Typed native documents plus caller-owned file of raw little-endian arrays; validated shape/stride/extent and file bounds before plotting. NumPy views read without JSON/base64 pixel copies; NumPy owns mapping lifetime."
+ },
+ "artist_comparison": {
+  "casa_version": "6.7.6.14",
+  "passed": 16,
+  "results": [
+   {
+    "name": "int_components.small.skymodel.png",
+    "native_run": "int_components-w1-a0SdHH",
+    "panels": 1,
+    "maximum_coordinate_difference": 2.289999370653732e-11,
+    "png_sha256": "d3c6506545631730a616b1b45e4fe6cdeed92edb3c2ab256e878478c0c9da086"
+   },
+   {
+    "name": "int_components.small.observe.png",
+    "native_run": "int_components-w1-a0SdHH",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png_sha256": "3f3cc9a8ef0fb1f6f6d9aa594b2747404f972da7ada7fa2a2116c3bee406b14b"
+   },
+   {
+    "name": "int_components.small.skymodel.png",
+    "native_run": "int_components-w3-PZhIw4",
+    "panels": 1,
+    "maximum_coordinate_difference": 2.289999370653732e-11,
+    "png_sha256": "d3c6506545631730a616b1b45e4fe6cdeed92edb3c2ab256e878478c0c9da086"
+   },
+   {
+    "name": "int_components.small.observe.png",
+    "native_run": "int_components-w3-PZhIw4",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png_sha256": "3f3cc9a8ef0fb1f6f6d9aa594b2747404f972da7ada7fa2a2116c3bee406b14b"
+   },
+   {
+    "name": "int_dense_pointings.small.skymodel.png",
+    "native_run": "int_dense_pointings-w1-kbKlcD",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png_sha256": "87d8627c20adf9b7460dd5e978aabb91485d75d27dbcf4b13c985fc41fa65726"
+   },
+   {
+    "name": "int_dense_pointings.small.observe.png",
+    "native_run": "int_dense_pointings-w1-kbKlcD",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598989224992692,
+    "png_sha256": "10cdad2baeb22e61a8bb145143fbe79da72c9deb3d49d60986094f9158d95997"
+   },
+   {
+    "name": "int_dense_pointings.small.skymodel.png",
+    "native_run": "int_dense_pointings-w3-P1H21r",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png_sha256": "87d8627c20adf9b7460dd5e978aabb91485d75d27dbcf4b13c985fc41fa65726"
+   },
+   {
+    "name": "int_dense_pointings.small.observe.png",
+    "native_run": "int_dense_pointings-w3-P1H21r",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598989224992692,
+    "png_sha256": "10cdad2baeb22e61a8bb145143fbe79da72c9deb3d49d60986094f9158d95997"
+   },
+   {
+    "name": "int_image.small.skymodel.png",
+    "native_run": "int_image-w1-TJ8ZbI",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png_sha256": "901c9af6f9138f897430d18fa8650ba379359d09e9ea86688873f1ec8ca5668f"
+   },
+   {
+    "name": "int_image.small.observe.png",
+    "native_run": "int_image-w1-TJ8ZbI",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png_sha256": "28bdd4b83030fdb4901532fbfa1da576db05b9bf30cea401861dda23ae29f423"
+   },
+   {
+    "name": "int_image.small.skymodel.png",
+    "native_run": "int_image-w3-W4Lgvn",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png_sha256": "901c9af6f9138f897430d18fa8650ba379359d09e9ea86688873f1ec8ca5668f"
+   },
+   {
+    "name": "int_image.small.observe.png",
+    "native_run": "int_image-w3-W4Lgvn",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png_sha256": "28bdd4b83030fdb4901532fbfa1da576db05b9bf30cea401861dda23ae29f423"
+   },
+   {
+    "name": "sd_image.small.skymodel.png",
+    "native_run": "sd_image-w1-5QbrRN",
+    "panels": 2,
+    "maximum_coordinate_difference": 0.0,
+    "png_sha256": "88359f8837f4be43d99c1f86c006e2e4a96a1fc7937aaf137d87d3b034175c77"
+   },
+   {
+    "name": "sd_image.small.observe.png",
+    "native_run": "sd_image-w1-5QbrRN",
+    "panels": 1,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png_sha256": "167db1a907b2c0d3e138a6305e01876af31a0975d3a4575156db80d4ec183080"
+   },
+   {
+    "name": "sd_image.small.skymodel.png",
+    "native_run": "sd_image-w3-YyfAzQ",
+    "panels": 2,
+    "maximum_coordinate_difference": 0.0,
+    "png_sha256": "88359f8837f4be43d99c1f86c006e2e4a96a1fc7937aaf137d87d3b034175c77"
+   },
+   {
+    "name": "sd_image.small.observe.png",
+    "native_run": "sd_image-w3-YyfAzQ",
+    "panels": 1,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png_sha256": "167db1a907b2c0d3e138a6305e01876af31a0975d3a4575156db80d4ec183080"
+   }
+  ]
+ },
+ "numerical_psf": {
+  "cpp_readback_passed": 6,
+  "max_data_nrms": 6.626962628684081e-07,
+  "cases": {
+   "int_image": 6.626962628684081e-07,
+   "int_components": 2.06274335642185e-07,
+   "int_dense_pointings": 6.422581136138259e-07
+  },
+  "cpu_workers": [
+   1,
+   3
+  ],
+  "actual_metal_session_diagnostic_max_relative": 0.0,
+  "backend_note": "Actual Metal-session prediction is exercised; the small diagnostic PSF itself uses CPU/f64 as recorded in the quick-PSF receipt.",
+  "default_tclean_psf_nrms": 1.226424541e-07,
+  "default_tclean_sumwt": 224.0
+ },
+ "task_process": "Real Python task process passes file/screen/both/none tests, expected product completion, relative project paths and deletion of its private payload directory. Atomic PNG publication preserves a previous output on failure.",
+ "review": {
+  "revision": "454689adbd7d671b182e9935efb1ec88306f37a4",
+  "reviewer": "One fresh-context Astra xhigh review as required by AGENTS.md; no re-review.",
+  "findings": [
+   "P2: an orphan pending artifact with no figure could report a stale PNG as newly created.",
+   "P2: failure during figure construction leaked its newly registered figure."
+  ],
+  "resolution": "117d49965afae282afce55806d8feedddcb9e42f",
+  "regressions": "Both findings reproduced before fixes and pass afterward. Additional artist-exception regression proves a captured view retains a live NumPy-owned mapping; previous raw mmap close left that mapping closed."
+ },
+ "verification": {
+  "full_touched_rust": {
+   "source_revision": "94810a7edccec670d4ace0292a6df1d4cf65a388",
+   "command": "RUST_TEST_THREADS=1 cargo test -p casa-ms -p casa-task-runtime -p casa-simulation -p casars-simulation -p casars-python --no-fail-fast",
+   "counts": {
+    "casa_ms": {
+     "passed": 881,
+     "failed": 0,
+     "ignored": 7
+    },
+    "casa_simulation": {
+     "passed": 300,
+     "failed": 0,
+     "ignored": 2
+    },
+    "casa_task_runtime": {
+     "passed": 149,
+     "failed": 0,
+     "ignored": 1
+    },
+    "casars_python": {
+     "passed": 60,
+     "failed": 0,
+     "ignored": 0
+    },
+    "casars_simulation": {
+     "passed": 7,
+     "failed": 0,
+     "ignored": 0
+    }
+   },
+   "failed_tests": []
+  },
+  "post_review_binding_rust": {
+   "revision": "117d49965afae282afce55806d8feedddcb9e42f",
+   "passed": 61,
+   "failed": 0
+  },
+  "focused_native_figures": {
+   "revision": "454689adbd7d671b182e9935efb1ec88306f37a4",
+   "passed": 4,
+   "ignored_parent_invoked_helper": 1
+  },
+  "post_review_editable_python": {
+   "revision": "117d49965afae282afce55806d8feedddcb9e42f",
+   "passed": 1176,
+   "skipped": 13,
+   "failed": 0,
+   "python": "3.13.10",
+   "numpy": "2.5.4",
+   "matplotlib": "3.11.2",
+   "environment_note": "Two earlier unrelated fake-executable tests failed because sys.executable contained a space, making generated shebangs invalid. The same package/dependencies and the rebuilt package pass from a physical no-space interpreter path."
+  },
+  "all_target_clippy": "passed for the five touched crates after review fixes",
+  "fmt": "passed",
+  "architecture": "All preceding checks pass; untouched casa-imaging-operator/tests/resample.rs exceeds the file limit (tracked #1253).",
+  "other_main_blocker": "Two unchanged imaging-application MVC assertions are independently tracked in #1262; this renderer changes no imaging-application source.",
+  "packaged_python": {
+   "revision": "117d49965afae282afce55806d8feedddcb9e42f",
+   "script_revision": "b588162080bffe04f6d4ec2b03c5245cfca0ad06",
+   "commands": [
+    "maturin build --release --manifest-path crates/casars-python/Cargo.toml --interpreter /opt/homebrew/bin/python3.13 --out DIST",
+    "maturin sdist --manifest-path crates/casars-python/Cargo.toml --out DIST",
+    "pip install WHEEL[test,plot]; pytest -q -p no:cacheprovider PYTHON_TESTS",
+    "MATURIN_PEP517_ARGS=--profile dev CARGO_TARGET_DIR=FRESH pip install SDIST[test,plot]; pytest -q -p no:cacheprovider test_binding_snapshots.py test_parameters.py test_data.py test_plot_document.py"
+   ],
+   "wheel": {
+    "passed": 1176,
+    "skipped": 13,
+    "failed": 0,
+    "sha256": "60ea29d126c1b56bf88d963e1fd703a16be466bded0886e71fb38dffba787def"
+   },
+   "sdist": {
+    "passed": 115,
+    "failed": 0,
+    "sha256": "1a397b6389f3266b46104bd54544ab9f866bb1412ae2b9d6b159758b85e34e4a"
+   },
+   "isolation": "Non-editable installs tested outside the checkout; casars, casars._core and casars._plot_document origins verified under their respective environments. The sdist uses a fresh independent Cargo target, with no artifact reuse. Equivalent manual commands were used on the source archive because the repository wrappers require git metadata."
+  }
+ },
+ "limits": [
+  "Artist/data equivalence and successful PNG generation are verified; raster bit identity across Matplotlib/font versions is not claimed.",
+  "The fixture uses hourangle=35s for the approved TAI/UTC labeling alignment. The bounded plot differences are at most 8.59899e-4 hours (about 3.1 seconds), 6.07e-5 degrees elevation and 5.31e-4 kilolambda. This plot fixture does not establish equal-stored-TIME MS/UVW parity; that is checked separately by the task receipts.",
+  "Rendering requires the Python host and plot extra. A direct headless task without the caller payload still warns that PNG rendering needs the host.",
+  "Public simutil plotting methods, other simulation mode/parameter combinations and full #1053 acceptance remain open.",
+  "Debug correctness runs do not establish performance or whole-task memory acceptance."
+ ]
+}
