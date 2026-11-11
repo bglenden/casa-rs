@@ -78,10 +78,24 @@ def artists(figure):
     return panels
 
 
+def image_record(path):
+    from casatools import image
+
+    ia = image()
+    ia.open(str(path))
+    cs = ia.coordsys()
+    result = {"shape": ia.shape().tolist(), "unit": ia.brightnessunit(),
+              "reference": cs.referencevalue()["numeric"].tolist(),
+              "increment": cs.increment()["numeric"].tolist(),
+              "pixels": ia.getchunk().tolist(), "beam": ia.restoringbeam()}
+    cs.done()
+    ia.done()
+    return result
+
+
 def main():
     import casatasks
-    from casatasks import simobserve
-    from casatools import image
+    from casatasks import simobserve, tclean
     from matplotlib import pyplot as plt
     from matplotlib.figure import Figure
 
@@ -120,15 +134,17 @@ def main():
                     "figures": {key: value for key, value in captured.items() if key.startswith(name + ".")}}
             psfs = list(Path(name).glob("*.quick.psf"))
             if psfs:
-                ia = image()
-                ia.open(str(psfs[0]))
-                cs = ia.coordsys()
-                case["psf"] = {"shape": ia.shape().tolist(), "unit": ia.brightnessunit(),
-                               "reference": cs.referencevalue()["numeric"].tolist(),
-                               "increment": cs.increment()["numeric"].tolist(),
-                               "pixels": ia.getchunk().tolist(), "beam": ia.restoringbeam()}
-                cs.done()
-                ia.done()
+                case["psf"] = image_record(psfs[0])
+            if name == "int_image":
+                # The ordinary imaging route must retain its own 1.2
+                # padding while the legacy quick PSF selects 1.0.
+                prefix = root / "default_tclean"
+                for old in root.glob("default_tclean.*"):
+                    shutil.rmtree(old) if old.is_dir() else old.unlink()
+                tclean(vis=str(root / name / (name + ".small.ms")), imagename=str(prefix),
+                       imsize=128, cell="2e-6rad", niter=0, calcres=False, restoration=False,
+                       weighting="natural", datacolumn="data")
+                case["default_tclean_psf"] = image_record(prefix.with_suffix(".psf"))
             cases.append(case)
             payload = {"casa_version": casatasks.version_string(), "recipe": __file__, "cases": cases}
             with (root / "graphics-reference.json.gz").open("wb") as raw:

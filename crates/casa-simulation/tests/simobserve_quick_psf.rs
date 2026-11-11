@@ -206,7 +206,13 @@ fn compare(reference: &Value, path: &Path) {
         .collect();
     assert_eq!(image.shape(), shape);
     assert_eq!(image.units(), reference["unit"].as_str().expect("unit"));
-    assert!(image.image_info().expect("info").beam_set.is_empty());
+    assert_eq!(
+        image.image_info().expect("info").beam_set.is_empty(),
+        reference["beam"]
+            .as_object()
+            .expect("beam metadata")
+            .is_empty()
+    );
     for (field, values) in [
         (
             "reference",
@@ -247,6 +253,41 @@ fn compare(reference: &Value, path: &Path) {
     assert!(nrms <= 1e-3, "quick PSF NRMS {nrms} exceeds 1e-3");
 }
 
+fn default_tclean_control(reference: &Value, quick: &Path) {
+    use casa_imaging_application::{
+        BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute,
+    };
+    let project = quick.parent().expect("project");
+    let prefix = project.join("default-control");
+    let values = serde_json::json!({
+        "vis": project.join("int_image.small.ms"), "imagename": prefix,
+        "imsize": 128, "cell": "2e-6rad", "weighting": "natural", "datacolumn": "data",
+        "niter": 0, "calcres": false, "restoration": false,
+    });
+    let resolved = casa_task_runtime::resolve_plain_values(
+        casa_provider_contracts::builtin_surface_bundle("tclean").expect("surface"),
+        std::env::current_dir().expect("workspace"),
+        values.as_object().expect("object"),
+    )
+    .expect("resolved control");
+    let mut request = ImagingRequest::from_tclean(&resolved).expect("request");
+    request.backend = ImagingBackend::Cpu;
+    execute(
+        &request,
+        RunContext {
+            host: HostResources::detect().expect("host"),
+            policy: ResourcePolicy::Explicit {
+                workers: 3,
+                memory: 2 << 30,
+            },
+            cancel: Cancel::new(),
+            summary: None,
+        },
+    )
+    .expect("ordinary imaging control");
+    compare(reference, &prefix.with_extension("psf"));
+}
+
 #[test]
 fn quick_psfs_match_casa_for_image_and_component_models() {
     let oracle = fixture();
@@ -276,6 +317,11 @@ fn quick_psfs_match_casa_for_image_and_component_models() {
                 let _kept = directory.keep();
             }
             compare(reference, &psf);
+            if workers == 3
+                && let Some(control) = case.get("default_tclean_psf")
+            {
+                default_tclean_control(control, &psf);
+            }
             if metal && workers == 3 {
                 compare_metal(reference, &psf, name);
             }
@@ -290,6 +336,10 @@ fn quick_psfs_match_casa_for_image_and_component_models() {
             );
         }
     }
+    graphics_mode_checks(&oracle);
+}
+
+fn graphics_mode_checks(oracle: &Value) {
     let directory = tempfile::tempdir().expect("directory");
     assert!(!run(directory.path(), "int_image_none", 1, "none").exists());
     let directory = tempfile::tempdir().expect("directory");
