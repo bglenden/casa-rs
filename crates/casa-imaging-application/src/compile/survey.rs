@@ -392,7 +392,7 @@ pub(super) fn survey(
         })
         .max()
         .unwrap_or(0);
-    let pb_antenna_bytes = if plan.track_pb_antennas {
+    let pb_antenna_count = if plan.track_pb_antennas {
         catalogue.antennas.len()
     } else {
         0
@@ -404,8 +404,10 @@ pub(super) fn survey(
         policy,
         &Demand {
             phase: "observation survey",
-            memory: (2 * batch_bytes + epoch_bytes + several_arrays_bytes + pb_antenna_bytes)
-                as u64,
+            memory: (2 * batch_bytes
+                + epoch_bytes
+                + several_arrays_bytes
+                + pb_antenna_count * size_of::<bool>()) as u64,
         },
     )?;
     let mut facts = Facts {
@@ -413,7 +415,7 @@ pub(super) fn survey(
         first_visibility: None,
         earliest_field_id: None,
         observation_ids: BTreeSet::new(),
-        pb_antennas: vec![false; pb_antenna_bytes],
+        pb_antennas: vec![false; pb_antenna_count],
         image_first_row: None,
         time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
         w: WRange::EMPTY,
@@ -701,14 +703,13 @@ fn observe_time(
         }
         if (find_first || rows.is_some())
             && let Some(ms) = plan.msv2
+            && let Some(row) = ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline)
         {
-            if let Some(row) = ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline) {
-                if let Some(rows) = rows.as_deref_mut() {
-                    rows.push(row as usize);
-                }
-                if find_first {
-                    first_row = Some(first_row.map_or(row, |previous: u32| previous.min(row)));
-                }
+            if let Some(rows) = rows.as_deref_mut() {
+                rows.push(row as usize);
+            }
+            if find_first {
+                first_row = Some(first_row.map_or(row, |previous: u32| previous.min(row)));
             }
         }
         // Standard gridding omits autocorrelations, so they cannot choose
@@ -888,6 +889,65 @@ mod tests {
 
     const T0: f64 = 5_000_000_000.0;
 
+    /// A mixed ALMA catalogue adds one retained antenna entry for each
+    /// antenna. Its survey reservation covers the bitmap capacity.
+    #[test]
+    fn a_survey_charges_the_selected_pb_antenna_bitmap() {
+        let root = tempfile::tempdir().expect("temporary fixture");
+        let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(archive).unwrap(),
+        ))
+        .unpack(root.path())
+        .unwrap();
+        let observation = Msv2Observation::open(&root.path().join("ms_trial.ms")).unwrap();
+        let catalogue = observation.catalogue();
+        let id = catalogue.partition_ids()[0];
+        let window = catalogue.partition(id).window.0 as usize;
+        let host = HostResources::detect().unwrap();
+        let policy = ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        };
+        let run = |track_pb_antennas| {
+            survey(
+                SurveyPlan {
+                    observation: &observation,
+                    msv2: Some(&observation),
+                    candidates: Candidates {
+                        data_group: "base".into(),
+                        partitions: vec![Candidate {
+                            id,
+                            spectral_window: window,
+                            wavelength_m: None,
+                        }],
+                    },
+                    row_selection: RowSelection::new(
+                        IdSelection::All,
+                        UvSelection::All,
+                        IntentSelection::All,
+                    ),
+                    image_row_epoch: false,
+                    w_range: false,
+                    track_pb_antennas,
+                    first_cross: false,
+                },
+                super::super::selection::spectral_windows(catalogue, [window].into_iter()),
+                (&host, &policy),
+            )
+            .unwrap()
+        };
+        let ordinary = run(false);
+        let tracked = run(true);
+        assert_eq!(ordinary.value.pb_antennas.capacity(), 0);
+        assert_eq!(tracked.value.pb_antennas.len(), catalogue.antennas.len());
+        assert!(tracked.value.pb_antennas.iter().any(|selected| *selected));
+        let extra = tracked.reservation.memory() - ordinary.reservation.memory();
+        let held = tracked.value.pb_antennas.capacity() * size_of::<bool>();
+        assert_eq!(extra, held as u64, "the survey charges its retained bitmap");
+    }
+
     /// A stored row's NaN coordinates are invalid input, not evidence of
     /// missing acquisition. Grid padding still passes the same survey.
     #[test]
@@ -964,6 +1024,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
                 image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -1129,6 +1190,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
                 image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -1230,6 +1292,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
                 image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
