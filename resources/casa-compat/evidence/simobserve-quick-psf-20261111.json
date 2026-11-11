@@ -162,5 +162,22 @@
    "metal_session_max_relative": 0.0
   },
   "verification_applicability": "The earlier full touched-crate run is retained at d10248c92. This follow-up changes path normalization only; all numerical controls, mode gates, repeat overwrite and current-source C++ readback were rerun."
+ },
+ "repaired_main_integration": {
+  "revision": "127d92f82eec0e0926bbf6b276a7b6039c669048",
+  "main_revision": "2097720482c08093531d12b70b4480ef71a161ac",
+  "merge_resolution": "Preserve main restoring-beam extraction and the branch execution-option extraction; both existing implementations are retained, with no duplicate deserializers.",
+  "verification": {
+   "imaging_application_library_passed": 194,
+   "quick_psf_passed": 3,
+   "ignored_parent_invoked_helper": 1,
+   "imaging_products_passed": 108,
+   "simulation_task_passed": 7,
+   "all_target_clippy": "passed for the four touched crates",
+   "fmt": "passed",
+   "docs": "passed",
+   "architecture": "passed; the former file-size blocker is repaired by #1270"
+  },
+  "applicability": "The earlier full simulation suite and C++ readback retain their recorded revisions. Current-main targeted checks cover the integration and resolved request-module conflict; no numerical kernel or product format changed in the merge."
  }
 }
