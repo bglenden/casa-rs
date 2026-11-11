@@ -149,7 +149,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -161,7 +162,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -197,7 +199,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -222,7 +225,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -296,7 +300,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111"
    ],
    "behaviors": [
     "schedule"
@@ -524,11 +529,12 @@
    "title": "Pointings",
    "status": "Partial",
    "scope": "setpointings with direction, mapsize, maptype and pointingspacing, or a ptgfile; written to <stem>.ptg.txt and checked against the model.",
-   "gap": "Square pointings now have both interferometric and historical single-dish task comparisons. Multi-entry user pointing files and combinations of explicit mapsize/pointingspacing overrides are not covered by this new receipt.",
+   "gap": "CASA task evidence includes square interferometric pointings, a three-entry user pointing file with 10/20/30-second dwell times over two full passes, and a 16 by 12 arcsecond hexagonal map with explicit 4 arcsecond spacing. Other file formats and pointing/model/mode combinations remain outside these receipts.",
    "evidence": [
     "task-tests",
     "parity-20261103",
-    "scheduling-20261111"
+    "scheduling-20261111",
+    "pointings-20261111"
    ]
   },
   {
@@ -865,6 +871,22 @@
    "source_revision": "ae1556d08df55fe9794b133cf52ac0dfceb62b98",
    "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-frame-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb (bg-mac-mini)",
    "receipt": "resources/casa-compat/evidence/simobserve-additional-frames-20261111.json"
+  },
+  "pointings-20261111": {
+   "kind": "CASA-paired task scenarios",
+   "state": "passed",
+   "result": "2/2 successful simulations agree. DATA NRMS at most 3.65e-7 (limit 1e-3); UVW at most 3.84e-8 m (existing allowance 1e-3 m). Pointing files are byte-identical; images, MS metadata and cells pass their existing checks.",
+   "scope": "Three input pointings with 10/20/30-second dwell times over two map passes, and explicit 16 by 12 arcsecond hexagonal mapping at 4 arcsecond spacing.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/data/simobserve-multiple-pointings.ptg.txt",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d23c5eea15e3c89f39dcd4bb92d776bd805c2c14",
+   "source_revision": "e57cf38dcf50f986aa17538ca630904f59dbfe64",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-pointing-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simobserve-pointings-20261111.json"
   }
  }
 }
