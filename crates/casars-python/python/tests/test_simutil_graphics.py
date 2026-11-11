@@ -89,19 +89,26 @@ def test_every_antenna_and_dish_matches_casa(case):
     compare(artists(plt.gcf()), case["artists"])
 
 
-def test_plotants_draws_on_the_selected_panel_and_preserves_its_labels():
+@pytest.mark.parametrize("method", ["plotants", "ephemeris"])
+def test_plotants_draws_on_the_selected_panel_and_preserves_its_labels(method):
     utility = simutil()
     utility.newfig([2, 2, 1], show=False)
     utility.nextfig()
     axis = plt.gca()
     axis.set(title="existing title", xlabel="existing x", ylabel="existing y")
     axis.title.set(fontsize=23, color="red", fontweight="bold")
-    case = REFERENCE["antennas"][1]
-    x, y, z = np.asarray(case["positions"]).T
-    utility.plotants(x, y, z, case["diameters"], case["names"])
+    if method == "plotants":
+        case = REFERENCE["antennas"][1]
+        x, y, z = np.asarray(case["positions"]).T
+        utility.plotants(x, y, z, case["diameters"], case["names"])
+        assert (axis.get_xlabel(), axis.get_ylabel()) == ("existing x", "existing y")
+        assert len(axis.patches) == len(case["names"])
+    else:
+        utility.ephemeris("2014/01/01", direction="J2000 10h00m00 -30d00m00", telescope="ALMA")
+        assert axis.get_xlabel().startswith("hours relative to ")
+        assert axis.get_ylabel() == "elevation" and len(axis.lines) == 2
     assert plt.gca() is axis and len(plt.gcf().axes) == 2
-    assert (axis.get_title(), axis.get_xlabel(), axis.get_ylabel()) == ("existing title", "existing x", "existing y")
-    assert len(axis.patches) == len(case["names"])
+    assert axis.get_title() == "existing title"
     assert axis.title.get_fontsize() == 23
     assert axis.title.get_color() == "red" and axis.title.get_fontweight() == "bold"
 

@@ -110,21 +110,17 @@
    ]
   },
   "endfig": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Applies x-small tick labels, draws when requested, saves a supplied filename and disables interactive mode; returns None as CASA does.",
    "evidence": [
-    "signature",
-    "refusals"
+    "signature"
    ]
   },
   "ephemeris": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Prepares the 96-sample elevation curve, transit and optional MS time range or quantity-duration bar in Rust, using the supplied date/hour-angle choice, direction or list, known telescope or explicit cofa; draws on current axes. Corrects CASA's default quantity-record comparison defect under the standing deviations rule.",
    "evidence": [
-    "signature",
-    "refusals"
+    "signature"
    ]
   },
   "flatimage": {
@@ -314,21 +310,17 @@
    ]
   },
   "newfig": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Clears the current Matplotlib figure, sets interactive mode and selects a multi-panel layout; retains the caller's list as pmulti, as CASA does. Requires the plot extra.",
    "evidence": [
-    "signature",
-    "refusals"
+    "signature"
    ]
   },
   "nextfig": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Applies x-small tick labels and advances the retained multi-panel list, keeping the last axes after its final panel, as CASA does.",
    "evidence": [
-    "signature",
-    "refusals"
+    "signature"
    ]
   },
   "noisetemp": {
@@ -349,12 +341,10 @@
    ]
   },
   "plotants": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Draws every antenna in its native local tangent plane, with CASA's dish-circle or marker choice and labels for fewer than ten antennas, on the selected axes. Requires the plot extra.",
    "evidence": [
-    "signature",
-    "refusals"
+    "signature"
    ]
   },
   "polsettings": {
@@ -419,9 +409,8 @@
    ]
   },
   "statim": {
-   "status": "Partial",
-   "issue": 1025,
-   "scope": "CASA's (min, max, rms, unit), the values 0-d float64 arrays as CASA returns them. plot=True, CASA's default, draws no figure yet and says so (#1025). A Jy/beam image without a beam is not scaled by the pixel area as CASA scales it (recorded deviation).",
+   "status": "Implemented",
+   "scope": "CASA's (min, max, rms, unit), values as 0-d float64 arrays, plus its complete default plot. Supports display-range scalar/list controls (an empty list receives computed limits), mask, colour-scale and statistics options; incell is unused as in CASA. Requires the plot extra only for plot=True. Retains the recorded Jy/beam-without-beam scaling correction.",
    "evidence": [
     "signature",
     "simanalyze-casa-fixture",
