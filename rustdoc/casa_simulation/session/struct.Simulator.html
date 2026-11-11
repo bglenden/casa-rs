@@ -79,7 +79,7 @@ observed so far and add them to the terms <code>corrupt</code> applies.</p>
 or contains the session’s MeasurementSet: raised. The term’s memory
 does not fit the session’s resource policy: an admission error,
 before anything is formed.</p>
-</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-Simulator-4" class="impl"><a class="src rightside" href="../../src/casa_simulation/session/prediction.rs.html#379-1126">Source</a><a href="#impl-Simulator-4" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Simulator.html" title="struct casa_simulation::session::Simulator">Simulator</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.set_options" class="method"><a class="src rightside" href="../../src/casa_simulation/session/prediction.rs.html#390-428">Source</a><h4 class="code-header">pub fn <a href="#method.set_options" class="fn">set_options</a>(
+</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-Simulator-4" class="impl"><a class="src rightside" href="../../src/casa_simulation/session/prediction.rs.html#379-1135">Source</a><a href="#impl-Simulator-4" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Simulator.html" title="struct casa_simulation::session::Simulator">Simulator</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.set_options" class="method"><a class="src rightside" href="../../src/casa_simulation/session/prediction.rs.html#390-428">Source</a><h4 class="code-header">pub fn <a href="#method.set_options" class="fn">set_options</a>(
     &amp;mut self,
     options: &amp;<a class="struct" href="struct.PredictionOptions.html" title="struct casa_simulation::session::PredictionOptions">PredictionOptions</a>,
 ) -&gt; <a class="type" href="error/type.SimulatorResult.html" title="type casa_simulation::session::error::SimulatorResult">SimulatorResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p><code>sm.setoptions(...)</code>: record the FTMachine <code>predict</code> degrids through,
@@ -94,7 +94,7 @@ other than <code>SF</code> for the interferometric machines, or other than <code
 <h5 id="errors-7"><a class="doc-anchor" href="#errors-7">§</a>Errors</h5>
 <p>Not yet implemented: a voltage-pattern table (<code>vptable</code> without
 <code>usedefaultvp</code>). Nothing is recorded then.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.predict" class="method"><a class="src rightside" href="../../src/casa_simulation/session/prediction.rs.html#533-640">Source</a><h4 class="code-header">pub fn <a href="#method.predict" class="fn">predict</a>(&amp;mut self, spec: &amp;<a class="struct" href="struct.PredictSpec.html" title="struct casa_simulation::session::PredictSpec">PredictSpec</a>) -&gt; <a class="type" href="error/type.SimulatorResult.html" title="type casa_simulation::session::error::SimulatorResult">SimulatorResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p><code>sm.predict(imagename, complist, incremental)</code>: predict the model
+</div></details><details class="toggle method-toggle" open><summary><section id="method.predict" class="method"><a class="src rightside" href="../../src/casa_simulation/session/prediction.rs.html#533-649">Source</a><h4 class="code-header">pub fn <a href="#method.predict" class="fn">predict</a>(&amp;mut self, spec: &amp;<a class="struct" href="struct.PredictSpec.html" title="struct casa_simulation::session::PredictSpec">PredictSpec</a>) -&gt; <a class="type" href="error/type.SimulatorResult.html" title="type casa_simulation::session::error::SimulatorResult">SimulatorResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p><code>sm.predict(imagename, complist, incremental)</code>: predict the model
 into the rows observed so far, replacing their DATA or, when
 <code>incremental</code>, adding to it.</p>
 <h5 id="errors-8"><a class="doc-anchor" href="#errors-8">§</a>Errors</h5>
@@ -102,7 +102,7 @@ into the rows observed so far, replacing their DATA or, when
 <li>Raised, as casatools’ binding raises before predicting: a named
 image that does not exist or does not open
 (<a href="struct.PredictSpec.html#method.check_images" title="method casa_simulation::session::PredictSpec::check_images"><code>PredictSpec::check_images</code></a>).</li>
-<li>Not yet implemented: more than one image, a model layout CASA reads
+<li>Not yet implemented: a model layout CASA reads
 and casa-rs does not (other than Stokes I, J2000,
 direction–Stokes–spectral axes), a component casa-rs does not
 predict (a direction not in J2000, or a flux, spectrum or shape
@@ -172,7 +172,7 @@ which casa-rs does not write yet.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.set_field" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#306-330">Source</a><h4 class="code-header">pub fn <a href="#method.set_field" class="fn">set_field</a>(
     &amp;mut self,
     name: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
-    direction: &amp;<a class="struct" href="../../casa_types/measures/direction/struct.MDirection.html" title="struct casa_types::measures::direction::MDirection">MDirection</a>,
+    direction: &amp;MDirection,
     calcode: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
     distance_m: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
 ) -&gt; <a class="type" href="error/type.SimulatorResult.html" title="type casa_simulation::session::error::SimulatorResult">SimulatorResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p><code>sm.setfield(sourcename, sourcedirection, calcode, distance)</code>: add a
@@ -184,7 +184,7 @@ converted to J2000 without an epoch and position.</p>
     &amp;mut self,
     name: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
     calcode: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
-    centre: &amp;<a class="struct" href="../../casa_types/measures/direction/struct.MDirection.html" title="struct casa_types::measures::direction::MDirection">MDirection</a>,
+    centre: &amp;MDirection,
     (nx, ny): (<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>, <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>),
     spacing_rad: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     distance_m: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
@@ -208,7 +208,7 @@ the spacing. It crosses a pole as the sphere does.</p>
     &amp;mut self,
     integration_s: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     use_hour_angle: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.bool.html">bool</a>,
-    reference: <a class="struct" href="../../casa_types/measures/epoch/struct.MEpoch.html" title="struct casa_types::measures::epoch::MEpoch">MEpoch</a>,
+    reference: MEpoch,
 ) -&gt; <a class="type" href="error/type.SimulatorResult.html" title="type casa_simulation::session::error::SimulatorResult">SimulatorResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p><code>sm.settimes(integrationtime, usehourangle, referencetime)</code>.</p>
 <p>A reference epoch in another time scale is converted to UTC, which
 the session works in.</p>
