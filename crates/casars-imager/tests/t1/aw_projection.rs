@@ -608,7 +608,11 @@ fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
     drop(ms);
 
     request["native_cf_cache"] = json!(observation.scratch("topo-linear-cf"));
-    request["start"] = json!("1.507GHz");
+    // CASA measures puts the converted band about 90 kHz below the stored
+    // band on this track. Shift by 40 kHz so the first and last planes
+    // have opposite support with and without conversion. Nearest would
+    // also populate the last plane from the adjacent native channel.
+    request["start"] = json!("1.49996GHz");
     request["width"] = json!("8MHz");
     let (_, products) = observation.image("aw-converted-offset-linear", request);
     let weights = products.get(".sumwt").channel_values();
