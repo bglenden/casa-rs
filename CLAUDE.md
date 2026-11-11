@@ -10,13 +10,11 @@
   on those events without waiting to be asked. The switch is per session and
   per PR, so every session that owns a PR turns it on for that PR. In a cloud
   session, `subscribe_pr_activity` does the same.
-- A ready PR with auto-merge set needs no open session while CI runs: take
-  the issue's next item, and end the session only when no authorized work
-  remains. When later work depends on a passing check or a
-  merge, which do not wake the session, start one background wait
-  (`gh pr checks N --watch`, or a Monitor until-loop where `gh` is
-  unavailable); the PR monitor's "do not poll CI" forbids repeated
-  foreground checks, not that one wait.
+- Keep working on the issue while the PR monitor runs. Follow AGENTS.md's
+  "While Checks Run" for continuation and waiting turns. Check which events
+  the monitor actually wakes this session for; a terminal watcher alone
+  does not guarantee a resumed agent turn. The monitor's "do not poll CI"
+  forbids repeated foreground checks, not one bounded or background wait.
 - `AGENTS.md`'s local review is, in Claude Code, a fresh `Agent` (not a
   fork) with model `fable` (the latest Fable) and effort `xhigh`; run it in
   the background and keep working. Its external review of Claude-led work

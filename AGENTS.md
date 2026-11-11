@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-11-02
+Last reality check: 2026-11-11
 Verification: just docs-check
 
 casa-rs is a native Rust implementation of casacore/CASA libraries and
@@ -153,10 +153,11 @@ Agents do not wait for the owner; the owner steers by reading what was
 decided, afterwards.
 
 - Carry an authorized task, resumed work and PRs taken over included,
-  through implementation, checks, review and a ready PR with auto-merge
-  set, then take its issue's next item, until no authorized work remains
-  or the end point its issue or plan names. There, report; do not start
-  unnamed work.
+  through its stated end point. While a change waits for checks, review or
+  merge, take the issue's next independent item. Opening a PR, setting
+  auto-merge or delivering one increment does not finish the authorized
+  task. Continue until no authorized work remains or the end point the
+  owner, issue or plan names; then report. Do not start unnamed work.
 - A choice not on the stop list is yours: make it, list it under
   `Decisions:` (what, why, the alternative not taken), add the
   `owner-review` label and continue. An overturned decision becomes
@@ -168,10 +169,9 @@ decided, afterwards.
   inside the stated goal) is confirmed by this file.
 - Never idle. While something waits (CI, a review, an answer, a run), work
   on what does not depend on it; when an item is blocked, say why on its
-  issue and take the next. Before ending a turn that waits, arrange to be
-  woken: the host's PR monitor, or one background wait such as
-  `gh pr checks N --watch`, which is not polling. The owner never has to
-  ask for status.
+  issue and take the next. A merge blocker does not block independent work
+  on the issue. Follow "While Checks Run" below for monitoring and when a
+  waiting turn may end. The owner never has to ask for status.
 - Spend in proportion. Use the cheapest model and effort that will do for
   searching, reading and mechanical edits; run agents in parallel only for
   independent work; keep one watcher per wait, and stop the background jobs
@@ -269,14 +269,14 @@ isolated, strengthen its demonstration test instead of adding a review.
 - A PR may open as a draft while work continues. Once its checks pass and
   any review is resolved, mark it ready and set
   `gh pr merge --auto --squash`: ready means merge when green, and GitHub
-  merges it without anyone watching. That ends the author's part; the
-  session need not stay open for CI.
-- A ready PR whose CI fails stays open, since auto-merge waits. Whoever
-  picks it up (the author's session if its PR monitor wakes it, or a later
-  session) reruns a job that failed on a known flake (noting it on the
-  flake's issue) or a timing gate that missed by about its noise, fixes
-  real failures on the branch, or returns the PR to draft, saying why, if
-  the fix is not quick.
+  merges it once its required checks pass. Continue the authorized task
+  while GitHub handles the merge.
+- Keep responsibility for the PR until it merges or is explicitly handed
+  off. When CI fails, investigate and fix failures caused by the change;
+  rerun a known flaky job (noting it on the flake's issue) or a timing gate
+  that missed by about its noise. Return the PR to draft, saying why, if a
+  fix is not quick. For an unrelated baseline failure, record the evidence
+  and its repair issue separately, then continue unaffected work.
 - Never skip, ignore or loosen a test, or change an expected value to match
   new output, to get green; a changed expected value says why the old one
   was wrong. A failure is not a flake until it is shown to be one.
@@ -287,10 +287,33 @@ isolated, strengthen its demonstration test instead of adding a review.
   description.
 - Missing test data or disk space is an environment problem, not a code
   regression; say so.
-- An agent's part is done when the PR is ready with auto-merge set on green
-  local checks, its description says what was run, what it showed, what
-  was not run and what was decided, and the docs match the code. The work
-  is done when it merges.
+- A change's pre-merge work is complete when its required evidence and review are
+  green, auto-merge is set, its description says what was run, what it
+  showed, what was not run and what was decided, and the docs match the
+  code. The change is delivered when it merges; the authorized task is
+  complete only at its stated end point.
+
+### While Checks Run
+
+- Run CI and reviews alongside the next independent, authorized work.
+  Preserve the revision under test: keep changes for the same outcome in
+  its PR, and use a separate branch for a genuinely independent outcome
+  when needed. Do not invent unrelated work to stay busy.
+- Use one monitor or background wait per pending result, and act on
+  failures when they arrive. Reuse current green evidence as TESTING.md
+  allows; continuing work does not require duplicate validation.
+- Before ending a turn with work pending, verify that every remaining
+  authorized item depends on a pending result, needs owner input under the
+  stop list, or has a concrete external blocker. A red check or draft PR
+  by itself is not a reason to end the task.
+- If only a pending result remains, end a waiting turn only when the host
+  has a verified mechanism that will resume the agent on that result. A
+  background process such as `gh pr checks N --watch` reports to its
+  terminal; it does not by itself guarantee another agent turn. Without a
+  working wake-up mechanism, keep the turn active with bounded waits and
+  progress updates. Record any external blocker and the action needed to
+  remove it; do not imply that implementation continues after a final
+  response.
 
 ## Imaging
 
