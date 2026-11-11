@@ -425,6 +425,7 @@ pub(crate) fn run(
             aw_catalog,
             backend: runtime.backend,
             grid_precision: runtime.grid_precision,
+            ft_padding: runtime.ft_padding,
             diagnostics: runtime.diagnostics,
         },
         summary,

@@ -340,6 +340,7 @@ fn write_machine(
         &correlations,
         BackendChoice::Cpu,
         Some(GridPrecision::F64),
+        runtime.ft_padding,
         None,
         &imaging::StoreKeys::single(),
         KernelAdmission {

@@ -28,6 +28,7 @@ use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 
+use execution::{grid_precision, hogbom_iteration_mode, major_cycle_limit, normalization};
 use uv_taper::uv_taper;
 
 /// One imaging run's parameters, as the catalog resolved them.
@@ -291,6 +292,11 @@ pub struct ImagingRequest {
     /// Grid arithmetic; `None` (`auto`) is `f64` on the CPU, `f32` on Metal.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
+    /// Native standard-FT padding override; ordinary tclean uses 1.2.
+    /// The legacy imager used by simulation quick PSFs selects 1.0.
+    /// This is an internal workflow choice, outside the CASA parameter surface.
+    #[serde(skip)]
+    pub ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     /// The optional diagnostic output: `stage_timing`,
     /// `metal_stage_timing` and `science_trace`.
     #[serde(flatten)]
@@ -1480,50 +1486,7 @@ fn given_restoring_beam(texts: [&str; 3]) -> Result<RestoringBeamPolicy, ()> {
         .map_err(|_| ())
 }
 
-fn major_cycle_limit<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<usize>, D::Error> {
-    let value = Value::deserialize(deserializer)?;
-    match value.as_i64() {
-        Some(-1) => Ok(None),
-        Some(limit) => usize::try_from(limit)
-            .map(Some)
-            .map_err(|_| unexpected(&value, "-1 or a major-cycle count")),
-        None => Err(unexpected(&value, "-1 or a major-cycle count")),
-    }
-}
-
-fn hogbom_iteration_mode<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<HogbomIterationAccounting, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "strict" => Ok(HogbomIterationAccounting::Strict),
-        "casa-inclusive" => Ok(HogbomIterationAccounting::CasaInclusive),
-        other => Err(D::Error::custom(format!("hogbom_iteration_mode {other:?}"))),
-    }
-}
-
-fn normalization<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<ProductNormalization, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "flatnoise" => Ok(ProductNormalization::FlatNoise),
-        "flatsky" => Ok(ProductNormalization::FlatSky),
-        "pbsquare" => Ok(ProductNormalization::PbSquare),
-        other => Err(D::Error::custom(format!("normtype {other:?}"))),
-    }
-}
-
-fn grid_precision<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<GridPrecision>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "auto" => Ok(None),
-        "f32" => Ok(Some(GridPrecision::F32)),
-        "f64" => Ok(Some(GridPrecision::F64)),
-        other => Err(D::Error::custom(format!("gridprecision {other:?}"))),
-    }
-}
+mod execution;
 
 mod uv_taper;
 

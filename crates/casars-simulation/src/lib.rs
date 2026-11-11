@@ -201,7 +201,11 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
         .to_string();
     let resource_kind = if kind == "ms" || kind.ends_with(".ms") {
         RunProductKind::MeasurementSet
-    } else if kind.ends_with("skymodel") || kind.ends_with(".flat") || kind == "newmodel" {
+    } else if kind.ends_with("skymodel")
+        || kind.ends_with(".flat")
+        || kind == "newmodel"
+        || kind == "quick.psf"
+    {
         RunProductKind::CasaImage
     } else if kind.ends_with(".txt") {
         RunProductKind::File
