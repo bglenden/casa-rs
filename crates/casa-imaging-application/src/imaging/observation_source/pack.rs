@@ -461,8 +461,8 @@ impl Packer<'_> {
         let uvw = batch.group.uvw.ok_or("the batch carries no UVW")?;
         // A pass reads a time's channels as CASA's frequency selection does:
         // tuned to the image for one that images, and for a density over the
-        // whole selection its untuned bands. A density per plane reads every
-        // selected channel.
+        // whole selection its untuned bands. The per-plane density's layout
+        // is already compacted to the time's imaging bands.
         let bands = if values {
             partition.frequency_bands.as_ref()
         } else {

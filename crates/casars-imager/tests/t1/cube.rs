@@ -946,6 +946,40 @@ fn drifting_track() -> Observation {
     drifting_track_with_width(2.0e3)
 }
 
+/// CASA's cube weightor grids the padded density from the channels each
+/// time actually selects. The edge plane's density changes when a channel
+/// enters or leaves the band, even if its visibility samples are correct.
+/// The explicit start lies 310 Hz below native output channel 18 at the
+/// first integration to avoid testing a rounding-sensitive tie (#1272).
+#[test]
+fn a_per_channel_density_follows_each_times_bands() {
+    let observation = drifting_track();
+    let (_, products) = observation.image(
+        "per-channel-density",
+        json!({
+            "specmode": "cube", "weighting": "briggs", "robust": 0.5,
+            "perchanweightdensity": true, "spw": "0:18~21", "nchan": 4, "niter": 0,
+            "start": "43997485381.41726685Hz", "width": "1999.88407898Hz",
+            "interpolation": "linear", "imsize": 128, "cell": "0.012arcsec",
+        }),
+    );
+    let sumwt = products.get(".sumwt").channel_values();
+    // CASA 6.7.6.14, with no cleaning.
+    let casa = [
+        14681.779296875,
+        44555.26171875,
+        44555.26171875,
+        44555.26171875,
+    ];
+    assert_eq!(sumwt.len(), casa.len());
+    for (plane, (ours, expected)) in sumwt.into_iter().zip(casa).enumerate() {
+        assert!(
+            (f64::from(ours) - expected).abs() <= 1.0e-3 * expected,
+            "plane {plane}: {ours} against CASA's {expected}"
+        );
+    }
+}
+
 /// The same track with a chosen native channel width.
 fn drifting_track_with_width(width_hz: f64) -> Observation {
     use casa_ms::MeasurementSet;
