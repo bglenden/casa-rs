@@ -25,7 +25,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -51,7 +52,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -64,7 +66,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -103,7 +106,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -116,7 +120,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -131,7 +136,8 @@
     "parity-20261103",
     "skymodel-fixture",
     "casa-suite-20261103",
-    "refusals-1099-20261104"
+    "refusals-1099-20261104",
+    "model-overrides-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -491,10 +497,11 @@
    "title": "Sky model and component list",
    "status": "Partial",
    "scope": "skymodel through modifymodel and flatimage with inbright, indirection, incell, incenter and inwidth; complist with compwidth and comp_nchan, alone or with a sky model.",
-   "gap": "Compared in 6 of #920's 11 cases and by the skymodel fixture; the indirection and incell overrides and comp_nchan > 1 are not exercised against CASA's task.",
+   "gap": "Paired task evidence now covers scalar indirection and incell overrides, separately and together, and a four-channel component-only model. Additional combinations (such as overrides with combined image/component input and multi-channel image models) remain outside this receipt; the behavior remains Partial.",
    "evidence": [
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "model-overrides-20261111"
    ]
   },
   {
@@ -806,6 +813,21 @@
    "source_revision": "49e280a16f1072ef67ed7995a21c1a951effa144",
    "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata LOCAL_COPY --only frame_topo frame_bary (bg-mac-mini, CPU)",
    "receipt": "resources/casa-compat/evidence/simobserve-frequency-frames-20261106.json"
+  },
+  "model-overrides-20261111": {
+   "kind": "CASA-paired task runs",
+   "state": "passed",
+   "result": "Four new successful cases agree: scalar direction override (DATA NRMS 6.81e-7), scalar cell override (5.71e-7), both overrides (4.64e-7), and four-channel component-only input (5.64e-8). A TOPO control and expected coarse-cell refusal also agree. Image metadata/pixels, byte-identical pointings and MS comparisons pass with existing tolerances and known differences.",
+   "scope": "Interferometric ALMA simobserve model preparation and prediction with scalar indirection/incell overrides and comp_nchan=4; six bounded cases including controls. Does not establish exhaustive model/noise/graphics coverage or performance acceptance.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "169376e710d325fab1134102d857795ba6b345c3",
+   "source_revision": "5b3552389f5c2f8ef644272dee9a62d80b661a0d",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-model-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/simobserve-model-overrides-20261111.json"
   }
  }
 }
