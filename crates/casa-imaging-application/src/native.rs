@@ -222,8 +222,9 @@ pub(crate) fn batch_route(
         (&runtime.host, &runtime.resource_policy),
     )?;
     opening.join(reservation);
-    let write_back = (model_data || corrected_data)
-        .then(|| imaging::WriteBack::new(model_data, corrected_data, !predicts_final_model));
+    let write_back = (model_data || corrected_data).then(|| {
+        imaging::WriteBack::new(problem, model_data, corrected_data, !predicts_final_model)
+    });
     let stores = routes
         .into_iter()
         .map(|(opened, selection, plan, pointing_budget)| {
