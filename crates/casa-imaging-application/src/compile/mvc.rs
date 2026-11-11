@@ -241,8 +241,8 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
 }
 
 /// The first native MVC slice forms a fresh cube and its two-term Taylor
-/// products. Cleaning currently needs a negative pblimit, no nsigma, and
-/// spatial-only user boxes; restart and side effects remain refused (#1069).
+/// products. Cleaning uses nsigma=0 and spatial-only user boxes. Restart
+/// and side effects remain refused (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
@@ -364,7 +364,8 @@ mod tests {
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.niter = 1;
-        assert!(check_execution_scope(&other, 1).is_err());
+        other.pblimit = 0.8;
+        assert!(check_execution_scope(&other, 1).is_ok());
         other.pblimit = -0.1;
         assert!(check_execution_scope(&other, 1).is_ok());
         other.nsigma = 1.0;

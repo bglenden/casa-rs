@@ -92,10 +92,25 @@ fn mvc_compiles_the_cube_view_from_the_full_selected_band() {
         "compiling the view leaves the parent request unchanged"
     );
     drop(crate::native::prepare(&problem, input, native).unwrap());
-    // The first native slice refuses cleaning rather than silently ignoring
-    // the parent's requested iterations.
     drop(_resident);
     request.niter = 1;
+    request.pblimit = 0.8;
+    {
+        let (cube, input, _, _resident) =
+            crate::compile_run(&request, &context, &resolved).unwrap();
+        let taylor = input.mvc_taylor.unwrap().compile_from_cube(&cube).unwrap();
+        assert_eq!(cube.reconstruction().controls().max_minor_iterations(), 0);
+        assert_eq!(
+            taylor
+                .problem
+                .reconstruction()
+                .controls()
+                .max_minor_iterations(),
+            1
+        );
+    }
+    // The run still refuses an unsupported noise threshold when cleaning.
+    request.nsigma = 1.0;
     assert!(matches!(
         crate::compile_run(&request, &context, &resolved),
         Err(crate::ApplicationDispatchError::Preparation(
@@ -103,6 +118,7 @@ fn mvc_compiles_the_cube_view_from_the_full_selected_band() {
         ))
     ));
     request.niter = 0;
+    request.nsigma = 0.0;
     request.mvc_output_channels = None;
     request.mvc_auto_channels = true;
     let (auto, _, _, _resident) = crate::compile_run(&request, &context, &resolved).unwrap();
