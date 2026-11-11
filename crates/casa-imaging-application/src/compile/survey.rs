@@ -901,7 +901,7 @@ mod tests {
         ))
         .unpack(root.path())
         .unwrap();
-        let observation = Msv2Observation::open(&root.path().join("ms_trial.ms")).unwrap();
+        let observation = Msv2Observation::open(root.path().join("ms_trial.ms")).unwrap();
         let catalogue = observation.catalogue();
         let id = catalogue.partition_ids()[0];
         let window = catalogue.partition(id).window.0 as usize;
@@ -933,7 +933,7 @@ mod tests {
                     track_pb_antennas,
                     first_cross: false,
                 },
-                super::super::selection::spectral_windows(catalogue, [window].into_iter()),
+                super::super::selection::spectral_windows(catalogue, [window]),
                 (&host, &policy),
             )
             .unwrap()
