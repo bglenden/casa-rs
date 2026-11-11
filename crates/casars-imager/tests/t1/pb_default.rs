@@ -308,6 +308,65 @@ fn topo_cube_partial_spw_starts_at_the_selected_band() {
     assert_eq!(sumwt.plane(4)[(0, 0)], 0.0);
 }
 
+/// Each saved TOPO control's rounded terminal centre equals its stored
+/// edge. The exact offsets put one inside and the other outside (#1198).
+#[test]
+fn topo_cube_uses_the_signed_terminal_coverage() {
+    use casa_types::ArrayValue;
+
+    let cases: [(&str, f64, f64, bool); 2] = [
+        (
+            "inside",
+            1_472_729_859.209_733_5,
+            13_503_932.928_956_198,
+            true,
+        ),
+        (
+            "outside",
+            1_504_182_515.244_028,
+            41_449_835.642_899_655,
+            false,
+        ),
+    ];
+    for (name, first, width, expected) in cases {
+        let observation = topo_boundary_observation(first);
+        swap_first_and_last_rows(&observation);
+        let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+        let mut spw = ms.spectral_window_mut().unwrap();
+        let centres = (0..5)
+            .map(|plane| first + f64::from(plane) * width)
+            .collect();
+        for (column, values) in [("CHAN_FREQ", centres), ("CHAN_WIDTH", vec![width; 5])] {
+            spw.set_array(
+                0,
+                column,
+                ArrayValue::Float64(ndarray::ArrayD::from_shape_vec(vec![5], values).unwrap()),
+            )
+            .unwrap();
+        }
+        ms.save().unwrap();
+        drop(ms);
+        let (_, products) = observation.image(
+            &format!("topo-terminal-{name}"),
+            json!({
+                "specmode": "cube", "spw": "0", "start": 0, "width": 1, "nchan": 5,
+                "niter": 0, "outframe": "TOPO", "weighting": "natural", "write_pb": true,
+            }),
+        );
+        let sumwt = products.get(".sumwt");
+        for plane in 0..4 {
+            assert!(sumwt.plane(plane)[(0, 0)] > 0.0, "{name} plane {plane}");
+        }
+        let terminal_weight = sumwt.plane(4)[(0, 0)];
+        if expected {
+            assert!(terminal_weight > 0.0, "{name}: {terminal_weight}");
+        } else {
+            assert_eq!(terminal_weight, 0.0, "{name}");
+        }
+        assert!(products.get(".pb").channel_frequency_hz(4) > first);
+    }
+}
+
 /// The paired irregular-channel TOPO fixture, including its physical row order.
 fn irregular_topo_observation() -> Observation {
     use casa_types::ArrayValue;

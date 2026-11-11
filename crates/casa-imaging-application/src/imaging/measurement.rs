@@ -591,10 +591,13 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
         }
     };
     let first_hz = reference_frequency_hz - reference_pixel * increment_hz;
-    Ok(SpectralResampler::channel_local(
-        SpectralAxis::new(first_hz, increment_hz, planes)?,
-        kernel,
-    ))
+    Ok(
+        SpectralResampler::channel_local(
+            SpectralAxis::new(first_hz, increment_hz, planes)?,
+            kernel,
+        )
+        .with_terminal_plane_outside(problem.geometry().spectral().terminal_plane_outside()),
+    )
 }
 
 /// The widest spacing between adjacent selected native channels of any

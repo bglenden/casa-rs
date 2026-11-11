@@ -8,8 +8,8 @@ use std::{borrow::Cow, collections::BTreeMap};
 
 use casa_imaging_model::{
     DirectionCoordinateSpec, DopplerConvention, Epoch, FrequencyBands, FrequencyFrame,
-    ItrfPosition, ReconstructionBasis, RestFrequency, SpectralCoordinateSpec, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, TimeScale,
+    ItrfPosition, ReconstructionBasis, RestFrequency, SourceLsrkGrid, SpectralCoordinateSpec,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, TimeScale,
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
@@ -43,7 +43,7 @@ pub(super) struct PreparedSpectralAxis<'a> {
     pub(super) output_frame: FrequencyFrame,
     pub(super) anchor: SpectralFrameAnchor,
     pub(super) wcs: SpectralWcs,
-    source_lsrk_grid: Option<[f64; 2]>,
+    source_lsrk_grid: Option<SourceLsrkGrid>,
     pub(super) rest_frequency: RestFrequency,
     /// The spectral axis the image header records: the gridded axis, but
     /// for an MFS image's frame and rest frequencies.
@@ -133,7 +133,7 @@ struct AxisLaw<'a> {
     selected_source_channels: Cow<'a, [WindowChannels]>,
     window_reads: Vec<WindowReads>,
     output_frequency_reference: FrequencyRef,
-    source_lsrk_grid: Option<[f64; 2]>,
+    source_lsrk_grid: Option<SourceLsrkGrid>,
     reference_frequency_hz: f64,
     increment_hz: f64,
     output_channels: usize,
@@ -837,18 +837,16 @@ fn cube_law(
     })
 }
 
-/// Exact LSRK grid for a TOPO cube whose channel-index request spans one SPW.
-/// With unit channel width and start zero, its first centre is the first
-/// stored centre. The final centre is the last stored centre if the span is
-/// exactly (nchan - 1) times the common width. Check the rounding residuals
-/// of both operations so a nearly coincident endpoint gains no coverage
-/// (#1198). The TOPO WCS comes from the usual CASA coordinate construction.
+/// Source LSRK grid for a TOPO cube whose channel-index request spans one SPW.
+/// The terminal plane's exact signed span determines coverage when its
+/// rounded centre coincides with the stored edge (#1198). The ordinary
+/// CASA coordinate construction supplies the published TOPO WCS.
 fn topo_source_grid(
     request: &ImagingRequest,
     axis: &CubeAxisConfig,
     surveys: &[&Survey],
     output_channels: usize,
-) -> Option<[f64; 2]> {
+) -> Option<SourceLsrkGrid> {
     let [survey] = surveys else { return None };
     let [window] = survey.spectral_windows.as_slice() else {
         return None;
@@ -870,10 +868,10 @@ fn topo_source_grid(
     {
         return None;
     }
-    exact_source_grid(&window.frequencies_hz, &window.channel_widths_hz)
+    source_grid_at_terminal(&window.frequencies_hz, &window.channel_widths_hz)
 }
 
-fn exact_source_grid(frequencies: &[f64], widths: &[f64]) -> Option<[f64; 2]> {
+fn source_grid_at_terminal(frequencies: &[f64], widths: &[f64]) -> Option<SourceLsrkGrid> {
     let [first, _, ..] = *frequencies else {
         return None;
     };
@@ -885,12 +883,17 @@ fn exact_source_grid(frequencies: &[f64], widths: &[f64]) -> Option<[f64; 2]> {
     let (high, low) = (first.max(last), first.min(last));
     let span = high - low;
     let steps = (frequencies.len() - 1) as f64;
-    // FastTwoSum residual for high + (-low), followed by the exact
-    // multiplication residual for width * steps.
-    if !span.is_normal() || (high - span) - low != 0.0 || width.mul_add(steps, -span) != 0.0 {
+    let step = width.copysign(last - first);
+    let rounded_span = width * steps;
+    // Both the executable grid and a single rounding of the ideal centre
+    // agree at this boundary. Compare the exact spans before admitting it.
+    if !span.is_normal() || first + step * steps != last || step.mul_add(steps, first) != last {
         return None;
     }
-    let step = width.copysign(last - first);
+    // Rounded values preserve order when they differ. For a tie, use the
+    // FMA product residual and the FastTwoSum subtraction residual.
+    let terminal_plane_outside = rounded_span > span
+        || (rounded_span == span && width.mul_add(steps, -rounded_span) > (high - span) - low);
     let half = step / 2.0;
     // A wave can begin at an interior channel. Its first interval still
     // gives one sample per plane, and either FineGrid path starts at first.
@@ -902,7 +905,11 @@ fn exact_source_grid(frequencies: &[f64], widths: &[f64]) -> Option<[f64; 2]> {
     {
         return None;
     }
-    Some([first, step])
+    Some(SourceLsrkGrid {
+        first_hz: first,
+        increment_hz: step,
+        terminal_plane_outside,
+    })
 }
 
 /// A cube in the rest frame of a moving source: the data-frame axis
@@ -1165,7 +1172,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn topo_source_grid_requires_exact_endpoint_membership() {
+    fn topo_source_grid_distinguishes_signed_terminal_offsets() {
         let first = 1_000_000_118.0;
         let width = 50_000_000.0_f64;
         let mut centres = [
@@ -1175,23 +1182,35 @@ mod tests {
             first + 3.0 * width + 83.0,
             first + 4.0 * width,
         ];
-        assert_eq!(
-            exact_source_grid(&centres, &[width; 5]),
-            Some([first, width])
-        );
+        let outside = |centres: &[f64], width| {
+            source_grid_at_terminal(centres, &vec![width; centres.len()])
+                .map(|grid| grid.terminal_plane_outside)
+        };
+        assert_eq!(outside(&centres, width), Some(false));
+        assert_eq!(outside(&centres, width.next_down()), Some(false));
+        assert_eq!(outside(&centres, width.next_up()), Some(true));
         let last = centres[4];
         centres[4] = last.next_down();
-        assert_eq!(exact_source_grid(&centres, &[width; 5]), None);
-        centres[4] = last;
-        // Exact multiplication by four lands just below the given span,
-        // although the first and last centres are both normal f64 values.
-        assert_eq!(exact_source_grid(&centres, &[width.next_down(); 5]), None);
-        // At this magnitude the rounded span is exactly 2 GHz even
-        // though the true high endpoint is below the requested centre.
+        assert_eq!(outside(&centres, width), None);
+        // The rounded span is 2 GHz and the rounded centre is 3 GHz.
+        // The subtraction residual puts the exact centre outside.
         assert_eq!(
-            exact_source_grid(&[1.0e9_f64.next_up(), 2.0e9, 3.0e9], &[1.0e9; 3]),
-            None
+            outside(&[1.0e9_f64.next_up(), 2.0e9, 3.0e9], 1.0e9),
+            Some(true)
         );
+        // This time the subtraction is exact and the product's residual
+        // alone puts the requested centre beyond the stored edge.
+        let rounded_span = 3.0 * width.next_down();
+        assert_eq!(
+            outside(
+                &[1.0e8, 1.5e8, 2.0e8, 1.0e8 + rounded_span],
+                width.next_down()
+            ),
+            Some(true)
+        );
+        centres[4] = last;
+        centres.reverse();
+        assert_eq!(outside(&centres, width.next_up()), Some(true));
     }
 
     /// `SynthesisImagerVi2::tuneSelectData`: a `cube` over 30 or more

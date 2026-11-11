@@ -1117,7 +1117,7 @@ fn output_in_lsrk(
 #[cfg(test)]
 mod source_grid_tests {
     use super::*;
-    use crate::{DopplerConvention, FrequencyFrame, RestFrequency, SpectralWcs};
+    use crate::{DopplerConvention, FrequencyFrame, RestFrequency, SourceLsrkGrid, SpectralWcs};
 
     #[test]
     fn source_grid_must_identify_the_anchored_topo_planes() {
@@ -1137,13 +1137,22 @@ mod source_grid_tests {
             RestFrequency::NotApplicable,
             DopplerConvention::Radio,
         );
-        let correct = spectral.clone().with_source_lsrk_grid(Some([first, step]));
+        let grid = |first_hz, increment_hz| {
+            Some(SourceLsrkGrid {
+                first_hz,
+                increment_hz,
+                terminal_plane_outside: false,
+            })
+        };
+        let correct = spectral.clone().with_source_lsrk_grid(grid(first, step));
         assert_eq!(
             interpolation_frequency_scale(&correct, Some(factor)).unwrap(),
             1.0
         );
         for wrong in [[first + step, step], [first, step * 2.0]] {
-            let wrong = spectral.clone().with_source_lsrk_grid(Some(wrong));
+            let wrong = spectral
+                .clone()
+                .with_source_lsrk_grid(grid(wrong[0], wrong[1]));
             assert!(matches!(
                 interpolation_frequency_scale(&wrong, Some(factor)),
                 Err(BatchGeometryError::SourceGridWcs)

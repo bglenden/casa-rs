@@ -834,6 +834,18 @@ pub enum DopplerConvention {
     Relativistic,
 }
 
+/// Source-defined LSRK coordinates for a channel-index TOPO cube.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceLsrkGrid {
+    /// Exact centre of plane zero in the source coordinate.
+    pub first_hz: f64,
+    /// Signed measured channel width in the source coordinate.
+    pub increment_hz: f64,
+    /// The requested last centre lies beyond the range of native channel
+    /// centres, even though its evaluated centre equals the stored edge.
+    pub terminal_plane_outside: bool,
+}
+
 /// Uncompiled deterministic spectral coordinate and transform specification.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralCoordinateSpec {
@@ -841,7 +853,7 @@ pub struct SpectralCoordinateSpec {
     output_frame: FrequencyFrame,
     anchor: SpectralFrameAnchor,
     wcs: SpectralWcs,
-    source_lsrk_grid: Option<[f64; 2]>,
+    source_lsrk_grid: Option<SourceLsrkGrid>,
     rest_frequency: RestFrequency,
     doppler_convention: DopplerConvention,
 }
@@ -870,9 +882,10 @@ impl SpectralCoordinateSpec {
 
     /// Retain the exact source LSRK grid of a channel-index TOPO cube, as
     /// its first centre and signed increment in hertz. The caller derives
-    /// both from the same selected SPW that defines this output WCS.
+    /// both from the selected SPW that defines this WCS and proves the
+    /// terminal plane's coverage against that same SPW.
     #[must_use]
-    pub const fn with_source_lsrk_grid(mut self, grid: Option<[f64; 2]>) -> Self {
+    pub const fn with_source_lsrk_grid(mut self, grid: Option<SourceLsrkGrid>) -> Self {
         self.source_lsrk_grid = grid;
         self
     }
@@ -883,12 +896,18 @@ impl SpectralCoordinateSpec {
         self.source_lsrk_grid.is_some()
     }
 
+    /// Whether the source span excludes the final plane from gridding.
+    #[must_use]
+    pub const fn terminal_plane_outside(&self) -> bool {
+        matches!(self.source_lsrk_grid, Some(grid) if grid.terminal_plane_outside)
+    }
+
     /// Linear interpolation coordinates in the frame the row frequencies
     /// use. Returns the reference pixel, its centre and the increment.
     #[must_use]
     pub fn linear_grid(&self) -> Option<[f64; 3]> {
-        if let Some([first, increment]) = self.source_lsrk_grid {
-            return Some([0.0, first, increment]);
+        if let Some(grid) = self.source_lsrk_grid {
+            return Some([0.0, grid.first_hz, grid.increment_hz]);
         }
         match self.wcs {
             SpectralWcs::Linear {
@@ -1467,7 +1486,8 @@ fn canonicalize_spectral(
 ) -> Result<(), CompileGeometryError> {
     // Distinct frames need a conversion; one frame allows one only to be
     // gridded through LSRK.
-    if let Some([first, step]) = spectral.source_lsrk_grid {
+    if let Some(grid) = spectral.source_lsrk_grid {
+        let (first, step) = (grid.first_hz, grid.increment_hz);
         let SpectralWcs::Linear {
             channels,
             increment_hz,

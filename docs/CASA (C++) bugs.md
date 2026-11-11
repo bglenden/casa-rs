@@ -3457,13 +3457,18 @@ plane, in opposite directions. A separate fresh-coefficients probe reproduced
 the flips. [Reproduction and measurements in #1198](https://github.com/bglenden/casa-rs/issues/1198#issuecomment-6800135096).
 
 For a channel-index TOPO cube in the standard gridder that spans one LSRK
-spectral window at unit width with natural weighting, casa-rs keeps the source-frame interpolation
-grid when its first centre and exact span establish both endpoints. A common
-width `d` and `n` output planes give a span of exactly `(n - 1) * d` between
-the stored endpoint centres. Rows are compared to that grid in LSRK with
-strict bounds and the same flag rules. The image records the TOPO coordinate
-built from the selected physical row. This keeps endpoint admission independent
-of the cache while retaining the TOPO header and beam calculation.
+spectral window at unit width with natural weighting, casa-rs can compare in
+the source coordinate when the rounded terminal centre coincides with the
+stored edge. It compares the exact requested span `(n - 1) * d` to the exact
+span between the stored endpoint centres. This distinguishes an in-band
+terminal centre from a genuinely out-of-band one even when both round to
+the stored edge. Saved controls fall 7/32 of a representable step inside
+and 3/8 of a step outside. The source proof retains the former and excludes
+the latter from gridding.
+
+The ordinary strict row bounds and flag rules still apply. The full TOPO
+image coordinate, primary-beam calculation and prediction basis retain
+all requested channels.
 
 ## A cube's fine frequency grid lets rounding choose one or two samples per plane
 
