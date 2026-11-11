@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Normal states assembled from major-cycle pass images.
 //!
-//! A major-cycle pass yields unnormalised dirty or residual images, PSF
+//! A gridding pass yields unnormalised dirty or residual images, PSF
 //! moments and `sumwt` per output channel. [`PassNormalState`] writes them
 //! into the normal-state representation the minor cycle and products read:
 //! resident coefficient families for the constant and Taylor bases, paged
@@ -20,7 +20,7 @@ use super::{
 };
 use crate::FinalNormalState;
 
-/// Unnormalised images of one image domain from one pass over a contiguous
+/// Images of one image domain from one pass over a contiguous
 /// range of output channels.
 ///
 /// Planes are x-major (`index = x · height + y`), the layout every
@@ -40,6 +40,8 @@ pub struct PassImages {
     /// Dirty or residual planes, one per data term.
     pub residual: Vec<f32>,
     /// PSF moment planes on an initial pass; `None` on a residual pass.
+    /// Gridding supplies raw PSFs. A restart reusing a single-term PSF
+    /// supplies its saved image values.
     pub psf: Option<Vec<f32>>,
     /// `sumwt` of the PSF gridding per PSF-moment plane on an initial pass;
     /// empty otherwise. It normalises the PSF and weight planes.

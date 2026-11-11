@@ -133,11 +133,18 @@ fn fit_beams(
                 (ordinal / polarizations) % channels,
                 ordinal % polarizations,
             )?;
-            // A plane with a PSF (`normPSF`'s rule) has a beam, its `sumwt`
-            // aside: CASA fits every Stokes plane's.
+            // A freshly formed PSF is normalized before CASA fits the beam,
+            // so normPSF zeros a sub-threshold peak. A reused PSF is already
+            // in image units: CASA attempts the fit for every positive peak,
+            // and FitGaussianPSF refuses positive peaks below 1e-7.
             let psf = psf_real_plane(&plane)?;
-            if !psf_normalizes(psf_peak(psf.iter().copied())?) {
-                return Ok(PlaneBeam::Blank);
+            let peak = psf_peak(psf.iter().copied())?;
+            if !psf_normalizes(peak) {
+                return Ok(if planned.reuses_single_psf && peak > 0.0 {
+                    PlaneBeam::Refused
+                } else {
+                    PlaneBeam::Blank
+                });
             }
             fit_plane_beam(
                 &psf,
@@ -422,6 +429,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             plane: &plane,
             domain_ordinal: self.domain_ordinal,
             polarization,
+            reuses_single_psf: self.planned.reuses_single_psf,
             fitted_beam: self.fitted_beams.get(beam_index).copied().flatten(),
             restoring_beam: self.restoring_beams.get(beam_index).copied().flatten(),
             primary_beam_model: self.planned.primary_beam_model,

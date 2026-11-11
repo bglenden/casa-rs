@@ -31,8 +31,8 @@ pub(crate) enum PlaneBeam {
     Fitted(RestoringBeam),
     /// The plane has no PSF, and so no beam.
     Blank,
-    /// `FitGaussianPSF` refuses the plane, as its peak is outside the inner
-    /// quarter. `SIImageStore::makeImageBeamSet` warns and carries on.
+    /// `FitGaussianPSF` refuses the plane when its positive peak is too weak
+    /// or outside the inner quarter. `SIImageStore::makeImageBeamSet` carries on.
     Refused,
 }
 

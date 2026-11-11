@@ -880,7 +880,7 @@ fn plane_shape(normal: &FinalNormalState, key: PlaneKey) -> PlaneShape {
     PlaneShape::new(nx, ny)
 }
 
-/// Term-0 PSF of `key`, unnormalised.
+/// Term-0 PSF of `key` in gridded or saved image units.
 fn read_psf(
     normal: &FinalNormalState,
     taylor: bool,

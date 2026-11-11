@@ -353,6 +353,9 @@ pub(crate) fn run(
         }
         publication.controls = controls;
     }
+    if !forms.psf {
+        publication.controls = publication.controls.with_reused_single_psf();
+    }
     // CASA selects the cube's VLA aperture through its LSRK conversion layer,
     // but evaluates it at each output plane's own frequency.
     let vla_selection_hz = publication.vla_selection_store.map(|reference| {

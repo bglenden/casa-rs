@@ -297,3 +297,97 @@ fn an_mfs_header_records_outframe_and_restfreq() {
         bary_width / lsrk_width
     );
 }
+
+/// CASA's restoring beam for a positive PSF below the fit threshold comes
+/// from the largest fitted beam in the cube (#1140).
+#[test]
+fn tclean_weak_psf_restores_with_the_largest_valid_beam() {
+    let [healthy, weak] = restore_with_weak_psf("mixed-weak-psf", false);
+    let healthy_major = healthy.major_in("arcsec").unwrap();
+    assert!((healthy_major - 0.056507).abs() < 1e-5, "{healthy:?}");
+    assert_beam(weak, healthy, "weak channel");
+}
+
+/// When every PSF is positive and below the fit threshold, CASA restores
+/// with a round beam of 1e-6 arcsec (#1140).
+#[test]
+fn tclean_all_weak_psfs_restore_with_the_tiny_beam() {
+    for beam in restore_with_weak_psf("all-weak-psfs", true) {
+        assert_beam(
+            beam,
+            GaussianBeam {
+                major: 1e-6 * ARCSEC,
+                minor: 1e-6 * ARCSEC,
+                position_angle: 0.0,
+            },
+            "all-weak cube",
+        );
+    }
+}
+
+fn restore_with_weak_psf(name: &str, all_weak: bool) -> [GaussianBeam; 2] {
+    use casa_images::{ImageBeamSet, PagedImage};
+    use casa_provider_contracts::TaskReply;
+
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch(name);
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.012arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 2, "start": 0, "width": 1,
+        "deconvolver": "clark", "niter": 0, "restoration": false,
+    });
+    let seed = super::casa_return::json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+
+    for product in ["psf", "residual", "sumwt"] {
+        let path = directory.join(format!("image.{product}"));
+        let mut image = PagedImage::<f32>::open(path).unwrap();
+        let mut info = image.image_info().unwrap();
+        info.beam_set = ImageBeamSet::empty();
+        image.set_image_info(&info).unwrap();
+        let mut data = image.get().unwrap();
+        data.fill(0.0);
+        match product {
+            "psf" => {
+                if all_weak {
+                    data[[32, 32, 0, 0]] = 5e-8;
+                } else {
+                    for x in 0..64 {
+                        for y in 0..64 {
+                            let dx = x as f32 - 32.0;
+                            let dy = y as f32 - 32.0;
+                            data[[x, y, 0, 0]] = (-(dx * dx + dy * dy) / 8.0).exp();
+                        }
+                    }
+                }
+                data[[32, 32, 0, 1]] = 1e-8;
+            }
+            "residual" => {
+                data[[32, 32, 0, 0]] = 1.0;
+                data[[32, 32, 0, 1]] = 1.0;
+            }
+            "sumwt" => data.fill(64.0),
+            _ => unreachable!(),
+        }
+        image.put_slice(&data, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    values["restoration"] = json!(true);
+    values["niter"] = json!(1);
+    let result = super::casa_return::json_run(&directory, values);
+    assert!(matches!(result, TaskReply::Succeeded { .. }), "{result:?}");
+    let psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
+    let saved = psf.get().unwrap();
+    assert_eq!(saved[[32, 32, 0, 0]], if all_weak { 5e-8 } else { 1.0 });
+    assert_eq!(saved[[32, 32, 0, 1]], 1e-8);
+    let beams = PagedImage::<f32>::open(directory.join("image.image"))
+        .unwrap()
+        .image_info()
+        .unwrap()
+        .beam_set;
+    [*beams.beam(0, 0), *beams.beam(1, 0)]
+}

@@ -550,7 +550,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
-    /// Load only the selected unnormalized point-spread-function plane.
+    /// Load only the selected gridded or saved PSF plane.
     pub fn read_psf(&self) -> Result<Cow<'a, [Complex64]>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
@@ -562,7 +562,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
-    /// Read only the selected unnormalized point-spread-function plane as Float values.
+    /// Read only the selected gridded or saved PSF plane as Float values.
     ///
     /// Values use the x-major plane layout. `None` means the backing is not
     /// real Float and the complex reader must be used instead.

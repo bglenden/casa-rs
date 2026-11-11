@@ -6,14 +6,11 @@
 //! CASA leaves its images standing when it does not form them again
 //! (`task_tclean.py`; `SIImageStore` opens what exists, and
 //! `FTMachine::finalizeToSkyNew` keeps a `.sumwt` already filled). The
-//! images on disk are normalized: the PSF to its peak, the residual by its
-//! sum of weights. The normal state holds them unnormalized, as a pass
-//! grids them, and products and minor cycles normalize them again; so the
-//! reader returns what a pass would have returned: the PSF times its
-//! principal sum of weights (the PSF peak of a direction-independent
-//! gridder) and the residual times the sum of weights that normalized it.
-//! Normalizing them again gives back the images read, to the rounding of
-//! one `f32` product and quotient.
+//! residual is returned in gridding units by multiplying it by its saved
+//! sum of weights. The single-term PSF keeps its saved pixels for beam
+//! fitting and publication. The solver scales it by its peak for the minor
+//! cycle. A Taylor PSF family still uses the principal sum of weights to
+//! return all its moments in gridding units.
 //!
 //! Only direction-independent gridders (standard and W-projection, one
 //! facet) are read: their sensitivity is the sum of weights alone
@@ -285,9 +282,13 @@ impl ExistingProducts {
                 }
             }
         }
-        // A pass's PSF peaks at its principal sum of weights; every moment
-        // shares that one divisor (`SIImageStore::normPSF`).
-        let principal = |channel: usize, pol: usize| sums[channel * moments * pols + pol];
+        // Single-term consumers fit and publish the saved PSF in image
+        // units. Taylor consumers take every moment in the gridding units
+        // obtained by undoing the shared principal normalization.
+        let psf_scale = |channel: usize, pol: usize| match self.family {
+            Family::Single => 1.0,
+            Family::Taylor { .. } => sums[channel * moments * pols + pol],
+        };
         let mut psf = vec![0.0; channels.len() * moments * pols * cells];
         for (moment, name) in self.family.names("psf").iter().enumerate() {
             let read = self.read(name, channels.clone())?;
@@ -298,7 +299,7 @@ impl ExistingProducts {
                         &mut psf[plane * cells..(plane + 1) * cells],
                         &read,
                         (channel, pol),
-                        principal(channel, pol),
+                        psf_scale(channel, pol),
                     );
                 }
             }
