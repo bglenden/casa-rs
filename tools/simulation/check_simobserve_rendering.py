@@ -58,10 +58,18 @@ def compare(actual, expected):
             close(image["clim"], reference["clim"], 1e-5, "colour limits")
             for name in ("origin", "interpolation", "cmap"):
                 assert image[name] == reference[name], name
-        for circle, reference in zip(a["circles"], e["circles"], strict=True):
-            close(circle["center"], reference["center"], 1e-3, "circle centre")
-            assert abs(circle["radius"] - reference["radius"]) <= 1e-9
-            assert circle["fill"] == reference["fill"]
+        circle_groups = ["circles"] + (["anchored_circles"] if "anchored_circles" in e else [])
+        for group in circle_groups:
+            assert len(a[group]) == len(e[group]), f"{group}: complete circle count"
+            for circle, reference in zip(a[group], e[group], strict=True):
+                close(circle["center"], reference["center"], 1e-3, "circle centre")
+                assert abs(circle["radius"] - reference["radius"]) <= 1e-9
+                assert circle["fill"] == reference["fill"]
+                if "line_width" in reference:
+                    assert circle["line_width"] == reference["line_width"], "circle width"
+                    close(circle["edge_color"], reference["edge_color"], 1e-12, "circle edge")
+                    if circle["fill"]:
+                        close(circle["face_color"], reference["face_color"], 1e-12, "circle fill")
         for text, reference in zip(a["texts"], e["texts"], strict=True):
             close(text["position"], reference["position"], 1e-3, "text position")
             assert text["text"] == reference["text"]

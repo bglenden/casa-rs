@@ -148,6 +148,11 @@ fn request(
         parameters.maptype = "square".into();
         parameters.incell = "2arcsec".into();
     }
+    if name == "int_dense_pointings" {
+        parameters.mapsize = vec!["16arcsec".into()];
+        parameters.pointingspacing = "1arcsec".into();
+        parameters.maptype = "hexagonal".into();
+    }
     let resources = SessionResources::pinned(
         HostResources {
             threads: 8,
@@ -445,6 +450,15 @@ fn complete_native_figures_match_casas_independent_plot_data() {
                     .to_string_lossy();
                 let reference = &case["figures"][file.as_ref()];
                 assert!(reference.is_array(), "{file} has no CASA reference");
+                if name == "int_dense_pointings" && plot.document.id == "skymodel" {
+                    assert!(
+                        reference[0]["lines"][0]["x"]
+                            .as_array()
+                            .expect("dense map")
+                            .len()
+                            > 19
+                    );
+                }
                 for (index, panel) in plot.document.panels.iter().enumerate() {
                     compare_panel(panel, &reference[index], &bytes);
                 }
@@ -543,7 +557,7 @@ fn compare_panel(
         1e-3,
         &format!("{} y limits", panel.id),
     );
-    let (mut line_index, mut image_index, mut circle_index) = (0, 0, 0);
+    let (mut line_index, mut image_index, mut circle_index, mut anchored_index) = (0, 0, 0, 0);
     for layer in &panel.layers {
         match layer.data.as_ref().expect("binary layer") {
             PlotLayerData::Points { x, y } => {
@@ -588,15 +602,28 @@ fn compare_panel(
                 close_values(extent, &expected["extent"], 1e-9, "image extent");
                 close_values(range, &expected["clim"], 1e-5, "image colour limits");
             }
-            PlotLayerData::Circles { x, y, radii, .. } => {
+            PlotLayerData::Circles {
+                x,
+                y,
+                radii,
+                anchored,
+                ..
+            } => {
                 let (x, y, radii) = (
                     binary_values(x, bytes),
                     binary_values(y, bytes),
                     binary_values(radii, bytes),
                 );
                 for ((x, y), radius) in x.into_iter().zip(y).zip(radii) {
-                    let expected = &reference["circles"][circle_index];
-                    circle_index += 1;
+                    let expected = if *anchored {
+                        let value = &reference["anchored_circles"][anchored_index];
+                        anchored_index += 1;
+                        value
+                    } else {
+                        let value = &reference["circles"][circle_index];
+                        circle_index += 1;
+                        value
+                    };
                     close_values(&[x, y], &expected["center"], 1e-3, "circle centre");
                     assert!((radius - expected["radius"].as_f64().expect("radius")).abs() <= 1e-9);
                 }
@@ -614,6 +641,13 @@ fn compare_panel(
     assert_eq!(
         circle_index,
         reference["circles"].as_array().expect("circles").len()
+    );
+    assert_eq!(
+        anchored_index,
+        reference
+            .get("anchored_circles")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len)
     );
     assert_eq!(
         panel.annotations.len(),

@@ -94,7 +94,11 @@ pub(super) fn layer(
         provenance: vec![],
         color_group: String::new(),
         symbol_size: 9.0,
-        line_width: 1.5,
+        line_width: if kind == PlotLayerKind::Circles {
+            1.0
+        } else {
+            1.5
+        },
         opacity: 1.0,
         source_sample_count: count,
         payload_strategy: PlotPayloadStrategy::BinaryArrays,

@@ -104,14 +104,18 @@ def _draw_layer(figure, axis, layer, payload):
             from matplotlib.offsetbox import AnchoredOffsetbox, AuxTransformBox
 
             box = AuxTransformBox(axis.transData)
+            box.set_alpha(0.7)
         for xc, yc, radius in zip(x, y, radii, strict=True):
-            circle = Circle((xc, yc), radius=radius, fill=data["filled"], color=color)
+            circle_color = {"facecolor": color} if data["filled"] else {"edgecolor": color}
+            circle = Circle((xc, yc), radius=radius, fill=data["filled"], linewidth=layer["line_width"], **circle_color)
             if box is None:
                 axis.add_patch(circle)
             else:
                 box.add_artist(circle)
         if box is not None:
-            axis.add_artist(AnchoredOffsetbox(loc=3, pad=0.2, borderpad=0, child=box, frameon=False))
+            anchored = AnchoredOffsetbox(loc=3, pad=0.2, borderpad=0, child=box, frameon=False)
+            anchored.set_alpha(0.7)
+            axis.add_artist(anchored)
         return
     if layer["kind"] == "interval":
         for start, end, lane in zip(layer["interval_x_start"], layer["interval_x_end"], layer["interval_y"], strict=True):

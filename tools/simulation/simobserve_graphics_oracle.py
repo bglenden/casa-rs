@@ -60,6 +60,11 @@ def artists(figure):
 
     panels = []
     for axis in figure.axes:
+        def circle_record(p):
+            return {"center": list(p.center), "radius": p.radius, "fill": p.get_fill(),
+                    "line_width": p.get_linewidth(), "edge_color": list(p.get_edgecolor()),
+                    "face_color": list(p.get_facecolor())}
+
         panels.append({
             "title": axis.get_title(), "xlabel": axis.get_xlabel(), "ylabel": axis.get_ylabel(),
             "xlim": list(axis.get_xlim()), "ylim": list(axis.get_ylim()), "aspect": axis.get_aspect(),
@@ -71,8 +76,8 @@ def artists(figure):
                         "clim": list(im.get_clim()), "origin": im.origin,
                         "interpolation": im.get_interpolation(), "cmap": im.get_cmap().name}
                        for im in axis.images],
-            "circles": [{"center": list(p.center), "radius": p.radius, "fill": p.get_fill()}
-                        for p in axis.patches if isinstance(p, Circle)],
+            "circles": [circle_record(p) for p in axis.patches if isinstance(p, Circle)],
+            "anchored_circles": [circle_record(p) for p in axis.findobj(Circle) if p not in axis.patches],
             "texts": [{"position": list(t.get_position()), "text": t.get_text()}
                       for t in axis.texts],
         })
@@ -123,6 +128,7 @@ def main():
         for name, extra in [
             ("int_image", {}),
             ("int_components", {"skymodel": "", "complist": str(root / "point.cl"), "compwidth": "1GHz"}),
+            ("int_dense_pointings", {"mapsize": "16arcsec", "pointingspacing": "1arcsec", "maptype": "hexagonal"}),
             ("sd_image", {"obsmode": "sd", "antennalist": "", "sdantlist": str(config), "maptype": "square", "incell": "2arcsec"}),
         ]:
             shutil.rmtree(name, ignore_errors=True)

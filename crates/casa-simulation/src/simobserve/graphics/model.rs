@@ -70,7 +70,7 @@ pub(super) fn prepare(
         let x = payload.values([beam])?;
         let y = payload.values([beam])?;
         let radii = payload.values([beam / 2.0])?;
-        output.layers.push(layer(
+        let mut legend = layer(
             "primary-beam",
             PlotLayerKind::Circles,
             PlotLayerData::Circles {
@@ -82,7 +82,9 @@ pub(super) fn prepare(
             },
             Some(color),
             None,
-        ));
+        );
+        legend.line_width = 2.0;
+        output.layers.push(legend);
     }
     let xhalf = xhalf.max(beam / 2.0);
     let yhalf = yhalf.max(beam / 2.0);
