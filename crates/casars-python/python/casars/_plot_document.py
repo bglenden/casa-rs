@@ -21,7 +21,7 @@ def array_view(payload: Any, descriptor: Mapping[str, Any]) -> np.ndarray:
     )
 
 
-def render_document(document: Mapping[str, Any], *, payload: Any = None, figure: Any = None, use_native_limits: bool = True, axes: Any = None):
+def render_document(document: Mapping[str, Any], *, payload: Any = None, figure: Any = None, use_native_limits: bool = True, axes: Any = None, preserve_titles: bool = False):
     """Return editable Matplotlib figures from native-prepared artists."""
 
     from matplotlib import pyplot as plt
@@ -37,14 +37,14 @@ def render_document(document: Mapping[str, Any], *, payload: Any = None, figure:
     if owned:
         figure = plt.figure()
     try:
-        return _render_document(document, payload, figure, use_native_limits, axes)
+        return _render_document(document, payload, figure, use_native_limits, axes, preserve_titles)
     except BaseException:
         if owned:
             plt.close(figure)
         raise
 
 
-def _render_document(document, payload, figure, use_native_limits, axes):
+def _render_document(document, payload, figure, use_native_limits, axes, preserve_titles):
     panels = document["panels"] or [document]
     layout = document.get("layout") or {}
     rows, columns = layout.get("rows", len(panels)), layout.get("columns", 1)
@@ -67,7 +67,8 @@ def _render_document(document, payload, figure, use_native_limits, axes):
             axis.text(annotation["x"], annotation["y"], annotation["text"], **kwargs)
         font = {} if layout.get("font_size") is None else {"fontsize": layout["font_size"]}
         title_font = font if panel.get("title_font_size") is None else {"fontsize": panel["title_font_size"]}
-        axis.set_title(panel.get("title", ""), **title_font)
+        if not preserve_titles:
+            axis.set_title(panel.get("title", ""), **title_font)
         if panel.get("frame_visible") is not None:
             axis.set_frame_on(panel["frame_visible"])
         if font:
@@ -105,11 +106,8 @@ def render_current(document, payload_path, preserve_title=False):
     from matplotlib import pyplot as plt
 
     axis = plt.gca()
-    title = axis.get_title()
     payload = np.memmap(payload_path, dtype="u1", mode="r")
-    render_document(document, payload=payload, figure=axis.figure, axes=[axis])
-    if preserve_title:
-        axis.set_title(title)
+    render_document(document, payload=payload, figure=axis.figure, axes=[axis], preserve_titles=preserve_title)
 
 
 def _draw_layer(figure, axis, layer, payload):

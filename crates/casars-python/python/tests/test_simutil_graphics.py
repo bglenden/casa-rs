@@ -95,12 +95,15 @@ def test_plotants_draws_on_the_selected_panel_and_preserves_its_labels():
     utility.nextfig()
     axis = plt.gca()
     axis.set(title="existing title", xlabel="existing x", ylabel="existing y")
+    axis.title.set(fontsize=23, color="red", fontweight="bold")
     case = REFERENCE["antennas"][1]
     x, y, z = np.asarray(case["positions"]).T
     utility.plotants(x, y, z, case["diameters"], case["names"])
     assert plt.gca() is axis and len(plt.gcf().axes) == 2
     assert (axis.get_title(), axis.get_xlabel(), axis.get_ylabel()) == ("existing title", "existing x", "existing y")
     assert len(axis.patches) == len(case["names"])
+    assert axis.title.get_fontsize() == 23
+    assert axis.title.get_color() == "red" and axis.title.get_fontweight() == "bold"
 
 
 @pytest.mark.parametrize("case", REFERENCE["images"], ids=lambda c: f"{c['image']}-{c['options']}")

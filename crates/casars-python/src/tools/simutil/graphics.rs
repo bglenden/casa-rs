@@ -104,7 +104,7 @@ impl PySimutil {
                 .map_err(|error| if error.to_string().contains("never visible") { PyValueError::new_err(format!("{shown} is not visible from {telescope}")) }
                     else { PyRuntimeError::new_err(error.to_string()) })
         })?;
-        draw(py, &document, file.path(), false)
+        draw(py, &document, file.path(), true)
     }
 
     /// Plot all antenna positions and dish sizes in their local tangent
