@@ -493,10 +493,10 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
     );
 }
 
-/// Linear multi-channel AW cubes remain refused with their issue number.
+/// Cubic multi-channel AW cubes remain refused with their issue number.
 /// A one-channel selection runs (#1121).
 #[test]
-fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
+fn a_multichannel_aw_cube_refuses_cubic_interpolation() {
     let setup = Setup {
         spectral_windows: vec![SyntheticSpectralSetup {
             channel_count: 2,
@@ -512,6 +512,7 @@ fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
         let fields = controls.as_object_mut().expect("controls");
         fields.insert("niter".into(), json!(0));
         fields.insert("specmode".into(), json!("cube"));
+        fields.insert("interpolation".into(), json!("cubic"));
         controls
     };
     let refused = observation
@@ -565,6 +566,35 @@ fn an_aw_cube_nearest_samples_a_multichannel_window() {
             );
         }
     }
+}
+
+/// An offset linear cube visits both in-band output planes. The following
+/// plane is outside the selected native span and remains blank (#1121).
+#[test]
+fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 3,
+            ..lband_window("t1-lband-offset-linear", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut request = cached_clean("0", &observation.scratch("linear-cf"), &surface);
+    request["niter"] = json!(0);
+    request["specmode"] = json!("cube");
+    request["outframe"] = json!("LSRK");
+    request["interpolation"] = json!("linear");
+    request["start"] = json!(1);
+    request["width"] = json!(1);
+    request["nchan"] = json!(3);
+    let (_, products) = observation.image("aw-offset-linear", request);
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 3);
+    assert!(weights[0] > 0.0 && weights[1] > 0.0, "{weights:?}");
+    assert_eq!(weights[2], 0.0, "{weights:?}");
 }
 
 /// A row off the grid still weighs in the sensitivity:

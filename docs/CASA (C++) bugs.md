@@ -4064,6 +4064,32 @@ can itself move a channel across a cell boundary, so casa-rs recovers the stored
 channel frequency for AW cell selection while retaining the converted frequency
 for UV placement. Rounding near an exact cell tie remains permitted.
 
+
+## AW cube interpolation restores the native channel map
+
+- Date noted: 2026-11-11
+- Status: verified CASA 6.7.6.14 bug ([#1121](https://github.com/bglenden/casa-rs/issues/1121#issuecomment-6698483927)).
+- Affected code: `FTMachine::interpolateFrequencyTogrid`,
+  `AWProjectFT::put` and `setupVBStore`, and `AWVisResampler::DataToGridImpl_p`
+  in `synthesis/TransformMachines2`.
+
+`AWProjectFT::put` calls `matchChannel` again after interpolating the data,
+weights and flags. The second call restores the map for native channels.
+`setupVBStore` supplies native reporting frequencies. The AW loop uses the
+length of the interpolated flag axis to index both native vectors.
+
+On `refim_point_linRL.ms` with `start=1, width=1, nchan=2` and linear
+interpolation, a trace of CASA's running sampler showed two interpolated
+entries and the native map `[-2, 0, 1]`. Only ordinals 0 and 1 were visited.
+Plane 1 had zero sum weight. CASA's standard gridder populated both planes
+on the same input. With `start=0, width=2, nchan=2`, the trace instead showed
+four entries. The AW loop reached ordinal 3 with positive weight and used
+the CF selection path even though the map and frequency vectors had length 3.
+
+casa-rs keeps each interpolated sample's output plane and frequency together
+through gridding and convolution-cell selection. This is the mapping used by
+the shared spectral resampler.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
