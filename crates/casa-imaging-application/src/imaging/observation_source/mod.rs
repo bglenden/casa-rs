@@ -30,7 +30,9 @@ mod write;
 
 use std::ops::Range;
 
-use casa_imaging_model::{BatchGeometry, CompiledProblem, GeometryPlan, GeometryTraversal};
+use casa_imaging_model::{
+    BatchGeometry, CompiledProblem, FrequencyBands, GeometryPlan, GeometryTraversal,
+};
 use casa_imaging_operator::PlaneRange;
 use casa_imaging_runtime::pass::{
     BlockShape, BoundedSource, NativeBlock, SampleContent, SourceError,
@@ -183,15 +185,9 @@ impl BatchRoute {
             .first()
             .ok_or("an estimate without its partition")?
             .held_bytes_per_time();
-        // A native block has one channel layout. A time-varying parent
-        // prediction therefore reads one integration per batch, so its
-        // physically selected channels can form that layout.
-        let time_varying = if prediction {
-            partition.prediction_bands.is_some()
-        } else {
-            values && partition.frequency_bands.is_some()
-        };
-        let times = if time_varying || single_time {
+        // A native block has one channel layout. Compacting a time-varying
+        // selection needs one integration per batch.
+        let times = if single_time {
             1
         } else {
             self.batching.times_per_batch(key.store, key.partition)
@@ -242,12 +238,12 @@ impl BatchRoute {
                     if channels == 0 {
                         continue;
                     }
-                    let (request, _) = self.request(key, 0..channels, true, prediction, false)?;
                     let bands = if prediction {
                         partition.prediction_bands.is_some()
                     } else {
                         partition.frequency_bands.is_some()
                     };
+                    let (request, _) = self.request(key, 0..channels, true, prediction, bands)?;
                     most = most.most(write_back.write_bytes(session, &request, bands)?);
                 }
                 Ok::<_, SourceError>(most)
@@ -258,7 +254,7 @@ impl BatchRoute {
 
 /// The traversal of one wave.
 struct Stream<'a> {
-    values: bool,
+    content: SampleContent,
     /// Whether the traversal's blocks are written back: each partition it
     /// binds and each block it fills is queued for the sink.
     writing: bool,
@@ -507,10 +503,13 @@ impl<'a> ObservationSource<'a> {
         &self,
         key: PartitionKey,
         window: Range<usize>,
-        (values, writing, prediction): (bool, bool, bool),
+        (content, writing, prediction): (SampleContent, bool, bool),
     ) -> Result<(Traversal<'a>, Layout), SourceError> {
         let route: &'a BatchRoute = self.route;
-        let single_time = self.packer.problem.visibility_transform().is_some();
+        let partition = &route.stores[key.store].selection.partitions[key.partition];
+        let single_time = self.packer.problem.visibility_transform().is_some()
+            || self.compact_bands(partition, content, prediction).is_some();
+        let values = content == SampleContent::Visibilities;
         let (request, layout) = route.request(key, window, values, prediction, single_time)?;
         let traversal = route.stores[key.store].observation().bind_read(&request)?;
         if writing && let Some(write_back) = route.write_back() {
@@ -520,6 +519,34 @@ impl<'a> ObservationSource<'a> {
             });
         }
         Ok((traversal, layout))
+    }
+
+    /// The frequency bands that physically compact a row before resampling.
+    /// CASA's per-channel cube density grids an interpolated PSF from the
+    /// same per-time channel selection as the cube (`BriggsCubeWeightor`).
+    /// The whole-selection density visits native channels independently
+    /// and applies its own untuned bands when packing their flags.
+    fn compact_bands<'p>(
+        &self,
+        partition: &'p SelectedPartition,
+        content: SampleContent,
+        prediction: bool,
+    ) -> Option<&'p FrequencyBands> {
+        if prediction && partition.prediction_channels.is_some() {
+            partition.prediction_bands.as_ref()
+        } else if content == SampleContent::Visibilities
+            || (content == SampleContent::FlagsAndWeights
+                && self
+                    .packer
+                    .problem
+                    .weighting()
+                    .density_scope()
+                    .is_per_channel())
+        {
+            partition.frequency_bands.as_ref()
+        } else {
+            None
+        }
     }
 
     /// Hold partition `key`'s pointing over its selected times, when its
@@ -564,7 +591,7 @@ impl<'a> ObservationSource<'a> {
                 let (traversal, layout) = self.bind(
                     key,
                     window,
-                    (stream.values, stream.writing, stream.prediction),
+                    (stream.content, stream.writing, stream.prediction),
                 )?;
                 if stream.geometry.1 != Some(key.store) {
                     // Each store's plan carries its own geometry state.
@@ -578,6 +605,8 @@ impl<'a> ObservationSource<'a> {
             let route: &'a BatchRoute = self.route;
             let store = &route.stores[key.store];
             let partition = &store.selection.partitions[key.partition];
+            // CASA omits channels outside a time's bands before interpolation.
+            let bands = self.compact_bands(partition, stream.content, stream.prediction);
             let Some(event) = traversal.next(&mut self.buffers)? else {
                 stream.current = None;
                 continue;
@@ -596,15 +625,6 @@ impl<'a> ObservationSource<'a> {
                 &mut stream.geometry.0,
                 &mut self.geometry,
             )?;
-            // CASA's iterators physically omit channels outside a time's
-            // bands; flagging a wider row changes interpolation.
-            let bands = if stream.prediction && partition.prediction_channels.is_some() {
-                partition.prediction_bands.as_ref()
-            } else if stream.values {
-                partition.frequency_bands.as_ref()
-            } else {
-                None
-            };
             let rule = self
                 .packer
                 .problem
@@ -633,7 +653,11 @@ impl<'a> ObservationSource<'a> {
                 (&batch, key.store, partition, layout, input_layout),
                 &self.geometry,
                 &self.keep,
-                (stream.values, stream.writing, stream.prediction),
+                (
+                    stream.content == SampleContent::Visibilities,
+                    stream.writing,
+                    stream.prediction,
+                ),
                 &mut self.scratch,
                 out,
             )?;
@@ -700,7 +724,7 @@ impl BoundedSource for ObservationSource<'_> {
             windows = self.density_windows(windows);
         }
         self.state = State::Streaming(Box::new(Stream {
-            values,
+            content,
             writing,
             prediction,
             windows,
