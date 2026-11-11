@@ -350,18 +350,18 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `integration` | `'10s'` | `'10s'`; `integration` → `integration` | Implemented | The integration time; one summing to zero pointing time is refused (decision). [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `direction` | `[]` | `[]`; `direction` → `direction` | Implemented | The map centre, or a list of pointings; a list of one is rounded to its mean as CASA does (decision). [pointings](#simobserve-behavior-pointings)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `mapsize` | `['', '']` | `['', '']`; `mapsize` → `mapsize` | Implemented | The map's size. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
-| `maptype` | `'hexagonal'` | `'hexagonal'`; `maptype` → `maptype` | Implemented | hexagonal, square and ALMA tilings. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: `ALMA`, `ALMA-OT`, `ALMA2012`, `alma`, `hex`, `hexagonal`, `square` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `maptype` | `'hexagonal'` | `'hexagonal'`; `maptype` → `maptype` | Implemented | hexagonal, square and ALMA tilings. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: `ALMA`, `ALMA-OT`, `ALMA2012`, `alma`, `hex`, `hexagonal`, `square` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [scheduling-20261111](#simobserve-evidence-scheduling-20261111) |
 | `pointingspacing` | `''` | `''`; `pointingspacing` → `pointingspacing` | Implemented | The spacing, or a fraction of the primary beam. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `caldirection` | `''` | `''`; `caldirection` → `caldirection` | Implemented | A calibrator's direction. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `calflux` | `'1Jy'` | `'1Jy'`; `calflux` → `calflux` | Implemented | The calibrator's flux. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `obsmode` | `'int'` | `'int'`; `obsmode` → `obsmode` | Implemented | 'int', 'sd', or '' to corrupt an existing MeasurementSet. [observation](#simobserve-behavior-observation)<br>Catalog domain: ``, `int`, `sd` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
-| `refdate` | `'2014/01/01'` | `'2014/01/01'`; `refdate` → `refdate` | Implemented | The observation date. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
-| `hourangle` | `'transit'` | `'transit'`; `hourangle` → `hourangle` | Implemented | 'transit' or an hour angle. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `refdate` | `'2014/01/01'` | `'2014/01/01'`; `refdate` → `refdate` | Implemented | The observation date. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [scheduling-20261111](#simobserve-evidence-scheduling-20261111) |
+| `hourangle` | `'transit'` | `'transit'`; `hourangle` → `hourangle` | Implemented | 'transit' or an hour angle. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [scheduling-20261111](#simobserve-evidence-scheduling-20261111) |
 | `totaltime` | `'7200s'` | `'7200s'`; `totaltime` → `totaltime` | Implemented | The total time; a pass the time does not complete is observed in part (decision). [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `antennalist` | `''` | `''`; `antennalist` → `antennalist` | Implemented | An interferometer configuration file or an ALMA resolution string. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `sdantlist` | `'aca.tp.cfg'` | `'aca.tp.cfg'`; `sdantlist` → `sdantlist` | Implemented | The total-power configuration. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `sdant` | `0` | `0`; `sdant` → `sdant` | Implemented | The total-power antenna's index. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `integer` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103), [refusals-1099-20261104](#simobserve-evidence-refusals-1099-20261104) |
-| `outframe` | `'LSRK'` | `'LSRK'`; `outframe` → `outframe` | Implemented | The spectral frame written. LSRK, TOPO and BARY are compared with CASA; other frames remain untested against the task. [observation](#simobserve-behavior-observation)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [frequency-frames-20261106](#simobserve-evidence-frequency-frames-20261106) |
+| `outframe` | `'LSRK'` | `'LSRK'`; `outframe` → `outframe` | Implemented | The spectral frame written. LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB have scoped CASA task comparisons; REST and Undefined and combinations with other observation modes remain unverified. [observation](#simobserve-behavior-observation)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [frequency-frames-20261106](#simobserve-evidence-frequency-frames-20261106), [additional-frames-20261111](#simobserve-evidence-additional-frames-20261111) |
 | `thermalnoise` | `'tsys-atm'` | `'tsys-atm'`; `thermalnoise` → `thermalnoise` | Implemented | 'tsys-atm', 'tsys-manual' or '' noise through the simulator's setnoise. [noise](#simobserve-behavior-noise)<br>Catalog domain: ``, `tsys-atm`, `tsys-manual` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103), [noise-seeds-20261103](#simobserve-evidence-noise-seeds-20261103) |
 | `user_pwv` | `0.5` | `0.5`; `user_pwv` → `user_pwv` | Implemented | Precipitable water vapour for tsys-atm. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103), [noise-seeds-20261103](#simobserve-evidence-noise-seeds-20261103) |
 | `t_ground` | `270.0` | `270.0`; `t_ground` → `t_ground` | Implemented | Ground temperature. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
@@ -399,27 +399,27 @@ Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simo
 
 **Partial** — setpointings with direction, mapsize, maptype and pointingspacing, or a ptgfile; written to <stem>.ptg.txt and checked against the model.
 
-maptype='square' is compared only through the single-dish case.
+Square pointings now have both interferometric and historical single-dish task comparisons. Multi-entry user pointing files and combinations of explicit mapsize/pointingspacing overrides are not covered by this new receipt.
 
-Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [scheduling-20261111](#simobserve-evidence-scheduling-20261111).
 
 <a id="simobserve-behavior-schedule"></a>
 ##### Calibrator and observing schedule
 
 **Partial** — caldirection and calflux, integration, totaltime, refdate and hourangle.
 
-The calibrator cases are compared with CASA's sm re-predict, since CASA's task leaves the calibrator unpredicted (decision). hourangle other than 'transit' and refdate is compared only at 2012/06/21.
+Paired task evidence now covers numeric and quantity non-transit hour angles, reference dates in 2015/2016/2017/2025 and discarded time suffixes. The historical calibrator cases still use CASA sm re-prediction because the CASA task leaves calibrator scans unpredicted (approved decision); these four new cases have no calibrator.
 
-Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [scheduling-20261111](#simobserve-evidence-scheduling-20261111).
 
 <a id="simobserve-behavior-observation"></a>
 ##### Observation and prediction
 
 **Partial** — obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.
 
-outframe LSRK, TOPO and BARY are compared; other frames are not yet compared against CASA.
+Image-model interferometry has scoped CASA comparisons for LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. REST and Undefined references and combinations with single dish, component models and existing-MS corruption remain outside these frame receipts.
 
-Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [frequency-frames-20261106](#simobserve-evidence-frequency-frames-20261106).
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [frequency-frames-20261106](#simobserve-evidence-frequency-frames-20261106), [additional-frames-20261111](#simobserve-evidence-additional-frames-20261111).
 
 <a id="simobserve-behavior-noise"></a>
 ##### Thermal noise and leakage
@@ -642,6 +642,28 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `169376e710d325fab1134102d857795ba6b345c3`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
 - Command: `CASAPY tools/simulation/simobserve_parity.py --out target/1053-model-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell (bg-mac-mini)`.
 - Receipt: `resources/casa-compat/evidence/simobserve-model-overrides-20261111.json`.
+
+<a id="simobserve-evidence-scheduling-20261111"></a>
+##### scheduling-20261111
+
+**CASA-paired task runs — passed.** 4/4 agree: DATA NRMS 6.88e-7, 7.88e-7, 6.96e-7 and 6.26e-7 (limit 1e-3); maximum UVW difference 1.61e-6 m (existing limit 1e-3 m). Image metadata/pixels, byte-identical pointing files and MeasurementSet comparisons pass with existing known differences. Four ALMA image-model simulations: numeric hours, a time quantity, a modern transit date, and interferometric square pointings across 2015/2016/2017/2025. Covers discarded refdate time suffixes and TAI-UTC offsets of 35, 36 and 37 seconds. Calibrator, noise, graphics and exhaustive scheduling combinations are outside this receipt.
+
+- [tools/simulation/simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/d23c5eea15e3c89f39dcd4bb92d776bd805c2c14/tools/simulation/simobserve_parity.py)
+- [tools/simulation/test_simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/d23c5eea15e3c89f39dcd4bb92d776bd805c2c14/tools/simulation/test_simobserve_parity.py)
+- Revision: `d23c5eea15e3c89f39dcd4bb92d776bd805c2c14`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
+- Command: `CASAPY tools/simulation/simobserve_parity.py --out target/1053-schedule-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square (bg-mac-mini)`.
+- Receipt: `resources/casa-compat/evidence/simobserve-scheduling-20261111.json`.
+
+<a id="simobserve-evidence-additional-frames-20261111"></a>
+##### additional-frames-20261111
+
+**CASA-paired task runs — passed.** 5/5 agree on spectral-frame codes and channel frequencies, image metadata/pixels, byte-identical pointing files and MS comparisons with existing known differences. DATA NRMS ranges from 7.013e-7 to 7.025e-7 (limit 1e-3); maximum UVW difference 3.69e-8 m. ALMA interferometric image-model predictions with LSRD, GEO, GALACTO, LGROUP and CMB frequency frames. REST/Undefined and combinations with other modes remain unverified.
+
+- [tools/simulation/simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/ae1556d08df55fe9794b133cf52ac0dfceb62b98/tools/simulation/simobserve_parity.py)
+- [tools/simulation/test_simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/ae1556d08df55fe9794b133cf52ac0dfceb62b98/tools/simulation/test_simobserve_parity.py)
+- Revision: `d23c5eea15e3c89f39dcd4bb92d776bd805c2c14`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
+- Command: `CASAPY tools/simulation/simobserve_parity.py --out target/1053-frame-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb (bg-mac-mini)`.
+- Receipt: `resources/casa-compat/evidence/simobserve-additional-frames-20261111.json`.
 
 ### split
 
