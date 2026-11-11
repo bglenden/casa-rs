@@ -145,6 +145,7 @@ def main():
                        imsize=128, cell="2e-6rad", niter=0, calcres=False, restoration=False,
                        weighting="natural", datacolumn="data")
                 case["default_tclean_psf"] = image_record(prefix.with_suffix(".psf"))
+                case["default_tclean_sumwt"] = image_record(prefix.with_suffix(".sumwt"))
             cases.append(case)
             payload = {"casa_version": casatasks.version_string(), "recipe": __file__, "cases": cases}
             with (root / "graphics-reference.json.gz").open("wb") as raw:

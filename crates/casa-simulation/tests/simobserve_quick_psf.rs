@@ -89,8 +89,8 @@ fn inputs(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     for (i, (x, y)) in pads.into_iter().enumerate() {
         text.push_str(&format!(
             "{:.6} {:.6} -2481681.150540 12.0 A{i:02}\n",
-            2_225_061.1636 + f64::from(x),
-            -5_440_057.36994 + f64::from(y)
+            2_225_061.163_6 + f64::from(x),
+            -5_440_057.369_94 + f64::from(y)
         ));
     }
     std::fs::write(&config, text).expect("config");
@@ -253,7 +253,7 @@ fn compare(reference: &Value, path: &Path) {
     assert!(nrms <= 1e-3, "quick PSF NRMS {nrms} exceeds 1e-3");
 }
 
-fn default_tclean_control(reference: &Value, quick: &Path) {
+fn default_tclean_control(case: &Value, quick: &Path) {
     use casa_imaging_application::{
         BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute,
     };
@@ -285,7 +285,16 @@ fn default_tclean_control(reference: &Value, quick: &Path) {
         },
     )
     .expect("ordinary imaging control");
-    compare(reference, &prefix.with_extension("psf"));
+    compare(&case["default_tclean_psf"], &prefix.with_extension("psf"));
+    let weight = PagedImage::<f32>::open(prefix.with_extension("sumwt")).expect("sumwt");
+    let actual = weight.get_slice(&[0; 4], weight.shape()).expect("weight");
+    let mut expected = Vec::new();
+    flatten(&case["default_tclean_sumwt"]["pixels"], &mut expected);
+    assert_eq!(actual.len(), expected.len());
+    for (&actual, expected) in actual.iter().zip(expected) {
+        assert!(actual.is_finite() && expected.is_finite() && expected > 0.0);
+        assert!((f64::from(actual) - expected).abs() <= 5e-5 * expected.abs());
+    }
 }
 
 #[test]
@@ -317,10 +326,8 @@ fn quick_psfs_match_casa_for_image_and_component_models() {
                 let _kept = directory.keep();
             }
             compare(reference, &psf);
-            if workers == 3
-                && let Some(control) = case.get("default_tclean_psf")
-            {
-                default_tclean_control(control, &psf);
+            if workers == 3 && case.get("default_tclean_psf").is_some() {
+                default_tclean_control(case, &psf);
             }
             if metal && workers == 3 {
                 compare_metal(reference, &psf, name);
