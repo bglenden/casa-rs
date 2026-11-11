@@ -96,6 +96,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) backend: BackendChoice,
     /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
+    pub(crate) ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     pub(crate) diagnostics: Diagnostics,
 }
 
@@ -547,6 +548,7 @@ impl<'a> Run<'a> {
                     &correlations,
                     backend,
                     inputs.grid_precision,
+                    inputs.ft_padding,
                     inputs.aw_catalog.as_ref(),
                     &keys,
                     admission,

@@ -134,14 +134,18 @@
    "casa-components",
    "casa-fft",
    "casa-images",
+   "casa-imaging-application",
    "casa-imaging-model",
    "casa-imaging-operator",
+   "casa-imaging-products",
    "casa-imaging-runtime",
    "casa-imaging-singledish",
    "casa-lattices",
    "casa-ms",
    "casa-numerics",
-   "casa-tables"
+   "casa-provider-contracts",
+   "casa-tables",
+   "casa-task-runtime"
   ]
  },
  "device_dependency_prefixes": [

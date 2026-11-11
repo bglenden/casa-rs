@@ -303,6 +303,7 @@ pub(crate) fn domain_operator(
     correlations: &[Correlation],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
+    requested_padding: Option<PaddingFactor>,
     aw_catalog: Option<&AwCatalogDeployment>,
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
@@ -310,9 +311,10 @@ pub(crate) fn domain_operator(
     let kind = kernel_set_kind(problem);
     // Each CASA facet's GridFT pads its own facet grid.
     let padding = match kind {
-        KernelSetKind::Standard | KernelSetKind::WPlanes => {
-            GridPadding::CasaComposite(PaddingFactor::TCLEAN)
+        KernelSetKind::Standard => {
+            GridPadding::CasaComposite(requested_padding.unwrap_or(PaddingFactor::TCLEAN))
         }
+        KernelSetKind::WPlanes => GridPadding::CasaComposite(PaddingFactor::TCLEAN),
         KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
     };
     let geometry = GridGeometry::new(extent, padding)?;

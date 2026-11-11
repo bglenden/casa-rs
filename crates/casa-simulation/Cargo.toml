@@ -21,24 +21,28 @@ casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-fft = { path = "../casa-fft" }
 casa-images = { path = "../casa-images" }
+casa-imaging-application = { path = "../casa-imaging-application" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
+casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
 casa-lattices = { path = "../casa-lattices" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
+casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
+casa-task-runtime = { path = "../casa-task-runtime" }
 casa-types = { path = "../casa-types" }
 ndarray.workspace = true
 num-complex.workspace = true
+serde_json = { version = "1", features = ["float_roundtrip"] }
+tempfile = "3"
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 flate2 = "1"
-serde_json = { version = "1", features = ["float_roundtrip"] }
 tar = "0.4"
-tempfile = "3"
 tracing-subscriber.workspace = true

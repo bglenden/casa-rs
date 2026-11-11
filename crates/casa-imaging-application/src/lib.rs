@@ -95,6 +95,7 @@ pub(crate) struct ApplicationRuntime {
     pub(crate) backend: BackendChoice,
     /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
+    pub(crate) ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     pub(crate) cancel: Cancel,
     /// Directory the paged cube state of a channel-local run lives in.
     pub(crate) spill_directory: PathBuf,
