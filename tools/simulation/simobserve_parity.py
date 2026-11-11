@@ -70,6 +70,9 @@ INPUTS = {
     "flatone.model": "unittest/simobserve/flatone.model",
     "flatone.single.ptg.txt": "unittest/simobserve/flatone.single.ptg.txt",
 }
+LOCAL_INPUTS = {
+    "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
+}
 
 PPDISK_VLA = {
     "skymodel": "inputs/input50pc_672GHz.fits",
@@ -178,6 +181,22 @@ CASES = [
         "name": "pointing_file",
         "params": dict(
             CORE, setpointings=False, ptgfile="inputs/flatone.single.ptg.txt", integration="2s", totaltime="60s"
+        ),
+    },
+    # Three supplied pointings with different dwell times, repeated for
+    # two full map passes. This exercises FIELD/POINTING and scheduling.
+    {
+        "name": "pointing_file_multiple",
+        "params": dict(
+            CORE, setpointings=False, ptgfile="inputs/multiple.pointings.ptg.txt",
+            totaltime="120s",
+        ),
+    },
+    {
+        "name": "pointing_explicit_spacing",
+        "params": dict(
+            CORE, maptype="hexagonal", mapsize=["16arcsec", "12arcsec"],
+            pointingspacing="4arcsec", totaltime="120s",
         ),
     },
     # Non-default frequency reference codes, checked in the output MS as
@@ -635,18 +654,18 @@ def copy_inputs(casatestdata: str, out: str, cases=None) -> None:
     """Copy the inputs used by the selected cases, or all known inputs."""
     inputs = os.path.join(out, "inputs")
     os.makedirs(inputs, exist_ok=True)
-    needed = set(INPUTS)
+    needed = set(INPUTS) | set(LOCAL_INPUTS)
     if cases is not None:
         needed = {value.removeprefix("inputs/") for case in cases
                   for value in case["params"].values()
                   if isinstance(value, str) and value.startswith("inputs/")}
-    for name, path in INPUTS.items():
+    for name, path in {**INPUTS, **LOCAL_INPUTS}.items():
         if name not in needed:
             continue
         target = os.path.join(inputs, name)
         if os.path.exists(target):
             continue
-        source = os.path.join(casatestdata, path)
+        source = path if name in LOCAL_INPUTS else os.path.join(casatestdata, path)
         if os.path.isdir(source):
             shutil.copytree(source, target)
         else:
