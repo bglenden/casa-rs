@@ -323,5 +323,26 @@
    "revision": "459122e01bb25fbb57c5002a1b09726e4e791389"
   },
   "applicability": "Full crate tests, including the final multi-image CPU/Metal feature test, and all-target Clippy pass together after integrating main 5fd27b58de85ebb1b584b588c9b890433515584a (shared spectral/geometry changes). Counts exclude subprocess helper summaries already represented by their parent tests."
+ },
+ "repaired_main_integration": {
+  "revision": "6c7078fc4db6c88860edddf47fd576b626aa455e",
+  "main_revision": "2097720482c08093531d12b70b4480ef71a161ac",
+  "validation": {
+   "prediction_regression_tests_passed": 18,
+   "simulation_task_tests_passed": 7,
+   "failed": 0,
+   "feature_cases": 14,
+   "cpu_workers": [
+    1,
+    3
+   ],
+   "actual_metal_cases": 12,
+   "all_target_clippy": "passed for simulation and task crates",
+   "fmt": "passed",
+   "docs": "passed",
+   "architecture": "passed"
+  },
+  "source_audit": "Tracked production sources matched the branch. An obsolete untracked quick-PSF test was discovered in this private Mac scratch copy and removed; the checkout was then fully synchronized before this run. The earlier full-crate and numerical receipts remain bound to their older revisions.",
+  "applicability": "Current source reruns the full multi-model CPU/Metal and admission-atomicity feature plus prediction field/sequence/session regressions. No multi-model production code changed in the main merge."
  }
 }
