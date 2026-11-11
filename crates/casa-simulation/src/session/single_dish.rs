@@ -12,8 +12,6 @@
 //! whatever `setvp` says; `setvp(dovp=True)` also applies that pattern to
 //! the model first, as CASA's `SkyEquation` does.
 
-use std::sync::Arc;
-
 use casa_imaging_runtime::{Demand, admit};
 
 use super::Simulator;
@@ -27,9 +25,9 @@ use crate::predict::{
 const SINGLE_DISH_PHASE: &str = "the simulator's total-power samples";
 
 impl Simulator {
-    /// Sample `model` with `kernel` for the scans observed so far and record
-    /// the step: replacing what came before unless `incremental`; `beam` is
-    /// `setvp`'s. The model is dropped, with its tile cache, before the
+    /// Sample `model` with `kernel` for the scans observed so far; `beam` is
+    /// `setvp`'s. The caller records the step after every model is prepared.
+    /// The model is dropped, with its tile cache, before the
     /// preparation's admission is released.
     ///
     /// # Errors
@@ -38,13 +36,12 @@ impl Simulator {
     ///   pattern casa-rs does not have.
     /// - Raised: the samples do not fit the session's memory budget, or the
     ///   model's pixels could not be read.
-    pub(super) fn predict_single_dish(
-        &mut self,
+    pub(super) fn prepare_single_dish(
+        &self,
         model: SkyModel,
         kernel: SingleDishKernel,
         beam: Option<PrimaryBeam>,
-        incremental: bool,
-    ) -> SimulatorResult<()> {
+    ) -> SimulatorResult<SingleDishPrediction> {
         let telescope = self.observing_telescope();
         // The PB kernel is compared with CASA for ALMA's and ACA's patterns;
         // the VLA's and EVLA's are not yet.
@@ -114,12 +111,6 @@ impl Simulator {
             pointings = count,
             "sampled the model for total power"
         );
-        if !incremental {
-            // Every step so far covers a prefix of the scans this one covers.
-            self.data_plan.clear();
-        }
-        self.data_plan
-            .predict_single_dish(Arc::new(prediction), self.scans.len());
-        Ok(())
+        Ok(prediction)
     }
 }

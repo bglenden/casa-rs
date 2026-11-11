@@ -513,7 +513,7 @@ impl Simulator {
     /// - Raised, as casatools' binding raises before predicting: a named
     ///   image that does not exist or does not open
     ///   ([`PredictSpec::check_images`]).
-    /// - Not yet implemented: more than one image, a model layout CASA reads
+    /// - Not yet implemented: a model layout CASA reads
     ///   and casa-rs does not (other than Stokes I, J2000,
     ///   direction–Stokes–spectral axes), a component casa-rs does not
     ///   predict (a direction not in J2000, or a flux, spectrum or shape
@@ -543,13 +543,6 @@ impl Simulator {
         } else {
             tracing::info!("The data column will be replaced");
         }
-        if images.len() > 1 {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict from {} model images is not yet implemented in casa-rs (#1053); one \
-                 image is",
-                images.len()
-            )));
-        }
         // The plan corrupts by gains and leakage after every prediction
         // (`session::plan`).
         if spec.incremental && self.data_plan.corrupts_by_jones() {
@@ -578,6 +571,12 @@ impl Simulator {
             .first()
             .map(|path| SkyModel::open(path).map_err(model_error))
             .transpose()?;
+        // Validate every header before changing the DATA plan. Later
+        // images are reopened for preparation, one at a time, so the
+        // input count does not keep that many open images or tile caches.
+        for path in images.iter().skip(1) {
+            SkyModel::open(path).map_err(model_error)?;
+        }
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: Caught exception: MSIter::construct - Input \
@@ -610,20 +609,30 @@ impl Simulator {
         if let Some(kernel) = self.single_dish {
             // Total power samples a model image; `SDGrid` with a component
             // list is not yet here.
-            let Some(model) = model.filter(|_| list.is_none()) else {
+            if model.is_none() || list.is_some() {
                 return Err(SimulatorError::not_yet_implemented(
                     "predict(complist=…) after setoptions(ftmachine='sd') is not yet \
                      implemented in casa-rs (#1053); a model image is",
                 ));
-            };
-            return self.predict_single_dish(model, kernel, beam, spec.incremental);
+            }
+            let predictions = opened_models(model, &images)
+                .map(|model| self.prepare_single_dish(model?, kernel, beam))
+                .collect::<SimulatorResult<Vec<_>>>()?;
+            if !spec.incremental {
+                self.data_plan.clear();
+            }
+            for prediction in predictions {
+                self.data_plan
+                    .predict_single_dish(Arc::new(prediction), self.scans.len());
+            }
+            return Ok(());
         }
         let components = list
             .map(|(label, list, held)| self.prepare_components(&label, (list, held), beam))
             .transpose()?;
-        let prediction = model
-            .map(|model| self.prepare_image(model, &correlations, beam))
-            .transpose()?;
+        let predictions = opened_models(model, &images)
+            .map(|model| self.prepare_image(model?, &correlations, beam))
+            .collect::<SimulatorResult<Vec<_>>>()?;
         if !spec.incremental {
             // Every step so far covers a prefix of the scans this one covers.
             self.data_plan.clear();
@@ -633,7 +642,7 @@ impl Simulator {
             self.data_plan
                 .predict_components(Arc::new(components), scans);
         }
-        if let Some(prediction) = prediction {
+        for prediction in predictions {
             self.data_plan.predict(Arc::new(prediction), scans);
         }
         Ok(())
@@ -1123,6 +1132,20 @@ impl Simulator {
             reservation,
         ))
     }
+}
+
+/// The first image's already open header, then each later image reopened
+/// only when it is prepared. No DATA step is recorded until they all fit.
+fn opened_models<'a>(
+    first: Option<SkyModel>,
+    paths: &'a [&'a Path],
+) -> impl Iterator<Item = SimulatorResult<SkyModel>> + 'a {
+    first.into_iter().map(Ok).chain(
+        paths
+            .iter()
+            .skip(1)
+            .map(|path| SkyModel::open(path).map_err(model_error)),
+    )
 }
 
 /// The names in `paths` that are not empty.
