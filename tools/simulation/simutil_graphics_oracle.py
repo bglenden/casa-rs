@@ -15,7 +15,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
 
-from simobserve_graphics_oracle import artists
+from simobserve_graphics_oracle import artists, inputs
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     with tarfile.open(source / "crates/casa-simulation/tests/data/simanalyze_analysis_inputs.tar.gz") as archive:
         archive.extractall(root, filter="data")
     os.chdir(root)
-    record = {"casa_version": casatasks.version_string(), "lifecycle": {}, "antennas": [], "images": [], "ephemerides": []}
+    record = {"casa_version": casatasks.version_string(), "lifecycle": {}, "antennas": [], "images": [], "ephemerides": [], "errors": []}
 
     utility = simutil()
     multi = [2, 2, 1]
@@ -80,6 +80,46 @@ def main():
         utility.newfig(show=False)
         result = utility.ephemeris("2014/01/01/00:00:00", usehourangle=hour_angle)
         record["ephemerides"].append({"date": "2014/01/01/00:00:00", "usehourangle": hour_angle, "direction": direction, "telescope": telescope, "totaltime": 0.0, "original_totaltime": original_total, "raw_error": raw_error, "returns_none": result is None, "artists": artists(plt.gcf())})
+
+    from casatools import measures
+    location = measures().observatory("ALMA")
+    science = root / "observation-inputs"
+    science.mkdir(exist_ok=True)
+    model, config = inputs(science)
+    casatasks.simobserve(project="observation", skymodel=str(model), antennalist=str(config),
+                        mapsize="1arcsec", integration="10s", totaltime="40s", refdate="2014/01/01",
+                        thermalnoise="", graphics="none", overwrite=True)
+    observation = "observation/observation.small.ms"
+    with tarfile.open(root / "simutil-graphics-observation.tar.gz", "w:gz") as archive:
+        archive.add(observation, arcname="ephemeris.ms")
+    extras = [
+        {"date": {"value": 56658.0, "unit": "d"}, "telescope": "custom", "cofa": location},
+        {"date": "2014/01/01/13:25:00", "telescope": "ALMA", "usehourangle": False},
+        {"date": "2014/01/01/00:00:00", "telescope": "ALMA", "ms": observation},
+    ]
+    for options in extras:
+        plt.close("all")
+        utility = simutil(direction="J2000 10h00m00 -30d00m00", totaltime=0.0)
+        utility.newfig(show=False)
+        result = utility.ephemeris(direction=utility.direction, **options)
+        case = {"date": options["date"], "usehourangle": options.get("usehourangle", True),
+                "direction": utility.direction, "telescope": options["telescope"], "totaltime": 0.0,
+                "returns_none": result is None, "artists": artists(plt.gcf())}
+        if "cofa" in options:
+            case["cofa"] = options["cofa"]
+        if "ms" in options:
+            case["ms"] = "ephemeris.ms"
+        record["ephemerides"].append(case)
+    for direction, telescope in (("J2000 10h00m00 -30d00m00", "custom"), ("J2000 00h00m00 +89d00m00", "ALMA")):
+        plt.close("all")
+        utility = simutil(totaltime=0.0)
+        options = {"direction": direction, "telescope": telescope}
+        try:
+            utility.ephemeris("2014/01/01", **options)
+        except Exception as error:
+            record["errors"].append({"options": options, "type": type(error).__name__, "message": str(error)})
+        else:
+            raise AssertionError("Expected the unobservable/unknown-site refusal")
     plt.close("all")
     with gzip.open(root / "simutil-graphics-reference.json.gz", "wt") as output:
         json.dump(record, output, separators=(",", ":"))

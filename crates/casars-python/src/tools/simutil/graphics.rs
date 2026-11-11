@@ -60,7 +60,9 @@ impl PySimutil {
         use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
         use std::str::FromStr;
 
-        let split = super::ops::directions(direction.unwrap_or(self.direction.bind(py)))?
+        let argument = direction.unwrap_or(self.direction.bind(py));
+        let shown = argument.str()?.to_string();
+        let split = super::ops::directions(argument)?
             .split()
             .map_err(super::ops::raised)?;
         let reference = DirectionRef::from_str(split.epoch.trim())
@@ -99,7 +101,7 @@ impl PySimutil {
             };
             ephemeris_plot(&EphemerisPlotRequest { source, date_mjd: date, position, measures: data,
                 use_hour_angle: usehourangle, measurement_set: ms.as_deref().filter(|path| !path.as_os_str().is_empty()), duration_hours }, file.path())
-                .map_err(|error| if error.to_string().contains("never visible") { PyValueError::new_err(error.to_string()) }
+                .map_err(|error| if error.to_string().contains("never visible") { PyValueError::new_err(format!("{shown} is not visible from {telescope}")) }
                     else { PyRuntimeError::new_err(error.to_string()) })
         })?;
         draw(py, &document, file.path(), false)

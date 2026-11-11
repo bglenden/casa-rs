@@ -38,6 +38,8 @@ def images(tmp_path_factory):
     root = tmp_path_factory.mktemp("simutil-plots")
     with tarfile.open(REPOSITORY / "crates/casa-simulation/tests/data/simanalyze_analysis_inputs.tar.gz") as archive:
         archive.extractall(root, filter="data")
+    with tarfile.open(Path(__file__).with_name("data") / "simutil_graphics_observation.tar.gz") as archive:
+        archive.extractall(root, filter="data")
     return root
 
 
@@ -102,14 +104,16 @@ def test_statim_complete_plane_controls_and_statistics_match_casa(case, images, 
 
 @pytest.mark.parametrize("case", REFERENCE["ephemerides"])
 @pytest.mark.parametrize("explicit", [False, True])
-def test_public_ephemeris_matches_casa(case, explicit):
+def test_public_ephemeris_matches_casa(case, explicit, images, monkeypatch):
+    monkeypatch.chdir(images)
     utility = simutil(direction=case["direction"], totaltime=case["totaltime"])
     utility.telescopename = case["telescope"]
     utility.newfig(show=False)
+    extra = {name: case[name] for name in ("ms", "cofa") if name in case}
     if explicit:
-        assert simutil().ephemeris(case["date"], usehourangle=case["usehourangle"], direction=case["direction"], telescope=case["telescope"]) is None
+        assert simutil().ephemeris(case["date"], usehourangle=case["usehourangle"], direction=case["direction"], telescope=case["telescope"], **extra) is None
     else:
-        assert utility.ephemeris(case["date"], usehourangle=case["usehourangle"]) is None
+        assert utility.ephemeris(case["date"], usehourangle=case["usehourangle"], **extra) is None
     compare(artists(plt.gcf()), case["artists"])
 
 
@@ -128,3 +132,15 @@ def test_ephemeris_accepts_its_default_quantity_and_draws_the_requested_duration
         transit = expected[0]["lines"][1]["x"][0]
         expected[0]["lines"].append({"x": [transit - 20 / 3600, transit + 20 / 3600], "y": [80, 80], "color": "r", "marker": "None", "linestyle": "-", "line_width": 1.5})
     compare(artists(plt.gcf()), expected)
+    if duration is not None:
+        x = plt.gca().lines[-1].get_xdata()
+        assert x[1] - x[0] == pytest.approx(40 / 3600, abs=1e-12)
+
+
+@pytest.mark.parametrize("case", REFERENCE["errors"])
+def test_ephemeris_refuses_an_unknown_or_unobservable_site_as_casa_does(case):
+    exception = ValueError if case["type"] == "ValueError" else RuntimeError
+    with pytest.raises(exception) as error:
+        simutil(totaltime=0.0).ephemeris("2014/01/01", **case["options"])
+    assert str(error.value) == case["message"]
+    assert plt.get_fignums() == []

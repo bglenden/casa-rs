@@ -4234,3 +4234,25 @@ CASA with SIGSEGV while converting the input record. casa-rs raises a
 catchable `ValueError` before conversion. Excessively nested records are
 also refused, and offset, multivalued and unsupported measure kinds are
 explicitly unimplemented (#1053).
+
+## Public simutil ephemeris compares a quantity record with an integer
+
+- Date noted: 2026-11-11
+- Status: CASA 6.7.6.14 raises with its default duration; casa-rs accepts the quantity (#1053).
+- Owner decision: Correct behavior that contradicts documented or evident intent under the standing AGENTS.md CASA deviations rule (owner #1054).
+- Evidence: `tools/simulation/simutil_graphics_oracle.py`, `casa_simutil_graphics.json.gz` and `test_simutil_graphics.py`.
+
+Without an `ms`, `simutil.ephemeris` tests `self.totaltime > 0` before
+converting it to hours. The constructor's own default is a quantity record,
+`{'value': 0.0, 'unit': 'h'}`, so Python 3 raises `TypeError: '>' not
+supported between instances of 'dict' and 'int'`. A supplied quantity such
+as `{'value': 40.0, 'unit': 's'}` fails the same way, after drawing only
+part of the figure.
+
+casa-rs checks the quantity's value and converts a positive duration to
+hours before drawing its observation bar. The default zero duration draws
+no bar. The fixture retains CASA's raw failures separately from successful
+numeric-zero controls. The positive-duration regression checks the full
+curve and transit against the independent CASA control, and the bar's
+width against the analytic 40 seconds. This corrects the default call and
+the intended quantity input without changing the elevation calculation.
