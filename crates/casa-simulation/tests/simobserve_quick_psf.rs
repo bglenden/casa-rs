@@ -395,3 +395,38 @@ fn repeated_simobserve_replaces_the_complete_quick_psf() {
     assert!(!path.join("previous-generation").exists());
     compare(reference, &path);
 }
+
+#[test]
+fn a_relative_project_publishes_its_quick_psf() {
+    let directory = tempfile::tempdir().expect("directory");
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .current_dir(directory.path())
+        .args([
+            "--exact",
+            "relative_project_quick_psf_helper",
+            "--ignored",
+            "--nocapture",
+        ])
+        .output()
+        .expect("relative-project child");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "subprocess helper; its parent sets the child working directory"]
+fn relative_project_quick_psf_helper() {
+    let path = run(Path::new("."), "int_image", 1, "file");
+    let oracle = fixture();
+    let reference = &oracle["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .find(|case| case["name"] == "int_image")
+        .expect("image case")["psf"];
+    compare(reference, &path);
+}
