@@ -121,6 +121,14 @@ def main():
         else:
             raise AssertionError("Expected the unobservable/unknown-site refusal")
     plt.close("all")
+    utility = simutil(direction="J2000 00h00m00 -89d00m00", totaltime=0.0)
+    utility.telescopename = "ALMA"
+    utility.newfig(show=False)
+    result = utility.ephemeris("2014/01/01")
+    record["ephemerides"].append({"date": "2014/01/01", "usehourangle": True,
+        "direction": utility.direction, "telescope": "ALMA", "totaltime": 0.0,
+        "returns_none": result is None, "artists": artists(plt.gcf())})
+    plt.close("all")
     with gzip.open(root / "simutil-graphics-reference.json.gz", "wt") as output:
         json.dump(record, output, separators=(",", ":"))
     print(f"Recorded CASA {record['casa_version']}: lifecycle, {len(record['antennas'])} antenna, {len(record['images'])} image and {len(record['ephemerides'])} ephemeris cases")
