@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "audit_revision": "98a907c6c5d4f766e556de9b69b328952ef4330d",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -31,7 +31,8 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe-20261103"
+    "observe-20261103",
+    "predict-multiple-models-20261111"
    ]
   },
   "done": {
@@ -39,7 +40,8 @@
    "scope": "As close, and frees the tool.",
    "evidence": [
     "signature",
-    "binding-tests"
+    "binding-tests",
+    "predict-multiple-models-20261111"
    ]
   },
   "name": {
@@ -179,11 +181,12 @@
   },
   "predict": {
    "status": "Partial",
-   "scope": "Predicts image models (one Stokes I, J2000 image) and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Refused: several model images, model layouts casa-rs cannot read, refocusing to a field's distance, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, scans whose windows have different correlations, and an incremental predict after a corrupt with setgain or setleakage terms.",
+   "scope": "Predicts one or more Stokes I, J2000 image models and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Prepares all models before committing replacement or incremental DATA; each image has its own geometry (mosaic cache correction). Refused: model layouts casa-rs cannot read, refocusing to a field's distance, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, scans whose windows have different correlations, and an incremental predict after a corrupt with setgain or setleakage terms.",
    "evidence": [
     "signature",
     "binding-tests",
     "predict-image-20261103",
+    "predict-multiple-models-20261111",
     "predict-components-20261103",
     "predict-sd-20261103",
     "openfromms-20261103",
@@ -199,7 +202,8 @@
     "binding-tests",
     "predict-image-20261103",
     "predict-sd-20261103",
-    "refusals"
+    "refusals",
+    "predict-multiple-models-20261111"
    ],
    "issue": 1053
   },
@@ -545,12 +549,13 @@
    "id": "sdgrid-total-power-nonpositive-uvw",
    "record": "`SDGrid` predicts total power into cross-correlations with no positive uvw",
    "inputs": "sm.predict after setoptions(ftmachine='sd') with cross-correlation rows whose u, v and w are all zero or negative.",
-   "casa": "SDGrid::get leaves out rows with max(uvw)>0, meant to keep cross-correlations at zero, but a cross-correlation with all components zero or negative passes and gets total power (read from source; a two-antenna probe saw only positive-component rows).",
+   "casa": "SDGrid::get leaves out rows with max(uvw)>0, meant to keep cross-correlations at zero. The eight-antenna CASA 6.7.6.14 oracle reproduces nonzero total power in 56 of 112 cross-correlation rows, alongside 32 autocorrelations; raw DATA is retained in the committed fixture.",
    "ours": "Predicts total power into autocorrelations only.",
    "rationale": "The test was meant to keep cross-correlations at zero.",
    "impact": "Cross-correlations of a single-dish prediction stay zero regardless of uvw sign.",
    "evidence": [
-    "bugs-record"
+    "bugs-record",
+    "predict-multiple-models-20261111"
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
@@ -573,12 +578,13 @@
    "id": "close-aborts-after-mosaic-predict",
    "record": "`sm.close()` aborts the process after a mosaic predict",
    "inputs": "setoptions(ftmachine='mosaic'), a successful predict, then sm.close() (simobserve's own sequence).",
-   "casa": "CASA 6.7.6 sm.close() kills the Python process with 'Pure virtual function called!' and SIGABRT (exit 134); DATA is already complete on disk.",
+   "casa": "CASA 6.7.6 sm.close() kills the Python process with 'Pure virtual function called!' and SIGABRT (exit 134); DATA is already complete on disk. The 14-case multi-image oracle reproduces the cleanup abort after sm.done(); a duplicate-model run also produced SIGBUS after preserving complete DATA.",
    "ours": "Close returns normally; the CASA oracle runs these scenarios in a child process and records close as aborted.",
    "rationale": "An abort at close is a defect, not behaviour to copy.",
    "impact": "Scripts do not die at close in casa-rs.",
    "evidence": [
-    "bugs-record"
+    "bugs-record",
+    "predict-multiple-models-20261111"
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
@@ -974,6 +980,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "mosaic-multiple-models-cache-geometry",
+   "record": "Mosaic multi-image prediction depends on image order",
+   "inputs": "sm.predict with two differently sized Stokes I images through the mosaic machine, in both orders, compared with independent single-image predictions.",
+   "casa": "CASA 6.7.6.14 joint predictions differ from the independent sum by 0.00353/0.0326 NRMS, and swapping the images changes DATA by 0.0307. The public convolution-cache key omits image geometry; repeated identical images accumulate correctly.",
+   "ours": "Prepares every image with its own geometry and sums the predictions, matching the independent CASA single-image sum to 2.11e-6 NRMS.",
+   "rationale": "SkyEquation intends to add every model image. Reusing an earlier image geometry corrupts DATA according to model order.",
+   "impact": "Multi-image mosaic prediction is linear across models; raw defective CASA joint outputs remain recorded and tested separately.",
+   "evidence": [
+    "bugs-record",
+    "predict-multiple-models-20261111"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
   }
  ],
  "evidence": {
@@ -985,7 +1006,8 @@
     "crates/casars-python/python/tests/data/casa_simulator_signatures.json",
     "crates/casars-python/python/tests/test_tools_simulator.py",
     "crates/casars-python/src/tools/simulator/surface.rs"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "refusals": {
    "kind": "Refusal records and tests",
@@ -994,7 +1016,8 @@
    "links": [
     "crates/casa-simulation/tests/refusals_name_an_issue.rs",
     "crates/casars-python/python/tests/test_tools_simulator.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "binding-tests": {
    "kind": "Python binding tests",
@@ -1002,7 +1025,8 @@
    "scope": "CASA's return values, logged errors, raised errors and state for each method, on CASA's messages.",
    "links": [
     "crates/casars-python/python/tests/test_tools_simulator.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "observe": {
    "kind": "CASA-paired MeasurementSets (PR-reported)",
@@ -1017,7 +1041,8 @@
     "tools/simulation/casa_sm_observe_oracle.py",
     "tools/simulation/compare_sm_ms.py"
    ],
-   "superseded_by": "observe-20261103"
+   "superseded_by": "observe-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "scripts": {
    "kind": "CASA sm scripts run unchanged (PR-reported)",
@@ -1027,7 +1052,8 @@
    "links": [
     "https://github.com/bglenden/casa-rs/pull/851",
     "tools/simulation/sm_scripts/run_sm_scripts.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-image": {
    "kind": "CASA-paired predictions (PR-reported)",
@@ -1045,7 +1071,8 @@
     "tools/simulation/casa_sm_predict_oracle.py",
     "tools/simulation/compare_sm_ms.py"
    ],
-   "superseded_by": "predict-image-20261103"
+   "superseded_by": "predict-image-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-components": {
    "kind": "CASA-paired component predictions (PR-reported)",
@@ -1056,7 +1083,8 @@
     "https://github.com/bglenden/casa-rs/pull/872",
     "tools/simulation/sm_components_scenarios.json"
    ],
-   "superseded_by": "predict-components-20261103"
+   "superseded_by": "predict-components-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-sd": {
    "kind": "CASA-paired total-power predictions (PR-reported)",
@@ -1067,7 +1095,8 @@
     "https://github.com/bglenden/casa-rs/pull/874",
     "tools/simulation/sm_sd_scenarios.json"
    ],
-   "superseded_by": "predict-sd-20261103"
+   "superseded_by": "predict-sd-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "openfromms": {
    "kind": "CASA-paired openfromms runs (PR-reported)",
@@ -1078,7 +1107,8 @@
     "https://github.com/bglenden/casa-rs/pull/886",
     "tools/simulation/sm_openfromms_scenarios.json"
    ],
-   "superseded_by": "openfromms-20261103"
+   "superseded_by": "openfromms-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "noise": {
    "kind": "CASA-paired noise statistics (PR-reported)",
@@ -1094,7 +1124,8 @@
     "tools/simulation/sm_atm_scenarios.json",
     "tools/simulation/corruption_stats.py"
    ],
-   "superseded_by": "noise-20261103"
+   "superseded_by": "noise-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "corruptions": {
    "kind": "CASA-paired corruption statistics and tables (PR-reported)",
@@ -1108,7 +1139,8 @@
     "tools/simulation/sm_corrupt_scenarios.json",
     "tools/simulation/corruption_stats.py"
    ],
-   "superseded_by": "corruptions-20261103"
+   "superseded_by": "corruptions-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "troposphere": {
    "kind": "CASA-paired tropospheric phase (PR-reported)",
@@ -1121,7 +1153,8 @@
     "tools/simulation/sm_trop_scenarios.json",
     "tools/simulation/troposphere_stats.py"
    ],
-   "superseded_by": "troposphere-20261103"
+   "superseded_by": "troposphere-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "bugs-record": {
    "kind": "Deviation record",
@@ -1129,7 +1162,8 @@
    "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
    "links": [
     "docs/CASA (C++) bugs.md"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "observe-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1144,7 +1178,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT observe (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-image-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1159,7 +1194,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT predict (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-components-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1174,7 +1210,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT components (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-sd-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1189,7 +1226,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT sd (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "openfromms-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1204,7 +1242,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT openfromms (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "noise-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1220,7 +1259,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT noise atm (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "corruptions-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1235,7 +1275,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT corrupt (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "troposphere-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1250,7 +1291,24 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT trop (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
+  },
+  "predict-multiple-models-20261111": {
+   "kind": "Independent CASA golden DATA and corrected-behavior laws",
+   "state": "passed",
+   "result": "14 cases pass with one and three CPU workers; 12 applicable cases also pass on the actual Metal device. DATA NRMS is at most 2.55e-6 (limit 1e-3); Metal/CPU maximum relative error is at most 3.16e-7 (limit 1e-4). Eleven cases use raw CASA, two mosaic cases use independent CASA image sums, and SD compares CASA autocorrelations plus exact zero cross-correlations. Later admission failure preserves the old plan and releases temporary reservations.",
+   "scope": "Multiple image sizes and spectral planes, duplicates, replacement, incremental, zero first image, components, setvp, GridFT, WProjectFT, mosaic and SDGrid. Raw CASA mosaic ordering and SDGrid cross-correlation defects are preserved; does not claim all image layouts or FT machines.",
+   "links": [
+    "tools/simulation/sm_multiple_models_oracle.py",
+    "crates/casa-simulation/tests/predict_multiple_models.rs",
+    "crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "459122e01bb25fbb57c5002a1b09726e4e791389",
+   "command": "CASAPY tools/simulation/sm_multiple_models_oracle.py --out OUT --fixture FIXTURE; cargo test -p casa-simulation --test predict_multiple_models -- --nocapture (bg-mac-mini, CPU one and three workers, Metal three workers)",
+   "receipt": "resources/casa-compat/evidence/sm-multiple-models-20261111.json",
+   "source_revision": "459122e01bb25fbb57c5002a1b09726e4e791389"
   }
  }
 }
