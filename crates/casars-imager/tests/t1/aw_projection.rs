@@ -791,6 +791,9 @@ fn an_aw_cube_nearest_samples_a_multichannel_window() {
 /// plane is outside the selected native span and remains blank (#1121).
 #[test]
 fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+
     let setup = Setup {
         spectral_windows: vec![SyntheticSpectralSetup {
             channel_count: 3,
@@ -809,7 +812,24 @@ fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
     request["start"] = json!(1);
     request["width"] = json!(1);
     request["nchan"] = json!(3);
-    let (_, products) = observation.image("aw-offset-linear", request);
+    let (_, products) = observation.image("aw-offset-linear", request.clone());
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 3);
+    assert!(weights[0] > 0.0 && weights[1] > 0.0, "{weights:?}");
+    assert_eq!(weights[2], 0.0, "{weights:?}");
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open the test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .expect("tag the observed frequencies as TOPO");
+    ms.save().expect("save the converted test MS");
+    drop(ms);
+
+    request["native_cf_cache"] = json!(observation.scratch("topo-linear-cf"));
+    request["start"] = json!("1.507GHz");
+    request["width"] = json!("8MHz");
+    let (_, products) = observation.image("aw-converted-offset-linear", request);
     let weights = products.get(".sumwt").channel_values();
     assert_eq!(weights.len(), 3);
     assert!(weights[0] > 0.0 && weights[1] > 0.0, "{weights:?}");
