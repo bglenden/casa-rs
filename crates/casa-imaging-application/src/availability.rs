@@ -49,7 +49,7 @@ pub enum Unsupported {
     /// W-facet modes outside the verified scalar continuum scope (#1063).
     FacetedWMode,
     /// Multi-channel AW cubes use nearest sampling outside REST, and
-    /// linear sampling on a native LSRK grid (#1121).
+    /// linear sampling to LSRK from LSRK or the verified TOPO scope (#1121).
     MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
@@ -97,7 +97,8 @@ impl fmt::Display for Unsupported {
             ),
             Self::MultiChannelWindowAwCube => formatter.write_str(
                 "AW projection of a multi-channel window supports nearest outside the rest frame \
-                 and linear on a native LSRK grid; other cube modes wait for #1121",
+                 and linear to LSRK from LSRK, or from TOPO with natural, Briggs or uniform \
+                 weighting; other cube modes wait for #1121",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -300,6 +301,7 @@ pub fn check(
             problem.science().spectral().sampling().kernel(),
             problem.geometry().spectral().source_frame(),
             problem.geometry().spectral().output_frame(),
+            problem.weighting().scheme(),
         )
     {
         unsupported.push(Unsupported::MultiChannelWindowAwCube);
@@ -396,15 +398,28 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
 
 /// Nearest uses the native channels. Linear carries each interpolated
 /// sample's frequency and plane together through the shared resampler.
-/// The CASA-paired linear scope uses LSRK on both axes (#1121).
+/// Linear TOPO-to-LSRK uses the same resampler with the row's converted
+/// frequencies. The converted comparisons cover natural, Briggs and
+/// uniform weighting (#1121).
 fn aw_multichannel_sampling_supported(
     kernel: SpectralKernel,
     source: FrequencyFrame,
     output: FrequencyFrame,
+    weighting: WeightingScheme,
 ) -> bool {
     match kernel {
         SpectralKernel::Nearest => output != FrequencyFrame::Rest,
-        SpectralKernel::Linear => source == FrequencyFrame::Lsrk && output == FrequencyFrame::Lsrk,
+        SpectralKernel::Linear => {
+            output == FrequencyFrame::Lsrk
+                && (source == FrequencyFrame::Lsrk
+                    || (source == FrequencyFrame::Topocentric
+                        && matches!(
+                            weighting,
+                            WeightingScheme::Natural
+                                | WeightingScheme::Briggs { .. }
+                                | WeightingScheme::Uniform
+                        )))
+        }
         _ => false,
     }
 }
@@ -414,30 +429,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn multi_channel_aw_accepts_linear_on_a_native_lsrk_grid() {
+    fn multi_channel_aw_accepts_linear_to_lsrk_from_lsrk_or_verified_topo() {
+        let lsrk = FrequencyFrame::Lsrk;
+        let topo = FrequencyFrame::Topocentric;
+        let natural = WeightingScheme::Natural;
         for frame in [
-            FrequencyFrame::Lsrk,
-            FrequencyFrame::Topocentric,
+            lsrk,
+            topo,
             FrequencyFrame::Barycentric,
             FrequencyFrame::Rest,
         ] {
-            let lsrk = FrequencyFrame::Lsrk;
             assert_eq!(
-                aw_multichannel_sampling_supported(SpectralKernel::Nearest, lsrk, frame),
+                aw_multichannel_sampling_supported(SpectralKernel::Nearest, lsrk, frame, natural),
                 frame != FrequencyFrame::Rest,
             );
-            assert_eq!(
-                aw_multichannel_sampling_supported(SpectralKernel::Linear, frame, lsrk),
-                frame == lsrk,
-                "linear from {frame:?}",
-            );
-            assert_eq!(
-                aw_multichannel_sampling_supported(SpectralKernel::Linear, lsrk, frame),
-                frame == lsrk,
-                "linear to {frame:?}",
-            );
+            for (weighting, converted) in [
+                (natural, true),
+                (WeightingScheme::Briggs { robust: 0.5 }, true),
+                (WeightingScheme::Uniform, true),
+                (WeightingScheme::Radial, false),
+                (
+                    WeightingScheme::BriggsAbsolute {
+                        robust: 0.5,
+                        noise_jy: 1.0,
+                    },
+                    false,
+                ),
+                (WeightingScheme::BriggsBandwidthTaper { robust: 0.5 }, false),
+            ] {
+                assert_eq!(
+                    aw_multichannel_sampling_supported(
+                        SpectralKernel::Linear,
+                        frame,
+                        lsrk,
+                        weighting
+                    ),
+                    frame == lsrk || (frame == topo && converted),
+                    "linear from {frame:?} with {weighting:?}",
+                );
+                for source in [lsrk, topo] {
+                    assert_eq!(
+                        aw_multichannel_sampling_supported(
+                            SpectralKernel::Linear,
+                            source,
+                            frame,
+                            weighting
+                        ),
+                        frame == lsrk && (source == lsrk || converted),
+                        "linear from {source:?} to {frame:?} with {weighting:?}",
+                    );
+                }
+            }
             for kernel in [SpectralKernel::Cubic, SpectralKernel::Identity] {
-                assert!(!aw_multichannel_sampling_supported(kernel, lsrk, frame));
+                assert!(!aw_multichannel_sampling_supported(
+                    kernel, lsrk, frame, natural
+                ));
+                assert!(!aw_multichannel_sampling_supported(
+                    kernel, topo, frame, natural
+                ));
             }
         }
     }

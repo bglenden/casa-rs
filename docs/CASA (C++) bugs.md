@@ -4090,6 +4090,16 @@ casa-rs keeps each interpolated sample's output plane and frequency together
 through gridding and convolution-cell selection. This is the mapping used by
 the shared spectral resampler.
 
+For converted TOPO-to-LSRK sampling, the offset and width-two comparisons
+use the executing standard CASA gridder's interpolated samples. Putting
+the captured samples on a copy of the measurement set reproduces the
+standard linear products. CASA AW nearest then grids those samples with
+the original channel count and convolution cache. In the width-two
+control, the channel-width metadata is set so CASA selects the cell for
+the actual sample frequency, accounting for its averaged-width CF lookup
+described above. Both comparisons retain the image grid and check the
+output masks and predictions.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
