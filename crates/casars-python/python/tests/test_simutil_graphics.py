@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -18,11 +19,25 @@ from casars.simutil import simutil
 
 REPOSITORY = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPOSITORY / "tools/simulation"))
-from check_simobserve_rendering import compare
+from check_simobserve_rendering import compare as compare_artists
 from simobserve_graphics_oracle import artists
 
 with gzip.open(Path(__file__).with_name("data") / "casa_simutil_graphics.json.gz", "rt") as source:
     REFERENCE = json.load(source)
+
+
+def compare(actual, expected):
+    maximum = compare_artists(actual, expected)
+    output = os.environ.get("CASA_RS_SIMUTIL_GRAPHICS_RECEIPT")
+    if output:
+        images = []
+        for panel, reference in zip(actual, expected, strict=True):
+            for image, truth in zip(panel["images"], reference["images"], strict=True):
+                pixels, values = np.asarray(image["pixels"]), np.asarray(truth["pixels"])
+                images.append(float(np.linalg.norm(pixels - values) / np.linalg.norm(values)))
+        with open(output, "a", encoding="utf-8") as destination:
+            destination.write(json.dumps({"case": os.environ["PYTEST_CURRENT_TEST"], "max_coordinate_difference_in_display_units": maximum, "image_nrms": images}) + "\n")
+    return maximum
 
 
 @pytest.fixture(autouse=True)
