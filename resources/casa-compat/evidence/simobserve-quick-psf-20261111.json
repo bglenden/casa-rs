@@ -1,0 +1,148 @@
+{
+ "schema": "simobserve-quick-psf-receipt/1",
+ "work_issue": 1053,
+ "graphics_issue": 1025,
+ "date": "2026-11-11",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "d10248c92b218b1ca1a713d256972c7884f66527",
+ "source_revision": "d10248c92b218b1ca1a713d256972c7884f66527",
+ "native_test_binary_sha256": "67bf11d84af0d263ed37dedae666e44d1b5c504c6a8c1a9414e7bd24ae8165cb",
+ "build": "macOS arm64, rustc 1.99.0; debug without incremental compilation or debug info; a private source archive plus mtime-refreshed overlays of the exact committed sources",
+ "commands": [
+  "CASAPY tools/simulation/simobserve_graphics_oracle.py --out target/graphics-control-reference",
+  "RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture",
+  "RUST_TEST_THREADS=1 cargo test -p casa-imaging-application --lib legacy_padding_is_only_available -- --nocapture",
+  "CASAPY tools/simulation/check_quick_psf_casa.py --native TARGET/quick-reviewed --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT",
+  "cargo clippy -p casa-imaging-application -p casa-imaging-products -p casa-simulation -p casars-simulation --all-targets -- -D warnings",
+  "RUST_TEST_THREADS=1 cargo test -p casars-imager --test t1 standard_mfs -- --nocapture"
+ ],
+ "fixture": {
+  "path": "crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz",
+  "sha256": "72a09ffddf1ec13ca251c8fa45ae3e4c84d9e97a9168d3438c5acd24d4d79cff",
+  "inputs": "Synthetic two-point 64x64 image and independent 1-Jy component model, 230 GHz with 1 GHz width, eight 12-m ALMA pads, four 10-second integrations; recipe is committed."
+ },
+ "alignment": "Native hourangle=35s compensates the approved CASA TAI-labelled-UTC offset at 2014-01-01, so the observation times and UVW match.",
+ "comparison": {
+  "pixels": "All pixels finite; full-image DATA normalized RMS <=1e-3. No near-zero exclusion or pixel thinning.",
+  "metadata": "Exact shape/unit/beam presence; coordinate reference, reference pixel and increments relative tolerance 1e-12.",
+  "ordinary_imaging_control": "Separate CASA tclean reference retains padding 1.2; native default padding is unset. Full PSF pixels and sumwt (relative tolerance 5e-5) are checked.",
+  "backend": "Diagnostic grid always CPU/f64. Actual Metal-session DATA prediction is exercised; diagnostic images are compared with CPU-session images using unchanged maximum-relative limit 1e-4."
+ },
+ "cases": [
+  {
+   "name": "int_image",
+   "shape": [
+    128,
+    128,
+    1,
+    1
+   ],
+   "data_nrms": 6.626962629e-07,
+   "cpu_workers": [
+    1,
+    3
+   ],
+   "metal_session_max_relative": 0.0
+  },
+  {
+   "name": "int_components",
+   "shape": [
+    152,
+    152,
+    1,
+    1
+   ],
+   "data_nrms": 2.062743356e-07,
+   "cpu_workers": [
+    1,
+    3
+   ],
+   "metal_session_max_relative": 0.0
+  },
+  {
+   "name": "default_tclean_control",
+   "shape": [
+    128,
+    128,
+    1,
+    1
+   ],
+   "data_nrms": 1.226424541e-07,
+   "sumwt": 224.0,
+   "sumwt_relative_limit": 5e-05
+  }
+ ],
+ "scope_checks": {
+  "file_screen_both": "Produce the numerical quick PSF.",
+  "none_and_single_dish": "Do not produce a numerical quick PSF.",
+  "repeat_overwrite": "Regression fails before review fix with Directory not empty; after the fix, atomically replaces the complete old image, removes an old-generation marker, and agrees with CASA.",
+  "padding_admission": "Regression before fix accepts padding=2 with virtual-model saving; after fix rejects it before execution, plus unverified factors, backends, precisions and execution modes.",
+  "cpp_readback": "Four native images read by casatools.image; shapes, units, coordinates, beam presence and full pixel values agree."
+ },
+ "diagnosis": {
+  "legacy_padding": "CASA legacy Imager::createFTMachine uses padding 1.0 for single-field GridFT; tclean uses 1.2. Using 1.2 for the quick PSF gave NRMS 0.1248259397; CASA tclean versus CASA quick PSF differs by 0.12482595199.",
+  "metal_unpadded_probe": "Metal quick-PSF grid had NRMS 5.6695e-5 but maximum-relative 4.273904487e-4, exceeding the unchanged 1e-4 backend law. CPU/f64 is selected for this small diagnostic; simulation prediction still honors its requested backend.",
+  "failed_probe": "An initial wrong-site synthetic configuration produced a zero CASA PSF and fit failure. It is not passing evidence. A corrected ALMA-site probe succeeds, including a separate narrowband control."
+ },
+ "review": {
+  "revision": "471a792c2024d1ea8e0eb7c1bf0925100255646d",
+  "reviewer": "Fresh-context Astra xhigh, one round as required by AGENTS.md",
+  "findings": [
+   "P1: repeated quick-PSF publication fails on an existing directory.",
+   "P2: arbitrary native padding could exceed virtual-model memory admission."
+  ],
+  "resolution": "d10248c92b218b1ca1a713d256972c7884f66527",
+  "regressions": "Both reproduced before fixes and pass afterward. No re-review."
+ },
+ "limits": "Numerical quick-PSF correctness only; PNG rendering remains unfinished and warns. Raw CASA plot artists are retained for subsequent rendering acceptance, not claimed as native rendering. Debug tests do not establish performance acceptance. Existing unrelated main blockers are #1253 (resample.rs size) and #1262 (two stale MVC assertions). The external legacy T1.5 fixture harness was not run; independent committed CASA PSF and default-tclean/sumwt controls were run.",
+ "cpp_readback": {
+  "source_revision": "d10248c92b218b1ca1a713d256972c7884f66527",
+  "passed": 4,
+  "data_nrms_max": 6.626962628684081e-07,
+  "command": "CASAPY tools/simulation/check_quick_psf_casa.py --native TARGET/quick-reviewed --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT"
+ },
+ "verification": {
+  "source_revision": "d10248c92b218b1ca1a713d256972c7884f66527",
+  "command": "RUST_TEST_THREADS=1 cargo test -p casa-imaging-products -p casa-imaging-application -p casa-simulation -p casars-simulation --no-fail-fast",
+  "counts": {
+   "casa_imaging_application": {
+    "passed": 336,
+    "failed": 2,
+    "ignored": 19
+   },
+   "casa_imaging_products": {
+    "passed": 108,
+    "failed": 0,
+    "ignored": 0
+   },
+   "casa_simulation": {
+    "passed": 297,
+    "failed": 0,
+    "ignored": 1
+   },
+   "casars_simulation": {
+    "passed": 7,
+    "failed": 0,
+    "ignored": 0
+   }
+  },
+  "failed_tests": [
+   "test compile::mvc::tests::native_mvc_refuses_unimplemented_execution_modes ... FAILED",
+   "test mvc_compile_law::mvc_compiles_the_cube_view_from_the_full_selected_band ... FAILED"
+  ],
+  "additional": {
+   "t1_standard_mfs": {
+    "passed": 13,
+    "filtered_out": 181
+   },
+   "all_target_clippy": "passed",
+   "fmt": "passed",
+   "docs_check": "passed",
+   "architecture": "only unchanged imaging-operator/tests/resample.rs file-length violation (#1253); all preceding architecture checks pass",
+   "baseline_failures": "Two unchanged main MVC assertions (#1262), independently reproduced on unchanged main imaging-application sources."
+  }
+ }
+}

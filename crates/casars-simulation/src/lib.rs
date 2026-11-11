@@ -343,6 +343,7 @@ mod tests {
             "p.alma.out01.ms",
             "p.alma.out01.noisy.ms",
             "p.alma.out01.skymodel.flat",
+            "p.alma.out01.quick.psf",
             "p.alma.out01.ptg.txt",
             "p.alma.out01.fullpol.cal",
         ]
@@ -358,6 +359,7 @@ mod tests {
                 ("ms".to_string(), RunProductKind::MeasurementSet),
                 ("noisy.ms".to_string(), RunProductKind::MeasurementSet),
                 ("skymodel.flat".to_string(), RunProductKind::CasaImage),
+                ("quick.psf".to_string(), RunProductKind::CasaImage),
                 ("ptg.txt".to_string(), RunProductKind::File),
                 ("fullpol.cal".to_string(), RunProductKind::CasaTable),
             ]
