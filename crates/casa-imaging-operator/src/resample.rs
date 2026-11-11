@@ -726,6 +726,8 @@ pub struct SpectralResampler {
     /// Whether a prediction degrids autocorrelation rows
     /// ([`Self::predicting_autocorrelations`]).
     autocorrelations: bool,
+    /// The source span excludes the last output plane from gridding.
+    omit_terminal_plane: bool,
 }
 
 impl SpectralResampler {
@@ -741,6 +743,7 @@ impl SpectralResampler {
             sampling: Sampling::Direct,
             basis,
             autocorrelations: false,
+            omit_terminal_plane: false,
         })
     }
 
@@ -758,7 +761,23 @@ impl SpectralResampler {
                 planes: output.channels,
             },
             autocorrelations: false,
+            omit_terminal_plane: false,
         }
+    }
+
+    /// Exclude a source-proved out-of-band last plane when gridding a
+    /// multi-plane interpolated axis. Prediction keeps the full cube basis.
+    #[must_use]
+    pub const fn with_terminal_plane_outside(mut self, outside: bool) -> Self {
+        self.omit_terminal_plane = outside;
+        self
+    }
+
+    fn gridding_axis(&self, mut axis: SpectralAxis) -> SpectralAxis {
+        if self.omit_terminal_plane && axis.channels > 1 {
+            axis.channels -= 1;
+        }
+        axis
     }
 
     /// This resampler, predicting autocorrelation rows as well: each is
@@ -880,6 +899,7 @@ impl SpectralResampler {
             basis: Basis::ChannelLocal {
                 planes: axis.channels,
             },
+            omit_terminal_plane: false,
             ..*self
         })
     }
@@ -1217,10 +1237,11 @@ impl SpectralResampler {
             Sampling::Nearest(axis) => nearest(axis, &mut visit),
             // CASA bypasses interpolation for a one-channel image or row.
             Sampling::Interpolated(axis, _) if axis.channels == 1 || native.len() == 1 => {
-                nearest(axis, &mut visit);
+                nearest(self.gridding_axis(axis), &mut visit);
             }
             Sampling::Interpolated(axis, order) => {
-                let Some(grid) = FineGrid::compile(axis, native[1] - native[0]) else {
+                let Some(grid) = FineGrid::compile(self.gridding_axis(axis), native[1] - native[0])
+                else {
                     return;
                 };
                 let count = grid.count();
