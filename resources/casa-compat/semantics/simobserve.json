@@ -26,7 +26,8 @@
     "task-tests",
     "parity-20261103",
     "skymodel-fixture",
-    "model-overrides-20261111"
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -53,7 +54,8 @@
     "task-tests",
     "parity-20261103",
     "skymodel-fixture",
-    "model-overrides-20261111"
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -67,7 +69,8 @@
     "task-tests",
     "parity-20261103",
     "skymodel-fixture",
-    "model-overrides-20261111"
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -107,7 +110,8 @@
     "task-tests",
     "parity-20261103",
     "skymodel-fixture",
-    "model-overrides-20261111"
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -121,7 +125,8 @@
     "task-tests",
     "parity-20261103",
     "skymodel-fixture",
-    "model-overrides-20261111"
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -137,7 +142,8 @@
     "skymodel-fixture",
     "casa-suite-20261103",
     "refusals-1099-20261104",
-    "model-overrides-20261111"
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -150,7 +156,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "pointings-20261111"
+    "pointings-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -163,7 +170,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "pointings-20261111"
+    "pointings-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -200,7 +208,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "pointings-20261111"
+    "pointings-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -213,7 +222,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "scheduling-20261111"
+    "scheduling-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -226,7 +236,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "pointings-20261111"
+    "pointings-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "pointings"
@@ -275,7 +286,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "scheduling-20261111"
+    "scheduling-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "schedule"
@@ -288,7 +300,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "scheduling-20261111"
+    "scheduling-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "schedule"
@@ -301,7 +314,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "pointings-20261111"
+    "pointings-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "schedule"
@@ -353,7 +367,8 @@
     "task-tests",
     "parity-20261103",
     "frequency-frames-20261106",
-    "additional-frames-20261111"
+    "additional-frames-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "observation"
@@ -510,7 +525,8 @@
    "evidence": [
     "task-tests",
     "parity-20261103",
-    "model-overrides-20261111"
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ]
   },
   {
@@ -534,7 +550,8 @@
     "task-tests",
     "parity-20261103",
     "scheduling-20261111",
-    "pointings-20261111"
+    "pointings-20261111",
+    "main-integration-20261111"
    ]
   },
   {
@@ -546,7 +563,8 @@
    "evidence": [
     "task-tests",
     "parity-20261103",
-    "scheduling-20261111"
+    "scheduling-20261111",
+    "main-integration-20261111"
    ]
   },
   {
@@ -559,7 +577,8 @@
     "task-tests",
     "parity-20261103",
     "frequency-frames-20261106",
-    "additional-frames-20261111"
+    "additional-frames-20261111",
+    "main-integration-20261111"
    ]
   },
   {
@@ -887,6 +906,21 @@
    "source_revision": "e57cf38dcf50f986aa17538ca630904f59dbfe64",
    "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-pointing-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only pointing_file_multiple pointing_explicit_spacing",
    "receipt": "resources/casa-compat/evidence/simobserve-pointings-20261111.json"
+  },
+  "main-integration-20261111": {
+   "kind": "Source-verified repaired-main CASA task replay",
+   "state": "passed",
+   "result": "All 17 named model/frame/scheduling/pointing cases agree: 16 successes and the expected coarse-cell refusal. Maximum reported DATA NRMS 1.05e-6 against 1e-3; UVW 1.61e-6 m against the existing 1e-3 m oracle gate. Pointing files are byte-identical.",
+   "scope": "The exact four preceding 2026-11-11 coverage groups, freshly rerun on repaired main with a source-audited release binary; bounded correctness only.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d5923d215f54c134d477cf246ef875fe19328e50",
+   "source_revision": "d5923d215f54c134d477cf246ef875fe19328e50",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simobserve-main-integration-20261111.json"
   }
  }
 }
