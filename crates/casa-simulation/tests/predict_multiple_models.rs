@@ -2,18 +2,20 @@
 //! Multi-image prediction against independent CASA 6.7.6.14 DATA (#1053).
 //! The oracle preserves mosaic DATA before CASA's known cleanup abort.
 
+mod pass_summary;
 mod predict_support;
 
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use casa_imaging_runtime::reserved_memory;
-use casa_simulation::{PredictSpec, PredictionOptions, Simulator, VoltagePatternSpec};
+use casa_imaging_runtime::{HostResources, ResourcePolicy, reserved_memory};
+use casa_simulation::{
+    BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, VoltagePatternSpec,
+};
 use flate2::read::GzDecoder;
 use predict_support::{
-    CENTRE_RAD, N, Row, read_main, resources, scan, session, write_model, write_model_of,
-    write_point_list,
+    CENTRE_RAD, N, Row, read_main, scan, session, write_model, write_model_of, write_point_list,
 };
 use serde_json::Value;
 
@@ -41,18 +43,32 @@ fn models(directory: &Path) -> BTreeMap<&'static str, PathBuf> {
     BTreeMap::from([("a", a), ("b", b), ("zero", zero)])
 }
 
-fn observed(path: &Path, workers: usize, budget: u64) -> Simulator {
-    let mut sm = session(path, "ALMA", "XX YY", resources(workers, budget));
+fn observed(path: &Path, workers: usize, budget: u64, backend: BackendRequest) -> Simulator {
+    let resources = SessionResources::pinned(
+        HostResources {
+            threads: 8,
+            performance_cores: 8,
+            available_memory: 8 << 30,
+            metal: backend == BackendRequest::Metal,
+        },
+        ResourcePolicy::Explicit {
+            workers,
+            memory: budget,
+        },
+        backend,
+    )
+    .expect("resources");
+    let mut sm = session(path, "ALMA", "XX YY", resources);
     sm.observe(&scan("target", 0.0, 20.0)).expect("observe");
     sm.observe(&scan("offset", 20.0, 40.0)).expect("observe");
     sm
 }
 
-fn run_case(case: &Value, workers: usize) -> Vec<Row> {
+fn run_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Row> {
     let directory = tempfile::tempdir().expect("temporary directory");
     let models = models(directory.path());
     let path = directory.path().join("multi.ms");
-    let mut sm = observed(&path, workers, 2 << 30);
+    let mut sm = observed(&path, workers, 2 << 30, backend);
     let machine = case["machine"].as_str().unwrap_or("ft");
     sm.set_options(&PredictionOptions {
         ftmachine: machine.to_string(),
@@ -93,8 +109,34 @@ fn run_case(case: &Value, workers: usize) -> Vec<Row> {
         incremental: case["incremental"].as_bool().unwrap_or(false),
     })
     .unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
-    sm.close().expect("close, including after mosaic predict");
+    let ((), summary) = pass_summary::capture(|| {
+        sm.close().expect("close, including after mosaic predict");
+    });
+    if backend == BackendRequest::Metal {
+        assert_eq!(summary.expect("prediction summary").backend, "Metal");
+    }
     read_main(&path).0
+}
+
+fn assert_metal(case: &Value, reference: &Value, cpu: &[Row]) {
+    let metal = run_case(case, 3, BackendRequest::Metal);
+    assert_casa(reference, &metal);
+    let (mut error, mut peak) = (0.0_f32, 0.0_f32);
+    assert_eq!(metal.len(), cpu.len());
+    for (m, c) in metal.iter().zip(cpu) {
+        assert_eq!(m.data.len(), c.data.len());
+        for (m, c) in m.data.iter().zip(&c.data) {
+            error = error.max((m - c).norm());
+            peak = peak.max(c.norm());
+        }
+    }
+    assert!(peak > 0.0);
+    let ratio = error / peak;
+    println!(
+        "{}: Metal/CPU maximum relative error {ratio:.9e}",
+        case["name"]
+    );
+    assert!(ratio <= 1e-4, "Metal/CPU law: {ratio} exceeds 1e-4");
 }
 
 fn assert_casa(case: &Value, actual: &[Row]) {
@@ -257,7 +299,7 @@ fn a_failed_later_model_keeps_the_plan_and_releases_its_admission(reference: &Va
         &[vec![(2048, 2048, 1.0)]],
     );
     let path = directory.path().join("atomic.ms");
-    let mut sm = observed(&path, 1, 256 << 20);
+    let mut sm = observed(&path, 1, 256 << 20, BackendRequest::Cpu);
     sm.predict(&PredictSpec {
         images: vec![models["a"].clone(), models["a"].clone()],
         ..PredictSpec::default()
@@ -289,12 +331,16 @@ fn multiple_model_predictions_match_casa_6_7_6_14() {
     let cases = fixture["cases"].as_array().expect("cases");
     assert_eq!(cases.len(), 14);
     the_raw_fixture_demonstrates_the_documented_casa_defects(cases);
+    let metal = HostResources::detect().expect("host resources").metal;
+    if !metal {
+        eprintln!("Metal comparisons skipped: no Metal device");
+    }
     let mut failed = Vec::new();
     for workers in [1, 3] {
         for case in cases {
             let reference = corrected_reference(case, cases);
             if std::panic::catch_unwind(|| {
-                let actual = run_case(case, workers);
+                let actual = run_case(case, workers, BackendRequest::Cpu);
                 if case["machine"] == "sd" {
                     for row in actual
                         .iter()
@@ -308,6 +354,14 @@ fn multiple_model_predictions_match_casa_6_7_6_14() {
                     }
                 }
                 assert_casa(&reference, &actual);
+                // SDGrid samples on the host; WProjectFT explicitly
+                // refuses Metal. The other machines must use the device.
+                if metal
+                    && workers == 3
+                    && !matches!(case["machine"].as_str(), Some("sd" | "wproject"))
+                {
+                    assert_metal(case, &reference, &actual);
+                }
             })
             .is_err()
             {
