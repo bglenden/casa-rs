@@ -45,8 +45,8 @@ pub use geometry::{
     ItrfPosition, MissingPointingPolicy, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
     PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PsfPhaseCentreLaw, RestFrequency, SkyDirection,
-    SpectralCoordinateSpec, SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes, UvwCoordinateLaw,
-    UvwUnit, VisibilityPhaseConvention,
+    SourceLsrkGrid, SpectralCoordinateSpec, SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes,
+    UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
 };
 pub use image_size::optimum_image_size;
 pub use restoring_beam::{FixedRestoringBeam, InvalidRestoringBeam};

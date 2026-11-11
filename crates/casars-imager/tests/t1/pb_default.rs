@@ -284,6 +284,170 @@ fn topo_cube_image_epoch_follows_the_first_selected_physical_row() {
     }
 }
 
+/// With no explicit start, the selected band sets the first output plane.
+/// An image that extends past the selection has no data in its last plane.
+#[test]
+fn topo_cube_partial_spw_starts_at_the_selected_band() {
+    let observation = topo_boundary_observation(1_000_000_118.0);
+    swap_first_and_last_rows(&observation);
+    let (_, products) = observation.image(
+        "topo-partial-spw",
+        json!({
+            "specmode": "cube", "spw": "0:1~4", "width": 1, "nchan": 5,
+            "niter": 0, "outframe": "TOPO", "weighting": "natural", "write_pb": true,
+        }),
+    );
+    let pb = products.get(".pb");
+    let first = pb.channel_frequency_hz(0);
+    assert!(
+        (first - 1_050_060_733.808_120_3).abs() < 0.5,
+        "first TOPO frequency {first}"
+    );
+    let sumwt = products.get(".sumwt");
+    assert!(sumwt.plane(1)[(0, 0)] > 0.0);
+    assert_eq!(sumwt.plane(4)[(0, 0)], 0.0);
+}
+
+/// Each saved TOPO control's rounded terminal centre equals its stored
+/// edge. The exact offsets put one inside and the other outside (#1198).
+#[test]
+fn topo_cube_uses_the_signed_terminal_coverage() {
+    use casa_types::ArrayValue;
+
+    let cases: [(&str, f64, f64, bool); 2] = [
+        (
+            "inside",
+            1_472_729_859.209_733_5,
+            13_503_932.928_956_198,
+            true,
+        ),
+        (
+            "outside",
+            1_504_182_515.244_028,
+            41_449_835.642_899_655,
+            false,
+        ),
+    ];
+    for (name, first, width, expected) in cases {
+        let observation = topo_boundary_observation(first);
+        swap_first_and_last_rows(&observation);
+        let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+        let mut spw = ms.spectral_window_mut().unwrap();
+        let centres = (0..5)
+            .map(|plane| first + f64::from(plane) * width)
+            .collect();
+        for (column, values) in [("CHAN_FREQ", centres), ("CHAN_WIDTH", vec![width; 5])] {
+            spw.set_array(
+                0,
+                column,
+                ArrayValue::Float64(ndarray::ArrayD::from_shape_vec(vec![5], values).unwrap()),
+            )
+            .unwrap();
+        }
+        ms.save().unwrap();
+        drop(ms);
+        let (_, products) = observation.image(
+            &format!("topo-terminal-{name}"),
+            json!({
+                "specmode": "cube", "spw": "0", "start": 0, "width": 1, "nchan": 5,
+                "niter": 0, "outframe": "TOPO", "weighting": "natural", "write_pb": true,
+            }),
+        );
+        let sumwt = products.get(".sumwt");
+        for plane in 0..4 {
+            assert!(sumwt.plane(plane)[(0, 0)] > 0.0, "{name} plane {plane}");
+        }
+        let terminal_weight = sumwt.plane(4)[(0, 0)];
+        if expected {
+            assert!(terminal_weight > 0.0, "{name}: {terminal_weight}");
+        } else {
+            assert_eq!(terminal_weight, 0.0, "{name}");
+        }
+        assert!(products.get(".pb").channel_frequency_hz(4) > first);
+    }
+}
+
+/// The paired irregular-channel TOPO fixture, including its physical row order.
+fn irregular_topo_observation() -> Observation {
+    use casa_types::ArrayValue;
+    let observation = topo_boundary_observation(1_000_000_118.0);
+    swap_first_and_last_rows(&observation);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let frequencies = vec![
+        1_000_000_118.0,
+        1_050_000_241.0,
+        1_100_000_063.0,
+        1_150_000_201.0,
+        1_200_000_118.0,
+    ];
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_array(
+            0,
+            "CHAN_FREQ",
+            ArrayValue::Float64(ndarray::ArrayD::from_shape_vec(vec![5], frequencies).unwrap()),
+        )
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    observation
+}
+
+/// CASA keeps both endpoints when an LSRK source grid has irregular interior
+/// channels and the image WCS is in TOPO (#1198).
+#[test]
+fn topo_cube_preserves_irregular_source_grid_endpoints() {
+    let observation = irregular_topo_observation();
+    let (_, products) = observation.image(
+        "topo-irregular-source-grid",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 0, "width": 1, "nchan": 5,
+            "niter": 0, "outframe": "TOPO", "weighting": "natural", "write_pb": true,
+        }),
+    );
+    let sumwt = products.get(".sumwt");
+    for (channel, expected) in [(0, 20_791.853_515_625), (4, 16_697.605_468_75)] {
+        let actual = f64::from(sumwt.plane(channel)[(0, 0)]);
+        assert!(
+            (actual - expected).abs() / expected < 5e-5,
+            "channel {channel}: sumwt {actual}, CASA {expected}"
+        );
+    }
+}
+
+/// A cleaned irregular TOPO cube writes the same predicted visibilities as
+/// CASA at its first physical row (#1198). The paired external comparison
+/// also checks every row and channel.
+#[test]
+fn topo_irregular_cube_predicts_casa_model_visibilities() {
+    use casa_types::Complex32;
+    let observation = irregular_topo_observation();
+    let _ = observation.image(
+        "topo-irregular-model",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 0, "width": 1, "nchan": 5,
+            "niter": 5, "deconvolver": "hogbom", "outframe": "TOPO",
+            "weighting": "natural", "savemodel": "modelcolumn", "write_pb": true,
+        }),
+    );
+    let rows = super::vis_list::model_rows(observation.measurement_set());
+    let expected = [
+        Complex32::new(-0.063_822_08, -0.014_624_763),
+        Complex32::new(-0.022_417_58, -0.082_254_78),
+        Complex32::new(0.118_532_16, 0.043_736_83),
+        Complex32::new(-0.013_400_649, 0.061_058_775),
+        Complex32::new(-0.003_976_36, 0.074_195_11),
+    ];
+    let mut error = 0.0_f64;
+    let mut power = 0.0_f64;
+    for (channel, casa) in expected.iter().enumerate() {
+        error += f64::from((rows[0][[0, channel]] - casa).norm_sqr());
+        power += f64::from(casa.norm_sqr());
+    }
+    let nrms = (error / power).sqrt();
+    assert!(nrms < 1e-3, "predicted MODEL_DATA NRMS {nrms}");
+}
+
 /// CASA excludes an unselected physical row before choosing the image epoch,
 /// for both scan and timerange selection (#1198).
 #[test]
