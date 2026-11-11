@@ -310,6 +310,9 @@ pub struct PlotDocumentPanel {
     pub id: String,
     /// Panel title.
     pub title: String,
+    /// Override the page's font size for this panel's title only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_font_size: Option<String>,
     /// Axes the panel's layers reference.
     pub axes: Vec<PlotDocumentAxis>,
     /// Drawable layers.

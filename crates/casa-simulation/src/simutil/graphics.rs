@@ -114,13 +114,15 @@ pub fn image_plot(
     }
     // imshow sets the image extents; statim leaves existing axis labels alone.
     panel.axes.clear();
+    panel.title_font_size = Some("x-small".into());
     panel.title = path
         .to_string_lossy()
         .split('/')
         .nth(1)
         .unwrap_or_else(|| path.to_str().unwrap_or_default())
         .to_string();
-    let document = document::document("statim", vec![panel], 1);
+    let mut document = document::document("statim", vec![panel], 1);
+    document.layout.as_mut().expect("image layout").font_size = None;
     document
         .validate_payload(payload.finish()?)
         .map_err(|e| SimobserveError::raised(e.to_string()))?;

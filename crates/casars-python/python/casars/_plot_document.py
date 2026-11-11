@@ -66,7 +66,8 @@ def _render_document(document, payload, figure, use_native_limits, axes):
                 kwargs["bbox"] = {"facecolor": style["background"], "alpha": 0.7}
             axis.text(annotation["x"], annotation["y"], annotation["text"], **kwargs)
         font = {} if layout.get("font_size") is None else {"fontsize": layout["font_size"]}
-        axis.set_title(panel.get("title", ""), **font)
+        title_font = font if panel.get("title_font_size") is None else {"fontsize": panel["title_font_size"]}
+        axis.set_title(panel.get("title", ""), **title_font)
         if panel.get("frame_visible") is not None:
             axis.set_frame_on(panel["frame_visible"])
         if font:
@@ -124,7 +125,9 @@ def _draw_layer(figure, axis, layer, payload):
             interpolation=data["interpolation"], origin=data["origin"],
         )
         if data["color_bar"]:
-            figure.colorbar(image, ax=axis, pad=0)
+            bar = figure.colorbar(image, ax=axis, pad=0)
+            if data.get("color_bar_font_size") is not None:
+                bar.ax.tick_params(labelsize=data["color_bar_font_size"])
         return
     if data:
         x, y = array_view(payload, data["x"]), array_view(payload, data["y"])

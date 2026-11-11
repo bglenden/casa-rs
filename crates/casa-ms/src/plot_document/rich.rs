@@ -144,6 +144,9 @@ pub enum PlotLayerData {
         origin: String,
         /// Draw an adjacent colour scale.
         color_bar: bool,
+        /// Optional renderer font size for the colour scale's tick labels.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color_bar_font_size: Option<String>,
     },
     /// Circle centres and radii in the layer's data coordinates.
     Circles {

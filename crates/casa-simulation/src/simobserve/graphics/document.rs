@@ -17,6 +17,7 @@ pub(crate) fn panel(
     PlotDocumentPanel {
         id: id.into(),
         title: title.into(),
+        title_font_size: None,
         axes: ["x", "y"]
             .into_iter()
             .zip(labels)

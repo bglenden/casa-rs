@@ -119,6 +119,7 @@ fn prepare_image(
             interpolation: "bilinear".into(),
             origin: if psf { "lower" } else { "upper" }.into(),
             color_bar: !psf,
+            color_bar_font_size: Some("x-small".into()),
         },
         None,
         None,

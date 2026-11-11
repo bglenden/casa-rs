@@ -36,6 +36,11 @@ def compare(actual, expected):
             assert a[name] == e[name], f"{name}: {a[name]!r} != {e[name]!r}"
         if "frame_on" in e:
             assert a["frame_on"] == e["frame_on"], "panel frame"
+        if "font_sizes" in e:
+            for label in ("title", "xlabel", "ylabel"):
+                if e[label]:
+                    assert a["font_sizes"][label] == e["font_sizes"][label], f"{label} font size"
+            assert a["tick_font_sizes"] == e["tick_font_sizes"], "visible tick font sizes"
         for name in ("xlim", "ylim"):
             maximum = max(maximum, close(a[name], e[name], 1e-3, name))
         for name in ("lines", "images", "circles", "texts"):
@@ -72,6 +77,9 @@ def compare(actual, expected):
         for text, reference in zip(a["texts"], e["texts"], strict=True):
             close(text["position"], reference["position"], 1e-3, "text position")
             assert text["text"] == reference["text"]
+            for style in ("font_size", "horizontal_alignment", "vertical_alignment"):
+                if style in reference:
+                    assert text[style] == reference[style], f"text {style}"
     return maximum
 
 

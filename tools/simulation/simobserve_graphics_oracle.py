@@ -69,6 +69,9 @@ def artists(figure):
             "title": axis.get_title(), "xlabel": axis.get_xlabel(), "ylabel": axis.get_ylabel(),
             "xlim": list(axis.get_xlim()), "ylim": list(axis.get_ylim()), "aspect": axis.get_aspect(),
             "frame_on": axis.get_frame_on(),
+            "font_sizes": {"title": axis.title.get_fontsize(), "xlabel": axis.xaxis.label.get_fontsize(), "ylabel": axis.yaxis.label.get_fontsize()},
+            "tick_font_sizes": {"x": sorted({label.get_fontsize() for label in axis.get_xticklabels() if label.get_visible()}),
+                                "y": sorted({label.get_fontsize() for label in axis.get_yticklabels() if label.get_visible()})},
             "lines": [{"x": line.get_xdata().tolist(), "y": line.get_ydata().tolist(),
                        "color": line.get_color(), "marker": line.get_marker(),
                        "linestyle": line.get_linestyle(), "line_width": line.get_linewidth()} for line in axis.lines],
@@ -78,7 +81,8 @@ def artists(figure):
                        for im in axis.images],
             "circles": [circle_record(p) for p in axis.patches if isinstance(p, Circle)],
             "anchored_circles": [circle_record(p) for p in axis.findobj(Circle) if p not in axis.patches],
-            "texts": [{"position": list(t.get_position()), "text": t.get_text()}
+            "texts": [{"position": list(t.get_position()), "text": t.get_text(),
+                       "font_size": t.get_fontsize(), "horizontal_alignment": t.get_ha(), "vertical_alignment": t.get_va()}
                       for t in axis.texts],
         })
     return panels
