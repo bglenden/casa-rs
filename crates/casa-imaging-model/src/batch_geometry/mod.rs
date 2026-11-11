@@ -95,6 +95,9 @@ pub enum BatchGeometryError {
     /// A fixed phase or pointing centre outside J2000.
     #[error("a fixed centre in {0:?} (imaging geometry takes J2000)")]
     FixedCentreFrame(DirectionFrame),
+    /// The interpolation grid and the TOPO WCS describe different planes.
+    #[error("source LSRK grid does not agree with the anchored TOPO spectral coordinate")]
+    SourceGridWcs,
     /// A faceted domain under the mosaic UVW law.
     #[error("a faceted image domain under the mosaic UVW law")]
     FacetedMosaic,
@@ -198,6 +201,8 @@ pub struct GeometryPlan {
     /// `A`, the factor that takes an output-frame frequency to LSRK at the
     /// image's anchor, for a cube gridded through LSRK.
     output_in_lsrk: Option<f64>,
+    /// Factor between the interpolation frequency coordinate and LSRK.
+    grid_in_lsrk: f64,
     parallactic: bool,
     responses: Responses,
     aw: Option<AwPointingGrouping>,
@@ -477,9 +482,12 @@ impl GeometryPlan {
             }
         };
         let spectral = problem.geometry().spectral();
+        let output_in_lsrk = output_in_lsrk(spectral, &frames)?;
+        let grid_in_lsrk = interpolation_frequency_scale(spectral, output_in_lsrk)?;
         Ok(Self {
             catalogue: Arc::clone(catalogue),
-            output_in_lsrk: output_in_lsrk(spectral, &frames)?,
+            output_in_lsrk,
+            grid_in_lsrk,
             frames,
             phase,
             anchor,
@@ -684,8 +692,8 @@ impl GeometryPlan {
                 reprojections = Some((field, self.reprojections(&context, &field_direction)?));
             }
             let machines = &reprojections.as_ref().expect("reprojections formed").1;
-            // Exactly 1 but for a cube gridded through LSRK.
-            let in_lsrk = self.output_in_lsrk.unwrap_or(1.0);
+            // Convert the grid's coordinate to LSRK wavelengths.
+            let in_lsrk = self.grid_in_lsrk;
             for sample in context.row_samples() {
                 let raw = uvw.metres_at(sample);
                 for (chart, machine) in machines.iter().enumerate() {
@@ -981,11 +989,9 @@ impl GeometryPlan {
         direction: &MDirection,
         source: FrequencyRef,
     ) -> Result<RowFrequencies, BatchGeometryError> {
-        if let Some(output_in_lsrk) = self.output_in_lsrk
-            && source != FrequencyRef::REST
-        {
-            // The row in LSRK at its own time, over the output channels'
-            // LSRK factor at the anchor: one factor, exactly 1 at the anchor.
+        if self.output_in_lsrk.is_some() && source != FrequencyRef::REST {
+            // Rows convert at their own time to the interpolation grid's
+            // frequency coordinate. A source-defined grid is already in LSRK.
             let frame = self
                 .frames
                 .observatory_at(time_mjd_s, scale)
@@ -997,7 +1003,7 @@ impl GeometryPlan {
                 Some(&frame),
             )?;
             return Ok(RowFrequencies::ThroughLsrk(
-                lsrk.convert_hz(1.0) / output_in_lsrk,
+                lsrk.convert_hz(1.0) / self.grid_in_lsrk,
             ));
         }
         if source == self.output_frame {
@@ -1042,6 +1048,34 @@ impl RowFrequencies {
     }
 }
 
+/// The interpolation grid and its UVW scale share a frequency coordinate.
+/// Verify that a retained LSRK grid represents the anchored TOPO planes.
+fn interpolation_frequency_scale(
+    spectral: &SpectralCoordinateSpec,
+    output_in_lsrk: Option<f64>,
+) -> Result<f64, BatchGeometryError> {
+    let factor = output_in_lsrk.unwrap_or(1.0);
+    if !spectral.has_source_lsrk_grid() {
+        return Ok(factor);
+    }
+    let [_, first, step] = spectral.linear_grid().expect("source LSRK grid is linear");
+    let channels = spectral.output_channels();
+    let last = first + (channels - 1) as f64 * step;
+    let world = [0, channels - 1]
+        .map(|plane| spectral.channel_centre_hz(plane).expect("in-range plane") * factor);
+    // Forward and reverse Doppler hops, plus regridChanBounds' stepping
+    // and linearization, incur roundoff proportional to the channel count.
+    // The two grids must also agree on the identity of the edge channels.
+    let relative_bound = 16.0 * (channels as f64 + 1.0) * f64::EPSILON;
+    for (actual, expected) in world.into_iter().zip([first, last]) {
+        let bound = (expected * relative_bound).min(step.abs() / 2.0);
+        if !actual.is_finite() || (actual - expected).abs() > bound {
+            return Err(BatchGeometryError::SourceGridWcs);
+        }
+    }
+    Ok(1.0)
+}
+
 /// `A`, the factor that takes `spectral`'s output frame to LSRK at its
 /// anchor, for a cube gridded through LSRK: CASA's LSRK conversion layer at
 /// the image's epoch and reference direction, from the observatory the rows
@@ -1078,4 +1112,42 @@ fn output_in_lsrk(
     )?
     .convert_hz(1.0);
     Ok(Some(factor))
+}
+
+#[cfg(test)]
+mod source_grid_tests {
+    use super::*;
+    use crate::{DopplerConvention, FrequencyFrame, RestFrequency, SpectralWcs};
+
+    #[test]
+    fn source_grid_must_identify_the_anchored_topo_planes() {
+        let factor = 0.99995;
+        let first = 1.0e9;
+        let step = 50.0e6;
+        let spectral = SpectralCoordinateSpec::new(
+            FrequencyFrame::Lsrk,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 5,
+                reference_pixel: 0.0,
+                reference_frequency_hz: first / factor,
+                increment_hz: step / factor,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::Radio,
+        );
+        let correct = spectral.clone().with_source_lsrk_grid(Some([first, step]));
+        assert_eq!(
+            interpolation_frequency_scale(&correct, Some(factor)).unwrap(),
+            1.0
+        );
+        for wrong in [[first + step, step], [first, step * 2.0]] {
+            let wrong = spectral.clone().with_source_lsrk_grid(Some(wrong));
+            assert!(matches!(
+                interpolation_frequency_scale(&wrong, Some(factor)),
+                Err(BatchGeometryError::SourceGridWcs)
+            ));
+        }
+    }
 }

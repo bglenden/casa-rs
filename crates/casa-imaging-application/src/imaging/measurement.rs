@@ -571,12 +571,8 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
     let Basis::ChannelLocal { planes } = basis else {
         return Ok(SpectralResampler::direct(basis)?);
     };
-    let SpectralWcs::Linear {
-        reference_pixel,
-        reference_frequency_hz,
-        increment_hz,
-        ..
-    } = problem.geometry().spectral().wcs()
+    let Some([reference_pixel, reference_frequency_hz, increment_hz]) =
+        problem.geometry().spectral().linear_grid()
     else {
         return Err(ImagingError::Unsupported {
             reason: "a tabular spectral axis has no uniform channel width",
@@ -596,7 +592,7 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
     };
     let first_hz = reference_frequency_hz - reference_pixel * increment_hz;
     Ok(SpectralResampler::channel_local(
-        SpectralAxis::new(first_hz, *increment_hz, planes)?,
+        SpectralAxis::new(first_hz, increment_hz, planes)?,
         kernel,
     ))
 }

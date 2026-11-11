@@ -841,6 +841,7 @@ pub struct SpectralCoordinateSpec {
     output_frame: FrequencyFrame,
     anchor: SpectralFrameAnchor,
     wcs: SpectralWcs,
+    source_lsrk_grid: Option<[f64; 2]>,
     rest_frequency: RestFrequency,
     doppler_convention: DopplerConvention,
 }
@@ -861,8 +862,42 @@ impl SpectralCoordinateSpec {
             output_frame,
             anchor,
             wcs,
+            source_lsrk_grid: None,
             rest_frequency,
             doppler_convention,
+        }
+    }
+
+    /// Retain the exact source LSRK grid of a channel-index TOPO cube, as
+    /// its first centre and signed increment in hertz. The caller derives
+    /// both from the same selected SPW that defines this output WCS.
+    #[must_use]
+    pub const fn with_source_lsrk_grid(mut self, grid: Option<[f64; 2]>) -> Self {
+        self.source_lsrk_grid = grid;
+        self
+    }
+
+    /// Whether rows and the interpolation grid are both evaluated in LSRK.
+    #[must_use]
+    pub const fn has_source_lsrk_grid(&self) -> bool {
+        self.source_lsrk_grid.is_some()
+    }
+
+    /// Linear interpolation coordinates in the frame the row frequencies
+    /// use. Returns the reference pixel, its centre and the increment.
+    #[must_use]
+    pub fn linear_grid(&self) -> Option<[f64; 3]> {
+        if let Some([first, increment]) = self.source_lsrk_grid {
+            return Some([0.0, first, increment]);
+        }
+        match self.wcs {
+            SpectralWcs::Linear {
+                reference_pixel,
+                reference_frequency_hz,
+                increment_hz,
+                ..
+            } => Some([reference_pixel, reference_frequency_hz, increment_hz]),
+            SpectralWcs::Tabular { .. } => None,
         }
     }
 
@@ -960,6 +995,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_output_frame(mut self, output_frame: FrequencyFrame) -> Self {
         self.output_frame = output_frame;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -967,6 +1003,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_anchor(mut self, anchor: SpectralFrameAnchor) -> Self {
         self.anchor = anchor;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -981,6 +1018,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_doppler_convention(mut self, doppler_convention: DopplerConvention) -> Self {
         self.doppler_convention = doppler_convention;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -988,6 +1026,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub fn with_wcs(mut self, wcs: SpectralWcs) -> Self {
         self.wcs = wcs;
+        self.source_lsrk_grid = None;
         self
     }
 }
@@ -1428,6 +1467,36 @@ fn canonicalize_spectral(
 ) -> Result<(), CompileGeometryError> {
     // Distinct frames need a conversion; one frame allows one only to be
     // gridded through LSRK.
+    if let Some([first, step]) = spectral.source_lsrk_grid {
+        let SpectralWcs::Linear {
+            channels,
+            increment_hz,
+            reference_pixel: 0.0,
+            ..
+        } = spectral.wcs
+        else {
+            return Err(CompileGeometryError::InvalidSpectralWcs);
+        };
+        let last = first + channels.saturating_sub(1) as f64 * step;
+        if spectral.source_frame != FrequencyFrame::Lsrk
+            || spectral.output_frame != FrequencyFrame::Topocentric
+            || !matches!(
+                spectral.doppler_convention,
+                DopplerConvention::Radio | DopplerConvention::NotApplicable
+            )
+            || channels < 2
+            || !step.is_normal()
+            || step.is_sign_positive() != increment_hz.is_sign_positive()
+            || !first.is_finite()
+            || first <= 0.0
+            || !last.is_finite()
+            || last <= 0.0
+            || !advances(first, first + step, step)
+            || !advances(last - step, last, step)
+        {
+            return Err(CompileGeometryError::InvalidSpectralWcs);
+        }
+    }
     let converts = spectral.source_frame != spectral.output_frame;
     let allowed = converts || spectral.output_frame.gridded_through_lsrk();
     match (&mut spectral.anchor, allowed) {

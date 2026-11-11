@@ -40,6 +40,7 @@ CASA behaviours casa-rs does not follow:
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
 [a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
+[a TOPO cube's cache-dependent endpoint selection](#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history),
 [a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
 [the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
 [multiscale on an off-centre PSF](#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre),
@@ -3438,6 +3439,31 @@ test suite reaches either difference: the one tuned cube with channels
 narrower than the shift, `test_cube_D2`, images in LSRK, where casa-rs and
 CASA select the same channels at every time (its edge plane keeps 2460.56 of
 5020.51 in both).
+
+## A TOPO cube can gain or lose an endpoint with CASA's aberration cache history
+
+In CASA 6.7.6.14, the image's TOPO spectral coordinate has an LSRK conversion
+layer. `FTMachine::initMaps` evaluates image-plane frequencies through that
+layer and `FTMachine::interpolateFrequencyTogrid` applies strict interpolation
+bounds to the resulting frequencies and the row's LSRK channels.
+
+The `GEO_BARY` hop evaluates `Aberration` with coefficients from the shared
+`MeasTable::theirMulAber` cache. `MeasTableMul::getArray` may reuse the
+coefficients of a nearby epoch. Pre-populating that cache before an identical
+`tclean` run moves the converted grid by a few floating-point steps. In the
+original out-of-order-row VLA fixture, the last plane's sum of weights changed
+from 16,697.6055 to zero. Two nearby frequency grids also flipped a whole
+plane, in opposite directions. A separate fresh-coefficients probe reproduced
+the flips. [Reproduction and measurements in #1198](https://github.com/bglenden/casa-rs/issues/1198#issuecomment-6800135096).
+
+For a channel-index TOPO cube in the standard gridder that spans one LSRK
+spectral window at unit width with natural weighting, casa-rs keeps the source-frame interpolation
+grid when its first centre and exact span establish both endpoints. A common
+width `d` and `n` output planes give a span of exactly `(n - 1) * d` between
+the stored endpoint centres. Rows are compared to that grid in LSRK with
+strict bounds and the same flag rules. The image records the TOPO coordinate
+built from the selected physical row. This keeps endpoint admission independent
+of the cache while retaining the TOPO header and beam calculation.
 
 ## A cube's fine frequency grid lets rounding choose one or two samples per plane
 

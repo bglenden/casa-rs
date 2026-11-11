@@ -29,7 +29,7 @@ use super::frequency_bands;
 use super::selection::{SourceSpectralWindow, WindowChannels, one_window};
 use super::stores::{ContinuumBand, SurveyedStore};
 use super::survey::Survey;
-use crate::{ImagingRequest, SaveModel, SpecMode};
+use crate::{Gridder, ImagingRequest, SaveModel, SpecMode, Weighting};
 
 /// The compiled spectral axis and the source channels it reads.
 pub(super) struct PreparedSpectralAxis<'a> {
@@ -43,6 +43,7 @@ pub(super) struct PreparedSpectralAxis<'a> {
     pub(super) output_frame: FrequencyFrame,
     pub(super) anchor: SpectralFrameAnchor,
     pub(super) wcs: SpectralWcs,
+    source_lsrk_grid: Option<[f64; 2]>,
     pub(super) rest_frequency: RestFrequency,
     /// The spectral axis the image header records: the gridded axis, but
     /// for an MFS image's frame and rest frequencies.
@@ -68,6 +69,7 @@ impl PreparedSpectralAxis<'_> {
             self.rest_frequency,
             self.doppler,
         )
+        .with_source_lsrk_grid(self.source_lsrk_grid)
     }
 
     /// The source channels the axis reads from surveyed window `spw_id` of
@@ -131,6 +133,7 @@ struct AxisLaw<'a> {
     selected_source_channels: Cow<'a, [WindowChannels]>,
     window_reads: Vec<WindowReads>,
     output_frequency_reference: FrequencyRef,
+    source_lsrk_grid: Option<[f64; 2]>,
     reference_frequency_hz: f64,
     increment_hz: f64,
     output_channels: usize,
@@ -194,6 +197,7 @@ pub(super) fn prepare_axis<'a>(
             reference_frequency_hz: law.reference_frequency_hz,
             increment_hz: law.increment_hz,
         },
+        source_lsrk_grid: law.source_lsrk_grid,
         rest_frequency: law.rest_frequency,
         // CASA lists tclean's further rest frequencies after the image's.
         image: ImageSpectralCoordinate {
@@ -269,6 +273,7 @@ fn continuum_law<'a>(
         selected_source_channels: continuum_channels(channels),
         window_reads: vec![WindowReads::new(); channels.len()],
         output_frequency_reference: FrequencyRef::LSRK,
+        source_lsrk_grid: None,
         reference_frequency_hz,
         increment_hz,
         output_channels: 1,
@@ -786,8 +791,8 @@ fn cube_law(
     let store = &stores[reference];
     let (catalogue, survey) = (store.catalogue(), &store.survey);
     let band_surveys = stores.iter().map(|store| &store.survey).collect::<Vec<_>>();
-    let (setup, band_hz) =
-        cube_setup(request, (survey, &band_surveys), frame, cube_axis(request)?)?;
+    let axis = cube_axis(request)?;
+    let (setup, band_hz) = cube_setup(request, (survey, &band_surveys), frame, axis.clone())?;
     let (selected_source_channels, window_reads) =
         cube_store_reads(request, (stores, reference), frame, &setup)?;
     let output_channels = setup.output_channel_frequencies_hz.len();
@@ -810,6 +815,7 @@ fn cube_law(
         selected_source_channels: Cow::Owned(selected_source_channels),
         window_reads,
         output_frequency_reference: setup.output_freq_ref,
+        source_lsrk_grid: topo_source_grid(request, &axis, &band_surveys, output_channels),
         reference_frequency_hz,
         increment_hz,
         output_channels,
@@ -829,6 +835,74 @@ fn cube_law(
             channels: output_channels,
         },
     })
+}
+
+/// Exact LSRK grid for a TOPO cube whose channel-index request spans one SPW.
+/// With unit channel width and start zero, its first centre is the first
+/// stored centre. The final centre is the last stored centre if the span is
+/// exactly (nchan - 1) times the common width. Check the rounding residuals
+/// of both operations so a nearly coincident endpoint gains no coverage
+/// (#1198). The TOPO WCS comes from the usual CASA coordinate construction.
+fn topo_source_grid(
+    request: &ImagingRequest,
+    axis: &CubeAxisConfig,
+    surveys: &[&Survey],
+    output_channels: usize,
+) -> Option<[f64; 2]> {
+    let [survey] = surveys else { return None };
+    let [window] = survey.spectral_windows.as_slice() else {
+        return None;
+    };
+    if !matches!(request.gridder, Gridder::Standard { .. })
+        || request.weighting != Weighting::Natural
+        || axis.specmode != CubeSpecMode::Cube
+        || survey.source_frequency_reference != FrequencyRef::LSRK
+        || axis.outframe != FrequencyRef::TOPO
+        || axis.veltype != DopplerRef::RADIO
+        || axis.interpolation == CubeInterpolation::Nearest
+        || !matches!(axis.start, None | Some(CubeAxisValue::Channel(0)))
+        || !matches!(axis.width, None | Some(CubeAxisValue::Channel(1)))
+        || output_channels != window.frequencies_hz.len()
+        || survey
+            .spw_channels
+            .get(&window.spw_id)
+            .is_some_and(|channels| !channels.iter().copied().eq(0..output_channels))
+    {
+        return None;
+    }
+    exact_source_grid(&window.frequencies_hz, &window.channel_widths_hz)
+}
+
+fn exact_source_grid(frequencies: &[f64], widths: &[f64]) -> Option<[f64; 2]> {
+    let [first, _, ..] = *frequencies else {
+        return None;
+    };
+    let last = *frequencies.last()?;
+    let width = widths.first()?.abs();
+    if !width.is_normal() || widths.iter().any(|stored| stored.abs() != width) {
+        return None;
+    }
+    let (high, low) = (first.max(last), first.min(last));
+    let span = high - low;
+    let steps = (frequencies.len() - 1) as f64;
+    // FastTwoSum residual for high + (-low), followed by the exact
+    // multiplication residual for width * steps.
+    if !span.is_normal() || (high - span) - low != 0.0 || width.mul_add(steps, -span) != 0.0 {
+        return None;
+    }
+    let step = width.copysign(last - first);
+    let half = step / 2.0;
+    // A wave can begin at an interior channel. Its first interval still
+    // gives one sample per plane, and either FineGrid path starts at first.
+    if (first - half) + half != first
+        || frequencies.windows(2).any(|pair| {
+            let gap = pair[1] - pair[0];
+            gap.signum() != step.signum() || width / gap.abs() >= 2.0
+        })
+    {
+        return None;
+    }
+    Some([first, step])
 }
 
 /// A cube in the rest frame of a moving source: the data-frame axis
@@ -891,6 +965,7 @@ fn source_frame_cube_law(
         selected_source_channels: Cow::Owned(vec![reads.channels]),
         window_reads: vec![reads.windows],
         output_frequency_reference: FrequencyRef::REST,
+        source_lsrk_grid: None,
         reference_frequency_hz,
         increment_hz,
         output_channels,
@@ -1088,6 +1163,36 @@ mod tests {
     use super::*;
     use crate::request::tests::request;
     use serde_json::json;
+
+    #[test]
+    fn topo_source_grid_requires_exact_endpoint_membership() {
+        let first = 1_000_000_118.0;
+        let width = 50_000_000.0_f64;
+        let mut centres = [
+            first,
+            first + width + 123.0,
+            first + 2.0 * width - 55.0,
+            first + 3.0 * width + 83.0,
+            first + 4.0 * width,
+        ];
+        assert_eq!(
+            exact_source_grid(&centres, &[width; 5]),
+            Some([first, width])
+        );
+        let last = centres[4];
+        centres[4] = last.next_down();
+        assert_eq!(exact_source_grid(&centres, &[width; 5]), None);
+        centres[4] = last;
+        // Exact multiplication by four lands just below the given span,
+        // although the first and last centres are both normal f64 values.
+        assert_eq!(exact_source_grid(&centres, &[width.next_down(); 5]), None);
+        // At this magnitude the rounded span is exactly 2 GHz even
+        // though the true high endpoint is below the requested centre.
+        assert_eq!(
+            exact_source_grid(&[1.0e9_f64.next_up(), 2.0e9, 3.0e9], &[1.0e9; 3]),
+            None
+        );
+    }
 
     /// `SynthesisImagerVi2::tuneSelectData`: a `cube` over 30 or more
     /// channels, or saving its model to `MODEL_DATA`, reads the image's
