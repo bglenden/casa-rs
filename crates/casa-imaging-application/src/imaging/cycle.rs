@@ -18,9 +18,7 @@ use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
     ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan, ReconstructionMaskSet,
 };
-use casa_imaging_model::{
-    CompiledProblem, ModelDeltaTerm, SpectralWcs, UncorrectedImageMaskPolicy,
-};
+use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, UncorrectedImageMaskPolicy};
 use casa_imaging_operator::{Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration};
 use casa_imaging_products::{
     AnalyticPrimaryBeam, FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
@@ -1302,7 +1300,7 @@ fn writes_initially(problem: &CompiledProblem, forms: Forms) -> bool {
     problem.reconstruction().controls().max_minor_iterations() == 0 && forms.psf && forms.residual
 }
 
-/// The output-frame frequency envelope of a plane range of a channel-local
+/// The gridding-frame frequency envelope of a plane range of a channel-local
 /// basis: from the low edge of its first channel to the high edge of its
 /// last.
 pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
@@ -1312,15 +1310,8 @@ pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
     ) {
         return None;
     }
-    let SpectralWcs::Linear {
-        reference_pixel,
-        reference_frequency_hz,
-        increment_hz,
-        ..
-    } = *problem.geometry().spectral().wcs()
-    else {
-        return None;
-    };
+    let [reference_pixel, reference_frequency_hz, increment_hz] =
+        problem.geometry().spectral().linear_grid()?;
     let centre = move |channel: u32| {
         reference_frequency_hz + (f64::from(channel) - reference_pixel) * increment_hz
     };
