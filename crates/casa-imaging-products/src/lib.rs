@@ -53,6 +53,6 @@ pub use source::{ContinuumProductInputs, FacetSumWeights, PrimaryBeamCentres};
 pub use storage::{ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout};
 pub use taylor_beam::TaylorPrimaryBeamAccumulator;
 pub use visibility::VisibilityProductCompletion;
-pub use writer::{CasaImageDomainOutput, CasaImageWriter};
+pub use writer::{CasaImageDomainOutput, CasaImageWriter, publish_staged_image};
 
 pub use taylor_moments::TaylorMomentAccumulator;

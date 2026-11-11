@@ -24,6 +24,7 @@ casa-images = { path = "../casa-images" }
 casa-imaging-application = { path = "../casa-imaging-application" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
+casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
 casa-lattices = { path = "../casa-lattices" }

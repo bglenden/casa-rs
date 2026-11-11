@@ -292,9 +292,8 @@ pub struct ImagingRequest {
     /// Grid arithmetic; `None` (`auto`) is `f64` on the CPU, `f32` on Metal.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
-    /// Native standard-FT padding override; ordinary tclean uses 1.2.
-    /// The legacy imager used by simulation quick PSFs selects 1.0.
-    /// This is an internal workflow choice, outside the CASA parameter surface.
+    /// Legacy quick-PSF padding: only 1.0 in a CPU/f64 PSF-only run is valid.
+    /// Ordinary tclean uses 1.2; this is outside the CASA parameter surface.
     #[serde(skip)]
     pub ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     /// The optional diagnostic output: `stage_timing`,
@@ -728,6 +727,7 @@ impl ImagingRequest {
     /// Check the relations between parameters that no single parameter's
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {
+        execution::validate_ft_padding(self)?;
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         if self.phasecenter.is_some() && self.phasecenter_field.is_some() {
             return invalid(

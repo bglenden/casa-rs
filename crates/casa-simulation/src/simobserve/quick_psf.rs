@@ -125,7 +125,7 @@ pub(super) fn prepare(run: &mut Run<'_>, sky: &Sky) -> Result<(), SimobserveErro
     drop(psf);
     let target = run.file(".quick.psf");
     make_way(&target)?;
-    std::fs::rename(&source, &target).map_err(failure)?;
+    casa_imaging_products::publish_staged_image(&source, &target).map_err(failure)?;
     run.wrote(&target);
     Ok(())
 }

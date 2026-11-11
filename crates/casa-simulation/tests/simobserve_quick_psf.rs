@@ -36,6 +36,9 @@ fn fixture() -> Value {
 
 fn inputs(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let image = root.join("model.image");
+    if image.exists() {
+        return (image, root.join("point.cl"), root.join("small.cfg"));
+    }
     let mut cs = CoordinateSystem::new();
     cs.add_coordinate(DirectionCoordinate::new(
         DirectionRef::J2000,
@@ -369,4 +372,26 @@ fn graphics_mode_checks(oracle: &Value) {
             ),
         );
     }
+}
+
+#[test]
+fn repeated_simobserve_replaces_the_complete_quick_psf() {
+    let oracle = fixture();
+    let reference = &oracle["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .find(|case| case["name"] == "int_image")
+        .expect("image case")["psf"];
+    let directory = tempfile::tempdir().expect("directory");
+    let path = run(directory.path(), "int_image", 1, "file");
+    let mut old = PagedImage::<f32>::open(&path).expect("first PSF");
+    let empty = ArrayD::zeros(IxDyn(old.shape()));
+    old.put_slice(&empty, &[0; 4]).expect("old pixels");
+    old.save().expect("old image");
+    drop(old);
+    std::fs::write(path.join("previous-generation"), "old product").expect("marker");
+    assert_eq!(path, run(directory.path(), "int_image", 1, "file"));
+    assert!(!path.join("previous-generation").exists());
+    compare(reference, &path);
 }
