@@ -124,6 +124,11 @@ a failure, resolve genuine platform-specific uncertainty, or satisfy an
 explicit user request. A narrower hosted job cannot stand in for a broader
 required gate such as `just verify`.
 
+Evidence reuse does not end the authorized task. While hosted checks run,
+continue independent work and handle failures under AGENTS.md's "While
+Checks Run"; a passing local result does not waive investigating a reported
+failure.
+
 Green evidence remains valid until a code, test, build, dependency, or
 runtime-configuration change could affect that gate. Review inspects the
 commits after the tested revision and reuses the result when they contain
