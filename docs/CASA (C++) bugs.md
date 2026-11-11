@@ -32,6 +32,7 @@ CASA behaviours casa-rs does not follow:
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [MEM masks on tiled images](#mem-reuses-the-first-mask-tile-for-its-alpha-update),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
+[an unused dish choosing the PB](#an-unused-alma-antenna-can-choose-the-standard-primary-beam),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
 [`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
@@ -4281,3 +4282,30 @@ CASA with SIGSEGV while converting the input record. casa-rs raises a
 catchable `ValueError` before conversion. Excessively nested records are
 also refused, and offset, multivalued and unsupported measure kinds are
 explicitly unimplemented (#1053).
+
+## An unused ALMA antenna can choose the standard primary beam
+
+- Date noted: 2026-11-11
+- Status: casa-rs chooses the one dish class used by the selected
+  cross-correlations for this single-MeasurementSet standard continuum
+  case (#1274).
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisImagerVi2.cc`
+  (`makePB`) and `SynthesisImager.cc` (`makePBImage`).
+
+CASA 6.7.6.14 reads ANTENNA row zero from the first MeasurementSet for its
+analytic primary beam. It warns when diameters differ. An ALMA-labelled
+observation then uses the ACA beam if that first diameter is below 12 m,
+even when that antenna does not appear in a selected cross-correlation.
+
+In public `M100-X220-shortened.ms`, the 264 selected field-6 rows use only
+12 m dishes. ANTENNA row zero describes a 7 m dish. Changing only that
+unused row's diameter to 12 m in a scratch copy leaves CASA's dirty PSF,
+residual, restored image and sum weight numerically identical. The
+`.pb.tt0` changes by 0.7893 normalized RMS and the PB-corrected restored
+image by 0.6723. The number of pixels above PB 0.2 falls from 16,384 to
+12,149. The 12 m reference uses the original visibility rows.
+
+For a single ALMA MeasurementSet with both dish classes in its ANTENNA
+table, standard continuum imaging chooses the analytic primary beam
+from the selected cross-correlations. It refuses a selection that
+requires both classes.

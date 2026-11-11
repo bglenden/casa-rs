@@ -42,50 +42,65 @@ pub(super) fn dish_diameters(catalogue: &Catalogue) -> Vec<f64> {
         .collect()
 }
 
+const ACA_DISH_METRES: Range<f64> = 6.0..8.0;
+const ALMA_DISH_METRES: Range<f64> = 10.0..13.0;
+
+/// Only a known mix of ALMA dish classes needs the survey to inspect
+/// selected baselines for the standard-gridder primary beam.
+pub(super) fn mixed_alma_dish_classes(catalogue: &Catalogue) -> bool {
+    if catalogue.observations.is_empty()
+        || !catalogue
+            .observations
+            .iter()
+            .all(|observation| observation.telescope.trim() == "ALMA")
+    {
+        return false;
+    }
+    let diameters = dish_diameters(catalogue);
+    diameters.iter().any(|m| ACA_DISH_METRES.contains(m))
+        && diameters.iter().any(|m| ALMA_DISH_METRES.contains(m))
+}
+
 /// The analytic primary beam a standard-gridder run writes `.pb` and
-/// `.image.pbcor` with.
+/// `.image.pbcor` with. `selected` is empty unless the survey distinguished
+/// the dishes of a mixed ANTENNA table (#1274).
 pub(super) fn standard_primary_beam_model(
     catalogue: &Catalogue,
+    selected: &[bool],
 ) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
     let telescopes = telescopes(catalogue);
-    match telescopes
+    let is_aca = match telescopes
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>()
         .as_slice()
     {
-        ["ALMA"] => {
-            // SynthesisImager::makePBImage selects ACA for an ALMA-labelled
-            // observation whose first dish is smaller than 12 m.
-            if dish_diameters(catalogue)
-                .first()
-                .is_some_and(|diameter_m| *diameter_m < 12.0)
-            {
-                homogeneous_dishes(catalogue, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry)
-            } else {
-                homogeneous_dishes(
-                    catalogue,
-                    10.0..13.0,
-                    AnalyticPrimaryBeamModel::CasaAlma12mAiry,
-                )
-            }
-        }
-        ["ACA"] => homogeneous_dishes(catalogue, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry),
-        _ => analytic_primary_beam_model_for_telescopes(&telescopes),
-    }
-}
-
-fn homogeneous_dishes(
-    catalogue: &Catalogue,
-    diameter_range_m: Range<f64>,
-    model: AnalyticPrimaryBeamModel,
-) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
+        ["ALMA"] => false,
+        ["ACA"] => true,
+        _ => return analytic_primary_beam_model_for_telescopes(&telescopes),
+    };
     let diameters = dish_diameters(catalogue);
-    if diameters.is_empty() {
-        return Err(PrepareError::NoAntennaDishes);
-    }
-    for (row, diameter_m) in diameters.into_iter().enumerate() {
-        if !diameter_m.is_finite() || !diameter_range_m.contains(&diameter_m) {
+    let mut dishes = diameters
+        .into_iter()
+        .enumerate()
+        .filter(|(row, _)| selected.is_empty() || selected[*row]);
+    let first = dishes.next().ok_or(PrepareError::NoAntennaDishes)?;
+    // CASA picks ACA from the first ANTENNA row below 12 m. In a
+    // mixed catalogue, that row may be unused. Classify the selected
+    // dishes by their physical class and only admit one class.
+    let use_aca = is_aca
+        || if selected.is_empty() {
+            first.1 < 12.0
+        } else {
+            ACA_DISH_METRES.contains(&first.1)
+        };
+    let (range, model) = if use_aca {
+        (ACA_DISH_METRES, AnalyticPrimaryBeamModel::CasaAca7mAiry)
+    } else {
+        (ALMA_DISH_METRES, AnalyticPrimaryBeamModel::CasaAlma12mAiry)
+    };
+    for (row, diameter_m) in std::iter::once(first).chain(dishes) {
+        if !range.contains(&diameter_m) {
             return Err(PrepareError::MixedAlmaDishes { row, diameter_m });
         }
     }

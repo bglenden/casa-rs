@@ -112,6 +112,9 @@ pub(super) struct Survey {
     /// selected row (`msc.fieldId()(0)`) in a MeasurementSet in time order.
     pub(super) earliest_field_id: usize,
     pub(super) observation_ids: BTreeSet<i32>,
+    /// The antennas of selected cross-correlations for an analytic ALMA PB
+    /// when the ANTENNA table holds both dish classes. Empty when unneeded.
+    pub(super) pb_antennas: Vec<bool>,
     /// The selected MS's first physical row time for an image conversion;
     /// otherwise the earliest selected time.
     pub(super) image_time_mjd_seconds: f64,
@@ -164,6 +167,8 @@ pub(super) struct SurveyPlan<'a> {
     /// Whether the survey reads UVW for the W range, besides a UV-distance
     /// interval's test.
     pub(super) w_range: bool,
+    /// Whether analytic PB selection needs the antennas of actual rows.
+    pub(super) track_pb_antennas: bool,
     /// Whether native AW needs its first cross-correlation sample.
     pub(super) first_cross: bool,
 }
@@ -196,6 +201,7 @@ struct Facts {
     first_visibility: Option<FirstVisibility>,
     earliest_field_id: Option<i32>,
     observation_ids: BTreeSet<i32>,
+    pb_antennas: Vec<bool>,
     /// Lowest selected physical row and its time, for the image epoch.
     image_first_row: Option<(u32, f64)>,
     time_bounds_mjd_seconds: [f64; 2],
@@ -300,7 +306,9 @@ impl SurveyPlan<'_> {
                 weights: !flags && self.stored_padding(),
                 // A partition of several arrays tells its rows apart
                 // sample by sample, padding by its NaN UVW.
-                uvw: self.reads_uvw() || self.partition_array(candidate).is_none(),
+                uvw: self.reads_uvw()
+                    || self.track_pb_antennas
+                    || self.partition_array(candidate).is_none(),
                 time_centroid: false,
                 interval: false,
                 exposure: false,
@@ -384,6 +392,11 @@ pub(super) fn survey(
         })
         .max()
         .unwrap_or(0);
+    let pb_antenna_count = if plan.track_pb_antennas {
+        catalogue.antennas.len()
+    } else {
+        0
+    };
     // The survey's buffers grow to its largest batch, the cursor's scratch
     // with them.
     let reservation = admit(
@@ -391,7 +404,10 @@ pub(super) fn survey(
         policy,
         &Demand {
             phase: "observation survey",
-            memory: (2 * batch_bytes + epoch_bytes + several_arrays_bytes) as u64,
+            memory: (2 * batch_bytes
+                + epoch_bytes
+                + several_arrays_bytes
+                + pb_antenna_count * size_of::<bool>()) as u64,
         },
     )?;
     let mut facts = Facts {
@@ -399,6 +415,7 @@ pub(super) fn survey(
         first_visibility: None,
         earliest_field_id: None,
         observation_ids: BTreeSet::new(),
+        pb_antennas: vec![false; pb_antenna_count],
         image_first_row: None,
         time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
         w: WRange::EMPTY,
@@ -489,6 +506,7 @@ pub(super) fn survey(
             )
             .expect("a FIELD row is nonnegative"),
             observation_ids: facts.observation_ids,
+            pb_antennas: facts.pb_antennas,
             image_time_mjd_seconds,
             time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
             first_cross,
@@ -528,7 +546,8 @@ fn survey_partition(
         || plan.times_tested();
     // A partition of several arrays reads each selected time's rows.
     let array = plan.partition_array(candidate);
-    let per_sample = plan.reads_uvw() || plan.stored_padding() || array.is_none();
+    let per_sample =
+        plan.reads_uvw() || plan.track_pb_antennas || plan.stored_padding() || array.is_none();
     let counted = tested || plan.stored_padding() || array.is_none();
     let description = plan.description(candidate);
     let (mut rows, mut arrays) = (Vec::new(), Vec::new());
@@ -568,6 +587,7 @@ fn survey_partition(
                     (&batch, time),
                     w,
                     array.is_none().then_some(&mut rows),
+                    &mut facts.pb_antennas,
                     find_first,
                 )?;
                 samples += if counted { held } else { 0 };
@@ -645,6 +665,7 @@ fn observe_time(
     (batch, time): (&VisibilityBatch<'_>, usize),
     w: &mut WRange,
     mut rows: Option<&mut Vec<usize>>,
+    pb_antennas: &mut [bool],
     find_first: bool,
 ) -> Result<(u64, Option<u32>), PrepareError> {
     let uv = plan.row_selection.uv_distances();
@@ -652,7 +673,8 @@ fn observe_time(
     let mut held = 0;
     let mut first_row = None;
     for sample in time * per_time..(time + 1) * per_time {
-        if !plan.baseline_holds(batch.baselines[sample % per_time]) {
+        let baseline = batch.baselines[sample % per_time];
+        if !plan.baseline_holds(baseline) {
             continue;
         }
         if plan.stored_padding() && stored_padding(batch, sample) {
@@ -664,7 +686,6 @@ fn observe_time(
                 continue;
             }
             if !uvw_m.iter().all(|value| value.is_finite()) {
-                let baseline = batch.baselines[sample % per_time];
                 let time_mjd_seconds = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
                 if plan.msv2.is_none_or(|ms| {
                     ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline)
@@ -682,16 +703,20 @@ fn observe_time(
         }
         if (find_first || rows.is_some())
             && let Some(ms) = plan.msv2
+            && let Some(row) = ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline)
         {
-            let baseline = batch.baselines[sample % per_time];
-            if let Some(row) = ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline) {
-                if let Some(rows) = rows.as_deref_mut() {
-                    rows.push(row as usize);
-                }
-                if find_first {
-                    first_row = Some(first_row.map_or(row, |previous: u32| previous.min(row)));
-                }
+            if let Some(rows) = rows.as_deref_mut() {
+                rows.push(row as usize);
             }
+            if find_first {
+                first_row = Some(first_row.map_or(row, |previous: u32| previous.min(row)));
+            }
+        }
+        // Standard gridding omits autocorrelations, so they cannot choose
+        // a dish model. Other selection predicates have already been tested.
+        if !pb_antennas.is_empty() && !baseline.is_auto() {
+            pb_antennas[baseline.antenna1.0 as usize] = true;
+            pb_antennas[baseline.antenna2.0 as usize] = true;
         }
         held += 1;
     }
@@ -864,6 +889,65 @@ mod tests {
 
     const T0: f64 = 5_000_000_000.0;
 
+    /// A mixed ALMA catalogue adds one retained antenna entry for each
+    /// antenna. Its survey reservation covers the bitmap capacity.
+    #[test]
+    fn a_survey_charges_the_selected_pb_antenna_bitmap() {
+        let root = tempfile::tempdir().expect("temporary fixture");
+        let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(archive).unwrap(),
+        ))
+        .unpack(root.path())
+        .unwrap();
+        let observation = Msv2Observation::open(root.path().join("ms_trial.ms")).unwrap();
+        let catalogue = observation.catalogue();
+        let id = catalogue.partition_ids()[0];
+        let window = catalogue.partition(id).window.0 as usize;
+        let host = HostResources::detect().unwrap();
+        let policy = ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        };
+        let run = |track_pb_antennas| {
+            survey(
+                SurveyPlan {
+                    observation: &observation,
+                    msv2: Some(&observation),
+                    candidates: Candidates {
+                        data_group: "base".into(),
+                        partitions: vec![Candidate {
+                            id,
+                            spectral_window: window,
+                            wavelength_m: None,
+                        }],
+                    },
+                    row_selection: RowSelection::new(
+                        IdSelection::All,
+                        UvSelection::All,
+                        IntentSelection::All,
+                    ),
+                    image_row_epoch: false,
+                    w_range: false,
+                    track_pb_antennas,
+                    first_cross: false,
+                },
+                super::super::selection::spectral_windows(catalogue, [window]),
+                (&host, &policy),
+            )
+            .unwrap()
+        };
+        let ordinary = run(false);
+        let tracked = run(true);
+        assert_eq!(ordinary.value.pb_antennas.capacity(), 0);
+        assert_eq!(tracked.value.pb_antennas.len(), catalogue.antennas.len());
+        assert!(tracked.value.pb_antennas.iter().any(|selected| *selected));
+        let extra = tracked.reservation.memory() - ordinary.reservation.memory();
+        let held = tracked.value.pb_antennas.capacity() * size_of::<bool>();
+        assert_eq!(extra, held as u64, "the survey charges its retained bitmap");
+    }
+
     /// A stored row's NaN coordinates are invalid input, not evidence of
     /// missing acquisition. Grid padding still passes the same survey.
     #[test]
@@ -932,6 +1016,7 @@ mod tests {
                 ),
                 image_row_epoch: false,
                 w_range: true,
+                track_pb_antennas: false,
                 first_cross: false,
             };
             let mut facts = Facts {
@@ -939,6 +1024,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
                 image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -1062,6 +1148,7 @@ mod tests {
             ),
             image_row_epoch: false,
             w_range: false,
+            track_pb_antennas: false,
             first_cross: true,
         };
         let request = plan.request(&candidate, entry, false, 1 << 20);
@@ -1086,6 +1173,7 @@ mod tests {
             ),
             image_row_epoch: false,
             w_range: false,
+            track_pb_antennas: false,
             first_cross: false,
         };
         let catalogue = observation.catalogue();
@@ -1102,6 +1190,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
                 image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -1186,6 +1275,7 @@ mod tests {
             row_selection,
             image_row_epoch: false,
             w_range: false,
+            track_pb_antennas: false,
             first_cross: false,
         };
         let catalogue = observation.catalogue();
@@ -1202,6 +1292,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
                 image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
