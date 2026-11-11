@@ -83,11 +83,16 @@ impl PySimutil {
                 .extract::<String>(py)?,
         };
         let date = value_in(&super::ops::quantity(&date)?, "d")?;
-        let duration = super::ops::quantity(&self.totaltime.extract::<Variant>(py)?)?;
-        let duration_hours = if duration.value() == 0.0 {
+        let measurement_set = ms.as_deref().filter(|path| !path.as_os_str().is_empty());
+        let duration_hours = if measurement_set.is_some() {
             0.0
         } else {
-            value_in(&duration, "h")?
+            let duration = super::ops::quantity(&self.totaltime.extract::<Variant>(py)?)?;
+            if duration.value() == 0.0 {
+                0.0
+            } else {
+                value_in(&duration, "h")?
+            }
         };
         let file = tempfile::NamedTempFile::new()?;
         let document = py.detach(|| {
@@ -100,7 +105,7 @@ impl PySimutil {
                     .ok_or_else(|| PyRuntimeError::new_err("simutil::ephemeris needs either a known observatory or an explicitly specified cofa measure"))?,
             };
             ephemeris_plot(&EphemerisPlotRequest { source, date_mjd: date, position, measures: data,
-                use_hour_angle: usehourangle, measurement_set: ms.as_deref().filter(|path| !path.as_os_str().is_empty()), duration_hours }, file.path())
+                use_hour_angle: usehourangle, measurement_set, duration_hours }, file.path())
                 .map_err(|error| if error.to_string().contains("never visible") { PyValueError::new_err(format!("{shown} is not visible from {telescope}")) }
                     else { PyRuntimeError::new_err(error.to_string()) })
         })?;

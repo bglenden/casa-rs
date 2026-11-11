@@ -87,7 +87,12 @@ def _render_document(document, payload, figure, use_native_limits, axes, preserv
             axis.set_yscale(y.get("scale", "linear"))
         aspect = panel.get("aspect") or layout.get("aspect")
         if aspect == "equal_data_limits":
-            axis.set_aspect("equal", adjustable="datalim")
+            if panel.get("axes"):
+                axis.set_aspect("equal", adjustable="datalim")
+            else:
+                # With no native bounds, CASA's axis('equal') also restores
+                # autoscaling after a caller explicitly fixed both limits.
+                axis.axis("equal")
         elif aspect:
             axis.set_aspect(aspect)
         if document["show_legend"] and len(panel["layers"]) > 1:

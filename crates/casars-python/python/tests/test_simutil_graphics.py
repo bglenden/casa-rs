@@ -25,6 +25,9 @@ from simobserve_graphics_oracle import artists
 with gzip.open(Path(__file__).with_name("data") / "casa_simutil_graphics.json.gz", "rt") as source:
     REFERENCE = json.load(source)
 
+with gzip.open(Path(__file__).with_name("data") / "casa_simutil_graphics_context.json.gz", "rt") as source:
+    CONTEXT = json.load(source)
+
 
 def compare(actual, expected):
     maximum = compare_artists(actual, expected)
@@ -169,3 +172,24 @@ def test_ephemeris_refuses_an_unknown_or_unobservable_site_as_casa_does(case):
         simutil(totaltime=0.0).ephemeris("2014/01/01", **case["options"])
     assert str(error.value) == case["message"]
     assert plt.get_fignums() == []
+
+
+@pytest.mark.parametrize("case", CONTEXT["cases"], ids=lambda c: f"{c['method']}-{c['totaltime']}")
+def test_existing_axes_and_unused_ms_duration_match_casa(case, images, monkeypatch):
+    monkeypatch.chdir(images)
+    utility = simutil(totaltime=case["totaltime"])
+    utility.newfig(show=False)
+    axis = plt.gca()
+    axis.set_aspect(2.5, adjustable="box")
+    axis.set(xlim=(-1, 1), ylim=(-1, 1), xlabel="existing x", ylabel="existing y")
+    axis.set_title("existing title", fontsize=23, color="red", fontweight="bold")
+    if case["method"] == "plotants":
+        options = case["options"]
+        x, y, z = np.asarray(options["positions"]).T
+        assert utility.plotants(x, y, z, options["diameters"], options["names"]) is None
+    else:
+        assert utility.ephemeris(**case["options"]) is None
+    compare(artists(plt.gcf()), case["artists"])
+    assert [axis.get_autoscalex_on(), axis.get_autoscaley_on()] == case["autoscale"]
+    assert axis.get_adjustable() == case["adjustable"]
+    assert axis.title.get_color() == "red" and axis.title.get_fontweight() == "bold"

@@ -43,7 +43,10 @@ pub fn ephemeris_plot(
     payload_path: &Path,
 ) -> Result<PlotDocument, SimobserveError> {
     let mut payload = Payload::open(payload_path)?;
-    let panel = crate::simobserve::graphics::ephemeris::panel_for(request, &mut payload)?;
+    let mut panel = crate::simobserve::graphics::ephemeris::panel_for(request, &mut payload)?;
+    // The task starts a new panel; the public helper draws on caller axes
+    // and, like CASA, preserves their existing aspect and adjustable mode.
+    panel.aspect = None;
     let document = document::document("ephemeris", vec![panel], 1);
     document
         .validate_payload(payload.finish()?)
