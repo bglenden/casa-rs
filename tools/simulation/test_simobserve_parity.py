@@ -25,7 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from simobserve_parity import CASES, compare_frequency_frames, compare_images, copy_inputs, main, repredict
+from simobserve_parity import CASES, casars_params, compare_frequency_frames, compare_images, copy_inputs, main, repredict
 
 
 class ComponentLists:
@@ -241,6 +241,24 @@ class ExpectedOutcomeTest(unittest.TestCase):
             status, report = self.run_case(expect_refusal=refused, refused=refused)
             self.assertEqual(status, 0)
             self.assertEqual(report["differences"], [])
+
+
+class ScheduleAlignmentTest(unittest.TestCase):
+    def test_time_alignment_preserves_the_numeric_hours_input_form(self):
+        params = {"hourangle": "-1.5", "refdate": "2017/01/02/09:30:00"}
+        with (patch("simobserve_parity.hour_angle_s", return_value=-5400.0),
+              patch("simobserve_parity.tai_minus_utc_s", return_value=37.0)):
+            aligned = casars_params({}, params)
+        self.assertAlmostEqual(float(aligned["hourangle"]) * 3600.0, -5363.0, places=9)
+        self.assertEqual(params["hourangle"], "-1.5")
+        self.assertEqual(aligned["refdate"], params["refdate"])
+
+    def test_quantity_and_transit_inputs_keep_the_seconds_alignment(self):
+        for hourangle, seconds in (("90min", 5400.0), ("transit", 0.0)):
+            with (patch("simobserve_parity.hour_angle_s", return_value=seconds),
+                  patch("simobserve_parity.tai_minus_utc_s", return_value=36.0)):
+                aligned = casars_params({}, {"hourangle": hourangle})
+            self.assertEqual(aligned["hourangle"], f"{seconds + 36.0}s")
 
 
 if __name__ == "__main__":

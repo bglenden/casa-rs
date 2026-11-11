@@ -184,6 +184,26 @@ CASES = [
     # well as through the visibility comparison.
     {"name": "frame_topo", "params": dict(CORE, outframe="TOPO")},
     {"name": "frame_bary", "params": dict(CORE, outframe="BARY")},
+    # Non-transit scheduling across dates with different TAI-UTC offsets.
+    # A time suffix in refdate is discarded in favor of hourangle.
+    {
+        "name": "schedule_hour_number",
+        "params": dict(CORE, hourangle="-1.5", refdate="2017/01/02/09:30:00", totaltime="60s"),
+    },
+    {
+        "name": "schedule_hour_quantity",
+        "params": dict(CORE, hourangle="90min", refdate="2016/06/21/12:34:56", totaltime="60s"),
+    },
+    {
+        "name": "schedule_refdate_modern",
+        "params": dict(CORE, hourangle="transit", refdate="2025/01/15", totaltime="60s"),
+    },
+    {
+        "name": "schedule_square",
+        "params": dict(
+            CORE, maptype="square", hourangle="-30min", refdate="2015/06/29", totaltime="60s"
+        ),
+    },
     # Model overrides must reach both the prepared image and the observed
     # geometry, not just the task's accepted parameter list (#1053).
     {
@@ -261,8 +281,18 @@ def casars_params(t, params: dict) -> dict:
     documentation)."""
     shifted = dict(params)
     refdate = params.get("refdate", "2014/01/01")
-    offset = hour_angle_s(t, params.get("hourangle", "transit")) + tai_minus_utc_s(t, refdate)
+    hourangle = params.get("hourangle", "transit")
+    shift = tai_minus_utc_s(t, refdate)
+    offset = hour_angle_s(t, hourangle) + shift
     shifted["hourangle"] = f"{offset!r}s"
+    # Preserve bare numeric hours so those scenarios test the native
+    # task's numeric-hour parser rather than only its seconds parser.
+    try:
+        hours = float(hourangle)
+    except ValueError:
+        pass
+    else:
+        shifted["hourangle"] = repr(hours + shift / 3600.0)
     return shifted
 
 
