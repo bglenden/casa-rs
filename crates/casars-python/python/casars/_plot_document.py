@@ -26,6 +26,13 @@ def render_document(document: Mapping[str, Any], *, payload: Any = None, figure:
 
     from matplotlib import pyplot as plt
 
+    if axes is not None:
+        if len(axes) != len(document["panels"] or [document]):
+            raise ValueError("one supplied axes is required for each panel")
+        if figure is None:
+            figure = axes[0].figure
+        if any(axis.figure is not figure for axis in axes):
+            raise ValueError("supplied axes must belong to the supplied figure")
     owned = figure is None
     if owned:
         figure = plt.figure()
