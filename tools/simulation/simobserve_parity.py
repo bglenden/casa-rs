@@ -184,10 +184,33 @@ CASES = [
     # well as through the visibility comparison.
     {"name": "frame_topo", "params": dict(CORE, outframe="TOPO")},
     {"name": "frame_bary", "params": dict(CORE, outframe="BARY")},
+    # Model overrides must reach both the prepared image and the observed
+    # geometry, not just the task's accepted parameter list (#1053).
+    {
+        "name": "model_direction",
+        "params": dict(CORE, indirection="J2000 19h30m00 -30d00m00", totaltime="60s"),
+    },
+    {"name": "model_cell", "params": dict(CORE, incell="0.03arcsec", totaltime="60s")},
+    {
+        "name": "model_direction_cell",
+        "params": dict(
+            CORE, indirection="J2000 19h30m00 -30d00m00", incell="0.03arcsec", totaltime="60s"
+        ),
+    },
+    # A component-only model with an even channel count exercises the
+    # half-pixel spectral reference, channel spacing and prediction.
+    {
+        "name": "components_cube",
+        "params": dict(
+            CORE, skymodel="", complist="inputs/core5ps.clist", compwidth="8GHz", comp_nchan=4,
+            totaltime="60s",
+        ),
+    },
     # A model whose 4″ cells the configuration cannot sample: both refuse
     # with CASA's message, and remove the flat model.
     {
         "name": "coarse_cell",
+        "expect_refusal": True,
         "params": dict(CORE, skymodel="inputs/flatone.model"),
     },
 ]
@@ -629,12 +652,16 @@ def main() -> int:
         casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
         if casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
+            if not case.get("expect_refusal", False):
+                report["differences"].append("expected a successful simulation, not a refusal")
             if casa_error != outcome.get("error"):
                 report["differences"].append(f"CASA raised {casa_error!r}, casa-rs {outcome.get('error')!r}")
             elif products(casa) != products(casars):
                 report["differences"].append(f"files: CASA {products(casa)} against casa-rs {products(casars)}")
         else:
             report = compare_case(t, case, casa, casars, out, args)
+            if case.get("expect_refusal", False):
+                report["differences"].append("expected a refusal, but both simulations succeeded")
         # The task's own times: CASA's simobserve call, casa-rs's run report.
         report["seconds"] = {"casa": casa_s, "casa-rs": outcome.get("elapsed_s")}
         reports.append(report)
