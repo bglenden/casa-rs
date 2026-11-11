@@ -450,13 +450,14 @@
   },
   "graphics": {
    "status": "Partial",
-   "scope": "Interferometric file/screen/both writes the numerical .quick.psf before corruption, using legacy single-field padding 1.0. PNG rendering remains unfinished and warns (#1025); none and single-dish do not write a quick PSF.",
+   "scope": "The Python host renders complete .skymodel.png and .observe.png figures for file/screen/both; none draws nothing. Rust prepares all scientific data, transferred by bounded typed file views without thinning. Interferometric file/screen/both also writes the numerical .quick.psf before corruption; none and single-dish do not. Direct headless use without the caller payload warns that PNGs require the Python host. Broader combinations remain unverified (#1053).",
    "evidence": [
     "signature",
     "task-tests",
     "parity-20261103",
     "quick-psf-20261111",
-    "quick-psf-relative-project-20261111"
+    "quick-psf-relative-project-20261111",
+    "graphics-20261111"
    ],
    "behaviors": [
     "outputs"
@@ -562,13 +563,14 @@
    "title": "Files, overwrite and graphics",
    "status": "Partial",
    "scope": "CASA's file names under the project, overwrite, verbose and graphics.",
-   "gap": "PNG rendering (.skymodel.png and .observe.png) remains unfinished and warns (#1025). Numerical interferometric .quick.psf is implemented; broader graphics and task acceptance remain open (#1053).",
+   "gap": "Complete image/component/dense-pointing/single-dish figures are verified through the Python host. Direct headless use without its payload does not render PNGs; broader task/output combinations and simulation-facing public simutil graphics remain unfinished (#1053).",
    "evidence": [
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
     "quick-psf-20261111",
-    "quick-psf-relative-project-20261111"
+    "quick-psf-relative-project-20261111",
+    "graphics-20261111"
    ]
   }
  ],
@@ -843,6 +845,24 @@
    "source_revision": "ca11bbddc581ab9f7efb22c6a09bfe03b309bf55",
    "command": "RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/check_quick_psf_casa.py --native DIR --reference FIXTURE --out OUT",
    "receipt": "resources/casa-compat/evidence/simobserve-quick-psf-20261111.json"
+  },
+  "graphics-20261111": {
+   "kind": "Installed CASA artists, real task rendering and C++ image readback",
+   "state": "passed",
+   "result": "Sixteen figures from four image/component/dense-279-point/single-dish cases agree with independent CASA artists at one/three workers, with all samples and pixels. CASA reads six native PSFs, maximum NRMS 6.63e-7. Real Python file/screen/both/none completion and payload cleanup pass. One renderer review is resolved with before/after regressions.",
+   "scope": "Python-host model and observation PNGs plus numerical controls; public simutil graphics, broader mode combinations, raster bit identity and performance acceptance remain open. Plot-time comparisons have bounded approximate alignment and do not replace equal-stored-TIME MS/UVW checks.",
+   "links": [
+    "crates/casa-simulation/src/simobserve/graphics/mod.rs",
+    "crates/casa-simulation/tests/simobserve_quick_psf.rs",
+    "crates/casars-python/python/casars/_plot_document.py",
+    "crates/casars-python/python/tests/test_simobserve_graphics.py",
+    "tools/simulation/check_simobserve_rendering.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "117d49965afae282afce55806d8feedddcb9e42f",
+   "source_revision": "117d49965afae282afce55806d8feedddcb9e42f",
+   "command": "RUST_TEST_THREADS=1 CASA_RS_GRAPHICS_DEBUG_DIR=OUT cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; python tools/simulation/check_simobserve_rendering.py --native DIR --reference FIXTURE --out OUT; pytest crates/casars-python/python/tests",
+   "receipt": "resources/casa-compat/evidence/simobserve-graphics-20261111.json"
   }
  }
 }

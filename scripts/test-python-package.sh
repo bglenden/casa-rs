@@ -43,6 +43,7 @@ cargo build -q -p casa-ms --bin flagmanager --bin flagdata -p casa-calibration -
 cargo build -q -p casa-images --bin immath
 cargo build -q -p casars-imexplore --bin imexplore
 cargo build -q -p casars-msconvert --bin msconvert
+cargo build -q -p casars-simulation --bin simobserve
 export CASARS_REQUIRE_TASK_BINARIES=1
 
 editable_venv="$tmp_root/editable-venv"
@@ -69,9 +70,10 @@ import sys
 
 import casars
 import casars._core
+import casars._plot_document
 
 venv = pathlib.Path(sys.argv[1]).resolve()
-for module in (casars, casars._core):
+for module in (casars, casars._core, casars._plot_document):
     path = pathlib.Path(module.__file__).resolve()
     if venv not in path.parents:
         raise SystemExit(f"{module.__name__} imported from {path}, not from {venv}")
@@ -110,4 +112,5 @@ MATURIN_PEP517_ARGS="--profile dev" \
 test_installed "$sdist_venv" \
   "$tests_dir/test_binding_snapshots.py" \
   "$tests_dir/test_parameters.py" \
-  "$tests_dir/test_data.py"
+  "$tests_dir/test_data.py" \
+  "$tests_dir/test_plot_document.py"

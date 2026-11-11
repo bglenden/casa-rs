@@ -18,10 +18,14 @@
 //! in its reply, and they depend on no binding crate.
 
 mod convert;
+mod rich;
+
+pub use rich::*;
 
 use std::path::PathBuf;
 use std::time::Instant;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use self::convert::{plot_document, plot_payload_metadata};
@@ -156,7 +160,7 @@ pub struct PlotAxisMetadata {
 }
 
 /// Scale of a document axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PlotAxisScale {
     /// Linear scale.
@@ -166,7 +170,7 @@ pub enum PlotAxisScale {
 }
 
 /// How a renderer draws a layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PlotLayerKind {
     /// Unconnected markers.
@@ -175,20 +179,26 @@ pub enum PlotLayerKind {
     Line,
     /// Horizontal bars over lanes.
     Interval,
+    /// A two-dimensional image.
+    Image,
+    /// Circles in the data coordinate system.
+    Circles,
 }
 
 /// Which of a layer's arrays hold its data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PlotPayloadStrategy {
     /// `x_values` and `y_values`, with optional labels, sizes and provenance.
     PointCloud,
     /// The `interval_*` arrays.
     Intervals,
+    /// Arrays in the caller-owned raw payload file.
+    BinaryArrays,
 }
 
 /// One axis of a document or panel.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PlotDocumentAxis {
     /// Identifier that layers reference.
     pub id: String,
@@ -209,7 +219,7 @@ pub struct PlotDocumentAxis {
 }
 
 /// MeasurementSet source of one plotted point.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PlotPointProvenance {
     /// MAIN-table row.
     pub row: u64,
@@ -222,7 +232,7 @@ pub struct PlotPointProvenance {
 }
 
 /// One drawable layer of a document or panel.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PlotDocumentLayer {
     /// Identifier unique within its panel.
     pub id: String,
@@ -269,10 +279,16 @@ pub struct PlotDocumentLayer {
     pub payload_strategy: PlotPayloadStrategy,
     /// Where the layer's data came from.
     pub provenance_summary: String,
+    /// File-backed data, absent for legacy inline layers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<PlotLayerData>,
+    /// Optional renderer styling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<PlotLayerStyle>,
 }
 
 /// A text annotation at a data position.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PlotDocumentAnnotation {
     /// Identifier unique within its panel.
     pub id: String,
@@ -282,10 +298,13 @@ pub struct PlotDocumentAnnotation {
     pub y: f64,
     /// Annotation text.
     pub text: String,
+    /// Optional axes-relative placement and style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<PlotTextStyle>,
 }
 
 /// One panel of a multi-panel document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PlotDocumentPanel {
     /// Stable panel identifier.
     pub id: String,
@@ -297,13 +316,19 @@ pub struct PlotDocumentPanel {
     pub layers: Vec<PlotDocumentLayer>,
     /// Text annotations.
     pub annotations: Vec<PlotDocumentAnnotation>,
+    /// Aspect of this panel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<PlotAspect>,
+    /// Draw the panel's border; absent keeps the renderer default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_visible: Option<bool>,
 }
 
 /// A renderer-neutral plot: one panel, or a list of panels.
 ///
 /// A single-panel document fills `axes`, `layers` and `annotations` and
 /// leaves `panels` empty; a multi-panel document does the reverse.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PlotDocument {
     /// Stable document identifier.
     pub id: String,
@@ -323,6 +348,9 @@ pub struct PlotDocument {
     pub panels: Vec<PlotDocumentPanel>,
     /// Whether renderers show a legend.
     pub show_legend: bool,
+    /// Optional explicit panel grid and margins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<PlotLayout>,
 }
 
 /// One series of a [`MeasurementSetPlot`] and the rows it came from.
