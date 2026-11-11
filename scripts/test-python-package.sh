@@ -70,9 +70,10 @@ import sys
 
 import casars
 import casars._core
+import casars._plot_document
 
 venv = pathlib.Path(sys.argv[1]).resolve()
-for module in (casars, casars._core):
+for module in (casars, casars._core, casars._plot_document):
     path = pathlib.Path(module.__file__).resolve()
     if venv not in path.parents:
         raise SystemExit(f"{module.__name__} imported from {path}, not from {venv}")
@@ -111,4 +112,5 @@ MATURIN_PEP517_ARGS="--profile dev" \
 test_installed "$sdist_venv" \
   "$tests_dir/test_binding_snapshots.py" \
   "$tests_dir/test_parameters.py" \
-  "$tests_dir/test_data.py"
+  "$tests_dir/test_data.py" \
+  "$tests_dir/test_plot_document.py"
