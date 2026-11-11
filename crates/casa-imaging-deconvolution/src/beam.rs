@@ -271,24 +271,21 @@ pub fn fit_restoring_beam(
     cell_size_rad: [f64; 2],
     cutoff: f32,
 ) -> Result<RestoringBeam, PsfBeamFitError> {
-    if peak_outside_inner_quarter(psf, shape)? {
+    let (peak_index, _) = positive_peak(psf)?;
+    if peak_outside_inner_quarter(peak_index, shape) {
         return Err(PsfBeamFitError::PeakOutsideInnerQuarter);
     }
     fit_main_lobe(psf, shape, cell_size_rad, cutoff)
 }
 
-/// Whether `psf`'s peak lies outside the plane's inner quarter
+/// Whether the peak lies outside the plane's inner quarter
 /// (`StokesImageUtil::FitGaussianPSF`).
-pub(crate) fn peak_outside_inner_quarter(
-    psf: &[f32],
-    shape: [usize; 2],
-) -> Result<bool, PsfBeamFitError> {
-    let (peak_index, _) = positive_peak(psf)?;
+pub(crate) fn peak_outside_inner_quarter(peak_index: usize, shape: [usize; 2]) -> bool {
     let pixel = [peak_index / shape[1], peak_index % shape[1]];
-    Ok(pixel.iter().zip(shape).any(|(&at, extent)| {
+    pixel.iter().zip(shape).any(|(&at, extent)| {
         let (at, extent) = (at as f64, extent as f64);
         at < extent / 4.0 || at > 3.0 * extent / 4.0
-    }))
+    })
 }
 
 /// [`fit_restoring_beam`] around the peak, wherever it lies.
@@ -334,7 +331,7 @@ pub(crate) fn fit_main_lobe(
 
 /// The flat index and value of `psf`'s peak, which must be positive and
 /// finite.
-fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
+pub(crate) fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
     let (peak_index, peak) = peak_flat(psf).ok_or(PsfBeamFitError::EmptyPsf)?;
     if !(peak.is_finite() && peak > 0.0) {
         return Err(PsfBeamFitError::PeakNotPositive { peak });
@@ -347,15 +344,14 @@ fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
 ///
 /// CASA defines the positive sidelobe as `max(psf - fitted_gaussian)` while
 /// preserving the magnitude of the most-negative original PSF sample. The
-/// Gaussian is unit peak and is scaled to the measured PSF peak before the
-/// subtraction.
+/// Gaussian is scaled to the PSF peak when measuring a normalized fraction.
 #[cfg(test)]
 pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
     psf: &[f32],
     shape: [usize; 2],
     beam: RestoringBeam,
 ) -> Result<f64, PsfBeamFitError> {
-    fitted_psf_sidelobe_fraction_with_cell(psf, shape, beam, [1.0, 1.0])
+    fitted_psf_sidelobe_fraction_with_cell(psf, shape, beam, [1.0, 1.0], false)
 }
 
 /// `beam` is in units of the first direction-axis pixel; `cell` gives each
@@ -365,6 +361,7 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
     shape: [usize; 2],
     beam: RestoringBeam,
     cell: [f64; 2],
+    image_units: bool,
 ) -> Result<f64, PsfBeamFitError> {
     if psf.len() != shape[0].saturating_mul(shape[1]) {
         return Err(PsfBeamFitError::ShapeMismatch {
@@ -373,6 +370,9 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
         });
     }
     let (_, peak) = positive_peak(psf)?;
+    // An existing CASA PSF keeps its image amplitude. MakeGaussianPSF
+    // subtracts a unit Gaussian and the result stays in those units.
+    let scale = if image_units { 1.0 } else { peak };
     // CASA's MakeGaussianPSF puts the beam at the image reference pixel,
     // not at the PSF's (possibly off-centre) maximum.
     let peak_pixel = [shape[0] / 2, shape[1] / 2];
@@ -381,7 +381,7 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
     let cos_pa = beam.position_angle_rad().cos();
     let sin_pa = beam.position_angle_rad().sin();
     // Beyond 16 times the larger sigma, exp(-r²/2) <= exp(-128)
-    // rounds to exactly zero in f32, before multiplication by the PSF peak.
+    // rounds to exactly zero in f32, before multiplication by the Gaussian scale.
     // Keep all PSF extrema, but evaluate the Gaussian only where it can matter.
     let radius = if sigma_minor > 0.0 {
         (16.0 * sigma_major.max(sigma_minor)).ceil() as usize
@@ -419,13 +419,17 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
             let dy = (y as f64 - peak_pixel[1] as f64) * cell[1];
             let u = dx * cos_pa + dy * sin_pa;
             let v = -dx * sin_pa + dy * cos_pa;
-            let gaussian = (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp()
-                as f32
-                * peak;
+            let exponent = 0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2));
+            // MakeGaussianPSF sets the saved-image Gaussian to zero at 20.
+            let gaussian = if !image_units || exponent < 20.0 {
+                (-exponent).exp() as f32 * scale
+            } else {
+                0.0
+            };
             maximum_delobed = maximum_delobed.max(sample - gaussian);
         }
     }
-    Ok(f64::from(minimum.abs().max(maximum_delobed)) / f64::from(peak))
+    Ok(f64::from(minimum.abs().max(maximum_delobed)) / f64::from(scale))
 }
 
 struct FitSample {
@@ -1082,11 +1086,13 @@ mod tests {
     #[test]
     fn a_peak_outside_the_inner_quarter_is_refused_as_casa_refuses_it() {
         for inside in [[5, 5], [15, 15], [10, 10]] {
-            assert!(!peak_outside_inner_quarter(&point_at(inside), [20, 20]).unwrap());
+            let (peak, _) = positive_peak(&point_at(inside)).unwrap();
+            assert!(!peak_outside_inner_quarter(peak, [20, 20]));
         }
         for outside in [[4, 10], [16, 10], [10, 4], [10, 16]] {
             let psf = point_at(outside);
-            assert!(peak_outside_inner_quarter(&psf, [20, 20]).unwrap());
+            let (peak, _) = positive_peak(&psf).unwrap();
+            assert!(peak_outside_inner_quarter(peak, [20, 20]));
             assert!(matches!(
                 fit_restoring_beam(&psf, [20, 20], [1.0, 1.0], 0.35),
                 Err(PsfBeamFitError::PeakOutsideInnerQuarter)

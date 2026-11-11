@@ -3,8 +3,8 @@
 
 use crate::Error;
 use crate::beam::{
-    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_main_lobe, fitted_psf_sidelobe_fraction_with_cell,
-    peak_outside_inner_quarter,
+    DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_main_lobe,
+    fitted_psf_sidelobe_fraction_with_cell, peak_outside_inner_quarter, positive_peak,
 };
 use crate::plane::{PlaneShape, psf_peak};
 
@@ -17,6 +17,7 @@ pub struct PsfSummary {
     sidelobe: f64,
     clark: ClarkPatch,
     off_centre: bool,
+    fit_refused: bool,
     unsettled_beam: bool,
 }
 
@@ -56,7 +57,7 @@ impl PsfSummary {
     ///
     /// When the PSF has no positive finite peak or the main lobe cannot be fitted.
     pub fn with_cutoff(psf: &[f64], shape: PlaneShape, cutoff: f32) -> Result<Self, Error> {
-        Self::measure(psf, shape, cutoff, None, [1.0, 1.0])
+        Self::measure(psf, shape, cutoff, None, [1.0, 1.0], None)
     }
 
     /// Measure a PSF with a fitted beam recovered from its image metadata.
@@ -70,7 +71,14 @@ impl PsfSummary {
         shape: PlaneShape,
         beam: RestoringBeam,
     ) -> Result<Self, Error> {
-        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam), [1.0, 1.0])
+        Self::measure(
+            psf,
+            shape,
+            DEFAULT_PSF_FIT_CUTOFF,
+            Some(beam),
+            [1.0, 1.0],
+            None,
+        )
     }
 
     /// Measure with direction increments expressed in first-axis pixels.
@@ -83,7 +91,7 @@ impl PsfSummary {
         cutoff: f32,
         cell: [f64; 2],
     ) -> Result<Self, Error> {
-        Self::measure(psf, shape, cutoff, None, cell)
+        Self::measure(psf, shape, cutoff, None, cell, None)
     }
 
     /// Measure a saved beam with direction increments in first-axis pixels.
@@ -96,7 +104,29 @@ impl PsfSummary {
         beam: RestoringBeam,
         cell: [f64; 2],
     ) -> Result<Self, Error> {
-        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam), cell)
+        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam), cell, None)
+    }
+
+    /// Measure a reused PSF with the peak of its saved Float image.
+    ///
+    /// `psf` is the solver's unit-peak view. The fit and controller
+    /// sidelobe read the saved image amplitude, and the Clark patch reads
+    /// the solver's view.
+    ///
+    /// # Errors
+    /// The PSF has an invalid peak or shape, or the main lobe cannot be fitted.
+    pub fn with_image_peak(
+        psf: &[f64],
+        shape: PlaneShape,
+        cutoff: f32,
+        saved_beam: Option<RestoringBeam>,
+        cell: [f64; 2],
+        image_peak: f64,
+    ) -> Result<Self, Error> {
+        if !image_peak.is_finite() || image_peak <= 0.0 {
+            return Err(Error::PsfPeak);
+        }
+        Self::measure(psf, shape, cutoff, saved_beam, cell, Some(image_peak))
     }
 
     /// A blank plane's saved beam for automatic-mask common-beam selection.
@@ -113,6 +143,7 @@ impl PsfSummary {
                 exterior_sidelobe: 0.0,
             },
             off_centre: false,
+            fit_refused: false,
             unsettled_beam: false,
         }
     }
@@ -131,36 +162,37 @@ impl PsfSummary {
         cutoff: f32,
         saved_beam: Option<RestoringBeam>,
         cell: [f64; 2],
+        image_peak: Option<f64>,
     ) -> Result<Self, Error> {
+        let axes = [shape.nx, shape.ny];
+        if psf.len() != shape.len() {
+            return Err(PsfBeamFitError::ShapeMismatch {
+                len: psf.len(),
+                shape: axes,
+            }
+            .into());
+        }
         let peak = psf_peak(psf, shape).ok_or(Error::PsfPeak)?;
         if !(psf[peak].is_finite() && psf[peak] > 0.0) {
             return Err(Error::PsfPeak);
         }
-        let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
-        let axes = [shape.nx, shape.ny];
-        // An off-centre plane without a saved beam takes its domain's largest
-        // later. With a saved beam, CASA subtracts that beam at the image
-        // centre even if it overlaps the off-centre PSF peak.
-        let off_centre = peak_outside_inner_quarter(&single, axes)?;
-        let (beam, sidelobe) = if off_centre {
-            match saved_beam {
-                Some(beam) => (
-                    beam,
-                    fitted_psf_sidelobe_fraction_with_cell(&single, axes, beam, cell)?,
-                ),
-                None => (
-                    RestoringBeam::new(1.0, 1.0, 0.0)?,
-                    psf.iter()
-                        .fold(0.0_f64, |level, value| level.max(value.abs())),
-                ),
-            }
+        let single = psf_samples(psf, image_peak);
+        let (fit_peak_index, fit_peak) = positive_peak(&single)?;
+        // FitGaussianPSF refuses a weak saved peak or one outside the inner
+        // quarter. Without a saved beam, the domain assigns its beam later.
+        let off_centre = peak_outside_inner_quarter(fit_peak_index, axes);
+        let fit_refused = (image_peak.is_some() && f64::from(fit_peak) < 1e-7) || off_centre;
+        let unsettled_beam = fit_refused && saved_beam.is_none();
+        let beam = match saved_beam {
+            Some(beam) => beam,
+            None if fit_refused => RestoringBeam::new(1.0, 1.0, 0.0)?,
+            None => fit_main_lobe(&single, axes, cell, cutoff)?,
+        };
+        let sidelobe = if unsettled_beam {
+            psf.iter()
+                .fold(0.0_f64, |level, value| level.max(value.abs()))
         } else {
-            let beam = match saved_beam {
-                Some(beam) => beam,
-                None => fit_main_lobe(&single, axes, cell, cutoff)?,
-            };
-            let sidelobe = fitted_psf_sidelobe_fraction_with_cell(&single, axes, beam, cell)?;
-            (beam, sidelobe)
+            fitted_psf_sidelobe_fraction_with_cell(&single, axes, beam, cell, image_peak.is_some())?
         };
         Ok(Self {
             peak,
@@ -168,15 +200,21 @@ impl PsfSummary {
             sidelobe,
             clark: ClarkPatch::new(psf, shape, beam),
             off_centre,
-            unsettled_beam: off_centre && saved_beam.is_none(),
+            fit_refused,
+            unsettled_beam,
         })
     }
 
-    /// Whether the plane's PSF peaks outside its inner quarter, so it has no
-    /// beam of its own (`SIImageStore::makeImageBeamSet`).
+    /// Whether the PSF peaks outside the plane's inner quarter.
     #[must_use]
     pub const fn off_centre(&self) -> bool {
         self.off_centre
+    }
+
+    /// Whether CASA refuses to fit this PSF's peak.
+    #[must_use]
+    pub const fn fit_refused(&self) -> bool {
+        self.fit_refused
     }
 
     /// This summary of the normalised PSF `psf` with its domain's largest
@@ -192,13 +230,13 @@ impl PsfSummary {
         }
     }
 
-    /// Whether the off-centre plane still needs its domain's beam.
+    /// Whether the plane still needs its domain's beam.
     #[must_use]
     pub const fn needs_domain_beam(&self) -> bool {
         self.unsettled_beam
     }
 
-    /// Set the domain's beam and remeasure an off-centre PSF's sidelobe.
+    /// Set the domain's beam and remeasure a refused PSF's sidelobe.
     /// `cell` gives the direction increments in first-axis pixels.
     ///
     /// # Errors
@@ -210,10 +248,16 @@ impl PsfSummary {
         shape: PlaneShape,
         beam: RestoringBeam,
         cell: [f64; 2],
+        image_peak: Option<f64>,
     ) -> Result<Self, Error> {
-        let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
-        let sidelobe =
-            fitted_psf_sidelobe_fraction_with_cell(&single, [shape.nx, shape.ny], beam, cell)?;
+        let single = psf_samples(psf, image_peak);
+        let sidelobe = fitted_psf_sidelobe_fraction_with_cell(
+            &single,
+            [shape.nx, shape.ny],
+            beam,
+            cell,
+            image_peak.is_some(),
+        )?;
         Ok(Self {
             sidelobe,
             unsettled_beam: false,
@@ -243,6 +287,13 @@ impl PsfSummary {
     #[must_use]
     pub const fn clark(&self) -> ClarkPatch {
         self.clark
+    }
+}
+
+fn psf_samples(psf: &[f64], image_peak: Option<f64>) -> Vec<f32> {
+    match image_peak {
+        Some(peak) => psf.iter().map(|value| (value * peak) as f32).collect(),
+        None => psf.iter().map(|value| *value as f32).collect(),
     }
 }
 
@@ -298,6 +349,65 @@ mod tests {
             }
         }
         psf
+    }
+
+    #[test]
+    fn a_reused_weak_psf_subtracts_a_unit_gaussian() {
+        let shape = PlaneShape::new(32, 32);
+        let mut psf = vec![0.0; shape.len()];
+        psf[shape.index(16, 16)] = 1.0;
+        psf[shape.index(17, 16)] = 0.9;
+        let beam = RestoringBeam::new(4.0, 4.0, 0.0).unwrap();
+        let summary = PsfSummary::with_image_peak(
+            &psf,
+            shape,
+            DEFAULT_PSF_FIT_CUTOFF,
+            Some(beam),
+            [1.0, 1.0],
+            5e-8,
+        )
+        .unwrap();
+        assert_eq!(summary.beam(), beam);
+        assert_eq!(summary.sidelobe(), 0.0);
+    }
+
+    #[test]
+    fn a_reused_weak_psf_keeps_samples_beyond_the_gaussian_cutoff() {
+        let shape = PlaneShape::new(32, 32);
+        let mut psf = vec![0.0; shape.len()];
+        psf[shape.index(16, 16)] = 1.0;
+        psf[shape.index(27, 16)] = 0.006;
+        let beam = RestoringBeam::new(4.0, 4.0, 0.0).unwrap();
+        let summary = PsfSummary::with_image_peak(
+            &psf,
+            shape,
+            DEFAULT_PSF_FIT_CUTOFF,
+            Some(beam),
+            [1.0, 1.0],
+            5e-8,
+        )
+        .unwrap();
+        assert_eq!(summary.sidelobe(), f64::from(3e-10_f32));
+    }
+
+    #[test]
+    fn a_reused_psf_checks_the_whole_plane_for_fit_refusal() {
+        let shape = PlaneShape::new(192, 192);
+        let mut psf = vec![0.0; shape.len()];
+        psf[shape.index(96, 96)] = 1.0;
+        psf[shape.index(142, 96)] = 3.0;
+        let beam = RestoringBeam::new(4.0, 4.0, 0.0).unwrap();
+        let summary = PsfSummary::with_image_peak(
+            &psf,
+            shape,
+            DEFAULT_PSF_FIT_CUTOFF,
+            Some(beam),
+            [1.0, 1.0],
+            5e-8,
+        )
+        .unwrap();
+        assert_eq!(summary.peak(), shape.index(96, 96));
+        assert!(!summary.fit_refused());
     }
 
     /// `getPSFSidelobeLevel` subtracts a Gaussian at the image's centre, so a
@@ -373,7 +483,7 @@ mod tests {
         let beam = RestoringBeam::new(40.0, 40.0, 0.0).unwrap();
         let summary = PsfSummary::new(&psf, shape)
             .unwrap()
-            .settle_domain_beam(&psf, shape, beam, [1.0, 2.0])
+            .settle_domain_beam(&psf, shape, beam, [1.0, 2.0], None)
             .unwrap();
         let expected = 1.0 - (-4.0 * std::f64::consts::LN_2 * (34.0_f64 / 40.0).powi(2)).exp();
         assert!(

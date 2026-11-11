@@ -147,6 +147,7 @@ fn blank_plane<'a>(inputs: &Inputs<'a>, key: PlaneKey) -> PlaneData<'a> {
         shape,
         residual: vec![vec![0.0; shape.len()]],
         psf: vec![vec![0.0; shape.len()]],
+        psf_peak: 0.0,
         support: Support::new(shape, mask.to_vec()),
         valid: Support::new(shape, vec![false; shape.len()]),
         response: None,

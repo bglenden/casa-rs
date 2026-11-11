@@ -53,7 +53,7 @@ pub use layout::{
     run_bytes_for,
 };
 use mem::{dense_result_bytes, dense_result_slots, solve_mem};
-use psfs::{measure_psfs, saved_beam, saved_psf_beam, summarize_psf};
+use psfs::{measure_psfs, saved_beam, saved_psf_beam};
 pub use rows::PlaneCycleRow;
 
 /// Component records kept per minor cycle for diagnostics.
@@ -156,6 +156,7 @@ struct PlaneKey {
 /// run is kept with them.
 #[derive(Default)]
 pub struct PsfCache {
+    reuses_single_psf: bool,
     summaries: BTreeMap<PlaneKey, PsfSummary>,
     clark: Option<LinearRefresh>,
     /// Whether each image domain's `.pb` keeps a pixel in some plane,
@@ -227,6 +228,7 @@ struct RetainedPlane {
     key: PlaneKey,
     residual: Vec<Vec<f64>>,
     psf: Vec<Vec<f64>>,
+    psf_peak: f64,
     support: Support,
     valid: Support,
 }
@@ -448,15 +450,13 @@ pub fn prepare_minor_cycle(
                 key: *key,
                 residual: plane.residual,
                 psf: plane.psf,
+                psf_peak: plane.psf_peak,
                 support: plane.support,
                 valid: plane.valid,
             });
             return Ok(());
         }
-        let summary = match shared.summaries.get(key) {
-            Some(summary) => *summary,
-            None => summarize_psf(normal, base, setup, *key, &plane.psf[0], plane.shape)?,
-        };
+        let summary = shared.summarize_loaded(normal, base, setup, *key, &plane)?;
         let pixels = plane_pixels(&inputs, *key, &plane)?;
         let mut statistics = PlaneStatistics::measure(
             &plane.residual[0],
@@ -493,6 +493,7 @@ pub fn prepare_minor_cycle(
                 key: *key,
                 residual: plane.residual,
                 psf: plane.psf,
+                psf_peak: plane.psf_peak,
                 support: plane.support,
                 valid: plane.valid,
             });
@@ -519,7 +520,8 @@ pub fn prepare_minor_cycle(
         retained = retained.or(kept);
     }
     // Both cycle controls and Clark's patch use the settled PSF beam.
-    beams::settle_off_centre(normal, base, taylor, cache, setup.psf_beams.is_some())?;
+    let saved = setup.psf_beams.is_some();
+    beams::settle_refused_fits(normal, base, taylor, cache, saved, retained.as_ref())?;
     // Each image domain is one CASA image store.
     let mut statistics = ResidualStatistics::empty();
     let domains = planes
@@ -928,6 +930,7 @@ struct ResponseBinding<'a> {
 struct PlaneTerms<'a> {
     residual: Vec<Vec<f64>>,
     psf: Vec<Vec<f64>>,
+    psf_peak: f64,
     response: Option<ResponseBinding<'a>>,
 }
 
@@ -936,6 +939,7 @@ struct PlaneData<'a> {
     shape: PlaneShape,
     residual: Vec<Vec<f64>>,
     psf: Vec<Vec<f64>>,
+    psf_peak: f64,
     support: Support,
     valid: Support,
     response: Option<ResponseBinding<'a>>,
@@ -1018,6 +1022,7 @@ fn load<'a>(
         shape,
         residual: terms.residual,
         psf: terms.psf,
+        psf_peak: terms.psf_peak,
         support: Support::new(shape, support),
         valid: Support::new(shape, valid),
         response: terms.response,
@@ -1058,6 +1063,7 @@ fn read_single<'a>(
     Ok(PlaneTerms {
         residual: vec![residual],
         psf: vec![normalise(psf, peak)],
+        psf_peak: peak,
         response,
     })
 }
@@ -1150,6 +1156,7 @@ fn read_taylor(
                 .map(|term| term.iter().map(|value| value.re / peak).collect())
                 .collect(),
             psf,
+            psf_peak: peak,
             response: None,
         });
     };
@@ -1179,6 +1186,7 @@ fn read_taylor(
     Ok(PlaneTerms {
         residual,
         psf,
+        psf_peak: peak,
         response: Some(ResponseBinding {
             sensitivity: Cow::Owned(sensitivity),
             response,
@@ -1294,6 +1302,7 @@ fn solve(
             shape: kept.support.shape(),
             residual: kept.residual,
             psf: kept.psf,
+            psf_peak: kept.psf_peak,
             support: kept.support,
             valid: kept.valid,
             response: None,
