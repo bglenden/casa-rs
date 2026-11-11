@@ -256,7 +256,7 @@ pub(crate) fn prepare_with_view_hooks(
         (&observation_info, object_name),
         domains::MaskPreparation::ForRun,
     )?;
-    let primary_beam = primary_beam_model(request, catalogue)?;
+    let primary_beam = primary_beam_model(request, catalogue, &survey.pb_antennas)?;
     let primary_beam_centres = match primary_beam {
         None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
         Some(_) => Some(primary_beam_centres(&domains, &stores, &centre)?),
@@ -463,6 +463,11 @@ fn survey_observation(
             request.gridder,
             Gridder::Wproject { .. } | Gridder::Awproject(_)
         ),
+        track_pb_antennas: request.vis.len() == 1
+            && request.specmode == SpecMode::Mfs
+            && matches!(request.gridder, Gridder::Standard { .. })
+            && (request.write_pb || request.pbcor)
+            && instrument::mixed_alma_dish_classes(catalogue),
         first_cross: matches!(
             &request.gridder,
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
@@ -744,6 +749,7 @@ fn geometry(
 fn primary_beam_model(
     request: &ImagingRequest,
     catalogue: &Catalogue,
+    pb_antennas: &[bool],
 ) -> Result<Option<AnalyticPrimaryBeamModel>, PrepareError> {
     Ok(match request.gridder {
         Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
@@ -752,7 +758,10 @@ fn primary_beam_model(
         Gridder::Standard { .. } | Gridder::Wproject { .. }
             if request.write_pb || request.pbcor =>
         {
-            Some(instrument::standard_primary_beam_model(catalogue)?)
+            Some(instrument::standard_primary_beam_model(
+                catalogue,
+                pb_antennas,
+            )?)
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
     })
