@@ -1,6 +1,7 @@
 """Analytic binary transport and rendering checks, independent of native data."""
 
 import struct
+import mmap
 
 import numpy as np
 import pytest
@@ -8,6 +9,7 @@ import pytest
 matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 
 from casars._plot_document import array_view, render_document
 from casars.tasks import _runner
@@ -105,3 +107,60 @@ def test_failed_publication_closes_even_a_requested_screen_figure(tmp_path, monk
     with pytest.raises(OSError, match="cannot publish PNG"):
         _runner._render_task_plots(plots, payload, tmp_path)
     assert plt.get_fignums() == before
+
+
+def test_figure_construction_failure_closes_the_new_figure(tmp_path):
+    payload = tmp_path / "arrays.bin"
+    payload.write_bytes(struct.pack("<4f", 1, 2, 3, 4))
+    plots = [{"output_file": None, "show": True, "document": {
+        "title": "", "show_legend": False, "panels": [{
+            "title": "", "axes": [], "layers": [{
+                "kind": "image", "data": {
+                    "kind": "image", "pixels": view(0, [2, 2], "f32_le"),
+                    "extent": [0, 1, 0, 1], "range": [1, 4],
+                    "color_map": "unsupported-colormap", "origin": "lower",
+                    "interpolation": "bilinear", "color_bar": False,
+                },
+            }],
+        }],
+    }}]
+    before = set(plt.get_fignums())
+    try:
+        with pytest.raises(ValueError, match="unsupported-colormap"):
+            _runner._render_task_plots(plots, payload, tmp_path)
+        assert set(plt.get_fignums()) == before
+    finally:
+        for number in set(plt.get_fignums()) - before:
+            plt.close(number)
+
+
+def test_failed_artist_keeps_its_borrowed_array_mapping_alive(tmp_path, monkeypatch):
+    payload = tmp_path / "arrays.bin"
+    payload.write_bytes(struct.pack("<4f", 1, 2, 3, 4))
+    document = {"title": "", "show_legend": False, "panels": [{
+        "title": "", "axes": [], "layers": [{"kind": "image", "data": {
+            "kind": "image", "pixels": view(0, [2, 2], "f32_le"),
+            "extent": [0, 1, 0, 1], "range": [1, 4], "color_map": "jet",
+            "origin": "lower", "interpolation": "bilinear", "color_bar": False,
+        }}],
+    }]}
+    borrowed = []
+
+    def fail(self, pixels, **kwargs):
+        borrowed.append(pixels)
+        raise RuntimeError("artist construction failed")
+
+    monkeypatch.setattr(Axes, "imshow", fail)
+    before = set(plt.get_fignums())
+    try:
+        with pytest.raises(RuntimeError, match="artist construction failed"):
+            _runner._render_task_plots([{"output_file": None, "show": True, "document": document}], payload, tmp_path)
+        owner = borrowed[0]
+        while isinstance(owner, np.ndarray):
+            owner = owner.base
+        assert isinstance(owner, mmap.mmap) and not owner.closed
+        np.testing.assert_array_equal(borrowed[0], [[1, 2], [3, 4]])
+    finally:
+        borrowed.clear()
+        for number in set(plt.get_fignums()) - before:
+            plt.close(number)

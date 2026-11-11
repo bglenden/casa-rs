@@ -340,13 +340,28 @@ fn plot_documents(
             .validate_payload(payload_bytes)
             .map_err(|e| e.to_string())?;
         if let Some(path) = &plot.output_file
-            && !reply.artifacts.iter().any(|a| {
-                a.render_pending
-                    && a.resource_kind == RunProductKind::File
-                    && Path::new(&a.path) == path
-            })
+            && reply
+                .artifacts
+                .iter()
+                .filter(|a| {
+                    a.render_pending
+                        && a.resource_kind == RunProductKind::File
+                        && Path::new(&a.path) == path
+                })
+                .count()
+                != 1
         {
-            return Err("a simulation figure names no declared pending file product".into());
+            return Err("a simulation figure needs one declared pending file product".into());
+        }
+    }
+    for artifact in reply.artifacts.iter().filter(|a| a.render_pending) {
+        let figures = reply
+            .plots
+            .iter()
+            .filter(|plot| plot.output_file.as_deref() == Some(Path::new(&artifact.path)))
+            .count();
+        if artifact.resource_kind != RunProductKind::File || figures != 1 {
+            return Err("a pending plot artifact needs exactly one matching figure".into());
         }
     }
     Ok(reply.plots)

@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
-import mmap
 import os
 from pathlib import Path
 
@@ -88,7 +87,8 @@ def main():
     results = []
     for metadata in sorted(args.native.glob("*/plots.json")):
         plots = json.loads(metadata.read_text())
-        with metadata.with_name("arrays.bin").open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as payload:
+        payload = np.memmap(metadata.with_name("arrays.bin"), dtype="u1", mode="r")
+        try:
             for plot in plots:
                 name = Path(plot["output_file"]).name
                 truth = next(case["figures"][name] for case in oracle["cases"] if name in case["figures"])
@@ -102,6 +102,8 @@ def main():
                     results.append({"name": name, "native_run": metadata.parent.name, "panels": len(truth), "maximum_coordinate_difference": maximum, "png": str(output)})
                 finally:
                     plt.close(figure)
+        finally:
+            del payload
     assert results, "no complete native plot documents"
     (args.out / "receipt.json").write_text(json.dumps({"casa_version": oracle["casa_version"], "passed": len(results), "results": results}, indent=1) + "\n")
     print(f"{len(results)} native figures agree with independent CASA artists and save as PNG")

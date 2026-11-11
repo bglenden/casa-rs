@@ -26,11 +26,21 @@ def render_document(document: Mapping[str, Any], *, payload: Any = None, figure:
 
     from matplotlib import pyplot as plt
 
+    owned = figure is None
+    if owned:
+        figure = plt.figure()
+    try:
+        return _render_document(document, payload, figure, use_native_limits)
+    except BaseException:
+        if owned:
+            plt.close(figure)
+        raise
+
+
+def _render_document(document, payload, figure, use_native_limits):
     panels = document["panels"] or [document]
     layout = document.get("layout") or {}
     rows, columns = layout.get("rows", len(panels)), layout.get("columns", 1)
-    if figure is None:
-        figure = plt.figure()
     axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
     for panel, axis in zip(panels, axes, strict=True):
         for layer in panel["layers"]:

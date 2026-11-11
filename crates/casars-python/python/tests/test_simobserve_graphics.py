@@ -1,5 +1,6 @@
 """A real task process, native plot payload, renderer and product completion."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,6 +15,28 @@ from matplotlib.figure import Figure
 
 from casars import tasks
 from casars.tasks import _runner
+
+
+def test_orphan_pending_png_is_refused_instead_of_reporting_a_stale_file(tmp_path, monkeypatch):
+    old = tmp_path / "old.png"
+    old.write_bytes(b"previous-run-png")
+    reply = {
+        "status": "succeeded", "surface": "simobserve", "value": {"kind": "none"},
+        "result": {
+            "run": {"stem": "p", "directory": str(tmp_path), "warnings": [], "elapsed_ns": 0},
+            "plots": [], "artifacts": [{
+                "kind": "observe.png", "label": "Observation", "path": str(old),
+                "exists": False, "render_pending": True, "resource_kind": "file",
+            }],
+        },
+    }
+    fake = tmp_path / "orphan-provider"
+    fake.write_text("#!/usr/bin/env python3\nimport json,sys\njson.load(sys.stdin)\nprint(" + repr(json.dumps(reply)) + ")\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("CASARS_SIMOBSERVE_BIN", str(fake))
+    with pytest.raises(tasks.TaskResultError, match="pending.*figure"):
+        tasks.run("simobserve", workspace=tmp_path, graphics="file")
+    assert old.read_bytes() == b"previous-run-png"
 
 
 @pytest.fixture(scope="module")

@@ -6,6 +6,27 @@ use std::fs;
 use super::*;
 
 #[test]
+fn an_orphan_pending_figure_cannot_report_an_old_png_as_new_output() {
+    let root = tempfile::tempdir().expect("directory");
+    let png = root.path().join("previous.png");
+    fs::write(&png, b"previous-run-png").expect("previous figure");
+    let reply = serde_json::json!({
+        "status":"succeeded", "surface":"simobserve", "value":{"kind":"none"},
+        "result":{"plots":[],"run":{"stem":"p"},"artifacts":[{
+            "kind":"observe.png","label":"Observation","path":png,
+            "exists":false,"render_pending":true,"resource_kind":"file"
+        }]}
+    })
+    .to_string();
+    let error = plot_documents("simobserve", 0, &reply, 0).expect_err("orphan figure");
+    assert!(
+        error.contains("pending") && error.contains("figure"),
+        "{error}"
+    );
+    assert_eq!(fs::read(png).expect("old figure"), b"previous-run-png");
+}
+
+#[test]
 fn simulation_figures_validate_payload_bounds_and_declared_destinations() {
     use casa_ms::plot_document::{
         PlotArrayDtype, PlotBinaryArray, PlotDocument, PlotDocumentLayer, PlotFigure,

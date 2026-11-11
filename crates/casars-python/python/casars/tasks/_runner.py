@@ -322,12 +322,16 @@ def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
 
     if not plots:
         return
-    import mmap
+    import numpy as np
 
     from matplotlib import pyplot as plt
     from .._plot_document import render_document
 
-    with payload.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+    # NumPy owns the mapping for as long as any view needs it, including
+    # views retained in an artist's exception traceback. Explicit mmap.close
+    # could invalidate those arrays while their Python objects are still live.
+    mapped = np.memmap(payload, dtype="u1", mode="r")
+    try:
         for plot in plots:
             figure, _ = render_document(plot["document"], payload=mapped)
             completed = False
@@ -340,6 +344,8 @@ def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
             finally:
                 if not plot["show"] or not completed:
                     plt.close(figure)
+    finally:
+        del mapped
 
 
 def _save_figure(figure, destination: Path) -> None:
