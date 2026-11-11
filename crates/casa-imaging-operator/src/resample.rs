@@ -611,19 +611,27 @@ struct RowPlacing {
 }
 
 impl RowPlacing {
-    fn new(cf: &dyn ConvolutionFunctionSet, geometry: &GridGeometry, row: &NativeRow<'_>) -> Self {
-        Self {
+    fn new(
+        cf: &dyn ConvolutionFunctionSet,
+        geometry: &GridGeometry,
+        row: &NativeRow<'_>,
+    ) -> Option<Self> {
+        let gradient = if cf.pointing_ramp() {
+            if !cf.admits_pointing(geometry, row.pointing_offset_rad) {
+                return None;
+            }
+            geometry.pointing_gradient(row.pointing_offset_rad)
+        } else {
+            [0.0, 0.0]
+        };
+        Some(Self {
             hold: CellHold::new(),
-            gradient: if cf.pointing_ramp() {
-                geometry.pointing_gradient(row.pointing_offset_rad)
-            } else {
-                [0.0, 0.0]
-            },
+            gradient,
             uniform: cf.uniform_key(),
             key: None,
             oversampling: 0,
             half_support: [0, 0],
-        }
+        })
     }
 }
 
@@ -1022,7 +1030,9 @@ impl SpectralResampler {
         let mut values = [Complex32::default(); 4];
         let mut weights = [0.0_f32; 4];
         let (values, weights) = (&mut values[..npol], &mut weights[..npol]);
-        let mut placing = RowPlacing::new(cf, geometry, row);
+        let Some(mut placing) = RowPlacing::new(cf, geometry, row) else {
+            return Ok(());
+        };
         // A directly sampled row's slot per native channel; other samplings
         // weigh every pass.
         let slots = slots.filter(|_| self.sampling == Sampling::Direct);
