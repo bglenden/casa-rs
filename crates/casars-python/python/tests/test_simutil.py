@@ -42,6 +42,7 @@ IMPLEMENTED = {
     "is4d", "isEven", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
     "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "needsFiller", "noisetemp", "openreport",
     "polsettings", "read_pointings", "readantenna", "setcfg", "spectral", "statim", "tconpc",
+    "newfig", "nextfig", "endfig", "plotants", "ephemeris",
     "tmgeod", "utm2long", "utm2xyz", "wrapang", "write_pointings", "xyz2long", "xyz2long_old",
 }
 
@@ -547,8 +548,7 @@ def analysis(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict[str, Any], 
     return record, root / "inputs"
 
 
-def test_statim_gives_casas_statistics(analysis: tuple[dict[str, Any], Path],
-                                       caplog: pytest.LogCaptureFixture) -> None:
+def test_statim_gives_casas_statistics(analysis: tuple[dict[str, Any], Path]) -> None:
     record, inputs = analysis
     u = simutil.simutil()
     for name, casa in record["statim"].items():
@@ -569,9 +569,6 @@ def test_statim_gives_casas_statistics(analysis: tuple[dict[str, Any], Path],
             assert isinstance(value, np.ndarray) and value.shape == () and value.dtype == np.float64, (name, key)
             assert float(value) == pytest.approx(casa[key], rel=1e-6), (name, key)
         assert found[3] == casa["unit"], name
-    with caplog.at_level(logging.WARNING, logger="casars.simutil"):
-        u.statim(str(inputs / "image.flat"))
-    assert "statim's plot is not yet implemented in casa-rs (#1025)" in caplog.text
 
 
 def test_cellsize_gives_casas_cells(analysis: tuple[dict[str, Any], Path]) -> None:

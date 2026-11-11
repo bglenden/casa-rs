@@ -62,6 +62,7 @@
 mod analysis;
 mod arithmetic;
 mod geodesy;
+mod graphics;
 mod helpers;
 mod ops;
 mod stubs;
@@ -118,6 +119,9 @@ pub(crate) struct PySimutil {
     /// The report file `openreport` opened, a Python file object.
     #[pyo3(get, set)]
     report: Option<Py<PyAny>>,
+    /// CASA's current multi-panel specification, retaining the caller's list.
+    #[pyo3(get, set)]
+    pmulti: Py<PyAny>,
 }
 
 /// A configuration-file error as the Python exception CASA's raises.
@@ -183,6 +187,7 @@ impl PySimutil {
             telescopename: None,
             reportfile: None,
             report: None,
+            pmulti: 0_i64.into_pyobject(py)?.into_any().unbind(),
         })
     }
 

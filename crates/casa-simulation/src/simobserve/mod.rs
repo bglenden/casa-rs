@@ -71,7 +71,7 @@
 //! which refuses it before it starts.
 
 mod antennas;
-mod graphics;
+pub(crate) mod graphics;
 mod noise;
 mod observe;
 mod parameters;

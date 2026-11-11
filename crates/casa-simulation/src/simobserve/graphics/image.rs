@@ -14,12 +14,30 @@ use super::{SimobserveError, failure};
 use crate::SessionResources;
 use crate::simutil::analysis;
 
-pub(super) fn image_panel(
+pub(crate) fn image_panel(
     path: &Path,
     payload: &mut Payload,
     resources: SessionResources,
     psf: bool,
 ) -> Result<PlotDocumentPanel, SimobserveError> {
+    prepare_image(path, payload, resources, psf, false).map(|(panel, _)| panel)
+}
+
+pub(crate) fn image_panel_for_simutil(
+    path: &Path,
+    payload: &mut Payload,
+    resources: SessionResources,
+) -> Result<(PlotDocumentPanel, analysis::ImageStatistics), SimobserveError> {
+    prepare_image(path, payload, resources, false, true)
+}
+
+fn prepare_image(
+    path: &Path,
+    payload: &mut Payload,
+    resources: SessionResources,
+    psf: bool,
+    public: bool,
+) -> Result<(PlotDocumentPanel, analysis::ImageStatistics), SimobserveError> {
     let image = PagedImage::<f32>::open(path).map_err(failure)?;
     let shape = image.shape();
     let cells = shape
@@ -62,13 +80,20 @@ pub(super) fn image_panel(
     // imshow preserves fixed image extents; the other spatial panels use
     // CASA's axis('equal'), which instead adjusts the data limits on draw.
     output.aspect = Some(casa_ms::plot_document::PlotAspect::Equal);
-    let range = if psf {
+    let range = if psf || stats.corner_samples == 0 {
         [stats.min, stats.max]
     } else {
         histogram_range(&pixels, mask.as_ref(), stats.min as f32, stats.max as f32)
     };
     let start = payload.position();
     let mut position = vec![0; shape.len()];
+    if public {
+        // CASA statim requests [-1, -1, 1, 1] and squeezes the result:
+        // the second Stokes/channel when present, clamped on singleton axes.
+        for axis in 2..shape.len().min(4) {
+            position[axis] = 1.min(shape[axis] - 1);
+        }
+    }
     for y in (0..height).rev() {
         position[1] = y;
         for x in 0..width {
@@ -127,7 +152,7 @@ pub(super) fn image_panel(
     output
         .annotations
         .push(annotation("statistics", [0.05, 0.95], text, true));
-    Ok(output)
+    Ok((output, stats))
 }
 
 fn scientific(value: f64) -> String {

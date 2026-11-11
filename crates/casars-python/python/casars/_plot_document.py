@@ -21,7 +21,7 @@ def array_view(payload: Any, descriptor: Mapping[str, Any]) -> np.ndarray:
     )
 
 
-def render_document(document: Mapping[str, Any], *, payload: Any = None, figure: Any = None, use_native_limits: bool = True):
+def render_document(document: Mapping[str, Any], *, payload: Any = None, figure: Any = None, use_native_limits: bool = True, axes: Any = None):
     """Return editable Matplotlib figures from native-prepared artists."""
 
     from matplotlib import pyplot as plt
@@ -30,18 +30,20 @@ def render_document(document: Mapping[str, Any], *, payload: Any = None, figure:
     if owned:
         figure = plt.figure()
     try:
-        return _render_document(document, payload, figure, use_native_limits)
+        return _render_document(document, payload, figure, use_native_limits, axes)
     except BaseException:
         if owned:
             plt.close(figure)
         raise
 
 
-def _render_document(document, payload, figure, use_native_limits):
+def _render_document(document, payload, figure, use_native_limits, axes):
     panels = document["panels"] or [document]
     layout = document.get("layout") or {}
     rows, columns = layout.get("rows", len(panels)), layout.get("columns", 1)
-    axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
+    supplied_axes = axes is not None
+    if axes is None:
+        axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
     for panel, axis in zip(panels, axes, strict=True):
         for layer in panel["layers"]:
             _draw_layer(figure, axis, layer, payload)
@@ -81,11 +83,25 @@ def _render_document(document, payload, figure, use_native_limits):
             axis.set_aspect(aspect)
         if document["show_legend"] and len(panel["layers"]) > 1:
             axis.legend()
-    figure.suptitle(document.get("title", ""))
+    if not supplied_axes:
+        figure.suptitle(document.get("title", ""))
     if layout.get("margins"):
         left, right, bottom, top, wspace, hspace = layout["margins"]
         figure.subplots_adjust(left=left, right=right, bottom=bottom, top=top, wspace=wspace, hspace=hspace)
     return figure, axes[0] if len(axes) == 1 else axes
+
+
+def render_current(document, payload_path, preserve_title=False):
+    """Draw one native simutil panel on Matplotlib's current axes."""
+
+    from matplotlib import pyplot as plt
+
+    axis = plt.gca()
+    title = axis.get_title()
+    payload = np.memmap(payload_path, dtype="u1", mode="r")
+    render_document(document, payload=payload, figure=axis.figure, axes=[axis])
+    if preserve_title:
+        axis.set_title(title)
 
 
 def _draw_layer(figure, axis, layer, payload):
