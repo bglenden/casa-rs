@@ -493,8 +493,8 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
     );
 }
 
-/// Linear multi-channel AW cubes and tracked BARY nearest cubes remain
-/// refused naming their issue; a one-channel selection runs (#1121).
+/// Linear multi-channel AW cubes remain refused with their issue number.
+/// A one-channel selection runs (#1121).
 #[test]
 fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
     let setup = Setup {
@@ -519,15 +519,6 @@ fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
         .err()
         .expect("a window of two channels");
     assert!(refused.contains("#1121"), "{refused}");
-    let mut tracked = controls("0");
-    let fields = tracked.as_object_mut().expect("controls");
-    fields.insert("interpolation".into(), json!("nearest"));
-    fields.insert("outframe".into(), json!("BARY"));
-    let refused = observation
-        .try_image("aw-tracked-two-channels", tracked)
-        .err()
-        .expect("tracked BARY AW cubes remain unsupported");
-    assert!(refused.contains("#1121"), "{refused}");
     observation.image("aw-one-channel", controls("0:0"));
 }
 
@@ -551,7 +542,7 @@ fn an_aw_cube_nearest_samples_a_multichannel_window() {
     fields.insert("specmode".into(), json!("cube"));
     fields.insert("nchan".into(), json!(2));
     fields.insert("interpolation".into(), json!("nearest"));
-    for frame in ["LSRK", "TOPO"] {
+    for frame in ["LSRK", "TOPO", "BARY"] {
         let mut request = controls.clone();
         request["outframe"] = json!(frame);
         let (_, products) = observation.image(&format!("aw-two-nearest-{frame}"), request);
