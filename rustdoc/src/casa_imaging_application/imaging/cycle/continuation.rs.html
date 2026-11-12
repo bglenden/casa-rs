@@ -81,12 +81,12 @@
 <a href=#81 id=81 data-nosnippet>81</a>    /// an empty one: no pass. It is charged as the initial pass would be,
 <a href=#82 id=82 data-nosnippet>82</a>    /// whose normal state it forms, and reads a window of channels at a
 <a href=#83 id=83 data-nosnippet>83</a>    /// time beside it.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_existing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
+<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_existing(<span class="kw-2">&amp;mut </span><span class="self">self</span>, seed_model: bool) -&gt; <span class="prelude-ty">Result</span>&lt;Major, ImagingError&gt; {
 <a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">let </span>existing = <span class="self">self
 <a href=#86 id=86 data-nosnippet>86</a>            </span>.existing
 <a href=#87 id=87 data-nosnippet>87</a>            .clone()
 <a href=#88 id=88 data-nosnippet>88</a>            .expect(<span class="string">"a run that reads its PSF has the earlier run's products"</span>);
-<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">let </span>seeding = <span class="self">self</span>.seeding_bytes();
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">let </span>seeding = <span class="kw">if </span>seed_model { <span class="self">self</span>.seeding_bytes() } <span class="kw">else </span>{ <span class="number">0 </span>};
 <a href=#90 id=90 data-nosnippet>90</a>        <span class="kw">let </span>Admitted {
 <a href=#91 id=91 data-nosnippet>91</a>            value: plan,
 <a href=#92 id=92 data-nosnippet>92</a>            reservation: <span class="kw-2">mut </span>charge,
@@ -97,13 +97,13 @@
 <a href=#97 id=97 data-nosnippet>97</a>            <span class="bool-val">false</span>,
 <a href=#98 id=98 data-nosnippet>98</a>        )<span class="question-mark">?</span>;
 <a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>generation = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.start_model {
-<a href=#100 id=100 data-nosnippet>100</a>            <span class="prelude-val">Some</span>(start) =&gt; {
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="prelude-val">Some</span>(start) <span class="kw">if </span>seed_model =&gt; {
 <a href=#101 id=101 data-nosnippet>101</a>                <span class="kw">let </span>_seeding = charge.split(seeding);
 <a href=#102 id=102 data-nosnippet>102</a>                <span class="kw">let </span>samples = start.main_samples().map_err(ImagingError::StartModel)<span class="question-mark">?</span>;
 <a href=#103 id=103 data-nosnippet>103</a>                <span class="self">self</span>.start_model_flux = seeding::plane_fluxes(<span class="self">self</span>.problem, start, <span class="kw-2">&amp;</span>samples);
 <a href=#104 id=104 data-nosnippet>104</a>                <span class="self">self</span>.lifecycle.initial_from_start_model(<span class="kw-2">&amp;</span>samples)<span class="question-mark">?
 <a href=#105 id=105 data-nosnippet>105</a>            </span>}
-<a href=#106 id=106 data-nosnippet>106</a>            <span class="prelude-val">None </span>=&gt; <span class="self">self</span>.lifecycle.initial_empty()<span class="question-mark">?</span>,
+<a href=#106 id=106 data-nosnippet>106</a>            <span class="kw">_ </span>=&gt; <span class="self">self</span>.lifecycle.initial_empty()<span class="question-mark">?</span>,
 <a href=#107 id=107 data-nosnippet>107</a>        };
 <a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span>model = <span class="self">self</span>.lifecycle.prepare_final_model(generation, [])<span class="question-mark">?</span>;
 <a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span><span class="kw-2">mut </span>cycle =
