@@ -19,7 +19,7 @@ fn partial_window_coverage_admits_batch_masks_and_preserved_scratch() {
     charge_process_caches(policy.host(), policy.policy()).unwrap();
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().unwrap();
-    let run = |integrations, opened| {
+    let run = |integrations: usize, opened: bool| {
         let reference = root.path().join("reference.ms");
         let mut reference_sm = configured(&reference, &measures, BUDGET_32, 32);
         reference_sm.observe(&scan(1)).unwrap();
