@@ -31,6 +31,8 @@ mod model_column;
 mod mosaic;
 #[path = "t1/mosaic_evla.rs"]
 mod mosaic_evla;
+#[path = "t1/mosaic_psf.rs"]
+mod mosaic_psf;
 #[path = "t1/msv4.rs"]
 mod msv4;
 #[path = "t1/mtmfs.rs"]

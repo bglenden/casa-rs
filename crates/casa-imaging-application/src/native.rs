@@ -24,6 +24,8 @@ use casa_observation::FieldEphemeris;
 use casa_types::measures::MeasuresProvider;
 
 use crate::compile::{OpenedStore, resolve_partitions};
+
+mod psf;
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
@@ -48,6 +50,7 @@ pub(crate) struct OpenedObservation {
 pub(crate) struct NativeInput {
     /// Prepared MVC Taylor view for this cube run, when requested.
     pub(crate) mvc_taylor: Option<crate::compile::TaylorView>,
+    pub(crate) psf_view: Option<CompiledProblem>,
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     /// Whether the model column's final write is CASA's `predictModel`, over
@@ -140,6 +143,7 @@ impl From<std::io::Error> for NativeError {
 /// cycles and products need. Its setup chooses and forms its worker teams.
 pub(crate) struct NativeRun {
     mvc_taylor: Option<crate::compile::CompiledTaylorView>,
+    psf_view: Option<psf::PsfRoute>,
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
@@ -284,6 +288,10 @@ pub(crate) fn prepare(
     }
     publication.controls.validate_for_problem(problem)?;
     let products = products_floor(problem, &publication)?;
+    let measures = input
+        .psf_view
+        .as_ref()
+        .map(|_| Arc::clone(&input.observation.measures));
     let Admitted {
         value: route,
         reservation: source,
@@ -297,8 +305,14 @@ pub(crate) fn prepare(
         ),
         &runtime,
     )?;
+    let psf_view = input
+        .psf_view
+        .zip(measures)
+        .map(|(view, measures)| psf::PsfRoute::new(view, measures, &route, &runtime))
+        .transpose()?;
     Ok(NativeRun {
         mvc_taylor,
+        psf_view,
         runtime,
         publication,
         aw_catalog,
@@ -325,10 +339,11 @@ pub(crate) fn run(
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, NativeError> {
     let NativeRun {
         mvc_taylor,
+        psf_view,
         runtime,
         publication,
         aw_catalog,
-        route,
+        mut route,
         source,
         products,
         masks,
@@ -362,20 +377,9 @@ pub(crate) fn run(
             .controls
             .with_psf_cutoff(casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF)?;
     }
-    // CASA selects the cube's VLA aperture through its LSRK conversion layer,
-    // but evaluates it at each output plane's own frequency.
-    let vla_selection_hz = publication.vla_selection_store.map(|reference| {
-        let factor = route.stores[reference]
-            .plan
-            .output_lsrk_factor()
-            .expect("a tracked cube has an LSRK conversion layer");
-        problem
-            .geometry()
-            .spectral()
-            .channel_centre_hz(0)
-            .expect("a cube has a first channel")
-            * factor
-    });
+    let vla_selection_hz = publication
+        .vla_selection_store
+        .map(|store| vla_selection_frequency(problem, &route, store));
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {
@@ -388,6 +392,9 @@ pub(crate) fn run(
         }
         None => None,
     };
+    let separate_psf = psf_view
+        .map(|view| view.form(&mut route, &runtime, summary))
+        .transpose()?;
     // The run's source borrows the batch route, which is released with the
     // source's charge once the run has finished with it.
     let visibility_write = route
@@ -418,6 +425,7 @@ pub(crate) fn run(
             psf_beams,
             mask_beams,
             source: &route,
+            separate_psf,
             masks,
             start_model,
             existing,
@@ -525,6 +533,25 @@ pub(crate) fn run(
         mvc_run,
         _retained: retained,
     })
+}
+
+/// CASA selects the cube's VLA aperture through its LSRK conversion layer,
+/// but evaluates it at each output plane's own frequency.
+fn vla_selection_frequency(
+    problem: &CompiledProblem,
+    route: &imaging::BatchRoute,
+    store: usize,
+) -> f64 {
+    let factor = route.stores[store]
+        .plan
+        .output_lsrk_factor()
+        .expect("a tracked cube has an LSRK conversion layer");
+    problem
+        .geometry()
+        .spectral()
+        .channel_centre_hz(0)
+        .expect("a cube has a first channel")
+        * factor
 }
 
 /// One run's cube or continuum products and, for MVC, its Taylor view.

@@ -321,6 +321,9 @@ pub enum PrepareError {
         /// The given angle.
         angle: String,
     },
+    /// A separately formed PSF is currently compiled for a fixed mosaic direction.
+    #[error("psfphasecenter with a moving mosaic phase centre is not implemented yet (#1062)")]
+    MovingMosaicPsf,
     /// A moving source's fields are only partly attached to ephemerides.
     #[error("moving-source selection mixes FIELD rows with and without attached ephemerides")]
     MixedEphemerisFields,

@@ -27,6 +27,7 @@ mod native_aw;
 mod opening;
 mod outliers;
 mod partitions;
+pub(crate) mod psf_view;
 mod selection;
 mod specification;
 pub(crate) mod spectral;
@@ -84,6 +85,7 @@ use survey::{Survey, SurveyPlan};
 pub(crate) struct Prepared {
     pub(crate) specification: ProblemSpecification,
     pub(crate) geometry: GeometryInput,
+    pub(crate) psf_view: Option<psf_view::PsfView>,
     pub(crate) model_lifecycle: ModelLifecycleRequirements,
     /// The separately coordinated Taylor view of an MVC run.
     pub(crate) mvc_taylor: Option<TaylorView>,
@@ -261,7 +263,7 @@ pub(crate) fn prepare_with_view_hooks(
         None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
         Some(_) => Some(primary_beam_centres(&domains, &stores, &centre)?),
     };
-    let deployment = deployment(
+    let mut deployment = deployment(
         request,
         context,
         surveyed,
@@ -313,23 +315,23 @@ pub(crate) fn prepare_with_view_hooks(
         _ => spectral.output_channels,
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
-    let continuation =
-        continuation::prepare(request, &mut domains[0], spectral.output_channels, context)?;
-    let start_model = if request.has_start_model() {
-        let terms = match request.deconvolver {
-            Deconvolver::Mtmfs => request.nterms,
-            _ => 1,
-        };
-        Some(StartModel::prepare(
-            &request.startmodel,
-            &domains[0],
-            request.stokes.len(),
-            (reconstruction_planes, terms),
-        )?)
-    } else {
-        continuation.start_model
-    };
+    let continuation = continuation::prepare(
+        request,
+        &mut domains[0],
+        (spectral.output_channels, reconstruction_planes),
+        context,
+        &mut deployment.publication.writer,
+    )?;
     let geometry = geometry(request, &domains, &centre, &spectral);
+    let psf_view = psf_view::prepare(
+        request,
+        &domains[0],
+        &centre,
+        &spectral,
+        context,
+        &specification,
+        &mut deployment.publication.writer,
+    )?;
     // A moving phase centre names a body and a table alike; the table, when
     // it is one, was read here.
     let phase_table = centre
@@ -351,6 +353,7 @@ pub(crate) fn prepare_with_view_hooks(
     Ok(Prepared {
         specification,
         geometry,
+        psf_view,
         mvc_taylor,
         model_lifecycle: ModelLifecycleRequirements::new(
             ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)?,
@@ -358,7 +361,7 @@ pub(crate) fn prepare_with_view_hooks(
         ),
         masks,
         mask_resident,
-        start_model,
+        start_model: continuation.start_model,
         existing: continuation.existing,
         minor_cycle_image_response: match &request.gridder {
             Gridder::Mosaic { .. } | Gridder::Awproject(_) => Some(MinorCycleImageResponse::new(
