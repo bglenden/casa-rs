@@ -1277,10 +1277,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#mvc-previously-agreed" class="md-nav__link">
+  <a href="#mvc-unfinished" class="md-nav__link">
     <span class="md-ellipsis">
       
-        mvc: Previously agreed
+        mvc: Unfinished
       
     </span>
   </a>
@@ -5655,10 +5655,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#mvc-previously-agreed" class="md-nav__link">
+  <a href="#mvc-unfinished" class="md-nav__link">
     <span class="md-ellipsis">
       
-        mvc: Previously agreed
+        mvc: Unfinished
       
     </span>
   </a>
@@ -10316,7 +10316,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'mfs'</code></td>
 <td><code>'mfs'</code>; <code>specmode</code> → <code>specmode</code></td>
 <td>Partial</td>
-<td>cont aliases mfs; mvc is refused (issue 823); cube, cubedata and cubesource pass into request/spectral compile. <a href="#tclean-behavior-spectral">spectral</a><br>Catalog domain: <code>cont</code>, <code>cube</code>, <code>cubedata</code>, <code>cubesource</code>, <code>mfs</code>, <code>mvc</code></td>
+<td>cont aliases mfs. Cube, cubedata and cubesource pass into spectral compilation. Standard-gridder MVC supports fresh natural-weighted Stokes I imaging with two Taylor terms and one selected field and MeasurementSet. The Taylor images copy their spectral axis from the published cube. Remaining MVC combinations are tracked in #1069. <a href="#tclean-behavior-spectral">spectral</a><br>Catalog domain: <code>cont</code>, <code>cube</code>, <code>cubedata</code>, <code>cubesource</code>, <code>mfs</code>, <code>mvc</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -10919,7 +10919,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="tclean-behavior-spectral"></a></p>
 <h5 id="cube-axes-reference-frequencies-and-moving-sources">Cube axes, reference frequencies and moving sources<a class="headerlink" href="#cube-axes-reference-frequencies-and-moving-sources" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — specmode, spw, start, width, nchan, reffreq, restfreq, outframe, veltype, interpolation and perchanweightdensity.</p>
-<p>nchan=-1 takes CASA's count from the start or the first selected channel to the band's far edge in channel, frequency and radio-velocity grids, and interpolation='cubic' fits casacore's four-point cubic (#1066); an optical-velocity grid, which CASA tabulates, is refused (#1096); a cube over several selected windows lays its axis over their channels merged as CASA's MSTransformRegridder::combineSpwsCore merges them, grids every window's rows onto it, and with nchan=-1 counts a channel grid's planes over the merged band as regridChanBounds does (#980); MFS outframe (LSRK/BARY/TOPO, header only, gridding stays LSRK as in CASA) and restfreq lists (first active, the others listed in the header) are read; MFS REST outframe and blank restfreq entries remain restricted. Moving-source cubesource needs its own representative oracle (#714). MVC removal is a separate prior owner decision, not a passing moving-source comparison. The moving-MFS spectral envelope now uses CASA FIELD-origin direction semantics; six fixed/moving CPU64/CPU32/GPU32 comparisons pass recorded WCS values, and the previous 3.5 Hz increment mismatch is repaired at its unchanged tolerance. This does not complete moving-PB or cubesource acceptance. The ordinary MFS default SOURCE rest-frequency label is now repaired; five fresh mosaic/AW weight families and small restart metadata checks match. DOPPLER-backed SOURCE lookup and multiple SOURCE key groups with stored wildcards are explicitly unfinished, not approved deviations. The MFS header's first visibility field is the least (ARRAY_ID, DATA_DESC_ID, FIELD_ID) of the selected samples, CASA's buffer order: the MSv2 adapter states each partition's array and the survey reads the rows' arrays for a partition holding several (3bdf6fa, after Astra's review found the merge had dropped ARRAY_ID); a T1 run with opposing arrays records CASA's choice. An MSv4 has no arrays. The moving-MFS increment oracle on the catalogue path gives CASA's 125020996.11132812 Hz exactly (8b0fe44).</p>
+<p>nchan=-1 takes CASA's count from the start or the first selected channel to the band's far edge in channel, frequency and radio-velocity grids, and interpolation='cubic' fits casacore's four-point cubic (#1066); an optical-velocity grid, which CASA tabulates, is refused (#1096); a cube over several selected windows lays its axis over their channels merged as CASA's MSTransformRegridder::combineSpwsCore merges them, grids every window's rows onto it, and with nchan=-1 counts a channel grid's planes over the merged band as regridChanBounds does (#980); MFS outframe (LSRK/BARY/TOPO, header only, gridding stays LSRK as in CASA) and restfreq lists (first active, the others listed in the header) are read; MFS REST outframe and blank restfreq entries remain restricted. Moving-source cubesource needs its own representative oracle (#714). Fresh standard MVC uses cube major cycles and Taylor minor cycles. The standard multi-SPW dirty and clean comparisons pass, with remaining cases on #1069. The moving-MFS spectral envelope now uses CASA FIELD-origin direction semantics; six fixed/moving CPU64/CPU32/GPU32 comparisons pass recorded WCS values, and the previous 3.5 Hz increment mismatch is repaired at its unchanged tolerance. This does not complete moving-PB or cubesource acceptance. The ordinary MFS default SOURCE rest-frequency label is now repaired; five fresh mosaic/AW weight families and small restart metadata checks match. DOPPLER-backed SOURCE lookup and multiple SOURCE key groups with stored wildcards are explicitly unfinished, not approved deviations. The MFS header's first visibility field is the least (ARRAY_ID, DATA_DESC_ID, FIELD_ID) of the selected samples, CASA's buffer order: the MSv2 adapter states each partition's array and the survey reads the rows' arrays for a partition holding several (3bdf6fa, after Astra's review found the merge had dropped ARRAY_ID); a T1 run with opposing arrays records CASA's choice. An MSv4 has no arrays. The moving-MFS increment oracle on the catalogue path gives CASA's 125020996.11132812 Hz exactly (8b0fe44).</p>
 <p>Evidence: <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-representative">representative</a>, <a href="#tclean-evidence-mvc-decision">mvc-decision</a>, <a href="#tclean-evidence-taylor-pb-mfs">taylor-pb-mfs</a>, <a href="#tclean-evidence-approved-comparisons-restart">approved-comparisons-restart</a>, <a href="#tclean-evidence-cloud-continuation">cloud-continuation</a>, <a href="#tclean-evidence-cube-axes-20261103">cube-axes-20261103</a>.</p>
 <p><a id="tclean-behavior-gridders"></a></p>
 <h5 id="gridder-weighting-and-beam-combinations">Gridder, weighting and beam combinations<a class="headerlink" href="#gridder-weighting-and-beam-combinations" title="Permanent link">&para;</a></h5>
@@ -10952,14 +10952,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Owner decision: Owner, 2026-10-31, this chat: Headless exception for now, but ultimately we will want to do something for this. Recorded on #980.</li>
 <li>Evidence: <a href="#tclean-evidence-interactive-decision">interactive-decision</a>, <a href="#tclean-evidence-reader">reader</a>.</li>
 </ul>
-<h5 id="mvc-previously-agreed">mvc: Previously agreed<a class="headerlink" href="#mvc-previously-agreed" title="Permanent link">&para;</a></h5>
+<h5 id="mvc-unfinished">mvc: Unfinished<a class="headerlink" href="#mvc-unfinished" title="Permanent link">&para;</a></h5>
 <ul>
 <li>Inputs: specmode='mvc'.</li>
 <li>CASA: Supports the MVC task path.</li>
-<li>casa-rs: Refuses MVC; cubesource is the surviving moving-source path.</li>
-<li>Rationale: Reuse owner decision B on #656, reflected in #714; do not revive a deleted mode without a new decision.</li>
-<li>User impact: MVC workflows are unavailable; cubesource representative acceptance remains unfinished.</li>
-<li>Owner decision: Decision B on #656; #714 non-goal: no MVC revival.</li>
+<li>casa-rs: Supports the bounded fresh standard-gridder mode. The three-SPW dirty and clean references agree on all published images, masks, coordinates and controller counts.</li>
+<li>Rationale: The Taylor header spans the first and last published cube channel centres and preserves the cube rest-frequency label. The polynomial expansion has its own reference frequency.</li>
+<li>User impact: PB-corrected imaging, continuation, other gridders and the separate dirty alpha boundary remain on #1069.</li>
+<li>Owner decision: Pending; not an accepted deviation.</li>
 <li>Evidence: <a href="#tclean-evidence-mvc-decision">mvc-decision</a>, <a href="#tclean-evidence-reader">reader</a>.</li>
 </ul>
 <h5 id="restart-unfinished">restart: Unfinished<a class="headerlink" href="#restart-unfinished" title="Permanent link">&para;</a></h5>
@@ -11117,10 +11117,10 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <p><a id="tclean-evidence-mvc-decision"></a></p>
 <h5 id="mvc-decision">mvc-decision<a class="headerlink" href="#mvc-decision" title="Permanent link">&para;</a></h5>
-<p><strong>Prior owner scope decision — recorded.</strong> Owner decision B on #656 removed MVC. #714 explicitly excludes MVC revival and requires a cubesource representative row; reuse only this scope.</p>
+<p><strong>Frozen CASA comparisons and MVC scope — Standard dirty and clean comparisons passed.</strong> CASA 6.7.6.14, refim_oneshiftpoint.mosaic.ms FIELD 0, three spectral windows, 512-square, three output channels. The Taylor axis follows the published cube axis. #1069 owns the remaining combinations.</p>
 <ul>
-<li><a href="https://github.com/bglenden/casa-rs/issues/714">https://github.com/bglenden/casa-rs/issues/714</a></li>
-<li><a href="https://github.com/bglenden/casa-rs/issues/656">https://github.com/bglenden/casa-rs/issues/656</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/issues/1069">https://github.com/bglenden/casa-rs/issues/1069</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/issues/1069#issuecomment-6801927969">https://github.com/bglenden/casa-rs/issues/1069#issuecomment-6801927969</a></li>
 </ul>
 <p><a id="tclean-evidence-accuracy-issue"></a></p>
 <h5 id="accuracy-issue">accuracy-issue<a class="headerlink" href="#accuracy-issue" title="Permanent link">&para;</a></h5>

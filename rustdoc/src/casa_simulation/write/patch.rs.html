@@ -180,7 +180,7 @@
 <a href=#180 id=180 data-nosnippet>180</a>            .phases()
 <a href=#181 id=181 data-nosnippet>181</a>            .iter()
 <a href=#182 id=182 data-nosnippet>182</a>            .flat_map(|phase| phase.noise_for_scan(<span class="number">0</span>))
-<a href=#183 id=183 data-nosnippet>183</a>            .any(|noise| noise.varies_by_row() || noise.fixed().is_some())
+<a href=#183 id=183 data-nosnippet>183</a>            .any(<span class="kw">crate</span>::corrupt::NoiseApplication::needs_time)
 <a href=#184 id=184 data-nosnippet>184</a>            || plan.corrupts_by_jones()
 <a href=#185 id=185 data-nosnippet>185</a>            || plan.has_query(),
 <a href=#186 id=186 data-nosnippet>186</a>        noise_scales: NoiseScales::of(plan, channels, <span class="prelude-val">None</span>),
