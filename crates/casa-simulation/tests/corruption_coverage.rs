@@ -114,7 +114,13 @@ fn existing_ms_whole_step_preserves_uncovered_data_noise_and_scratch() {
     for variant in ["plain", "noise", "selected", "repeat"] {
         let noise = variant == "noise";
         for workers in [1, 3] {
-            let root = tempfile::tempdir().unwrap();
+            let export = std::env::var_os("CASA_RS_COVERAGE_OUT");
+            let root = if let Some(export) = &export {
+                std::fs::create_dir_all(export).unwrap();
+                tempfile::tempdir_in(export).unwrap()
+            } else {
+                tempfile::tempdir().unwrap()
+            };
             let reference = root.path().join("reference.ms");
             original(&reference, workers).close().unwrap();
             let table = root.path().join("g.cal");
@@ -143,6 +149,14 @@ fn existing_ms_whole_step_preserves_uncovered_data_noise_and_scratch() {
             }
             sm.close().unwrap();
             compare(&path, &fixture(variant), noise);
+            if export.is_some() {
+                std::fs::write(
+                    root.path().join("case.json"),
+                    serde_json::json!({"variant":variant,"workers":workers}).to_string(),
+                )
+                .unwrap();
+                let _kept = root.keep();
+            }
         }
     }
 }

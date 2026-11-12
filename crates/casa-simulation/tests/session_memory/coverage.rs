@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Coverage masks and preserved scratch cells stay bounded by the write batch.
-#[path = "../selection/input.rs"]
-mod input;
+use super::selection::input;
 use super::{
     ALLOWANCE_BYTES, BUDGET_32, CHANNEL_HZ, FREQUENCY_HZ, REFERENCE_MJD, ROWS_ALLOWANCE_BYTES,
     alone, charge_process_caches, configured, measured_close, resources, scan,
