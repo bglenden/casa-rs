@@ -218,7 +218,6 @@ class ExpectedOutcomeTest(unittest.TestCase):
                 patch("simobserve_parity.tools", return_value={}),
                 patch("simobserve_parity.run_casa", side_effect=RuntimeError("refused") if refused else None),
                 patch("simobserve_parity.run_casars", return_value=("unused", {"error": "refused"} if refused else {})),
-                patch("simobserve_parity.products", return_value=[]),
                 patch("simobserve_parity.compare_case", return_value={"name": "probe", "differences": []}),
                 contextlib.redirect_stdout(io.StringIO()),
             ):

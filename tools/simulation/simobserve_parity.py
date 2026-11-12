@@ -228,6 +228,36 @@ CASES = [
             CORE, maptype="square", hourangle="-30min", refdate="2015/06/29", totaltime="60s"
         ),
     },
+    # The programme's micrometre geometry goal on the extended arrays.
+    # Keep these strict even when the general comparator keeps its legacy
+    # millimetre default; a caller can request a still tighter threshold.
+    {
+        "name": "uvw_long_vla_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_vla_2025",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="90min",
+            refdate="2025/01/15", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_alma_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="alma.out28.cfg", incell="0.001arcsec",
+            mapsize=["0.08arcsec", "0.08arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
     # Model overrides must reach both the prepared image and the observed
     # geometry, not just the task's accepted parameter list (#1053).
     {
@@ -641,7 +671,8 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
         json.dump({"scenarios": scenarios(t, case, casa, casars, links)}, handle, indent=1)
     command = [sys.executable, os.path.join(HERE, "compare_sm_ms.py"), "--casa", compare, "--casars", links,
                "--json", os.path.join(compare, "report.json"),
-               "--uvw-tolerance-m", str(args.uvw_tolerance_m)]
+               "--uvw-tolerance-m", str(min(args.uvw_tolerance_m,
+                                             case.get("uvw_tolerance_m", args.uvw_tolerance_m)))]
     if args.atmosphere_model:
         command += ["--atmosphere-model", args.atmosphere_model]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
@@ -713,8 +744,13 @@ def main() -> int:
                 report["differences"].append("expected a successful simulation, not a refusal")
             if casa_error != outcome.get("error"):
                 report["differences"].append(f"CASA raised {casa_error!r}, casa-rs {outcome.get('error')!r}")
-            elif products(casa) != products(casars):
-                report["differences"].append(f"files: CASA {products(casa)} against casa-rs {products(casars)}")
+            else:
+                # An early refusal may precede creation of the project.
+                # Successful runs still require their directories below.
+                casa_files = products(casa) if os.path.isdir(casa) else []
+                casars_files = products(casars) if os.path.isdir(casars) else []
+                if casa_files != casars_files:
+                    report["differences"].append(f"files: CASA {casa_files} against casa-rs {casars_files}")
         else:
             report = compare_case(t, case, casa, casars, out, args)
             if case.get("expect_refusal", False):
