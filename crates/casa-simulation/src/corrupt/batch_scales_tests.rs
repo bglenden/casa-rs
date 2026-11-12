@@ -116,7 +116,7 @@ fn phasors_are_one_entry_per_antenna_and_solution() {
     let delays = vec![0.5, 1.0, 2.0];
     let term = tropospheric(
         antennas,
-        (chunks.sorted(), &slots),
+        (chunks.sorted(), Some(&slots)),
         TroposphericPhase::new(excess.clone(), vec![Some(delays.clone())]),
     );
     // Every baseline of the four integrations, twice over.

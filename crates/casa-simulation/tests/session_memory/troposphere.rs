@@ -47,7 +47,7 @@ const SETTER_ALLOWANCE_BYTES: u64 = 64 * 1024;
 
 /// The setter law's sessions: (mode, integrations of 10 s). The screen
 /// spans 4,000 s of a 7 m/s wind in 6 m pixels.
-const SETTERS: [(&str, usize); 2] = [("individual", 20_000), ("screen", 400)];
+const SETTERS: [(&str, usize); 3] = [("individual", 20_000), ("screen", 400), ("test", 20_000)];
 
 fn trop(mode: &str) -> TroposphereSpec {
     TroposphereSpec {

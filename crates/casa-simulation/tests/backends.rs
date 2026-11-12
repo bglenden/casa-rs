@@ -46,6 +46,8 @@ mod coverage;
 mod offline_noise;
 mod pass_summary;
 mod predict_support;
+#[path = "backends/trop_test_ramp.rs"]
+mod trop_test_ramp;
 
 use std::path::Path;
 
