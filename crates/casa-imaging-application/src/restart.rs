@@ -13,7 +13,7 @@
 //! earlier products are preserved.
 
 mod existing;
-pub(crate) use existing::{ExistingProducts, SavedMosaicBeam};
+pub(crate) use existing::ExistingProducts;
 mod grid;
 pub(crate) use grid::check_grid;
 mod mask;
@@ -152,12 +152,15 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
     Ok(())
 }
 
-/// An ordinary continuum mosaic can carry forward the saved PSF, weights,
+/// An ordinary continuum or cube mosaic can carry forward the saved PSF, weights,
 /// and PB while forming a new residual (`calcpsf=False, calcres=True`).
 pub(crate) fn reuses_mosaic_psf(request: &ImagingRequest) -> bool {
     !request.calcpsf
         && request.calcres
-        && request.specmode == crate::SpecMode::Mfs
+        && matches!(
+            request.specmode,
+            crate::SpecMode::Mfs | crate::SpecMode::Cube
+        )
         && Family::of(request) == Family::Single
         && matches!(request.gridder, Gridder::Mosaic { .. })
 }

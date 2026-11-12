@@ -2075,6 +2075,28 @@ impl<T: ImagePixel> PagedImage<T> {
         <Self as ImageInterface<T>>::get_mask_slice(self, start, shape, stride)
     }
 
+    /// The cache and two tile buffers a default-mask slice may hold, or two
+    /// full copies for a legacy inline mask. Excludes the returned slice.
+    ///
+    /// # Errors
+    /// The mask metadata is invalid or the paged mask cannot be opened.
+    pub fn mask_slice_working_bytes(&self) -> Result<u64, ImageError> {
+        let Some(name) = self.default_mask_name() else {
+            return Ok(0);
+        };
+        let Some(Value::Record(masks)) = self.table.keywords().get(MASKS_KEYWORD) else {
+            return Err(ImageError::MaskNotFound(name));
+        };
+        match masks.get(&name) {
+            Some(Value::Array(ArrayValue::Bool(mask))) => Ok(2 * mask.len() as u64),
+            Some(Value::Record(record)) => self.with_persistent_mask(&name, record, |mask| {
+                let tile = mask.tile_shape().iter().product::<usize>() as u64;
+                Ok(self.cache_bytes() as u64 + 2 * tile)
+            }),
+            _ => Err(ImageError::MaskNotFound(name)),
+        }
+    }
+
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
         if let Some(mask) = self.temp_masks.get(name) {

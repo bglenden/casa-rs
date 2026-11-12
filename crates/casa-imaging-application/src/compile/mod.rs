@@ -1029,9 +1029,6 @@ fn deployment(
     if let Some(model) = primary_beam {
         controls = controls.with_primary_beam_model(model);
     }
-    if crate::restart::reuses_mosaic_psf(request) {
-        controls = controls.preserving_mosaic_products();
-    }
     Ok(Deployment {
         runtime: PendingRuntime {
             host: context.host,

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use num_complex::{Complex32, Complex64};
 
-use crate::geometry::CellLocation;
+use crate::geometry::{CellLocation, GridGeometry};
 use crate::sample::CfKey;
 
 /// Taps of one convolution-function cell in the layout the kernels read.
@@ -652,6 +652,13 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// (`Placement::gradient`): the kernels encode a pointing offset from
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
+
+    /// Whether this pointing supplies a convolution function on the image.
+    /// Called for sets that apply a pointing ramp. A rejected pointing
+    /// contributes neither a gridded sample nor a model prediction.
+    fn admits_pointing(&self, _geometry: &GridGeometry, _offset_rad: [f64; 2]) -> bool {
+        true
+    }
 
     /// Whether CASA's pointing-gradient origin is one fine pixel after the
     /// array centre for this cell. Weight includes PSF and sensitivity

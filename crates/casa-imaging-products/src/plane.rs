@@ -114,10 +114,11 @@ pub(crate) fn produce_plane_member(
             // `SIImageStore::pbcor` leaves a plane zero only where the PB's
             // peak is: a blank plane's restored start model is corrected.
             let restored = restored_plane(request, valid)?;
-            if let Some((beam, _)) = inputs.saved_mosaic_beam(request.polarization) {
+            if let Some(beam) = inputs.saved_mosaic_beam() {
                 // `SIImageStore::pbcor` uses the saved PB values, testing
                 // positivity rather than the new residual's pblimit.
-                return correct_primary_beam(&restored, beam, 0.0);
+                let values = beam.read_values(plane.output_channel(), request.polarization)?;
+                return correct_primary_beam(&restored, &values, 0.0);
             }
             let primary_beam =
                 primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
@@ -371,8 +372,8 @@ pub(crate) fn product_plane_validity(
             Ok(vec![valid; shape[0] * shape[1]])
         }
         ProductValidityRule::PrimaryBeam(policy) => {
-            if let Some((_, mask)) = inputs.saved_mosaic_beam(polarization) {
-                return Ok(mask.to_vec());
+            if let Some(beam) = inputs.saved_mosaic_beam() {
+                return beam.read_mask(plane.output_channel(), polarization);
             }
             Ok(
                 primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?

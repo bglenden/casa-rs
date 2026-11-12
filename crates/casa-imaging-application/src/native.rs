@@ -270,17 +270,20 @@ pub(crate) fn prepare(
         .map_err(|error| NativeError::Other(Box::new(error)))?;
     let ApplicationNative {
         runtime,
-        publication,
+        mut publication,
         aw_catalog,
     } = native;
-    publication.controls.validate_for_problem(problem)?;
-    let mut products = products_floor(problem, &publication)?;
-    if let Some(existing) = &input.existing
-        && existing.reads_mosaic_beam()
+    if let Some(beam) = input
+        .existing
+        .as_ref()
+        .and_then(|input| input.mosaic_beam())
     {
-        let (read, retain) = existing.mosaic_beam_bytes();
-        products = read.max(products.saturating_add(retain));
+        publication.controls = publication
+            .controls
+            .preserving_mosaic_products(beam.reading_bytes());
     }
+    publication.controls.validate_for_problem(problem)?;
+    let products = products_floor(problem, &publication)?;
     let Admitted {
         value: route,
         reservation: source,
@@ -337,7 +340,7 @@ pub(crate) fn run(
     } = run;
     let saved_mosaic_beam = existing
         .as_ref()
-        .filter(|input| input.reads_mosaic_beam())
+        .and_then(crate::restart::ExistingProducts::mosaic_beam)
         .cloned();
     let saved_psf_beams = existing
         .as_ref()
@@ -453,10 +456,6 @@ pub(crate) fn run(
         runtime.diagnostics,
         summary,
         || {
-            let saved = saved_mosaic_beam
-                .as_ref()
-                .map(|input| read_saved_mosaic_beam(input, &runtime))
-                .transpose()?;
             publish_run_products(
                 RunProductInputs {
                     problem,
@@ -467,9 +466,9 @@ pub(crate) fn run(
                         mem_alpha: outcome.mem_alpha,
                         saved_psf_beams,
                         vla_selection_hz,
-                        primary_beam: saved.as_ref().map(|beam| {
-                            ProductPrimaryBeam::SavedMosaic(&beam.value.values, &beam.value.mask)
-                        }),
+                        primary_beam: saved_mosaic_beam
+                            .as_ref()
+                            .map(ProductPrimaryBeam::SavedMosaic),
                     },
                     taylor_view: mvc_taylor,
                     taylor_completion: outcome.mvc_taylor,
@@ -525,29 +524,6 @@ pub(crate) fn run(
         mvc_taylor_names: taylor_names,
         mvc_run,
         _retained: retained,
-    })
-}
-
-/// Load the saved mosaic PB and its mask under admission before product
-/// generation. The reservation stays with the pixels while it borrows them.
-fn read_saved_mosaic_beam(
-    input: &crate::restart::ExistingProducts,
-    runtime: &ApplicationRuntime,
-) -> Result<Admitted<crate::restart::SavedMosaicBeam>, NativeError> {
-    let (reading, resident) = input.mosaic_beam_bytes();
-    let mut charge = admit(
-        &runtime.host,
-        &runtime.resource_policy,
-        &Demand {
-            phase: "saved mosaic primary beam",
-            memory: reading,
-        },
-    )?;
-    let beam = input.read_mosaic_beam().map_err(ImagingError::Existing)?;
-    charge.retain(resident);
-    Ok(Admitted {
-        value: beam,
-        reservation: charge,
     })
 }
 
@@ -650,7 +626,7 @@ struct Products {
 enum ProductPrimaryBeam<'a> {
     MvcCube(&'a [f32]),
     MvcTaylor(&'a [f32]),
-    SavedMosaic(&'a [f32], &'a [bool]),
+    SavedMosaic(&'a casa_imaging_products::SavedMosaicBeam),
 }
 
 struct ProductSource<'a> {
@@ -888,9 +864,7 @@ fn stage_products(
             ProductPrimaryBeam::MvcTaylor(beam) => inputs
                 .with_taylor_primary_beam(beam)?
                 .with_taylor_residual_sum_weight(1.0)?,
-            ProductPrimaryBeam::SavedMosaic(beam, mask) => {
-                inputs.with_saved_mosaic_beam(beam, mask)?
-            }
+            ProductPrimaryBeam::SavedMosaic(beam) => inputs.with_saved_mosaic_beam(beam)?,
         };
     }
     if let Some(frequency) = vla_selection_hz {

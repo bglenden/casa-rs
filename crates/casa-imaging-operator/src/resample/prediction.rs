@@ -459,7 +459,9 @@ impl SpectralResampler {
         let native = row.frequencies_hz;
         let prepared = model.layout().planes();
         let terms = self.basis.data_terms();
-        let mut placing = RowPlacing::new(operator.cf(), operator.geometry(), row);
+        let Some(mut placing) = RowPlacing::new(operator.cf(), operator.geometry(), row) else {
+            return Ok(PlacedRow { start, end: start });
+        };
         if matches!(self.sampling, Sampling::Direct | Sampling::Nearest(_))
             && terms == 1
             && placing.uniform.is_some()
