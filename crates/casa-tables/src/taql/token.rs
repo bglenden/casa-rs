@@ -292,9 +292,10 @@ pub enum Token {
     IntLiteral,
 
     /// Floating-point literal: digits with decimal point and/or exponent.
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?", priority = 4)]
-    #[regex(r"[0-9]+[eE][+-]?[0-9]+", priority = 4)]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?", priority = 4)]
+    #[regex(
+        r"([0-9]+\.[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+",
+        priority = 4
+    )]
     FloatLiteral,
 
     /// String literal: single- or double-quoted.
