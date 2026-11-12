@@ -10370,9 +10370,9 @@ impl TiledFileIO {
                 // Find least-recently-used slot.
                 let mut min_slot = 0;
                 let mut min_access = u64::MAX;
-                for i in 0..lru.max_slots {
-                    if lru.slot_access[i] < min_access {
-                        min_access = lru.slot_access[i];
+                for (i, &access) in lru.slot_access[..lru.max_slots].iter().enumerate() {
+                    if access < min_access {
+                        min_access = access;
                         min_slot = i;
                     }
                 }
@@ -10616,9 +10616,7 @@ impl TiledFileIO {
             lru.slot_access[i] = i as u64;
         }
         // Mark any remaining slots as empty (when load_count < max_slots).
-        for i in load_count..max_slots {
-            lru.slot_tile[i] = usize::MAX;
-        }
+        lru.slot_tile[load_count..max_slots].fill(usize::MAX);
         lru.used_slots = load_count;
         lru.access_counter = load_count as u64;
         Ok(Some(load_count))
@@ -10757,9 +10755,7 @@ impl TiledFileIO {
                                     .stats
                                     .flat_flush_write_bytes
                                     .saturating_add(src_end.saturating_sub(src_start));
-                                for written_tile in start..tile_index {
-                                    self.tile_on_disk[written_tile] = true;
-                                }
+                                self.tile_on_disk[start..tile_index].fill(true);
                                 run_start = None;
                             }
                         }

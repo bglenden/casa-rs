@@ -225,10 +225,10 @@ elapsed time alone is not a reason to stop useful work.
 - Act on authorized work without routine confirmation. A recommendation is
   not a substitute for implementation when implementation was requested.
   Continue useful authorized work through progress checkpoints without
-  asking the owner to say "please continue". Stop when the bounded delivery
-  is complete or a real blocker, external result or owner decision prevents
-  further useful authorized work. Follow "While Checks Run" for pending
-  ownership; do not invent work to keep a session active.
+  asking the owner to say "please continue". Move to the next listed,
+  independent authorized delivery when the current one is complete or waiting
+  for CI. Stop only when no useful authorized work can advance. Follow
+  "While Checks Run" for pending ownership; do not invent work to keep a session active.
 - Use the cheapest capable model and effort for the work. No additional
   agents or expensive reviews by default; use one reviewer for the progress
   checks above, when Review requires it, or when the owner asks. No speculative
@@ -365,8 +365,11 @@ isolated, strengthen its demonstration test instead of adding a review.
 - Run CI and reviews alongside the next independent, authorized work.
   It must already be listed. Preserve the revision under test; use a separate
   branch for independent deliveries.
-- When only an external result remains, stop active model work. Use existing
-  result notifications when available. Otherwise leave one short handoff in
+- Before stopping for CI, review or runtime waits, check the next listed
+  tickets for useful, independent authorized work and continue with it when available. A pending CI run alone
+  does not block the programme or require another owner prompt.
+- When no such work can advance and only an external result remains, stop
+  active model work. Use existing result notifications when available. Otherwise leave one short handoff in
   the existing issue/PR: link, pending result and next action. State that a
   resume is needed; do not imply automatic follow-through without a working
   mechanism. Do not burn model budget polling, spawn a watcher fleet or build
