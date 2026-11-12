@@ -1030,6 +1030,12 @@ impl AwProjection {
         self.wbawp && self.aterm
     }
 
+    /// The imported-buffer tolerance. CASA stores the image parameter in
+    /// Float degrees before converting the Quantity to Float radians.
+    pub(crate) fn pa_tolerance_rad(&self) -> f32 {
+        f64::from(self.computepastep as f32).to_radians() as f32
+    }
+
     fn validate(&self) -> Result<(), InvalidRequest> {
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         let Some(planes) = self.wprojplanes else {
@@ -1039,7 +1045,7 @@ impl AwProjection {
                  implemented by casa-rs yet (#980)",
             );
         };
-        let pa_step_rad = self.computepastep.to_radians() as f32;
+        let pa_step_rad = self.pa_tolerance_rad();
         if !pa_step_rad.is_finite() || pa_step_rad <= 0.0 {
             return invalid("computepastep", "the PA step must be finite and positive");
         }

@@ -274,6 +274,22 @@ fn aw_projection_reads_its_planes_and_terms() {
     );
 }
 
+#[test]
+fn aw_pa_tolerance_rounds_the_requested_degrees_before_radians() {
+    let Gridder::Awproject(aw) = request(json!({
+        "gridder": "awproject",
+        "cfcache": "cf",
+        "wprojplanes": 32,
+        "computepastep": 5.0000001,
+    }))
+    .gridder
+    else {
+        panic!("an AW request");
+    };
+    // SynthesisParamsImage's Float rounds 5.0000001 to 5 degrees.
+    assert_eq!(aw.pa_tolerance_rad(), 5.0_f32.to_radians());
+}
+
 /// A blank optional parameter is unset, as CASA's empty text is.
 #[test]
 fn blank_optional_values_are_unset() {

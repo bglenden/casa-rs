@@ -1105,7 +1105,7 @@ fn aw_plan(
         indexing: AwIndexing {
             conjugate_beams: aw.conjbeams,
             image_reference_hz: surveyed.spectral.reference_frequency_hz,
-            pa_tolerance_rad: aw.computepastep.to_radians() as f32,
+            pa_tolerance_rad: aw.pa_tolerance_rad(),
             feed_zero_angles_rad,
         },
         resident_bytes: match aw.cf_resident_mb {
