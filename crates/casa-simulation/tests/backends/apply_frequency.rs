@@ -8,16 +8,21 @@ use casa_simulation::ApplySpec;
 
 #[test]
 fn metal_prediction_composes_with_channel_dependent_table_application() {
-    check_time_mode("linear");
+    check_time_mode("linear", false);
 }
 
 #[test]
 fn metal_prediction_composes_with_higher_time_interpolation() {
-    check_time_mode("cubic");
-    check_time_mode("spline");
+    check_time_mode("cubic", false);
+    check_time_mode("spline", false);
 }
 
-fn check_time_mode(mode: &str) {
+#[test]
+fn metal_prediction_composes_with_full_polarized_table_application() {
+    check_time_mode("linear", true);
+}
+
+fn check_time_mode(mode: &str, full: bool) {
     if !metal_device() {
         return;
     }
@@ -63,6 +68,9 @@ fn check_time_mode(mode: &str) {
         })
     });
     write_simulated_jones_table(&ms, &table, SimulatedJones::Troposphere, rows).unwrap();
+    if full {
+        full_leakage(&table);
+    }
     let model = cube(directory.path());
     let run = |name: &str, backend: BackendRequest, calibrated: bool| {
         let path = directory.path().join(name);
@@ -73,7 +81,7 @@ fn check_time_mode(mode: &str) {
         if calibrated {
             sm.set_apply(&ApplySpec {
                 table: table.to_string_lossy().into_owned(),
-                kind: "Tf".into(),
+                kind: if full { "Dfgen" } else { "Tf" }.into(),
                 interval_s: 0.0,
                 interp: format!("{mode},linear"),
                 calwt: true,
@@ -107,4 +115,48 @@ fn check_time_mode(mode: &str) {
         assert_eq!(cpu.antennas, metal.antennas);
         assert_eq!(cpu.flag_row, metal.flag_row);
     }
+}
+
+fn full_leakage(path: &std::path::Path) {
+    use casa_tables::{Table, TableOptions};
+    use casa_types::{ArrayValue, ScalarValue, Value};
+    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+    let mut table = Table::open(TableOptions::new(path)).unwrap();
+    for row in 0..table.row_count() {
+        let ArrayValue::Complex32(values) =
+            table.cell_accessor(row, "CPARAM").unwrap().array().unwrap()
+        else {
+            panic!("CPARAM");
+        };
+        let shape = IxDyn(&[2, CHANNELS]);
+        let values = ArrayD::from_shape_fn(shape.clone().f(), |index| {
+            values[[0, index[1]]] * if index[0] == 0 { 0.2 } else { -0.15 }
+        });
+        for (column, value) in [
+            ("CPARAM", ArrayValue::Complex32(values)),
+            (
+                "FLAG",
+                ArrayValue::Bool(ArrayD::from_elem(shape.clone().f(), false)),
+            ),
+            (
+                "PARAMERR",
+                ArrayValue::Float32(ArrayD::zeros(shape.clone().f())),
+            ),
+            ("SNR", ArrayValue::Float32(ArrayD::ones(shape.f()))),
+        ] {
+            table
+                .cell_accessor_mut(row, column)
+                .unwrap()
+                .set(Value::Array(value))
+                .unwrap();
+        }
+    }
+    let mut info = table.info().clone();
+    info.sub_type = "Dfgen Jones".into();
+    table.set_info(info);
+    table.keywords_mut().upsert(
+        "VisCal",
+        Value::Scalar(ScalarValue::String("Dfgen Jones".into())),
+    );
+    table.save(TableOptions::new(path)).unwrap();
 }
