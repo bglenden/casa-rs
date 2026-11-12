@@ -87,39 +87,30 @@
 <a href=#87 id=87 data-nosnippet>87</a>        <span class="self">self</span>.<span class="number">0</span>.beam_resident_bytes()
 <a href=#88 id=88 data-nosnippet>88</a>    }
 <a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Peak and retained bytes for the earlier mosaic's PB and mask.
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Access the saved mosaic PB as product generation does.
 <a href=#91 id=91 data-nosnippet>91</a>    </span><span class="attr">#[must_use]
-<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">pub fn </span>mosaic_beam_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u64, u64) {
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="self">self</span>.<span class="number">0</span>.mosaic_beam_bytes()
+<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">pub fn </span>mosaic_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>casa_imaging_products::SavedMosaicBeam&gt; {
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="self">self</span>.<span class="number">0</span>.mosaic_beam()
 <a href=#94 id=94 data-nosnippet>94</a>    }
 <a href=#95 id=95 data-nosnippet>95</a>
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// Read the earlier mosaic's PB and mask as product generation does.
-<a href=#97 id=97 data-nosnippet>97</a>    ///
-<a href=#98 id=98 data-nosnippet>98</a>    /// # Errors
-<a href=#99 id=99 data-nosnippet>99</a>    /// Pixel or mask I/O fails.
-<a href=#100 id=100 data-nosnippet>100</a>    </span><span class="kw">pub fn </span>read_mosaic_beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;f32&gt;, Vec&lt;bool&gt;), casa_images::ImageError&gt; {
-<a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">let </span>beam = <span class="self">self</span>.<span class="number">0</span>.read_mosaic_beam()<span class="question-mark">?</span>;
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="prelude-val">Ok</span>((beam.values, beam.mask))
-<a href=#103 id=103 data-nosnippet>103</a>    }
-<a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// Bytes admitted for reading `channels` channels, besides the images.
-<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="attr">#[must_use]
-<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub fn </span>reading_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, channels: usize) -&gt; u64 {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="self">self</span>.<span class="number">0</span>.reading_bytes(channels)
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="doccomment">/// Bytes admitted for the images of `channels` channels.
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="attr">#[must_use]
-<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub fn </span>images_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, channels: usize) -&gt; u64 {
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="self">self</span>.<span class="number">0</span>.images_bytes(channels)
-<a href=#115 id=115 data-nosnippet>115</a>    }
-<a href=#116 id=116 data-nosnippet>116</a>
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Read `channels` as the production reader does.
-<a href=#118 id=118 data-nosnippet>118</a>    ///
-<a href=#119 id=119 data-nosnippet>119</a>    /// # Errors
-<a href=#120 id=120 data-nosnippet>120</a>    /// Pixel I/O fails.
-<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub fn </span>read(<span class="kw-2">&amp;</span><span class="self">self</span>, channels: Range&lt;usize&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;PassImages, casa_images::ImageError&gt; {
-<a href=#122 id=122 data-nosnippet>122</a>        <span class="self">self</span>.<span class="number">0</span>.pass_images(channels)
-<a href=#123 id=123 data-nosnippet>123</a>    }
-<a href=#124 id=124 data-nosnippet>124</a>}
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// Bytes admitted for reading `channels` channels, besides the images.
+<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="attr">#[must_use]
+<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">pub fn </span>reading_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, channels: usize) -&gt; u64 {
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="self">self</span>.<span class="number">0</span>.reading_bytes(channels)
+<a href=#100 id=100 data-nosnippet>100</a>    }
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// Bytes admitted for the images of `channels` channels.
+<a href=#103 id=103 data-nosnippet>103</a>    </span><span class="attr">#[must_use]
+<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub fn </span>images_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, channels: usize) -&gt; u64 {
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="self">self</span>.<span class="number">0</span>.images_bytes(channels)
+<a href=#106 id=106 data-nosnippet>106</a>    }
+<a href=#107 id=107 data-nosnippet>107</a>
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Read `channels` as the production reader does.
+<a href=#109 id=109 data-nosnippet>109</a>    ///
+<a href=#110 id=110 data-nosnippet>110</a>    /// # Errors
+<a href=#111 id=111 data-nosnippet>111</a>    /// Pixel I/O fails.
+<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">pub fn </span>read(<span class="kw-2">&amp;</span><span class="self">self</span>, channels: Range&lt;usize&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;PassImages, casa_images::ImageError&gt; {
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="self">self</span>.<span class="number">0</span>.pass_images(channels)
+<a href=#114 id=114 data-nosnippet>114</a>    }
+<a href=#115 id=115 data-nosnippet>115</a>}
 </code></pre></div></section></main></body></html>
