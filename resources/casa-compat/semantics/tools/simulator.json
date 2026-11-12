@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
+ "audit_revision": "30517424209d7531ce6f4c93e1e8ef94a5e4e66b",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -1524,8 +1524,8 @@
   "corruption-window-coverage-20261112": {
    "kind": "Independent CASA whole-step spectral-window coverage, bounded grids and actual C++ consumption",
    "state": "passed",
-   "result": "Four independent180-row cases pass CPU W1/W3 with exact stored TIME, deterministic cells and preserved quality/scratch columns. Seeded worker DATA agree exactly; native/CASA noisy covered-cell variance ratio1.02344. C++ reads8 native MSs and consumes5 native tables across4 scenarios; deterministic consumer cells match exactly and noise variance ratio1.0. Actual Metal max-relative2.37e-7 under1e-4. The former12.89GB uncovered-grid request becomes a2512-byte heap peak under the unchanged256MiB budget/64KiB call allowance. Full native, installed-wheel and broader counting gates pass; details and review state are in the receipt.",
-   "scope": "Applied mapping snapshot, missing table windows, whole-step Jones/noise gating, selected fields, repeated steps, preserved corrected-data cells, nonzero fresh prediction and actual Metal. Existing unsupported calibration/time/layout/noise scopes remain open under #1053.",
+   "result": "Six independent144/180-row cases pass CPU W1/W3, including defined-but-unobserved windows and simultaneous terms. Stored TIME, deterministic cells and preserved quality/scratch columns match exactly. Seeded worker DATA agree exactly; native/CASA noisy-cell variance ratio1.02344. C++ reads12 native MSs and applies8 native tables across6 scenarios (deterministic values exact, noise ratio1.0). Actual Metal max-relative2.37e-7 under1e-4. The former12.89GB two-term grid request becomes a4320-byte heap peak under unchanged256MiB/64KiB gates. Full native460 reported passes/2 helper ignores, installed wheel71/2 skips,38 memory laws and the ONE resolved review pass; no re-review.",
+   "scope": "Applied mapping snapshot, missing table windows, whole-step Jones/noise gating, selected fields, repeated steps, preserved corrected-data cells, nonzero fresh prediction and actual Metal. Existing unsupported calibration/time/layout/noise scopes remain open under #1053. Coverage intersection precedes term admission/evaluation; all defined window slots are represented even when unobserved.",
    "links": [
     "crates/casa-simulation/tests/corruption_coverage.rs",
     "crates/casa-simulation/tests/session_memory/coverage.rs",
@@ -1536,11 +1536,13 @@
     "crates/casa-simulation/tests/data/sm_apply_later_window_noise_casa.json.gz",
     "crates/casa-simulation/tests/data/sm_apply_existing_window_casa.json.gz",
     "crates/casa-simulation/tests/data/sm_apply_selected_window_casa.json.gz",
-    "crates/casa-simulation/tests/data/sm_apply_repeated_window_casa.json.gz"
+    "crates/casa-simulation/tests/data/sm_apply_repeated_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_unobserved_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_overlapping_terms_casa.json.gz"
    ],
    "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
-   "source_revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
-   "revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
+   "source_revision": "30517424209d7531ce6f4c93e1e8ef94a5e4e66b",
+   "revision": "30517424209d7531ce6f4c93e1e8ef94a5e4e66b",
    "command": "RUST_TEST_THREADS=1 CASA_RS_COVERAGE_OUT=EXPORT cargo test -p casa-simulation --test corruption_coverage -- --nocapture; cargo test -p casa-simulation --test session_memory coverage:: -- --nocapture; cargo test -p casa-simulation --test backends coverage::actual_metal_prediction_preserves_whole_step_window_coverage -- --exact --nocapture; CASAPY tools/simulation/sm_corruption_coverage_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data --out CPP; cargo test -p casa-simulation -p casars-python",
    "receipt": "resources/casa-compat/evidence/sm-corruption-window-coverage-20261112.json"
   }
