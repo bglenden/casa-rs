@@ -85,7 +85,12 @@ fn actual_metal_prediction_preserves_whole_step_window_coverage() {
     assert_eq!(metal_pass.backend, "Metal");
     assert_eq!(plain.len(), 108);
     assert_eq!(plain.len(), cpu.len());
-    assert!(plain[72..].iter().flat_map(|row| &row.data).any(|value| value.norm() > 0.1));
+    assert!(
+        plain[72..]
+            .iter()
+            .flat_map(|row| &row.data)
+            .any(|value| value.norm() > 0.1)
+    );
     assert!(relative_difference(&cpu[..72], &plain[..72]) > 0.5);
     for (a, b) in plain[72..].iter().zip(&cpu[72..]) {
         assert_eq!(
