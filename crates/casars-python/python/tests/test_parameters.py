@@ -39,7 +39,7 @@ def test_malformed_numpy_scalar_profile_is_rejected_before_number_as_text(
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 42
+contract = 41
 
 [parameters]
 

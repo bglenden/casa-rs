@@ -5104,11 +5104,6 @@
       "fingerprint": "3195341b29125e38eaa5d951c75a365d730b354b2f64e3f4aa09474c3fdd8bdd"
     },
     {
-      "id": "tclean",
-      "contract_version": 42,
-      "fingerprint": "c43c035c04ab74683e3ab6df42a7bb514bf725a334d471c09813edd024f83c41"
-    },
-    {
       "id": "uvcontsub",
       "contract_version": 1,
       "fingerprint": "2435bfb0428d488b10bff6339d782f63e2b03af7b9eb1b7e585c3080985c363e"
