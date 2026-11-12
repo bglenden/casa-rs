@@ -243,6 +243,7 @@ fn fresh_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec<
     let nrms = (error / power).sqrt();
     println!("{} W{workers}: DATA NRMS {nrms:e}", case["name"]);
     assert!(nrms <= 1e-3);
+    export(directory, case, workers, backend);
     actual.into_iter().map(|row| row.data).collect()
 }
 
@@ -377,6 +378,7 @@ fn opened_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec
         println!("{} W{workers}: selected DATA NRMS {nrms:e}", case["name"]);
         assert!(nrms <= 1e-3);
     }
+    export(directory, case, workers, backend);
     rows.into_iter().map(|row| row.data).collect()
 }
 
@@ -447,4 +449,23 @@ fn selected_prediction_uses_metal_and_matches_cpu() {
         );
         assert!(peak > 0.0 && difference <= 1e-4 * peak);
     }
+}
+
+fn export(directory: tempfile::TempDir, case: &Value, workers: usize, backend: BackendRequest) {
+    let Some(root) = std::env::var_os("CASA_RS_SELECTION_OUT") else {
+        return;
+    };
+    let name = case["name"].as_str().unwrap();
+    if name.ends_with("_without_noise") {
+        return;
+    }
+    let destination = PathBuf::from(root).join(format!("{name}-{backend:?}-w{workers}"));
+    if destination.exists() {
+        return;
+    }
+    std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+    let record =
+        serde_json::json!({ "name": name, "workers": workers, "backend": format!("{backend:?}") });
+    std::fs::write(directory.path().join("case.json"), record.to_string()).unwrap();
+    std::fs::rename(directory.path(), destination).unwrap();
 }
