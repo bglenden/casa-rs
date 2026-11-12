@@ -16,7 +16,7 @@
   },
   "openfromms": {
    "status": "Partial",
-   "scope": "Opens an existing MeasurementSet for predict and corrupt. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, POINTING away from PHASE_DIR, and rows flagged without FLAG_ROW.",
+   "scope": "Opens an existing MeasurementSet for predict and corrupt, respecting image sample flags while components and corruption also operate on flagged samples. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, and POINTING away from PHASE_DIR.",
    "evidence": [
     "signature",
     "binding-tests",
