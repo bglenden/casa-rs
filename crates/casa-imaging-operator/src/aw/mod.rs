@@ -695,10 +695,12 @@ impl AwCatalog {
     #[must_use]
     pub fn pa_cell(&self, pa_rad: f32) -> Option<usize> {
         let step = self.indexing.pa_tolerance_rad;
+        // CFCache collects the on-disk Double degrees in a Float list.
+        let radians = |degrees: f64| f64::from(degrees as f32).to_radians() as f32;
         let first = self
             .pa_deg
-            .partition_point(|angle| pa_rad - angle.to_radians() as f32 >= step);
-        let angle = self.pa_deg.get(first)?.to_radians() as f32;
+            .partition_point(|&angle| pa_rad - radians(angle) >= step);
+        let angle = radians(*self.pa_deg.get(first)?);
         ((pa_rad - angle).abs() < step).then_some(first)
     }
 
@@ -1383,6 +1385,12 @@ mod tests {
         assert_eq!(catalog.pa_cell(edge), Some(1));
         catalog.pa_deg = vec![-179.0];
         assert_eq!(catalog.pa_cell(179.0_f32.to_radians()), None);
+
+        // CASA rounds the header to Float degrees before it makes a radian
+        // quantity. Keeping the Double degrees would put this row in band.
+        catalog.pa_deg = vec![53.00008538104];
+        catalog.indexing.pa_tolerance_rad = 0.001;
+        assert_eq!(catalog.pa_cell(0.926026_f32), None);
     }
 
     #[test]
