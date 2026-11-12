@@ -27,6 +27,13 @@ def parameters(kind, antenna, channel):
     return np.array(values,dtype=np.complex128)*(1.+.05*channel)
 
 
+def initialize_matrix_data(path):
+    tb=table();tb.open(str(path),nomodify=False)
+    data=np.array([3.+4j,-2.+.5j,1.5-.2j,4.-1j],dtype=np.complex64)[:,None]*np.array([1.,1.1,1.2,1.3],dtype=np.float32)[None,:]
+    for row in range(tb.nrows()):tb.putcell('DATA',row,data)
+    times=tb.getcol('TIME');tb.close();return times
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out',type=Path,required=True);parser.add_argument('--fixture',type=Path,required=True)
@@ -35,10 +42,7 @@ def main():
     for spec in CASES:
         directory=args.out/spec['name'];directory.mkdir();path=directory/'data.ms';terms=directory/'terms.cal'
         sm=make_session(path,stokes='XX XY YX YY');assert sm.setgain(mode='random',table=str(terms),amplitude=[0.,0.]);sm.reset();sm.close();initialize(path)
-        tb=table();tb.open(str(path),nomodify=False)
-        data=np.array([3.+4j,-2.+.5j,1.5-.2j,4.-1j],dtype=np.complex64)[:,None]*np.array([1.,1.1,1.2,1.3],dtype=np.float32)[None,:]
-        for row in range(tb.nrows()):tb.putcell('DATA',row,data)
-        times=tb.getcol('TIME');tb.close();tb.open(str(terms),nomodify=False)
+        times=initialize_matrix_data(path);tb=table();tb.open(str(terms),nomodify=False)
         kind=spec['kind'];info=tb.info();info['subType']=kind+' Jones';tb.putinfo(info);tb.putkeyword('VisCal',kind+' Jones')
         for row,antenna in enumerate(tb.getcol('ANTENNA1')):
             values=np.stack([parameters(kind,antenna,c) for c in range(spec['channels'])],axis=1).astype(np.complex64)
