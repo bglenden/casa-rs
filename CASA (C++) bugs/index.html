@@ -983,6 +983,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#aw-aperture-rotation-can-regrid-an-already-rotated-cell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AW aperture rotation can regrid an already rotated cell
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1517,6 +1528,30 @@ with exact masks. The default 360-degree control also matches across both
 fields. CASA's separate one-degree coalescence in
 <code>CFCache::fillCFListFromDisk</code> and <code>CFStore2::resize</code> remains unverified for
 densely spaced imported headers (#1070).</p>
+<h2 id="aw-aperture-rotation-can-regrid-an-already-rotated-cell">AW aperture rotation can regrid an already rotated cell<a class="headerlink" href="#aw-aperture-rotation-can-regrid-an-already-rotated-cell" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: CASA 6.7.6.14 rotation history affects the residual. Casa-rs
+  samples the saved cell at each rotation epoch (#1070).</li>
+<li>Affected code: <code>TransformMachines2/AWConvFunc.cc</code>
+  (<code>prepareConvFunction</code>), <code>AzElAperture.cc</code> (<code>rotate2</code>) and
+  <code>Utils.cc</code> (<code>rotateComplexArray</code>).</li>
+</ul>
+<p>The first change greater than <code>rotatepastep</code> regrids the current kernel
+with cubic interpolation and records the current feed PA. Later changes
+regrid those already interpolated pixels. On field 0 of
+<code>refim_mawproject.ms</code>, a zero-weight integration at -99.639° followed
+by the same nonzero integration at 177.839° changes CASA's 5-degree
+residual by 1.122e-4 NRMS versus selecting the final integration alone.
+Both paths rotate to the same final PA. The default 360-degree control
+has identical arrays in both selections.</p>
+<p>Casa-rs uses the same strict trigger and cubic interpolation, starting
+from the saved cell at each epoch. As in CASA's major cycle, an
+integration with no unflagged cross-correlation cannot advance the
+rotation. The two selections at the same final PA have identical arrays
+and masks in casa-rs. The independent CASA one-integration
+control and the full field match all seven products and masks under the
+existing limits. The largest full-field NRMS is 6.737e-5.</p>
 <h2 id="aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer">AW pointing can reuse the origin of an earlier convolution buffer<a class="headerlink" href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>

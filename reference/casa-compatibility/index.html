@@ -10500,7 +10500,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>360.0</code></td>
 <td><code>360.0</code>; <code>rotatepastep</code> → <code>rotatepastep</code></td>
 <td>Default only</td>
-<td>Read and ignored; non-default values catalog-refused for applicable AW families (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when (gridder='awproject' or gridder='awprojectft') (#1070)</td>
+<td>Non-default awproject rotation supports a fresh dirty VLA or EVLA continuum image with the aperture, one imported axis-aligned PA buffer, one selected field and spectral window, and the default compute step. Each rotation starts from the saved cell to avoid cumulative interpolation. Other rotation combinations remain open (#1070). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when gridder='awprojectft' (#1070)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
