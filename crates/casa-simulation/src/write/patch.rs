@@ -59,10 +59,10 @@ use casa_types::measures::MPosition;
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
-use super::components::{self, add_components};
+use super::components;
+use super::data::{DataBatch, DataStage};
 use super::geometry::{ArrayGeometry, RowGeometry};
-use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob, batch_scales, noise_jobs};
-use super::prediction::{PredictionStage, device_noise};
+use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob};
 use super::resources::{NoiseScales, admit_field_grids};
 use super::{cell_shape, noise_varies_by_row, write_error};
 use crate::session::SessionResources;
@@ -145,7 +145,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let window = ReservationWindow::open();
     let started = Instant::now();
     let resources = &session.options().resources;
-    let mut prediction = PredictionStage::new(
+    let mut prediction = DataStage::new(
         session,
         (correlations, channels),
         resources.prediction_backend(),
@@ -163,7 +163,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         correlations,
         channels,
         reads_data: !plan.replaced(),
-        reads_flags: prediction.is_some() || plan.predicts_single_dish(),
+        reads_flags: plan.predicts_images() || plan.predicts_single_dish(),
         columns: columns.len(),
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
@@ -185,6 +185,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             admission.block_rows,
             admission.cores.streaming_workers,
             admission.grid_bytes,
+            admission.plan.batch_rows().max(1),
         );
     }
     let team = WorkerTeam::new(admission.cores.streaming_workers)
@@ -237,13 +238,13 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let (grid_preparations, grid_prepare) = patch
         .prediction
         .as_ref()
-        .map_or((0, Duration::ZERO), PredictionStage::grid_preparations);
+        .map_or((0, Duration::ZERO), DataStage::grid_preparations);
     tracing::info!(
         rows = shape.rows,
         columns = ?columns,
         reads_data = shape.reads_data,
         batches = patch.batches,
-        backend = ?patch.prediction.as_ref().map(PredictionStage::backend),
+        backend = ?patch.prediction.as_ref().map(DataStage::backend),
         workers = admission.cores.streaming_workers,
         block_rows = admission.block_rows,
         grid_bytes = admission.grid_bytes,
@@ -274,7 +275,7 @@ struct Patch<'s> {
     shape: PatchShape,
     columns: &'s [&'static str],
     team: &'s WorkerTeam,
-    prediction: Option<PredictionStage<'s>>,
+    prediction: Option<DataStage<'s>>,
     /// The array's geometry, which gives each row's airmasses when the
     /// noise needs them.
     array: Option<ArrayGeometry<'s>>,
@@ -319,75 +320,25 @@ impl Patch<'_> {
         }
         let runs = &self.runs;
         let (session, team) = (self.session, self.team);
-        let (scans, plan) = (session.scans(), session.data_plan());
         let geometry = &self.reader.geometry;
-        // The noise follows the DATA read from disk.
-        let reads_data = self.shape.reads_data;
-        // Mask only the sky-image prediction. Noise still reaches every
-        // sample, so a flagged batch's noise follows masking on the host.
-        let host_noise = reads_data || self.reader.flags.iter().any(|&flag| flag);
         if let Some(stage) = &mut self.prediction {
-            stage.predict(
+            stage.apply(
                 team,
-                (scans, geometry),
-                runs,
-                first as u64,
+                DataBatch {
+                    rows: geometry,
+                    runs,
+                    first_row: first as u64,
+                    flags: self
+                        .shape
+                        .reads_flags
+                        .then_some(self.reader.flags.as_slice()),
+                    stored: self.shape.reads_data.then_some(self.reader.data.as_slice()),
+                },
                 &mut self.data,
-                |scan| device_noise(plan, scan, host_noise),
+                &self.shape.noise_scales,
+                false,
             )?;
         }
-        if plan.predicts_single_dish() {
-            super::single_dish::add_single_dish(
-                (scans, geometry),
-                plan,
-                runs,
-                (&mut self.data, samples),
-            );
-        }
-        for (value, &flag) in self.data.iter_mut().zip(&self.reader.flags) {
-            if flag {
-                *value = Complex32::new(0.0, 0.0);
-            }
-        }
-        if plan.predicts_components() {
-            add_components(
-                team,
-                (scans, geometry),
-                plan,
-                runs,
-                (&mut self.data, samples),
-            )?;
-        }
-        if reads_data {
-            for (value, stored) in self.data.iter_mut().zip(&self.reader.data) {
-                *value += *stored;
-            }
-        }
-        let prediction = &self.prediction;
-        let noised = |scan| {
-            prediction
-                .as_ref()
-                .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, host_noise)))
-        };
-        let scales = batch_scales(
-            (plan, NoiseContext::of(session), team),
-            (geometry, runs),
-            &noised,
-            &self.shape.noise_scales,
-        )?;
-        let mut jobs = noise_jobs(
-            (plan, NoiseContext::of(session), team),
-            &self.receptors,
-            (geometry, runs),
-            (first as u64, &mut self.data),
-            (samples, &scales),
-            &noised,
-        );
-        let correlations = self.shape.correlations;
-        team.for_each_mut(&mut jobs, |_, job| {
-            job.run(correlations, samples);
-            Ok::<_, SimulatorError>(())
-        })?;
         self.batches += 1;
         Ok(self.mutation(rows))
     }
@@ -650,7 +601,7 @@ fn admit_patch(
     resources: &SessionResources,
     shape: &PatchShape,
     columns: &[&str],
-    prediction: Option<&PredictionStage<'_>>,
+    prediction: Option<&DataStage<'_>>,
 ) -> SimulatorResult<PatchAdmission> {
     let (host, policy) = (resources.host(), resources.policy());
     // The patch reads the MeasurementSet through the process's table cache.
@@ -689,7 +640,9 @@ fn admit_patch(
             + shape
                 .noise_scales
                 .bytes(batch_rows, cores.streaming_workers)
-            + prediction.map_or(0, |stage| stage.bytes(block_rows, cores.streaming_workers))
+            + prediction.map_or(0, |stage| {
+                stage.bytes(block_rows, cores.streaming_workers, batch_rows)
+            })
     };
     // As `close` admits a new MeasurementSet's pipeline: a batch predicted
     // as one block when that fits with the policy's workers, else small

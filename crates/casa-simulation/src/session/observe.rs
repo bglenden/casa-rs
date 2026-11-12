@@ -405,6 +405,7 @@ impl super::Simulator {
             });
         }
         tracing::info!("Calculating a total of {integrations} integrations");
+        self.data_plan.reset_selection();
         Ok(())
     }
 

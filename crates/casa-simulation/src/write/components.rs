@@ -12,7 +12,7 @@ use num_complex::Complex32;
 use super::geometry::RowGeometry;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
-use crate::session::plan::DataPlan;
+use crate::session::plan::DataPhase as DataPlan;
 
 /// Rows of one job.
 pub(super) const JOB_ROWS: usize = 256;

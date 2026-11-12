@@ -44,6 +44,7 @@ pub mod observe;
 pub(crate) mod plan;
 pub(crate) mod prediction;
 pub mod resources;
+mod selection;
 mod single_dish;
 pub mod spectral;
 #[cfg(test)]
@@ -479,14 +480,12 @@ impl Simulator {
     /// - then the TaQL `msselect` applies;
     /// - a selection that keeps no row reverts to every row, with a warning.
     ///
-    /// casa-rs takes a selection that keeps every row, as `simobserve`'s
-    /// `setdata(fieldid=range(nfld))` does. The following steps then act on
-    /// every row observed so far, as without `setdata`.
+    /// Each DATA operation retains the selection in force at that call;
+    /// later selections leave earlier operations unchanged.
     ///
     /// # Errors
     ///
-    /// Not yet implemented: a selection that keeps some but not all of the
-    /// rows, or a non-blank `msselect`.
+    /// Not yet implemented: a non-blank `msselect`.
     pub fn set_data(
         &mut self,
         spectral_window_ids: &[i64],
@@ -502,9 +501,6 @@ impl Simulator {
         let windows: Vec<usize> = (0..self.spectral_windows.len())
             .filter(|window| spectral_window_ids.contains(&(*window as i64)))
             .collect();
-        if field_ids.is_empty() && windows.is_empty() {
-            return Ok(());
-        }
         let selected = |scan: &Scan| {
             (field_ids.is_empty() || field_ids.contains(&(scan.field_id as i64)))
                 && (windows.is_empty() || windows.contains(&scan.spectral_window_id))
@@ -512,16 +508,14 @@ impl Simulator {
         let kept = self.scans.iter().filter(|scan| selected(scan)).count();
         if kept == 0 {
             tracing::warn!("Selection is empty: reverting to original MeasurementSet");
-            return Ok(());
         }
-        if kept == self.scans.len() {
-            return Ok(());
-        }
-        Err(SimulatorError::not_yet_implemented(format!(
-            "setdata selecting {kept} of the {} scans observed so far is not yet implemented in \
-             casa-rs (#1053); a selection of them all is",
-            self.scans.len()
-        )))
+        let selection = if kept == 0 || kept == self.scans.len() {
+            selection::DataSelection::All
+        } else {
+            selection::DataSelection::fields(field_ids, windows)
+        };
+        self.data_plan.select(selection);
+        Ok(())
     }
 
     /// `sm.close()` / `sm.done()`: write the MeasurementSet, or, after
