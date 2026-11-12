@@ -6,13 +6,6 @@ Verification: just docs-check
 
 Situational guidance for agents: read only the section relevant to the task.
 
-## CASA Conversion Work
-
-Use [the conversion workflow](casa-conversion-work.md) to divide an authorized
-conversion into observable behaviors and track their parameter and test coverage.
-The issue holds the ordered chunks, current work and evidence links; this
-reference holds no task backlog.
-
 ## CASA And C++ Oracles
 
 - Local CASA task runs use the CASA 6.7.6 release's Python,
