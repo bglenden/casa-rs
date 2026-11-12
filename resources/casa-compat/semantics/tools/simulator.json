@@ -260,12 +260,13 @@
   },
   "setapply": {
    "status": "Partial",
-   "scope": "Applies G and D tables with linear or nearest interpolation. Refused: calwt, a nonzero t, a nonzero opacity, other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations.",
+   "scope": "Applies G and D tables with linear or nearest interpolation. G/D corruption preserves WEIGHT and SIGMA for either calwt setting; t and opacity leave these tables' per-row interpolation unchanged, as in CASA. Refused: other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations.",
    "evidence": [
     "signature",
     "binding-tests",
     "corruptions-20261103",
-    "refusals"
+    "refusals",
+    "apply-parameters-20261112"
    ],
    "issue": 1053
   },
@@ -1408,6 +1409,23 @@
    "revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
    "command": "CASAPY tools/simulation/sm_selection_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SELECTION_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test selection -- --nocapture; CASAPY tools/simulation/sm_selection_readback.py --root EXPORT --fixture FIXTURE --out REPORT; RUST_TEST_THREADS=1 cargo test -p casa-simulation",
    "receipt": "resources/casa-compat/evidence/sm-selection-20261112.json"
+  },
+  "apply-parameters-20261112": {
+   "kind": "Independent CASA argument controls and native G/D table consumption through C++",
+   "state": "passed",
+   "result": "28 controls pass one/three CPU workers, maximum DATA NRMS7.64e-8 under1e-3; WEIGHT/SIGMA and stored TIME are exact. C++ reads all56 native MS/table outputs and actually applies28 native tables with zero DATA residual against the independent reference. Integrated simulation/binding gates366 passed/two parent-executed helper ignores;57 installed-wheel simulator tests and strict Clippy pass.",
+   "scope": "G/D, nearest/linear, nonidentity antenna/time-dependent receptor terms at two endpoints, calwt=True, positive/negative t, nonzero opacity and combined arguments. Native/C++ interoperability covers inputs and outputs. Other calibration constraints remain explicit. No new numerical or allocation path.",
+   "links": [
+    "tools/simulation/sm_apply_parameters_oracle.py",
+    "tools/simulation/sm_apply_parameters_readback.py",
+    "crates/casa-simulation/tests/apply_parameters.rs",
+    "crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "594f02d6cfae7e630bb0a5891a4684465eec9c97",
+   "revision": "594f02d6cfae7e630bb0a5891a4684465eec9c97",
+   "command": "CASAPY tools/simulation/sm_apply_parameters_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_parameters_readback.py --root EXPORT --fixture FIXTURE --out OUT; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
+   "receipt": "resources/casa-compat/evidence/sm-apply-parameters-20261112.json"
   }
  }
 }
