@@ -462,7 +462,7 @@
     },
     "usepointing": {
       "status": "Implemented",
-      "scope": "Copied only for mosaic/AW; read and ignored for standard/W.",
+      "scope": "Read by mosaic and AW gridders; ignored for standard/W. AW uses each antenna's POINTING direction when available and the visibility field's phase direction when no sample exists.",
       "evidence": [
         "signature",
         "reader"
