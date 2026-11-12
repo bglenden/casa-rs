@@ -3,14 +3,12 @@
 //! They share the corruption models and the ordinary calibration-table writer.
 use std::path::PathBuf;
 
-use casa_calibration::{
-    SimulatedJones, SimulatedSolution, SolutionValues, simulated_table_bytes,
-    write_simulated_jones_table,
-};
-use casa_imaging_runtime::{Demand, Reservation, admit};
+use crate::corrupt::tsys_snapshot::{Chunk, TsysSnapshot};
+use casa_calibration::{SimulatedJones, write_simulated_jones_table};
+use casa_imaging_runtime::{Demand, admit};
 use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
-use casa_types::{Complex32, ScalarValue};
+use casa_types::ScalarValue;
 
 use super::Simulator;
 use super::corruption::calibration_table_root;
@@ -20,51 +18,9 @@ use crate::corrupt::{NoiseLevel, WindowNoise};
 use crate::write::ArrayGeometry;
 
 #[derive(Debug)]
-struct Chunk {
-    time_s: f64,
-    field: i32,
-    window: i32,
-    channels: usize,
-    offset: usize,
-}
-
-#[derive(Debug)]
 pub(super) struct NoiseTable {
     pub(super) path: PathBuf,
-    kind: SimulatedJones,
-    antennas: usize,
-    chunks: Vec<Chunk>,
-    values: Vec<f32>,
-    _reservation: Reservation,
-}
-
-impl NoiseTable {
-    fn solutions(&self) -> impl Iterator<Item = SimulatedSolution> + '_ {
-        self.chunks.iter().flat_map(move |chunk| {
-            (0..self.antennas).map(move |antenna| {
-                let offset = chunk.offset + antenna * chunk.channels;
-                SimulatedSolution {
-                    time_s: chunk.time_s,
-                    field_id: chunk.field,
-                    spectral_window_id: chunk.window,
-                    antenna: antenna as i32,
-                    values: SolutionValues::Channels(
-                        self.values[offset..offset + chunk.channels]
-                            .iter()
-                            .map(|&gain| Complex32::new(gain, 0.))
-                            .collect(),
-                    ),
-                }
-            })
-        })
-    }
-
-    fn write_bytes(&self) -> u64 {
-        simulated_table_bytes(
-            (self.chunks.len() * self.antennas) as u64,
-            self.values.len() as u64,
-        )
-    }
+    pub(super) snapshot: std::sync::Arc<TsysSnapshot>,
 }
 
 fn raised(error: impl std::fmt::Display) -> SimulatorError {
@@ -76,10 +32,14 @@ impl Simulator {
         &self,
         level: &NoiseLevel,
         name: &str,
+        domain: &crate::corrupt::noise_domain::NoiseDomain,
     ) -> SimulatorResult<Option<NoiseTable>> {
         if matches!(
             level,
-            NoiseLevel::Simple(_) | NoiseLevel::Fixed(_) | NoiseLevel::ScaledFixed { .. }
+            NoiseLevel::Simple(_)
+                | NoiseLevel::Fixed(_)
+                | NoiseLevel::ScaledFixed { .. }
+                | NoiseLevel::Snapshot(_)
         ) {
             return Ok(None);
         }
@@ -89,12 +49,22 @@ impl Simulator {
         let path = self
             .table_path(&format!("{root}.T.cal"))?
             .expect("nonempty table name");
+        let snapshot = self.noise_snapshot(level, domain)?;
+        Ok(Some(NoiseTable { path, snapshot }))
+    }
+
+    pub(super) fn noise_snapshot(
+        &self,
+        level: &NoiseLevel,
+        domain: &crate::corrupt::noise_domain::NoiseDomain,
+    ) -> SimulatorResult<std::sync::Arc<TsysSnapshot>> {
+        let scans = domain.scans;
         let kind = if matches!(level, NoiseLevel::TsysManual(_)) {
             SimulatedJones::ScalarGain
         } else {
             SimulatedJones::Troposphere
         };
-        let (counts, _) = self.integration_counts();
+        let (counts, _) = self.integration_counts_before(scans);
         let chunks = counts.iter().sum::<usize>();
         let antennas = self.antennas.len();
         let values = counts
@@ -110,26 +80,35 @@ impl Simulator {
                     }
             })
             .sum::<usize>();
-        let kept = (chunks * size_of::<Chunk>() + values * size_of::<f32>() + 1024) as u64;
+        let kept = (chunks * (size_of::<Chunk>() + size_of::<usize>())
+            + values * size_of::<f32>()
+            + 1024) as u64;
         let bytes = TermBytes {
             kept,
             forming: (antennas * 512) as u64,
         };
         let reservation = self.admit_term(bytes)?;
-        let mut table = NoiseTable {
-            path,
+        let mut table = TsysSnapshot {
+            metadata: domain.metadata(),
             kind,
             antennas,
             chunks: Vec::with_capacity(chunks),
             values: Vec::with_capacity(values),
-            _reservation: reservation,
+            order: Vec::with_capacity(chunks),
+            reservation,
         };
-        self.fill_noise_table(level, &mut table)?;
-        table._reservation.retain(kept);
-        Ok(Some(table))
+        self.fill_noise_table(level, scans, &mut table)?;
+        table.finish_index();
+        table.reservation.retain(kept);
+        Ok(std::sync::Arc::new(table))
     }
 
-    fn fill_noise_table(&self, level: &NoiseLevel, table: &mut NoiseTable) -> SimulatorResult<()> {
+    fn fill_noise_table(
+        &self,
+        level: &NoiseLevel,
+        scans: usize,
+        table: &mut TsysSnapshot,
+    ) -> SimulatorResult<()> {
         let geometry = ArrayGeometry::new(
             &self.telescope,
             &self.antennas,
@@ -140,7 +119,7 @@ impl Simulator {
             .as_ref()
             .map(|_| Table::open(TableOptions::new(self.path())).map_err(raised))
             .transpose()?;
-        for (index, scan) in self.scans.iter().enumerate() {
+        for (index, scan) in self.scans.iter().take(scans).enumerate() {
             let exposure = if let Some(planned) = scan.planned() {
                 planned.integration_s
             } else {
@@ -191,7 +170,8 @@ impl Simulator {
                         ),
                         NoiseLevel::Simple(_)
                         | NoiseLevel::Fixed(_)
-                        | NoiseLevel::ScaledFixed { .. } => {
+                        | NoiseLevel::ScaledFixed { .. }
+                        | NoiseLevel::Snapshot(_) => {
                             unreachable!("simple noise writes no T table")
                         }
                     }
@@ -209,7 +189,12 @@ impl Simulator {
     }
 
     pub(super) fn write_noise_tables(&self) -> SimulatorResult<()> {
-        let Some(memory) = self.noise_tables.iter().map(NoiseTable::write_bytes).max() else {
+        let Some(memory) = self
+            .noise_tables
+            .iter()
+            .map(|table| table.snapshot.write_bytes())
+            .max()
+        else {
             return Ok(());
         };
         let resources = &self.options.resources;
@@ -224,8 +209,14 @@ impl Simulator {
         .map_err(SimulatorError::admission)?;
         let ms = MeasurementSet::open(self.path()).map_err(raised)?;
         for table in &self.noise_tables {
-            write_simulated_jones_table(&ms, &table.path, table.kind, table.solutions())
-                .map_err(raised)?;
+            write_simulated_jones_table(
+                &ms,
+                &table.path,
+                table.snapshot.kind,
+                table.snapshot.solutions(),
+                Some(table.snapshot.metadata),
+            )
+            .map_err(raised)?;
         }
         Ok(())
     }

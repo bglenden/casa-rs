@@ -38,14 +38,34 @@ use crate::predict::{ComponentPrediction, SingleDishPrediction};
 
 /// One `setnoise` term: CASA's `ANoise` calibration term (with, for
 /// `tsys-manual`, the `T` that scales it), kept until `reset`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct NoiseTerm {
+    pub(crate) domain: Arc<crate::corrupt::noise_domain::NoiseDomain>,
+    pub(crate) snapshot: Option<Arc<crate::corrupt::tsys_snapshot::TsysSnapshot>>,
     /// The seed in force at `setnoise`.
     pub(crate) seed: i32,
     /// How large its draws are.
     pub(crate) level: NoiseLevel,
     /// How many `corrupt` calls have applied the term.
     pub(crate) applications: u32,
+}
+
+impl NoiseTerm {
+    pub(crate) fn application_level(&self, scans: usize) -> NoiseLevel {
+        if scans > self.domain.scans
+            && let Some(snapshot) = &self.snapshot
+        {
+            let scale = NoiseLevel::Snapshot(Arc::clone(snapshot));
+            return match &self.level {
+                NoiseLevel::ScaledFixed { field, .. } => NoiseLevel::ScaledFixed {
+                    field: Arc::clone(field),
+                    scale: Arc::new(scale),
+                },
+                _ => scale,
+            };
+        }
+        self.level.clone()
+    }
 }
 
 /// A step that changes DATA, covering the scans observed before it.
@@ -197,12 +217,10 @@ impl DataPhase {
         !self.jones.is_empty()
     }
 
-    /// Whether a step covering scan `scan` corrupts it by an antenna-based
-    /// term: its noise then follows each step's terms
-    /// ([`Self::corruptions_for_scan`]) rather than adding at once.
-    pub(crate) fn has_jones_for_scan(&self, scan: usize) -> bool {
-        self.corruptions_for_scan(scan)
-            .any(|(_, jones)| !jones.is_empty())
+    pub(crate) fn needs_corruption_steps(&self, scan: usize, window: usize) -> bool {
+        self.corruptions_for_scan(scan).any(|(noise, jones)| {
+            !jones.is_empty() || noise.iter().any(|term| !term.covers(window))
+        })
     }
 
     /// The corruptions covering scan `scan`, in the order they were taken:
@@ -237,7 +255,10 @@ impl DataPhase {
         window: usize,
     ) -> impl Iterator<Item = (&[NoiseApplication], &[Arc<HeldTerm>])> {
         self.corruptions_for_scan(scan)
-            .filter(move |(_, jones)| jones.iter().all(|term| term.covers(window)))
+            .filter(move |(noise, jones)| {
+                noise.iter().all(|term| term.covers(window))
+                    && jones.iter().all(|term| term.covers(window))
+            })
     }
 
     /// Whether this phase changes rows of the given scan/window. An
@@ -248,8 +269,10 @@ impl DataPhase {
     }
 
     pub(crate) fn has_uncovered_corruption(&self, scan: usize, window: usize) -> bool {
-        self.corruptions_for_scan(scan)
-            .any(|(_, jones)| jones.iter().any(|term| !term.covers(window)))
+        self.corruptions_for_scan(scan).any(|(noise, jones)| {
+            noise.iter().any(|term| !term.covers(window))
+                || jones.iter().any(|term| !term.covers(window))
+        })
     }
 
     /// Whether no step was taken (or every one was replaced by nothing).
@@ -381,6 +404,7 @@ mod tests {
 
     fn noise(seed: i32, ordinal: u32) -> NoiseApplication {
         NoiseApplication {
+            domain: crate::corrupt::noise_domain::NoiseDomain::unrestricted(),
             seed,
             level: NoiseLevel::Simple(0.5),
             ordinal,

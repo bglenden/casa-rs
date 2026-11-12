@@ -222,7 +222,7 @@ fn offline_tsys_adds_noise_to_the_predicted_model() {
 }
 
 #[test]
-fn offline_tsys_refuses_later_observations_before_data_changes() {
+fn reset_preserves_original_tsys_output_after_later_observation() {
     for mode in ["tsys-manual", "tsys-atm"] {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("data.ms");
@@ -237,12 +237,6 @@ fn offline_tsys_refuses_later_observations_before_data_changes() {
         .unwrap();
         sm.observe(&predict_support::scan("target", 40., 50.))
             .unwrap();
-        let error = sm.corrupt().unwrap_err();
-        assert_eq!(
-            error.outcome(),
-            casa_simulation::CasaOutcome::NotYetImplemented
-        );
-        assert!(error.message().contains("#1292"));
         sm.reset();
         sm.close().unwrap();
         assert!(

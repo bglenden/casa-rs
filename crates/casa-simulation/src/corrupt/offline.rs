@@ -20,8 +20,8 @@ struct Window {
 /// A complete A Noise field, with its storage admitted before construction.
 #[derive(Debug)]
 pub(crate) struct OfflineNoise {
+    pub(crate) metadata: casa_calibration::SimulatedTableMetadata,
     pub(crate) antennas: usize,
-    pub(crate) scans: usize,
     windows: Vec<Window>,
     values: Vec<Complex32>,
     chunks: usize,
@@ -44,10 +44,10 @@ impl OfflineNoise {
 
     pub(crate) fn new(
         antennas: usize,
-        scans: usize,
         counts: &[usize],
         channels: &[usize],
         reservation: Reservation,
+        metadata: casa_calibration::SimulatedTableMetadata,
     ) -> Self {
         let baselines = antennas * (antennas + 1) / 2;
         let values = counts
@@ -56,8 +56,8 @@ impl OfflineNoise {
             .map(|(n, c)| n * baselines * c * 4)
             .sum();
         Self {
+            metadata,
             antennas,
-            scans,
             windows: counts
                 .iter()
                 .zip(channels)

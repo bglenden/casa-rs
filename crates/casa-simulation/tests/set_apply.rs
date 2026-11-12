@@ -295,7 +295,8 @@ fn write_gains(ms: &Path, output: &Path, solutions: &[(f64, i32, f32)]) {
             values: SolutionValues::Receptors([Complex32::new(gain, 0.0); 2]),
         })
     });
-    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).expect("write the table");
+    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows, None)
+        .expect("write the table");
 }
 
 /// The first and last integration times of a session `observed` makes.

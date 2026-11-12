@@ -15,6 +15,7 @@ const N: usize = 1 << 20;
 
 fn application(seed: i32, ordinal: u32) -> NoiseApplication {
     NoiseApplication {
+        domain: crate::corrupt::noise_domain::NoiseDomain::unrestricted(),
         seed,
         level: NoiseLevel::Simple(1.0),
         ordinal,
@@ -66,6 +67,7 @@ fn the_key_is_the_seed_then_the_purpose_byte_above_the_ordinal() {
         [0x8000_0000, 0x01ff_ffff]
     );
     let noise = NoiseApplication {
+        domain: crate::corrupt::noise_domain::NoiseDomain::unrestricted(),
         seed: 7,
         level: NoiseLevel::Simple(0.25),
         ordinal: 2,
@@ -137,6 +139,7 @@ fn a_known_cell_gets_its_known_bits_on_every_platform() {
         [0xbd8f_48c0, 0x3e07_8ae4],
     ];
     let noise = NoiseApplication {
+        domain: crate::corrupt::noise_domain::NoiseDomain::unrestricted(),
         seed: 11_111,
         level: NoiseLevel::Simple(0.1),
         ordinal: 3,
@@ -168,6 +171,7 @@ fn more_known_cells_keep_their_bits() {
     let cells = [
         KnownCell {
             noise: NoiseApplication {
+                domain: crate::corrupt::noise_domain::NoiseDomain::unrestricted(),
                 seed: i32::MIN,
                 level: NoiseLevel::Simple(2.5),
                 ordinal: MAXIMUM_APPLICATIONS - 1,
@@ -198,6 +202,7 @@ fn more_known_cells_keep_their_bits() {
         },
         KnownCell {
             noise: NoiseApplication {
+                domain: crate::corrupt::noise_domain::NoiseDomain::unrestricted(),
                 seed: -11_111,
                 level: NoiseLevel::Simple(0.1),
                 ordinal: 0,
@@ -214,6 +219,7 @@ fn more_known_cells_keep_their_bits() {
         },
         KnownCell {
             noise: NoiseApplication {
+                domain: crate::corrupt::noise_domain::NoiseDomain::unrestricted(),
                 seed: 0,
                 level: NoiseLevel::Simple(3.7e-3),
                 ordinal: 1,

@@ -36,6 +36,7 @@ fn actual_metal_prediction_preserves_whole_step_window_coverage() {
             antenna: antenna as i32,
             values: SolutionValues::Receptors([Complex32::new(2.0, 0.0); 2]),
         }),
+        None,
     )
     .unwrap();
     let model = cube(root.path());

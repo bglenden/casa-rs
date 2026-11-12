@@ -88,6 +88,7 @@ pub(super) struct MainShape<'a> {
 pub(super) struct NoiseScales {
     /// The plan's `tsys-atm` terms.
     terms: usize,
+    channel_sigma: bool,
     /// The plan's `settrop` terms.
     tropospheric_terms: usize,
     /// Channels of the cells.
@@ -126,6 +127,11 @@ impl NoiseScales {
         tropospheric.sort_unstable();
         tropospheric.dedup();
         Self {
+            channel_sigma: plan
+                .phases()
+                .iter()
+                .flat_map(|phase| phase.noise_for_scan(0))
+                .any(crate::corrupt::NoiseApplication::channel_sigma),
             terms: models.len(),
             tropospheric_terms: tropospheric.len(),
             channels,
@@ -144,7 +150,7 @@ impl NoiseScales {
 
     /// The most a batch of `rows` rows holds with `workers` workers.
     pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
-        let scratch = if self.terms == 0 {
+        let scratch = if !self.channel_sigma {
             0
         } else {
             workers as u64 * NoiseScratch::bytes(self.channels)

@@ -176,7 +176,14 @@ fn run_case(
             ),
         })
     });
-    write_simulated_jones_table(&reference_ms, &table, SimulatedJones::Troposphere, rows).unwrap();
+    write_simulated_jones_table(
+        &reference_ms,
+        &table,
+        SimulatedJones::Troposphere,
+        rows,
+        None,
+    )
+    .unwrap();
     if matches!(kind, "B" | "B TSYS" | "Jf") {
         use casa_tables::{Table, TableOptions};
         use casa_types::{ArrayValue, ScalarValue, Value};

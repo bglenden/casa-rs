@@ -78,7 +78,7 @@ fn table(path: &Path, output: &Path, case: &Json) {
     } else {
         SimulatedJones::Gain
     };
-    write_simulated_jones_table(&ms, output, writer_kind, rows).unwrap();
+    write_simulated_jones_table(&ms, output, writer_kind, rows, None).unwrap();
     let mut tb = Table::open(TableOptions::new(output)).unwrap();
     let receptors = case["calibration"]["parameters"].as_u64().unwrap() as usize;
     let channels = case["calibration"]["channels"].as_u64().unwrap() as usize;

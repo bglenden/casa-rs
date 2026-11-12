@@ -254,7 +254,7 @@ impl Simulator {
                 JonesKind::SkyGain => unreachable!("only applied tables have sky gains"),
                 JonesKind::General => unreachable!("only applied tables have full Jones matrices"),
             };
-            write_simulated_jones_table(&ms, path, kind, term.table_solutions()).map_err(
+            write_simulated_jones_table(&ms, path, kind, term.table_solutions(), None).map_err(
                 |error| {
                     SimulatorError::raised(format!(
                         "write the calibration table {}: {error}",
@@ -303,9 +303,13 @@ impl Simulator {
     /// window, and the span of their times: what a gain term's chunks
     /// number, counted before they are formed.
     pub(super) fn integration_counts(&self) -> (Vec<usize>, Option<[f64; 2]>) {
+        self.integration_counts_before(self.scans.len())
+    }
+
+    pub(super) fn integration_counts_before(&self, scans: usize) -> (Vec<usize>, Option<[f64; 2]>) {
         let mut per_window = Vec::new();
         let mut span: Option<[f64; 2]> = None;
-        for (index, scan) in self.scans.iter().enumerate() {
+        for (index, scan) in self.scans.iter().take(scans).enumerate() {
             let window = scan.spectral_window_id;
             if per_window.len() <= window {
                 per_window.resize(window + 1, 0);

@@ -85,7 +85,7 @@ fn prepare(path: &Path, calibration: &Path, case: &Json) {
             values: SolutionValues::Receptors([Complex32::new(1., 0.); 2]),
         })
     });
-    write_simulated_jones_table(&ms, calibration, SimulatedJones::Gain, rows).unwrap();
+    write_simulated_jones_table(&ms, calibration, SimulatedJones::Gain, rows, None).unwrap();
     let mut table = Table::open(TableOptions::new(calibration)).unwrap();
     let kind = case["kind"].as_str().unwrap();
     let channels = case["channels"].as_u64().unwrap() as usize;
