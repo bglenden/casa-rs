@@ -152,17 +152,24 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
     Ok(())
 }
 
-/// An ordinary continuum or cube mosaic can carry forward the saved PSF, weights,
-/// and PB while forming a new residual (`calcpsf=False, calcres=True`).
-pub(crate) fn reuses_mosaic_psf(request: &ImagingRequest) -> bool {
-    !request.calcpsf
-        && request.calcres
-        && matches!(
-            request.specmode,
-            crate::SpecMode::Mfs | crate::SpecMode::Cube
-        )
-        && Family::of(request) == Family::Single
-        && matches!(request.gridder, Gridder::Mosaic { .. })
+/// Whether a direction-dependent run reuses its PSF, weight and PB products
+/// while forming a new residual (`calcpsf=False, calcres=True`).
+pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
+    if request.calcpsf || !request.calcres {
+        return false;
+    }
+    match (&request.gridder, Family::of(request)) {
+        (Gridder::Mosaic { .. }, Family::Single) => {
+            matches!(
+                request.specmode,
+                crate::SpecMode::Mfs | crate::SpecMode::Cube
+            )
+        }
+        (Gridder::Awproject(_), Family::Taylor { .. }) => {
+            request.specmode == crate::SpecMode::Mfs && !request.pbcor
+        }
+        _ => false,
+    }
 }
 
 /// Check that what `calcpsf=False` and `calcres=False` read exists and that
@@ -184,7 +191,11 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             Some("with facets")
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
-        Gridder::Mosaic { .. } if reuses_mosaic_psf(request) => None,
+        Gridder::Mosaic { .. } | Gridder::Awproject(_)
+            if reuses_direction_dependent_psf(request) =>
+        {
+            None
+        }
         Gridder::Mosaic { .. } => Some("with the mosaic gridder"),
         Gridder::Awproject(_) => Some("with A-projection"),
     };
@@ -214,13 +225,16 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             }
         }
     }
-    if reuses_mosaic_psf(request) {
+    if reuses_direction_dependent_psf(request) {
         for base in ["weight", "pb"] {
             if let Some(path) = missing(base) {
+                let gridder = match request.gridder {
+                    Gridder::Mosaic { .. } => "the mosaic gridder",
+                    _ => "A-projection",
+                };
                 return refuse(
                     path,
-                    "calcpsf=False with the mosaic gridder requires the saved weight and PB images"
-                        .into(),
+                    format!("calcpsf=False with {gridder} requires the saved weight and PB images"),
                 );
             }
         }

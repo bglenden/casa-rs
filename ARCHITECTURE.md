@@ -208,7 +208,11 @@ is given. Under `calcpsf=False` or `calcres=False` the earlier PSF, sums of
 weights or residual are read back as the unnormalized images a pass would
 have formed, so the same minor cycle and products normalize them again; a
 run that reads both runs no initial pass, and a residual read is not a
-major cycle.
+major cycle. A single-term mosaic or an AW-projected MT-MFS continuum
+run that reuses the PSF while forming a residual also reads the saved
+sensitivity and primary-beam mask. In a saved Taylor family only the
+principal weight image needs its scale restored. Higher moments are
+already stored in gridding units.
 
 `backend` (`auto`, `cpu`, `gpu`) resolves once the problem is compiled.
 `auto` takes the GPU only for problems a T1 Metal law compares with the CPU
