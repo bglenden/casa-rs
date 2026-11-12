@@ -513,7 +513,9 @@ the cold run by 2.95e-3 NRMS. Casa-rs reports a missing imported buffer
 before publication, preserving its read-only import policy (#1043).
 Field 0 is covered by the same cache, and all seven products match CASA
 with exact masks. The default 360-degree control also matches across both
-fields.
+fields. CASA's separate one-degree coalescence in
+`CFCache::fillCFListFromDisk` and `CFStore2::resize` remains unverified for
+densely spaced imported headers (#1070).
 
 ## AW pointing can reuse the origin of an earlier convolution buffer
 

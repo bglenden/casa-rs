@@ -472,7 +472,7 @@
       ]
     },
     "computepastep": {
-      "scope": "Imported awproject uses the first sorted PA strictly inside this angle and fails if a selected row lacks coverage. Native EVLA cache generation supports the default step. Other applicable AW families retain their own restrictions (#1070).",
+      "scope": "Imported awproject uses the first sorted PA strictly inside this angle and fails if a selected row lacks coverage. CASA's one-degree coalescence of densely spaced cache headers remains unverified. Native EVLA cache generation supports the default step. Other applicable AW families retain their own restrictions (#1070).",
       "evidence": [
         "signature",
         "reader"

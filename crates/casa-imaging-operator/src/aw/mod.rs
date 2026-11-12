@@ -266,10 +266,10 @@ enum Slot {
 /// the cell and its input polarization (`AWVisResampler`). Prediction
 /// divides once by the kernel sum and `sumwt += W·|N|`
 /// ([`KernelNormalisation::KernelSum`]); the pointing ramp applies to
-/// every row ([`ConvolutionFunctionSet::pointing_ramp`]). A row whose
-/// parallactic angle lies between cells takes the nearest cell; CASA would
-/// rotate it (`AWConvFunc::rotateCF`, `rotatepastep`), which the frozen
-/// 360° steps of the EVLA cache make the same choice.
+/// every row ([`ConvolutionFunctionSet::pointing_ramp`]). An imported row
+/// uses the first sorted PA buffer within the strict compute tolerance.
+/// CASA's one-degree coalescence of densely spaced headers and runtime
+/// rotation remain open in #1070.
 ///
 /// # Panics
 ///
