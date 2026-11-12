@@ -49,12 +49,11 @@ impl<'a> Binding<'a> {
             .column_set
             .columns
             .iter()
-            .enumerate()
-            .filter(|(_, binding)| binding.dm_seq_nr == sequence)
+            .filter(|binding| binding.dm_seq_nr == sequence)
             .collect::<Vec<_>>();
         let column = bindings
             .iter()
-            .position(|(index, _)| *index == descriptor)
+            .position(|binding| binding.original_name == name)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "array column '{name}' missing data-manager column binding"
@@ -62,8 +61,20 @@ impl<'a> Binding<'a> {
             })?;
         let columns = bindings
             .into_iter()
-            .map(|(index, _)| &table.table_desc.columns[index])
-            .collect();
+            .map(|binding| {
+                table
+                    .table_desc
+                    .columns
+                    .iter()
+                    .find(|column| column.col_name == binding.original_name)
+                    .ok_or_else(|| {
+                        StorageError::FormatMismatch(format!(
+                            "array binding '{}' has no descriptor",
+                            binding.original_name
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             manager,
             columns,
