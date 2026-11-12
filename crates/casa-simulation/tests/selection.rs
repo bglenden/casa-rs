@@ -3,14 +3,19 @@
 
 #[path = "selection/input.rs"]
 mod input;
+#[path = "selection/noise.rs"]
+mod noise;
+mod pass_summary;
 mod predict_support;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_simulation::{
-    CasaOutcome, NoiseSpec, PredictSpec, Simulator, SimulatorOptions, SpectralWindowSpec,
+    ApplySpec, BackendRequest, CasaOutcome, NoiseSpec, PredictSpec, SessionResources, Simulator,
+    SimulatorOptions, SpectralWindowSpec,
 };
 use casa_types::Complex32;
 use casa_types::measures::frequency::FrequencyRef;
@@ -18,7 +23,7 @@ use casa_types::measures::{EpochRef, MEpoch};
 use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use predict_support::{
-    CHANNEL_HZ, FREQUENCY_HZ, N, read_main, resources, scan, session, write_model, write_model_of,
+    CHANNEL_HZ, FREQUENCY_HZ, N, read_main, scan, session, write_model, write_model_of,
 };
 use serde_json::Value;
 
@@ -29,12 +34,29 @@ fn fixture() -> Value {
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
-    assert_eq!(fixture["cases"].as_array().unwrap().len(), 36);
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 40);
     fixture
 }
 
-fn observed(path: &Path, workers: usize) -> Simulator {
-    let mut sm = session(path, "ALMA", "XX YY", resources(workers, 2 << 30));
+fn resources(workers: usize, backend: BackendRequest) -> SessionResources {
+    SessionResources::pinned(
+        HostResources {
+            threads: 8,
+            performance_cores: 8,
+            available_memory: 8 << 30,
+            metal: HostResources::detect().unwrap().metal,
+        },
+        ResourcePolicy::Explicit {
+            workers,
+            memory: 2 << 30,
+        },
+        backend,
+    )
+    .unwrap()
+}
+
+fn observed(path: &Path, workers: usize, backend: BackendRequest) -> Simulator {
+    let mut sm = session(path, "ALMA", "XX YY", resources(workers, backend));
     sm.observe(&scan("target", 0.0, 20.0)).unwrap();
     sm.observe(&scan("offset", 20.0, 40.0)).unwrap();
     sm.set_spectral_window(&SpectralWindowSpec {
@@ -153,19 +175,38 @@ fn apply_steps(sm: &mut Simulator, case: &Value, images: &[PathBuf; 2], path: &P
                 assert_eq!(step["simplenoise"], "0.1Jy");
                 sm.set_noise(&NoiseSpec::simple(0.1)).unwrap();
             }
+            "fixedgain" => {
+                let calibration = images[0].parent().unwrap().join("fixed.gcal");
+                input::fixed_gains(
+                    path,
+                    &calibration,
+                    step["receptor_gain"].as_f64().unwrap() as f32,
+                );
+                sm.reset();
+                sm.set_apply(&ApplySpec {
+                    table: calibration.to_string_lossy().into_owned(),
+                    kind: String::new(),
+                    interval_s: 0.0,
+                    interp: "nearest".to_string(),
+                    calwt: false,
+                    spwmap: vec![-1],
+                    opacity: 0.0,
+                })
+                .unwrap();
+            }
             "corrupt" => sm.corrupt().unwrap(),
             operation => panic!("unexpected selection operation {operation}"),
         }
     }
 }
 
-fn fresh_case(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
+fn fresh_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec<Complex32>> {
     let directory = tempfile::tempdir().unwrap();
     let images = models(directory.path());
     let path = directory.path().join("selection.ms");
-    let mut sm = observed(&path, workers);
+    let mut sm = observed(&path, workers, backend);
     apply_steps(&mut sm, case, &images, &path);
-    sm.close().unwrap();
+    close(sm, case, backend);
     let (actual, correlations) = read_main(&path);
     assert_eq!(correlations, 2);
     let expected = case["rows"].as_array().unwrap();
@@ -213,27 +254,31 @@ fn fresh_selection_and_observe_reset_match_casa() {
         .iter()
         .filter(|case| case["fresh"] == true)
     {
-        assert_eq!(fresh_case(case, 1), fresh_case(case, 3), "CPU workers");
+        assert_eq!(
+            fresh_case(case, 1, BackendRequest::Cpu),
+            fresh_case(case, 3, BackendRequest::Cpu),
+            "CPU workers"
+        );
     }
 }
 
-fn opened_case(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
+fn opened_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec<Complex32>> {
     let directory = tempfile::tempdir().unwrap();
     let images = models(directory.path());
     let path = directory.path().join("existing.ms");
-    observed(&path, workers).close().unwrap();
+    observed(&path, workers, backend).close().unwrap();
     input::prepare(&path);
     let mut sm = Simulator::open_from_ms(
         &path,
         SimulatorOptions {
             measures: casa_test_support::deterministic_measures_provider(),
-            resources: resources(workers, 2 << 30),
+            resources: resources(workers, backend),
             now: MEpoch::from_mjd(predict_support::REFERENCE_MJD, EpochRef::UTC),
         },
     )
     .unwrap();
     apply_steps(&mut sm, case, &images, &path);
-    sm.close().unwrap();
+    close(sm, case, backend);
     let (rows, correlations) = read_main(&path);
     assert_eq!(correlations, 2);
     assert_eq!(rows.len(), case["rows"].as_array().unwrap().len());
@@ -326,10 +371,12 @@ fn opened_case(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
             }
         }
     }
-    assert!(power > 0.0);
-    let nrms = (error / power).sqrt();
-    println!("{} W{workers}: selected DATA NRMS {nrms:e}", case["name"]);
-    assert!(nrms <= 1e-3);
+    if case["noise"] != true {
+        assert!(power > 0.0);
+        let nrms = (error / power).sqrt();
+        println!("{} W{workers}: selected DATA NRMS {nrms:e}", case["name"]);
+        assert!(nrms <= 1e-3);
+    }
     rows.into_iter().map(|row| row.data).collect()
 }
 
@@ -343,10 +390,56 @@ fn selected_existing_rows_preserve_data_and_scratch_columns() {
         .filter(|case| case["fresh"] != true && case["noise"] != true)
     {
         assert_eq!(
-            opened_case(case, 1),
-            opened_case(case, 3),
+            opened_case(case, 1, BackendRequest::Cpu),
+            opened_case(case, 3, BackendRequest::Cpu),
             "CPU workers for {}",
             case["name"]
         );
+    }
+}
+
+fn close(sm: Simulator, case: &Value, backend: BackendRequest) {
+    let ((), summary) = pass_summary::capture(|| sm.close().unwrap());
+    let images = case["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|step| step["op"] == "predict" && !step["images"].as_array().unwrap().is_empty());
+    if images {
+        let expected = if backend == BackendRequest::Metal {
+            "Metal"
+        } else {
+            "Cpu"
+        };
+        assert_eq!(summary.unwrap().backend, expected);
+    }
+}
+
+#[test]
+fn selected_prediction_uses_metal_and_matches_cpu() {
+    if !HostResources::detect().unwrap().metal {
+        eprintln!("Metal comparisons skipped: no Metal device");
+        return;
+    }
+    for case in fixture()["cases"].as_array().unwrap() {
+        let run = if case["fresh"] == true {
+            fresh_case
+        } else {
+            opened_case
+        };
+        let cpu = run(case, 3, BackendRequest::Cpu);
+        let metal = run(case, 3, BackendRequest::Metal);
+        let (mut difference, mut peak) = (0.0_f32, 0.0_f32);
+        for (cpu, metal) in cpu.iter().flatten().zip(metal.iter().flatten()) {
+            assert!(cpu.is_finite() && metal.is_finite());
+            difference = difference.max((*metal - *cpu).norm());
+            peak = peak.max(cpu.norm());
+        }
+        println!(
+            "{}: Metal/CPU max relative error {}",
+            case["name"],
+            difference / peak
+        );
+        assert!(peak > 0.0 && difference <= 1e-4 * peak);
     }
 }

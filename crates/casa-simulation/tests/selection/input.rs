@@ -101,3 +101,32 @@ pub(super) fn prepare(path: &Path) {
         .unwrap();
     writer.finish_mutation().unwrap();
 }
+
+/// Both oracle and native inputs use the stated constant receptor gain, not
+/// either implementation's simulated random sequence.
+pub(super) fn fixed_gains(path: &Path, output: &Path, gain: f32) {
+    use casa_calibration::{
+        SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
+    };
+    let ms = MeasurementSet::open(path).unwrap();
+    let time = match ms
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+    {
+        ScalarValue::Float64(time) => time,
+        _ => panic!("TIME type"),
+    };
+    let rows = (0..2).flat_map(|spw| {
+        (0..8).map(move |antenna| SimulatedSolution {
+            time_s: time,
+            field_id: 0,
+            spectral_window_id: spw,
+            antenna,
+            values: SolutionValues::Receptors([Complex32::new(gain, 0.0); 2]),
+        })
+    });
+    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).unwrap();
+}

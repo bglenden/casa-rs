@@ -34,6 +34,7 @@ def predict(images=("a",), incremental=False, components=False):
             "components": components}
 
 
+GAINS = [{"op": "fixedgain", "receptor_gain": 2.0}, {"op": "corrupt"}]
 NOISE = [{"op": "setseed", "seed": 617},
          {"op": "setnoise", "mode": "simplenoise", "simplenoise": "0.1Jy"},
          {"op": "corrupt"}]
@@ -78,6 +79,10 @@ CASES = [
      {"op": "observe", "sourcename": "target", "spwname": "band6b", "starttime": "43s", "stoptime": "63s"},
      predict(["b"], incremental=True)]},
     {"name": "query_noise", "noise": True, "steps": [select(query="ANTENNA1 != ANTENNA2"), *NOISE]},
+    {"name": "gains_then_increment", "steps": [predict(), *GAINS, predict(["b"], incremental=True)]},
+    {"name": "selected_gains_then_increment", "steps": [predict(), select(field=[1]), *GAINS, predict(["b"], incremental=True)]},
+    {"name": "query_gains_then_increment", "steps": [predict(), select(query="ANTENNA1 != ANTENNA2"), *GAINS, predict(["b"], incremental=True)]},
+    {"name": "gains_then_subset_replacement", "steps": [predict(), *GAINS, select(field=[1]), predict(["b"])]},
 ]
 
 
@@ -141,6 +146,20 @@ def worker(spec, out, fixture):
         args = dict(step)
         operation = args.pop("op")
         expected = args.pop("expected_return", True)
+        if operation == "fixedgain":
+            calibration = out / "fixed.gcal"
+            assert sm.setgain(mode="fbm", table=str(calibration), amplitude=[0.0, 0.0])
+            tb = table()
+            tb.open(str(calibration), nomodify=False)
+            try:
+                values = tb.getcol("CPARAM")
+                tb.putcol("CPARAM", np.full_like(values, args["receptor_gain"]))
+            finally:
+                tb.close()
+            sm.reset()
+            assert sm.setapply(table=str(calibration), interp="nearest", calwt=False)
+            calls.append({**step, "returned": True})
+            continue
         if operation == "predict":
             names = args.pop("images")
             if names:
