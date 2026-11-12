@@ -677,71 +677,81 @@ fn admit_patch(
     // Its batches aim at casa-ms's batch size, whatever the budget allows,
     // as a new MeasurementSet's tile bands do.
     let index_bytes = 2 * (shape.rows * size_of::<usize>()) as u64;
-    let writer_bytes = usize::try_from((free / 2).saturating_sub(index_bytes))
+    let mut writer_bytes = usize::try_from((free / 2).saturating_sub(index_bytes))
         .unwrap_or(usize::MAX)
         .min(TARGET_BATCH_BYTES);
-    let plan = patch_plan(shape, columns, writer_bytes).map_err(|_| {
-        SimulatorError::admission(casa_imaging_runtime::Admission {
-            phase: WRITER_PHASE,
-            required: index_bytes
-                + 2 * (shape.columns * shape.samples() * size_of::<Complex32>()) as u64,
-            available: free,
-        })
-    })?;
-    let mut reservation = admit(
-        host,
-        policy,
-        &Demand {
-            phase: WRITER_PHASE,
-            memory: plan.maximum_resident_bytes() as u64 + index_bytes,
-        },
-    )
-    .map_err(SimulatorError::admission)?;
-    let policy_cores = resources
-        .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
-    let free = free_memory(host, policy);
-    let batch_rows = plan.batch_rows().max(1);
-    let demand = |cores: CoreAllocation, block_rows: usize| {
-        pipeline_bytes(shape, columns.len(), batch_rows)
-            + shape
-                .noise_scales
-                .bytes(batch_rows, cores.streaming_workers)
-            + prediction.map_or(0, |stage| {
-                stage.bytes(block_rows, cores.streaming_workers, batch_rows)
+    loop {
+        let plan = patch_plan(shape, columns, writer_bytes).map_err(|_| {
+            SimulatorError::admission(casa_imaging_runtime::Admission {
+                phase: WRITER_PHASE,
+                required: index_bytes
+                    + 2 * (shape.columns * shape.samples() * size_of::<Complex32>()) as u64,
+                available: free,
             })
-    };
-    // As `close` admits a new MeasurementSet's pipeline: a batch predicted
-    // as one block when that fits with the policy's workers, else small
-    // blocks with the workers shrinking first.
-    let (cores, block_rows) = if demand(policy_cores, batch_rows) <= free {
-        (policy_cores, batch_rows)
-    } else {
-        let small = prediction.map_or(batch_rows, |stage| stage.small_block_rows(batch_rows));
-        let cores = (1..=policy_cores.streaming_workers)
-            .rev()
-            .map(|workers| policy_cores.at_most(workers))
-            .find(|cores| demand(*cores, small) <= free)
-            .unwrap_or_else(|| policy_cores.at_most(1));
-        (cores, small)
-    };
-    let pipeline = admit(
-        host,
-        policy,
-        &Demand {
-            phase: PIPELINE_PHASE,
-            memory: demand(cores, block_rows),
-        },
-    )
-    .map_err(SimulatorError::admission)?;
-    reservation.join(pipeline);
-    let grid_bytes = admit_field_grids(resources, prediction, &mut reservation)?;
-    Ok(PatchAdmission {
-        plan,
-        cores,
-        block_rows,
-        grid_bytes,
-        reservation,
-    })
+        })?;
+        let mut reservation = admit(
+            host,
+            policy,
+            &Demand {
+                phase: WRITER_PHASE,
+                memory: plan.maximum_resident_bytes() as u64 + index_bytes,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let policy_cores = resources
+            .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
+        let free = free_memory(host, policy);
+        let batch_rows = plan.batch_rows().max(1);
+        let demand = |cores: CoreAllocation, block_rows: usize| {
+            pipeline_bytes(shape, columns.len(), batch_rows)
+                + shape
+                    .noise_scales
+                    .bytes(batch_rows, cores.streaming_workers)
+                + prediction.map_or(0, |stage| {
+                    stage.bytes(block_rows, cores.streaming_workers, batch_rows)
+                })
+        };
+        // As `close` admits a new MeasurementSet's pipeline: a batch predicted
+        // as one block when that fits with the policy's workers, else small
+        // blocks with the workers shrinking first.
+        let (cores, block_rows) = if demand(policy_cores, batch_rows) <= free {
+            (policy_cores, batch_rows)
+        } else {
+            let small = prediction.map_or(batch_rows, |stage| stage.small_block_rows(batch_rows));
+            let cores = (1..=policy_cores.streaming_workers)
+                .rev()
+                .map(|workers| policy_cores.at_most(workers))
+                .find(|cores| demand(*cores, small) <= free)
+                .unwrap_or_else(|| policy_cores.at_most(1));
+            (cores, small)
+        };
+        // Prediction blocks can shrink independently, but selected-run masks,
+        // original scratch columns and mutation cells live for the entire batch.
+        // If those do not fit, reduce the writer's batch as well. The ordinary
+        // all-row path keeps its first plan when it already fits.
+        if demand(cores, block_rows) > free && writer_bytes > 1 {
+            writer_bytes /= 2;
+            continue;
+        }
+        let pipeline = admit(
+            host,
+            policy,
+            &Demand {
+                phase: PIPELINE_PHASE,
+                memory: demand(cores, block_rows),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        reservation.join(pipeline);
+        let grid_bytes = admit_field_grids(resources, prediction, &mut reservation)?;
+        return Ok(PatchAdmission {
+            plan,
+            cores,
+            block_rows,
+            grid_bytes,
+            reservation,
+        });
+    }
 }
 
 /// The mutation of every row of `shape` writing `columns`, with
