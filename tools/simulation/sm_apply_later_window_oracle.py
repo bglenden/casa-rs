@@ -19,6 +19,8 @@ parser.add_argument("--noise",action="store_true")
 parser.add_argument("--existing",action="store_true")
 parser.add_argument("--selected",action="store_true")
 parser.add_argument("--repeat",action="store_true")
+parser.add_argument("--unobserved",action="store_true")
+parser.add_argument("--overlap",action="store_true")
 args=parser.parse_args()
 assert casatasks.version_string()=="6.7.6.14"
 args.out.mkdir(parents=True)
@@ -34,7 +36,8 @@ if args.noise:
     assert sm.setseed(5)
     assert sm.setnoise(simplenoise="0.1Jy")
 assert sm.setspwindow(spwname="later",freq="230GHz",deltafreq="15.625MHz",freqresolution="15.625MHz",refcode="TOPO",nchannels=4,stokes="XX XY YX YY")
-assert sm.observe(sourcename="target",spwname="later",starttime="3s",stoptime="13s")
+if not args.unobserved:
+    assert sm.observe(sourcename="target",spwname="later",starttime="3s",stoptime="13s")
 initialize(path)
 if args.existing:
     from casatools import simulator
@@ -45,6 +48,9 @@ if args.existing:
     if args.noise:
         assert sm.setseed(5)
         assert sm.setnoise(simplenoise="0.1Jy")
+if args.overlap:
+    assert args.existing and not args.noise and not args.repeat
+    assert sm.setapply(table=str(terms),interp="nearest",spwmap=[0],calwt=False)
 if args.selected:
     assert args.existing and not args.repeat
     assert sm.setdata(fieldid=[0])
@@ -61,8 +67,8 @@ if args.repeat:
 sm.close()
 rows=read_rows(path)
 tb.open(str(path));windows=tb.getcol("DATA_DESC_ID");times=tb.getcol("TIME");tb.close()
-assert len(rows)==180 and set(windows)=={0,1}
-factors=[36.0,9.0] if args.repeat else [4.0,1.0]
+assert len(rows)==(144 if args.unobserved else 180) and set(windows)==({0} if args.unobserved else {0,1})
+factors=[36.0,9.0] if args.repeat else [16.0,1.0] if args.overlap else [4.0,1.0]
 for row,window,time in zip(rows,windows,times):
     row.update(window=int(window),time_s=float(time))
     if not args.noise or window==1:
@@ -71,8 +77,8 @@ for row,window,time in zip(rows,windows,times):
 record={"casa_version":casatasks.version_string(),"work_issue":1053,
         "recipe":"tools/simulation/sm_apply_later_window_oracle.py",
         "case":"G_broadcast_before_new_window","calibration":info,
-        "noise":args.noise,"existing":args.existing,"selected":args.selected,"repeat":args.repeat,"scalar_gain":2.0,"spwmap":[0],"data_gain_factors_by_window":factors,"rows":rows}
+        "noise":args.noise,"existing":args.existing,"selected":args.selected,"repeat":args.repeat,"unobserved":args.unobserved,"overlap":args.overlap,"scalar_gain":2.0,"spwmap":[0],"data_gain_factors_by_window":factors,"rows":rows}
 args.fixture.parent.mkdir(parents=True,exist_ok=True)
 with args.fixture.open("wb") as raw,gzip.GzipFile(filename="",fileobj=raw,mode="wb",mtime=0) as stream:
     stream.write((json.dumps(record,separators=(",",":"),allow_nan=False)+"\n").encode())
-print(f"CASA window coverage:180 rows; DATA factors {factors}; selected={args.selected}; repeat={args.repeat}",flush=True)
+print(f"CASA window coverage:{len(rows)} rows; DATA factors {factors}; selected={args.selected}; repeat={args.repeat}",flush=True)

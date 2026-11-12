@@ -26,13 +26,18 @@ fn fixture(variant: &str) -> Value {
         "selected" => include_bytes!("data/sm_apply_selected_window_casa.json.gz"),
         "repeat" => include_bytes!("data/sm_apply_repeated_window_casa.json.gz"),
         "plain" => include_bytes!("data/sm_apply_existing_window_casa.json.gz"),
+        "unobserved" => include_bytes!("data/sm_apply_unobserved_window_casa.json.gz"),
+        "overlap" => include_bytes!("data/sm_apply_overlapping_terms_casa.json.gz"),
         _ => panic!("variant"),
     };
     let mut text = String::new();
     GzDecoder::new(bytes).read_to_string(&mut text).unwrap();
     let value: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(value["casa_version"], "6.7.6.14");
-    assert_eq!(value["rows"].as_array().unwrap().len(), 180);
+    assert_eq!(
+        value["rows"].as_array().unwrap().len(),
+        if variant == "unobserved" { 144 } else { 180 }
+    );
     value
 }
 
@@ -43,7 +48,7 @@ fn original(path: &Path, workers: usize) -> Simulator {
     sm
 }
 
-fn later(sm: &mut Simulator) {
+fn define_later(sm: &mut Simulator) {
     sm.set_spectral_window(&SpectralWindowSpec {
         name: "later".into(),
         start_frequency_hz: FREQUENCY_HZ,
@@ -54,6 +59,10 @@ fn later(sm: &mut Simulator) {
         stokes: "XX XY YX YY".into(),
     })
     .unwrap();
+}
+
+fn later(sm: &mut Simulator) {
+    define_later(sm);
     let mut spec = scan("target", 40.0, 50.0);
     spec.spectral_window = "later".into();
     sm.observe(&spec).unwrap();
@@ -111,7 +120,14 @@ fn options(workers: usize) -> SimulatorOptions {
 
 #[test]
 fn existing_ms_whole_step_preserves_uncovered_data_noise_and_scratch() {
-    for variant in ["plain", "noise", "selected", "repeat"] {
+    for variant in [
+        "plain",
+        "noise",
+        "selected",
+        "repeat",
+        "unobserved",
+        "overlap",
+    ] {
         let noise = variant == "noise";
         for workers in [1, 3] {
             let export = std::env::var_os("CASA_RS_COVERAGE_OUT");
@@ -127,11 +143,18 @@ fn existing_ms_whole_step_preserves_uncovered_data_noise_and_scratch() {
             gains(&reference, &table, 2.0);
             let path = root.path().join("applied.ms");
             let mut sm = original(&path, workers);
-            later(&mut sm);
+            if variant == "unobserved" {
+                define_later(&mut sm);
+            } else {
+                later(&mut sm);
+            }
             sm.close().unwrap();
             input::prepare(&path);
             let mut sm = Simulator::open_from_ms(&path, options(workers)).unwrap();
             sm.set_apply(&apply(&table, false)).unwrap();
+            if variant == "overlap" {
+                sm.set_apply(&apply(&table, true)).unwrap();
+            }
             if noise {
                 sm.set_seed(5);
                 sm.set_noise(&NoiseSpec::simple(0.1)).unwrap();
@@ -258,7 +281,7 @@ fn compare(path: &Path, reference: &Value, noise: bool) {
             }
         }
     }
-    assert_eq!(rows.len(), 180);
+    assert_eq!(rows.len(), reference["rows"].as_array().unwrap().len());
     if noise {
         let ratio = native_variance / casa_variance;
         assert!(

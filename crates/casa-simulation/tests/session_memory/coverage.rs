@@ -130,7 +130,7 @@ fn uncovered_frequency_windows_reserve_no_sample_grids() {
     .unwrap();
     let mut sm = configured(&root.path().join("huge-uncovered.ms"), &measures, BUDGET, 4);
     sm.observe(&scan(4)).unwrap();
-    sm.set_apply(&ApplySpec {
+    let apply = ApplySpec {
         table: table.to_string_lossy().into_owned(),
         kind: String::new(),
         interval_s: 0.0,
@@ -138,8 +138,8 @@ fn uncovered_frequency_windows_reserve_no_sample_grids() {
         calwt: false,
         spwmap: vec![-1],
         opacity: 0.0,
-    })
-    .unwrap();
+    };
+    sm.set_apply(&apply).unwrap();
     sm.set_spectral_window(&SpectralWindowSpec {
         name: "later".into(),
         start_frequency_hz: FREQUENCY_HZ,
@@ -153,6 +153,13 @@ fn uncovered_frequency_windows_reserve_no_sample_grids() {
     let mut later = scan(1024);
     later.spectral_window = "later".into();
     sm.observe(&later).unwrap();
+    // This second table alone covers both windows; the first term still
+    // excludes the later one, so neither may form its sample grid there.
+    sm.set_apply(&ApplySpec {
+        spwmap: vec![0],
+        ..apply
+    })
+    .unwrap();
     // Reserving all cells for this uncovered window would request12GiB;
     // forming the covered four-channel term needs only a few KiB.
     let formed = measured(|| sm.corrupt().unwrap());
