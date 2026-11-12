@@ -25,6 +25,7 @@ pub use cache::{CacheBound, CacheCharge};
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
+pub use pa::{first_covered_pa, stored_pa_rad};
 pub use rotation::AwPaRotation;
 
 #[cfg(test)]
@@ -32,6 +33,7 @@ use cell_image::{cf_area, convolution_origin, dense_cell_padded};
 use cell_image::{load_group, read_header};
 use native_cache::{STAGING_PREFIX, write_manifest};
 
+mod pa;
 mod rotation;
 
 use crate::error::OperatorError;
@@ -755,14 +757,7 @@ impl AwCatalog {
     /// radians. A row outside every interval has no imported buffer.
     #[must_use]
     pub fn pa_cell(&self, pa_rad: f32) -> Option<usize> {
-        let step = self.indexing.pa_tolerance_rad;
-        // CFCache collects the on-disk Double degrees in a Float list.
-        let radians = |degrees: f64| f64::from(degrees as f32).to_radians() as f32;
-        let first = self
-            .pa_deg
-            .partition_point(|&angle| pa_rad - radians(angle) >= step);
-        let angle = radians(*self.pa_deg.get(first)?);
-        ((pa_rad - angle).abs() < step).then_some(first)
+        first_covered_pa(&self.pa_deg, pa_rad, self.indexing.pa_tolerance_rad)
     }
 
     fn row_pa_cell(&self, row: &RowContext) -> Option<usize> {

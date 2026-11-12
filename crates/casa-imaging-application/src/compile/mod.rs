@@ -471,7 +471,9 @@ fn survey_observation(
             && matches!(request.gridder, Gridder::Standard { .. })
             && (request.write_pb || request.pbcor)
             && instrument::mixed_alma_dish_classes(catalogue),
-        track_rotation_epochs: matches!(&request.gridder, Gridder::Awproject(aw) if aw.rotatepastep != 360.0),
+        track_aw_pa_epochs: matches!(&request.gridder, Gridder::Awproject(aw)
+            if aw.rotatepastep != 360.0 || (aw.computepastep != 360.0
+                && matches!(aw.cf_source, AwCfSource::NativeEvla { .. }))),
         first_cross: matches!(
             &request.gridder,
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
@@ -1085,12 +1087,12 @@ fn aw_plan(
                 .survey
                 .first_cross
                 .ok_or(PrepareError::NoCrossCorrelationRow)?;
-            let input = native_aw::resolve(request, aw, surveyed, first_cross)?;
+            let input = native_aw::resolve(request, aw, surveyed, first_cross, context)?;
             input.validate()?;
             (native_cf_cache.clone(), Some((*native_cf_policy, input)))
         }
     };
-    let feed_zero_angles_rad = if native.is_none() {
+    let feed_zero_angles_rad = if native.is_none() || aw.computepastep != 360.0 {
         let mut feed_zero_angles = vec![0.0; surveyed.catalogue.windows.len()];
         for window in &surveyed.survey.spectral_windows {
             let spw = u32::try_from(window.spw_id).expect("a surveyed window fits u32");
@@ -1178,11 +1180,13 @@ fn aw_rotation(
     )?;
     let mut samples = Vec::with_capacity(epochs.len());
     for epoch in epochs.iter().filter(|epoch| epoch.has_unflagged_cross) {
-        let field = usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
-        let pa = surveyed
-            .engine
-            .parallactic_angle(epoch.time_mjd_seconds, field, 0)? as f32;
-        samples.push((epoch.time_mjd_seconds, pa + feed[window.spw_id]));
+        let pa = native_aw::feed_pa(
+            surveyed,
+            epoch.time_mjd_seconds,
+            epoch.field_id,
+            feed[window.spw_id],
+        )?;
+        samples.push((epoch.time_mjd_seconds, pa));
     }
     Ok(Some(casa_imaging_operator::AwPaRotation {
         step_rad: f64::from(aw.rotatepastep as f32).to_radians(),
