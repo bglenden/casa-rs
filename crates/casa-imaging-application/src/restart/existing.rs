@@ -46,6 +46,8 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
+    /// The mosaic sensitivity from the saved `.weight` image.
+    weight: bool,
     /// A complete PSF beam set read from the earlier image, channel-major.
     psf_beams: Option<Arc<[RestoringBeam]>>,
     /// The same beam grid in pixels for minor-cycle preparation.
@@ -65,6 +67,7 @@ impl ExistingProducts {
         family: Family,
         (shape, polarizations, channels): ([usize; 2], usize, usize),
         (psf, residual): (bool, bool),
+        weight: bool,
     ) -> Result<Self, PrepareError> {
         let planes = match family {
             Family::Single => channels,
@@ -77,6 +80,9 @@ impl ExistingProducts {
         }
         if residual {
             bases.push("residual");
+        }
+        if weight {
+            bases.extend(["weight", "pb"]);
         }
         for base in bases {
             for name in family.names(base) {
@@ -107,6 +113,7 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
+            weight,
             psf_beams: None,
             psf_pixel_beams: None,
             mask_beams: None,
@@ -235,6 +242,50 @@ impl ExistingProducts {
         self.residual
     }
 
+    /// Whether this restart reads the saved mosaic response products.
+    pub(crate) const fn reads_mosaic_beam(&self) -> bool {
+        self.weight
+    }
+
+    /// Peak and retained bytes for the saved MFS primary beam. Its pixels
+    /// and mask each have one plane per polarization. The image and its
+    /// mask reader can each hold a tile cache and tile buffers while the
+    /// x-major copies are filled.
+    pub(crate) fn mosaic_beam_bytes(&self) -> (u64, u64) {
+        let pixels = self.shape[0] * self.shape[1] * self.polarizations;
+        let retained = (pixels * (size_of::<f32>() + size_of::<bool>())) as u64;
+        (2 * self.reading_bytes(1) + retained, retained)
+    }
+
+    /// The saved CASA PB and its default pixel mask, polarization-major
+    /// with an x-major image for each polarization. They are independent
+    /// of the cutoff the continuation uses to normalize its new residual.
+    pub(crate) fn read_mosaic_beam(&self) -> Result<(Vec<f32>, Vec<bool>), ImageError> {
+        let path = product_path(&self.prefix, "pb");
+        let image = PagedImage::<f32>::open_with_cache(&path, CACHE_BYTES)?;
+        let pixels = image.get()?;
+        let mask = image.get_mask()?;
+        let cells = self.shape[0] * self.shape[1];
+        let mut values = vec![0.0; cells * self.polarizations];
+        let mut valid = vec![true; values.len()];
+        for polarization in 0..self.polarizations {
+            let start = polarization * cells;
+            self.write_plane(
+                &mut values[start..start + cells],
+                &pixels,
+                (0, polarization),
+                1.0,
+            );
+            if let Some(mask) = &mask {
+                for (index, value) in valid[start..start + cells].iter_mut().enumerate() {
+                    let ny = self.shape[1];
+                    *value = mask[&[index / ny, index % ny, polarization, 0][..]];
+                }
+            }
+        }
+        Ok((values, valid))
+    }
+
     /// The `(terms, moments)` of each channel: one of each, or a Taylor
     /// family's coefficients and PSF moments.
     const fn terms(&self) -> (usize, usize) {
@@ -259,12 +310,14 @@ impl ExistingProducts {
     }
 
     /// Bytes the pass images of `channels` channels hold: the residual
-    /// terms and PSF moments in `f32` and two sums of weights per moment.
+    /// terms, PSF moments and saved mosaic sensitivity in `f32`, plus two
+    /// sums of weights per moment.
     pub(crate) fn images_bytes(&self, channels: usize) -> u64 {
         let (terms, moments) = self.terms();
         let planes = channels * self.polarizations;
         let cells = self.shape[0] * self.shape[1];
-        (planes * (cells * (terms + moments) * 4 + moments * 2 * 8)) as u64
+        let image_planes = terms + moments + usize::from(self.weight);
+        (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
     }
 
     /// The images of domain 0 a pass forming its PSF and residual would
@@ -303,6 +356,27 @@ impl ExistingProducts {
                 }
             }
         }
+        // CASA saves `.weight` after dividing by the PSF sum of weights
+        // (`SIImageStore::divideWeightBySumwt`). Restore the unnormalised
+        // sensitivity the normal state expects.
+        let weight = if self.weight {
+            let read = self.read("weight", channels.clone())?;
+            let mut weight = vec![0.0; channels.len() * pols * cells];
+            for channel in 0..channels.len() {
+                for pol in 0..pols {
+                    let plane = channel * pols + pol;
+                    self.write_plane(
+                        &mut weight[plane * cells..(plane + 1) * cells],
+                        &read,
+                        (channel, pol),
+                        principal(channel, pol),
+                    );
+                }
+            }
+            Some(weight)
+        } else {
+            None
+        };
         let mut images = PassImages {
             domain: 0,
             shape: self.shape,
@@ -312,7 +386,7 @@ impl ExistingProducts {
             psf: Some(psf),
             sum_weights: sums.clone(),
             published_sum_weights: sums,
-            weight: None,
+            weight,
         };
         self.fill_residual(&mut images)?;
         Ok(images)

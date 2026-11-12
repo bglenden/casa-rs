@@ -39,6 +39,7 @@ pub enum AnalyticPrimaryBeamModel {
 pub struct ContinuumProductControls {
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    preserve_mosaic_products: bool,
 }
 
 impl ContinuumProductControls {
@@ -48,13 +49,28 @@ impl ContinuumProductControls {
     ///
     /// Rejects a cutoff outside `(0, 1)` or non-finite values.
     pub fn new(psf_cutoff: f32) -> Result<Self, ProductsError> {
+        Self::default().with_psf_cutoff(psf_cutoff)
+    }
+
+    /// Set the fit cutoff while keeping the other production controls.
+    ///
+    /// # Errors
+    /// Rejects a cutoff outside `(0, 1)` or non-finite values.
+    pub fn with_psf_cutoff(mut self, psf_cutoff: f32) -> Result<Self, ProductsError> {
         if !psf_cutoff.is_finite() || psf_cutoff <= 0.0 || psf_cutoff >= 1.0 {
             return Err(ProductsError::InvalidControls);
         }
-        Ok(Self {
-            psf_cutoff,
-            primary_beam_model: None,
-        })
+        self.psf_cutoff = psf_cutoff;
+        Ok(self)
+    }
+
+    /// Keep the PSF, weight, sum of weights and primary beam already on
+    /// disk when a mosaic continuation reads them instead of forming them.
+    /// The scientific product dependencies still include their response.
+    #[must_use]
+    pub const fn preserving_mosaic_products(mut self) -> Self {
+        self.preserve_mosaic_products = true;
+        self
     }
 
     /// Return the main-lobe cutoff fraction used for beam fitting.
@@ -116,6 +132,7 @@ impl Default for ContinuumProductControls {
         Self {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
             primary_beam_model: None,
+            preserve_mosaic_products: false,
         }
     }
 }
@@ -180,6 +197,17 @@ impl PlannedContinuumGeneration {
         let mut members = Vec::with_capacity(list.publication().members().len());
         for id in list.publication().members() {
             let entry = &list.entries()[id.ordinal()];
+            if controls.preserve_mosaic_products
+                && matches!(
+                    entry.role(),
+                    ProductRole::Psf(_)
+                        | ProductRole::Weight(_)
+                        | ProductRole::SumWeights(_)
+                        | ProductRole::PrimaryBeam(_)
+                )
+            {
+                continue;
+            }
             ensure_producible(entry.role())?;
             let needs_primary_beam = |rule| {
                 matches!(

@@ -132,6 +132,7 @@ pub(super) fn prepare(
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
+            restart::reuses_mosaic_psf(request),
         )?;
         if psf_beam {
             let mut charge = admit(
