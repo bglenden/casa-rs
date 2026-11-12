@@ -549,7 +549,7 @@
 <a href=#549 id=549 data-nosnippet>549</a>                        geometry.antenna_responses(sample),
 <a href=#550 id=550 data-nosnippet>550</a>                        <span class="kw-2">&amp;</span><span class="self">self</span>.keys.dish_classes,
 <a href=#551 id=551 data-nosnippet>551</a>                    ),
-<a href=#552 id=552 data-nosnippet>552</a>                    parallactic_angle_rad: geometry.parallactic_angles(sample).unwrap_or([<span class="number">0.0</span>; <span class="number">2</span>]),
+<a href=#552 id=552 data-nosnippet>552</a>                    parallactic_angle_rad: kernel_parallactic_angles(geometry, sample, time),
 <a href=#553 id=553 data-nosnippet>553</a>                    field: <span class="self">self</span>.keys.field(store, field.<span class="number">0</span>),
 <a href=#554 id=554 data-nosnippet>554</a>                    spectral_window: <span class="self">self</span>.keys.window(store, partition.spectral_window),
 <a href=#555 id=555 data-nosnippet>555</a>                },
@@ -830,120 +830,127 @@
 <a href=#830 id=830 data-nosnippet>830</a>/// [`crate::imaging::measurement::domain_operator`] lists the dishes in; a row
 <a href=#831 id=831 data-nosnippet>831</a>/// without response classes (every problem without an instrument model)
 <a href=#832 id=832 data-nosnippet>832</a>/// is on the first dish.
-<a href=#833 id=833 data-nosnippet>833</a></span><span class="kw">fn </span>antenna_types(
-<a href=#834 id=834 data-nosnippet>834</a>    responses: <span class="prelude-ty">Option</span>&lt;SelectedAntennaResponses&gt;,
-<a href=#835 id=835 data-nosnippet>835</a>    classes: <span class="kw-2">&amp;</span>[AntennaResponseClass],
-<a href=#836 id=836 data-nosnippet>836</a>) -&gt; [u8; <span class="number">2</span>] {
-<a href=#837 id=837 data-nosnippet>837</a>    <span class="kw">let </span>index = |class: AntennaResponseClass| {
-<a href=#838 id=838 data-nosnippet>838</a>        classes
-<a href=#839 id=839 data-nosnippet>839</a>            .iter()
-<a href=#840 id=840 data-nosnippet>840</a>            .position(|known| <span class="kw-2">*</span>known == class)
-<a href=#841 id=841 data-nosnippet>841</a>            .map_or(<span class="number">0</span>, |index| u8::try_from(index).expect(<span class="string">"few dish classes"</span>))
-<a href=#842 id=842 data-nosnippet>842</a>    };
-<a href=#843 id=843 data-nosnippet>843</a>    responses.map_or([<span class="number">0</span>, <span class="number">0</span>], |responses| {
-<a href=#844 id=844 data-nosnippet>844</a>        [index(responses.antenna1), index(responses.antenna2)]
-<a href=#845 id=845 data-nosnippet>845</a>    })
-<a href=#846 id=846 data-nosnippet>846</a>}
-<a href=#847 id=847 data-nosnippet>847</a>
-<a href=#848 id=848 data-nosnippet>848</a><span class="doccomment">/// The offset of a row's pointing from `direction`'s reference pixel as
-<a href=#849 id=849 data-nosnippet>849</a>/// direction cosines along the image axes: the A-projection pointing pixel
-<a href=#850 id=850 data-nosnippet>850</a>/// when the selection evaluated one, else the antenna-1 pointing direction
-<a href=#851 id=851 data-nosnippet>851</a>/// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
-<a href=#852 id=852 data-nosnippet>852</a>/// buffer's first `direction1`; under tclean `usepointing=False` the
-<a href=#853 id=853 data-nosnippet>853</a>/// selection evaluates it as the field's phase-tracking centre), placed in
-<a href=#854 id=854 data-nosnippet>854</a>/// the chart's frame and less a moving source's shift when the geometry
-<a href=#855 id=855 data-nosnippet>855</a>/// placed it ([`BatchGeometry::chart_pointing`]).
-<a href=#856 id=856 data-nosnippet>856</a></span><span class="kw">fn </span>pointing_offset(
-<a href=#857 id=857 data-nosnippet>857</a>    (direction, coordinate): <span class="kw-2">&amp;</span>(DirectionCoordinateSpec, DirectionCoordinate),
-<a href=#858 id=858 data-nosnippet>858</a>    aw_pixel: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;,
-<a href=#859 id=859 data-nosnippet>859</a>    pointing: SkyDirection,
-<a href=#860 id=860 data-nosnippet>860</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[f64; <span class="number">2</span>], SourceError&gt; {
-<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">let </span>pixel = <span class="kw">match </span>aw_pixel {
-<a href=#862 id=862 data-nosnippet>862</a>        <span class="prelude-val">Some</span>(pixel) =&gt; pixel,
-<a href=#863 id=863 data-nosnippet>863</a>        <span class="prelude-val">None </span>=&gt; {
-<a href=#864 id=864 data-nosnippet>864</a>            <span class="kw">if </span>pointing.frame() != direction.reference_direction().frame() {
-<a href=#865 id=865 data-nosnippet>865</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"a row's pointing direction is not in the image frame"</span>.into());
-<a href=#866 id=866 data-nosnippet>866</a>            }
-<a href=#867 id=867 data-nosnippet>867</a>            coordinate.world_to_pixel([pointing.longitude_rad(), pointing.latitude_rad()])<span class="question-mark">?
-<a href=#868 id=868 data-nosnippet>868</a>        </span>}
-<a href=#869 id=869 data-nosnippet>869</a>    };
-<a href=#870 id=870 data-nosnippet>870</a>    <span class="kw">let </span>reference = direction.reference_pixel();
-<a href=#871 id=871 data-nosnippet>871</a>    <span class="kw">let </span>increment = direction.increment_rad();
-<a href=#872 id=872 data-nosnippet>872</a>    <span class="prelude-val">Ok</span>([
-<a href=#873 id=873 data-nosnippet>873</a>        (pixel[<span class="number">0</span>] - reference[<span class="number">0</span>]) * increment[<span class="number">0</span>],
-<a href=#874 id=874 data-nosnippet>874</a>        (pixel[<span class="number">1</span>] - reference[<span class="number">1</span>]) * increment[<span class="number">1</span>],
-<a href=#875 id=875 data-nosnippet>875</a>    ])
-<a href=#876 id=876 data-nosnippet>876</a>}
-<a href=#877 id=877 data-nosnippet>877</a>
-<a href=#878 id=878 data-nosnippet>878</a><span class="attr">#[cfg(test)]
-<a href=#879 id=879 data-nosnippet>879</a></span><span class="kw">mod </span>compact_layout_tests {
-<a href=#880 id=880 data-nosnippet>880</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#881 id=881 data-nosnippet>881</a>
-<a href=#882 id=882 data-nosnippet>882</a>    <span class="doccomment">/// A compact row addresses the original batch span, including gaps
-<a href=#883 id=883 data-nosnippet>883</a>    /// before and between its channels; the write uses the same indices.
-<a href=#884 id=884 data-nosnippet>884</a>    </span><span class="attr">#[test]
-<a href=#885 id=885 data-nosnippet>885</a>    </span><span class="kw">fn </span>compacting_channels_preserves_batch_offsets_and_admission() {
-<a href=#886 id=886 data-nosnippet>886</a>        <span class="kw">let </span>layout = Layout {
-<a href=#887 id=887 data-nosnippet>887</a>            channels: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">2</span>, <span class="number">5</span>, <span class="number">9</span>],
-<a href=#888 id=888 data-nosnippet>888</a>            channel_indices: <span class="macro">vec!</span>[<span class="number">10</span>, <span class="number">12</span>, <span class="number">15</span>, <span class="number">19</span>],
-<a href=#889 id=889 data-nosnippet>889</a>            native_hz: <span class="macro">vec!</span>[<span class="number">100.0</span>, <span class="number">102.0</span>, <span class="number">105.0</span>, <span class="number">109.0</span>],
-<a href=#890 id=890 data-nosnippet>890</a>            half_widths_hz: <span class="macro">vec!</span>[<span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.3</span>, <span class="number">0.4</span>],
-<a href=#891 id=891 data-nosnippet>891</a>            correlations: <span class="macro">vec!</span>[Correlation::XX, Correlation::YY],
-<a href=#892 id=892 data-nosnippet>892</a>            correlation_indices: <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">3</span>],
-<a href=#893 id=893 data-nosnippet>893</a>            parallel: <span class="macro">vec!</span>[<span class="bool-val">true</span>, <span class="bool-val">true</span>],
-<a href=#894 id=894 data-nosnippet>894</a>        };
-<a href=#895 id=895 data-nosnippet>895</a>        <span class="kw">let </span>selected = layout
-<a href=#896 id=896 data-nosnippet>896</a>            .compact(<span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>])
-<a href=#897 id=897 data-nosnippet>897</a>            .expect(<span class="string">"two channels"</span>);
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="macro">assert_eq!</span>(selected.channels, [<span class="number">2</span>, <span class="number">9</span>]);
-<a href=#899 id=899 data-nosnippet>899</a>        <span class="macro">assert_eq!</span>(selected.channel_indices, [<span class="number">12</span>, <span class="number">19</span>]);
-<a href=#900 id=900 data-nosnippet>900</a>        <span class="macro">assert_eq!</span>(selected.native_hz, [<span class="number">102.0</span>, <span class="number">109.0</span>]);
-<a href=#901 id=901 data-nosnippet>901</a>        <span class="macro">assert_eq!</span>(selected.half_widths_hz, [<span class="number">0.2</span>, <span class="number">0.4</span>]);
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="macro">assert_eq!</span>(selected.correlation_indices, [<span class="number">1</span>, <span class="number">3</span>]);
-<a href=#903 id=903 data-nosnippet>903</a>        <span class="macro">assert!</span>(layout.compact(<span class="kw-2">&amp;</span>[<span class="bool-val">false</span>; <span class="number">4</span>]).is_none());
-<a href=#904 id=904 data-nosnippet>904</a>        <span class="kw">let </span>allocated = selected.channels.capacity() * size_of::&lt;usize&gt;()
-<a href=#905 id=905 data-nosnippet>905</a>            + selected.channel_indices.capacity() * size_of::&lt;u32&gt;()
-<a href=#906 id=906 data-nosnippet>906</a>            + (selected.native_hz.capacity() + selected.half_widths_hz.capacity())
-<a href=#907 id=907 data-nosnippet>907</a>                * size_of::&lt;f64&gt;()
-<a href=#908 id=908 data-nosnippet>908</a>            + selected.correlations.capacity() * size_of::&lt;Correlation&gt;()
-<a href=#909 id=909 data-nosnippet>909</a>            + selected.correlation_indices.capacity() * size_of::&lt;u32&gt;()
-<a href=#910 id=910 data-nosnippet>910</a>            + selected.parallel.capacity() * size_of::&lt;bool&gt;();
-<a href=#911 id=911 data-nosnippet>911</a>        <span class="kw">let </span>shape = BlockShape {
-<a href=#912 id=912 data-nosnippet>912</a>            spectrum: casa_imaging_operator::RowSpectrum::evenly_spaced(<span class="number">4</span>),
-<a href=#913 id=913 data-nosnippet>913</a>            correlations: <span class="number">2</span>,
-<a href=#914 id=914 data-nosnippet>914</a>            ..BlockShape::default()
-<a href=#915 id=915 data-nosnippet>915</a>        };
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="macro">assert!</span>(
-<a href=#917 id=917 data-nosnippet>917</a>            allocated &lt;= Layout::compacted_bound(shape),
-<a href=#918 id=918 data-nosnippet>918</a>            <span class="string">"{allocated} bytes exceed compact layout admission"
-<a href=#919 id=919 data-nosnippet>919</a>        </span>);
-<a href=#920 id=920 data-nosnippet>920</a>    }
-<a href=#921 id=921 data-nosnippet>921</a>    <span class="doccomment">/// The fit buffers retain capacity as rows of different sizes arrive;
-<a href=#922 id=922 data-nosnippet>922</a>    /// their admitted bound covers the full input union and mapping.
-<a href=#923 id=923 data-nosnippet>923</a>    </span><span class="attr">#[test]
-<a href=#924 id=924 data-nosnippet>924</a>    </span><span class="kw">fn </span>compacted_fit_scratch_stays_within_its_admission() {
-<a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">let </span><span class="kw-2">mut </span>scratch = PackScratch::default();
-<a href=#926 id=926 data-nosnippet>926</a>        <span class="kw">for </span>channels <span class="kw">in </span>[<span class="number">1</span>, <span class="number">17</span>, <span class="number">33</span>, <span class="number">65</span>] {
-<a href=#927 id=927 data-nosnippet>927</a>            <span class="kw">let </span>cells = channels * <span class="number">4</span>;
-<a href=#928 id=928 data-nosnippet>928</a>            scratch.fit_values.resize(cells, Complex32::default());
-<a href=#929 id=929 data-nosnippet>929</a>            scratch.fit_weights.resize(cells, <span class="number">0.0</span>);
-<a href=#930 id=930 data-nosnippet>930</a>            scratch.fit_flags.resize(cells, <span class="bool-val">false</span>);
-<a href=#931 id=931 data-nosnippet>931</a>            scratch.fit_positions.clear();
-<a href=#932 id=932 data-nosnippet>932</a>            scratch.fit_positions.extend(<span class="number">0</span>..channels);
-<a href=#933 id=933 data-nosnippet>933</a>        }
-<a href=#934 id=934 data-nosnippet>934</a>        <span class="kw">let </span>held = scratch.fit_values.capacity() * size_of::&lt;Complex32&gt;()
-<a href=#935 id=935 data-nosnippet>935</a>            + scratch.fit_weights.capacity() * size_of::&lt;f32&gt;()
-<a href=#936 id=936 data-nosnippet>936</a>            + scratch.fit_flags.capacity() * size_of::&lt;bool&gt;()
-<a href=#937 id=937 data-nosnippet>937</a>            + scratch.fit_positions.capacity() * size_of::&lt;usize&gt;();
-<a href=#938 id=938 data-nosnippet>938</a>        <span class="kw">let </span>shape = BlockShape {
-<a href=#939 id=939 data-nosnippet>939</a>            spectrum: casa_imaging_operator::RowSpectrum::evenly_spaced(<span class="number">65</span>),
-<a href=#940 id=940 data-nosnippet>940</a>            correlations: <span class="number">4</span>,
-<a href=#941 id=941 data-nosnippet>941</a>            ..BlockShape::default()
-<a href=#942 id=942 data-nosnippet>942</a>        };
-<a href=#943 id=943 data-nosnippet>943</a>        <span class="macro">assert!</span>(
-<a href=#944 id=944 data-nosnippet>944</a>            held &lt;= PackScratch::fit_bound(shape),
-<a href=#945 id=945 data-nosnippet>945</a>            <span class="string">"{held} bytes exceed fit scratch admission"
-<a href=#946 id=946 data-nosnippet>946</a>        </span>);
-<a href=#947 id=947 data-nosnippet>947</a>    }
-<a href=#948 id=948 data-nosnippet>948</a>}
+<a href=#833 id=833 data-nosnippet>833</a></span><span class="kw">fn </span>kernel_parallactic_angles(geometry: <span class="kw-2">&amp;</span>BatchGeometry, sample: usize, time: usize) -&gt; [f64; <span class="number">2</span>] {
+<a href=#834 id=834 data-nosnippet>834</a>    geometry.aw_parallactic_angle(time).map_or_else(
+<a href=#835 id=835 data-nosnippet>835</a>        || geometry.parallactic_angles(sample).unwrap_or([<span class="number">0.0</span>; <span class="number">2</span>]),
+<a href=#836 id=836 data-nosnippet>836</a>        |pa| [-f64::from(pa); <span class="number">2</span>],
+<a href=#837 id=837 data-nosnippet>837</a>    )
+<a href=#838 id=838 data-nosnippet>838</a>}
+<a href=#839 id=839 data-nosnippet>839</a>
+<a href=#840 id=840 data-nosnippet>840</a><span class="kw">fn </span>antenna_types(
+<a href=#841 id=841 data-nosnippet>841</a>    responses: <span class="prelude-ty">Option</span>&lt;SelectedAntennaResponses&gt;,
+<a href=#842 id=842 data-nosnippet>842</a>    classes: <span class="kw-2">&amp;</span>[AntennaResponseClass],
+<a href=#843 id=843 data-nosnippet>843</a>) -&gt; [u8; <span class="number">2</span>] {
+<a href=#844 id=844 data-nosnippet>844</a>    <span class="kw">let </span>index = |class: AntennaResponseClass| {
+<a href=#845 id=845 data-nosnippet>845</a>        classes
+<a href=#846 id=846 data-nosnippet>846</a>            .iter()
+<a href=#847 id=847 data-nosnippet>847</a>            .position(|known| <span class="kw-2">*</span>known == class)
+<a href=#848 id=848 data-nosnippet>848</a>            .map_or(<span class="number">0</span>, |index| u8::try_from(index).expect(<span class="string">"few dish classes"</span>))
+<a href=#849 id=849 data-nosnippet>849</a>    };
+<a href=#850 id=850 data-nosnippet>850</a>    responses.map_or([<span class="number">0</span>, <span class="number">0</span>], |responses| {
+<a href=#851 id=851 data-nosnippet>851</a>        [index(responses.antenna1), index(responses.antenna2)]
+<a href=#852 id=852 data-nosnippet>852</a>    })
+<a href=#853 id=853 data-nosnippet>853</a>}
+<a href=#854 id=854 data-nosnippet>854</a>
+<a href=#855 id=855 data-nosnippet>855</a><span class="doccomment">/// The offset of a row's pointing from `direction`'s reference pixel as
+<a href=#856 id=856 data-nosnippet>856</a>/// direction cosines along the image axes: the A-projection pointing pixel
+<a href=#857 id=857 data-nosnippet>857</a>/// when the selection evaluated one, else the antenna-1 pointing direction
+<a href=#858 id=858 data-nosnippet>858</a>/// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
+<a href=#859 id=859 data-nosnippet>859</a>/// buffer's first `direction1`; under tclean `usepointing=False` the
+<a href=#860 id=860 data-nosnippet>860</a>/// selection evaluates it as the field's phase-tracking centre), placed in
+<a href=#861 id=861 data-nosnippet>861</a>/// the chart's frame and less a moving source's shift when the geometry
+<a href=#862 id=862 data-nosnippet>862</a>/// placed it ([`BatchGeometry::chart_pointing`]).
+<a href=#863 id=863 data-nosnippet>863</a></span><span class="kw">fn </span>pointing_offset(
+<a href=#864 id=864 data-nosnippet>864</a>    (direction, coordinate): <span class="kw-2">&amp;</span>(DirectionCoordinateSpec, DirectionCoordinate),
+<a href=#865 id=865 data-nosnippet>865</a>    aw_pixel: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;,
+<a href=#866 id=866 data-nosnippet>866</a>    pointing: SkyDirection,
+<a href=#867 id=867 data-nosnippet>867</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[f64; <span class="number">2</span>], SourceError&gt; {
+<a href=#868 id=868 data-nosnippet>868</a>    <span class="kw">let </span>pixel = <span class="kw">match </span>aw_pixel {
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="prelude-val">Some</span>(pixel) =&gt; pixel,
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="prelude-val">None </span>=&gt; {
+<a href=#871 id=871 data-nosnippet>871</a>            <span class="kw">if </span>pointing.frame() != direction.reference_direction().frame() {
+<a href=#872 id=872 data-nosnippet>872</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"a row's pointing direction is not in the image frame"</span>.into());
+<a href=#873 id=873 data-nosnippet>873</a>            }
+<a href=#874 id=874 data-nosnippet>874</a>            coordinate.world_to_pixel([pointing.longitude_rad(), pointing.latitude_rad()])<span class="question-mark">?
+<a href=#875 id=875 data-nosnippet>875</a>        </span>}
+<a href=#876 id=876 data-nosnippet>876</a>    };
+<a href=#877 id=877 data-nosnippet>877</a>    <span class="kw">let </span>reference = direction.reference_pixel();
+<a href=#878 id=878 data-nosnippet>878</a>    <span class="kw">let </span>increment = direction.increment_rad();
+<a href=#879 id=879 data-nosnippet>879</a>    <span class="prelude-val">Ok</span>([
+<a href=#880 id=880 data-nosnippet>880</a>        (pixel[<span class="number">0</span>] - reference[<span class="number">0</span>]) * increment[<span class="number">0</span>],
+<a href=#881 id=881 data-nosnippet>881</a>        (pixel[<span class="number">1</span>] - reference[<span class="number">1</span>]) * increment[<span class="number">1</span>],
+<a href=#882 id=882 data-nosnippet>882</a>    ])
+<a href=#883 id=883 data-nosnippet>883</a>}
+<a href=#884 id=884 data-nosnippet>884</a>
+<a href=#885 id=885 data-nosnippet>885</a><span class="attr">#[cfg(test)]
+<a href=#886 id=886 data-nosnippet>886</a></span><span class="kw">mod </span>compact_layout_tests {
+<a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#888 id=888 data-nosnippet>888</a>
+<a href=#889 id=889 data-nosnippet>889</a>    <span class="doccomment">/// A compact row addresses the original batch span, including gaps
+<a href=#890 id=890 data-nosnippet>890</a>    /// before and between its channels; the write uses the same indices.
+<a href=#891 id=891 data-nosnippet>891</a>    </span><span class="attr">#[test]
+<a href=#892 id=892 data-nosnippet>892</a>    </span><span class="kw">fn </span>compacting_channels_preserves_batch_offsets_and_admission() {
+<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>layout = Layout {
+<a href=#894 id=894 data-nosnippet>894</a>            channels: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">2</span>, <span class="number">5</span>, <span class="number">9</span>],
+<a href=#895 id=895 data-nosnippet>895</a>            channel_indices: <span class="macro">vec!</span>[<span class="number">10</span>, <span class="number">12</span>, <span class="number">15</span>, <span class="number">19</span>],
+<a href=#896 id=896 data-nosnippet>896</a>            native_hz: <span class="macro">vec!</span>[<span class="number">100.0</span>, <span class="number">102.0</span>, <span class="number">105.0</span>, <span class="number">109.0</span>],
+<a href=#897 id=897 data-nosnippet>897</a>            half_widths_hz: <span class="macro">vec!</span>[<span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.3</span>, <span class="number">0.4</span>],
+<a href=#898 id=898 data-nosnippet>898</a>            correlations: <span class="macro">vec!</span>[Correlation::XX, Correlation::YY],
+<a href=#899 id=899 data-nosnippet>899</a>            correlation_indices: <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">3</span>],
+<a href=#900 id=900 data-nosnippet>900</a>            parallel: <span class="macro">vec!</span>[<span class="bool-val">true</span>, <span class="bool-val">true</span>],
+<a href=#901 id=901 data-nosnippet>901</a>        };
+<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">let </span>selected = layout
+<a href=#903 id=903 data-nosnippet>903</a>            .compact(<span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>])
+<a href=#904 id=904 data-nosnippet>904</a>            .expect(<span class="string">"two channels"</span>);
+<a href=#905 id=905 data-nosnippet>905</a>        <span class="macro">assert_eq!</span>(selected.channels, [<span class="number">2</span>, <span class="number">9</span>]);
+<a href=#906 id=906 data-nosnippet>906</a>        <span class="macro">assert_eq!</span>(selected.channel_indices, [<span class="number">12</span>, <span class="number">19</span>]);
+<a href=#907 id=907 data-nosnippet>907</a>        <span class="macro">assert_eq!</span>(selected.native_hz, [<span class="number">102.0</span>, <span class="number">109.0</span>]);
+<a href=#908 id=908 data-nosnippet>908</a>        <span class="macro">assert_eq!</span>(selected.half_widths_hz, [<span class="number">0.2</span>, <span class="number">0.4</span>]);
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="macro">assert_eq!</span>(selected.correlation_indices, [<span class="number">1</span>, <span class="number">3</span>]);
+<a href=#910 id=910 data-nosnippet>910</a>        <span class="macro">assert!</span>(layout.compact(<span class="kw-2">&amp;</span>[<span class="bool-val">false</span>; <span class="number">4</span>]).is_none());
+<a href=#911 id=911 data-nosnippet>911</a>        <span class="kw">let </span>allocated = selected.channels.capacity() * size_of::&lt;usize&gt;()
+<a href=#912 id=912 data-nosnippet>912</a>            + selected.channel_indices.capacity() * size_of::&lt;u32&gt;()
+<a href=#913 id=913 data-nosnippet>913</a>            + (selected.native_hz.capacity() + selected.half_widths_hz.capacity())
+<a href=#914 id=914 data-nosnippet>914</a>                * size_of::&lt;f64&gt;()
+<a href=#915 id=915 data-nosnippet>915</a>            + selected.correlations.capacity() * size_of::&lt;Correlation&gt;()
+<a href=#916 id=916 data-nosnippet>916</a>            + selected.correlation_indices.capacity() * size_of::&lt;u32&gt;()
+<a href=#917 id=917 data-nosnippet>917</a>            + selected.parallel.capacity() * size_of::&lt;bool&gt;();
+<a href=#918 id=918 data-nosnippet>918</a>        <span class="kw">let </span>shape = BlockShape {
+<a href=#919 id=919 data-nosnippet>919</a>            spectrum: casa_imaging_operator::RowSpectrum::evenly_spaced(<span class="number">4</span>),
+<a href=#920 id=920 data-nosnippet>920</a>            correlations: <span class="number">2</span>,
+<a href=#921 id=921 data-nosnippet>921</a>            ..BlockShape::default()
+<a href=#922 id=922 data-nosnippet>922</a>        };
+<a href=#923 id=923 data-nosnippet>923</a>        <span class="macro">assert!</span>(
+<a href=#924 id=924 data-nosnippet>924</a>            allocated &lt;= Layout::compacted_bound(shape),
+<a href=#925 id=925 data-nosnippet>925</a>            <span class="string">"{allocated} bytes exceed compact layout admission"
+<a href=#926 id=926 data-nosnippet>926</a>        </span>);
+<a href=#927 id=927 data-nosnippet>927</a>    }
+<a href=#928 id=928 data-nosnippet>928</a>    <span class="doccomment">/// The fit buffers retain capacity as rows of different sizes arrive;
+<a href=#929 id=929 data-nosnippet>929</a>    /// their admitted bound covers the full input union and mapping.
+<a href=#930 id=930 data-nosnippet>930</a>    </span><span class="attr">#[test]
+<a href=#931 id=931 data-nosnippet>931</a>    </span><span class="kw">fn </span>compacted_fit_scratch_stays_within_its_admission() {
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span><span class="kw-2">mut </span>scratch = PackScratch::default();
+<a href=#933 id=933 data-nosnippet>933</a>        <span class="kw">for </span>channels <span class="kw">in </span>[<span class="number">1</span>, <span class="number">17</span>, <span class="number">33</span>, <span class="number">65</span>] {
+<a href=#934 id=934 data-nosnippet>934</a>            <span class="kw">let </span>cells = channels * <span class="number">4</span>;
+<a href=#935 id=935 data-nosnippet>935</a>            scratch.fit_values.resize(cells, Complex32::default());
+<a href=#936 id=936 data-nosnippet>936</a>            scratch.fit_weights.resize(cells, <span class="number">0.0</span>);
+<a href=#937 id=937 data-nosnippet>937</a>            scratch.fit_flags.resize(cells, <span class="bool-val">false</span>);
+<a href=#938 id=938 data-nosnippet>938</a>            scratch.fit_positions.clear();
+<a href=#939 id=939 data-nosnippet>939</a>            scratch.fit_positions.extend(<span class="number">0</span>..channels);
+<a href=#940 id=940 data-nosnippet>940</a>        }
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="kw">let </span>held = scratch.fit_values.capacity() * size_of::&lt;Complex32&gt;()
+<a href=#942 id=942 data-nosnippet>942</a>            + scratch.fit_weights.capacity() * size_of::&lt;f32&gt;()
+<a href=#943 id=943 data-nosnippet>943</a>            + scratch.fit_flags.capacity() * size_of::&lt;bool&gt;()
+<a href=#944 id=944 data-nosnippet>944</a>            + scratch.fit_positions.capacity() * size_of::&lt;usize&gt;();
+<a href=#945 id=945 data-nosnippet>945</a>        <span class="kw">let </span>shape = BlockShape {
+<a href=#946 id=946 data-nosnippet>946</a>            spectrum: casa_imaging_operator::RowSpectrum::evenly_spaced(<span class="number">65</span>),
+<a href=#947 id=947 data-nosnippet>947</a>            correlations: <span class="number">4</span>,
+<a href=#948 id=948 data-nosnippet>948</a>            ..BlockShape::default()
+<a href=#949 id=949 data-nosnippet>949</a>        };
+<a href=#950 id=950 data-nosnippet>950</a>        <span class="macro">assert!</span>(
+<a href=#951 id=951 data-nosnippet>951</a>            held &lt;= PackScratch::fit_bound(shape),
+<a href=#952 id=952 data-nosnippet>952</a>            <span class="string">"{held} bytes exceed fit scratch admission"
+<a href=#953 id=953 data-nosnippet>953</a>        </span>);
+<a href=#954 id=954 data-nosnippet>954</a>    }
+<a href=#955 id=955 data-nosnippet>955</a>}
 </code></pre></div></section></main></body></html>

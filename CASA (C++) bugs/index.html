@@ -972,6 +972,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#aw-gridding-can-continue-after-a-pa-cache-miss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AW gridding can continue after a PA cache miss
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1482,6 +1493,30 @@ term's raw <code>getWeightImage</code> moment, so <code>.weight.tt1</code> and <
 the raw Σ W·s^N while <code>.weight.tt0</code> is normalized. CASA 6.7.6.14 on
 <code>refim_alma_mosaic</code> (mosaic, <code>nterms=2</code>) agrees: <code>weight.ttN / sumwt.ttN</code> is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.</p>
+<h2 id="aw-gridding-can-continue-after-a-pa-cache-miss">AW gridding can continue after a PA cache miss<a class="headerlink" href="#aw-gridding-can-continue-after-a-pa-cache-miss" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: CASA 6.7.6.14 bug. Casa-rs reports an uncovered imported buffer (#1070).</li>
+<li>Affected code: <code>TransformMachines2/CFStore2.cc</code> (<code>nearestPA</code>),
+  <code>VB2CFBMap.cc</code> (<code>makeVBRow2CFBMap</code>) and <code>AWProjectFT.cc</code>
+  (<code>findConvFunction</code>, <code>resampleDataToGrid</code>).</li>
+</ul>
+<p><code>CFStore2::nearestPA</code> takes the first angle strictly within
+<code>computepastep</code>, in the imported catalog's sorted angle order. On a cache
+miss <code>makeVBRow2CFBMap</code> can leave the previous row-to-buffer mapping in
+place. <code>findConvFunction</code> can generate a missing buffer when its angle
+change detector fires. The gridding path also calls the map builder and
+continues when that lookup reports a miss.</p>
+<p>On <code>refim_mawproject.ms</code> with a 5-degree step and default rotation, CASA
+creates 31 PA buffers. The warm replay still logs five integrations with
+no in-band PA in field 1 and publishes an image. Its residual differs from
+the cold run by 2.95e-3 NRMS. Casa-rs reports a missing imported buffer
+before publication, preserving its read-only import policy (#1043).
+Field 0 is covered by the same cache, and all seven products match CASA
+with exact masks. The default 360-degree control also matches across both
+fields. CASA's separate one-degree coalescence in
+<code>CFCache::fillCFListFromDisk</code> and <code>CFStore2::resize</code> remains unverified for
+densely spaced imported headers (#1070).</p>
 <h2 id="aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer">AW pointing can reuse the origin of an earlier convolution buffer<a class="headerlink" href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>

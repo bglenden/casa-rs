@@ -462,8 +462,8 @@
 <a href=#462 id=462 data-nosnippet>462</a>
 <a href=#463 id=463 data-nosnippet>463</a><span class="doccomment">/// The installed A-projection: CASA's EVLA aperture, prolate-spheroidal,
 <a href=#464 id=464 data-nosnippet>464</a>/// wideband and conjugate-beam terms as tclean asks for them (wideband
-<a href=#465 id=465 data-nosnippet>465</a>/// only with the aperture, [`AwProjection::wideband`]), and 360-degree
-<a href=#466 id=466 data-nosnippet>466</a>/// parallactic-angle steps, over the selected `|w|` range.
+<a href=#465 id=465 data-nosnippet>465</a>/// only with the aperture, [`AwProjection::wideband`]), and the PA lookup
+<a href=#466 id=466 data-nosnippet>466</a>/// step, over the selected `|w|` range.
 <a href=#467 id=467 data-nosnippet>467</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>aw_projection(
 <a href=#468 id=468 data-nosnippet>468</a>    aw: <span class="kw-2">&amp;</span>AwProjection,
 <a href=#469 id=469 data-nosnippet>469</a>    [<span class="kw">_</span>, highest_hz]: [f64; <span class="number">2</span>],
@@ -481,7 +481,7 @@
 <a href=#481 id=481 data-nosnippet>481</a>        aw.conjbeams,
 <a href=#482 id=482 data-nosnippet>482</a>        aw.usepointing,
 <a href=#483 id=483 data-nosnippet>483</a>        effective_aw_pointing_offset_sigdev_arcsec(aw.usepointing, <span class="kw-2">&amp;</span>aw.pointingoffsetsigdev),
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="number">360.0</span>,
+<a href=#484 id=484 data-nosnippet>484</a>        aw.computepastep,
 <a href=#485 id=485 data-nosnippet>485</a>        <span class="number">360.0</span>,
 <a href=#486 id=486 data-nosnippet>486</a>    )<span class="question-mark">?</span>)
 <a href=#487 id=487 data-nosnippet>487</a>}
