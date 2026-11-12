@@ -963,6 +963,62 @@ def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Pa
 
 
 @needs_measures
+@pytest.mark.parametrize("kind", ["G", "T"])
+@pytest.mark.parametrize("mode", ["cubic", "spline"])
+def test_higher_time_interpolation_matches_closed_form(tmp_path: Path, kind: str, mode: str) -> None:
+    from casars.tools import table as table_tool
+
+    path, calibration = tmp_path / "x.ms", tmp_path / "time.cal"
+    sm = opened(tmp_path)
+    configure(sm, stokes="RR RL LR LL")
+    assert sm.observe("F", "L", starttime="0s", stoptime="40s")
+    assert sm.setseed(5)
+    assert sm.setnoise(simplenoise="0.1Jy")
+    assert sm.corrupt()
+    sm.close()
+    before = Table.open(path)
+    names = ("DATA", "TIME", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")
+    expected = {name: np.asarray(before.get_column(name)).copy() for name in names}
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setgain(mode="fbm", table=str(calibration), amplitude=[0.0, 0.0])
+    sm.close()
+    tb = table_tool()
+    assert tb.open(str(calibration), nomodify=False)
+    times = np.asarray(tb.getcol("TIME"))
+    knots = np.unique(times)
+    assert len(knots) == 4
+    receptors = 1 if kind == "T" else 2
+    values = np.asarray([1., 2., .5, 1.25], dtype=np.complex64)[np.searchsorted(knots, times)]
+    shape = (receptors, 1, len(times))
+    for column, data in (("CPARAM", np.broadcast_to(values, shape).copy()),
+                         ("FLAG", np.zeros(shape, dtype=bool)),
+                         ("PARAMERR", np.zeros(shape, dtype=np.float32)),
+                         ("SNR", np.ones(shape, dtype=np.float32))):
+        assert tb.putcol(column, data)
+    assert tb.putcol("TIME", times - 5)
+    assert tb.putkeyword("VisCal", kind + " Jones")
+    assert tb.putinfo({"subType": kind + " Jones"})
+    tb.close()
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setapply(table=str(calibration), interp=mode)
+    assert sm.corrupt()
+    sm.close()
+    amplitudes = np.asarray([135/64, 81/64, 19/64, 5/4] if mode == "cubic"
+                            else [289/160, 203/160, 47/80, 5/4])
+    index = np.rint((expected["TIME"] - expected["TIME"].min()) / 10).astype(int)
+    expected["DATA"] *= amplitudes[index, None, None] ** 2
+    after = Table.open(path)
+    for name, reference in expected.items():
+        actual = np.asarray(after.get_column(name))
+        if name == "DATA":
+            np.testing.assert_allclose(actual, reference, rtol=2e-6, atol=1e-7)
+        else:
+            np.testing.assert_array_equal(actual, reference, err_msg=name)
+
+
+@needs_measures
 def test_settrop_follows_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     sm = opened(tmp_path)
     configure(sm)

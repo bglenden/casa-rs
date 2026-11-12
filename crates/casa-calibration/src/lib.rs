@@ -29,6 +29,7 @@ mod corrected_export;
 mod execute;
 mod fluxscale;
 mod gencal;
+mod interpolation;
 mod lookup;
 mod lookup_frequency;
 mod managed_output;

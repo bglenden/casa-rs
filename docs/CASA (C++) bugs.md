@@ -4403,3 +4403,58 @@ half-knot amplitudes. That control is also checked against the closed-form
 receptor equation; the native spline is compared against it. C++ consumption
 of the original native spline table is checked separately against the raw
 CASA result. This exception changes no numerical tolerance.
+
+
+## Simulator time-spline setup uses an uninitialized interpolator
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing crash/evident-intent rule (#1053)
+- Affected code: CASA 6.7.6.14 `CTTimeInterp1` constructor and
+  `interpolate`, with casacore `Interpolate1D<Float,Array<Float>>`.
+
+For G/D/T/B/Tf/Df calibration tables, `sm.setapply(interp='spline')`
+selects the spline method before supplying the interpolator's data.
+`Interpolate1D::setMethod` accesses the uninitialized sample count and
+knot arrays. All eight independent four-time curve/analytic probes terminate
+with signal 11 during `setapply`; `corrupt` is never called. The later time
+registration supplies data for linear and cubic methods, but has no spline
+branch. The same interpolator also skips the first interior back-substitution
+identified in the natural-spline defect above.
+
+casa-rs initializes a natural amplitude/continuous-phase spline from the
+loaded time series, completes every interior back-substitution and retains
+its coefficients. Exact times and queries outside the range retain the
+registered knot or endpoint; one knot is constant and two knots form a line.
+Flags combine only the adjacent time samples, without removing flagged
+knots, as CASA's other time interpolators do.
+
+`sm_apply_time_casa.json.gz` retains each raw CASA termination and separate
+nearest-CASA controls. A dense NumPy linear-system solution, independent of
+the native tridiagonal solver, samples the corrected amplitude/phase curves
+at the requested times and supplies them to CASA's nearest interpolation.
+The four real amplitudes `[1,2,1/2,5/4]` additionally give exact half-knot
+amplitudes `[289/160,203/160,47/80]`. C++ consumption of the original native
+knot tables uses the separate original-table nearest controls, because the
+CASA spline setup itself crashes. No numerical tolerance is relaxed.
+
+
+## Simulator short cubic time axes can alter DATA before failing
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing data-loss rule (#1053, #1054)
+- Affected code: CASA 6.7.6.14 `CTTimeInterp1::interpolate` and simulator
+  corruption writes.
+
+With two calibration times coincident with the first and last data times,
+G and scalar-T cubic application first writes the exact-time solution.
+The following interior query then asks for a four-time stencil and raises
+`RuntimeError`; the already changed DATA remains. The reference fixture
+retains both partial-write outcomes. With two or three knots and an initial
+interior query, CASA raises before changing DATA. Single-time, exact and
+outside-range queries do not need a cubic stencil.
+
+casa-rs preserves those mathematical success/refusal rules, but evaluates
+the applied term before staging any DATA writes. A short-axis interior
+failure therefore leaves the entire input DATA intact. The regression test
+checks both exact-first partial-write cases as well as the initially interior
+failures. This preserves the simulator's existing fail-closed write contract.

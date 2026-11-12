@@ -8,6 +8,16 @@ use casa_simulation::ApplySpec;
 
 #[test]
 fn metal_prediction_composes_with_channel_dependent_table_application() {
+    check_time_mode("linear");
+}
+
+#[test]
+fn metal_prediction_composes_with_higher_time_interpolation() {
+    check_time_mode("cubic");
+    check_time_mode("spline");
+}
+
+fn check_time_mode(mode: &str) {
     if !metal_device() {
         return;
     }
@@ -24,21 +34,33 @@ fn metal_prediction_composes_with_channel_dependent_table_application() {
     sm.close().unwrap();
     let ms = casa_ms::MeasurementSet::open(&reference).unwrap();
     let table = directory.path().join("frequency.cal");
-    let rows = (0..predict_support::ANTENNAS).map(|antenna| SimulatedSolution {
-        time_s: 0.0,
-        field_id: 0,
-        spectral_window_id: 0,
-        antenna: antenna as i32,
-        values: SolutionValues::Channels(
-            (0..CHANNELS)
-                .map(|channel| {
-                    Complex32::from_polar(
-                        1.2 + 0.01 * channel as f32,
-                        0.03 * (antenna * channel) as f32,
-                    )
-                })
-                .collect(),
-        ),
+    let casa_types::ScalarValue::Float64(first) = ms
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+    else {
+        panic!("TIME")
+    };
+    let first = *first - 5.;
+    let rows = (0..if mode == "linear" { 1 } else { 4 }).flat_map(|index| {
+        (0..predict_support::ANTENNAS).map(move |antenna| SimulatedSolution {
+            time_s: first + 10. * index as f64,
+            field_id: 0,
+            spectral_window_id: 0,
+            antenna: antenna as i32,
+            values: SolutionValues::Channels(
+                (0..CHANNELS)
+                    .map(|channel| {
+                        Complex32::from_polar(
+                            (1.2 + 0.01 * channel as f32) * [1., 2., 0.5, 1.25][index],
+                            0.03 * (antenna * channel) as f32 + 0.1 * index as f32,
+                        )
+                    })
+                    .collect(),
+            ),
+        })
     });
     write_simulated_jones_table(&ms, &table, SimulatedJones::Troposphere, rows).unwrap();
     let model = cube(directory.path());
@@ -53,7 +75,7 @@ fn metal_prediction_composes_with_channel_dependent_table_application() {
                 table: table.to_string_lossy().into_owned(),
                 kind: "Tf".into(),
                 interval_s: 0.0,
-                interp: "linear,linear".into(),
+                interp: format!("{mode},linear"),
                 calwt: true,
                 spwmap: vec![-1],
                 opacity: 0.0,
@@ -77,7 +99,9 @@ fn metal_prediction_composes_with_channel_dependent_table_application() {
         "calibration is observable"
     );
     let difference = relative_difference(&metal, &cpu);
-    println!("frequency table after actual Metal prediction: max-relative {difference:e}");
+    println!(
+        "{mode} time/frequency table after actual Metal prediction: max-relative {difference:e}"
+    );
     assert!(difference <= TOLERANCE);
     for (cpu, metal) in cpu.iter().zip(&metal) {
         assert_eq!(cpu.antennas, metal.antennas);

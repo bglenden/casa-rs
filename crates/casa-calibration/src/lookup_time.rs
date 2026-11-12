@@ -4,7 +4,7 @@ use super::{
     ApplyExecutionError, ApplyInterpolationMode, CalibrationGrid, CalibrationSolution,
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection, GainGrid,
 };
-use crate::lookup_frequency::{FrequencyInterpolation, sample, spline_derivatives};
+use crate::interpolation::{Curve, sample, spline_derivatives, unwrap_phase};
 use casa_types::Complex32;
 use std::collections::HashMap;
 use std::path::Path;
@@ -134,16 +134,6 @@ fn relative(time: f64, reference: f64) -> f64 {
     f64::from((time - reference) as f32)
 }
 
-fn unwrap_phase(previous: f32, mut phase: f32) -> f32 {
-    while f64::from(phase - previous) > std::f64::consts::PI {
-        phase = (f64::from(phase) - std::f64::consts::TAU) as f32;
-    }
-    while f64::from(phase - previous) < -std::f64::consts::PI {
-        phase = (f64::from(phase) + std::f64::consts::TAU) as f32;
-    }
-    phase
-}
-
 impl TimePlan {
     pub(super) fn solution(
         &self,
@@ -199,37 +189,39 @@ impl TimePlan {
                 ));
             }
         }
+        if !stencil.windows(2).all(|pair| {
+            relative(pair[0].time_seconds, reference) < relative(pair[1].time_seconds, reference)
+        }) {
+            return Err(invalid(path, "time samples must be strictly increasing"));
+        }
         let high = grid(path, &candidates[upper])?;
         let (receptors, channels) = (base.receptor_count, base.channel_count);
+        let spline = (self.mode == TimeInterpolation::Spline).then(|| &self.splines[key]);
         let mut values = Vec::with_capacity(receptors * channels);
         let mut flags = Vec::with_capacity(receptors * channels);
         for index in 0..receptors * channels {
             let mut points = [(0., 0., 0.); 4];
             for (i, row) in stencil.iter().enumerate() {
                 let z = value(grid(path, row)?, index).0;
-                points[i] = (relative(row.time_seconds, reference), z.norm(), z.arg());
-                if i > 0 {
+                let phase = spline.map_or_else(
+                    || z.arg(),
+                    |s| s.phases[(first + i) * receptors * channels + index],
+                );
+                points[i] = (relative(row.time_seconds, reference), z.norm(), phase);
+                if i > 0 && spline.is_none() {
                     points[i].2 = unwrap_phase(points[i - 1].2, points[i].2);
                 }
             }
             let result = if self.mode == TimeInterpolation::Cubic {
-                if !points.windows(2).all(|w| w[0].0 < w[1].0) {
-                    return Err(invalid(
-                        path,
-                        "cubic time samples must be strictly increasing",
-                    ));
-                }
-                sample(&points, time, FrequencyInterpolation::Cubic, false, &[])
+                sample(&points, time, Curve::Cubic, false, &[])
             } else {
-                let spline = &self.splines[key];
+                let spline = spline.expect("spline coefficients");
                 let left = lower * receptors * channels + index;
                 let right = left + receptors * channels;
-                points[0].2 = spline.phases[left];
-                points[1].2 = spline.phases[right];
                 sample(
                     &points[..2],
                     time,
-                    FrequencyInterpolation::Spline,
+                    Curve::Spline,
                     false,
                     &[spline.second[left], spline.second[right]],
                 )
