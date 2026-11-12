@@ -695,9 +695,12 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     if a and b:
         report["spectral_windows"] = {}
         report["differences"].extend(compare_frequency_frames(t["tb"], a, b, report["spectral_windows"]))
-        if "uvw_tolerance_m" in case:
+    if "uvw_tolerance_m" in case:
+        if a and b:
             report["geometry"], failures = compare_geometry(t["tb"], a, b, uvw_limit)
             report["differences"].extend(failures)
+        else:
+            differ("MAIN: strict UVW comparison requires both MeasurementSets")
     compare = os.path.join(out, "compare", case["name"])
     shutil.rmtree(compare, ignore_errors=True)
     links = os.path.join(compare, "casars")

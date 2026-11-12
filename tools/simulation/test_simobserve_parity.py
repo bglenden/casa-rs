@@ -199,7 +199,7 @@ class GeometryTables(SpectralWindows):
 
 
 class StrictGeometryTest(unittest.TestCase):
-    def compare(self, *, time_delta=False, uvw=0.0, uvw_delta=0.0, caller_limit=1e-3):
+    def compare(self, *, time_delta=False, uvw=0.0, uvw_delta=0.0, caller_limit=1e-3, write_ms=True):
         # Exercise the actual task comparator, replacing only CASA's I/O and
         # the external legacy-comparator process (which reports success).
         with tempfile.TemporaryDirectory() as out:
@@ -210,7 +210,8 @@ class StrictGeometryTest(unittest.TestCase):
                 project.mkdir()
                 (project / "x.ptg.txt").write_text("pointing\n")
                 ms = project / "x.ms"
-                ms.mkdir()
+                if write_ms:
+                    ms.mkdir()
                 paths.append(str(project))
                 time = np.nextafter(5e9, np.inf) if time_delta and side == "casars" else 5e9
                 coordinate = uvw + uvw_delta if side == "casars" else uvw
@@ -224,6 +225,9 @@ class StrictGeometryTest(unittest.TestCase):
     def test_equal_time_is_required_even_for_one_ulp(self):
         self.assertEqual(self.compare()["differences"], [])
         self.assertTrue(any("TIME" in line for line in self.compare(time_delta=True)["differences"]))
+
+    def test_strict_geometry_requires_both_measurement_sets(self):
+        self.assertTrue(self.compare(write_ms=False)["differences"])
 
     def test_one_micrometre_is_an_absolute_cap_even_with_a_looser_caller(self):
         self.assertEqual(self.compare(uvw_delta=1e-6)["differences"], [])
