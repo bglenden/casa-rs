@@ -62,7 +62,7 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use super::components;
 use super::data::{DataBatch, DataStage};
 use super::geometry::{ArrayGeometry, RowGeometry};
-use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseContext, NoiseJob};
+use super::pipeline::{MINIMUM_NOISE_JOB_ROWS, NoiseJob};
 use super::resources::{NoiseScales, admit_field_grids};
 use super::{cell_shape, noise_varies_by_row, write_error};
 use crate::session::SessionResources;
@@ -319,7 +319,7 @@ impl Patch<'_> {
             )?;
         }
         let runs = &self.runs;
-        let (session, team) = (self.session, self.team);
+        let team = self.team;
         let geometry = &self.reader.geometry;
         if let Some(stage) = &mut self.prediction {
             stage.apply(

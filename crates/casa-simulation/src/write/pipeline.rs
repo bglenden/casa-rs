@@ -491,6 +491,7 @@ pub(super) fn noise_jobs<'a>(
         let corruption = plan.has_jones_for_scan(scan).then(|| {
             let window = context.scans[scan].spectral_window_id;
             Corruption {
+                plan,
                 scan,
                 window,
                 receptors: &receptors[window],
