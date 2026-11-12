@@ -719,10 +719,6 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
     assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
     with pytest.raises(NotImplementedError, match="OTF=False"):
         sm.setnoise(simplenoise="0.1Jy", OTF=False)
-    # CASA writes a Tsys mode's T term to <table>.T.cal; casa-rs not yet.
-    for mode in ["tsys-manual", "tsys-atm"]:
-        with pytest.raises(NotImplementedError, match=r"noisy\.T\.cal"):
-            sm.setnoise(mode=mode, table="noisy.cal")
     caplog.clear()
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.setnoise(mode="tsys-manual", pwv="200mm") is False
@@ -747,6 +743,25 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
     sm.close()
     data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
     assert np.all(data == 0)
+
+
+@needs_measures
+@pytest.mark.parametrize("mode, vis_cal", [("tsys-manual", "T Jones"), ("tsys-atm", "Tf Jones")])
+def test_setnoise_writes_its_tsys_table_after_reset(tmp_path: Path, mode: str, vis_cal: str) -> None:
+    sm = simulator()
+    assert sm.open(str(tmp_path / "data.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setnoise(mode=mode, table=str(tmp_path / "noise_.cal"), pwv="1mm")
+    assert sm.reset()
+    assert sm.close()
+    table = Table.open(tmp_path / "noise.T.cal")
+    assert table.keywords["VisCal"] == vis_cal
+    assert table.row_count == 3 * 4
+    gains = np.asarray(table.get_column("CPARAM"))
+    assert gains.size == 3 * 4 * (1 if mode == "tsys-manual" else 4)
+    assert np.all(np.isfinite(gains)) and np.all(gains.real > 0)
+    assert np.all(gains.imag == 0)
 
 
 def tsys_atm_data(path: Path, **site: Any) -> np.ndarray:

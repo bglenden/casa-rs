@@ -104,6 +104,8 @@ mod heap;
 mod jones;
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
+#[path = "session_memory/noise_tables.rs"]
+mod noise_tables;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;

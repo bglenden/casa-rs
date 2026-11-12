@@ -55,9 +55,9 @@ pub struct NoiseSpec {
     pub mode: String,
     /// `simplenoise`: σ of each real and imaginary draw, Jy.
     pub simple_noise_jy: f64,
-    /// `table`: the calibration table's name. CASA writes no table for a
-    /// `simplenoise` term set with `OTF`; for the Tsys modes it writes the
-    /// `T` term's to `<table>.T.cal`, which casa-rs does not yet.
+    /// `table`: the calibration-table root. Tsys modes write T/Tf noise-scale
+    /// parameters to `<table>.T.cal` at close (CASA writes at `setnoise`).
+    /// A `simplenoise` term with `OTF=True` writes no table.
     pub table: String,
     /// `pwv`, mm: in the Tsys modes, a value above 100 mm is refused, as
     /// CASA refuses it. `tsys-atm` sees the sky through this column of
@@ -69,9 +69,9 @@ pub struct NoiseSpec {
     /// `tsys-atm`'s site and atmosphere (`pground`, `relhum`, `altitude`,
     /// `waterheight`); the ground's temperature is `tsys`'s `tground`.
     pub atmosphere: AtmosphereSpec,
-    /// `OTF`: corrupt on the fly. CASA writes no calibration table then,
-    /// whatever `table` says; without it, it writes one, which casa-rs does
-    /// not yet.
+    /// `OTF`: generate additive noise on the fly. `False`, which saves the
+    /// additive A Noise table, is not yet implemented. This does not control
+    /// the separate Tsys noise-scale table.
     pub on_the_fly: bool,
 }
 
@@ -149,8 +149,8 @@ impl Simulator {
     ///
     /// - A mode CASA does not know: CASA logs "unsupported mode … in
     ///   setnoise()" and returns `False`.
-    /// - `OTF=False`: not yet implemented; nor is a Tsys mode with a
-    ///   `table`, which CASA writes.
+    /// - `OTF=False`: not yet implemented. Tsys modes write an optional
+    ///   table at close, using the model snapshot at this call.
     /// - No rows observed yet: CASA cannot size the term on an empty
     ///   MeasurementSet and returns `False`, adding no term.
     /// - A Tsys mode with a water vapour above 100 mm, or a zenith Tsys at
@@ -204,6 +204,7 @@ impl Simulator {
                 NoiseLevel::TsysAtm(Arc::new(self.tsys_atm(spec, water_vapour_mm)?))
             }
         };
+        let table = self.prepare_noise_table(&level, &spec.table)?;
         tracing::info!("Creating A NOISE Calibration structure for data corruption.");
         match mode {
             NoiseMode::Simple => {}
@@ -219,6 +220,10 @@ impl Simulator {
             level,
             applications: 0,
         });
+        if let Some(table) = table {
+            self.noise_tables.retain(|old| old.path != table.path);
+            self.noise_tables.push(table);
+        }
         Ok(())
     }
 
@@ -431,20 +436,13 @@ fn check_tsys_spec(spec: &NoiseSpec) -> SimulatorResult<()> {
             spec.water_vapour_mm
         )));
     }
-    if let Some(table) = calibration_table_root(&spec.table) {
-        return Err(SimulatorError::not_yet_implemented(format!(
-            "setnoise(mode='{}', table=...), which writes the T calibration table {table}.T.cal, \
-             is not yet implemented in casa-rs (#1053)",
-            spec.mode
-        )));
-    }
     Ok(())
 }
 
 /// The root of the calibration table `setnoise` writes for `table`, as
 /// `Simulator::setnoise` trims it (blanks, then a trailing `cal`, `.` and
 /// `_`), or `None` when it writes none (a root of at most one character).
-fn calibration_table_root(table: &str) -> Option<&str> {
+pub(super) fn calibration_table_root(table: &str) -> Option<&str> {
     let mut root = table.trim();
     if root.len() > 3 {
         root = root.strip_suffix("cal").unwrap_or(root);

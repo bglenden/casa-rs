@@ -40,6 +40,7 @@ pub mod fields;
 mod from_ms;
 mod gains;
 mod mosaic;
+mod noise_tables;
 pub mod observe;
 pub(crate) mod plan;
 pub(crate) mod prediction;
@@ -152,6 +153,8 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
+    /// Parameter snapshots for the optional Tsys calibration tables.
+    noise_tables: Vec<noise_tables::NoiseTable>,
     /// The antenna-based terms `setgain`, `setleakage` and `setapply` set,
     /// in the order they were set, until `reset`.
     jones_terms: Vec<apply::JonesSource>,
@@ -209,6 +212,7 @@ impl Simulator {
             scans: Vec::new(),
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
+            noise_tables: Vec::new(),
             jones_terms: Vec::new(),
             jones_tables: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
@@ -546,7 +550,8 @@ impl Simulator {
         } else {
             write::write_measurement_set(&self)?;
         }
-        self.write_jones_tables()
+        self.write_jones_tables()?;
+        self.write_noise_tables()
     }
 
     /// `direction` in J2000, as `[ra, dec]` radians with the longitude in
