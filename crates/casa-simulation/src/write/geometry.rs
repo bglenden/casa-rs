@@ -129,7 +129,7 @@ impl<'a> ArrayGeometry<'a> {
         // At the pointing direction, as `NewMSSimulator` computes a moved
         // pointing's UVW, though its DATA is phased on the field (#884).
         let frame = UvwFrame::new(
-            scan.scan.pointing_rad,
+            self.feed_direction(scan, &epoch)?,
             epoch.clone(),
             &self.observatory,
             self.measures.clone(),
@@ -224,6 +224,36 @@ impl<'a> ArrayGeometry<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Rotate each feed's fixed antenna-frame offset at the current epoch.
+    /// Recomputing from that fixed offset corrects CASA's accidental repeated
+    /// rotation of the previous integration's offset.
+    fn feed_direction(&self, scan: PlannedScan<'_>, epoch: &MEpoch) -> SimulatorResult<[f64; 2]> {
+        let [mut x, mut y] = scan.rows.feed_offset_rad;
+        if x == 0. && y == 0. {
+            return Ok(scan.scan.pointing_rad);
+        }
+        let direction = MDirection::from_angles(
+            scan.scan.pointing_rad[0],
+            scan.scan.pointing_rad[1],
+            DirectionRef::J2000,
+        );
+        if matches!(self.antennas[0].mount.as_str(), "alt-az" | "ALT-AZ") {
+            let frame = MeasFrame::new()
+                .with_epoch(epoch.clone())
+                .with_position(self.positions[0].clone())
+                .with_measures(self.measures.clone());
+            let angle = direction
+                .parallactic_angle(&frame)
+                .map_err(|e| SimulatorError::raised(format!("feed rotation: {e}")))?;
+            let (s, c) = angle.sin_cos();
+            (x, y) = (c * x - s * y, s * x + c * y);
+        }
+        let shifted = casa_types::measures::ephemeris::offset_true_angle(&direction, [-x, y])
+            .map_err(|e| SimulatorError::raised(format!("feed pointing: {e}")))?;
+        let (longitude, latitude) = shifted.as_angles();
+        Ok([longitude, latitude])
     }
 
     /// The airmass ([`airmass`]) of J2000 `direction_rad` at each of the

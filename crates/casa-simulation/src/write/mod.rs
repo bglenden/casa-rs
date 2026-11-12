@@ -429,7 +429,8 @@ impl MainWriter {
                 "OBSERVATION_ID" => ScalarValue::Int32(planned.observation_id),
                 "SCAN_NUMBER" => ScalarValue::Int32(scan.scan_number),
                 "STATE_ID" => ScalarValue::Int32(planned.state_id as i32),
-                // ARRAY_ID, FEED1, FEED2 and PROCESSOR_ID.
+                "FEED1" | "FEED2" => ScalarValue::Int32(planned.feed_id),
+                // ARRAY_ID and PROCESSOR_ID.
                 _ => ScalarValue::Int32(0),
             };
             session

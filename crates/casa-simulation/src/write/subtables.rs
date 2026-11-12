@@ -223,7 +223,18 @@ fn write_feeds(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult<
                 vec![
                     ("ANTENNA_ID", scalar_i32(feed.antenna_id)),
                     ("BEAM_ID", scalar_i32(-1)),
-                    ("BEAM_OFFSET", f64_array(&[2, 2], vec![0.0; 4])),
+                    (
+                        "BEAM_OFFSET",
+                        f64_array(
+                            &[2, 2],
+                            vec![
+                                feed.offset_rad[0],
+                                feed.offset_rad[0],
+                                feed.offset_rad[1],
+                                feed.offset_rad[1],
+                            ],
+                        ),
+                    ),
                     ("FEED_ID", scalar_i32(feed.feed_id)),
                     ("INTERVAL", scalar_f64(1e30)),
                     ("NUM_RECEPTORS", scalar_i32(2)),
