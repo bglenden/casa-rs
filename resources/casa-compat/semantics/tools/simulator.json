@@ -88,7 +88,8 @@
     "observe-20261103",
     "scripts",
     "refusals",
-    "uvw-sidereal-20261112"
+    "uvw-sidereal-20261112",
+    "uvw-long-baselines-20261112"
    ],
    "issue": 1053
   },
@@ -100,7 +101,8 @@
     "binding-tests",
     "observe-20261103",
     "refusals",
-    "uvw-sidereal-20261112"
+    "uvw-sidereal-20261112",
+    "uvw-long-baselines-20261112"
    ],
    "issue": 1053
   },
@@ -1363,6 +1365,24 @@
    "source_revision": "68f863c1d280a9145b5fa507291e60cde4030e71",
    "command": "CASAPY tools/simulation/sidereal_oracle.py --out crates/casa-types/tests/data/casa_simulation_sidereal.json; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
    "receipt": "resources/casa-compat/evidence/simulation-uvw-sidereal-20261112.json"
+  },
+  "uvw-long-baselines-20261112": {
+   "kind": "Independent CASA baseline rotation matrices and paired full MeasurementSets",
+   "state": "passed",
+   "result": "All 20 outcomes agree: 19 successful simulations and one expected refusal. Three extended-array cases require exactly equal stored TIME and UVW <=1e-6 m absolutely: VLA 2017 5.836e-7 m, VLA 2025 7.266e-7 m, ALMA 2017 1.978e-7 m. Maximum DATA NRMS across all nineteen successes is 1.0442e-6 under 1e-3. Six independent aberration matrix residuals are <=1.352e-13 (2e-12 limit).",
+   "scope": "Extended VLA/ALMA arrays and a fresh replay of seventeen compact scheduling/model/frame/pointing outcomes. All tables, images, pointing files and frequency metadata compared. One shared-helper review resolved two acceptance-gate findings with regressions; no re-review. Other modes remain open.",
+   "links": [
+    "crates/casa-types/src/measures/baseline.rs",
+    "crates/casa-types/tests/data/casa_baseline_aberration.json",
+    "tools/simulation/baseline_aberration_oracle.py",
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d7d5aa380ac1f7d0ec3ea87c623fff9ac7fbaa8b",
+   "source_revision": "d7d5aa380ac1f7d0ec3ea87c623fff9ac7fbaa8b",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --only uvw_long_vla_2017 uvw_long_vla_2025 uvw_long_alma_2017; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simulation-uvw-long-baselines-20261112.json"
   }
  }
 }
