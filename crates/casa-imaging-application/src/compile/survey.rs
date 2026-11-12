@@ -6,7 +6,8 @@
 //!
 //! The traversal reads each partition's selected fields' times and, when a
 //! UV-distance interval or a W-projecting gridder needs them, the samples'
-//! UVW; nothing else. A time's field comes with the batch, and a
+//! UVW. AW rotation also identifies each buffer with an unflagged
+//! cross-correlation. A time's field comes with the batch, and a
 //! partition's samples share one spectral window and observing session, so
 //! the survey learns the selected fields, observations, times and windows
 //! from the batches' coordinates. The epochs (time, field) of each window's
@@ -78,6 +79,8 @@ pub(super) struct Epoch {
     /// Seconds since MJD 0 in the observation's time scale.
     pub(super) time_mjd_seconds: f64,
     pub(super) field_id: i32,
+    /// The buffer has a cross-correlation which passes CASA's row-validity check.
+    pub(super) has_unflagged_cross: bool,
 }
 
 /// The earliest selected cross-correlation sample not wholly flagged: what
@@ -169,6 +172,8 @@ pub(super) struct SurveyPlan<'a> {
     pub(super) w_range: bool,
     /// Whether analytic PB selection needs the antennas of actual rows.
     pub(super) track_pb_antennas: bool,
+    /// Whether AW rotation needs the epochs CASA accepts into its major cycle.
+    pub(super) track_rotation_epochs: bool,
     /// Whether native AW needs its first cross-correlation sample.
     pub(super) first_cross: bool,
 }
@@ -302,7 +307,7 @@ impl SurveyPlan<'_> {
             data_group: self.candidates.data_group.clone(),
             roles: Roles {
                 values: false,
-                flags,
+                flags: flags || (self.track_rotation_epochs && self.stored_padding()),
                 weights: !flags && self.stored_padding(),
                 // A partition of several arrays tells its rows apart
                 // sample by sample, padding by its NaN UVW.
@@ -473,7 +478,14 @@ pub(super) fn survey(
                 .total_cmp(&b.time_mjd_seconds)
                 .then(a.field_id.cmp(&b.field_id))
         });
-        epochs.dedup();
+        epochs.dedup_by(|later, kept| {
+            if later.time_mjd_seconds == kept.time_mjd_seconds && later.field_id == kept.field_id {
+                kept.has_unflagged_cross |= later.has_unflagged_cross;
+                true
+            } else {
+                false
+            }
+        });
     }
     facts.epochs.retain(|_, epochs| !epochs.is_empty());
     let mut spectral_windows = spectral_windows;
@@ -546,8 +558,11 @@ fn survey_partition(
         || plan.times_tested();
     // A partition of several arrays reads each selected time's rows.
     let array = plan.partition_array(candidate);
-    let per_sample =
-        plan.reads_uvw() || plan.track_pb_antennas || plan.stored_padding() || array.is_none();
+    let per_sample = plan.reads_uvw()
+        || plan.track_pb_antennas
+        || plan.track_rotation_epochs
+        || plan.stored_padding()
+        || array.is_none();
     let counted = tested || plan.stored_padding() || array.is_none();
     let description = plan.description(candidate);
     let (mut rows, mut arrays) = (Vec::new(), Vec::new());
@@ -572,7 +587,7 @@ fn survey_partition(
             let find_first = plan.image_row_epoch
                 && plan.msv2.is_some()
                 && image_first_row.is_none_or(|(row, _)| row != 0);
-            let (selected, first_row) = if per_sample {
+            let (selected, first_row, has_unflagged_cross) = if per_sample {
                 // UVW read only to tell rows apart leaves the W range alone.
                 let mut unused = WRange::EMPTY;
                 let w = if plan.reads_uvw() {
@@ -581,7 +596,7 @@ fn survey_partition(
                     &mut unused
                 };
                 rows.clear();
-                let (held, first_row) = observe_time(
+                let (held, first_row, has_unflagged_cross) = observe_time(
                     plan,
                     candidate,
                     (&batch, time),
@@ -591,7 +606,7 @@ fn survey_partition(
                     find_first,
                 )?;
                 samples += if counted { held } else { 0 };
-                (held > 0, first_row)
+                (held > 0, first_row, has_unflagged_cross)
             } else {
                 let first_row = if find_first {
                     plan.msv2
@@ -600,7 +615,7 @@ fn survey_partition(
                 } else {
                     None
                 };
-                (true, first_row)
+                (true, first_row, false)
             };
             if !selected {
                 continue;
@@ -640,6 +655,7 @@ fn survey_partition(
             epochs.push(Epoch {
                 time_mjd_seconds,
                 field_id,
+                has_unflagged_cross,
             });
         }
     }
@@ -667,11 +683,12 @@ fn observe_time(
     mut rows: Option<&mut Vec<usize>>,
     pb_antennas: &mut [bool],
     find_first: bool,
-) -> Result<(u64, Option<u32>), PrepareError> {
+) -> Result<(u64, Option<u32>, bool), PrepareError> {
     let uv = plan.row_selection.uv_distances();
     let per_time = batch.samples_per_time();
     let mut held = 0;
     let mut first_row = None;
+    let mut has_unflagged_cross = false;
     for sample in time * per_time..(time + 1) * per_time {
         let baseline = batch.baselines[sample % per_time];
         if !plan.baseline_holds(baseline) {
@@ -712,6 +729,12 @@ fn observe_time(
                 first_row = Some(first_row.map_or(row, |previous: u32| previous.min(row)));
             }
         }
+        // The synthesis major cycle skips a buffer with no valid cross-row
+        // before AW can inspect its PA (SynthesisUtilMethods::validate).
+        if plan.track_rotation_epochs && !has_unflagged_cross && !baseline.is_auto() {
+            let epoch = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
+            has_unflagged_cross = unflagged_row(plan, candidate, batch, sample, epoch, baseline)?;
+        }
         // Standard gridding omits autocorrelations, so they cannot choose
         // a dish model. Other selection predicates have already been tested.
         if !pb_antennas.is_empty() && !baseline.is_auto() {
@@ -720,7 +743,7 @@ fn observe_time(
         }
         held += 1;
     }
-    Ok((held, first_row))
+    Ok((held, first_row, has_unflagged_cross))
 }
 
 /// Whether sample `sample` of `batch` is padding its store holds: every
@@ -817,21 +840,7 @@ fn first_cross_sample(
                 continue;
             }
             let time_mjd_seconds = batch.time.seconds_since(time, origin);
-            let unflagged = match plan.msv2 {
-                Some(ms) => {
-                    ms.row_flagged(candidate.id, time_mjd_seconds, baseline)
-                        .map_err(PrepareError::Opening)?
-                        == Some(false)
-                }
-                None => !batch
-                    .group
-                    .flags
-                    .expect("the pass reads an MSv4's flags")
-                    .slice(ndarray::s![sample, .., ..])
-                    .iter()
-                    .all(|flag| *flag),
-            };
-            if !unflagged {
+            if !unflagged_row(plan, candidate, &batch, sample, time_mjd_seconds, baseline)? {
                 continue;
             }
             return Ok(Some(FirstCrossSample {
@@ -843,6 +852,31 @@ fn first_cross_sample(
         }
     }
     Ok(None)
+}
+
+/// CASA tests FLAG_ROW independently of channel flags and weights. MSv4
+/// folds FLAG_ROW into FLAG, so it uses the represented sample flags.
+fn unflagged_row(
+    plan: &SurveyPlan<'_>,
+    candidate: &Candidate,
+    batch: &VisibilityBatch<'_>,
+    sample: usize,
+    time_mjd_seconds: f64,
+    baseline: OrderedBaseline,
+) -> Result<bool, PrepareError> {
+    match plan.msv2 {
+        Some(ms) => Ok(ms
+            .row_flagged(candidate.id, time_mjd_seconds, baseline)
+            .map_err(PrepareError::Opening)?
+            == Some(false)),
+        None => Ok(!batch
+            .group
+            .flags
+            .expect("the pass reads an MSv4's flags")
+            .slice(ndarray::s![sample, .., ..])
+            .iter()
+            .all(|flag| *flag)),
+    }
 }
 
 #[cfg(test)]
@@ -931,6 +965,7 @@ mod tests {
                     image_row_epoch: false,
                     w_range: false,
                     track_pb_antennas,
+                    track_rotation_epochs: false,
                     first_cross: false,
                 },
                 super::super::selection::spectral_windows(catalogue, [window]),
@@ -1017,6 +1052,7 @@ mod tests {
                 image_row_epoch: false,
                 w_range: true,
                 track_pb_antennas: false,
+                track_rotation_epochs: false,
                 first_cross: false,
             };
             let mut facts = Facts {
@@ -1050,10 +1086,10 @@ mod tests {
         }
     }
 
-    /// Native AW's reference time on `ms_trial.ms` cut to two
-    /// cross-correlation rows of one baseline an hour apart, each row's
-    /// (`FLAG_ROW`, every `FLAG` set) as `rows` gives them.
-    fn first_cross_time(rows: [(bool, bool); 2]) -> Option<f64> {
+    /// Native AW's reference time and imported AW's valid rotation epochs
+    /// on `ms_trial.ms` cut to two rows an hour apart. Each row specifies
+    /// (`FLAG_ROW`, every `FLAG` set, autocorrelation).
+    fn aw_cross_times(rows: [(bool, bool, bool); 2]) -> (Option<f64>, Vec<f64>) {
         let root = tempfile::tempdir().expect("a temporary directory");
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
@@ -1094,7 +1130,7 @@ mod tests {
                 .set(value)
                 .expect("set");
         }
-        for (row, (row_flag, all_flagged)) in rows.into_iter().enumerate() {
+        for (row, (row_flag, all_flagged, auto)) in rows.into_iter().enumerate() {
             let Value::Array(ArrayValue::Bool(mut flags)) = ms
                 .main_table()
                 .column_accessor("FLAG")
@@ -1111,7 +1147,10 @@ mod tests {
                 ("FLAG", Value::Array(ArrayValue::Bool(flags))),
                 ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(row_flag))),
                 ("ANTENNA1", Value::Scalar(ScalarValue::Int32(0))),
-                ("ANTENNA2", Value::Scalar(ScalarValue::Int32(1))),
+                (
+                    "ANTENNA2",
+                    Value::Scalar(ScalarValue::Int32(i32::from(!auto))),
+                ),
                 (
                     "TIME",
                     Value::Scalar(ScalarValue::Float64(T0 + row as f64 * 3600.0)),
@@ -1149,12 +1188,33 @@ mod tests {
             image_row_epoch: false,
             w_range: false,
             track_pb_antennas: false,
+            track_rotation_epochs: true,
             first_cross: true,
         };
         let request = plan.request(&candidate, entry, false, 1 << 20);
-        first_cross_sample(&plan, &candidate, &request, &mut BatchBuffers::default())
+        let mut buffers = BatchBuffers::default();
+        let first = first_cross_sample(&plan, &candidate, &request, &mut buffers)
             .expect("the pass reads")
-            .map(|sample| sample.time_mjd_seconds)
+            .map(|sample| sample.time_mjd_seconds);
+        let mut facts = Facts {
+            fields: BTreeSet::new(),
+            first_visibility: None,
+            earliest_field_id: None,
+            observation_ids: BTreeSet::new(),
+            pb_antennas: Vec::new(),
+            image_first_row: None,
+            time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+            w: WRange::EMPTY,
+            epochs: [(candidate.spectral_window, Vec::new())].into(),
+        };
+        survey_partition(&plan, &candidate, &request, &mut buffers, &mut facts)
+            .expect("the survey reads");
+        let times = facts.epochs[&candidate.spectral_window]
+            .iter()
+            .filter(|epoch| epoch.has_unflagged_cross)
+            .map(|epoch| epoch.time_mjd_seconds)
+            .collect();
+        (first, times)
     }
 
     /// The samples `observation`'s survey selects, with no selection.
@@ -1174,6 +1234,7 @@ mod tests {
             image_row_epoch: false,
             w_range: false,
             track_pb_antennas: false,
+            track_rotation_epochs: false,
             first_cross: false,
         };
         let catalogue = observation.catalogue();
@@ -1276,6 +1337,7 @@ mod tests {
             image_row_epoch: false,
             w_range: false,
             track_pb_antennas: false,
+            track_rotation_epochs: false,
             first_cross: false,
         };
         let catalogue = observation.catalogue();
@@ -1374,16 +1436,33 @@ mod tests {
 
     #[test]
     fn a_row_not_row_flagged_counts_however_its_cells_are_flagged() {
-        assert_eq!(first_cross_time([(false, true), (false, false)]), Some(T0));
-        assert_eq!(first_cross_time([(false, true), (false, true)]), Some(T0));
+        assert_eq!(
+            aw_cross_times([(false, true, false), (false, false, false)]).0,
+            Some(T0)
+        );
+        assert_eq!(
+            aw_cross_times([(false, true, false), (false, true, false)]).0,
+            Some(T0)
+        );
     }
 
     #[test]
     fn a_row_flagged_row_does_not_count_however_its_cells_are_flagged() {
         assert_eq!(
-            first_cross_time([(true, false), (false, false)]),
+            aw_cross_times([(true, false, false), (false, false, false)]).0,
             Some(T0 + 3600.0)
         );
-        assert_eq!(first_cross_time([(true, false), (true, false)]), None);
+        assert_eq!(
+            aw_cross_times([(true, false, false), (true, false, false)]).0,
+            None
+        );
+    }
+
+    #[test]
+    fn rotation_epochs_exclude_flagged_and_auto_only_visibility_buffers() {
+        let both_cross = aw_cross_times([(true, false, false), (false, true, false)]);
+        assert_eq!(both_cross.1, [T0 + 3600.0]);
+        let earlier_auto = aw_cross_times([(false, false, true), (false, true, false)]);
+        assert_eq!(earlier_auto.1, [T0 + 3600.0]);
     }
 }

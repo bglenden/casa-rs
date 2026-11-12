@@ -471,6 +471,7 @@ fn survey_observation(
             && matches!(request.gridder, Gridder::Standard { .. })
             && (request.write_pb || request.pbcor)
             && instrument::mixed_alma_dish_classes(catalogue),
+        track_rotation_epochs: matches!(&request.gridder, Gridder::Awproject(aw) if aw.rotatepastep != 360.0),
         first_cross: matches!(
             &request.gridder,
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
@@ -1176,7 +1177,7 @@ fn aw_rotation(
         },
     )?;
     let mut samples = Vec::with_capacity(epochs.len());
-    for epoch in epochs {
+    for epoch in epochs.iter().filter(|epoch| epoch.has_unflagged_cross) {
         let field = usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
         let pa = surveyed
             .engine

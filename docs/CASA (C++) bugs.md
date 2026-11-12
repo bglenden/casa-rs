@@ -536,8 +536,10 @@ Both paths rotate to the same final PA. The default 360-degree control
 has identical arrays in both selections.
 
 Casa-rs uses the same strict trigger and cubic interpolation, starting
-from the saved cell at each epoch. Its two selections at the same final
-PA have identical arrays and masks. The independent CASA one-integration
+from the saved cell at each epoch. As in CASA's major cycle, an
+integration with no unflagged cross-correlation cannot advance the
+rotation. The two selections at the same final PA have identical arrays
+and masks in casa-rs. The independent CASA one-integration
 control and the full field match all seven products and masks under the
 existing limits. The largest full-field NRMS is 6.737e-5.
 
