@@ -102,7 +102,7 @@ impl ParameterSession {
             context_patch: ResolutionPatch::default(),
             override_patch: ResolutionPatch::default(),
             states: BTreeMap::new(),
-            diagnostics: resolved.diagnostics,
+            diagnostics: Vec::new(),
             dirty: false,
         };
         session.recompute()?;
@@ -349,7 +349,6 @@ mod tests {
                 summary: "Test".into(),
                 provider_family: "test".into(),
                 casa_task: None,
-                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![SurfaceParameterBinding {
                     name: "niter".into(),
@@ -374,12 +373,10 @@ mod tests {
                             hidden: false,
                         },
                     },
-                    aliases: Vec::new(),
                     reviewed_homonym: None,
                     unimplemented: None,
                     unimplemented_forms: None,
                 }],
-                migrations: Vec::new(),
             }),
             catalog: ParameterCatalog {
                 schema_version: 1,

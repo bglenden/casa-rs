@@ -150,7 +150,7 @@ fn describe_concept(
 }
 
 /// Validate a profile's text, against `bundle` when given, else against the
-/// surface the profile names; return the summary line and its warnings.
+/// surface the profile names; return the summary line.
 pub fn validate_profile_text(
     source: &str,
     bundle: Option<&SurfaceContractBundle>,
@@ -158,7 +158,7 @@ pub fn validate_profile_text(
     let profile = parse_profile(source).map_err(format_profile_error)?;
     let named;
     let bundle = match bundle {
-        Some(bundle) if bundle.surface.answers_to(&profile.header.surface) => bundle,
+        Some(bundle) if bundle.surface.id() == profile.header.surface => bundle,
         Some(bundle) => {
             return Err(format!(
                 "the profile is for {:?}, not {:?}",
@@ -173,16 +173,13 @@ pub fn validate_profile_text(
     };
     let resolved = resolve_profile(&profile, bundle).map_err(format_profile_error)?;
     let count = resolved.explicit_overrides.len();
-    let mut text = format!(
+    let text = format!(
         "valid {} {} profile (contract {}, {count} explicit override{})\n",
         profile.header.kind,
         profile.header.surface,
         profile.header.contract,
         if count == 1 { "" } else { "s" }
     );
-    for diagnostic in resolved.diagnostics {
-        text.push_str(&format!("warning: {}\n", diagnostic.message));
-    }
     Ok(text)
 }
 

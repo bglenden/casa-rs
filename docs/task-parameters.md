@@ -29,7 +29,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 30
+contract = 41
 
 [parameters]
 vis = "data/target.ms"
@@ -55,24 +55,11 @@ duplicate, inactive, or wrong-surface parameters are errors with source
 locations where possible. A compound value is replaced as one value; profiles
 are not recursive merge patches.
 
-A surface retains older profiles only when its canonical definition publishes
-an explicit ordered migration chain; other stale contracts and historical
-aliases are rejected rather than silently interpreted. The imager surface
-became CASA's `tclean` at contract 29: a profile naming surface `imager` at
-contract 28, its last, migrates. Its casa-rs names move to
-CASA's (`phasecenter_field` to `phasecenter`, `mask_box` and `mask_image` to
-`mask`, `minor_cycle_length` to `cycleniter`, and `dirty_only = true` to
-`niter = 0`), its values to CASA's forms, and an omitted value whose default
-changed (`imsize`, `cell`, `cycleniter`, `nterms`) takes tclean's with a
-warning. Older imager contracts are refused.
-
-Contract 30 changes casa-rs's keyword-only `write_pb` extra to default to
-`True`, so an ordinary `tclean` call writes the `.pb` product CASA writes.
-This changes none of CASA's 92 parameters or their defaults; `pbcor=False`
-still leaves the restored image uncorrected. A contract-29 profile with
-`write_pb` omitted adopts the new default with a warning. An explicit
-`write_pb=False` remains an opt-out. The owner approved this change on
-2026-10-31 (#980).
+Use the version emitted by the current executable's profile template.
+Older and newer profile versions are rejected with an error. To use an old
+file, start from the current template and copy the values you still need,
+using current parameter names. An omitted optional value uses the current
+default.
 
 Relative dataset and product paths resolve against the explicit workspace or
 the process current directory. They do not resolve relative to the profile file

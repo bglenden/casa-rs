@@ -2,7 +2,7 @@
 //! The tool surfaces: each CASA tool's methods with their parameters, value
 //! kinds and the installed CASA binding's effective defaults, and the
 //! object-surface contract, Python projection and annotations built from
-//! them (ADR-0019).
+//! them (ADR-0017).
 //!
 //! Each tool keeps one [`ToolSurface`] table. The pyo3 declarations carry the
 //! same names and defaults (`signature` and `text_signature` must be
@@ -213,7 +213,7 @@ pub(crate) struct ToolSurface {
     /// The Python module that exposes the class.
     pub(crate) module: &'static str,
     /// The constructor's parameters: keyword-only casa-rs controls
-    /// (ADR-0019 item 3); CASA's tool constructors take none.
+    /// (ADR-0017); CASA's tool constructors take none.
     pub(crate) constructor: &'static [Parameter],
     /// Every public method of CASA's class.
     pub(crate) methods: &'static [Method],

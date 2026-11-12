@@ -119,7 +119,7 @@ fn system_now() -> MEpoch {
 }
 
 // A session moves between threads, so the Python tool can release the GIL
-// while it writes (ADR-0019).
+// while it writes (ADR-0017).
 const _: () = {
     const fn assert_send<T: Send>() {}
     assert_send::<Simulator>();

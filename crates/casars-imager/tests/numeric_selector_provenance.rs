@@ -111,7 +111,7 @@ fn current_profiles_and_provider_projection_preserve_selector_text() {
 }
 
 #[test]
-fn direct_current_values_preserve_selector_text_without_profile_migration() {
+fn direct_current_values_preserve_selector_text() {
     for name in SELECTORS {
         for &text in TEXTS {
             let mut values = json!({"vis":"unused.ms", "imagename":"unused", "cell":"1arcsec"});
@@ -120,37 +120,6 @@ fn direct_current_values_preserve_selector_text_without_profile_migration() {
                 resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
             assert_plain(&parameters.0, name, text);
             assert_request(&request, name, text);
-        }
-    }
-}
-
-#[test]
-fn supported_old_profiles_migrate_only_exact_typed_none_before_exact_text() {
-    for version in 28..=37 {
-        for surface in ["tclean", "imager"] {
-            for name in SELECTORS {
-                assert_transports(&profile_session(version, surface, name, None), name, "");
-                for &text in TEXTS {
-                    // Each selector's "none" was the stored absence until the
-                    // contract that kept its text exact: 33 for scan and
-                    // observation, 34 for antenna and timerange.
-                    let exact_from = if matches!(name, "scan" | "observation") {
-                        33
-                    } else {
-                        34
-                    };
-                    let expected = if text == "none" && version < exact_from {
-                        ""
-                    } else {
-                        text
-                    };
-                    assert_transports(
-                        &profile_session(version, surface, name, Some(text)),
-                        name,
-                        expected,
-                    );
-                }
-            }
         }
     }
 }

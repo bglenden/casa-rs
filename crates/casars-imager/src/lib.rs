@@ -16,7 +16,6 @@
 mod casa_return;
 mod history;
 pub mod interrupt;
-mod schema;
 mod task_contract;
 
 use std::{path::PathBuf, time::Instant};
@@ -29,7 +28,6 @@ use casa_task_runtime::{
 use serde_json::{Map, Value};
 
 pub use casa_return::{RunReturn, tclean_record};
-pub use schema::command_schema;
 pub use task_contract::*;
 
 fn imager_surface() -> Result<SurfaceContractBundle, String> {

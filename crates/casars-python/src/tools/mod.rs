@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA tools as pyo3 classes, exposed as `casars.tools` (ADR-0019), and
+//! CASA tools as pyo3 classes, exposed as `casars.tools` (ADR-0017), and
 //! the CASA helper classes casa-rs ports beside them (`casars.simutil`).
 //!
 //! Each tool is a class with CASA's name, method names, parameter order and
