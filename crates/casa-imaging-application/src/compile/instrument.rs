@@ -198,8 +198,9 @@ pub(super) fn scientific_instrument_model(
 }
 
 /// Where each row points: the POINTING table under tclean `usepointing`
-/// (AW samples it at the visibility time, mosaic interpolates it, or
-/// takes each field's direction from a MeasurementSet without one); each
+/// (AW samples it at the visibility time or uses the field's phase
+/// direction when no sample exists; mosaic interpolates it or takes the
+/// field's direction from a MeasurementSet without the table); each
 /// row's FIELD direction for a mosaic or A-projection run without it
 /// (`usepointing=False`, the tclean default); the phase-tracking centre
 /// for a direction-independent run.
@@ -212,7 +213,7 @@ pub(super) fn pointing_centre_law(gridder: &Gridder) -> PointingCentreLaw {
                 PointingTimeSampling::VisibilityTime,
                 PointingInterpolation::Nearest,
                 PointingExtrapolation::HoldNearest,
-                MissingPointingPolicy::UsePhaseTrackingCentre,
+                MissingPointingPolicy::UseFieldPhaseCentre,
             ))
         }
         Gridder::Mosaic {
@@ -267,7 +268,7 @@ mod tests {
         assert_eq!(law.time_sampling(), PointingTimeSampling::VisibilityTime);
         assert_eq!(law.interpolation(), PointingInterpolation::Nearest);
         assert_eq!(law.extrapolation(), PointingExtrapolation::HoldNearest);
-        assert_eq!(law.missing(), MissingPointingPolicy::UsePhaseTrackingCentre);
+        assert_eq!(law.missing(), MissingPointingPolicy::UseFieldPhaseCentre);
         assert!(matches!(
             pointing_centre_law(&aw(false)),
             PointingCentreLaw::FieldCentre
