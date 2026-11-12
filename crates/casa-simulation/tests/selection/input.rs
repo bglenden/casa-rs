@@ -116,7 +116,7 @@ pub(super) fn fixed_gains(path: &Path, output: &Path, gain: f32) {
         .scalar()
         .unwrap()
     {
-        ScalarValue::Float64(time) => time,
+        ScalarValue::Float64(time) => *time,
         _ => panic!("TIME type"),
     };
     let rows = (0..2).flat_map(|spw| {
