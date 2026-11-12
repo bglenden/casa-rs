@@ -46,6 +46,8 @@ use crate::writer::{
 pub enum SimulatedJones {
     /// `sm.setgain`: antenna gains, `G Jones`.
     Gain,
+    /// `sm.setnoise(mode='tsys-manual')`: scalar noise-scale gains, `T Jones`.
+    ScalarGain,
     /// `sm.setleakage`: polarization leakage, `D Jones`.
     Leakage,
     /// `sm.settrop`: tropospheric phase, channel by channel, `Tf Jones`.
@@ -58,6 +60,7 @@ impl SimulatedJones {
     pub fn vis_cal(self) -> &'static str {
         match self {
             Self::Gain => "G Jones",
+            Self::ScalarGain => "T Jones",
             Self::Leakage => "D Jones",
             Self::Troposphere => "Tf Jones",
         }
@@ -91,8 +94,7 @@ pub struct SimulatedSolution {
 pub enum SolutionValues {
     /// `G` and `D`: the two receptors' values, in one channel (`[2, 1]`).
     Receptors([Complex32; 2]),
-    /// `Tf`: the one parameter's value in each channel of the window
-    /// (`[1, n]`).
+    /// `T` or `Tf`: one parameter per channel (`[1, n]`), one channel for T.
     Channels(Vec<Complex32>),
 }
 

@@ -6,8 +6,8 @@
 
 use casa_imaging_model::{
     CompiledProblem, ProductAxes, ProductBeamRule, ProductId, ProductNormalization,
-    ProductPixelMask, ProductRole, ProductStorageContract, ProductUnit, ProductValidityRule,
-    ReconstructionBasis, RestoringBeamPolicy,
+    ProductPixelMask, ProductRole, ProductStorageContract, ProductTerm, ProductUnit,
+    ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
 };
 
 use crate::analytic_beam::check_frequencies;
@@ -40,6 +40,7 @@ pub struct ContinuumProductControls {
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     saved_mosaic_beam_read_bytes: Option<u64>,
+    saved_higher_primary_beam: bool,
 }
 
 impl ContinuumProductControls {
@@ -67,10 +68,16 @@ impl ContinuumProductControls {
     /// Keep the PSF, weight, sum of weights and primary beam already on
     /// disk when a mosaic continuation reads them instead of forming them.
     /// The scientific product dependencies still include their response.
-    /// `read_bytes` bounds one worker's PB or pixel mask read.
+    /// `read_bytes` bounds one worker's PB or pixel mask read. A two-term
+    /// PB correction also keeps its auxiliary beam when it already exists.
     #[must_use]
-    pub const fn preserving_mosaic_products(mut self, read_bytes: u64) -> Self {
+    pub const fn preserving_mosaic_products(
+        mut self,
+        read_bytes: u64,
+        saved_higher_primary_beam: bool,
+    ) -> Self {
         self.saved_mosaic_beam_read_bytes = Some(read_bytes);
+        self.saved_higher_primary_beam = saved_higher_primary_beam;
         self
     }
 
@@ -134,6 +141,7 @@ impl Default for ContinuumProductControls {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
             primary_beam_model: None,
             saved_mosaic_beam_read_bytes: None,
+            saved_higher_primary_beam: false,
         }
     }
 }
@@ -201,13 +209,18 @@ impl PlannedContinuumGeneration {
         for id in list.publication().members() {
             let entry = &list.entries()[id.ordinal()];
             if controls.saved_mosaic_beam_read_bytes.is_some()
-                && matches!(
-                    entry.role(),
+                && match entry.role() {
                     ProductRole::Psf(_)
-                        | ProductRole::Weight(_)
-                        | ProductRole::SumWeights(_)
-                        | ProductRole::PrimaryBeam(_)
-                )
+                    | ProductRole::Weight(_)
+                    | ProductRole::SumWeights(_)
+                    | ProductRole::PrimaryBeam(ProductTerm::Single | ProductTerm::Taylor(0)) => {
+                        true
+                    }
+                    ProductRole::PrimaryBeam(ProductTerm::Taylor(1)) => {
+                        controls.saved_higher_primary_beam
+                    }
+                    _ => false,
+                }
             {
                 continue;
             }
