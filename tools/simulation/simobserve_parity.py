@@ -640,7 +640,8 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     with open(os.path.join(compare, "manifest.json"), "w", encoding="utf-8") as handle:
         json.dump({"scenarios": scenarios(t, case, casa, casars, links)}, handle, indent=1)
     command = [sys.executable, os.path.join(HERE, "compare_sm_ms.py"), "--casa", compare, "--casars", links,
-               "--json", os.path.join(compare, "report.json")]
+               "--json", os.path.join(compare, "report.json"),
+               "--uvw-tolerance-m", str(args.uvw_tolerance_m)]
     if args.atmosphere_model:
         command += ["--atmosphere-model", args.atmosphere_model]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
@@ -678,6 +679,8 @@ def main() -> int:
     parser.add_argument("--casars-bin", required=True, help="casa-rs's simobserve task binary")
     parser.add_argument("--casatestdata", required=True, help="a casatestdata clone")
     parser.add_argument("--atmosphere-model", help="casa-atmosphere's at_tool_quantities example, for tsys-atm")
+    parser.add_argument("--uvw-tolerance-m", type=float, default=1e-3,
+                        help="UVW absolute tolerance passed to compare_sm_ms.py; use 1e-6 for the programme goal")
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-casa", action="store_true", help="reuse OUT/casa")
     args = parser.parse_args()

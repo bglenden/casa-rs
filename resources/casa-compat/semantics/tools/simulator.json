@@ -87,7 +87,8 @@
     "binding-tests",
     "observe-20261103",
     "scripts",
-    "refusals"
+    "refusals",
+    "uvw-sidereal-20261112"
    ],
    "issue": 1053
   },
@@ -98,7 +99,8 @@
     "signature",
     "binding-tests",
     "observe-20261103",
-    "refusals"
+    "refusals",
+    "uvw-sidereal-20261112"
    ],
    "issue": 1053
   },
@@ -1343,6 +1345,24 @@
    "source_revision": "cd842e0e3804730301a65e552392af83f67027b6",
    "command": "CASAPY tools/simulation/sm_flagged_samples_oracle.py --out OUT --fixture FIXTURE; CASA_RS_FLAGGED_SAMPLES_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test flagged_samples --test open_from_ms --test backends --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/sm_flagged_samples_oracle.py --verify-native EXPORT --fixture FIXTURE --out OUT",
    "receipt": "resources/casa-compat/evidence/sm-flagged-samples-20261112.json"
+  },
+  "uvw-sidereal-20261112": {
+   "kind": "Independent CASA sidereal angles and paired full MeasurementSets",
+   "state": "passed",
+   "result": "All 17 scenario outcomes agree (16 successful, one expected refusal) at the stricter 1e-6 m UVW limit. Maximum UVW 9.228972431e-08 m; DATA NRMS 1.046009822e-06 under 1e-3. Five LAST residuals are <=1.70e-11 rad. Three-crate regression: 1514 passed, nine documented ignores; one shared-helper review has no findings.",
+   "scope": "Existing simobserve scheduling/model/frame/pointing scenarios and the shared simulation UVW sidereal calculation. Full metadata, pointings and numerical visibility checks retained. No all-mode or whole-task performance claim.",
+   "links": [
+    "crates/casa-types/src/measures/baseline.rs",
+    "crates/casa-types/tests/simulation_sidereal.rs",
+    "crates/casa-types/tests/data/casa_simulation_sidereal.json",
+    "tools/simulation/sidereal_oracle.py",
+    "tools/simulation/simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "68f863c1d280a9145b5fa507291e60cde4030e71",
+   "source_revision": "68f863c1d280a9145b5fa507291e60cde4030e71",
+   "command": "CASAPY tools/simulation/sidereal_oracle.py --out crates/casa-types/tests/data/casa_simulation_sidereal.json; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simulation-uvw-sidereal-20261112.json"
   }
  }
 }
