@@ -459,7 +459,7 @@ pub enum BinaryOp {
     Mul,
     /// Division `/`.
     Div,
-    /// Integer division `//`.
+    /// Floor division `//` (a real result, as CASA's `floor(a/b)`).
     IntDiv,
     /// Modulo `%`.
     Modulo,

@@ -13,7 +13,7 @@
 //! | 8/9        | NOT (prefix)          | right |
 //! | 10/11      | `=` `!=` `<` `<=` `>` `>=` | left |
 //! | 12/13      | `+` `-`               | left  |
-//! | 14/15      | `*` `/` `%`           | left  |
+//! | 14/15      | `*` `/` `//` `%`           | left  |
 //! | 17/16      | `**` (power)          | right |
 //! | 19         | unary `-` `~`         | right |
 //!
@@ -1225,7 +1225,7 @@ fn infix_binding_power(tok: &Token) -> Option<(u8, u8)> {
         | Token::Gt
         | Token::Ge => Some((10, 11)),
         Token::Plus | Token::Minus => Some((12, 13)),
-        Token::Star | Token::Slash | Token::Percent => Some((14, 15)),
+        Token::Star | Token::Slash | Token::DoubleSlash | Token::Percent => Some((14, 15)),
         Token::DoubleStar => Some((17, 16)), // right-associative
         _ => None,
     }
@@ -1238,6 +1238,7 @@ fn infix_op(tok: &Token) -> BinaryOp {
         Token::Minus => BinaryOp::Sub,
         Token::Star => BinaryOp::Mul,
         Token::Slash => BinaryOp::Div,
+        Token::DoubleSlash => BinaryOp::IntDiv,
         Token::Percent => BinaryOp::Modulo,
         Token::DoubleStar => BinaryOp::Power,
         Token::Eq | Token::EqEq => BinaryOp::Eq,

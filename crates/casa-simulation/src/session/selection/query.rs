@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bounded evaluation of row-header TaQL using the existing table evaluator.
 
+mod types;
+
 use std::sync::Arc;
 
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
@@ -63,6 +65,7 @@ impl RowQuery {
             SimulatorError::refused("Caught exception: missing selection predicate")
         })?;
         let scratch_bytes = validate(&expression)?;
+        types::predicate(&expression)?;
         Ok(Self {
             expression,
             style: select.style,
