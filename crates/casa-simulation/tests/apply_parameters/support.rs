@@ -129,6 +129,10 @@ fn table(path: &Path, output: &Path, case: &Value) {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "shared input module; only mixed-term suites need a separate leakage table"
+)]
 pub(super) fn leakage_fixture(path: &Path, output: &Path) {
     let ms = MeasurementSet::open(path).unwrap();
     let time = |row| match ms
