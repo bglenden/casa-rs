@@ -2,7 +2,6 @@
 //! CASA's frequency resampling interpolates amplitude and unwrapped phase.
 use crate::interpolation::{Curve, sample, spline_derivatives, unwrap_phase};
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
-use num_complex::Complex32;
 
 /// Frequency interpolation for a complex calibration grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,8 +198,6 @@ impl CalibrationTableLookup {
     }
 }
 
-/// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
-
 /// Registration follows CTPatchedInterp::resampleFlagsInFreq on the full
 /// input axis, independently of the compressed valid interpolation samples.
 fn registered_flag(
@@ -253,6 +250,7 @@ fn registered_flag(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_types::Complex32;
     #[test]
     fn natural_spline_matches_the_closed_form_at_every_half_knot() {
         // For unit-spaced amplitudes [1,2,1/2,5/4], the interior
