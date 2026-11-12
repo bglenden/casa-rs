@@ -98,6 +98,9 @@ pub struct ImagingRequest {
     /// ephemeris name or table.
     #[serde(deserialize_with = "optional")]
     pub phasecenter: Option<String>,
+    /// Fixed direction for a mosaic PSF formed separately from the main image.
+    #[serde(default, deserialize_with = "optional")]
+    pub psfphasecenter: Option<String>,
     /// First selected channel when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_start: Option<usize>,
@@ -729,6 +732,7 @@ impl ImagingRequest {
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {
         execution::validate_ft_padding(self)?;
+        self.validate_psf_phase_centre()?;
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         if self.phasecenter.is_some() && self.phasecenter_field.is_some() {
             return invalid(
@@ -866,6 +870,29 @@ impl ImagingRequest {
         }
         if let Gridder::Awproject(aw) = &self.gridder {
             aw.validate()?;
+        }
+        Ok(())
+    }
+
+    /// CASA forms a separate PSF only for the mosaic gridder.
+    pub(crate) fn uses_separate_psf(&self) -> bool {
+        self.psfphasecenter.is_some() && matches!(self.gridder, Gridder::Mosaic { .. })
+    }
+
+    pub(crate) fn supports_separate_psf(&self) -> bool {
+        matches!(self.gridder, Gridder::Mosaic { .. })
+            && self.specmode == SpecMode::Mfs
+            && self.deconvolver != Deconvolver::Mtmfs
+            && self.outlierfile.is_none()
+    }
+
+    /// A separately formed mosaic PSF uses the single-term MFS route.
+    pub(crate) fn validate_psf_phase_centre(&self) -> Result<(), InvalidRequest> {
+        if self.calcpsf && self.uses_separate_psf() && !self.supports_separate_psf() {
+            return Err(InvalidRequest {
+                parameters: "psfphasecenter",
+                reason: "a separate PSF centre is supported for a single-term MFS mosaic without outliers (#1062)",
+            });
         }
         Ok(())
     }

@@ -779,6 +779,33 @@ impl TaylorPlane {
             .ok_or(ProductsError::UnsupportedProblem)
     }
 
+    /// CASA's `SIImageStoreMultiTerm::calculateAlphaBeta` spectral curvature.
+    /// Use the same support as alpha and form the payload only when publishing.
+    fn spectral_curvature(&self) -> Option<Vec<f32>> {
+        let spectral_index = self.spectral_index.as_ref()?;
+        let taylor0 = self.restored.first()?;
+        let taylor2 = self.restored.get(2)?;
+        Some(
+            taylor0
+                .iter()
+                .zip(taylor2)
+                .zip(
+                    spectral_index
+                        .alpha
+                        .iter()
+                        .zip(&spectral_index.alpha_validity),
+                )
+                .map(|((&image0, &image2), (&alpha, &valid))| {
+                    if valid {
+                        image2 / image0 - 0.5 * alpha * (alpha - 1.0)
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        )
+    }
+
     fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
@@ -800,6 +827,11 @@ impl TaylorPlane {
             ProductRole::PrimaryBeam(value) => self.primary_beam.get(term(value)?),
             ProductRole::PbCorrectedImage(value) => self.pb_corrected.get(term(value)?),
             ProductRole::SpectralIndex => self.spectral_index.as_ref().map(|index| &index.alpha),
+            ProductRole::SpectralCurvature => {
+                return self
+                    .spectral_curvature()
+                    .ok_or(ProductsError::UnsupportedProductRole { role });
+            }
             ProductRole::PbCorrectedSpectralIndex => {
                 self.spectral_index.as_ref().map(|index| &index.alpha_pbcor)
             }

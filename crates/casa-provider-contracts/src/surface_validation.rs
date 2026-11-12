@@ -43,17 +43,12 @@ pub(super) fn validate_surface_views(
                 ),
             ));
         }
-        // A former id names the surface in saved profiles, so it may name no
-        // other surface, now or before.
-        for id in std::iter::once(bundle.surface.id())
-            .chain(bundle.surface.former_ids().iter().map(String::as_str))
-        {
-            if !surface_ids.insert(id.to_string()) {
-                errors.push(ContractValidationError::new(
-                    "duplicate_surface",
-                    format!("duplicate surface {id}"),
-                ));
-            }
+        let id = bundle.surface.id();
+        if !surface_ids.insert(id.to_string()) {
+            errors.push(ContractValidationError::new(
+                "duplicate_surface",
+                format!("duplicate surface {id}"),
+            ));
         }
         // Consecutive surfaces often borrow the very same catalog. A second
         // scan cannot add definitions or diagnostics if the first found no

@@ -97,6 +97,12 @@ fn every_request_field_is_required_or_consumed_internal_provenance() {
                 assert_ne!(explicit, default);
                 continue;
             }
+            if name == "psfphasecenter" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("typed requests default to the image centre for the PSF");
+                assert!(default.psfphasecenter.is_none());
+                continue;
+            }
             assert!(
                 serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
                 "{overrides}: the request does not read {name}"
@@ -172,14 +178,21 @@ fn parameters_a_mode_does_not_read_are_ignored() {
     assert_eq!(request(json!({ "spw": "*" })), plain);
 }
 
-/// What the catalog takes only at tclean's default, wherever CASA reads it.
+/// Only mosaic gridders use a separate PSF centre when they form the PSF.
 #[test]
-fn the_catalog_refuses_what_casa_reads_in_every_mode() {
-    // CASA reads psfphasecenter for every gridder named for a mosaic.
-    let overrides =
-        json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" });
-    let error = resolved(overrides.clone()).expect_err("refused at the catalog");
-    assert!(error.to_string().contains("#1062"), "{overrides}: {error}");
+fn the_psf_phase_centre_is_used_by_single_term_mfs_mosaics() {
+    let centre = "J2000 0rad 0rad";
+    for gridder in ["mosaic", "mosaicft", "ftmosaic"] {
+        let mfs = request(json!({"gridder": gridder, "psfphasecenter": centre}));
+        assert_eq!(mfs.psfphasecenter.as_deref(), Some(centre));
+        let cube =
+            refusal(json!({"gridder": gridder, "specmode": "cube", "psfphasecenter": centre}));
+        assert!(cube.to_string().contains("#1062"), "{cube}");
+    }
+    assert_eq!(
+        request(json!({"gridder": "standard", "psfphasecenter": centre})).psfphasecenter,
+        None
+    );
 }
 
 #[test]

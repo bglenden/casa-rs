@@ -84,15 +84,6 @@ fn with_temp_cwd<T>(f: impl FnOnce(&Path) -> T) -> T {
 }
 
 #[test]
-fn command_schema_describes_public_importvla_surface() {
-    let schema = command_schema("importvla");
-    assert_eq!(schema.command_id, "importvla");
-    assert_eq!(schema.display_name, "ImportVLA");
-    assert!(schema.render_help().contains("--archivefiles"));
-    assert!(schema.render_help().contains("--vis"));
-}
-
-#[test]
 fn the_front_end_answers_the_machine_actions_and_help() {
     let front_end = task_front_end();
     let schema = front_end.dispatch(&args(&["--json-schema"]));

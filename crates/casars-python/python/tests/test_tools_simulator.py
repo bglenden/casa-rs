@@ -1,4 +1,4 @@
-"""`casars.tools.simulator`: CASA's `sm` tool (ADR-0019, #841).
+"""`casars.tools.simulator`: CASA's `sm` tool (ADR-0017, #841).
 
 The signatures are compared with the installed CASA binding's, recorded by
 `tools/simulation/dump_casa_tool_signatures.py` in
@@ -1326,7 +1326,7 @@ def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCapt
 
 @needs_measures
 def test_setconfig_lets_other_threads_run_while_the_session_works(tmp_path: Path) -> None:
-    """The session's work runs without the GIL (ADR-0019 §4).
+    """The session's work runs without the GIL (ADR-0017).
 
     With a switch interval longer than the test, this thread keeps the GIL
     until a call releases it, so the counting thread, which counts only while

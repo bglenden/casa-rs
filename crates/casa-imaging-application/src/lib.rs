@@ -468,13 +468,24 @@ fn compile_run(
     let observation = compile_observation(prepared.snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
     drop(prepared.survey);
+    let model_lifecycle = prepared.model_lifecycle;
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,
         observation,
-        prepared.model_lifecycle,
+        model_lifecycle,
     ))
     .map_err(ApplicationDispatchError::Compile)?;
+    let psf_view = prepared
+        .psf_view
+        .map(|view| {
+            let view = view.compile(&problem, model_lifecycle)?;
+            // Its writer coordinates remain live through publication.
+            resident.join(view.reservation);
+            Ok(view.value)
+        })
+        .transpose()
+        .map_err(ApplicationDispatchError::Compile)?;
     let backend = availability::resolve_backend(
         &problem,
         request.backend,
@@ -490,6 +501,7 @@ fn compile_run(
         .map_err(ApplicationDispatchError::Preparation)?;
     let input = NativeInput {
         mvc_taylor: prepared.mvc_taylor,
+        psf_view,
         observation: prepared.observation,
         write_model_column: prepared.write_model_column,
         predicts_final_model: prepared.predicts_final_model,

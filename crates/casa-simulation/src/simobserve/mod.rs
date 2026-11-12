@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The `simobserve` task (simulation Phase 5c, #841): CASA 6.7.6's
-//! `task_simobserve.py`, ported as its specification (ADR-0018) onto the
+//! `task_simobserve.py`, ported as its specification (ADR-0017) onto the
 //! simulator session ([`Simulator`]) and the `simutil` helpers
 //! ([`crate::simutil`]).
 //!

@@ -14,7 +14,14 @@ history live in issues; `just docs-check` rejects issue references here.
 ## Core Contracts And Priorities
 
 - **Interoperability:** data written here must be readable by casacore C++,
-  and vice versa. This is non-negotiable.
+  and vice versa. Preserve MSv4 conformance and exchange where supported.
+  This is non-negotiable.
+- **Build for one investigator** ([ADR-0020](docs/adr/0020-single-investigator-development.md)).
+  We are in development with no downstream users. Keep casa-rs-owned APIs,
+  settings, and developer artifacts current. Reject stale saved parameters
+  clearly. Do not build migrations, historical ledgers, compatibility
+  shims, or process for hypothetical future users. Use regression tests
+  and one existing issue or PR for evidence.
 - **Agreement with CASA:** outputs should agree with CASA, not bit for bit,
   but typically to about 0.001 normalized RMS. CASA has bugs; a justified
   divergence is fine when it is explained and recorded (see
@@ -37,7 +44,7 @@ history live in issues; `just docs-check` rejects issue references here.
 - `TESTING.md`: which gates to run, CI, test data
 - `docs/agent-reference.md`: workstation, CASA/C++ oracle, data and storage
   locations, release recipes
-- `docs/adr/`: accepted decisions; binding, and changed or added only after
+- `docs/adr/`: short records of durable decisions; broad new designs need
   external review (see Review)
 - `.agents/skills/`: casa-rs domain skills (e.g. imaging performance); generic
   workflows come from the user-level skills
@@ -50,7 +57,8 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 - Rust at least `Cargo.toml`'s `rust-version` (`rustup update stable`); set
   `CARGO_INCREMENTAL=0` for raw cargo. Install `cargo-nextest` so tests run
   in parallel; without it `scripts/test-workspace.sh` runs them serially.
-- `just quick` is the full local gate (CI runs the same); `just verify` is
+- Use focused local checks for the selected behavior; CI runs the broad
+  gates. `just quick` reproduces the broad local gate; `just verify` is
   for milestones and releases; `just --list` shows everything else.
 - Python package tests: `scripts/test-python-package.sh`. Python binds Rust
   through PyO3 only, in `casars._core` (`crates/casars-python/src`).
@@ -69,7 +77,7 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   (`scripts/check-no-casa-runtime.py` enforces this).
 - Computation lives in Rust. The Python package presents CASA's names and
   signatures, converts data and starts the work. Logic that CASA writes in
-  Python, such as task scripts and `simutil`, is ported to Rust (ADR-0018).
+  Python, such as task scripts and `simutil`, is ported to Rust (ADR-0017).
 - Idiomatic Rust, not a C++ API mirror. Search for existing behaviour before
   adding code.
 - Crate names: `casa-*` for libraries, `casars-*` for apps and runtimes.
@@ -117,10 +125,11 @@ locations are in `docs/agent-reference.md`.
   message: subject; what changed and why; `Work issue: #N` (or
   `Work source: <reason>`); `Evidence:`; `Decisions:`; `Review:` if there
   was one. Use `Closes #N` only when merge should close the issue.
-- Keep work toward one coherent goal, such as a performance improvement,
-  in the same PR until that goal is delivered. Do not move remaining work
-  on the same goal into follow-on PRs merely because an initial increment
-  is useful. Use separate PRs for genuinely separate outcomes.
+- A broad issue can ship through several bounded PRs. Each PR completes an
+  independently useful, tested behavior; keep its implementation, regression
+  test and required fixes together. Land it when ready and leave the issue's
+  other behaviors open. Do not hold finished work for the entire issue, or
+  split scaffolding and individual arguments into PRs to inflate delivery.
 - Keep PR descriptions readable: lead with a crisp status summary and a
   list of open issues or limitations, then organize supporting details to
   follow those points. Group evidence and decisions by topic; avoid a single
@@ -143,9 +152,11 @@ locations are in `docs/agent-reference.md`.
   dependencies and keep shared fixes in one owning issue; other issues
   cover their own integration. Do not duplicate progress narratives in
   the parent, catalogs or new files, or reset valid completed work.
-  Keep one behavior issue under implementation and queue unrelated findings
-  on the appropriate backlog. While checks run, take the next independent
-  listed issue. Report progress by target IDs and their remaining behavior.
+  Keep one bounded behavior under implementation and queue unrelated findings
+  on the appropriate backlog. While checks run, take only an already listed,
+  independent behavior. Report merged behaviors and issue totals separately;
+  do not equate an open broad issue
+  with zero delivery or create completed issues retrospectively.
   Keep this bookkeeping cheap: no duplicate ledgers, SHA/hash inventories,
   tracking contracts, sealing steps or new administrative completion gates.
   The ordinary engineering checks elsewhere in this file still apply.
@@ -168,62 +179,91 @@ locations are in `docs/agent-reference.md`.
 - The repository is public; copying its source to any host is fine. Never
   copy credentials, secrets, or non-public datasets.
 
-## Decide, Record, Continue
+## Delivery First
 
-Agents do not wait for the owner; the owner steers by reading what was
-decided, afterwards.
+Always be closing: optimize for merged, scientifically sound behavior.
+Choose a finishable delivery from the authorized work and bring it to its
+stated endpoint. Organize a large programme into bounded deliveries;
+elapsed time alone is not a reason to stop useful work.
 
-- Carry an authorized task, resumed work and PRs taken over included,
-  through its stated end point. While a change waits for checks, review or
-  merge, take the issue's next independent item. Opening a PR, setting
-  auto-merge or delivering one increment does not finish the authorized
-  task. Continue until no authorized work remains or the end point the
-  owner, issue or plan names; then report. Do not start unnamed work.
+- Before implementation, put three short items in the existing issue or PR:
+  the observable behavior, its independent reference case and the done
+  condition. Freeze that scope. Do not start a new planning document.
+- Use progress checkpoints, not a default time limit. At about 30 minutes
+  of active work, check what concrete evidence has advanced the frozen done
+  condition. If progress is unclear, investigation is expanding or the same
+  checks keep repeating, request an independent progress check then.
+  Otherwise request one at about 60 minutes of active work, and every
+  60 minutes thereafter while the delivery remains open. Passive CI/runtime
+  waits do not trigger these checks. Honor any explicit owner spending limit.
+- The progress reviewer uses fresh, concise context: the frozen target,
+  changes/results since the last checkpoint, current blocker and next action.
+  Use one cheap, capable reviewer for a brief scope/progress assessment,
+  checking the actual diff/results as needed to verify claimed progress,
+  without another code audit, test run or research project. It reports either
+  on-target progress or a concrete redirection toward closure. Act on that
+  redirection within the existing scope. Keep at most a short note in the
+  existing issue/PR; no new tracker or report. A progress check cannot waive
+  acceptance or authorize scope expansion.
+- Finish the selected behavior before exploring another. A factory listing,
+  adjacent capability or new oracle case does not expand the assignment.
+  Capture worthwhile discoveries as non-blocking ideas in the existing
+  issue/backlog, or a separate issue when an independently useful future
+  outcome merits one. A sentence about the behavior and its value is enough;
+  no investigation, design, triage or extra tracking is required now.
+  Recording an idea does not add it to the current delivery. Defer it and
+  continue toward the frozen done condition. Treat it as a current blocker
+  only when evidence shows that condition cannot be met without it.
+  Expanding the selected behavior needs owner direction.
+- Close the issue when its stated criteria are met. Until then, ship completed
+  behaviors through bounded PRs and keep an explicit remaining list. Do not
+  narrow the issue's acceptance or invent retrospective tickets to claim success.
 - A choice not on the stop list is yours: make it, list it under
   `Decisions:` (what, why, the alternative not taken), add the
   `owner-review` label and continue. An overturned decision becomes
   ordinary follow-up work.
-- Never end a turn on a report, a recommendation, an offer ("Shall I…") or
-  a question whose answer you would act on anyway; act and record. A loop's
-  or tool's own stopping rule is a checkpoint, not the end of the task. A
-  skill's confirmation step on your own work (archiving its history, scope
-  inside the stated goal) is confirmed by this file.
-- Never idle. While something waits (CI, a review, an answer, a run), work
-  on what does not depend on it; when an item is blocked, say why on its
-  issue and take the next. A merge blocker does not block independent work
-  on the issue. Follow "While Checks Run" below for monitoring and when a
-  waiting turn may end. The owner never has to ask for status.
-- Spend in proportion. Use the cheapest model and effort that will do for
-  searching, reading and mechanical edits; run agents in parallel only for
-  independent work; keep one watcher per wait, and stop the background jobs
-  you start once they are no longer needed.
+- Act on authorized work without routine confirmation. A recommendation is
+  not a substitute for implementation when implementation was requested.
+  Continue useful authorized work through progress checkpoints without
+  asking the owner to say "please continue". Stop when the bounded delivery
+  is complete or a real blocker, external result or owner decision prevents
+  further useful authorized work. Follow "While Checks Run" for pending
+  ownership; do not invent work to keep a session active.
+- Use the cheapest capable model and effort for the work. No additional
+  agents or expensive reviews by default; use one reviewer for the progress
+  checks above, when Review requires it, or when the owner asks. No speculative
+  parallel investigations.
 - Before a long or overnight run, check what fails cheaply first (inputs,
   admission, a short dry run), then schedule it yourself.
-- Fix a defect you find on the way in the PR when it is small; otherwise
-  file it.
+- Fix a small defect in the PR when it blocks the selected behavior; queue
+  unrelated defects without expanding the implementation.
 - Keep long work's state in one status comment on its issue, edited in
   place. A handoff is that comment plus a startup prompt naming no model or
   host-specific tool. A resumed branch follows `AGENTS.md` on `origin/main`.
+  Start the next delivery with concise current context: the instructions,
+  selected behavior, issue/PR and next action. Do not replay the full history.
 - Never weaken an acceptance check to finish. Unfinished work stays open on
   its issue and the PR does not claim it; that includes relaxations
   `TESTING.md` reserves for the owner.
 
-Ask the owner only before these, asynchronously where the host allows:
+Owner direction is required to expand the frozen behavior;
+existing explicit direction is sufficient. Otherwise ask the owner only
+before these, asynchronously where the host allows:
 
 1. deleting or overwriting anything outside the repository and your own
    scratch (NAS or GLENDENNING data, releases, branches you did not
    create);
-2. a change casacore C++ could not read, or one that stops casa-rs reading
-   data it wrote before;
-3. building a design for a broad new capability, or changing or adding an
-   ADR, before its external review (see Review);
+2. a change to scientific data persistence that breaks CASA/casacore or
+   MSv4 interoperability, or stops casa-rs reading scientific data it wrote before;
+3. building a design for a broad new capability before its external review
+   (see Review);
 4. taking the laptop's internal disk below about 40 GB free, when deleting
    your own artifacts and running `cleanup-disk` (where the host has it)
    cannot prevent it; this floor does not apply in a cloud environment;
 5. handling credentials, secrets or non-public data.
 
-Everything else is decided and recorded, including scope within the stated
-goal, APIs between workspace crates, task-provider contract versions,
+Everything else is decided and recorded within the frozen behavior,
+including APIs between workspace crates, current profile versions,
 algorithms and CASA deviations.
 
 ### CASA deviations
@@ -258,17 +298,18 @@ By how far a change reaches:
    itself (the latest Fable at `xhigh` in Claude Code, the latest Astra at
    `xhigh` in Codex), and reads the findings itself; the owner never runs,
    relays or announces it.
-3. **Broad new capabilities and ADRs: external review of the design, before
-   it is built.** Broad means a new task or tool family, crate family, app
-   or storage format, or architecture several areas depend on; ADR changes
-   and additions count too. The reviewer is a human or the other vendor's
+3. **Broad new designs: external review before implementation.** Broad means
+   a new task or tool family, crate family, app or storage format, or architecture
+   several areas depend on. Recording an owner decision or consolidating ADRs
+   does not trigger a new review. The reviewer is a human or the other vendor's
    model (the latest Astra at `xhigh` for Claude-led work, the latest Fable
    at `xhigh` for Codex-led work). Post the design and a self-contained
    brief on its issue and ask the owner to arrange the review.
 
-No loops: at most one review per change, one round. Fix blocking and
-should-fix findings, each with a test, or answer them; decline optional
-ones with a reason. Fixes are never reviewed again. A finding that needs a
+No loops: at most one code/design review per change, one round. Periodic
+progress checks above assess direction and closure, and do not reopen code
+review. Fix blocking and should-fix findings, each with a test, or answer
+them; decline optional ones with a reason. Fixes are never reviewed again. A finding that needs a
 redesign or new scope becomes a follow-up issue at its own level. A design
 reviewed externally is not reviewed again when built; its implementation
 takes level 1 or 2.
@@ -283,15 +324,20 @@ isolated, strengthen its demonstration test instead of adding a review.
 
 ## Checks And Merging
 
-- Before pushing, run what the change can affect: `cargo fmt`, clippy
-  `-D warnings` and the tests of the touched crates, and `just arch-check`.
-  CI runs the whole workspace; run `just quick` locally only for changes
-  across many crates. One green run is enough.
+- During implementation, run the cheapest meaningful test that distinguishes
+  the selected behavior. On a stable diff, run one affected validation batch:
+  `cargo fmt`, clippy `-D warnings`, relevant tests and `just arch-check`.
+  Docs-only changes need `just docs-check`. Leave full-crate/workspace suites
+  to CI unless the change's risk or an explicit `TESTING.md` requirement
+  needs them locally. Preserve scientific, interop, performance and memory
+  acceptance. Reuse green results; rerun only gates invalidated under
+  `TESTING.md`'s evidence-reuse rules. Do not rebuild or revalidate an
+  unchanged component per case.
 - A PR may open as a draft while work continues. Once its checks pass and
   any review is resolved, mark it ready and set
   `gh pr merge --auto --squash`: ready means merge when green, and GitHub
-  merges it once its required checks pass. Continue the authorized task
-  while GitHub handles the merge.
+  merges it once its required checks pass. Additional implementation follows
+  the bounded assignment and progress-check rules, not the duration of CI.
 - Keep responsibility for the PR until it merges or is explicitly handed
   off. When CI fails, investigate and fix failures caused by the change;
   rerun a known flaky job (noting it on the flake's issue) or a timing gate
@@ -317,24 +363,17 @@ isolated, strengthen its demonstration test instead of adding a review.
 ### While Checks Run
 
 - Run CI and reviews alongside the next independent, authorized work.
-  Preserve the revision under test: keep changes for the same outcome in
-  its PR, and use a separate branch for a genuinely independent outcome
-  when needed. Do not invent unrelated work to stay busy.
-- Use one monitor or background wait per pending result, and act on
-  failures when they arrive. Reuse current green evidence as TESTING.md
-  allows; continuing work does not require duplicate validation.
-- Before ending a turn with work pending, verify that every remaining
-  authorized item depends on a pending result, needs owner input under the
-  stop list, or has a concrete external blocker. A red check or draft PR
-  by itself is not a reason to end the task.
-- If only a pending result remains, end a waiting turn only when the host
-  has a verified mechanism that will resume the agent on that result. A
-  background process such as `gh pr checks N --watch` reports to its
-  terminal; it does not by itself guarantee another agent turn. Without a
-  working wake-up mechanism, keep the turn active with bounded waits and
-  progress updates. Record any external blocker and the action needed to
-  remove it; do not imply that implementation continues after a final
-  response.
+  It must already be listed. Preserve the revision under test; use a separate
+  branch for independent deliveries.
+- When only an external result remains, stop active model work. Use existing
+  result notifications when available. Otherwise leave one short handoff in
+  the existing issue/PR: link, pending result and next action. State that a
+  resume is needed; do not imply automatic follow-through without a working
+  mechanism. Do not burn model budget polling, spawn a watcher fleet or build
+  new waiting infrastructure for this purpose.
+- Ending a waiting invocation does not abandon the PR. Retain ownership and
+  resume on the result or next invocation to fix relevant failures and finish
+  the merge. Stop background jobs you started once they are no longer needed.
 
 ## Imaging
 

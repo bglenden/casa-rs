@@ -415,6 +415,9 @@ fn requested_products(
         products.push(ProductKind::TaylorTerms);
         if restored && spectral_index {
             products.extend([ProductKind::SpectralIndex, ProductKind::SpectralIndexError]);
+            if request.nterms > 2 {
+                products.push(ProductKind::SpectralCurvature);
+            }
         }
     }
     if weight_image {

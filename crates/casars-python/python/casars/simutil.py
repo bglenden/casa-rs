@@ -12,7 +12,7 @@ A CASA script changes only its import::
 In CASA, `simutil` is a Python helper class in the private `simutil` module of
 CASA's task package, not a CASA tool, so it is not in `casars.tools` or in the
 object-surface bundle. casa-rs implements, in Rust (the class lives in the
-`casars._core` extension, ADR-0018), the parts `sm` scripts and `simobserve`
+`casars._core` extension, ADR-0017), the parts `sm` scripts and `simobserve`
 use:
 - `readantenna`;
 - the pointings `calc_pointings2`, `read_pointings` and `write_pointings`;

@@ -103,7 +103,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -153,7 +152,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -204,7 +202,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "MeasurementSet summary output is distinct from a calibration report destination."
@@ -257,7 +254,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -309,7 +305,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -359,7 +354,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -414,7 +408,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -469,7 +462,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -524,7 +516,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -579,7 +570,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -634,7 +624,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -689,7 +678,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -744,7 +732,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -799,7 +786,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -854,7 +840,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -909,7 +894,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -964,7 +948,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1014,7 +997,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1097,7 +1079,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1147,7 +1128,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1197,7 +1177,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1247,7 +1226,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1297,7 +1275,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1347,7 +1324,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1397,7 +1373,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1447,7 +1422,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1497,7 +1471,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1547,7 +1520,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1597,7 +1569,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1647,7 +1618,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1697,7 +1667,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1747,7 +1716,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1797,7 +1765,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1847,7 +1814,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1897,7 +1863,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1947,7 +1912,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -1997,7 +1961,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2047,7 +2010,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2097,7 +2059,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2147,7 +2108,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2197,7 +2157,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2247,7 +2206,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2297,7 +2255,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2347,7 +2304,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2397,7 +2353,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2448,7 +2403,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2498,7 +2452,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2548,7 +2501,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2598,7 +2550,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2648,7 +2599,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2698,7 +2648,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2748,7 +2697,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2798,7 +2746,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2848,7 +2795,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2898,7 +2844,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2948,7 +2893,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -2998,7 +2942,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3048,7 +2991,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3098,7 +3040,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3148,7 +3089,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3198,7 +3138,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3248,7 +3187,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3298,7 +3236,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3348,7 +3285,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3398,7 +3334,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3448,65 +3383,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [
-            {
-              "kind": "transform",
-              "parameter": "flag_panel",
-              "transform": {
-                "kind": "integer_to_string"
-              }
-            }
-          ],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {
-              "kind": "remove",
-              "parameter": "plot_width"
-            },
-            {
-              "kind": "remove",
-              "parameter": "plot_height"
-            }
-          ],
-          "changed_defaults": [
-            "plot_format"
-          ]
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 6,
-          "to_contract": 7,
-          "steps": [],
-          "changed_defaults": []
         }
       ]
     },
@@ -3605,7 +3482,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3748,7 +3624,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3821,7 +3696,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3889,7 +3763,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -3968,7 +3841,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4036,7 +3908,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4115,7 +3986,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4194,7 +4064,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4273,7 +4142,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4352,7 +4220,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4415,7 +4282,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4478,7 +4344,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4529,7 +4394,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4579,7 +4443,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4660,7 +4523,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4710,7 +4572,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4773,7 +4634,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4836,7 +4696,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -4899,7 +4758,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5020,7 +4878,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5109,7 +4966,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5172,7 +5028,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5235,7 +5090,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5298,7 +5152,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5361,7 +5214,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5424,7 +5276,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5495,7 +5346,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5558,7 +5408,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5621,7 +5470,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5684,7 +5532,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5757,7 +5604,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5825,7 +5671,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5893,7 +5738,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -5956,7 +5800,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6019,7 +5862,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6082,7 +5924,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6147,7 +5988,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6228,7 +6068,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6307,7 +6146,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6399,7 +6237,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6491,7 +6328,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6575,7 +6411,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6659,7 +6494,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6743,7 +6577,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6827,7 +6660,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6911,7 +6743,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -6974,7 +6805,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7032,7 +6862,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7090,7 +6919,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7150,7 +6978,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7213,7 +7040,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7276,7 +7102,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7339,40 +7164,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [],
-          "changed_defaults": []
         }
       ]
     },
@@ -7456,7 +7248,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7512,7 +7303,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Imported MeasurementSet destination is distinct from an input MeasurementSet path."
@@ -7565,7 +7355,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7615,7 +7404,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7665,7 +7453,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7715,7 +7502,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7765,7 +7551,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7817,7 +7602,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7867,7 +7651,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "importvla's autocorr keeps autocorrelations on import, distinct from flagdata's selection of them to flag."
@@ -7920,7 +7703,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -7970,7 +7752,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -8020,45 +7801,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [
-            {
-              "kind": "transform",
-              "parameter": "archivefiles",
-              "transform": {
-                "kind": "scalar_to_array",
-                "length": 1
-              }
-            }
-          ],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {"kind": "replace_value", "parameter": "bandname", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
-          ],
-          "changed_defaults": []
         }
       ]
     },
@@ -8071,7 +7814,6 @@
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
       "provider_family": "imager",
       "casa_task": "tclean",
-      "former_ids": ["imager"],
       "execution": {
         "invocation_name": "casars-imager",
         "fixed_args": [],
@@ -8553,17 +8295,13 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "surface_note": "A fixed direction for the PSF of a single-term MFS mosaic. Other gridders ignore it. Alternate cube and Taylor PSFs are tracked in #1062.",
           "projections": {
             "cli": {"flags": ["--psfphasecenter"], "metavar": "DIR|FIELD"},
             "provider": {"field": "psfphasecenter"},
             "python": {"name": "psfphasecenter"},
             "presentation": {"label": "PSF Phase Center", "group": "Advanced Wide-Field", "advanced": true}
-          },
-          "unimplemented": {"issue": 1062, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "mosaic"}},
-            {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "mosaicft"}},
-            {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "ftmosaic"}}
-          ]}}
+          }
         },
         {
           "name": "wprojplanes",
@@ -9775,124 +9513,6 @@
             "presentation": {"label": "Science Trace", "group": "Stages", "advanced": true}
           }
         }
-      ],
-      "migrations": [
-        {
-          "from_contract": 28,
-          "to_contract": 29,
-          "steps": [
-            {"kind": "remove", "parameter": "phasecenter_field", "when": {"kind": "equals", "parameter": "phasecenter_field", "value": {"kind": "string", "value": "none"}}},
-            {"kind": "remove", "parameter": "phasecenter", "when": {"kind": "equals", "parameter": "phasecenter", "value": {"kind": "string", "value": "none"}}},
-            {"kind": "remove", "parameter": "mask_box", "when": {"kind": "equals", "parameter": "mask_box", "value": {"kind": "string", "value": "none"}}},
-            {"kind": "remove", "parameter": "mask_image", "when": {"kind": "equals", "parameter": "mask_image", "value": {"kind": "string", "value": "none"}}},
-            {"kind": "rename", "from": "phasecenter_field", "to": "phasecenter"},
-            {"kind": "rename", "from": "mask_box", "to": "mask"},
-            {"kind": "rename", "from": "mask_image", "to": "mask"},
-            {"kind": "rename", "from": "minor_cycle_length", "to": "cycleniter"},
-            {"kind": "set", "parameter": "niter", "value": {"kind": "integer", "value": 0}, "when": {"kind": "equals", "parameter": "dirty_only", "value": {"kind": "bool", "value": true}}},
-            {"kind": "remove", "parameter": "dirty_only"},
-            {"kind": "transform", "parameter": "veltype", "transform": {"kind": "lowercase"}},
-            {"kind": "transform", "parameter": "datacolumn", "transform": {"kind": "lowercase"}},
-            {"kind": "replace_value", "parameter": "datacolumn", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": "corrected"}},
-            {"kind": "replace_value", "parameter": "datacolumn", "from": {"kind": "string", "value": "corrected_data"}, "to": {"kind": "string", "value": "corrected"}},
-            {"kind": "transform", "parameter": "scales", "transform": {"kind": "text_list", "separator": ",", "element": "float"}},
-            {"kind": "transform", "parameter": "pointingoffsetsigdev", "transform": {"kind": "text_list", "separator": ",", "element": "float"}},
-            {"kind": "transform", "parameter": "restfreq", "transform": {"kind": "text_list", "separator": ",", "element": "string"}},
-            {"kind": "replace_value", "parameter": "restoringbeam", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": []}},
-            {"kind": "replace_value", "parameter": "restoringbeam", "from": {"kind": "string", "value": "common"}, "to": {"kind": "array", "value": [{"kind": "string", "value": "common"}]}},
-            {"kind": "replace_value", "parameter": "wprojplanes", "from": {"kind": "string", "value": "none"}, "to": {"kind": "integer", "value": -1}},
-            {"kind": "replace_value", "parameter": "cfcache", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "outlierfile", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "startmodel", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "phasecenter", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "mask", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "start", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "width", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "set", "parameter": "wprojplanes", "value": {"kind": "integer", "value": -1}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "wproject"}}, {"kind": "not", "predicate": {"kind": "is_set", "parameter": "wprojplanes"}}]}},
-            {"kind": "set", "parameter": "wprojplanes", "value": {"kind": "integer", "value": -1}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}}, {"kind": "not", "predicate": {"kind": "is_set", "parameter": "wprojplanes"}}]}},
-            {"kind": "set", "parameter": "mosweight", "value": {"kind": "bool", "value": false}, "when": {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "mosaic"}}},
-            {"kind": "set", "parameter": "conjbeams", "value": {"kind": "bool", "value": true}, "when": {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}}}
-          ],
-          "changed_defaults": ["imsize", "cell", "cycleniter", "nterms", "perchanweightdensity"]
-        },
-        {
-          "from_contract": 29,
-          "to_contract": 30,
-          "steps": [],
-          "changed_defaults": ["write_pb"]
-        },
-        {
-          "from_contract": 30,
-          "to_contract": 31,
-          "steps": [],
-          "changed_defaults": ["hogbom_iteration_mode"]
-        },
-        {
-          "from_contract": 31,
-          "to_contract": 32,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 32,
-          "to_contract": 33,
-          "steps": [
-            {"kind": "replace_value", "parameter": "scan", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "observation", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
-          ],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 33,
-          "to_contract": 34,
-          "steps": [
-            {"kind": "replace_value", "parameter": "antenna", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "timerange", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
-          ],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 34,
-          "to_contract": 35,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 35,
-          "to_contract": 36,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 36,
-          "to_contract": 37,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 37,
-          "to_contract": 38,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 38,
-          "to_contract": 39,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 39,
-          "to_contract": 40,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 40,
-          "to_contract": 41,
-          "steps": [],
-          "changed_defaults": []
-        }
       ]
     },
     {
@@ -9978,7 +9598,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "The simulation project, a directory and the stem of its files, is distinct from importvla's project-code selector."
@@ -10031,7 +9650,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10081,7 +9699,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10131,7 +9748,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10181,7 +9797,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10231,7 +9846,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10281,7 +9895,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10331,7 +9944,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10381,7 +9993,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10431,7 +10042,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10483,7 +10093,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10533,7 +10142,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10583,7 +10191,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10633,7 +10240,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10692,7 +10298,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10742,7 +10347,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10792,7 +10396,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10842,7 +10445,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10892,7 +10494,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10942,7 +10543,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -10992,7 +10592,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11042,7 +10641,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11092,7 +10690,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11142,7 +10739,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11192,7 +10788,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11242,7 +10837,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11292,7 +10886,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "The simulated spectral window's frequency frame is distinct from the frame of an imager cube's output axis."
@@ -11345,7 +10938,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11395,7 +10987,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11445,7 +11036,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11495,7 +11085,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11545,7 +11134,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11595,7 +11183,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11645,7 +11232,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11695,7 +11281,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11745,7 +11330,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11795,7 +11379,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11847,11 +11430,9 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         }
-      ],
-      "migrations": []
+      ]
     },
     {
       "kind": "task",
@@ -11932,7 +11513,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -11982,7 +11562,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Image-header mode is distinct from the aggregate calibration workflow mode."
@@ -12035,7 +11614,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -12085,244 +11663,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": ["hdkey", "hdvalue"]
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 6,
-          "to_contract": 7,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 7,
-          "to_contract": 8,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 8,
-          "to_contract": 9,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 9,
-          "to_contract": 10,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 10,
-          "to_contract": 11,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 11,
-          "to_contract": 12,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 12,
-          "to_contract": 13,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 13,
-          "to_contract": 14,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 14,
-          "to_contract": 15,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 15,
-          "to_contract": 16,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 16,
-          "to_contract": 17,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 17,
-          "to_contract": 18,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 18,
-          "to_contract": 19,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 19,
-          "to_contract": 20,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 20,
-          "to_contract": 21,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 21,
-          "to_contract": 22,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 22,
-          "to_contract": 23,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 23,
-          "to_contract": 24,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 24,
-          "to_contract": 25,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 25,
-          "to_contract": 26,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 26,
-          "to_contract": 27,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 27,
-          "to_contract": 28,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 28,
-          "to_contract": 29,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 29,
-          "to_contract": 30,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 30,
-          "to_contract": 31,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 31,
-          "to_contract": 32,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 32,
-          "to_contract": 33,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 33,
-          "to_contract": 34,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 34,
-          "to_contract": 35,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 35,
-          "to_contract": 36,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 36,
-          "to_contract": 37,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 37,
-          "to_contract": 38,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 38,
-          "to_contract": 39,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 39,
-          "to_contract": 40,
-          "steps": [],
-          "changed_defaults": []
         }
       ]
     },
@@ -12676,7 +12017,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -12726,7 +12066,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -12776,7 +12115,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -12826,28 +12164,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": ["region", "box", "chans"]
         }
       ]
     },
@@ -12928,7 +12245,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -12978,7 +12294,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -13130,7 +12445,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -13180,7 +12494,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -13230,7 +12543,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -13280,7 +12592,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -13331,41 +12642,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {"kind": "replace_value", "parameter": "moments", "from": {"kind": "string", "value": "-1"}, "to": {"kind": "array", "value": [{"kind": "integer", "value": -1}]}},
-            {"kind": "replace_value", "parameter": "moments", "from": {"kind": "string", "value": "0"}, "to": {"kind": "array", "value": [{"kind": "integer", "value": 0}]}},
-            {"kind": "replace_value", "parameter": "moments", "from": {"kind": "string", "value": "1"}, "to": {"kind": "array", "value": [{"kind": "integer", "value": 1}]}},
-            {"kind": "replace_value", "parameter": "moments", "from": {"kind": "string", "value": "2"}, "to": {"kind": "array", "value": [{"kind": "integer", "value": 2}]}},
-            {"kind": "replace_value", "parameter": "moments", "from": {"kind": "string", "value": "3"}, "to": {"kind": "array", "value": [{"kind": "integer", "value": 3}]}},
-            {"kind": "transform", "parameter": "includepix", "transform": {"kind": "number_list"}}
-          ],
-          "changed_defaults": ["moments", "chans", "mask", "includepix"]
         }
       ]
     },
@@ -13572,7 +12849,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -13620,7 +12896,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Output FITS destination is distinct from an input FITS path."
@@ -13673,7 +12948,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -13723,34 +12997,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
         }
       ]
     },
@@ -14616,38 +13863,7 @@
             "presentation": {"label": "Reindex", "group": "Output", "advanced": true}
           },
           "unimplemented": {"issue": 978}
-        }      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {"kind": "rename", "from": "width", "to": "chanbin"},
-            {"kind": "set", "parameter": "chanaverage", "value": {"kind": "bool", "value": true}, "when": {"kind": "is_set", "parameter": "chanbin"}},
-            {"kind": "set", "parameter": "chanaverage", "value": {"kind": "bool", "value": false}, "when": {"kind": "equals", "parameter": "chanbin", "value": {"kind": "integer", "value": 1}}},
-            {"kind": "rename", "from": "msselect", "to": "taql"}
-          ],
-          "changed_defaults": ["datacolumn"]
-        }
-      ]
+        }      ]
     },
     {
       "kind": "task",
@@ -14977,33 +14193,7 @@
             "python": {"name": "msselect", "keyword_only": true},
             "presentation": {"label": "MS Select", "group": "Selection"}
           }
-        }      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": ["datacolumn"]
-        }
-      ]
+        }      ]
     },
     {
       "kind": "task",
@@ -15409,54 +14599,6 @@
             "python": {"name": "array", "keyword_only": true},
             "presentation": {"label": "Array IDs", "group": "Selection"}
           }
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [
-            {"kind": "rename", "from": "gaintables", "to": "gaintable"},
-            {"kind": "replace_value", "parameter": "gaintable", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": []}},
-            {"kind": "transform", "parameter": "gaintable", "transform": {"kind": "text_list", "separator": ",", "element": "path"}},
-            {"kind": "rename", "from": "apply_mode", "to": "applymode"},
-            {"kind": "transform", "parameter": "gainfield", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
-            {"kind": "transform", "parameter": "interp", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
-            {"kind": "transform", "parameter": "spwmap", "transform": {"kind": "text_list", "separator": ";", "element": "integer_list"}},
-            {"kind": "replace_value", "parameter": "calwt", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": [{"kind": "bool", "value": false}]}},
-            {"kind": "replace_value", "parameter": "calwt", "from": {"kind": "string", "value": ""}, "to": {"kind": "array", "value": [{"kind": "bool", "value": false}]}},
-            {"kind": "transform", "parameter": "calwt", "transform": {"kind": "text_list", "separator": ",", "element": "bool"}},
-            {"kind": "broadcast", "parameter": "gainfield", "to_length_of": "gaintable"},
-            {"kind": "broadcast", "parameter": "interp", "to_length_of": "gaintable"},
-            {"kind": "broadcast", "parameter": "spwmap", "to_length_of": "gaintable"},
-            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "callib"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": "none"}}}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": ""}}}]}},
-            {"kind": "replace_value", "parameter": "callib", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
-          ],
-          "changed_defaults": ["calwt"]
         }
       ]
     },
@@ -16113,63 +15255,6 @@
             "presentation": {"label": "Array IDs", "group": "Selection"}
           }
         }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [
-            {"kind": "rename", "from": "gaintables", "to": "gaintable"},
-            {"kind": "replace_value", "parameter": "gaintable", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": []}},
-            {"kind": "transform", "parameter": "gaintable", "transform": {"kind": "text_list", "separator": ",", "element": "path"}},
-            {"kind": "rename", "from": "out_table", "to": "caltable"},
-            {"kind": "rename", "from": "gain_type", "to": "gaintype"},
-            {"kind": "replace_value", "parameter": "gaintype", "from": {"kind": "string", "value": "g"}, "to": {"kind": "string", "value": "G"}},
-            {"kind": "replace_value", "parameter": "gaintype", "from": {"kind": "string", "value": "t"}, "to": {"kind": "string", "value": "T"}},
-            {"kind": "rename", "from": "solve_mode", "to": "calmode"},
-            {"kind": "rename", "from": "gain_combine", "to": "combine"},
-            {"kind": "replace_value", "parameter": "combine", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "rename", "from": "min_snr", "to": "minsnr"},
-            {"kind": "transform", "parameter": "smodel", "transform": {"kind": "text_list", "separator": ",", "element": "float"}},
-            {"kind": "set", "parameter": "smodel", "value": {"kind": "array", "value": []}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gain_model_source", "value": {"kind": "string", "value": "model-column"}}, {"kind": "not", "predicate": {"kind": "is_set", "parameter": "smodel"}}]}},
-            {"kind": "set", "parameter": "smodel", "value": {"kind": "array", "value": []}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gain_model_source", "value": {"kind": "string", "value": "model-column"}}, {"kind": "is_set", "parameter": "smodel"}]}},
-            {"kind": "set", "parameter": "smodel", "value": {"kind": "array", "value": [{"kind": "float", "value": 1.0}, {"kind": "float", "value": 0.0}, {"kind": "float", "value": 0.0}, {"kind": "float", "value": 0.0}]}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "gain_model_source", "value": {"kind": "string", "value": "point"}}, {"kind": "not", "predicate": {"kind": "is_set", "parameter": "smodel"}}]}},
-            {"kind": "remove", "parameter": "gain_model_source"},
-            {"kind": "transform", "parameter": "gainfield", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
-            {"kind": "transform", "parameter": "interp", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
-            {"kind": "transform", "parameter": "spwmap", "transform": {"kind": "text_list", "separator": ";", "element": "integer_list"}},
-            {"kind": "broadcast", "parameter": "gainfield", "to_length_of": "gaintable"},
-            {"kind": "broadcast", "parameter": "interp", "to_length_of": "gaintable"},
-            {"kind": "broadcast", "parameter": "spwmap", "to_length_of": "gaintable"},
-            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "callib"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": "none"}}}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": ""}}}]}},
-            {"kind": "replace_value", "parameter": "callib", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
-          ],
-          "changed_defaults": ["calmode", "smodel"]
-        }
       ]
     },
     {
@@ -16775,57 +15860,6 @@
             "presentation": {"label": "Array IDs", "group": "Selection"}
           }
         }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [
-            {"kind": "rename", "from": "gaintables", "to": "gaintable"},
-            {"kind": "replace_value", "parameter": "gaintable", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": []}},
-            {"kind": "transform", "parameter": "gaintable", "transform": {"kind": "text_list", "separator": ",", "element": "path"}},
-            {"kind": "rename", "from": "out_table", "to": "caltable"},
-            {"kind": "rename", "from": "bandpass_combine", "to": "combine"},
-            {"kind": "replace_value", "parameter": "combine", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
-            {"kind": "replace_value", "parameter": "bandtype", "from": {"kind": "string", "value": "b"}, "to": {"kind": "string", "value": "B"}},
-            {"kind": "replace_value", "parameter": "bandtype", "from": {"kind": "string", "value": "bpoly"}, "to": {"kind": "string", "value": "BPOLY"}},
-            {"kind": "rename", "from": "min_snr", "to": "minsnr"},
-            {"kind": "transform", "parameter": "smodel", "transform": {"kind": "text_list", "separator": ",", "element": "float"}},
-            {"kind": "transform", "parameter": "gainfield", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
-            {"kind": "transform", "parameter": "interp", "transform": {"kind": "text_list", "separator": ";", "element": "string"}},
-            {"kind": "transform", "parameter": "spwmap", "transform": {"kind": "text_list", "separator": ";", "element": "integer_list"}},
-            {"kind": "broadcast", "parameter": "gainfield", "to_length_of": "gaintable"},
-            {"kind": "broadcast", "parameter": "interp", "to_length_of": "gaintable"},
-            {"kind": "broadcast", "parameter": "spwmap", "to_length_of": "gaintable"},
-            {"kind": "set", "parameter": "docallib", "value": {"kind": "bool", "value": true}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "callib"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": "none"}}}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "callib", "value": {"kind": "string", "value": ""}}}]}},
-            {"kind": "replace_value", "parameter": "callib", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
-          ],
-          "changed_defaults": ["combine", "smodel"]
-        }
       ]
     },
     {
@@ -17135,48 +16169,6 @@
             "python": {"name": "format", "keyword_only": true},
             "presentation": {"label": "Output Format", "group": "Output", "advanced": true}
           }
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [
-            {"kind": "rename", "from": "fluxscale_input", "to": "caltable"},
-            {"kind": "rename", "from": "out_table", "to": "fluxtable"},
-            {"kind": "rename", "from": "reference_fields", "to": "reference"},
-            {"kind": "transform", "parameter": "reference", "transform": {"kind": "text_list", "separator": ",", "element": "string"}},
-            {"kind": "rename", "from": "transfer_fields", "to": "transfer"},
-            {"kind": "transform", "parameter": "transfer", "transform": {"kind": "text_list", "separator": ",", "element": "string"}},
-            {"kind": "replace_value", "parameter": "refspwmap", "from": {"kind": "string", "value": "none"}, "to": {"kind": "array", "value": [{"kind": "integer", "value": -1}]}},
-            {"kind": "transform", "parameter": "refspwmap", "transform": {"kind": "text_list", "separator": ",", "element": "integer"}},
-            {"kind": "replace_value", "parameter": "gainthreshold", "from": {"kind": "string", "value": "none"}, "to": {"kind": "float", "value": -1.0}}
-          ],
-          "changed_defaults": []
         }
       ]
     },
@@ -17493,41 +16485,6 @@
             "presentation": {"label": "Gaincurve Table", "group": "Gencal", "advanced": true}
           }
         }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [
-            {"kind": "rename", "from": "out_table", "to": "caltable"},
-            {"kind": "transform", "parameter": "parameter", "transform": {"kind": "text_list", "separator": ",", "element": "float"}}
-          ],
-          "changed_defaults": []
-        }
       ]
     },
     {
@@ -17632,7 +16589,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -17682,7 +16638,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -17733,7 +16688,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -17783,7 +16737,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -17835,7 +16788,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -17885,7 +16837,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -17940,7 +16891,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -17995,7 +16945,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18050,7 +16999,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18105,7 +17053,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18160,7 +17107,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18215,7 +17161,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18270,7 +17215,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18325,7 +17269,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18380,7 +17323,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18435,7 +17377,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18490,7 +17431,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18540,7 +17480,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18623,7 +17562,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18673,7 +17611,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18723,7 +17660,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18773,7 +17709,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18823,7 +17758,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18873,7 +17807,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18923,7 +17856,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -18973,7 +17905,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19023,7 +17954,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19073,7 +18003,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19123,7 +18052,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19173,7 +18101,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19223,7 +18150,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19273,7 +18199,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19323,7 +18248,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19373,7 +18297,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19423,7 +18346,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19473,7 +18395,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19523,7 +18444,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19573,7 +18493,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19623,7 +18542,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19673,7 +18591,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19723,7 +18640,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19773,7 +18689,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19823,7 +18738,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19873,7 +18787,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19923,7 +18836,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -19974,7 +18886,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20024,7 +18935,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20074,7 +18984,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20124,7 +19033,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20174,7 +19082,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20224,7 +19131,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20274,7 +19180,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20324,7 +19229,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20374,7 +19278,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20424,7 +19327,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20474,7 +19376,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20524,7 +19425,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20574,7 +19474,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20624,7 +19523,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20674,7 +19572,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20724,7 +19621,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20774,7 +19670,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20824,7 +19719,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20874,7 +19768,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20924,7 +19817,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -20974,65 +19866,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [
-            {
-              "kind": "transform",
-              "parameter": "flag_panel",
-              "transform": {
-                "kind": "integer_to_string"
-              }
-            }
-          ],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {
-              "kind": "remove",
-              "parameter": "plot_width"
-            },
-            {
-              "kind": "remove",
-              "parameter": "plot_height"
-            }
-          ],
-          "changed_defaults": [
-            "plot_format"
-          ]
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 6,
-          "to_contract": 7,
-          "steps": [],
-          "changed_defaults": []
         }
       ]
     },
@@ -22001,7 +20835,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22051,7 +20884,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Flagging mode is distinct from the aggregate calibration workflow mode."
@@ -22104,7 +20936,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22154,7 +20985,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22204,7 +21034,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22254,7 +21083,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22304,7 +21132,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22354,7 +21181,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22406,7 +21232,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22456,7 +21281,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22506,7 +21330,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22556,7 +21379,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22606,7 +21428,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22656,7 +21477,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22707,7 +21527,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22758,7 +21577,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22811,7 +21629,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -22861,43 +21678,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {"kind": "set", "parameter": "mode", "value": {"kind": "string", "value": "unflag"}, "when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manual"}}, {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}]}},
-            {"kind": "set", "parameter": "action", "value": {"kind": "string", "value": "apply"}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "mode"}, {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}]}},
-            {"kind": "set", "parameter": "mode", "value": {"kind": "string", "value": "unflag"}, "when": {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "unflag"}}},
-            {"kind": "replace_value", "parameter": "action", "from": {"kind": "string", "value": "unflag"}, "to": {"kind": "string", "value": "apply"}},
-            {"kind": "replace_value", "parameter": "action", "from": {"kind": "string", "value": "flag"}, "to": {"kind": "string", "value": "apply"}},
-            {"kind": "replace_value", "parameter": "quackmode", "from": {"kind": "string", "value": "end"}, "to": {"kind": "string", "value": "endb"}},
-            {"kind": "set", "parameter": "timedevscale", "value": {"kind": "float", "value": 1.0}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "timedev"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "timedev", "value": {"kind": "string", "value": "none"}}}]}},
-            {"kind": "set", "parameter": "freqdevscale", "value": {"kind": "float", "value": 1.0}, "when": {"kind": "all", "predicates": [{"kind": "is_set", "parameter": "freqdev"}, {"kind": "not", "predicate": {"kind": "equals", "parameter": "freqdev", "value": {"kind": "string", "value": "none"}}}]}}
-          ],
-          "changed_defaults": ["mode", "quackinterval", "extendflags", "extendpols", "growtime", "growfreq"]
         }
       ]
     },
@@ -22973,7 +21754,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23023,7 +21803,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Flag-version mode is distinct from the aggregate calibration workflow mode."
@@ -23076,7 +21855,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23126,7 +21904,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23176,7 +21953,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23226,34 +22002,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
         }
       ]
     },
@@ -23336,7 +22085,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23386,7 +22134,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23436,7 +22183,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23486,7 +22232,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23536,7 +22281,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null,
           "unimplemented": {"issue": 977}
         },
@@ -23587,7 +22331,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null,
           "unimplemented": {"issue": 977}
         },
@@ -23638,7 +22381,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null,
           "unimplemented": {"issue": 977}
         },
@@ -23689,7 +22431,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null,
           "unimplemented": {"issue": 977}
         },
@@ -23740,7 +22481,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null,
           "unimplemented": {"issue": 977}
         },
@@ -23791,7 +22531,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Primary-beam correction mode is distinct from the aggregate calibration workflow mode."
@@ -23844,7 +22583,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -23894,45 +22632,11 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null,
           "unimplemented": {
             "issue": 977,
             "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
           }
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {"kind": "transform", "parameter": "stretch", "transform": {"kind": "trim"}},
-            {"kind": "transform", "parameter": "stretch", "transform": {"kind": "lowercase"}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "false"}, "to": {"kind": "bool", "value": false}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "true"}, "to": {"kind": "bool", "value": true}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "f"}, "to": {"kind": "bool", "value": false}},
-            {"kind": "replace_value", "parameter": "stretch", "from": {"kind": "string", "value": "t"}, "to": {"kind": "bool", "value": true}}
-          ],
-          "changed_defaults": ["pbimage", "box", "region", "chans", "stokes", "mask", "stretch"]
         }
       ]
     },
@@ -24170,7 +22874,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24220,7 +22923,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24270,7 +22972,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24320,7 +23021,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24370,7 +23070,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "PV-slice width in pixels is distinct from image and channel-averaging widths."
@@ -24423,7 +23122,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24473,34 +23171,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": ["chans"]
         }
       ]
     },
@@ -24581,7 +23252,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24629,7 +23299,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24679,7 +23348,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24729,7 +23397,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24779,7 +23446,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -24895,32 +23561,6 @@
             "applies_when": {"kind": "equals", "parameter": "dropdeg", "value": {"kind": "bool", "value": true}}
           }
         }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": ["box", "chans"]
-        }
       ]
     },
     {
@@ -25003,7 +23643,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25255,7 +23894,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25305,7 +23943,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25356,34 +23993,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": ["outfile", "expr"]
         }
       ]
     },
@@ -25550,7 +24160,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25600,7 +24209,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25656,7 +24264,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Regridded image output is distinct from a calibration report destination."
@@ -25717,7 +24324,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25767,34 +24373,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": ["template"]
         }
       ]
     },
@@ -25894,7 +24473,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25944,7 +24522,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -25994,7 +24571,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26044,7 +24620,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26095,34 +24670,7 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
         }
       ]
     },
@@ -26203,7 +24751,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26251,7 +24798,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26301,7 +24847,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26397,32 +24942,6 @@
           },
           "unimplemented": {"issue": 977}
         }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [],
-          "changed_defaults": []
-        }
       ]
     },
     {
@@ -26503,7 +25022,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26553,7 +25071,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26603,7 +25120,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26653,7 +25169,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26703,7 +25218,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26755,7 +25269,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26805,7 +25318,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26855,7 +25367,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26905,7 +25416,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -26955,7 +25465,6 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "msconvert's threads convert partitions at once; distinct from uvcontsub's continuum-fit threads."
@@ -27008,11 +25517,9 @@
               "hidden": false
             }
           },
-          "aliases": [],
           "reviewed_homonym": null
         }
-      ],
-      "migrations": []
+      ]
     }
   ]
 }

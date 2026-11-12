@@ -150,6 +150,7 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
         | ProductRole::PbCorrectedImage(_)
         | ProductRole::SpectralIndex
         | ProductRole::SpectralIndexError
+        | ProductRole::SpectralCurvature
         | ProductRole::PbCorrectedSpectralIndex
         | ProductRole::Sensitivity
         | ProductRole::CleanMask => Ok(()),

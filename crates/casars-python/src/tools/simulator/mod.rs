@@ -61,7 +61,7 @@ pub(crate) struct Session {
 /// CASA's `simulator` tool.
 ///
 /// `simulator(*, memory_budget=None, backend='auto', workers=None)` takes
-/// only casa-rs's controls, keyword-only (ADR-0019 item 3):
+/// only casa-rs's controls, keyword-only (ADR-0017):
 /// - `memory_budget` caps, in bytes, what a session holds at once while
 ///   `close` writes: the MeasurementSet writer gets half of it and the
 ///   geometry and noise the rest. `None` takes three quarters of the
@@ -104,7 +104,7 @@ impl PySimulator {
     /// The method has converted its Python arguments to Rust values (the
     /// signature's `Variant`s and lists) before it calls this; `work` turns
     /// them into the session's types, which can need the session's measures,
-    /// and does the session's work, all without the GIL (ADR-0019 §4). An
+    /// and does the session's work, all without the GIL (ADR-0017). An
     /// error it returns is created lazily and raised once the GIL is back.
     fn on_session<T: Send>(
         &self,
