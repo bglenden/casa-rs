@@ -151,8 +151,11 @@ pub(super) fn prepared(
         predict_support::resources(workers, 2 << 30),
     );
     for (source, start, stop) in [("target", 0., 20.), ("offset", 20., 40.)] {
-        sm.observe(&predict_support::scan(source, start, stop))
-            .unwrap();
+        let mut scan = predict_support::scan(source, start, stop);
+        scan.add_observation = source == "offset"
+            && case["segment"] == "split"
+            && case["mode"].as_str().unwrap().contains("perobs");
+        sm.observe(&scan).unwrap();
     }
     sm.close().unwrap();
     input::prepare(&path);
@@ -187,12 +190,7 @@ fn context(path: &Path, calibration: &Path, case: &Json) {
     if split {
         for root in [path, calibration] {
             let observation = root.join("OBSERVATION");
-            let mut table = Table::open(TableOptions::new(&observation)).unwrap();
-            if table.row_count() == 1 {
-                let row = table.row_accessor().row(0).unwrap().clone();
-                table.add_row(row).unwrap();
-            }
-            table.save(TableOptions::new(&observation)).unwrap();
+            assert_eq!(Table::rows_on_disk(&observation).unwrap(), 2);
         }
         let mut table = Table::open(TableOptions::new(path)).unwrap();
         for row in 0..table.row_count() {
