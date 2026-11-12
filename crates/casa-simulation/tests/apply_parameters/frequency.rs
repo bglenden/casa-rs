@@ -71,8 +71,16 @@ pub(super) fn prepare(path: &Path, case: &Json) {
             .set(Value::Array(parameters))
             .unwrap();
         let mut flags = vec![false; receptors * 4];
-        if case["probe"] == "flag_channel" && antenna == 0 {
-            flags[receptors] = true;
+        if antenna == 0 {
+            let probe = case["probe"].as_str().unwrap();
+            if probe.starts_with("flag_channel") {
+                flags[receptors] = true;
+            } else if probe == "all_flagged" {
+                flags.fill(true);
+            } else if probe == "one_valid" {
+                flags.fill(true);
+                flags[2 * receptors..3 * receptors].fill(false);
+            }
         }
         table
             .cell_accessor_mut(row, "FLAG")
@@ -110,14 +118,24 @@ pub(super) fn prepare(path: &Path, case: &Json) {
     else {
         panic!("frequencies")
     };
-    let frequencies = frequencies.mapv(|frequency| {
-        frequency
-            + if case["probe"] == "shifted" {
-                250_000.0
-            } else {
-                0.0
-            }
-    });
+    let probe = case["probe"].as_str().unwrap();
+    let mut frequencies = frequencies
+        .iter()
+        .map(|frequency| {
+            frequency
+                + if probe == "tie_shifted" {
+                    7_812_500.0
+                } else if probe.contains("shifted") {
+                    250_000.0
+                } else {
+                    0.0
+                }
+        })
+        .collect::<Vec<_>>();
+    if probe == "descending_shifted" {
+        frequencies.reverse();
+    }
+    let frequencies = ArrayD::from_shape_vec(IxDyn(&[frequencies.len()]), frequencies).unwrap();
     assert_eq!(
         frequencies.iter().copied().collect::<Vec<_>>(),
         case["calibration"]["frequencies_hz"]

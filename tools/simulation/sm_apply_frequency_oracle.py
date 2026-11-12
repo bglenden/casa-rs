@@ -27,6 +27,32 @@ CASES += [{"name": f"{kind}_{interp.replace(',', '_')}_shifted", "kind": kind,
           for interp in ("nearest,nearest", "nearest,linear", "linear,linear")]
 
 
+CASES += [{"name": f"{kind}_{interp.replace(',', '_')}_{probe}", "kind": kind,
+           "interp": interp, "options": {}, "probe": probe}
+          for kind in ("B", "Tf", "Df")
+          for interp, probe in [
+              ("nearest,cubic", "shifted"), ("linear,cubic", "shifted"),
+              ("nearest,spline", "shifted"), ("linear,spline", "shifted"),
+              ("nearest,nearest", "descending_shifted"),
+              ("nearest,linear", "descending_shifted"),
+              ("nearest,cubic", "descending_shifted"),
+              ("nearest,spline", "descending_shifted"),
+              ("nearest,nearest", "tie_shifted"),
+              ("nearest,linear", "tie_shifted"),
+              ("nearest,unrecognized", "shifted"),
+          ]]
+CASES += [{"name": f"{kind}_nearest_{mode}_{probe}", "kind": kind,
+           "interp": "nearest," + mode, "options": {}, "probe": probe}
+          for kind in ("B", "Tf")
+          for mode, probe in [
+              ("nearestflag", "flag_channel_shifted"),
+              ("linearflag", "flag_channel_shifted"),
+              ("cubicflag", "all_flagged"),
+              ("splineflag", "all_flagged"),
+              ("linear", "one_valid"), ("nearest", "one_valid"),
+          ]]
+
+
 def calibration(sm, path, kind, bounds, probe):
     from casatools import table
 
@@ -46,8 +72,15 @@ def calibration(sm, path, kind, bounds, probe):
                 for channel in range(4):
                     values[:, channel, :] = (base[:, channel, :] + LEAKAGE_OFFSETS[channel]
                                              if kind == "Df" else base[:, channel, :] * GAIN_FACTORS[channel])
-            if column == "FLAG" and probe == "flag_channel":
-                values[0, 1, tb.getcol("ANTENNA1") == 0] = True
+            if column == "FLAG":
+                selected = tb.getcol("ANTENNA1") == 0
+                if probe.startswith("flag_channel"):
+                    values[0, 1, selected] = True
+                elif probe == "all_flagged":
+                    values[:, :, selected] = True
+                elif probe == "one_valid":
+                    values[:, :, selected] = True
+                    values[:, 2, selected] = False
             tb.putcol(column, values)
         tb.putkeyword("VisCal", kind + " Jones")
         information = tb.info()
@@ -63,8 +96,12 @@ def calibration(sm, path, kind, bounds, probe):
             for column in destination.colnames():
                 if column in source.colnames() and source.iscelldefined(column, row):
                     destination.putcell(column, row, source.getcell(column, row))
-        if probe == "shifted":
-            destination.putcol("CHAN_FREQ", destination.getcol("CHAN_FREQ") + 250_000.0)
+        frequencies = destination.getcol("CHAN_FREQ")
+        if "shifted" in probe:
+            frequencies += 7_812_500.0 if probe == "tie_shifted" else 250_000.0
+        if probe == "descending_shifted":
+            frequencies = frequencies[::-1, :]
+        destination.putcol("CHAN_FREQ", frequencies)
         frequencies = destination.getcell("CHAN_FREQ", 0).tolist()
     finally:
         source.close()
@@ -101,6 +138,7 @@ def main():
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--fixture", type=pathlib.Path, required=True)
     parser.add_argument("--only", choices=[case["name"] for case in CASES])
+    parser.add_argument("--resume", action="store_true", help="Reuse existing successful per-case CASA results")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     assert casatasks.version_string() == "6.7.6.14"
@@ -113,12 +151,13 @@ def main():
     results = []
     for spec in selected:
         out = args.out / spec["name"]
-        out.mkdir()
+        out.mkdir(exist_ok=args.resume)
         fixture = out / "result.json.gz"
-        with (out / "worker.log").open("w") as log:
-            subprocess.run([sys.executable, __file__, "--out", str(out), "--fixture", str(fixture),
-                            "--only", spec["name"], "--worker"], stdout=log, stderr=subprocess.STDOUT,
-                           check=True)
+        if not (args.resume and fixture.is_file()):
+            with (out / "worker.log").open("w") as log:
+                subprocess.run([sys.executable, __file__, "--out", str(out), "--fixture", str(fixture),
+                                "--only", spec["name"], "--worker"], stdout=log, stderr=subprocess.STDOUT,
+                               check=True)
         with gzip.open(fixture, "rt") as handle:
             results.extend(json.load(handle)["cases"])
         save(args.fixture, results)

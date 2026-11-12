@@ -119,6 +119,13 @@ impl std::fmt::Debug for AppliedTable {
     }
 }
 
+/// Evaluated solutions; channel offsets are present only for spectral tables.
+struct AppliedSolutions {
+    chunks: Chunks,
+    values: Vec<[Complex32; 2]>,
+    offsets: Vec<usize>,
+}
+
 /// A loaded table with the memory admitted for what it keeps.
 struct HeldLookup {
     lookup: CalibrationTableLookup,
@@ -188,8 +195,7 @@ impl Simulator {
             }
         };
         let frequency = matches!(kind.as_str(), "B" | "TF" | "DF")
-            .then(|| frequency_interpolation(&spec.interp))
-            .transpose()?;
+            .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
             "G" | "B" => AppliedKind::Gain,
             "D" | "DF" => AppliedKind::Leakage,
@@ -288,12 +294,23 @@ impl Simulator {
                     TermBytes::per_chunk(&per_window, antennas)
                 };
                 let mut reservation = self.admit_term(bytes)?;
-                let (chunks, values, offsets) = self.applied_solutions(table, &per_window)?;
+                let evaluated = self.applied_solutions(table, &per_window)?;
                 reservation.retain(bytes.kept);
                 let term = if table.frequency.is_some() {
-                    applied_frequency(table.kind.operator(), antennas, chunks, values, offsets)
+                    applied_frequency(
+                        table.kind.operator(),
+                        antennas,
+                        evaluated.chunks,
+                        evaluated.values,
+                        evaluated.offsets,
+                    )
                 } else {
-                    applied(table.kind.operator(), antennas, chunks, values)
+                    applied(
+                        table.kind.operator(),
+                        antennas,
+                        evaluated.chunks,
+                        evaluated.values,
+                    )
                 };
                 Ok(Arc::new(HeldTerm::new(term, reservation)))
             }
@@ -307,7 +324,7 @@ impl Simulator {
         &self,
         table: &AppliedTable,
         per_window: &[usize],
-    ) -> SimulatorResult<(Chunks, Vec<[Complex32; 2]>, Vec<usize>)> {
+    ) -> SimulatorResult<AppliedSolutions> {
         let kind = table.kind;
         let lookup = &table.lookup.lookup;
         let spwmap = &table.spwmap;
@@ -420,7 +437,11 @@ impl Simulator {
         if table.frequency.is_some() {
             offsets.push(values.len());
         }
-        Ok((chunks.sorted(), values, offsets))
+        Ok(AppliedSolutions {
+            chunks: chunks.sorted(),
+            values,
+            offsets,
+        })
     }
 }
 
@@ -441,11 +462,30 @@ fn apply_interpolation(interp: &str) -> SimulatorResult<ApplyInterpolationMode> 
 }
 
 /// CASA defaults frequency interpolation to linear for frequency-dependent parameters.
-fn frequency_interpolation(interp: &str) -> SimulatorResult<FrequencyInterpolation> {
+fn frequency_interpolation(interp: &str) -> FrequencyInterpolation {
     let mode = interp.split(',').nth(1).unwrap_or("linear");
-    match mode {
-        "nearest" => Ok(FrequencyInterpolation::Nearest),
-        "" | "linear" => Ok(FrequencyInterpolation::Linear),
-        other => Err(not_yet(format!("with frequency interp='{other}'"))),
+    let retain_flags = mode.contains("flag");
+    if mode.contains("nearest") {
+        if retain_flags {
+            FrequencyInterpolation::NearestFlag
+        } else {
+            FrequencyInterpolation::Nearest
+        }
+    } else if mode.contains("cubic") {
+        if retain_flags {
+            FrequencyInterpolation::CubicFlag
+        } else {
+            FrequencyInterpolation::Cubic
+        }
+    } else if mode.contains("spline") {
+        if retain_flags {
+            FrequencyInterpolation::SplineFlag
+        } else {
+            FrequencyInterpolation::Spline
+        }
+    } else if retain_flags {
+        FrequencyInterpolation::LinearFlag
+    } else {
+        FrequencyInterpolation::Linear
     }
 }
