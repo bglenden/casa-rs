@@ -5171,6 +5171,35 @@ CASA table control. C++ consumption of native invalid-solution tables is
 compared with the unmodified defective CASA outputs separately. The
 reference fixture retains both results so this exception cannot silently
 become a relaxed numerical tolerance.</p>
+<h2 id="natural-spline-interpolation-skips-the-first-interior-back-substitution">Natural-spline interpolation skips the first interior back-substitution<a class="headerlink" href="#natural-spline-interpolation-skips-the-first-interior-back-substitution" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: corrected under the standing evident-intent rule (#1053)</li>
+<li>Affected code: <code>InterpolateArray1D&lt;Double,Float&gt;::interpolatePtr</code>, natural
+  spline back-substitution, called by <code>CTPatchedInterp::resampleInFreq</code>.</li>
+<li>Reference: installed CASA 6.7.6.14. Historical casacore source
+  <code>083f0509fd76a03d6ec738c60e9dcfaf3e6c56a5</code> has the same mechanism:
+  its backward loop stops at <code>i &gt; 1</code>, leaving knot 1 partially eliminated.</li>
+</ul>
+<p>A scalar Tf table with four equally spaced, real amplitudes <code>[1,2,1/2,5/4]</code>
+should have zero endpoint second derivatives and interior second derivatives
+<code>[-49/10,23/5]</code> in unit-spacing coordinates. The defining equations are
+<code>4*m1+m2=-15</code> and <code>m1+4*m2=27/2</code>. At the first three half knots, the
+natural spline is exactly <code>[289/160,203/160,47/80]</code>.</p>
+<p>CASA leaves the first interior derivative at <code>-15/4</code>, rather than <code>-49/10</code>,
+and evaluates the first half knot as <code>1.734375</code>, rather than <code>1.80625</code>.
+The first derivative is then discontinuous at the first interior knot,
+contradicting the stated natural-spline interpolation. With input DATA
+<code>3+4j</code> and identical antenna gains, CASA writes approximately
+<code>9.02417+12.03223j</code> instead of <code>9.78762+13.05016j</code>. The complete four-channel
+visibility result differs by normalized RMS 0.0780.</p>
+<p>casa-rs completes back-substitution at every interior knot. The fixture
+<code>sm_apply_frequency_casa.json.gz</code> keeps the raw CASA output and an independent
+CASA control: a nearest-interpolated table explicitly containing the exact
+half-knot amplitudes. That control is also checked against the closed-form
+receptor equation; the native spline is compared against it. C++ consumption
+of the original native spline table is checked separately against the raw
+CASA result. This exception changes no numerical tolerance.</p>
 
 
 
