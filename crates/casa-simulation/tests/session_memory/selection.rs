@@ -2,8 +2,7 @@
 //! Fragmented row selections keep bounded evaluation and batch scratch,
 //! including existing scratch columns and increments after Jones (#1053).
 
-#[path = "../selection/input.rs"]
-pub(super) mod input;
+use super::selection_input as input;
 
 use std::path::Path;
 use std::sync::Arc;
