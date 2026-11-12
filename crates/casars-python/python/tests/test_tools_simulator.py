@@ -900,6 +900,68 @@ def test_table_application_uses_valid_and_neutral_parameters(tmp_path: Path, kin
 
 
 @needs_measures
+@pytest.mark.parametrize("kind", ["B", "Tf", "Df"])
+@pytest.mark.parametrize("flagged", [False, True])
+def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Path, kind: str, flagged: bool) -> None:
+    from casars.tools import table as table_tool
+
+    path, calibration = tmp_path / "x.ms", tmp_path / "frequency.cal"
+    sm = opened(tmp_path)
+    configure(sm, stokes="RR RL LR LL")
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.setseed(5)
+    assert sm.setnoise(simplenoise="0.1Jy")
+    assert sm.corrupt()
+    sm.close()
+    before = Table.open(path)
+    expected = {name: np.asarray(before.get_column(name)).copy() for name in ("DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")}
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setgain(table=str(calibration), amplitude=[0.0])
+    sm.close()
+    receptors = 1 if kind == "Tf" else 2
+    coefficients = np.array([[1.0, 1.2, 1.4, 1.6], [0.8, 0.9, 1.0, 1.1]], dtype=np.complex64)[:receptors]
+    if kind == "Df":
+        coefficients *= 0.05 + 0.03j
+    tb = table_tool()
+    assert tb.open(str(calibration), nomodify=False)
+    rows = np.asarray(tb.getcol("TIME")).size
+    for column in ("CPARAM", "FLAG", "PARAMERR", "SNR"):
+        values = np.repeat(coefficients[:, :, None], rows, axis=2) if column == "CPARAM" else np.full((receptors, 4, rows), flagged if column == "FLAG" else 0, dtype=bool if column == "FLAG" else np.float32)
+        assert tb.putcol(column, values)
+    assert tb.putkeyword("VisCal", kind + " Jones")
+    assert tb.putinfo({"subType": kind + " Jones"})
+    tb.close()
+    frequencies = np.asarray(Table.open(path / "SPECTRAL_WINDOW").get_column("CHAN_FREQ"))
+    assert tb.open(str(calibration / "SPECTRAL_WINDOW"), nomodify=False)
+    assert tb.putcol("CHAN_FREQ", frequencies)
+    tb.close()
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setapply(table=str(calibration), type=kind, interp="linear,linear")
+    assert sm.corrupt()
+    sm.close()
+    if not flagged:
+        # get_column exposes row, correlation, channel for this DATA column.
+        data = expected["DATA"]
+        if kind == "Df":
+            xx, yy = data[:, 0, :].copy(), data[:, 3, :].copy()
+            data[:, 1, :] += coefficients[0] * yy + coefficients[1].conj() * xx
+            data[:, 2, :] += coefficients[1] * xx + coefficients[0].conj() * yy
+        else:
+            pairs = ((0, 0), (0, 1), (1, 0), (1, 1))
+            for correlation, (left, right) in enumerate(pairs):
+                data[:, correlation, :] *= coefficients[0 if receptors == 1 else left] * coefficients[0 if receptors == 1 else right].conj()
+    after = Table.open(path)
+    for name, reference in expected.items():
+        actual = after.get_column(name)
+        if name == "DATA":
+            np.testing.assert_allclose(actual, reference, rtol=2e-6, atol=1e-7)
+        else:
+            np.testing.assert_array_equal(actual, reference, err_msg=name)
+
+
+@needs_measures
 def test_settrop_follows_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     sm = opened(tmp_path)
     configure(sm)

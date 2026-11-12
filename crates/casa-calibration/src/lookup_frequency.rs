@@ -241,9 +241,10 @@ impl CalibrationTableLookup {
             path: path.display().to_string(),
             reason,
         };
-        let table =
-            casa_tables::Table::open(casa_tables::TableOptions::new(path.join("SPECTRAL_WINDOW")))
-                .map_err(|e| error(e.to_string()))?;
+        let spectral = crate::lookup::spectral_window_path(path)?
+            .ok_or_else(|| error("missing SPECTRAL_WINDOW table reference".to_string()))?;
+        let table = casa_tables::Table::open(casa_tables::TableOptions::new(spectral))
+            .map_err(|e| error(e.to_string()))?;
         let spw = casa_ms::MsSpectralWindow::new(&table);
         (0..table.row_count())
             .map(|row| spw.chan_freq(row).map_err(|e| error(e.to_string())))
@@ -263,7 +264,8 @@ fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
         let right = points[index + 1].0 - points[index].0;
         let diagonal = 2.0 * (left + right) - left * upper[index - 1];
         upper[index] = right / diagonal;
-        for axis in 0..2 {
+        let previous = second[index - 1];
+        for (axis, value) in second[index].iter_mut().enumerate() {
             let y = |index: usize| {
                 f64::from(if axis == 0 {
                     points[index].1
@@ -272,12 +274,13 @@ fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
                 })
             };
             let slope = (y(index + 1) - y(index)) / right - (y(index) - y(index - 1)) / left;
-            second[index][axis] = (6.0 * slope - left * second[index - 1][axis]) / diagonal;
+            *value = (6.0 * slope - left * previous[axis]) / diagonal;
         }
     }
     for index in (1..points.len() - 1).rev() {
-        for axis in 0..2 {
-            second[index][axis] -= upper[index] * second[index + 1][axis];
+        let next = second[index + 1];
+        for (value, next) in second[index].iter_mut().zip(next) {
+            *value -= upper[index] * next;
         }
     }
     second
@@ -321,6 +324,45 @@ fn registered_flag(
         _ => {
             let center = left.max(1).min(n.saturating_sub(3).max(1));
             (center - 1..(center + 3).min(n)).any(flag)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn natural_spline_matches_the_closed_form_at_every_half_knot() {
+        // For unit-spaced amplitudes [1,2,1/2,5/4], the interior
+        // curvature equations are 4*m1+m2=-15, m1+4*m2=27/2.
+        // m1=-49/10 and m2=23/5 give these exact half-knot values.
+        let solution = ComplexSolution {
+            receptors: 1,
+            channels: 4,
+            values: vec![1.0, 2.0, 0.5, 1.25]
+                .into_iter()
+                .map(|a| Complex32::new(a, 0.0))
+                .collect(),
+            flags: vec![false; 4],
+        };
+        let output = solution
+            .resample_frequency(
+                &[1e9, 1.001e9, 1.002e9, 1.003e9],
+                &[1.0005e9, 1.0015e9, 1.0025e9],
+                FrequencyInterpolation::Spline,
+            )
+            .unwrap();
+        for (actual, expected) in
+            output
+                .values
+                .iter()
+                .zip([289.0 / 160.0, 203.0 / 160.0, 47.0 / 80.0])
+        {
+            assert!(
+                (actual.re - expected).abs() < 1e-6,
+                "{actual} versus {expected}"
+            );
+            assert_eq!(actual.im, 0.0);
         }
     }
 }

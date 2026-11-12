@@ -204,12 +204,10 @@ impl CalibrationTableLookup {
     pub fn metadata_bytes_on_disk(path: impl AsRef<Path>) -> Result<u64, ApplyExecutionError> {
         let path = path.as_ref();
         let rows = Self::rows_on_disk(path)?;
-        let spectral = path.join("SPECTRAL_WINDOW");
-        let windows = if spectral.exists() {
-            Self::rows_on_disk(spectral)?
-        } else {
-            0
-        };
+        let windows = spectral_window_path(path)?
+            .map(Self::rows_on_disk)
+            .transpose()?
+            .unwrap_or(0);
         Ok((rows as u64)
             .saturating_add(windows as u64)
             .saturating_mul(LOOKUP_LOADING_ROW_BYTES)
@@ -233,12 +231,15 @@ impl CalibrationTableLookup {
         };
         let (rows, values, max_cell_values, channels) =
             shape_counts(path, "CPARAM").map_err(error)?;
-        let spectral = path.join("SPECTRAL_WINDOW");
-        let (frequency_windows, frequency_values) = if channels > 1 && spectral.exists() {
-            let (windows, values, _, _) = shape_counts(&spectral, "CHAN_FREQ").map_err(error)?;
-            (windows, values)
-        } else if spectral.exists() {
-            (Self::rows_on_disk(&spectral)?, 0)
+        let spectral = spectral_window_path(path)?;
+        let (frequency_windows, frequency_values) = if let Some(spectral) = spectral {
+            if channels > 1 {
+                let (windows, values, _, _) =
+                    shape_counts(&spectral, "CHAN_FREQ").map_err(error)?;
+                (windows, values)
+            } else {
+                (Self::rows_on_disk(spectral)?, 0)
+            }
         } else {
             (0, 0)
         };
@@ -602,4 +603,23 @@ fn shape_counts(path: &Path, name: &str) -> Result<(usize, usize, usize, usize),
         }
     }
     Ok((rows, values, maximum, channels))
+}
+
+/// Resolve the ordinary table keyword, including linked external subtables.
+pub(crate) fn spectral_window_path(path: &Path) -> Result<Option<PathBuf>, ApplyExecutionError> {
+    let table = Table::open(casa_tables::TableOptions::new(path)).map_err(|error| {
+        ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(table
+        .keywords()
+        .get("SPECTRAL_WINDOW")
+        .and_then(casa_types::Value::as_table_ref)
+        .map(|stored| casa_tables::add_directory(stored, path))
+        .or_else(|| {
+            let child = path.join("SPECTRAL_WINDOW");
+            child.is_dir().then_some(child)
+        }))
 }

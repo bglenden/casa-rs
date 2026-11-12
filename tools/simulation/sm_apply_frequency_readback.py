@@ -34,6 +34,8 @@ def check_table(path, case):
             base = np.asarray(receptor_values("D" if kind == "Df" else "G", int(antenna), float(time-first)), dtype=np.complex64)[:receptors].astype(np.complex128)
             expected = np.asarray([base + offset if kind == "Df" else base * factor
                                    for factor, offset in zip(GAIN_FACTORS, LEAKAGE_OFFSETS)], dtype=np.complex64).T
+            if case["probe"] == "spline_analytic":
+                expected = np.array([[1, 2, 0.5, 1.25]], dtype=np.complex64)
             np.testing.assert_array_equal(parameters[:, :, row], expected)
             expected_flags = np.zeros((receptors, 4), dtype=bool)
             if antenna == 0:
@@ -67,7 +69,8 @@ def consume(path, case, out):
     assert sm.setapply(table=str(path.resolve()), interp=case["interp"], **options)
     assert sm.corrupt()
     sm.close()
-    return compare(output, case)
+    reference = {**case, "rows":case.get("casa_unmodified_rows",case["rows"])}
+    return compare(output, reference)
 
 
 def main():
@@ -81,7 +84,7 @@ def main():
         fixture = json.load(handle)
     assert fixture["casa_version"] == casatasks.version_string()
     cases = {case["name"]: case for case in fixture["cases"]}
-    assert len(cases) == 75
+    assert len(cases) == 76
     expected = {(name, workers) for name in cases for workers in (1, 3)}
     seen, reports = set(), []
     args.out.mkdir(parents=True, exist_ok=True)
@@ -99,7 +102,7 @@ def main():
         reports.append(report)
     assert seen == expected, ("missing", sorted(expected-seen))
     (args.out / "report.json").write_text(json.dumps({"casa_version":casatasks.version_string(),"runs":reports},indent=1,allow_nan=False)+"\n")
-    print("C++ readback:", len(reports), "native MS/table pairs;75 native tables consumed", flush=True)
+    print("C++ readback:", len(reports), "native MS/table pairs;76 native tables consumed", flush=True)
 
 
 if __name__ == "__main__":

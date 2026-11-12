@@ -136,7 +136,20 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     } else {
         tempfile::tempdir().unwrap()
     };
-    let (path, mut sm, spec) = prepared(directory.path(), case, workers);
+    let (path, mut sm, mut spec) = prepared(directory.path(), case, workers);
+    if let Some(root) = std::env::var_os("CASA_RS_APPLY_CASA_TABLES")
+        .filter(|_| frequency::is_frequency(case["kind"].as_str().unwrap()))
+    {
+        assert!(
+            export.is_none(),
+            "C++ input-table comparison is separate from native-output export"
+        );
+        spec.table = std::path::PathBuf::from(root)
+            .join(case["name"].as_str().unwrap())
+            .join("terms.cal")
+            .to_string_lossy()
+            .into_owned();
+    }
     sm.set_apply(&spec).unwrap();
     sm.corrupt().unwrap();
     sm.close().unwrap();
@@ -152,7 +165,7 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     rows
 }
 
-fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
+pub(super) fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
     let (actual, correlations) = read_main(path);
     let expected = case["rows"].as_array().unwrap();
     assert_eq!(
@@ -340,17 +353,8 @@ pub(super) fn prepared(
     }
     sm.close().unwrap();
     input::prepare(&path);
-    let calibration = if let Some(root) = std::env::var_os("CASA_RS_APPLY_CASA_TABLES")
-        .filter(|_| frequency::is_frequency(case["kind"].as_str().unwrap()))
-    {
-        std::path::PathBuf::from(root)
-            .join(case["name"].as_str().unwrap())
-            .join("terms.cal")
-    } else {
-        let calibration = directory.join("terms.cal");
-        table(&path, &calibration, case);
-        calibration
-    };
+    let calibration = directory.join("terms.cal");
+    table(&path, &calibration, case);
     let sm = Simulator::open_from_ms(
         &path,
         SimulatorOptions {

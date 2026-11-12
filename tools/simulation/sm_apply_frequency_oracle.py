@@ -57,6 +57,9 @@ CASES += [{"name": f"{kind}_spw_{name}", "kind": kind, "interp": "linear,linear"
           for kind in ("B", "Tf", "Df")
           for name, mapping in (("broadcast", [0]), ("explicit", [0, 0]), ("fanout", [-999]))]
 
+CASES += [{"name": "Tf_spline_analytic", "kind": "Tf", "interp": "nearest,spline",
+           "options": {}, "probe": "spline_analytic"}]
+
 REFUSALS = [{"name": f"{kind}_spw_{name}_refusal", "kind": kind, "interp": "linear,linear",
              "options": {"spwmap": mapping}, "probe": "spw_mapping", "data_window": 1,
              "stage": "setapply", "refusal": True}
@@ -87,6 +90,10 @@ def calibration(sm, path, kind, bounds, probe):
                 for channel in range(4):
                     values[:, channel, :] = (base[:, channel, :] + LEAKAGE_OFFSETS[channel]
                                              if kind == "Df" else base[:, channel, :] * GAIN_FACTORS[channel])
+                if probe in ("spline_analytic", "spline_sampled"):
+                    amplitudes = (1.0, 2.0, 0.5, 1.25) if probe == "spline_analytic" else (1.80625, 1.26875, 0.5875, 1.25)
+                    for channel, amplitude in enumerate(amplitudes):
+                        values[:, channel, :] = amplitude
             if column == "FLAG":
                 selected = tb.getcol("ANTENNA1") == 0
                 if probe.startswith("flag_channel"):
@@ -116,6 +123,8 @@ def calibration(sm, path, kind, bounds, probe):
         frequencies = destination.getcol("CHAN_FREQ")
         if "shifted" in probe:
             frequencies += 7_812_500.0 if probe == "tie_shifted" else 250_000.0
+        elif probe == "spline_analytic":
+            frequencies -= 7_812_500.0
         if probe == "descending_shifted":
             frequencies = frequencies[::-1, :]
         destination.putcol("CHAN_FREQ", frequencies)
@@ -200,6 +209,7 @@ def main():
     parser.add_argument("--fixture", type=pathlib.Path, required=True)
     parser.add_argument("--only", choices=[case["name"] for case in CASES + REFUSALS])
     parser.add_argument("--resume", action="store_true", help="Reuse existing successful per-case CASA results")
+    parser.add_argument("--sampled", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     assert casatasks.version_string() == "6.7.6.14"
@@ -207,7 +217,11 @@ def main():
     selected = [case for case in CASES + REFUSALS if not args.only or case["name"] == args.only]
     if args.worker:
         assert len(selected) == 1
-        worker(selected[0], args.out, args.fixture)
+        spec = dict(selected[0])
+        if args.sampled:
+            assert spec["probe"] == "spline_analytic"
+            spec.update(probe="spline_sampled", interp="nearest,nearest")
+        worker(spec, args.out, args.fixture)
         return
     results, refusals = [], []
     for spec in selected:
@@ -221,8 +235,31 @@ def main():
                                check=True)
         with gzip.open(fixture, "rt") as handle:
             record = json.load(handle)
-            results.extend(record["cases"])
-            refusals.extend(record.get("refusals", []))
+        if spec["probe"] == "spline_analytic":
+            control = args.out / (spec["name"] + "_sampled")
+            control.mkdir(exist_ok=args.resume)
+            control_fixture = control / "result.json.gz"
+            if not (args.resume and control_fixture.is_file()):
+                with (control / "worker.log").open("w") as log:
+                    subprocess.run([sys.executable, __file__, "--out", str(control), "--fixture", str(control_fixture),
+                                    "--only", spec["name"], "--worker", "--sampled"], stdout=log, stderr=subprocess.STDOUT, check=True)
+            with gzip.open(control_fixture, "rt") as handle:
+                reference = json.load(handle)["cases"][0]["rows"]
+            case = record["cases"][0]
+            case["casa_unmodified_rows"] = case["rows"]
+            case["rows"] = reference
+            case["exception"] = "Natural spline back-substitution includes the first interior knot; see docs/CASA (C++) bugs.md."
+            # The independent closed-form natural-spline solution has
+            # second derivatives (-4.9,4.6) at its interior unit-spaced knots.
+            # Its half-knot amplitudes are 289/160,203/160,47/80.
+            for row in reference:
+                for channel, amplitude in enumerate((289/160,203/160,47/80,5/4)):
+                    expected = (3+4j)*np.float32(amplitude)**2
+                    actual = complex(*row["data"][channel*4])
+                    assert abs(actual-expected) <= 2e-6*abs(expected)
+            assert any(a["data"] != b["data"] for a,b in zip(reference,case["casa_unmodified_rows"]))
+        results.extend(record["cases"])
+        refusals.extend(record.get("refusals", []))
         save(args.fixture, results, refusals)
         print(spec["name"], "passed", flush=True)
 

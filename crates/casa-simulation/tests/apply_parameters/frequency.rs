@@ -62,9 +62,16 @@ pub(super) fn prepare(path: &Path, case: &Json) {
         };
         let (antenna, elapsed) = (*antenna as usize, *time - first);
         let shape = [receptors, 4];
-        let parameters = ArrayValue::Complex32(
-            ArrayD::from_shape_vec(IxDyn(&shape).f(), values(kind, antenna, elapsed)).unwrap(),
-        );
+        let values = if case["probe"] == "spline_analytic" {
+            vec![1.0, 2.0, 0.5, 1.25]
+                .into_iter()
+                .map(|amplitude| Complex32::new(amplitude, 0.0))
+                .collect()
+        } else {
+            values(kind, antenna, elapsed)
+        };
+        let parameters =
+            ArrayValue::Complex32(ArrayD::from_shape_vec(IxDyn(&shape).f(), values).unwrap());
         table
             .cell_accessor_mut(row, "CPARAM")
             .unwrap()
@@ -123,7 +130,9 @@ pub(super) fn prepare(path: &Path, case: &Json) {
         .iter()
         .map(|frequency| {
             frequency
-                + if probe == "tie_shifted" {
+                + if probe == "spline_analytic" {
+                    -7_812_500.0
+                } else if probe == "tie_shifted" {
                     7_812_500.0
                 } else if probe.contains("shifted") {
                     250_000.0
