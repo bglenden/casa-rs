@@ -273,12 +273,42 @@ impl TsysAtm {
         (channel_bandwidth_hz, exposure_s): (f64, f64),
         scales: &mut [f32],
     ) {
+        self.antenna_parameters(
+            window,
+            (diameter_m, airmass),
+            (channel_bandwidth_hz, exposure_s),
+            scales,
+            true,
+        );
+    }
+
+    /// The Tf Jones parameters written by `setnoise(table=...)`.
+    pub(crate) fn antenna_gains(
+        &self,
+        window: &WindowAtmosphere,
+        antenna: (f64, f32),
+        integration: (f64, f64),
+        gains: &mut [f32],
+    ) {
+        self.antenna_parameters(window, antenna, integration, gains, false);
+    }
+
+    fn antenna_parameters(
+        &self,
+        window: &WindowAtmosphere,
+        (diameter_m, airmass): (f64, f32),
+        (channel_bandwidth_hz, exposure_s): (f64, f64),
+        parameters: &mut [f32],
+        inverse: bool,
+    ) {
         let factor =
             (f64::from(self.jansky_per_kelvin) / (channel_bandwidth_hz * exposure_s).sqrt()).sqrt();
-        for (channel, scale) in scales.iter_mut().enumerate() {
+        for (channel, parameter) in parameters.iter_mut().enumerate() {
             let tsys = self.tsys(window, channel, airmass);
             let jones = (diameter_m / factor / f64::from(tsys.sqrt())) as f32;
-            *scale = if jones.is_nan() || jones == 0.0 {
+            *parameter = if !inverse {
+                jones
+            } else if jones.is_nan() || jones == 0.0 {
                 1.0
             } else {
                 1.0 / jones

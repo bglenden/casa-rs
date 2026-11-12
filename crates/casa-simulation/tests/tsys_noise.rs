@@ -568,8 +568,7 @@ fn outcome(result: SimulatorResult<()>) -> (CasaOutcome, String) {
     (error.outcome(), error.message().to_string())
 }
 
-/// What CASA refuses, or casa-rs does not yet do, adds no term: a `table`
-/// (CASA writes the `T` term's), `OTF=False`, a water vapour above 100 mm
+/// Refused noise configurations add no term: `OTF=False`, water vapour above 100 mm
 /// and an undefined zenith Tsys, which CASA refuses after adding a unit-σ
 /// term (`docs/CASA (C++) bugs.md`).
 #[test]
@@ -582,10 +581,6 @@ fn refusals_add_no_term() {
         change(&mut spec);
         spec
     };
-    let table = spec(&|spec| spec.table = "noisy.cal".to_string());
-    let (refused, message) = outcome(sm.set_noise(&table));
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("noisy.T.cal"), "{message}");
     let otf = spec(&|spec| spec.on_the_fly = false);
     assert_eq!(
         outcome(sm.set_noise(&otf)).0,
@@ -933,10 +928,6 @@ fn tsys_atm_refusals_add_no_term() {
     let (refused, message) = outcome(sm.set_noise(&wet));
     assert_eq!(refused, CasaOutcome::ReturnsFalse);
     assert!(message.contains("you input PWV=200mm"), "{message}");
-    let table = spec(&|spec| spec.table = "noisy.cal".to_string());
-    let (refused, message) = outcome(sm.set_noise(&table));
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("noisy.T.cal"), "{message}");
     let high = spec(&|spec| spec.atmosphere.altitude_m = 50_000.0);
     let (refused, message) = outcome(sm.set_noise(&high));
     assert_eq!(refused, CasaOutcome::ReturnsFalse);
