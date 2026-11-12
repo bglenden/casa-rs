@@ -51,9 +51,8 @@ use casa_ms::VisibilityColumns;
 use casa_types::Complex32;
 
 use super::MainWriter;
-use super::components::add_components;
+use super::data::{DataBatch, DataStage, PendingNoise};
 use super::geometry::{ArrayGeometry, RowGeometry};
-use super::prediction::{PredictionStage, device_noise};
 use super::resources::NoiseScales;
 use crate::corrupt::{
     BatchScales, BatchScalesBuilder, NoiseApplication, NoiseScratch, WindowNoise,
@@ -62,7 +61,7 @@ use crate::session::Simulator;
 use crate::session::array::Antenna;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::{PlannedScan, Scan};
-use crate::session::plan::DataPlan;
+use crate::session::plan::DataPhase as DataPlan;
 use crate::session::spectral::SpectralWindow;
 
 /// Jobs per worker a batch's noise is split into, so that workers
@@ -124,13 +123,10 @@ pub(super) struct StageTimes {
 
 /// The rows of the batch in hand and what fills their cells and columns.
 struct Rows<'s> {
-    scans: &'s [Scan],
     /// The same scans with the rows `observe` planned for them.
     planned: &'s [PlannedScan<'s>],
     geometry: &'s ArrayGeometry<'s>,
     team: &'s WorkerTeam,
-    /// The session's DATA steps, which give each scan's noise.
-    plan: &'s DataPlan,
     /// What the noise reads beside the plan.
     noise: NoiseContext<'s>,
     /// The room a batch's `tsys-atm` antenna scales are admitted.
@@ -153,7 +149,7 @@ struct Rows<'s> {
 pub(super) struct Pipeline<'s> {
     rows: Rows<'s>,
     /// The model's prediction, when a `predict` covers any scan.
-    prediction: Option<PredictionStage<'s>>,
+    prediction: Option<DataStage<'s>>,
     pub(super) times: StageTimes,
 }
 
@@ -164,12 +160,12 @@ impl<'s> Pipeline<'s> {
     /// of `(correlations, channels)` whose correlations have the receptors
     /// `receptors` (`[window]`).
     pub(super) fn new(
-        (scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
+        (_scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
-        (prediction, plan, noise, scales): (
-            Option<PredictionStage<'s>>,
-            &'s DataPlan,
+        (prediction, _plan, noise, scales): (
+            Option<DataStage<'s>>,
+            &'s crate::session::plan::DataPlan,
             NoiseContext<'s>,
             NoiseScales,
         ),
@@ -177,11 +173,9 @@ impl<'s> Pipeline<'s> {
     ) -> Self {
         Self {
             rows: Rows {
-                scans,
                 planned,
                 geometry,
                 team,
-                plan,
                 noise,
                 scales,
                 receptors,
@@ -200,15 +194,15 @@ impl<'s> Pipeline<'s> {
     pub(super) fn block_fill_time(&self) -> Duration {
         self.prediction
             .as_ref()
-            .map_or(Duration::ZERO, PredictionStage::fill_time)
+            .map_or(Duration::ZERO, DataStage::fill_time)
     }
 
     /// Per-field sets of grids the prediction prepared, and the time that
-    /// took ([`PredictionStage::grid_preparations`]).
+    /// took ([`DataStage::grid_preparations`]).
     pub(super) fn grid_preparations(&self) -> (usize, Duration) {
         self.prediction
             .as_ref()
-            .map_or((0, Duration::ZERO), PredictionStage::grid_preparations)
+            .map_or((0, Duration::ZERO), DataStage::grid_preparations)
     }
 
     /// Write every row of the scans: `next` yields each integration with
@@ -242,45 +236,27 @@ impl<'s> Pipeline<'s> {
             let first = first_row as u64;
             let started = Instant::now();
             if let Some(stage) = &mut self.prediction {
-                let rows = &self.rows;
-                stage.predict(
-                    rows.team,
-                    (rows.scans, &rows.rows),
-                    &runs,
-                    first,
+                stage.apply(
+                    self.rows.team,
+                    DataBatch {
+                        rows: &self.rows.rows[..rows],
+                        runs: &runs,
+                        first_row: first,
+                        flags: None,
+                        stored: None,
+                    },
                     &mut batch.data,
-                    |scan| device_noise(rows.plan, scan, false),
+                    &self.rows.scales,
+                    true,
                 )?;
-            }
-            if self.rows.plan.predicts_components() {
-                let rows = &self.rows;
-                add_components(
-                    rows.team,
-                    (rows.scans, &rows.rows),
-                    rows.plan,
-                    &runs,
-                    (&mut batch.data, rows.samples),
-                )?;
-            }
-            if self.rows.plan.predicts_single_dish() {
-                let rows = &self.rows;
-                super::single_dish::add_single_dish(
-                    (rows.scans, &rows.rows),
-                    rows.plan,
-                    &runs,
-                    (&mut batch.data, rows.samples),
-                );
             }
             self.times.predict += started.elapsed();
             let started = Instant::now();
-            // A run the stage predicted on the device has its noise.
-            let (prediction, plan) = (&self.prediction, self.rows.plan);
-            let noised = |scan| {
-                prediction
-                    .as_ref()
-                    .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, false)))
-            };
-            self.rows.fill(writer, &mut batch, (first, rows), &noised)?;
+            let pending = self
+                .prediction
+                .as_ref()
+                .map(|stage| stage.pending_noise(&runs));
+            self.rows.fill(writer, &mut batch, (first, rows), pending)?;
             self.times.cells += started.elapsed();
             let started = Instant::now();
             writer.send(batch)?;
@@ -339,7 +315,7 @@ impl Rows<'_> {
         writer: &mut MainWriter,
         batch: &mut VisibilityColumns,
         (first_row, rows): (u64, usize),
-        noised: &dyn Fn(usize) -> bool,
+        pending: Option<PendingNoise<'_, '_>>,
     ) -> SimulatorResult<()> {
         let VisibilityColumns {
             data,
@@ -348,13 +324,17 @@ impl Rows<'_> {
             weight,
             sigma,
         } = batch;
-        let runs = self.segments(rows);
-        let scales = batch_scales(
-            (self.plan, self.noise, self.team),
-            (&self.rows, &runs),
-            noised,
-            &self.scales,
-        )?;
+        let noised = |scan| pending.as_ref().is_some_and(|pending| pending.noised(scan));
+        let scales = if let Some(pending) = &pending {
+            batch_scales(
+                (pending.plan, self.noise, self.team),
+                (&self.rows, pending.runs),
+                &noised,
+                &self.scales,
+            )?
+        } else {
+            BatchScales::default()
+        };
         let mut jobs = vec![BatchJob::Columns(ColumnsJob {
             writer,
             flag_row,
@@ -362,7 +342,20 @@ impl Rows<'_> {
             weight,
             sigma,
         })];
-        self.noise_jobs((first_row, data), &runs, &scales, noised, &mut jobs);
+        if let Some(pending) = &pending {
+            jobs.extend(
+                noise_jobs(
+                    (pending.plan, self.noise, self.team),
+                    &self.receptors,
+                    (&self.rows, pending.runs),
+                    (first_row, data),
+                    (self.samples, &scales),
+                    &noised,
+                )
+                .into_iter()
+                .map(BatchJob::Noise),
+            );
+        }
         let (scans, integrations, geometry) = (self.planned, &self.integrations, &self.rows);
         let (correlations, samples) = (self.correlations, self.samples);
         self.team.for_each_mut(&mut jobs, |_, job| match job {
@@ -372,30 +365,6 @@ impl Rows<'_> {
                 Ok(())
             }
         })
-    }
-
-    /// Split the batch's `runs` of `data` into noise jobs, runs of one scan
-    /// with noise that `noised` does not already have, reading `scales`.
-    fn noise_jobs<'a>(
-        &'a self,
-        (first_row, data): (u64, &'a mut [Complex32]),
-        runs: &[(usize, usize, usize)],
-        scales: &'a BatchScales,
-        noised: &dyn Fn(usize) -> bool,
-        jobs: &mut Vec<BatchJob<'a>>,
-    ) {
-        jobs.extend(
-            noise_jobs(
-                (self.plan, self.noise, self.team),
-                &self.receptors,
-                (&self.rows, runs),
-                (first_row, data),
-                (self.samples, scales),
-                noised,
-            )
-            .into_iter()
-            .map(BatchJob::Noise),
-        );
     }
 
     /// The batch's first `rows` rows as runs of one scan: (scan, first row,
@@ -505,7 +474,11 @@ pub(super) fn noise_jobs<'a>(
             .sum(),
     );
     let mut rest = data;
+    let mut position = 0;
     for &(scan, start, count) in runs {
+        let (_, tail) = std::mem::take(&mut rest).split_at_mut((start - position) * samples);
+        rest = tail;
+        position = start + count;
         let (segment, after) = std::mem::take(&mut rest).split_at_mut(count * samples);
         rest = after;
         if !noised_here(plan, scan, noised) {

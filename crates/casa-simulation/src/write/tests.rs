@@ -31,7 +31,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
 use ndarray::{ArrayD, IxDyn};
 
-use super::prediction::PredictionStage;
+use super::data::DataStage;
 use super::resources::{MainShape, admit_main_write, writer_plan};
 use super::{cell_shape, main_shape};
 use crate::session::observe::PlannedScan;
@@ -344,7 +344,7 @@ fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
         );
         let cell = cell_shape(&probe).expect("one shape").expect("scans");
         let shape = main_shape(&probe, &planned(&probe), cell);
-        let stage = PredictionStage::new(&probe, cell, BackendChoice::Cpu)
+        let stage = DataStage::new(&probe, cell, BackendChoice::Cpu)
             .expect("stage")
             .expect("the session predicts");
         let fits = |budget: u64| {

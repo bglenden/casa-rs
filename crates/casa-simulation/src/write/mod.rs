@@ -19,6 +19,7 @@
 //! A session `openfromms` opened is patched in place instead ([`patch`]).
 
 mod components;
+mod data;
 mod geometry;
 mod grids;
 mod patch;
@@ -47,10 +48,10 @@ use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::PlannedScan;
 use crate::session::plan::DataPlan;
+use data::DataStage;
 use geometry::{ArrayGeometry, RowGeometry};
 pub(crate) use patch::patch_measurement_set;
 use pipeline::{NoiseContext, Pipeline};
-use prediction::PredictionStage;
 use resources::{MainAdmission, MainShape, NoiseScales};
 
 /// The readme CASA's simulator gives MAIN.
@@ -73,7 +74,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let shape = cell.map(|cell| main_shape(session, &planned, cell));
     let resources = &session.options().resources;
     let prediction = match cell {
-        Some(cell) => PredictionStage::new(session, cell, resources.prediction_backend())?,
+        Some(cell) => DataStage::new(session, cell, resources.prediction_backend())?,
         None => None,
     };
     // Admitted before anything is written, so a refusal leaves nothing.
@@ -220,7 +221,7 @@ fn write_main<'s>(
     (session, planned): (&'s Simulator, &[PlannedScan<'_>]),
     target: &MainTarget<'_>,
     shape: &MainShape<'_>,
-    (admission, mut prediction): (MainAdmission, Option<PredictionStage<'s>>),
+    (admission, mut prediction): (MainAdmission, Option<DataStage<'s>>),
 ) -> SimulatorResult<()> {
     let started = Instant::now();
     let batch_rows = admission.plan.batch_rows().max(1);
@@ -229,11 +230,12 @@ fn write_main<'s>(
             admission.block_rows,
             admission.cores.streaming_workers,
             admission.grid_bytes,
+            batch_rows,
         );
     }
     let backend = prediction.as_ref().map_or_else(
         || session.options().resources.resolved_backend(false),
-        PredictionStage::backend,
+        DataStage::backend,
     );
     let mut writer = MainWriter::start(target.staging, admission.plan.clone())?;
     let geometry = ArrayGeometry::new(
@@ -310,8 +312,9 @@ fn write_main<'s>(
 /// modes), whose rows then need their antennas' airmasses and exposure.
 /// Every `corrupt` covers scan 0, so its noise is all the plan's.
 fn noise_varies_by_row(plan: &DataPlan) -> bool {
-    plan.noise_for_scan(0)
+    plan.phases()
         .iter()
+        .flat_map(|phase| phase.noise_for_scan(0))
         .any(crate::corrupt::NoiseApplication::varies_by_row)
 }
 

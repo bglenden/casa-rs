@@ -390,12 +390,13 @@ fn gains_and_leakage_refuse_what_casa_or_casa_rs_cannot_do() {
     .expect("predict");
     sm.set_gain(&gain(0.05)).expect("setgain");
     sm.corrupt().expect("corrupt");
-    let (outcome, message) = refusal(sm.predict(&PredictSpec {
+    // The independent nonidentity-gain CASA controls in selection.rs prove
+    // that the later model is added after, rather than through, these gains.
+    sm.predict(&PredictSpec {
         images: Vec::new(),
         component_lists: vec![point],
         incremental: true,
-    }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{message}");
-    assert!(message.contains("incremental"), "{message}");
+    })
+    .expect("increment after Jones");
     sm.close().expect("close");
 }

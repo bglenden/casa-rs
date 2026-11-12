@@ -1,0 +1,1200 @@
+{
+ "casa_version": "6.7.6.14",
+ "runs": [
+  {
+   "name": "absolute_cross_correlations",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "absolute_cross_correlations",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "absolute_cross_correlations",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.6636390422325806e-06,
+   "rows": 288
+  },
+  {
+   "name": "all_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 5.357508578591999e-07,
+   "rows": 288
+  },
+  {
+   "name": "all_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 5.357508578591999e-07,
+   "rows": 288
+  },
+  {
+   "name": "all_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 5.363617216415557e-07,
+   "rows": 288
+  },
+  {
+   "name": "all_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "all_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "all_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.106630730833258e-06,
+   "rows": 288
+  },
+  {
+   "name": "boolean_arithmetic_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "boolean_arithmetic_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "boolean_arithmetic_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "cross_correlations",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "cross_correlations",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "cross_correlations",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.6636390422325806e-06,
+   "rows": 288
+  },
+  {
+   "name": "disjoint_replacements",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "disjoint_replacements",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "disjoint_replacements",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.6209446964493516e-06,
+   "rows": 288
+  },
+  {
+   "name": "division_zero_is_ieee",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.848133525426671e-06,
+   "rows": 288
+  },
+  {
+   "name": "division_zero_is_ieee",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.848133525426671e-06,
+   "rows": 288
+  },
+  {
+   "name": "division_zero_is_ieee",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.8596180544044201e-06,
+   "rows": 288
+  },
+  {
+   "name": "division_zero_nan_ordering",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.848133525426671e-06,
+   "rows": 288
+  },
+  {
+   "name": "division_zero_nan_ordering",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.848133525426671e-06,
+   "rows": 288
+  },
+  {
+   "name": "division_zero_nan_ordering",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.8596180544044201e-06,
+   "rows": 288
+  },
+  {
+   "name": "empty_query_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "empty_query_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "empty_query_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "field_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 7.513197107639146e-07,
+   "rows": 288
+  },
+  {
+   "name": "field_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 7.513197107639146e-07,
+   "rows": 288
+  },
+  {
+   "name": "field_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 7.51373464511367e-07,
+   "rows": 288
+  },
+  {
+   "name": "field_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "field_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "field_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "fractional_integer_division",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.848133525426671e-06,
+   "rows": 288
+  },
+  {
+   "name": "fractional_integer_division",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.848133525426671e-06,
+   "rows": 288
+  },
+  {
+   "name": "fractional_integer_division",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.8596180544044201e-06,
+   "rows": 288
+  },
+  {
+   "name": "fresh_subset",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "fresh_subset",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "fresh_subset",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.1066084306774398e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.1066084306774398e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.1156120627769643e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_subset_replacement",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 4.945197160376069e-07,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_subset_replacement",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 4.945197160376069e-07,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_subset_replacement",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 5.026443565882715e-07,
+   "rows": 288
+  },
+  {
+   "name": "increment_subset",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.5201843159551148e-06,
+   "rows": 288
+  },
+  {
+   "name": "increment_subset",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.5201843159551148e-06,
+   "rows": 288
+  },
+  {
+   "name": "increment_subset",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.525232553270802e-06,
+   "rows": 288
+  },
+  {
+   "name": "integer_power_is_real",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.0161793562102844e-06,
+   "rows": 288
+  },
+  {
+   "name": "integer_power_is_real",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.0161793562102844e-06,
+   "rows": 288
+  },
+  {
+   "name": "integer_power_is_real",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.0213873998133539e-06,
+   "rows": 288
+  },
+  {
+   "name": "intersection_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.973191018829162e-06,
+   "rows": 288
+  },
+  {
+   "name": "intersection_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.973191018829162e-06,
+   "rows": 288
+  },
+  {
+   "name": "intersection_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.987059193036805e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_field_fallback",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_field_fallback",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_field_fallback",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.106630730833258e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_query_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_query_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_query_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_window_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_window_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_window_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "lowercase_column_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "lowercase_column_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "lowercase_column_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "mixed_boolean_arithmetic_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "mixed_boolean_arithmetic_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "mixed_boolean_arithmetic_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "near_integration",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "near_integration",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "near_integration",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.5907079691508417e-07,
+   "rows": 288
+  },
+  {
+   "name": "nearabs_integration",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "nearabs_integration",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "nearabs_integration",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.5907079691508417e-07,
+   "rows": 288
+  },
+  {
+   "name": "negative_divisor_modulo",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.6541787871675933e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_divisor_modulo",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.6541787871675933e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_divisor_modulo",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.6691338188710577e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_float_modulo",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.1520683402473913e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_float_modulo",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.1520683402473913e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_float_modulo",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.1628353250008665e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_floor_division",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.404098529882591e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_floor_division",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.404098529882591e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_floor_division",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.4188835753102958e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_integer_modulo",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.1520683402473913e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_integer_modulo",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.1520683402473913e-06,
+   "rows": 288
+  },
+  {
+   "name": "negative_integer_modulo",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.1628353250008665e-06,
+   "rows": 288
+  },
+  {
+   "name": "numeric_predicate_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "numeric_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "numeric_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "observe_resets_row_query",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.4722231410394033e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_row_query",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.4722231410394033e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_row_query",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.477313175613096e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_selection",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.7207312109792798e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_selection",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.7207312109792798e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_selection",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.725805191608869e-06,
+   "rows": 360
+  },
+  {
+   "name": "query_gains_then_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.5952644326983114e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_gains_then_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.5952644326983114e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_gains_then_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.6063979817007587e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_increment_preserves_other_rows",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.325556860835573e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_increment_preserves_other_rows",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.325556860835573e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_increment_preserves_other_rows",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.3301986194826223e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 1792,
+     "mean": 0.0033192364498972893,
+     "variance": 0.00955205870606519
+    },
+    "cross_imaginary": {
+     "samples": 1792,
+     "mean": 0.0003613232235823359,
+     "variance": 0.010411195890372569
+    }
+   }
+  },
+  {
+   "name": "query_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 1792,
+     "mean": 0.0033192364498972893,
+     "variance": 0.00955205870606519
+    },
+    "cross_imaginary": {
+     "samples": 1792,
+     "mean": 0.0003613232235823359,
+     "variance": 0.010411195890372569
+    }
+   }
+  },
+  {
+   "name": "query_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": {
+    "cross_real": {
+     "samples": 1792,
+     "mean": 0.0033192364498972893,
+     "variance": 0.00955205870606519
+    },
+    "cross_imaginary": {
+     "samples": 1792,
+     "mean": 0.0003613232235823359,
+     "variance": 0.010411195890372569
+    }
+   }
+  },
+  {
+   "name": "query_replacement_overlaps_fields",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.9004214524112183e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_replacement_overlaps_fields",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.9004214524112183e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_replacement_overlaps_fields",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.9028754526457702e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_after_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_after_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_after_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.6209446964493516e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_preserves_other_rows",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_preserves_other_rows",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_preserves_other_rows",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.6209446964493516e-06,
+   "rows": 288
+  },
+  {
+   "name": "reset_selection",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.2318887833430922e-06,
+   "rows": 288
+  },
+  {
+   "name": "reset_selection",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.2318887833430922e-06,
+   "rows": 288
+  },
+  {
+   "name": "reset_selection",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.2323000704726218e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 3.129386247341782e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 3.129386247341782e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 3.129386247341782e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components_then_image",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.920680970198103e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components_then_image",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.920680970198103e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components_then_image",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.9341861009983166e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_gains_then_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.903922779671334e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_gains_then_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.903922779671334e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_gains_then_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.915612648155479e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_image_then_components",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 5.311671258156716e-07,
+   "rows": 288
+  },
+  {
+   "name": "selected_image_then_components",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 5.311671258156716e-07,
+   "rows": 288
+  },
+  {
+   "name": "selected_image_then_components",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 5.386571131864566e-07,
+   "rows": 288
+  },
+  {
+   "name": "selected_multiple_images",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 3.0194964218599884e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_multiple_images",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 3.0194964218599884e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_multiple_images",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 3.0249586667423194e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972004924501,
+     "variance": 0.009449381476086744
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481211423874,
+     "variance": 0.011388744569517772
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488817796111107,
+     "variance": 0.00897589211904023
+    }
+   }
+  },
+  {
+   "name": "selected_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972004924501,
+     "variance": 0.009449381476086744
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481211423874,
+     "variance": 0.011388744569517772
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488817796111107,
+     "variance": 0.00897589211904023
+    }
+   }
+  },
+  {
+   "name": "selected_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972004924501,
+     "variance": 0.009449381476086744
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481211423874,
+     "variance": 0.011388744569517772
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488817796111107,
+     "variance": 0.00897589211904023
+    }
+   }
+  },
+  {
+   "name": "selected_prediction_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437971863563039,
+     "variance": 0.009449382499237161
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.0033574808788086686,
+     "variance": 0.011388744070584577
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488828040659428,
+     "variance": 0.008975892670708112
+    }
+   }
+  },
+  {
+   "name": "selected_prediction_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437971863563039,
+     "variance": 0.009449382499237161
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.0033574808788086686,
+     "variance": 0.011388744070584577
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488828040659428,
+     "variance": 0.008975892670708112
+    }
+   }
+  },
+  {
+   "name": "selected_prediction_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972262701285,
+     "variance": 0.00944938257146897
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481410992997,
+     "variance": 0.0113887440095691
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488828040659428,
+     "variance": 0.008975892670708112
+    }
+   }
+  },
+  {
+   "name": "selection_restarts_from_original",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.5443177265459204e-06,
+   "rows": 288
+  },
+  {
+   "name": "selection_restarts_from_original",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.5443177265459204e-06,
+   "rows": 288
+  },
+  {
+   "name": "selection_restarts_from_original",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.55612851805994e-06,
+   "rows": 288
+  },
+  {
+   "name": "short_circuit_type_error_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "short_circuit_type_error_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "short_circuit_type_error_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "true_predicate_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "true_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "true_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "window_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.106036911115637e-06,
+   "rows": 288
+  },
+  {
+   "name": "window_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.106036911115637e-06,
+   "rows": 288
+  },
+  {
+   "name": "window_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.118039777741222e-06,
+   "rows": 288
+  },
+  {
+   "name": "within_scan_times",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.23983139263929e-06,
+   "rows": 288
+  },
+  {
+   "name": "within_scan_times",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.23983139263929e-06,
+   "rows": 288
+  },
+  {
+   "name": "within_scan_times",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.2512072354565e-06,
+   "rows": 288
+  }
+ ],
+ "schema": "sm-selection-cpp-readback/1",
+ "work_issue": 1053,
+ "native_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+ "reference_fixture": "crates/casa-simulation/tests/data/sm_selection_casa.json.gz"
+}

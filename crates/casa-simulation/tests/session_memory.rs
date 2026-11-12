@@ -103,6 +103,8 @@ mod mosaic;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;
+#[path = "session_memory/selection.rs"]
+mod selection;
 #[path = "session_memory/troposphere.rs"]
 mod troposphere;
 #[path = "session_memory/tsys.rs"]
