@@ -271,6 +271,25 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
         gaincurve_table: None,
     })
     .unwrap();
+    // CASA gencal collapses a uniform parameter table's spectral axis.
+    // Its four 15.625 MHz channels become one at 230.0234375 GHz.
+    let spectral = Table::open(TableOptions::new(calibration.join("SPECTRAL_WINDOW"))).unwrap();
+    assert_eq!(
+        spectral
+            .cell_accessor(0, "NUM_CHAN")
+            .unwrap()
+            .scalar()
+            .unwrap(),
+        &ScalarValue::Int32(1)
+    );
+    for (column, expected) in [("CHAN_FREQ", 230_023_437_500.), ("CHAN_WIDTH", 62_500_000.)] {
+        let ArrayValue::Float64(values) =
+            spectral.cell_accessor(0, column).unwrap().array().unwrap()
+        else {
+            panic!("spectral axis");
+        };
+        assert_eq!(values.as_slice().unwrap(), &[expected]);
+    }
     if delay || case["subtype"].is_string() {
         patch_table(&calibration, case);
     }
