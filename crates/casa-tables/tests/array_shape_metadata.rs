@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shapes come from storage headers, with row order and undefinedness intact.
-use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
+use casa_tables::{
+    ColumnBinding, ColumnOptions, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema,
+};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use std::path::Path;
@@ -8,6 +10,11 @@ use std::path::Path;
 fn table(shapes: &[Option<Vec<usize>>], fixed: bool) -> Table {
     let column = if fixed {
         ColumnSchema::array_fixed("DATA", PrimitiveType::Float32, vec![2, 3])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .unwrap()
     } else {
         ColumnSchema::array_variable("DATA", PrimitiveType::Float32, Some(2))
     };
@@ -55,14 +62,21 @@ fn save(table: &Table, path: &Path, manager: DataManagerKind) {
 fn metadata_shapes_preserve_rows_duplicates_and_undefined_cells() {
     for manager in [
         DataManagerKind::StandardStMan,
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::IncrementalStMan,
         DataManagerKind::TiledShapeStMan,
         DataManagerKind::TiledCellStMan,
         DataManagerKind::TiledColumnStMan,
     ] {
-        let fixed = manager == DataManagerKind::TiledColumnStMan;
+        let fixed = matches!(
+            manager,
+            DataManagerKind::TiledColumnStMan | DataManagerKind::IncrementalStMan
+        );
         let undefined = matches!(
             manager,
-            DataManagerKind::StandardStMan | DataManagerKind::TiledShapeStMan
+            DataManagerKind::StandardStMan
+                | DataManagerKind::StManAipsIO
+                | DataManagerKind::TiledShapeStMan
         );
         let shapes = if fixed {
             vec![Some(vec![2, 3]); 4]
@@ -173,4 +187,61 @@ fn pending_array_edits_cannot_be_mistaken_for_persisted_shapes() {
             .array_shapes_uncached(&[0])
             .is_err()
     );
+}
+
+#[test]
+fn cpp_incremental_shapes_include_carried_forward_and_undefined_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, bytes) in [
+        (
+            "table.dat",
+            &include_bytes!("data/ism_variable_shapes/table.dat")[..],
+        ),
+        (
+            "table.f0",
+            &include_bytes!("data/ism_variable_shapes/table.f0")[..],
+        ),
+        (
+            "table.f0i",
+            &include_bytes!("data/ism_variable_shapes/table.f0i")[..],
+        ),
+        (
+            "table.info",
+            &include_bytes!("data/ism_variable_shapes/table.info")[..],
+        ),
+    ] {
+        std::fs::write(directory.path().join(name), bytes).unwrap();
+    }
+    let table = Table::open(TableOptions::new(directory.path())).unwrap();
+    let expected = vec![
+        None,
+        Some(vec![2, 1]),
+        Some(vec![2, 1]),
+        Some(vec![1, 5]),
+        Some(vec![2, 4]),
+    ];
+    assert_eq!(
+        table
+            .column_accessor("DATA")
+            .unwrap()
+            .array_shapes_uncached(&[0, 1, 2, 3, 4])
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        table
+            .column_accessor("DATA")
+            .unwrap()
+            .array_shapes_uncached(&[4, 2, 0, 2])
+            .unwrap(),
+        vec![
+            expected[4].clone(),
+            expected[2].clone(),
+            None,
+            expected[2].clone()
+        ]
+    );
+    for (row, shape) in expected.iter().enumerate() {
+        assert_eq!(&table.array_shape(row, "DATA").unwrap(), shape);
+    }
 }

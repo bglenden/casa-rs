@@ -61,6 +61,10 @@
 //! - CASA simulates leakage for the first two spectral windows only and
 //!   leaves later windows uncorrupted; casa-rs simulates every window.
 
+mod frequency;
+use frequency::FrequencyValues;
+pub(crate) use frequency::applied_frequency;
+
 use std::ops::Deref;
 
 use casa_calibration::{SimulatedSolution, SolutionValues};
@@ -109,6 +113,8 @@ pub(crate) enum JonesKind {
 enum JonesValues {
     /// G and D: `[block · antennas + antenna]`, the receptors' values.
     Receptors(Vec<[Complex32; 2]>),
+    /// Frequency-dependent applied receptor values, by block and antenna.
+    Frequency(FrequencyValues),
     /// Tf: each block's water-vapour excess per antenna, and each window's
     /// wet phase delay per channel.
     Troposphere(TroposphericPhase),
@@ -150,6 +156,7 @@ impl JonesTerm {
             + match &self.values {
                 JonesValues::Receptors(values) => values.capacity() as u64 * VALUE_BYTES,
                 JonesValues::Troposphere(phase) => phase.bytes(),
+                JonesValues::Frequency(values) => values.bytes(),
             }
     }
 
@@ -159,6 +166,7 @@ impl JonesTerm {
     pub(crate) fn receptor_values(&self) -> &[[Complex32; 2]] {
         match &self.values {
             JonesValues::Receptors(values) => values,
+            JonesValues::Frequency(values) => &values.values,
             JonesValues::Troposphere(_) => panic!("a tropospheric term has no receptors' values"),
         }
     }
@@ -183,6 +191,7 @@ impl JonesTerm {
     pub(crate) fn table_values(&self) -> u64 {
         match &self.values {
             JonesValues::Receptors(_) => 2 * self.table_rows(),
+            JonesValues::Frequency(values) => 2 * values.values.len() as u64,
             JonesValues::Troposphere(phase) => self
                 .solutions
                 .iter()
@@ -220,6 +229,9 @@ impl JonesTerm {
             JonesValues::Receptors(values) => {
                 SolutionValues::Receptors(values[block * self.antennas + antenna])
             }
+            JonesValues::Frequency(_) => {
+                unreachable!("applied tables are not exported as simulated solutions")
+            }
             JonesValues::Troposphere(phase) => {
                 let mut phasors =
                     vec![Complex32::new(1.0, 0.0); phase.channels(window).unwrap_or(0)];
@@ -256,7 +268,7 @@ impl JonesTerm {
     /// A tropospheric term's phases; `None` for gains and leakage.
     pub(crate) fn tropospheric_phase(&self) -> Option<&TroposphericPhase> {
         match &self.values {
-            JonesValues::Receptors(_) => None,
+            JonesValues::Receptors(_) | JonesValues::Frequency(_) => None,
             JonesValues::Troposphere(phase) => Some(phase),
         }
     }
@@ -276,6 +288,17 @@ impl JonesTerm {
         let correlations = receptors.len();
         let values = match &self.values {
             JonesValues::Receptors(values) => values,
+            JonesValues::Frequency(values) => {
+                values.apply(
+                    self.kind,
+                    self.antennas,
+                    block,
+                    (antenna1, antenna2),
+                    receptors,
+                    cell,
+                );
+                return;
+            }
             JonesValues::Troposphere(_) => {
                 // A scalar per channel, the same for every correlation.
                 let p = table.phasors(self, (window, block), antenna1);
@@ -291,39 +314,7 @@ impl JonesTerm {
         };
         let p = values[block * self.antennas + antenna1];
         let q = values[block * self.antennas + antenna2];
-        match self.kind {
-            JonesKind::Troposphere => unreachable!("a tropospheric term has its own values"),
-            JonesKind::Gain => {
-                // A cell has at most four correlations.
-                let mut factors = [Complex32::new(1.0, 0.0); 4];
-                for (factor, &[r1, r2]) in factors.iter_mut().zip(receptors) {
-                    *factor = p[r1] * q[r2].conj();
-                }
-                for sample in cell.chunks_exact_mut(correlations) {
-                    for (value, factor) in sample.iter_mut().zip(&factors) {
-                        *value *= *factor;
-                    }
-                }
-            }
-            JonesKind::Leakage => {
-                let position = |pair: [usize; 2]| receptors.iter().position(|&r| r == pair);
-                // `corrupt` refuses leakage on data without all four
-                // correlations.
-                let (Some(xx), Some(xy), Some(yx), Some(yy)) = (
-                    position([0, 0]),
-                    position([0, 1]),
-                    position([1, 0]),
-                    position([1, 1]),
-                ) else {
-                    return;
-                };
-                for sample in cell.chunks_exact_mut(correlations) {
-                    let (vxx, vyy) = (sample[xx], sample[yy]);
-                    sample[xy] += p[0] * vyy + q[1].conj() * vxx;
-                    sample[yx] += p[1] * vxx + q[0].conj() * vyy;
-                }
-            }
-        }
+        apply_receptors(self.kind, p, q, receptors, cell);
     }
 }
 
@@ -790,3 +781,46 @@ impl ScreenFft {
 #[cfg(test)]
 #[path = "jones_tests.rs"]
 mod tests;
+
+fn apply_receptors(
+    kind: JonesKind,
+    p: [Complex32; 2],
+    q: [Complex32; 2],
+    receptors: &[[usize; 2]],
+    cell: &mut [Complex32],
+) {
+    let correlations = receptors.len();
+    match kind {
+        JonesKind::Troposphere => unreachable!("a tropospheric term has its own values"),
+        JonesKind::Gain => {
+            // A cell has at most four correlations.
+            let mut factors = [Complex32::new(1.0, 0.0); 4];
+            for (factor, &[r1, r2]) in factors.iter_mut().zip(receptors) {
+                *factor = p[r1] * q[r2].conj();
+            }
+            for sample in cell.chunks_exact_mut(correlations) {
+                for (value, factor) in sample.iter_mut().zip(&factors) {
+                    *value *= *factor;
+                }
+            }
+        }
+        JonesKind::Leakage => {
+            let position = |pair: [usize; 2]| receptors.iter().position(|&r| r == pair);
+            // `corrupt` refuses leakage on data without all four
+            // correlations.
+            let (Some(xx), Some(xy), Some(yx), Some(yy)) = (
+                position([0, 0]),
+                position([0, 1]),
+                position([1, 0]),
+                position([1, 1]),
+            ) else {
+                return;
+            };
+            for sample in cell.chunks_exact_mut(correlations) {
+                let (vxx, vyy) = (sample[xx], sample[yy]);
+                sample[xy] += p[0] * vyy + q[1].conj() * vxx;
+                sample[yx] += p[1] * vxx + q[0].conj() * vyy;
+            }
+        }
+    }
+}

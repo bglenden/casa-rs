@@ -56,6 +56,53 @@ pub const LOOKUP_LOADING_ROW_BYTES: u64 = 4_096;
 /// 320 bytes with the loading figure, with a quarter more.
 pub const LOOKUP_KEPT_ROW_BYTES: u64 = 400;
 
+/// Payload dimensions used to admit a complex calibration-table lookup.
+///
+/// Row metadata and numerical values have separate costs: a wide table
+/// cannot be sized from its row count alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalibrationTableLayout {
+    /// Physical rows in the calibration table.
+    pub rows: usize,
+    /// Complex parameters across all defined CPARAM cells.
+    pub values: usize,
+    /// Largest CPARAM cell, for admitted interpolation scratch.
+    pub max_cell_values: usize,
+    /// CHAN_FREQ values needed for frequency-dependent solutions.
+    pub frequency_values: usize,
+    /// Frequency-grid rows retained beside those values.
+    pub frequency_windows: usize,
+}
+
+impl CalibrationTableLayout {
+    fn extra_values(self) -> u64 {
+        self.values.saturating_sub(self.rows.saturating_mul(2)) as u64
+    }
+
+    /// Heap used temporarily while loading, beside the retained lookup.
+    /// Existing per-row admission includes up to two complex parameters.
+    #[must_use]
+    pub fn loading_bytes(self) -> u64 {
+        (self.rows as u64)
+            .saturating_mul(LOOKUP_LOADING_ROW_BYTES)
+            .saturating_add(self.extra_values().saturating_mul(24))
+            .saturating_add((self.frequency_values as u64).saturating_mul(16))
+            .saturating_add(
+                (self.frequency_windows as u64).saturating_mul(LOOKUP_LOADING_ROW_BYTES),
+            )
+    }
+
+    /// Heap retained by the lookup, including wide parameter grids.
+    #[must_use]
+    pub fn kept_bytes(self) -> u64 {
+        (self.rows as u64)
+            .saturating_mul(LOOKUP_KEPT_ROW_BYTES)
+            .saturating_add(self.extra_values().saturating_mul(12))
+            .saturating_add((self.frequency_values as u64).saturating_mul(12))
+            .saturating_add((self.frequency_windows as u64).saturating_mul(64))
+    }
+}
+
 /// A complex calibration table, loaded to look its solutions up.
 pub struct CalibrationTableLookup {
     path: PathBuf,
@@ -144,6 +191,59 @@ impl CalibrationTableLookup {
                 path: path.display().to_string(),
                 reason: error.to_string(),
             }
+        })
+    }
+
+    /// Admit the root and spectral-window row metadata before inspecting
+    /// shapes. This reads control files only, never numerical payloads.
+    ///
+    /// # Errors
+    /// A table control file cannot be read.
+    pub fn metadata_bytes_on_disk(path: impl AsRef<Path>) -> Result<u64, ApplyExecutionError> {
+        let path = path.as_ref();
+        let rows = Self::rows_on_disk(path)?;
+        let spectral = path.join("SPECTRAL_WINDOW");
+        let windows = if spectral.exists() {
+            Self::rows_on_disk(spectral)?
+        } else {
+            0
+        };
+        Ok((rows as u64)
+            .saturating_add(windows as u64)
+            .saturating_mul(LOOKUP_LOADING_ROW_BYTES)
+            .max(64 * 1024))
+    }
+
+    /// Inspect CPARAM dimensions without reading numerical cell payloads.
+    ///
+    /// The caller admits [`Self::metadata_bytes_on_disk`] first. Shapes
+    /// are scanned in bounded batches; only scalar counts survive here.
+    ///
+    /// # Errors
+    /// A table's shape metadata cannot be read, or value counts overflow.
+    pub fn layout_on_disk(
+        path: impl AsRef<Path>,
+    ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
+        let path = path.as_ref();
+        let error = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason,
+        };
+        let (rows, values, max_cell_values, channels) =
+            shape_counts(path, "CPARAM").map_err(error)?;
+        let spectral = path.join("SPECTRAL_WINDOW");
+        let (frequency_windows, frequency_values) = if channels > 1 && spectral.exists() {
+            let (windows, values, _, _) = shape_counts(&spectral, "CHAN_FREQ").map_err(error)?;
+            (windows, values)
+        } else {
+            (0, 0)
+        };
+        Ok(CalibrationTableLayout {
+            rows,
+            values,
+            max_cell_values,
+            frequency_values,
+            frequency_windows,
         })
     }
 
@@ -454,4 +554,36 @@ pub(crate) fn interpolate_gain_amplitude_phase(
     }
     let phase = lower_phase + (upper_phase - lower_phase) * fraction;
     Complex32::new(amp * phase.cos(), amp * phase.sin())
+}
+
+/// Row count, logical value count, largest cell and largest second axis;
+/// arrays themselves are never read or retained during this inspection.
+fn shape_counts(path: &Path, name: &str) -> Result<(usize, usize, usize, usize), String> {
+    let table =
+        Table::open(casa_tables::TableOptions::new(path)).map_err(|error| error.to_string())?;
+    let rows = table.row_count();
+    let column = table
+        .column_accessor(name)
+        .map_err(|error| error.to_string())?;
+    let (mut values, mut maximum, mut channels) = (0usize, 0usize, 0usize);
+    for start in (0..rows).step_by(512) {
+        let selected = (start..rows.min(start.saturating_add(512))).collect::<Vec<_>>();
+        for shape in column
+            .array_shapes_uncached(&selected)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .flatten()
+        {
+            channels = channels.max(shape.get(1).copied().unwrap_or(1));
+            let size = shape
+                .into_iter()
+                .try_fold(1usize, |count, dimension| count.checked_mul(dimension))
+                .ok_or_else(|| "array shape size overflows usize".to_string())?;
+            maximum = maximum.max(size);
+            values = values
+                .checked_add(size)
+                .ok_or_else(|| "array value count overflows usize".to_string())?;
+        }
+    }
+    Ok((rows, values, maximum, channels))
 }

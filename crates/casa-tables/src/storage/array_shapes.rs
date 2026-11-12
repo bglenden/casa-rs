@@ -97,6 +97,40 @@ impl CompositeStorage {
         let binding = Binding::of(&metadata.table_dat, column)?;
         let manager = binding.manager;
         match manager.type_name.as_str() {
+            "StManAipsIO" => {
+                let data = table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", manager.seq_nr));
+                let descriptors = binding
+                    .columns
+                    .iter()
+                    .map(|column| (*column).clone())
+                    .collect::<Vec<_>>();
+                stman_aipsio::read_stman_array_column_shapes(
+                    &data,
+                    &descriptors,
+                    binding.column,
+                    rows,
+                    ByteOrder::BigEndian,
+                )?
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "metadata-only StManAipsIO shapes unavailable for '{column}'"
+                    ))
+                })
+            }
+            "IncrementalStMan" => {
+                let data = table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", manager.seq_nr));
+                incremental_stman::read_ism_array_column_shapes(
+                    &data,
+                    &binding.columns,
+                    binding.column,
+                    rows,
+                )?
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "metadata-only ISM shapes unavailable for '{column}'"
+                    ))
+                })
+            }
             "StandardStMan" => {
                 let data = table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", manager.seq_nr));
                 standard_stman::read_ssm_array_column_shapes(

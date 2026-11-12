@@ -29,13 +29,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_calibration::{ApplyInterpolationMode, CalibrationTableLookup, FieldSelection};
+use casa_calibration::{
+    ApplyInterpolationMode, CalibrationTableLookup, FieldSelection, FrequencyInterpolation,
+};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use num_complex::Complex32;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied};
+use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency};
 
 /// The phase loading a `setapply` table is admitted as: the table as it is
 /// read, and what the loaded lookup keeps.
@@ -102,6 +104,7 @@ pub(crate) struct AppliedTable {
     path: PathBuf,
     lookup: Arc<HeldLookup>,
     kind: AppliedKind,
+    frequency: Option<FrequencyInterpolation>,
     spwmap: Vec<i64>,
 }
 
@@ -119,6 +122,8 @@ impl std::fmt::Debug for AppliedTable {
 /// A loaded table with the memory admitted for what it keeps.
 struct HeldLookup {
     lookup: CalibrationTableLookup,
+    frequencies: Vec<Vec<f64>>,
+    max_cell_values: usize,
     _reservation: Reservation,
 }
 
@@ -182,10 +187,13 @@ impl Simulator {
                 )));
             }
         };
+        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF")
+            .then(|| frequency_interpolation(&spec.interp))
+            .transpose()?;
         let kind = match kind.as_str() {
-            "G" => AppliedKind::Gain,
-            "D" => AppliedKind::Leakage,
-            "T" => AppliedKind::Scalar,
+            "G" | "B" => AppliedKind::Gain,
+            "D" | "DF" => AppliedKind::Leakage,
+            "T" | "TF" => AppliedKind::Scalar,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
         self.require_rows()?;
@@ -198,6 +206,7 @@ impl Simulator {
             path,
             lookup: Arc::new(lookup),
             kind,
+            frequency,
             spwmap: spec.spwmap.clone(),
         }));
         Ok(())
@@ -211,23 +220,44 @@ impl Simulator {
         path: &std::path::Path,
         interp: ApplyInterpolationMode,
     ) -> SimulatorResult<HeldLookup> {
-        let rows = CalibrationTableLookup::rows_on_disk(path).map_err(raised)?;
-        let kept = CalibrationTableLookup::kept_bytes(rows);
+        let metadata_bytes =
+            CalibrationTableLookup::metadata_bytes_on_disk(path).map_err(raised)?;
         let resources = &self.options.resources;
+        // Admit headers before inspecting shapes; no numerical array is
+        // materialized by layout_on_disk. Only scalar counts survive it.
+        let metadata = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: LOOKUP_PHASE,
+                memory: metadata_bytes,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let layout = CalibrationTableLookup::layout_on_disk(path).map_err(raised)?;
+        drop(metadata);
+        let kept = layout.kept_bytes();
         let mut reservation = admit(
             resources.host(),
             resources.policy(),
             &Demand {
                 phase: LOOKUP_PHASE,
-                memory: CalibrationTableLookup::loading_bytes(rows) + kept,
+                memory: layout.loading_bytes().saturating_add(kept),
             },
         )
         .map_err(SimulatorError::admission)?;
         let lookup = CalibrationTableLookup::open_with(path, interp, FieldSelection::AnyField)
             .map_err(raised)?;
+        let frequencies = if layout.frequency_values > 0 {
+            CalibrationTableLookup::frequency_grids_on_disk(path).map_err(raised)?
+        } else {
+            Vec::new()
+        };
         reservation.retain(kept);
         Ok(HeldLookup {
             lookup,
+            frequencies,
+            max_cell_values: layout.max_cell_values,
             _reservation: reservation,
         })
     }
@@ -242,19 +272,30 @@ impl Simulator {
             JonesSource::Applied(table) => {
                 let antennas = self.antennas.len();
                 let (per_window, _) = self.integration_counts();
-                let bytes = TermBytes::per_chunk(&per_window, antennas);
+                let channels = self
+                    .spectral_windows
+                    .iter()
+                    .map(|window| window.channel_count)
+                    .collect::<Vec<_>>();
+                let bytes = if table.frequency.is_some() {
+                    TermBytes::frequency(
+                        &per_window,
+                        &channels,
+                        antennas,
+                        table.lookup.max_cell_values,
+                    )
+                } else {
+                    TermBytes::per_chunk(&per_window, antennas)
+                };
                 let mut reservation = self.admit_term(bytes)?;
-                let (chunks, values) = self.applied_solutions(
-                    &table.lookup.lookup,
-                    &table.spwmap,
-                    &per_window,
-                    table.kind,
-                )?;
+                let (chunks, values, offsets) = self.applied_solutions(table, &per_window)?;
                 reservation.retain(bytes.kept);
-                Ok(Arc::new(HeldTerm::new(
-                    applied(table.kind.operator(), antennas, chunks, values),
-                    reservation,
-                )))
+                let term = if table.frequency.is_some() {
+                    applied_frequency(table.kind.operator(), antennas, chunks, values, offsets)
+                } else {
+                    applied(table.kind.operator(), antennas, chunks, values)
+                };
+                Ok(Arc::new(HeldTerm::new(term, reservation)))
             }
         }
     }
@@ -264,11 +305,12 @@ impl Simulator {
     /// window (mapped by `spwmap`).
     fn applied_solutions(
         &self,
-        lookup: &CalibrationTableLookup,
-        spwmap: &[i64],
+        table: &AppliedTable,
         per_window: &[usize],
-        kind: AppliedKind,
-    ) -> SimulatorResult<(Chunks, Vec<[Complex32; 2]>)> {
+    ) -> SimulatorResult<(Chunks, Vec<[Complex32; 2]>, Vec<usize>)> {
+        let kind = table.kind;
+        let lookup = &table.lookup.lookup;
+        let spwmap = &table.spwmap;
         let table_window = |window: usize| {
             spwmap
                 .get(window)
@@ -287,20 +329,51 @@ impl Simulator {
             0.0,
         );
         let mut chunks = Chunks::with_capacity(per_window);
-        let mut values = Vec::with_capacity(per_window.iter().sum::<usize>() * self.antennas.len());
+        let value_count = per_window
+            .iter()
+            .enumerate()
+            .map(|(window, count)| {
+                count
+                    * self.antennas.len()
+                    * if table.frequency.is_some() {
+                        self.spectral_windows[window].channel_count
+                    } else {
+                        1
+                    }
+            })
+            .sum();
+        let mut values = Vec::with_capacity(value_count);
+        let mut offsets = if table.frequency.is_some() {
+            Vec::with_capacity(per_window.iter().sum::<usize>() + 1)
+        } else {
+            Vec::new()
+        };
         for (index, scan) in self.scans.iter().enumerate() {
             let window = table_window(scan.spectral_window_id);
+            let output_hz = if table.frequency.is_some() {
+                self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
+            } else {
+                Vec::new()
+            };
+            let channels = if table.frequency.is_some() {
+                output_hz.len()
+            } else {
+                1
+            };
             for time_s in self.integration_times_s(index) {
+                if table.frequency.is_some() {
+                    offsets.push(values.len());
+                }
                 chunks.push(scan.spectral_window_id, time_s, scan.field_id);
                 for antenna in 0..self.antennas.len() {
                     let Some(solution) = lookup
                         .solution(scan.field_id as i32, window as i32, antenna as i32, time_s)
                         .map_err(raised)?
                     else {
-                        values.push([neutral; 2]);
+                        values.extend(std::iter::repeat_n([neutral; 2], channels));
                         continue;
                     };
-                    if solution.channels != 1 {
+                    if solution.channels != 1 && table.frequency.is_none() {
                         return Err(not_yet("of a table of solutions per channel"));
                     }
                     if solution.receptors != kind.receptors() {
@@ -311,24 +384,43 @@ impl Simulator {
                             kind.receptors()
                         )));
                     }
-                    let invalid_leakage =
-                        kind == AppliedKind::Leakage && solution.flags.iter().any(|&flag| flag);
-                    values.push(std::array::from_fn(|receptor| {
-                        let receptor = if kind == AppliedKind::Scalar {
-                            0
-                        } else {
-                            receptor
-                        };
-                        if invalid_leakage || solution.flags[receptor] {
-                            neutral
-                        } else {
-                            solution.value(receptor, 0)
-                        }
-                    }));
+                    let solution = if let Some(mode) = table.frequency {
+                        let input_hz = table
+                            .lookup
+                            .frequencies
+                            .get(window)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]);
+                        solution
+                            .resample_frequency(input_hz, &output_hz, mode)
+                            .map_err(raised)?
+                    } else {
+                        solution
+                    };
+                    for channel in 0..channels {
+                        let invalid_leakage = kind == AppliedKind::Leakage
+                            && (0..solution.receptors)
+                                .any(|receptor| solution.flags[receptor * channels + channel]);
+                        values.push(std::array::from_fn(|receptor| {
+                            let receptor = if kind == AppliedKind::Scalar {
+                                0
+                            } else {
+                                receptor
+                            };
+                            if invalid_leakage || solution.flags[receptor * channels + channel] {
+                                neutral
+                            } else {
+                                solution.value(receptor, channel)
+                            }
+                        }));
+                    }
                 }
             }
         }
-        Ok((chunks.sorted(), values))
+        if table.frequency.is_some() {
+            offsets.push(values.len());
+        }
+        Ok((chunks.sorted(), values, offsets))
     }
 }
 
@@ -345,5 +437,15 @@ fn apply_interpolation(interp: &str) -> SimulatorResult<ApplyInterpolationMode> 
         "" | "linear" => Ok(ApplyInterpolationMode::Linear),
         "nearest" => Ok(ApplyInterpolationMode::Nearest),
         other => Err(not_yet(format!("with interp='{other}'"))),
+    }
+}
+
+/// CASA defaults frequency interpolation to linear for frequency-dependent parameters.
+fn frequency_interpolation(interp: &str) -> SimulatorResult<FrequencyInterpolation> {
+    let mode = interp.split(',').nth(1).unwrap_or("linear");
+    match mode {
+        "nearest" => Ok(FrequencyInterpolation::Nearest),
+        "" | "linear" => Ok(FrequencyInterpolation::Linear),
+        other => Err(not_yet(format!("with frequency interp='{other}'"))),
     }
 }
