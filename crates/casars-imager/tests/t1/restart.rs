@@ -47,7 +47,16 @@ fn assert_unchanged(
 /// PB, weights and sums stay in place while the residual and model advance.
 #[test]
 fn a_mosaic_reuses_the_saved_psf_sensitivity_and_pb_during_continuation() {
-    let (observation, mut controls) = mosaic_run(false);
+    check_mosaic_continuation(false);
+}
+
+#[test]
+fn a_mosaic_cube_reuses_each_channels_saved_weight_and_pb() {
+    check_mosaic_continuation(true);
+}
+
+fn check_mosaic_continuation(cube: bool) {
+    let (observation, mut controls) = mosaic_run(cube);
     controls["niter"] = json!(8);
     controls["threshold"] = json!("0Jy");
     let (_, seed) = observation.image("mosaic-saved", controls.clone());
@@ -72,14 +81,25 @@ fn a_mosaic_reuses_the_saved_psf_sensitivity_and_pb_during_continuation() {
         assert!(!continued.suffixes().contains(suffix), "rewrote {suffix}");
         assert_unchanged(&before, &snapshot(path));
     }
-    assert_ne!(seed.get(".model").pixels, continued.get(".model").pixels);
+    assert_ne!(
+        seed.get(".model").values(),
+        continued.get(".model").values()
+    );
+    let seed_pb_mask = seed.get(".pb").mask();
+    for suffix in [".image", ".image.pbcor", ".residual"] {
+        assert_eq!(
+            continued.get(suffix).mask(),
+            seed_pb_mask,
+            "{suffix} saved mosaic PB mask"
+        );
+    }
     for suffix in [".image", ".image.pbcor", ".model", ".residual"] {
-        let expected = &refreshed.get(suffix).pixels;
-        let reused = &continued.get(suffix).pixels;
+        let expected = refreshed.get(suffix).values();
+        let reused = continued.get(suffix).values();
         let power: f64 = expected.iter().map(|value| f64::from(*value).powi(2)).sum();
         let error: f64 = expected
             .iter()
-            .zip(reused)
+            .zip(&reused)
             .map(|(a, b)| f64::from(*a - *b).powi(2))
             .sum();
         assert!(

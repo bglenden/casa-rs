@@ -21,6 +21,7 @@ mod normalization;
 mod plan;
 mod plane;
 mod restore;
+mod saved_mosaic_beam;
 mod source;
 mod storage;
 mod taylor;
@@ -49,6 +50,7 @@ pub use plan::{
 pub use restore::{
     ResidualBeamScaling, fft_convolve, gaussian_beam_image, rescale_residual_to_beam,
 };
+pub use saved_mosaic_beam::SavedMosaicBeam;
 pub use source::{ContinuumProductInputs, FacetSumWeights, PrimaryBeamCentres};
 pub use storage::{ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout};
 pub use taylor_beam::TaylorPrimaryBeamAccumulator;

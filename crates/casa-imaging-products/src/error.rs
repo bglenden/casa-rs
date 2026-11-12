@@ -72,9 +72,26 @@ pub enum ProductsError {
         "a cube Taylor primary beam needs a finite non-negative plane and a single-domain, single-polarization cube"
     )]
     InvalidCubeTaylorPrimaryBeam,
-    /// A saved mosaic beam or its default mask is invalid.
-    #[error("the saved mosaic primary beam and its mask must match the finite MFS image planes")]
+    /// The saved primary beam contains an invalid value.
+    #[error("the saved mosaic primary beam contains a negative or non-finite value")]
     InvalidSavedMosaicBeam,
+    /// The saved mosaic PB does not match the dimensions of the normal state.
+    #[error("saved mosaic PB shape {saved:?} does not match the image grid {expected:?}")]
+    SavedMosaicBeamShape {
+        /// Saved CASA image axes.
+        saved: [usize; 4],
+        /// Expected CASA image axes.
+        expected: [usize; 4],
+    },
+    /// The saved primary beam image or its default mask could not be read.
+    #[error("reading saved mosaic primary beam {}: {source}", path.display())]
+    SavedMosaicBeam {
+        /// Path to the saved CASA image.
+        path: PathBuf,
+        /// Image or mask read error.
+        #[source]
+        source: casa_images::ImageError,
+    },
     /// A supplied Taylor residual normalization divisor is invalid.
     #[error("Taylor residual normalization needs a positive finite divisor and a Taylor family")]
     InvalidTaylorResidualSumWeight,

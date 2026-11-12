@@ -87,19 +87,10 @@ impl Input {
         self.0.beam_resident_bytes()
     }
 
-    /// Peak and retained bytes for the earlier mosaic's PB and mask.
+    /// Access the saved mosaic PB as product generation does.
     #[must_use]
-    pub fn mosaic_beam_bytes(&self) -> (u64, u64) {
-        self.0.mosaic_beam_bytes()
-    }
-
-    /// Read the earlier mosaic's PB and mask as product generation does.
-    ///
-    /// # Errors
-    /// Pixel or mask I/O fails.
-    pub fn read_mosaic_beam(&self) -> Result<(Vec<f32>, Vec<bool>), casa_images::ImageError> {
-        let beam = self.0.read_mosaic_beam()?;
-        Ok((beam.values, beam.mask))
+    pub fn mosaic_beam(&self) -> Option<&casa_imaging_products::SavedMosaicBeam> {
+        self.0.mosaic_beam()
     }
 
     /// Bytes admitted for reading `channels` channels, besides the images.
