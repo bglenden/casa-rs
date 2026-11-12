@@ -245,3 +245,110 @@ fn cpp_incremental_shapes_include_carried_forward_and_undefined_rows() {
         assert_eq!(&table.array_shape(row, "DATA").unwrap(), shape);
     }
 }
+
+/// Historical payload length and active marker+i64 offsets must not make
+/// small live cells unreadable. Sparse holes keep the fixture physically small.
+#[test]
+fn large_aipsio_files_keep_shape_headers_and_active_64_bit_offsets_readable() {
+    use std::io::{Seek, SeekFrom, Write};
+    for active_large_offset in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = if let Some(root) = std::env::var_os("CASA_RS_LARGE_AIPSIO_OUT") {
+            let path = std::path::PathBuf::from(root).join(if active_large_offset {
+                "large-offset"
+            } else {
+                "historical-length"
+            });
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            path
+        } else {
+            directory.path().join("arrays")
+        };
+        let shapes = vec![Some(vec![2, 1]), Some(vec![1, 5])];
+        save(&table(&shapes, false), &path, DataManagerKind::StManAipsIO);
+        let array_path = std::fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.file_name().unwrap().to_string_lossy().ends_with('i'))
+            .unwrap();
+        let original = std::fs::read(&array_path).unwrap();
+        let large_offset = (1u64 << 31) + 64;
+        let mut array = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&array_path)
+            .unwrap();
+        array.seek(SeekFrom::Start(large_offset)).unwrap();
+        // Independently encoded version1 rank2 [2,1] Float32 cell,
+        // exactly the original first cell, at an active 64-bit file position.
+        array.write_all(&original[16..40]).unwrap();
+        let length = large_offset + 24;
+        array.set_len(length).unwrap();
+        array.seek(SeekFrom::Start(4)).unwrap();
+        array.write_all(&(length as i64).to_be_bytes()).unwrap();
+        drop(array);
+        if active_large_offset {
+            let main_path =
+                std::path::PathBuf::from(array_path.to_string_lossy().strip_suffix('i').unwrap());
+            let mut bytes = std::fs::read(&main_path).unwrap();
+            let pattern = [2u32.to_be_bytes(), 16u32.to_be_bytes(), 40u32.to_be_bytes()].concat();
+            let matches = bytes
+                .windows(pattern.len())
+                .enumerate()
+                .filter_map(|(index, value)| (value == pattern).then_some(index))
+                .collect::<Vec<_>>();
+            assert_eq!(matches.len(), 1);
+            let slot = matches[0] + 4;
+            // AipsIO object lengths include the added i64; all three
+            // enclosing objects are patched, so the existing full reader
+            // and actual C++ can consume the same independently encoded file.
+            for tag in [
+                "StManAipsIO",
+                "StManColumnIndArrayAipsIO",
+                "StManColumnAipsIO",
+            ] {
+                let offsets = bytes
+                    .windows(tag.len())
+                    .enumerate()
+                    .filter_map(|(index, value)| (value == tag.as_bytes()).then_some(index))
+                    .collect::<Vec<_>>();
+                assert_eq!(offsets.len(), 1);
+                let start = offsets[0] - 8;
+                let old = u32::from_be_bytes(bytes[start..start + 4].try_into().unwrap());
+                bytes[start..start + 4].copy_from_slice(&(old + 8).to_be_bytes());
+            }
+            let marker = (1u32 << 31) + 1;
+            bytes.splice(
+                slot..slot + 4,
+                [
+                    marker.to_be_bytes().to_vec(),
+                    (large_offset as i64).to_be_bytes().to_vec(),
+                ]
+                .concat(),
+            );
+            std::fs::write(main_path, bytes).unwrap();
+        }
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        // The ordinary reader already accepts this format before the new
+        // shape API: this check distinguishes a regression from new scope.
+        for (row, expected) in shapes.iter().enumerate() {
+            assert_eq!(reopened.array_shape(row, "DATA").unwrap(), *expected);
+            let ArrayValue::Float32(values) = reopened
+                .cell_accessor(row, "DATA")
+                .unwrap()
+                .array()
+                .unwrap()
+            else {
+                panic!("float")
+            };
+            assert!(values.iter().all(|&value| value == 7.0));
+        }
+        assert_eq!(
+            reopened
+                .column_accessor("DATA")
+                .unwrap()
+                .array_shapes_uncached(&[1, 0, 1])
+                .unwrap(),
+            vec![shapes[1].clone(), shapes[0].clone(), shapes[1].clone()]
+        );
+    }
+}
