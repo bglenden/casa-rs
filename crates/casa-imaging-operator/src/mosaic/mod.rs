@@ -839,6 +839,17 @@ impl ConvolutionFunctionSet for MosaicPb {
         true
     }
 
+    /// `HetArrayConvFunc::checkPBOfField` converts the pointing's pixel to
+    /// integer coordinates before testing the image bounds. A pointing
+    /// outside has no convolution function, even if its beam overlaps.
+    fn admits_pointing(&self, geometry: &GridGeometry, offset_rad: [f64; 2]) -> bool {
+        let image = geometry.image();
+        offset_rad.into_iter().enumerate().all(|(axis, offset)| {
+            let pixel = image.reference_pixel[axis] as f64 + offset / image.increment_rad[axis];
+            (0.0..image.shape[axis] as f64).contains(&pixel.trunc())
+        })
+    }
+
     /// `MosaicFT::put` grids through `sectgmosd2` and `gmoswgtd2`, which
     /// clip a support to the grid (`onmosgrid`), and predicts through
     /// `sectdmos2`, which drops a sample that overruns it (`omos`).
