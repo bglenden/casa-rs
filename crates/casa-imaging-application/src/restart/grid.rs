@@ -6,8 +6,9 @@
 
 use std::path::Path;
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, Projection, ProjectionType};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, Projection, ProjectionType};
 use casa_images::{AnyPagedImage, ImagePixel, RegridTemplate};
+use casa_imaging_model::{DirectionCoordinateSpec, DirectionFrame, SkyDirection};
 
 use crate::PrepareError;
 
@@ -17,7 +18,8 @@ pub(crate) fn check_grid(
     path: &Path,
     suffix: &str,
     template: &RegridTemplate,
-) -> Result<(), PrepareError> {
+    mosaic_psf: Option<DirectionCoordinateSpec>,
+) -> Result<Option<CoordinateSystem>, PrepareError> {
     let refuse = |reason: String| PrepareError::Restart {
         path: path.into(),
         reason,
@@ -36,9 +38,10 @@ pub(crate) fn check_grid(
             // SIImageStore::openImage deliberately excludes sumwt from grid
             // checks; the sums are read by the plane they normalize.
             if suffix.starts_with("sumwt") {
-                Ok(())
+                Ok(None)
             } else {
-                check_header(image, template)
+                check_header(image, template, mosaic_psf.filter(|_| suffix == "psf"))
+                    .map(|alternate| alternate.then(|| image.coordinates().clone()))
             }
         }
         AnyPagedImage::Float64(_) => Err("CASA restart requires a Float32 image".into()),
@@ -50,7 +53,8 @@ pub(crate) fn check_grid(
 fn check_header<T: ImagePixel>(
     image: &casa_images::PagedImage<T>,
     template: &RegridTemplate,
-) -> Result<(), String> {
+    mosaic_psf: Option<DirectionCoordinateSpec>,
+) -> Result<bool, String> {
     if image.shape() != template.shape {
         return Err(format!(
             "shape mismatch: existing {:?}, requested {:?}",
@@ -58,7 +62,55 @@ fn check_header<T: ImagePixel>(
             template.shape
         ));
     }
-    check_coordinates(image.coordinates(), &template.coordinates)
+    let actual = image.coordinates();
+    let requested = &template.coordinates;
+    if let Some(main) = mosaic_psf
+        && actual.n_coordinates() == requested.n_coordinates()
+        && !same_grid(actual, requested)
+    {
+        let mut alternate = requested.clone();
+        use_saved_psf_reference(actual, &mut alternate, main);
+        check_coordinates(actual, &alternate)?;
+        return Ok(true);
+    }
+    check_coordinates(actual, requested)?;
+    Ok(false)
+}
+
+/// A single-term mosaic can have a PSF formed about a fixed J2000
+/// direction of its own. Rebuild the expected direction at that reference
+/// and still check the actual projection, axes, poles and pixel geometry.
+fn use_saved_psf_reference(
+    actual: &CoordinateSystem,
+    requested: &mut CoordinateSystem,
+    main: DirectionCoordinateSpec,
+) {
+    let CoordinateModel::Direction(direction) = actual.coordinate(0) else {
+        return;
+    };
+    let values = direction.reference_value();
+    let [longitude, latitude] = [values[0], values[1]];
+    let projection = main.projection();
+    if !longitude.is_finite()
+        || !(-std::f64::consts::FRAC_PI_2..=std::f64::consts::FRAC_PI_2).contains(&latitude)
+        || (projection == casa_imaging_model::Projection::Ncp && latitude == 0.0)
+    {
+        return;
+    }
+    let poles = if projection.zenithal() || latitude < 0.0 {
+        [180.0, 90.0]
+    } else {
+        [0.0, 90.0]
+    };
+    let direction = DirectionCoordinateSpec::new(
+        projection,
+        SkyDirection::new(DirectionFrame::J2000, longitude, latitude),
+        main.reference_pixel(),
+        main.increment_rad(),
+        main.pc(),
+        poles,
+    );
+    requested.replace_coordinate(0, direction.coordinate());
 }
 
 fn check_coordinates(

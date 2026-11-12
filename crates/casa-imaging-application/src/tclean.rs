@@ -117,6 +117,9 @@ impl ImagingRequest {
         request
             .validate_mem_scope()
             .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
+        request
+            .validate_psf_phase_centre()
+            .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
         Ok(request)
     }
 }
@@ -142,7 +145,7 @@ fn read(
     };
     let modes = tclean.modes()?;
     tclean.selection()?;
-    tclean.geometry()?;
+    tclean.geometry(&modes)?;
     tclean.spectral(&modes)?;
     tclean.gridding(&modes)?;
     tclean.weighting(&modes)?;
@@ -537,7 +540,7 @@ impl<'a> Tclean<'a> {
         Ok(())
     }
 
-    fn geometry(&mut self) -> Result<(), TcleanRefusal> {
+    fn geometry(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.copy(&["imsize", "stokes", "startmodel", "outlierfile"])?;
         let cell = self.value("cell")?;
         if cell.as_array().is_some_and(Vec::is_empty) {
@@ -560,8 +563,17 @@ impl<'a> Tclean<'a> {
             },
         );
         self.set("phasecenter_field", if field { centre } else { "none" });
+        let psf = self.text("psfphasecenter")?;
+        self.set(
+            "psfphasecenter",
+            if modes.gridder == "mosaic" && !psf.is_empty() {
+                psf
+            } else {
+                "none"
+            },
+        );
         self.projection()?;
-        self.ignore(&["psfphasecenter", "vptable"])
+        self.ignore(&["vptable"])
     }
 
     /// CASA's `projection` (`SynthesisParamsImage::fromRecord`): `NCP`, which

@@ -45,6 +45,7 @@ use crate::{PlannedContinuumGeneration, PlannedMember, ProductsError, RestoringB
 pub struct CasaImageWriter {
     domains: Arc<BTreeMap<ImageDomainRole, CasaImageDomainOutput>>,
     alternate_coordinates: Option<Vec<(ImageDomainRole, CoordinateSystem)>>,
+    main_psf_coordinates: Option<Arc<CoordinateSystem>>,
     mem_alpha: Option<f32>,
     staged: Arc<Mutex<Vec<StagedImage>>>,
 }
@@ -154,6 +155,7 @@ impl CasaImageWriter {
         Self {
             domains: Arc::new(outputs),
             alternate_coordinates: None,
+            main_psf_coordinates: None,
             mem_alpha: None,
             staged: Arc::new(Mutex::new(Vec::new())),
         }
@@ -187,9 +189,27 @@ impl CasaImageWriter {
         Self {
             domains: Arc::clone(&self.domains),
             alternate_coordinates: Some(coordinates),
+            main_psf_coordinates: self.main_psf_coordinates.clone(),
             mem_alpha: self.mem_alpha,
             staged: Arc::clone(&self.staged),
         }
+    }
+
+    /// Use the separately gridded main PSF's coordinates for its image.
+    /// The residual, model, weight and other products keep the main grid.
+    pub fn set_main_psf_coordinates(&mut self, coordinates: CoordinateSystem) {
+        self.main_psf_coordinates = Some(Arc::new(coordinates));
+    }
+
+    fn member_coordinates(&self, member: &PlannedMember) -> &CoordinateSystem {
+        let role = member.axes().domain();
+        if role == &ImageDomainRole::Main
+            && matches!(member.role(), ProductRole::Psf(_))
+            && let Some(coordinates) = &self.main_psf_coordinates
+        {
+            return coordinates;
+        }
+        self.coordinates_for(role)
     }
 
     /// The coordinate binding of this family, or the original binding.
@@ -243,16 +263,19 @@ impl CasaImageWriter {
         const IMAGE_ENVELOPE_BYTES: u64 = 64 * 1024;
         const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
         let overflow = || ProductsError::ResourceDemandOverflow("CASA image writer");
-        let coordinate_bytes = self.domains.keys().try_fold(0_u64, |maximum, role| {
-            let bytes = self
-                .coordinates_for(role)
-                .to_record()
-                .retained_heap_bytes()
-                .and_then(|bytes| bytes.checked_mul(4))
-                .and_then(|bytes| u64::try_from(bytes).ok())
-                .ok_or_else(overflow)?;
-            Ok::<_, ProductsError>(maximum.max(bytes))
-        })?;
+        let coordinate_bytes = planned
+            .members()
+            .iter()
+            .try_fold(0_u64, |maximum, member| {
+                let bytes = self
+                    .member_coordinates(member)
+                    .to_record()
+                    .retained_heap_bytes()
+                    .and_then(|bytes| bytes.checked_mul(4))
+                    .and_then(|bytes| u64::try_from(bytes).ok())
+                    .ok_or_else(overflow)?;
+                Ok::<_, ProductsError>(maximum.max(bytes))
+            })?;
         let beam_bytes = planned
             .members()
             .iter()
@@ -374,7 +397,7 @@ impl CasaImageWriter {
         let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
             layout.shape().to_vec(),
             tile.to_vec(),
-            self.coordinates_for(member.axes().domain()).clone(),
+            self.member_coordinates(member).clone(),
             &staging,
             layout.maximum_values() * size_of::<f32>(),
         )

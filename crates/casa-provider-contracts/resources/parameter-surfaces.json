@@ -8553,17 +8553,13 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "surface_note": "A fixed direction for the PSF of a single-term MFS mosaic. Other gridders ignore it. Alternate cube and Taylor PSFs are tracked in #1062.",
           "projections": {
             "cli": {"flags": ["--psfphasecenter"], "metavar": "DIR|FIELD"},
             "provider": {"field": "psfphasecenter"},
             "python": {"name": "psfphasecenter"},
             "presentation": {"label": "PSF Phase Center", "group": "Advanced Wide-Field", "advanced": true}
-          },
-          "unimplemented": {"issue": 1062, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "mosaic"}},
-            {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "mosaicft"}},
-            {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "ftmosaic"}}
-          ]}}
+          }
         },
         {
           "name": "wprojplanes",
