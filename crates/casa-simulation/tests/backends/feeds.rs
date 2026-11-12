@@ -36,7 +36,7 @@ fn multiple_feed_predictions_and_noise_agree_on_actual_metal() {
     let difference = relative_difference(&metal, &cpu);
     println!("multi-feed actual Metal relative residual {difference:e}");
     assert!(difference < TOLERANCE);
-    for feed in cpu.chunks_exact(144) {
+    for feed in cpu.as_chunks::<144>().0 {
         assert!(feed.iter().any(|r| r.data.iter().any(|v| v.norm() > 0.5)));
     }
 }
