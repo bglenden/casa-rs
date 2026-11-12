@@ -267,7 +267,9 @@ fn aw_projection_reads_its_planes_and_terms() {
     request(native(16, 16)).validate().expect("16 planes");
     let mut native = native(16, 16);
     native["computepastep"] = json!(5.0);
-    assert_eq!(refusal(native), "computepastep");
+    request(native)
+        .validate()
+        .expect("native PA generation is resolved against the observation");
     assert_eq!(
         refusal(aw(json!({ "computepastep": 0.0 }))),
         "computepastep"

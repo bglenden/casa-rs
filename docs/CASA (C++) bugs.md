@@ -517,6 +517,29 @@ fields. CASA's separate one-degree coalescence in
 `CFCache::fillCFListFromDisk` and `CFStore2::resize` remains unverified for
 densely spaced imported headers (#1070).
 
+## AW cache creation and reopening can select different PA buffers
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 cold and warm selection differs when PA coverage
+  intervals overlap. Casa-rs uses the sorted cache order in both runs (#1070).
+- Affected code: `TransformMachines2/AWProjectFT.cc` (`findConvFunction`),
+  `CFStore2.cc` (`resize`, `nearestPA`) and `CFCache.cc`
+  (`fillCFListFromDisk`).
+
+CASA adds generated buffers in observation order and picks the first PA
+strictly inside `computepastep`. Reloading sorts the cache by PA before
+applying the same first-match rule. On FIELD 0 of `refim_mawproject.ms`
+at 5 degrees, both orders cover all 108 selected integrations using
+the same 19 buffers. They select different buffers at 57 integrations.
+CASA's cold and warm residuals differ by 3.284e-3 NRMS and 16 mask
+pixels. With the same cache pixels, a temporary insertion-order
+selector matches all seven CASA cold products. The sorted selector
+matches all seven warm products, with exact masks in both comparisons.
+
+Native cache generation plans a centre at each uncovered selected feed
+angle and uses CASA's sorted replay order for both fresh and reused
+cells. Its cold and warm outputs agree with the CASA warm reference.
+
 ## AW aperture rotation can regrid an already rotated cell
 
 - Date noted: 2026-11-12
