@@ -454,23 +454,7 @@ pub(crate) fn run(
         || {
             let saved = saved_mosaic_beam
                 .as_ref()
-                .map(|input| {
-                    let (reading, resident) = input.mosaic_beam_bytes();
-                    let mut charge = admit(
-                        &runtime.host,
-                        &runtime.resource_policy,
-                        &Demand {
-                            phase: "saved mosaic primary beam",
-                            memory: reading,
-                        },
-                    )?;
-                    let beam = input.read_mosaic_beam().map_err(ImagingError::Existing)?;
-                    charge.retain(resident);
-                    Ok::<_, NativeError>(Admitted {
-                        value: beam,
-                        reservation: charge,
-                    })
-                })
+                .map(|input| read_saved_mosaic_beam(input, &runtime))
                 .transpose()?;
             publish_run_products(
                 RunProductInputs {
@@ -483,7 +467,7 @@ pub(crate) fn run(
                         saved_psf_beams,
                         vla_selection_hz,
                         primary_beam: saved.as_ref().map(|beam| {
-                            ProductPrimaryBeam::SavedMosaic(&beam.value.0, &beam.value.1)
+                            ProductPrimaryBeam::SavedMosaic(&beam.value.values, &beam.value.mask)
                         }),
                     },
                     taylor_view: mvc_taylor,
@@ -540,6 +524,29 @@ pub(crate) fn run(
         mvc_taylor_names: taylor_names,
         mvc_run,
         _retained: retained,
+    })
+}
+
+/// Load the saved mosaic PB and its mask under admission before product
+/// generation. The reservation stays with the pixels while it borrows them.
+fn read_saved_mosaic_beam(
+    input: &crate::restart::ExistingProducts,
+    runtime: &ApplicationRuntime,
+) -> Result<Admitted<crate::restart::SavedMosaicBeam>, NativeError> {
+    let (reading, resident) = input.mosaic_beam_bytes();
+    let mut charge = admit(
+        &runtime.host,
+        &runtime.resource_policy,
+        &Demand {
+            phase: "saved mosaic primary beam",
+            memory: reading,
+        },
+    )?;
+    let beam = input.read_mosaic_beam().map_err(ImagingError::Existing)?;
+    charge.retain(resident);
+    Ok(Admitted {
+        value: beam,
+        reservation: charge,
     })
 }
 

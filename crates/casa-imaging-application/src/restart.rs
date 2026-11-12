@@ -13,7 +13,7 @@
 //! earlier products are preserved.
 
 mod existing;
-pub(crate) use existing::ExistingProducts;
+pub(crate) use existing::{ExistingProducts, SavedMosaicBeam};
 mod grid;
 pub(crate) use grid::check_grid;
 mod mask;

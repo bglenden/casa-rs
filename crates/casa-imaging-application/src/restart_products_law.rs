@@ -98,7 +98,8 @@ impl Input {
     /// # Errors
     /// Pixel or mask I/O fails.
     pub fn read_mosaic_beam(&self) -> Result<(Vec<f32>, Vec<bool>), casa_images::ImageError> {
-        self.0.read_mosaic_beam()
+        let beam = self.0.read_mosaic_beam()?;
+        Ok((beam.values, beam.mask))
     }
 
     /// Bytes admitted for reading `channels` channels, besides the images.

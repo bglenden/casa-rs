@@ -15,9 +15,10 @@
 //! Normalizing them again gives back the images read, to the rounding of
 //! one `f32` product and quotient.
 //!
-//! Only direction-independent gridders (standard and W-projection, one
-//! facet) are read: their sensitivity is the sum of weights alone
-//! ([`super::check_inputs`] refuses the rest).
+//! Direction-independent gridders (standard and W-projection, one facet)
+//! use the sum of weights alone. A single-term MFS mosaic also reads its
+//! saved sensitivity and primary beam when it reuses the PSF and forms a
+//! new residual.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -31,6 +32,11 @@ use crate::PrepareError;
 
 /// The tile cache each image is read with.
 const CACHE_BYTES: usize = 64 * 1024;
+
+pub(crate) struct SavedMosaicBeam {
+    pub(crate) values: Vec<f32>,
+    pub(crate) mask: Vec<bool>,
+}
 
 /// What a run reads of an earlier run's products at its prefix.
 #[derive(Clone, Debug)]
@@ -260,7 +266,7 @@ impl ExistingProducts {
     /// The saved CASA PB and its default pixel mask, polarization-major
     /// with an x-major image for each polarization. They are independent
     /// of the cutoff the continuation uses to normalize its new residual.
-    pub(crate) fn read_mosaic_beam(&self) -> Result<(Vec<f32>, Vec<bool>), ImageError> {
+    pub(crate) fn read_mosaic_beam(&self) -> Result<SavedMosaicBeam, ImageError> {
         let path = product_path(&self.prefix, "pb");
         let image = PagedImage::<f32>::open_with_cache(&path, CACHE_BYTES)?;
         let pixels = image.get()?;
@@ -283,7 +289,10 @@ impl ExistingProducts {
                 }
             }
         }
-        Ok((values, valid))
+        Ok(SavedMosaicBeam {
+            values,
+            mask: valid,
+        })
     }
 
     /// The `(terms, moments)` of each channel: one of each, or a Taylor
