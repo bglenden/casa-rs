@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection and ordered DATA against independent CASA 6.7.6.14 (#1053).
 
+#[path = "selection/input.rs"]
+mod input;
 mod predict_support;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use casa_simulation::{PredictSpec, Simulator, SpectralWindowSpec};
+use casa_ms::MeasurementSet;
+use casa_simulation::{PredictSpec, Simulator, SimulatorOptions, SpectralWindowSpec};
+use casa_types::ArrayValue;
 use casa_types::Complex32;
 use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::{EpochRef, MEpoch};
 use flate2::read::GzDecoder;
 use predict_support::{
     CHANNEL_HZ, FREQUENCY_HZ, N, read_main, resources, scan, session, write_model, write_model_of,
@@ -75,11 +80,7 @@ fn ids(step: &Value, name: &str) -> Vec<i64> {
         .collect()
 }
 
-fn fresh_case(case: &Value, workers: usize) {
-    let directory = tempfile::tempdir().unwrap();
-    let images = models(directory.path());
-    let path = directory.path().join("selection.ms");
-    let mut sm = observed(&path, workers);
+fn apply_steps(sm: &mut Simulator, case: &Value, images: &[PathBuf; 2]) {
     for step in case["steps"].as_array().unwrap() {
         match step["op"].as_str().unwrap() {
             "setdata" => sm
@@ -106,15 +107,35 @@ fn fresh_case(case: &Value, workers: usize) {
                 spec.spectral_window = "band6b".to_string();
                 sm.observe(&spec).unwrap();
             }
-            operation => panic!("unexpected fresh-case operation {operation}"),
+            operation => panic!("unexpected selection operation {operation}"),
         }
     }
+}
+
+fn fresh_case(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
+    let directory = tempfile::tempdir().unwrap();
+    let images = models(directory.path());
+    let path = directory.path().join("selection.ms");
+    let mut sm = observed(&path, workers);
+    apply_steps(&mut sm, case, &images);
     sm.close().unwrap();
-    let actual = read_main(&path).0;
+    let (actual, correlations) = read_main(&path);
+    assert_eq!(correlations, 2);
     let expected = case["rows"].as_array().unwrap();
     assert_eq!(actual.len(), expected.len());
     let (mut error, mut power) = (0.0_f64, 0.0_f64);
     for (actual, expected) in actual.iter().zip(expected) {
+        assert_eq!(
+            actual.data.len(),
+            expected["data"].as_array().unwrap().len()
+        );
+        assert_eq!(
+            actual.antennas,
+            [
+                expected["antennas"][0].as_u64().unwrap() as u32,
+                expected["antennas"][1].as_u64().unwrap() as u32
+            ]
+        );
         assert_eq!(actual.field, expected["field"].as_u64().unwrap() as usize);
         assert_eq!(actual.flag_row, expected["flag_row"].as_bool().unwrap());
         for (&value, reference) in actual.data.iter().zip(expected["data"].as_array().unwrap()) {
@@ -134,6 +155,7 @@ fn fresh_case(case: &Value, workers: usize) {
     let nrms = (error / power).sqrt();
     println!("{} W{workers}: DATA NRMS {nrms:e}", case["name"]);
     assert!(nrms <= 1e-3);
+    actual.into_iter().map(|row| row.data).collect()
 }
 
 #[test]
@@ -144,8 +166,92 @@ fn fresh_selection_and_observe_reset_match_casa() {
         .iter()
         .filter(|case| case["fresh"] == true)
     {
-        for workers in [1, 3] {
-            fresh_case(case, workers);
+        assert_eq!(fresh_case(case, 1), fresh_case(case, 3), "CPU workers");
+    }
+}
+
+#[test]
+fn selected_existing_rows_preserve_data_and_scratch_columns() {
+    let fixture = fixture();
+    let case = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "field_replace")
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let images = models(directory.path());
+    let path = directory.path().join("existing.ms");
+    observed(&path, 1).close().unwrap();
+    input::prepare(&path);
+    let mut sm = Simulator::open_from_ms(
+        &path,
+        SimulatorOptions {
+            measures: casa_test_support::deterministic_measures_provider(),
+            resources: resources(1, 2 << 30),
+            now: MEpoch::from_mjd(predict_support::REFERENCE_MJD, EpochRef::UTC),
+        },
+    )
+    .unwrap();
+    apply_steps(&mut sm, case, &images);
+    sm.close().unwrap();
+    let (rows, correlations) = read_main(&path);
+    assert_eq!(correlations, 2);
+    assert_eq!(rows.len(), case["rows"].as_array().unwrap().len());
+    let ms = MeasurementSet::open(&path).unwrap();
+    let table = ms.main_table();
+    let (mut error, mut power) = (0.0_f64, 0.0_f64);
+    for (index, (actual, expected)) in rows
+        .iter()
+        .zip(case["rows"].as_array().unwrap())
+        .enumerate()
+    {
+        assert_eq!(
+            actual.data.len(),
+            expected["data"].as_array().unwrap().len()
+        );
+        for (column, key) in [
+            ("MODEL_DATA", "model_data"),
+            ("CORRECTED_DATA", "corrected_data"),
+        ] {
+            let ArrayValue::Complex32(values) =
+                table.cell_accessor(index, column).unwrap().array().unwrap()
+            else {
+                panic!("complex column")
+            };
+            for channel in 0..4 {
+                for correlation in 0..2 {
+                    let sample = channel * 2 + correlation;
+                    let reference = &expected[key][sample];
+                    let reference = Complex32::new(
+                        reference[0].as_f64().unwrap() as f32,
+                        reference[1].as_f64().unwrap() as f32,
+                    );
+                    if column == "MODEL_DATA" || reference == Complex32::new(-5.0, 6.0) {
+                        assert_eq!(
+                            values[[correlation, channel]],
+                            reference,
+                            "{column} row {index}"
+                        );
+                    } else {
+                        assert_eq!(values[[correlation, channel]], actual.data[sample]);
+                    }
+                }
+            }
+        }
+        for (&value, reference) in actual.data.iter().zip(expected["data"].as_array().unwrap()) {
+            assert!(value.re.is_finite() && value.im.is_finite());
+            let reference = Complex32::new(
+                reference[0].as_f64().unwrap() as f32,
+                reference[1].as_f64().unwrap() as f32,
+            );
+            if reference == Complex32::new(3.0, 4.0) {
+                assert_eq!(value, reference, "unselected DATA row {index}");
+            } else {
+                error += f64::from((value - reference).norm_sqr());
+                power += f64::from(reference.norm_sqr());
+            }
         }
     }
+    assert!(power > 0.0 && (error / power).sqrt() <= 1e-3);
 }

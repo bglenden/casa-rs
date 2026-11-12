@@ -123,7 +123,6 @@ pub(super) struct StageTimes {
 
 /// The rows of the batch in hand and what fills their cells and columns.
 struct Rows<'s> {
-    scans: &'s [Scan],
     /// The same scans with the rows `observe` planned for them.
     planned: &'s [PlannedScan<'s>],
     geometry: &'s ArrayGeometry<'s>,
@@ -161,7 +160,7 @@ impl<'s> Pipeline<'s> {
     /// of `(correlations, channels)` whose correlations have the receptors
     /// `receptors` (`[window]`).
     pub(super) fn new(
-        (scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
+        (_scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
         (prediction, _plan, noise, scales): (
@@ -174,7 +173,6 @@ impl<'s> Pipeline<'s> {
     ) -> Self {
         Self {
             rows: Rows {
-                scans,
                 planned,
                 geometry,
                 team,

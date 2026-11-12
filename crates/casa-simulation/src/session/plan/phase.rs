@@ -114,10 +114,6 @@ pub(crate) struct DataPhase {
     noise: Vec<NoiseApplication>,
     /// Every corruption's antenna-based terms, in the order they were taken.
     jones: Vec<Arc<HeldTerm>>,
-    /// Whether a replacing `predict` cleared the plan. Every step covers
-    /// every scan of a MeasurementSet `openfromms` opened, so its DATA
-    /// then starts from zero, else from the DATA on disk.
-    replaced: bool,
 }
 
 impl DataPhase {
@@ -187,11 +183,11 @@ impl DataPhase {
 
     /// Forget every step: a replacing `predict` overwrites what they did,
     /// and the DATA on disk.
+    #[cfg(test)]
     pub(crate) fn clear(&mut self) {
         self.steps.clear();
         self.noise.clear();
         self.jones.clear();
-        self.replaced = true;
     }
 
     /// Whether a step corrupts by an antenna-based term: a later
@@ -231,12 +227,6 @@ impl DataPhase {
                 | DataStep::PredictComponents { .. }
                 | DataStep::PredictSingleDish { .. } => None,
             })
-    }
-
-    /// Whether a replacing `predict` cleared the plan; see the `replaced`
-    /// field.
-    pub(crate) fn replaced(&self) -> bool {
-        self.replaced
     }
 
     /// Whether no step was taken (or every one was replaced by nothing).

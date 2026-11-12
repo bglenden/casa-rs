@@ -212,7 +212,6 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         data: Vec::new(),
         // As many runs as a batch can have, as admitted.
         runs: Vec::with_capacity(most_runs(shape.scans, batch_rows)),
-        receptors: super::window_receptors(session),
         cursor: 0,
         batches: 0,
     };
@@ -284,8 +283,6 @@ struct Patch<'s> {
     data: Vec<Complex32>,
     /// The batch's runs.
     runs: Vec<Run>,
-    /// `[window]`: each correlation's receptors.
-    receptors: Vec<Vec<[usize; 2]>>,
     /// The first scan the next batch can reach.
     cursor: usize,
     batches: usize,

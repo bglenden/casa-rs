@@ -244,8 +244,7 @@ impl<'s> DataStage<'s> {
                     &batch,
                     runs,
                     data,
-                    self.samples,
-                    host_noise,
+                    (self.samples, host_noise),
                 )?;
                 combine_stored(phase.phase, runs, data, batch.stored, self.samples);
             } else {
@@ -258,8 +257,7 @@ impl<'s> DataStage<'s> {
                     &batch,
                     runs,
                     &mut self.scratch,
-                    self.samples,
-                    host_noise,
+                    (self.samples, host_noise),
                 )?;
                 for &(_, start, count) in runs {
                     let range = start * self.samples..(start + count) * self.samples;
@@ -302,8 +300,7 @@ fn predict_phase(
     batch: &DataBatch<'_>,
     runs: &[Run],
     data: &mut [Complex32],
-    samples: usize,
-    host_noise: bool,
+    (samples, host_noise): (usize, bool),
 ) -> SimulatorResult<()> {
     let plan = phase.phase;
     let scans = session.scans();

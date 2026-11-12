@@ -116,10 +116,6 @@ impl DataPlan {
         self.phases.iter().any(DataPhase::predicts)
     }
 
-    pub(crate) fn predicts_components(&self) -> bool {
-        self.phases.iter().any(DataPhase::predicts_components)
-    }
-
     pub(crate) fn predicts_single_dish(&self) -> bool {
         self.phases.iter().any(DataPhase::predicts_single_dish)
     }
