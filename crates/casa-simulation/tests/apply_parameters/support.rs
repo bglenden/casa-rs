@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared independent G/D/T table input and complete MS comparisons.
 
+#[path = "frequency.rs"]
+mod frequency;
+
 use super::input;
 use super::predict_support::{ANTENNAS, REFERENCE_MJD, read_main, resources, scan, session};
 use casa_calibration::{
@@ -84,12 +87,18 @@ fn table(path: &Path, output: &Path, case: &Value) {
                 },
             })
     });
-    let writer_kind = if kind != "D" {
+    let writer_kind = if frequency::is_frequency(kind) {
+        SimulatedJones::Troposphere
+    } else if kind != "D" {
         SimulatedJones::Gain
     } else {
         SimulatedJones::Leakage
     };
     write_simulated_jones_table(&ms, output, writer_kind, rows).unwrap();
+    if frequency::is_frequency(kind) {
+        frequency::prepare(output, case);
+        return;
+    }
     if kind == "T" {
         use casa_tables::{Table, TableOptions};
         use casa_types::Value;
@@ -112,7 +121,9 @@ fn table(path: &Path, output: &Path, case: &Value) {
 }
 
 pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
-    let export = std::env::var_os(if case["kind"] == "T" {
+    let export = std::env::var_os(if frequency::is_frequency(case["kind"].as_str().unwrap()) {
+        "CASA_RS_APPLY_FREQUENCY_OUT"
+    } else if case["kind"] == "T" {
         "CASA_RS_APPLY_SCALAR_OUT"
     } else if case["probe"].is_string() {
         "CASA_RS_APPLY_FLAGS_OUT"
