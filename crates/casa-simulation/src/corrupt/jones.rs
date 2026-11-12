@@ -63,7 +63,7 @@
 
 mod frequency;
 use frequency::FrequencyValues;
-pub(crate) use frequency::applied_frequency;
+pub(crate) use frequency::{applied_frequency, applied_matrices};
 
 use std::ops::Deref;
 
@@ -101,6 +101,8 @@ pub(crate) const MAXIMUM_GAIN_SCALE: f64 = 0.9;
 pub(crate) enum JonesKind {
     /// `G Jones`: antenna gains.
     Gain,
+    /// A supplied full polarized Jones matrix, between G and D.
+    General,
     /// `D`: polarization leakage.
     Leakage,
     /// E/T supplied gains act on the sky side of instrumental leakage.
@@ -117,6 +119,8 @@ enum JonesValues {
     Receptors(Vec<[Complex32; 2]>),
     /// Frequency-dependent applied receptor values, by block and antenna.
     Frequency(FrequencyValues),
+    /// Full polarized matrices, with scalar or channel-dependent blocks.
+    Matrices(FrequencyValues<4>),
     /// Tf: each block's water-vapour excess per antenna, and each window's
     /// wet phase delay per channel.
     Troposphere(TroposphericPhase),
@@ -159,6 +163,7 @@ impl JonesTerm {
                 JonesValues::Receptors(values) => values.capacity() as u64 * VALUE_BYTES,
                 JonesValues::Troposphere(phase) => phase.bytes(),
                 JonesValues::Frequency(values) => values.bytes(),
+                JonesValues::Matrices(values) => values.bytes(),
             }
     }
 
@@ -170,6 +175,7 @@ impl JonesTerm {
             JonesValues::Receptors(values) => values,
             JonesValues::Frequency(values) => &values.values,
             JonesValues::Troposphere(_) => panic!("a tropospheric term has no receptors' values"),
+            JonesValues::Matrices(_) => panic!("a full matrix has four elements"),
         }
     }
 
@@ -194,6 +200,7 @@ impl JonesTerm {
         match &self.values {
             JonesValues::Receptors(_) => 2 * self.table_rows(),
             JonesValues::Frequency(values) => 2 * values.values.len() as u64,
+            JonesValues::Matrices(values) => 4 * values.values.len() as u64,
             JonesValues::Troposphere(phase) => self
                 .solutions
                 .iter()
@@ -231,7 +238,7 @@ impl JonesTerm {
             JonesValues::Receptors(values) => {
                 SolutionValues::Receptors(values[block * self.antennas + antenna])
             }
-            JonesValues::Frequency(_) => {
+            JonesValues::Frequency(_) | JonesValues::Matrices(_) => {
                 unreachable!("applied tables are not exported as simulated solutions")
             }
             JonesValues::Troposphere(phase) => {
@@ -270,7 +277,9 @@ impl JonesTerm {
     /// A tropospheric term's phases; `None` for gains and leakage.
     pub(crate) fn tropospheric_phase(&self) -> Option<&TroposphericPhase> {
         match &self.values {
-            JonesValues::Receptors(_) | JonesValues::Frequency(_) => None,
+            JonesValues::Receptors(_) | JonesValues::Frequency(_) | JonesValues::Matrices(_) => {
+                None
+            }
             JonesValues::Troposphere(phase) => Some(phase),
         }
     }
@@ -299,6 +308,10 @@ impl JonesTerm {
                     receptors,
                     cell,
                 );
+                return;
+            }
+            JonesValues::Matrices(values) => {
+                values.apply_matrix(self.antennas, block, (antenna1, antenna2), receptors, cell);
                 return;
             }
             JonesValues::Troposphere(_) => {
@@ -793,7 +806,7 @@ fn apply_receptors(
 ) {
     let correlations = receptors.len();
     match kind {
-        JonesKind::Troposphere => unreachable!("a tropospheric term has its own values"),
+        JonesKind::Troposphere | JonesKind::General => unreachable!("this term has its own values"),
         JonesKind::Gain | JonesKind::SkyGain => {
             // A cell has at most four correlations.
             let mut factors = [Complex32::new(1.0, 0.0); 4];

@@ -37,7 +37,11 @@ use num_complex::Complex32;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency};
+use crate::corrupt::jones::{
+    Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency, applied_matrices,
+};
+#[path = "apply_matrix.rs"]
+mod matrix;
 #[path = "apply_physical.rs"]
 mod physical;
 
@@ -103,6 +107,8 @@ enum AppliedKind {
     Opacity,
     GainCurve,
     SystemTemperature,
+    General,
+    FullLeakage,
 }
 
 impl AppliedKind {
@@ -114,7 +120,8 @@ impl AppliedKind {
             | Self::AntennaPosition
             | Self::Opacity
             | Self::SystemTemperature => JonesKind::Gain,
-            Self::Leakage => JonesKind::Leakage,
+            Self::Leakage | Self::FullLeakage => JonesKind::Leakage,
+            Self::General => JonesKind::General,
             Self::GainCurve => JonesKind::SkyGain,
         }
     }
@@ -124,8 +131,13 @@ impl AppliedKind {
             Self::Scalar | Self::Opacity => 1,
             Self::AntennaPosition => 3,
             Self::GainCurve => 8,
+            Self::General => 4,
             _ => 2,
         }
+    }
+
+    fn matrix(self) -> bool {
+        matches!(self, Self::General | Self::FullLeakage)
     }
 }
 
@@ -170,6 +182,7 @@ struct AppliedSolutions {
     chunks: Chunks,
     values: Vec<[Complex32; 2]>,
     offsets: Vec<usize>,
+    matrices: Vec<[Complex32; 4]>,
 }
 
 /// A loaded table with the memory admitted for what it keeps.
@@ -255,7 +268,7 @@ impl Simulator {
                 )));
             }
         };
-        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF" | "B TSYS")
+        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF" | "B TSYS" | "JF" | "DFGEN")
             .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
             "G" | "B" => AppliedKind::Gain,
@@ -266,6 +279,8 @@ impl Simulator {
             "TOPAC" => AppliedKind::Opacity,
             "EGAINCURVE" => AppliedKind::GainCurve,
             "B TSYS" => AppliedKind::SystemTemperature,
+            "J" | "JF" => AppliedKind::General,
+            "DGEN" | "DFGEN" => AppliedKind::FullLeakage,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
         let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;
@@ -389,10 +404,39 @@ impl Simulator {
                 if matches!(table.kind, AppliedKind::Opacity | AppliedKind::GainCurve) {
                     bytes.forming += (antennas * size_of::<f64>()) as u64;
                 }
+                if table.kind.matrix() {
+                    let count: usize = per_window
+                        .iter()
+                        .enumerate()
+                        .map(|(window, count)| {
+                            count
+                                * antennas
+                                * if table.channel_dependent() {
+                                    channels[window]
+                                } else {
+                                    1
+                                }
+                        })
+                        .sum();
+                    bytes.kept += (count * size_of::<[Complex32; 2]>()) as u64;
+                    if !table.channel_dependent() {
+                        bytes.kept +=
+                            ((per_window.iter().sum::<usize>() + 1) * size_of::<usize>()) as u64;
+                    }
+                    bytes.forming += (table.lookup.max_cell_values * 32) as u64;
+                }
                 let mut reservation = self.admit_term(bytes)?;
                 let evaluated = self.applied_solutions(table, &per_window)?;
                 reservation.retain(bytes.kept);
-                let term = if table.channel_dependent() {
+                let term = if table.kind.matrix() {
+                    applied_matrices(
+                        table.kind.operator(),
+                        antennas,
+                        evaluated.chunks,
+                        evaluated.matrices,
+                        evaluated.offsets,
+                    )
+                } else if table.channel_dependent() {
                     applied_frequency(
                         table.kind.operator(),
                         antennas,
@@ -448,8 +492,17 @@ impl Simulator {
                     }
             })
             .sum();
-        let mut values = Vec::with_capacity(value_count);
-        let mut offsets = if table.channel_dependent() {
+        let mut values = if kind.matrix() {
+            Vec::new()
+        } else {
+            Vec::with_capacity(value_count)
+        };
+        let mut matrices = if kind.matrix() {
+            Vec::with_capacity(value_count)
+        } else {
+            Vec::new()
+        };
+        let mut offsets = if table.channel_dependent() || kind.matrix() {
             Vec::with_capacity(per_window.iter().sum::<usize>() + 1)
         } else {
             Vec::new()
@@ -477,8 +530,12 @@ impl Simulator {
                     + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.
             });
             for time_s in self.integration_times_s(index) {
-                if table.channel_dependent() {
-                    offsets.push(values.len());
+                if table.channel_dependent() || kind.matrix() {
+                    offsets.push(if kind.matrix() {
+                        matrices.len()
+                    } else {
+                        values.len()
+                    });
                 }
                 chunks.push(scan.spectral_window_id, time_s, scan.field_id);
                 let geometry = physical::Geometry::new(self, kind, scan.field_id, time_s)?;
@@ -494,7 +551,11 @@ impl Simulator {
                         )
                         .map_err(raised)?
                     else {
-                        values.extend(std::iter::repeat_n([neutral; 2], channels));
+                        if kind.matrix() {
+                            matrices.extend(std::iter::repeat_n(matrix::IDENTITY, channels));
+                        } else {
+                            values.extend(std::iter::repeat_n([neutral; 2], channels));
+                        }
                         continue;
                     };
                     if solution.channels != 1 && table.frequency.is_none() {
@@ -532,6 +593,10 @@ impl Simulator {
                         .copied()
                         .unwrap_or(0.);
                     for channel in 0..channels {
+                        if kind.matrix() {
+                            matrices.push(matrix::parameters(kind, &solution, channel));
+                            continue;
+                        }
                         if let Some(pair) = geometry.values(
                             kind,
                             &solution,
@@ -561,13 +626,18 @@ impl Simulator {
                 }
             }
         }
-        if table.channel_dependent() {
-            offsets.push(values.len());
+        if table.channel_dependent() || kind.matrix() {
+            offsets.push(if kind.matrix() {
+                matrices.len()
+            } else {
+                values.len()
+            });
         }
         Ok(AppliedSolutions {
             chunks: chunks.sorted(),
             values,
             offsets,
+            matrices,
         })
     }
 }
