@@ -920,7 +920,7 @@ idiomatic Rust request.</p>
 <p>Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.</p>
 <p>The object surfaces are <code>casars.data.Image</code> and <code>casars.data.Table</code>, and the
-CASA tool classes of <code>casars.tools</code> (ADR-0019): <code>simulator</code> (CASA's <code>sm</code>),
+CASA tool classes of <code>casars.tools</code> (ADR-0017): <code>simulator</code> (CASA's <code>sm</code>),
 <code>measures</code> (<code>me</code>), <code>quanta</code> (<code>qa</code>), <code>componentlist</code> (<code>cl</code>), <code>image</code> (<code>ia</code>),
 <code>coordsys</code> (<code>cs</code>), <code>table</code> (<code>tb</code>), <code>msmetadata</code> (<code>msmd</code>) and <code>ms</code>.</p>
 <p>The <code>casars.data</code> classes are persistent data access APIs; the <code>casars.tools</code>
@@ -969,7 +969,7 @@ at least:</p>
 <li>parameter contract where the surface is parameterized</li>
 <li>shared <code>ParameterCatalog</code> concepts</li>
 <li>the task <code>SurfaceDefinition</code></li>
-<li>parameter bindings, defaults, roles, validation, migrations, and aliases</li>
+<li>parameter bindings, defaults, roles and validation</li>
 <li>shared component schemas</li>
 <li>reusable logical value definitions referenced across operations</li>
 <li>annotations</li>
@@ -1026,8 +1026,7 @@ through <code>cargo</code>, <code>PATH</code> is not searched, and the caller's 
 (<code>current_exe</code>) is not consulted. Python, packaging scripts, and the suite
 inventory all project from this catalog.</p>
 <h2 id="parameter-catalog-and-surface-definitions">Parameter Catalog and Surface Definitions<a class="headerlink" href="#parameter-catalog-and-surface-definitions" title="Permanent link">&para;</a></h2>
-<p>ADR-0006 defines the common parameter model, including the optional
-current-only profile contract used by simobserve and msconvert.</p>
+<p>ADR-0006 defines the common parameter model and current-only profiles.</p>
 <p><code>ParameterCatalog</code> entries describe reusable concepts:</p>
 <ul>
 <li>stable semantic ID and canonical CASA-facing name</li>
@@ -1043,11 +1042,9 @@ a catalog concept even when a legacy CLI happens to spell them alike.</p>
 <ul>
 <li>absent, literal, or pure conditional default</li>
 <li>required and activation predicates</li>
-<li>provably narrowing refinements, aliases, and projection metadata</li>
+<li>provably narrowing refinements and projection metadata</li>
 <li>an optional context role consistent with the concept's semantic role</li>
 </ul>
-<p>Aliases are unique within a surface and cannot shadow any canonical parameter
-name on that surface.</p>
 <p>Concept roles are part of the contract. A path that is safe as an input does not become
 an output merely because both serialize as strings. Runtime-only controls such
 as executable overrides, progress paths, telemetry, and Last controls are
@@ -1058,13 +1055,6 @@ one-shot provider invocation.</p>
 <p>Every optional parameter has an explicit default. Conditional defaults depend
 only on other parameters and form an acyclic graph. Dataset-derived context is
 an explicit suggestion or override, never an undeclared default.</p>
-<p>Semantic evolution is guarded by the append-only fingerprints in
-<code>resources/parameter-contract-history.json</code>. Changing a concept's type,
-normalization, constraints, units, role, or persistence requires a new semantic
-revision. Changing a surface's bindings, defaults, predicates, provider
-projections, or migrations requires a new surface contract version.
-Run <code>scripts/check-parameter-contract-history.py --update</code> only after making and
-reviewing those version bumps; the normal architecture gate is check-only.</p>
 <h2 id="sparse-parameter-documents">Sparse Parameter Documents<a class="headerlink" href="#sparse-parameter-documents" title="Permanent link">&para;</a></h2>
 <p>The human interchange format is versioned sparse TOML. The <code>[casars]</code> table
 identifies format version, surface ID, surface kind (always <code>task</code>), and
@@ -1075,16 +1065,10 @@ empty arrays, or zero-dimensional arrays are instead stored in an optional
 <code>[typed_parameters]</code> table, as JSON strings containing recursively tagged
 parameter values. This keeps complex values distinct from ordinary records
 and allows profiles to round-trip them without reserving any record key.</p>
-<p>This makes additive evolution cheap: a newly added optional parameter receives
-its current default without adding an override to a saved file. A surface may
-publish explicit ordered migrations for older contracts, including warnings for
-changed defaults. An empty migration set declares a current-only surface: only
-the exact current contract and canonical parameter names are accepted. The
-simobserve and msconvert surfaces are current-only. A chain may start after
-contract 1: <code>tclean</code>, the imager's surface since contract 29, migrates
-profiles from contract 28, the <code>imager</code> surface's last, and answers to that
-former id. Future, stale, and otherwise
-unmigratable contracts are errors.</p>
+<p>A saved profile must match the current task, format, and profile version.
+Recreate stale profiles using the current parameters. Adding an optional
+parameter can leave the version alone: a saved file uses its current default.
+Change the marker when a file can no longer be read with its intended meaning.</p>
 <p>Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the
 selected workspace or process current directory, not the profile file's parent.
@@ -1254,7 +1238,7 @@ provider protocol engine. For object surfaces, Python binds directly
 in-process.</p>
 <p><code>casars.parameters</code> exposes the common typed task profile, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep
-a second default or migration implementation.</p>
+a second implementation of defaults.</p>
 <h2 id="surface-inventory">Surface inventory<a class="headerlink" href="#surface-inventory" title="Permanent link">&para;</a></h2>
 <p>Every catalog surface is a task surface; the
 <a href="../reference/task-parameters/">generated parameter reference</a> lists them.

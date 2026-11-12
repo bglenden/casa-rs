@@ -9187,7 +9187,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">92</td>
 <td style="text-align: right;">92</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">4</td>
 <td style="text-align: right;">22</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -10146,7 +10146,6 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
 <li>Accepted only at CASA's default until #980: <code>vptable</code>, <code>interactive</code></li>
-<li>Accepted only at CASA's default until #1062: <code>psfphasecenter</code></li>
 <li>Accepted only at CASA's default until #1070: <code>computepastep</code>, <code>rotatepastep</code></li>
 <li>casa-rs parameters CASA lacks: <code>ddid</code>, <code>channel_start</code>, <code>channel_count</code>, <code>hogbom_iteration_mode</code>, <code>write_pb</code>, <code>fitspw</code>, <code>fitorder</code>, <code>save_continuum_residual</code>, <code>backend</code>, <code>gridprecision</code>, <code>aw_cf_source</code>, <code>cf_resident_mb</code>, <code>native_cf_cache</code>, <code>evla_surface</code>, <code>native_cf_policy</code>, <code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, <code>native_cf_maximum_cells</code>, <code>stage_timing</code>, <code>metal_stage_timing</code>, <code>science_trace</code></li>
 <li>Shared parameters: 92, in CASA's order: yes</li>
@@ -10154,7 +10153,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h4 id="tclean-parameter-implementation">tclean parameter implementation<a class="headerlink" href="#tclean-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 5, Implemented: 46, Not implemented: 0, Partial: 40, Unassessed: 1.</p>
+<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 4, Implemented: 46, Not implemented: 0, Partial: 41, Unassessed: 1.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -10412,8 +10411,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>psfphasecenter</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>psfphasecenter</code> → <code>psfphasecenter</code></td>
-<td>Default only</td>
-<td>Read and ignored; non-default catalog-refused for mosaic/mosaicft/ftmosaic (issue 980). <br>Catalog domain: <code>string</code>; Non-default refused when (gridder='mosaic' or gridder='mosaicft' or gridder='ftmosaic') (#1062)</td>
+<td>Partial</td>
+<td>A fixed J2000 direction for the PSF of a single-term MFS mosaic. The main residual, weights, PB and sumwt retain their own grid. A continuation with calcpsf=False reuses the saved PSF. With calcpsf=True and no new centre, CASA reforms the pixels in the existing PSF image and keeps its coordinates and beam. Other gridders ignore the option. Alternate cube, Taylor and moving-source PSFs remain in #1062. <br>Catalog domain: <code>string</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>

@@ -61,7 +61,7 @@
 <a href=#61 id=61 data-nosnippet>61</a><span class="doccomment">/// CASA's `simulator` tool.
 <a href=#62 id=62 data-nosnippet>62</a>///
 <a href=#63 id=63 data-nosnippet>63</a>/// `simulator(*, memory_budget=None, backend='auto', workers=None)` takes
-<a href=#64 id=64 data-nosnippet>64</a>/// only casa-rs's controls, keyword-only (ADR-0019 item 3):
+<a href=#64 id=64 data-nosnippet>64</a>/// only casa-rs's controls, keyword-only (ADR-0017):
 <a href=#65 id=65 data-nosnippet>65</a>/// - `memory_budget` caps, in bytes, what a session holds at once while
 <a href=#66 id=66 data-nosnippet>66</a>///   `close` writes: the MeasurementSet writer gets half of it and the
 <a href=#67 id=67 data-nosnippet>67</a>///   geometry and noise the rest. `None` takes three quarters of the
@@ -104,7 +104,7 @@
 <a href=#104 id=104 data-nosnippet>104</a>    /// The method has converted its Python arguments to Rust values (the
 <a href=#105 id=105 data-nosnippet>105</a>    /// signature's `Variant`s and lists) before it calls this; `work` turns
 <a href=#106 id=106 data-nosnippet>106</a>    /// them into the session's types, which can need the session's measures,
-<a href=#107 id=107 data-nosnippet>107</a>    /// and does the session's work, all without the GIL (ADR-0019 §4). An
+<a href=#107 id=107 data-nosnippet>107</a>    /// and does the session's work, all without the GIL (ADR-0017). An
 <a href=#108 id=108 data-nosnippet>108</a>    /// error it returns is created lazily and raised once the GIL is back.
 <a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">fn </span>on_session&lt;T: Send&gt;(
 <a href=#110 id=110 data-nosnippet>110</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,

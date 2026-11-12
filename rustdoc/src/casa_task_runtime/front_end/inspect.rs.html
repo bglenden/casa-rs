@@ -150,7 +150,7 @@
 <a href=#150 id=150 data-nosnippet>150</a>}
 <a href=#151 id=151 data-nosnippet>151</a>
 <a href=#152 id=152 data-nosnippet>152</a><span class="doccomment">/// Validate a profile's text, against `bundle` when given, else against the
-<a href=#153 id=153 data-nosnippet>153</a>/// surface the profile names; return the summary line and its warnings.
+<a href=#153 id=153 data-nosnippet>153</a>/// surface the profile names; return the summary line.
 <a href=#154 id=154 data-nosnippet>154</a></span><span class="kw">pub fn </span>validate_profile_text(
 <a href=#155 id=155 data-nosnippet>155</a>    source: <span class="kw-2">&amp;</span>str,
 <a href=#156 id=156 data-nosnippet>156</a>    bundle: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>SurfaceContractBundle&gt;,
@@ -158,7 +158,7 @@
 <a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">let </span>profile = parse_profile(source).map_err(format_profile_error)<span class="question-mark">?</span>;
 <a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">let </span>named;
 <a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">let </span>bundle = <span class="kw">match </span>bundle {
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="prelude-val">Some</span>(bundle) <span class="kw">if </span>bundle.surface.answers_to(<span class="kw-2">&amp;</span>profile.header.surface) =&gt; bundle,
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="prelude-val">Some</span>(bundle) <span class="kw">if </span>bundle.surface.id() == profile.header.surface =&gt; bundle,
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="prelude-val">Some</span>(bundle) =&gt; {
 <a href=#163 id=163 data-nosnippet>163</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
 <a href=#164 id=164 data-nosnippet>164</a>                <span class="string">"the profile is for {:?}, not {:?}"</span>,
@@ -173,72 +173,72 @@
 <a href=#173 id=173 data-nosnippet>173</a>    };
 <a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">let </span>resolved = resolve_profile(<span class="kw-2">&amp;</span>profile, bundle).map_err(format_profile_error)<span class="question-mark">?</span>;
 <a href=#175 id=175 data-nosnippet>175</a>    <span class="kw">let </span>count = resolved.explicit_overrides.len();
-<a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">let </span><span class="kw-2">mut </span>text = <span class="macro">format!</span>(
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">let </span>text = <span class="macro">format!</span>(
 <a href=#177 id=177 data-nosnippet>177</a>        <span class="string">"valid {} {} profile (contract {}, {count} explicit override{})\n"</span>,
 <a href=#178 id=178 data-nosnippet>178</a>        profile.header.kind,
 <a href=#179 id=179 data-nosnippet>179</a>        profile.header.surface,
 <a href=#180 id=180 data-nosnippet>180</a>        profile.header.contract,
 <a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">if </span>count == <span class="number">1 </span>{ <span class="string">"" </span>} <span class="kw">else </span>{ <span class="string">"s" </span>}
 <a href=#182 id=182 data-nosnippet>182</a>    );
-<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">for </span>diagnostic <span class="kw">in </span>resolved.diagnostics {
-<a href=#184 id=184 data-nosnippet>184</a>        text.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"warning: {}\n"</span>, diagnostic.message));
-<a href=#185 id=185 data-nosnippet>185</a>    }
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="prelude-val">Ok</span>(text)
-<a href=#187 id=187 data-nosnippet>187</a>}
-<a href=#188 id=188 data-nosnippet>188</a>
-<a href=#189 id=189 data-nosnippet>189</a><span class="doccomment">/// A profile error as its located, suggestion-bearing lines.
-<a href=#190 id=190 data-nosnippet>190</a></span><span class="kw">pub fn </span>format_profile_error(error: ProfileError) -&gt; String {
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">match </span>error {
-<a href=#192 id=192 data-nosnippet>192</a>        ProfileError::Diagnostics(diagnostics) =&gt; diagnostics
-<a href=#193 id=193 data-nosnippet>193</a>            .into_iter()
-<a href=#194 id=194 data-nosnippet>194</a>            .map(|diagnostic| {
-<a href=#195 id=195 data-nosnippet>195</a>                <span class="kw">let </span>location = diagnostic.location.map_or_else(String::new, |location| {
-<a href=#196 id=196 data-nosnippet>196</a>                    <span class="macro">format!</span>(<span class="string">"{}:{}: "</span>, location.line, location.column)
-<a href=#197 id=197 data-nosnippet>197</a>                });
-<a href=#198 id=198 data-nosnippet>198</a>                <span class="kw">let </span>suggestions = <span class="kw">if </span>diagnostic.suggestions.is_empty() {
-<a href=#199 id=199 data-nosnippet>199</a>                    String::new()
-<a href=#200 id=200 data-nosnippet>200</a>                } <span class="kw">else </span>{
-<a href=#201 id=201 data-nosnippet>201</a>                    <span class="macro">format!</span>(<span class="string">"; did you mean {}?"</span>, diagnostic.suggestions.join(<span class="string">" or "</span>))
-<a href=#202 id=202 data-nosnippet>202</a>                };
-<a href=#203 id=203 data-nosnippet>203</a>                <span class="macro">format!</span>(<span class="string">"{location}{}{suggestions}"</span>, diagnostic.message)
-<a href=#204 id=204 data-nosnippet>204</a>            })
-<a href=#205 id=205 data-nosnippet>205</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#206 id=206 data-nosnippet>206</a>            .join(<span class="string">"\n"</span>),
-<a href=#207 id=207 data-nosnippet>207</a>        other =&gt; other.to_string(),
-<a href=#208 id=208 data-nosnippet>208</a>    }
-<a href=#209 id=209 data-nosnippet>209</a>}
-<a href=#210 id=210 data-nosnippet>210</a>
-<a href=#211 id=211 data-nosnippet>211</a><span class="doccomment">/// A session error, with a profile error's located lines.
-<a href=#212 id=212 data-nosnippet>212</a></span><span class="kw">pub fn </span>format_session_error(error: ParameterSessionError) -&gt; String {
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">match </span>error {
-<a href=#214 id=214 data-nosnippet>214</a>        ParameterSessionError::Profile(error) =&gt; format_profile_error(error),
-<a href=#215 id=215 data-nosnippet>215</a>        other =&gt; other.to_string(),
-<a href=#216 id=216 data-nosnippet>216</a>    }
-<a href=#217 id=217 data-nosnippet>217</a>}
-<a href=#218 id=218 data-nosnippet>218</a>
-<a href=#219 id=219 data-nosnippet>219</a><span class="attr">#[cfg(test)]
-<a href=#220 id=220 data-nosnippet>220</a></span><span class="kw">mod </span>tests {
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">use </span>casa_provider_contracts::builtin_surface_bundle;
-<a href=#222 id=222 data-nosnippet>222</a>
-<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#224 id=224 data-nosnippet>224</a>
-<a href=#225 id=225 data-nosnippet>225</a>    <span class="attr">#[test]
-<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="kw">fn </span>describe_uses_the_shared_concept_catalog() {
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">let </span>text = describe(<span class="string">"width"</span>).unwrap();
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="macro">assert!</span>(text.contains(<span class="string">"ms.transform.width@r1"</span>));
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="macro">assert!</span>(text.contains(<span class="string">"mstransform"</span>));
-<a href=#230 id=230 data-nosnippet>230</a>        <span class="macro">assert!</span>(text.contains(<span class="string">"split"</span>));
-<a href=#231 id=231 data-nosnippet>231</a>        <span class="macro">assert!</span>(describe(<span class="string">"not-a-parameter"</span>).is_err());
-<a href=#232 id=232 data-nosnippet>232</a>    }
-<a href=#233 id=233 data-nosnippet>233</a>
-<a href=#234 id=234 data-nosnippet>234</a>    <span class="attr">#[test]
-<a href=#235 id=235 data-nosnippet>235</a>    </span><span class="kw">fn </span>a_profile_for_another_surface_is_refused() {
-<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>profile = <span class="string">"[casars]\nformat = 1\nsurface = \"imstat\"\nkind = \"task\"\ncontract = 3\n\n[parameters]\nimagename = [\"x.image\"]\n"</span>;
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>imstat = builtin_surface_bundle(<span class="string">"imstat"</span>).unwrap();
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>text = validate_profile_text(profile, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>imstat)).unwrap();
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="prelude-val">Ok</span>(text)
+<a href=#184 id=184 data-nosnippet>184</a>}
+<a href=#185 id=185 data-nosnippet>185</a>
+<a href=#186 id=186 data-nosnippet>186</a><span class="doccomment">/// A profile error as its located, suggestion-bearing lines.
+<a href=#187 id=187 data-nosnippet>187</a></span><span class="kw">pub fn </span>format_profile_error(error: ProfileError) -&gt; String {
+<a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">match </span>error {
+<a href=#189 id=189 data-nosnippet>189</a>        ProfileError::Diagnostics(diagnostics) =&gt; diagnostics
+<a href=#190 id=190 data-nosnippet>190</a>            .into_iter()
+<a href=#191 id=191 data-nosnippet>191</a>            .map(|diagnostic| {
+<a href=#192 id=192 data-nosnippet>192</a>                <span class="kw">let </span>location = diagnostic.location.map_or_else(String::new, |location| {
+<a href=#193 id=193 data-nosnippet>193</a>                    <span class="macro">format!</span>(<span class="string">"{}:{}: "</span>, location.line, location.column)
+<a href=#194 id=194 data-nosnippet>194</a>                });
+<a href=#195 id=195 data-nosnippet>195</a>                <span class="kw">let </span>suggestions = <span class="kw">if </span>diagnostic.suggestions.is_empty() {
+<a href=#196 id=196 data-nosnippet>196</a>                    String::new()
+<a href=#197 id=197 data-nosnippet>197</a>                } <span class="kw">else </span>{
+<a href=#198 id=198 data-nosnippet>198</a>                    <span class="macro">format!</span>(<span class="string">"; did you mean {}?"</span>, diagnostic.suggestions.join(<span class="string">" or "</span>))
+<a href=#199 id=199 data-nosnippet>199</a>                };
+<a href=#200 id=200 data-nosnippet>200</a>                <span class="macro">format!</span>(<span class="string">"{location}{}{suggestions}"</span>, diagnostic.message)
+<a href=#201 id=201 data-nosnippet>201</a>            })
+<a href=#202 id=202 data-nosnippet>202</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#203 id=203 data-nosnippet>203</a>            .join(<span class="string">"\n"</span>),
+<a href=#204 id=204 data-nosnippet>204</a>        other =&gt; other.to_string(),
+<a href=#205 id=205 data-nosnippet>205</a>    }
+<a href=#206 id=206 data-nosnippet>206</a>}
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a><span class="doccomment">/// A session error, with a profile error's located lines.
+<a href=#209 id=209 data-nosnippet>209</a></span><span class="kw">pub fn </span>format_session_error(error: ParameterSessionError) -&gt; String {
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">match </span>error {
+<a href=#211 id=211 data-nosnippet>211</a>        ParameterSessionError::Profile(error) =&gt; format_profile_error(error),
+<a href=#212 id=212 data-nosnippet>212</a>        other =&gt; other.to_string(),
+<a href=#213 id=213 data-nosnippet>213</a>    }
+<a href=#214 id=214 data-nosnippet>214</a>}
+<a href=#215 id=215 data-nosnippet>215</a>
+<a href=#216 id=216 data-nosnippet>216</a><span class="attr">#[cfg(test)]
+<a href=#217 id=217 data-nosnippet>217</a></span><span class="kw">mod </span>tests {
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">use </span>casa_provider_contracts::builtin_surface_bundle;
+<a href=#219 id=219 data-nosnippet>219</a>
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#221 id=221 data-nosnippet>221</a>
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="attr">#[test]
+<a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">fn </span>describe_uses_the_shared_concept_catalog() {
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span>text = describe(<span class="string">"width"</span>).unwrap();
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="macro">assert!</span>(text.contains(<span class="string">"ms.transform.width@r1"</span>));
+<a href=#226 id=226 data-nosnippet>226</a>        <span class="macro">assert!</span>(text.contains(<span class="string">"mstransform"</span>));
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="macro">assert!</span>(text.contains(<span class="string">"split"</span>));
+<a href=#228 id=228 data-nosnippet>228</a>        <span class="macro">assert!</span>(describe(<span class="string">"not-a-parameter"</span>).is_err());
+<a href=#229 id=229 data-nosnippet>229</a>    }
+<a href=#230 id=230 data-nosnippet>230</a>
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="attr">#[test]
+<a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">fn </span>a_profile_for_another_surface_is_refused() {
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>imstat = builtin_surface_bundle(<span class="string">"imstat"</span>).unwrap();
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>profile = <span class="macro">format!</span>(
+<a href=#235 id=235 data-nosnippet>235</a>            <span class="string">"[casars]\nformat = 1\nsurface = \"imstat\"\nkind = \"task\"\ncontract = {}\n\n[parameters]\nimagename = [\"x.image\"]\n"</span>,
+<a href=#236 id=236 data-nosnippet>236</a>            imstat.surface.contract_version()
+<a href=#237 id=237 data-nosnippet>237</a>        );
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>text = validate_profile_text(<span class="kw-2">&amp;</span>profile, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>imstat)).unwrap();
 <a href=#239 id=239 data-nosnippet>239</a>        <span class="macro">assert!</span>(text.starts_with(<span class="string">"valid task imstat profile"</span>), <span class="string">"{text}"</span>);
 <a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>imhead = builtin_surface_bundle(<span class="string">"imhead"</span>).unwrap();
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>error = validate_profile_text(profile, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>imhead)).unwrap_err();
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>error = validate_profile_text(<span class="kw-2">&amp;</span>profile, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>imhead)).unwrap_err();
 <a href=#242 id=242 data-nosnippet>242</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"not \"imhead\""</span>), <span class="string">"{error}"</span>);
 <a href=#243 id=243 data-nosnippet>243</a>    }
 <a href=#244 id=244 data-nosnippet>244</a>}

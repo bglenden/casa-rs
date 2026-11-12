@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a>//!
 <a href=#6 id=6 data-nosnippet>6</a>//! `simutil` is a Python class of CASA's tasks, not a CASA tool, so it is
 <a href=#7 id=7 data-nosnippet>7</a>//! not under `casars.tools`; `casars.simutil` is its public import (CASA's
-<a href=#8 id=8 data-nosnippet>8</a>//! is `casatasks.private.simutil`). ADR-0018 puts its computation in Rust,
+<a href=#8 id=8 data-nosnippet>8</a>//! is `casatasks.private.simutil`). ADR-0017 puts its computation in Rust,
 <a href=#9 id=9 data-nosnippet>9</a>//! so the class is declared here like the tools, with CASA's constructor
 <a href=#10 id=10 data-nosnippet>10</a>//! and method signatures, and its state: `direction`, `verbose`,
 <a href=#11 id=11 data-nosnippet>11</a>//! `centerfreq`, `bandwidth` and `totaltime` from the constructor, the

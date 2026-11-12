@@ -378,54 +378,52 @@
 <a href=#378 id=378 data-nosnippet>378</a>                .len(),
 <a href=#379 id=379 data-nosnippet>379</a>            <span class="number">2
 <a href=#380 id=380 data-nosnippet>380</a>        </span>);
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">let </span>form = casa_provider_contracts::project_ui_form(<span class="kw-2">&amp;</span>bundle.parameter_surfaces[<span class="number">0</span>]);
-<a href=#382 id=382 data-nosnippet>382</a>        <span class="macro">assert_eq!</span>(form[<span class="string">"command_id"</span>], <span class="string">"msexplore"</span>);
-<a href=#383 id=383 data-nosnippet>383</a>    }
-<a href=#384 id=384 data-nosnippet>384</a>
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="attr">#[test]
-<a href=#386 id=386 data-nosnippet>386</a>    </span><span class="kw">fn </span>protocol_info_matches_public_constants() {
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">let </span>info = msexplore_protocol_descriptor();
-<a href=#388 id=388 data-nosnippet>388</a>        <span class="macro">assert_eq!</span>(info.protocol_name, MSEXPLORE_TASK_PROTOCOL_NAME);
-<a href=#389 id=389 data-nosnippet>389</a>        <span class="macro">assert_eq!</span>(info.protocol_version, MSEXPLORE_TASK_PROTOCOL_VERSION);
-<a href=#390 id=390 data-nosnippet>390</a>        <span class="macro">assert_eq!</span>(MSEXPLORE_TASK_PROTOCOL_VERSION, <span class="number">2</span>);
-<a href=#391 id=391 data-nosnippet>391</a>        <span class="macro">assert_eq!</span>(info.surface_kind, ProviderSurfaceKind::Task);
-<a href=#392 id=392 data-nosnippet>392</a>    }
-<a href=#393 id=393 data-nosnippet>393</a>
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="attr">#[test]
-<a href=#395 id=395 data-nosnippet>395</a>    </span><span class="kw">fn </span>request_and_result_envelopes_round_trip_with_stable_kind_tags() {
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="kw">let </span>request = MsExploreTaskRequest::Run(MsExploreRunTaskRequest {
-<a href=#397 id=397 data-nosnippet>397</a>            spec: test_spec(<span class="string">"example.ms"</span>),
-<a href=#398 id=398 data-nosnippet>398</a>            summary_output_path: <span class="prelude-val">None</span>,
-<a href=#399 id=399 data-nosnippet>399</a>            overwrite_outputs: <span class="bool-val">true</span>,
-<a href=#400 id=400 data-nosnippet>400</a>            flag_edit: <span class="prelude-val">None</span>,
-<a href=#401 id=401 data-nosnippet>401</a>            plot_export: <span class="prelude-val">None</span>,
-<a href=#402 id=402 data-nosnippet>402</a>        });
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>request_json = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>request).expect(<span class="string">"serialize request"</span>);
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="macro">assert!</span>(request_json.contains(<span class="string">"\"kind\": \"run\""</span>));
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="macro">assert!</span>(request_json.contains(<span class="string">"\"ms_path\": \"example.ms\""</span>));
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="macro">assert_eq!</span>(
-<a href=#407 id=407 data-nosnippet>407</a>            serde_json::from_str::&lt;MsExploreTaskRequest&gt;(<span class="kw-2">&amp;</span>request_json).expect(<span class="string">"parse request"</span>),
-<a href=#408 id=408 data-nosnippet>408</a>            request
-<a href=#409 id=409 data-nosnippet>409</a>        );
-<a href=#410 id=410 data-nosnippet>410</a>    }
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a>    <span class="attr">#[test]
-<a href=#413 id=413 data-nosnippet>413</a>    </span><span class="kw">fn </span>write_output_refuses_existing_files_unless_overwrite_is_enabled() {
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>dir = tempdir().expect(<span class="string">"tempdir"</span>);
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>output = dir.path().join(<span class="string">"summary.txt"</span>);
-<a href=#416 id=416 data-nosnippet>416</a>        write_output(<span class="kw-2">&amp;</span>output, <span class="bool-val">false</span>, <span class="string">"first"</span>).expect(<span class="string">"first write"</span>);
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>error = write_output(<span class="kw-2">&amp;</span>output, <span class="bool-val">false</span>, <span class="string">"second"</span>).expect_err(<span class="string">"overwrite guard"</span>);
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"refusing to overwrite existing output"</span>));
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="macro">assert_eq!</span>(
-<a href=#420 id=420 data-nosnippet>420</a>            std::fs::read_to_string(<span class="kw-2">&amp;</span>output).expect(<span class="string">"read output"</span>),
-<a href=#421 id=421 data-nosnippet>421</a>            <span class="string">"first"
-<a href=#422 id=422 data-nosnippet>422</a>        </span>);
-<a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a>        write_output(<span class="kw-2">&amp;</span>output, <span class="bool-val">true</span>, <span class="string">"second"</span>).expect(<span class="string">"overwrite"</span>);
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="macro">assert_eq!</span>(
-<a href=#426 id=426 data-nosnippet>426</a>            std::fs::read_to_string(<span class="kw-2">&amp;</span>output).expect(<span class="string">"read output"</span>),
-<a href=#427 id=427 data-nosnippet>427</a>            <span class="string">"second"
-<a href=#428 id=428 data-nosnippet>428</a>        </span>);
-<a href=#429 id=429 data-nosnippet>429</a>    }
-<a href=#430 id=430 data-nosnippet>430</a>}
+<a href=#381 id=381 data-nosnippet>381</a>    }
+<a href=#382 id=382 data-nosnippet>382</a>
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="attr">#[test]
+<a href=#384 id=384 data-nosnippet>384</a>    </span><span class="kw">fn </span>protocol_info_matches_public_constants() {
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">let </span>info = msexplore_protocol_descriptor();
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="macro">assert_eq!</span>(info.protocol_name, MSEXPLORE_TASK_PROTOCOL_NAME);
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">assert_eq!</span>(info.protocol_version, MSEXPLORE_TASK_PROTOCOL_VERSION);
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="macro">assert_eq!</span>(MSEXPLORE_TASK_PROTOCOL_VERSION, <span class="number">2</span>);
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="macro">assert_eq!</span>(info.surface_kind, ProviderSurfaceKind::Task);
+<a href=#390 id=390 data-nosnippet>390</a>    }
+<a href=#391 id=391 data-nosnippet>391</a>
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="attr">#[test]
+<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">fn </span>request_and_result_envelopes_round_trip_with_stable_kind_tags() {
+<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">let </span>request = MsExploreTaskRequest::Run(MsExploreRunTaskRequest {
+<a href=#395 id=395 data-nosnippet>395</a>            spec: test_spec(<span class="string">"example.ms"</span>),
+<a href=#396 id=396 data-nosnippet>396</a>            summary_output_path: <span class="prelude-val">None</span>,
+<a href=#397 id=397 data-nosnippet>397</a>            overwrite_outputs: <span class="bool-val">true</span>,
+<a href=#398 id=398 data-nosnippet>398</a>            flag_edit: <span class="prelude-val">None</span>,
+<a href=#399 id=399 data-nosnippet>399</a>            plot_export: <span class="prelude-val">None</span>,
+<a href=#400 id=400 data-nosnippet>400</a>        });
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>request_json = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>request).expect(<span class="string">"serialize request"</span>);
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="macro">assert!</span>(request_json.contains(<span class="string">"\"kind\": \"run\""</span>));
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="macro">assert!</span>(request_json.contains(<span class="string">"\"ms_path\": \"example.ms\""</span>));
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="macro">assert_eq!</span>(
+<a href=#405 id=405 data-nosnippet>405</a>            serde_json::from_str::&lt;MsExploreTaskRequest&gt;(<span class="kw-2">&amp;</span>request_json).expect(<span class="string">"parse request"</span>),
+<a href=#406 id=406 data-nosnippet>406</a>            request
+<a href=#407 id=407 data-nosnippet>407</a>        );
+<a href=#408 id=408 data-nosnippet>408</a>    }
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="attr">#[test]
+<a href=#411 id=411 data-nosnippet>411</a>    </span><span class="kw">fn </span>write_output_refuses_existing_files_unless_overwrite_is_enabled() {
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span>dir = tempdir().expect(<span class="string">"tempdir"</span>);
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>output = dir.path().join(<span class="string">"summary.txt"</span>);
+<a href=#414 id=414 data-nosnippet>414</a>        write_output(<span class="kw-2">&amp;</span>output, <span class="bool-val">false</span>, <span class="string">"first"</span>).expect(<span class="string">"first write"</span>);
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>error = write_output(<span class="kw-2">&amp;</span>output, <span class="bool-val">false</span>, <span class="string">"second"</span>).expect_err(<span class="string">"overwrite guard"</span>);
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"refusing to overwrite existing output"</span>));
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="macro">assert_eq!</span>(
+<a href=#418 id=418 data-nosnippet>418</a>            std::fs::read_to_string(<span class="kw-2">&amp;</span>output).expect(<span class="string">"read output"</span>),
+<a href=#419 id=419 data-nosnippet>419</a>            <span class="string">"first"
+<a href=#420 id=420 data-nosnippet>420</a>        </span>);
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a>        write_output(<span class="kw-2">&amp;</span>output, <span class="bool-val">true</span>, <span class="string">"second"</span>).expect(<span class="string">"overwrite"</span>);
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="macro">assert_eq!</span>(
+<a href=#424 id=424 data-nosnippet>424</a>            std::fs::read_to_string(<span class="kw-2">&amp;</span>output).expect(<span class="string">"read output"</span>),
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="string">"second"
+<a href=#426 id=426 data-nosnippet>426</a>        </span>);
+<a href=#427 id=427 data-nosnippet>427</a>    }
+<a href=#428 id=428 data-nosnippet>428</a>}
 </code></pre></div></section></main></body></html>

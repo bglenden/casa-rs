@@ -21,7 +21,7 @@
     
     
       
-        <title>ADR-0006: Unified parameter catalog and sparse profiles - casa-rs</title>
+        <title>ADR-0006: One parameter model and current sparse profiles - casa-rs</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0006-unified-parameter-catalog-and-sparse-profiles" class="md-skip">
+        <a href="#adr-0006-one-parameter-model-and-current-sparse-profiles" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR-0006: Unified parameter catalog and sparse profiles
+              ADR-0006: One parameter model and current sparse profiles
             
           </span>
         </div>
@@ -649,130 +649,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#context" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Decision
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Decision">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#one-catalog-the-bundle-is-a-projection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        One catalog; the bundle is a projection
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sparse-toml-profiles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sparse TOML profiles
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#current-only-surfaces" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Current-only surfaces
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#managed-last-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Managed Last state
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#consequences" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Consequences
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternatives considered
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#enforcement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Enforcement
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drift-detection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Drift detection
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -788,191 +664,27 @@
 
 
 
-<h1 id="adr-0006-unified-parameter-catalog-and-sparse-profiles">ADR-0006: Unified parameter catalog and sparse profiles<a class="headerlink" href="#adr-0006-unified-parameter-catalog-and-sparse-profiles" title="Permanent link">&para;</a></h1>
+<h1 id="adr-0006-one-parameter-model-and-current-sparse-profiles">ADR-0006: One parameter model and current sparse profiles<a class="headerlink" href="#adr-0006-one-parameter-model-and-current-sparse-profiles" title="Permanent link">&para;</a></h1>
 <p>Status: accepted
-Date: 2026-07-09
-Truth class: normative
-Supersedes:
-Superseded by: ADR-0017, in part (session surfaces, session Last handling and
-the TUI and GUI consumers were removed on 2026-10-20; the parameter catalog
-and sparse task profiles stand)</p>
-<p>Amended: 2026-11-02, on owner approval. This record now also holds the
-current-only profile contracts (decided 2026-09-03, #551) and the surviving
-rule of the provider schema bundle decision (2026-04-19); their separate
-records were deleted and git history keeps them. Text that ADR-0017
-superseded is removed.</p>
-<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>Task defaults, aliases, validation, command-line parsers, Python signatures
-and saved requests drift apart when each consumer defines its own
-parameters. Users need parameter files that are readable in a Markdown code
-block, easy to edit and review, sparse enough to adopt newly added defaults,
-and usable from a task's command line and from Python without changing
-meaning.</p>
-<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<h3 id="one-catalog-the-bundle-is-a-projection">One catalog; the bundle is a projection<a class="headerlink" href="#one-catalog-the-bundle-is-a-projection" title="Permanent link">&para;</a></h3>
-<p>The repository maintains one checked aggregate catalog. Its authoritative
-concepts are:</p>
-<ul>
-<li><code>ParameterCatalog</code>: reusable parameter concepts with stable semantic IDs,
-  canonical CASA-facing names, value types, units or dimensions,
-  normalization, semantic roles, persistence classes, constraints, and
-  documentation.</li>
-<li><code>SurfaceParameterBinding</code>: a surface-specific use of a catalog concept,
-  including its default, requirement and activation rules, narrowing
-  constraints, aliases, presentation hints, and private provider projection.</li>
-<li><code>SurfaceDefinition</code>: a task definition containing the ordered bindings,
-  the migrations and the provider projection that surface needs.</li>
-</ul>
-<p>Each provider's versioned schema bundle is the machine boundary between the
-provider and its consumers. It embeds the catalog concepts and surface
-definitions it uses and is generated from them. The bundle must not become a
-second source of truth: CLI parsers, JSON Schema and Python signatures are
-views derived from it, and no consumer hand-defines a default, alias, shape
-or behaviour that the catalog does not carry.</p>
-<p>A canonical name has one meaning. <code>imsize</code> keeps the same value semantics
-wherever it is bound. Parameters that share a spelling but differ in meaning
-use different semantic IDs and are never silently unified; such a binding
-carries a <code>reviewed_homonym</code> record citing this ADR. Roles such as input,
-output, selection, science control and presentation stay explicit, so a path
-or scalar cannot be reused in an unsafe role because its storage type
-matches.</p>
-<p>Task definitions resolve parameters into one-shot invocation requests. Tool
-objects (ADR-0019), runtime controls and transient state are not
-parameterized surfaces.</p>
-<h3 id="sparse-toml-profiles">Sparse TOML profiles<a class="headerlink" href="#sparse-toml-profiles" title="Permanent link">&para;</a></h3>
-<p>Human parameter documents use sparse TOML. The metadata table identifies the
-document format, logical surface, surface kind and contract version; the
-<code>parameters</code> table holds required values and semantic differences from the
-current defaults. Optional values equal to their defaults are omitted.</p>
-<div class="codehilite"><pre><span></span><code><span class="k">[casars]</span>
-<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
-<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tclean"</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">29</span>
-
-<span class="k">[parameters]</span>
-<span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
-<span class="n">imagename</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"products/target"</span>
-<span class="n">imsize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
-<span class="n">cell</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0.2arcsec"</span>
-<span class="n">niter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span>
-<span class="n">threshold</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2mJy"</span>
-</code></pre></div>
-
-<p>Evolution rules:</p>
-<ul>
-<li>Adding an optional defaulted parameter does not require existing files to
-  change.</li>
-<li>An omitted parameter adopts the current default. Loading warns when a
-  migration lists that default as changed since the document's contract.</li>
-<li>Renames and type or value changes use explicit ordered migrations of the
-  sparse overrides, each advancing one contract version. A chain may start
-  after contract 1; a profile older than its first migration is refused
-  (<code>tclean</code> migrates contract 28 to 29 and refuses older profiles). A
-  renamed surface keeps its former ids, which a saved profile may still
-  name (<code>imager</code>, now <code>tclean</code>).</li>
-<li>A newly required parameter needs a migration or causes a load error.</li>
-<li>Future document or contract versions are rejected.</li>
-<li>Saving rewrites a document at the current contract version against the
-  current defaults.</li>
-</ul>
-<h3 id="current-only-surfaces">Current-only surfaces<a class="headerlink" href="#current-only-surfaces" title="Permanent link">&para;</a></h3>
-<p>A surface declares a <strong>current-only</strong> profile contract by publishing an
-empty migration set. Such a surface accepts exactly its current contract
-version, exposes and accepts only canonical names with no compatibility
-aliases, rejects stale and future contract versions instead of interpreting
-or rewriting them, and serializes only required values and non-default
-overrides whose persistence class is <code>profile</code>. Omitted optional values adopt
-the current defaults; they are not materialized to preserve an older
-contract's behaviour. Shipped profiles, tutorials and examples advance with
-the contract. <code>simobserve</code> and <code>msconvert</code> are current-only; the other
-surfaces keep ordered migration chains.</p>
-<h3 id="managed-last-state">Managed Last state<a class="headerlink" href="#managed-last-state" title="Permanent link">&para;</a></h3>
-<p>The managed workspace store is:</p>
-<div class="codehilite"><pre><span></span><code>&lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/
-  last.toml
-  last-successful.toml
-</code></pre></div>
-
-<p><code>CASA_RS_STATE_DIR</code> may redirect the managed state root for automation
-without changing how relative task paths resolve. Managed writes use a
-per-surface lock, a same-directory temporary file and atomic replacement.</p>
-<p><code>last.toml</code> records the validated resolved intent of a command-line run
-immediately before execution; <code>last-successful.toml</code> updates only after
-successful completion. Failure or cancellation does not replace the
-successful state. <code>--json-run</code>, which Python's task calls use, reads and
-writes no Last (ADR-0017 item 4).</p>
-<p><code>casa-task-runtime</code> is the sole owner of these rules: source parsing,
-resolution, attempted-state capture, managed persistence and completion.
-Task executables and the Python package delegate to it and keep no alternate
-lifecycle maps, Last writers or test-only persistence paths.</p>
-<p>Opening an explicit profile never grants permission to overwrite that file.
-Automatic persistence always targets the managed store; changing an explicit
-file needs an explicit save.</p>
-<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
-<p>Positive:
-- defaults, validation, docs, projections and persistence share one source
-  of truth
-- sparse files stay readable and naturally adopt additive parameters
-- a profile has the same meaning on a task's command line and in Python
-- task aliases keep distinct logical identities and Last files even when
-  they share a provider binary
-- a current-only surface's meaning is its one canonical request vocabulary</p>
-<p>Negative:
-- every parameterized surface defines complete typed bindings, and migrations
-  unless it is current-only
-- default changes need deliberate compatibility diagnostics
-- a contract bump of a current-only surface deliberately invalidates
-  profiles that were not updated</p>
-<p>Neutral / tradeoffs:
-- sparse profiles reproduce user intent under current defaults; they are
-  not exact historical run-replay records
-- provider bundles may use JSON as a machine transport, but JSON Schema and
-  CLI flags are projections rather than the semantic model</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Persist complete JSON request envelopes, freezing old defaults into every
-   file.</li>
-<li>Keep independent command-line and Python parameter definitions, or let
-   each consumer define its own bundle shape.</li>
-<li>Use unversioned TOML maps without catalog identities or explicit
-   migrations.</li>
-<li>Keep every historical migration and alias on every surface, including
-   those that declare themselves current-only.</li>
-<li>Load stale profiles silently against current defaults, which changes
-   meaning while looking valid.</li>
-</ol>
-<h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
-<p>This decision is enforced by:
-- tests: catalog completeness, contract invariants (including the homonym
-  review and the refusal of aliases on a surface with no migrations), sparse
-  TOML round trips, migrations, managed-store lifecycle and cross-surface
-  resolution parity in <code>casa-provider-contracts</code> and <code>casa-task-runtime</code>;
-  the Python package's parameter and binding tests
-- lint/import/dependency rules: <code>scripts/check-parameter-surface-catalog.py</code>;
-  consumers may project provider definitions but add no authoritative
-  default or alias
-- CI checks: <code>just arch-check</code>, whose <code>scripts/check-parameter-contract-history.py</code>
-  keeps semantic fingerprints append-only (a changed concept revision or
-  surface contract cannot replace an existing <code>(id, version)</code> entry), and
-  <code>just docs-check</code>, which checks the generated parameter reference
-- review trigger: changes to catalog concepts, public bindings, defaults,
-  migrations, persistence behaviour or the parameter document format
-- none / guidance only:</p>
-<h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
-<p>Suspect drift if:
-- the same canonical parameter name acquires different value semantics on
-  two surfaces
-- a command-line parser or Python wrapper supplies a default not present in
-  the provider definition, or hand-defines schema that does not round-trip
-  through the bundle
-- a parameter file contains current default values after canonical save
-- task aliases share Last state only because they use the same executable
-- a current-only surface publishes an alias or migration, or accepts a stale
-  contract
-- a shipped profile does not name its surface's current contract
-- run state, plans, caches or resource inventory enter a human profile
-- an explicit source profile changes without an explicit save action</p>
+Date: 2026-11-12
+Truth class: normative</p>
+<p>The CLI, Python, and task providers share Rust definitions for parameter
+names, types, defaults, normalization, and validation. Share concepts by
+meaning; each task supplies its own bindings and defaults. Runtime controls
+such as executable selection and telemetry stay out of saved parameters.</p>
+<p>Profiles are sparse TOML. They store required values and explicit differences
+from defaults. Provider JSON is a machine transport. The common task runtime
+owns resolution and any managed Last state; ordinary Python task calls leave
+Last alone.</p>
+<p>A profile must name the current task and use the current file format and task
+profile version. Refuse stale files and tell the user to recreate them. Bump
+the marker only when an existing profile can no longer be interpreted as
+intended. An added optional parameter can use its default. The former
+migration and history policy is superseded by
+<a href="../0020-single-investigator-development/">ADR-0020</a>.</p>
+<p>See <a href="../../task-parameters/">Task Parameter Profiles</a> for the format and
+<a href="../../provider-contracts/#parameter-catalog-and-surface-definitions">Provider Contracts</a>
+for the current implementation.</p>
 
 
 

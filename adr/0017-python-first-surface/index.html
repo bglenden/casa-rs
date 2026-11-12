@@ -21,7 +21,7 @@
     
     
       
-        <title>ADR-0017: Python and headless task providers are the product surface - casa-rs</title>
+        <title>ADR-0017: Rust computation and CASA-shaped Python interfaces - casa-rs</title>
       
     
     
@@ -64,7 +64,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0017-python-and-headless-task-providers-are-the-product-surface" class="md-skip">
+        <a href="#adr-0017-rust-computation-and-casa-shaped-python-interfaces" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR-0017: Python and headless task providers are the product surface
+              ADR-0017: Rust computation and CASA-shaped Python interfaces
             
           </span>
         </div>
@@ -649,80 +649,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#context" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Decision
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#consequences" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Consequences
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternatives considered
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#enforcement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Enforcement
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drift-detection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Drift detection
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -738,121 +664,36 @@
 
 
 
-<h1 id="adr-0017-python-and-headless-task-providers-are-the-product-surface">ADR-0017: Python and headless task providers are the product surface<a class="headerlink" href="#adr-0017-python-and-headless-task-providers-are-the-product-surface" title="Permanent link">&para;</a></h1>
+<h1 id="adr-0017-rust-computation-and-casa-shaped-python-interfaces">ADR-0017: Rust computation and CASA-shaped Python interfaces<a class="headerlink" href="#adr-0017-rust-computation-and-casa-shaped-python-interfaces" title="Permanent link">&para;</a></h1>
 <p>Status: accepted
-Date: 2026-10-20
+Date: 2026-11-12
 Truth class: normative
-Supersedes: the native macOS GUI prototype and the scientific notebooks and
-assistant ADRs (both deleted 2026-11-02; git history keeps them); the
-stateful-session provider and session-surface parts of ADR-0006 and of the
-provider schema bundle ADR, whose surviving rule ADR-0006 now holds
-Superseded by:</p>
-<p>Amended: 2026-10-27, on owner direction (#931): Python binds Rust through
-PyO3 only (item 4, Enforcement and Drift detection). This was the first stage
-of #931.
-Amended: 2026-10-28, on owner direction (#931 PR 3): the <code>casars</code> launcher
-is retired and Python starts each task's executable directly (items 1 and 4,
-Enforcement and Drift detection, in their final wording).</p>
-<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>From May to October 2026 casa-rs carried several interactive surfaces beside
-its Python package and command-line tasks: a ratatui terminal launcher with
-image and table browsers (<code>casars</code>), a native macOS SwiftUI workbench
-(<code>apps/casars-mac</code>), a scientific-notebook and AI-assistant program
-(<code>casa-notebook</code>), JSONL browser-session providers (<code>imexplore
---session</code>, <code>tablebrowser</code>) with their own parameter surfaces, and Rust-side
-plot rasterisation (PNG/PDF through <code>plotters</code>, <code>image</code> and <code>printpdf</code>). The
-experiments showed that one computational codebase and one task/parameter
-contract can serve several frontends, but each frontend added code, tests,
-CI time (a macOS GUI gate on every pull request) and support crates that
-competed with the scientific work.</p>
-<p>The project's direction is a Python package that mirrors CASA's Python
-interfaces (casatasks-style task calls and <code>ia</code>/<code>tb</code>-style tools) so casa-rs
-can replace CASA in existing scripts. Interactive inspection and plotting are
-better served by Python tools (NumPy, Matplotlib, Jupyter) than by
-project-owned GUIs.</p>
-<p>The last state of the interactive surfaces is preserved at the tag
-<code>ui-experiments-2026-10-20</code> (commit <code>42ba2012</code>); the GUI and the notebook
-program each had an ADR, which git history keeps.</p>
-<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<ol>
-<li>The product surfaces are the Python package (<code>casars</code>) and the task
-   executables listed in the application catalog.</li>
-<li>casa-rs has no terminal UI, native GUI, notebook or assistant program,
-   interactive browser sessions, or Rust-side plot rasterisation. Every
-   parameter surface is a one-shot task; <code>SurfaceKind</code> and <code>SurfaceDefinition</code>
-   keep a single task variant so the serialized contracts keep their shape.</li>
-<li>Plots are typed data. Rust builds plot documents and text point manifests
-   (<code>msexplore</code>/<code>plotms --plot-format txt</code>); Python renders them with
-   Matplotlib (<code>casars.data.plot_matplotlib</code>, <code>casars.imexplore</code>).</li>
-<li>The Python package binds in-process Rust functionality through PyO3 in
-   <code>casars._core</code>. Task calls start the catalog-selected task-provider
-   executable directly as a child process; a provider may host a task
-   family. Python and the executable use the shared task front end in
-   <code>casa-task-runtime</code>. Ordinary Python task calls neither load nor save
-   managed Last state; command-line lifecycle policy is explicit. There is
-   no separate <code>casars</code> launcher or UniFFI layer.</li>
-<li>New interactive surfaces, if ever wanted again, start from a new ADR
-   rather than from the retired code.</li>
-</ol>
-<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
-<p>Positive:
-- The workspace loses the terminal, GUI, notebook, browser-protocol and
-  rasterisation crates and dependencies (<code>ratatui*</code>, <code>crossterm</code>, <code>plotters</code>,
-  <code>image</code>, <code>printpdf</code>, <code>rusqlite</code>, UniFFI Swift bindings and others).
-- CI no longer needs a macOS GUI job; the required checks are <code>lint_test</code>,
-  <code>python_package</code> and <code>docs</code>.
-- Contract and runtime code no longer carries session-only branches.</p>
-<p>Negative:
-- There is no point-and-click inspection; users inspect data from Python.
-- <code>msexplore</code>/<code>plotms</code> no longer write PNG or PDF files.</p>
-<p>Neutral / tradeoffs:
-- Catalog presentation fields (<code>show_in_tui</code>, <code>show_in_swift</code>, <code>shell_kind</code>,
-  <code>interaction</code>) and the provider CLI parser schema
-  (<code>casa_ms::presentation::UiCommandSchema</code>) remain until the CASA-shaped
-  Python work reshapes them.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Keep the Swift GUI as the primary surface: rejected; Python reaches the
-   intended users and existing CASA scripts directly.</li>
-<li>Keep the TUI as a lightweight viewer: rejected; it duplicated the GUI's
-   browsing model and carried terminal-graphics dependencies for little gain.</li>
-<li>Keep the code dormant behind feature flags: rejected; dormant code still
-   costs build time, review and maintenance, and the tag preserves it.</li>
-</ol>
-<h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
-<p>This decision is enforced by:
-- tests:
-  - the Python package tests: <code>test_task_runner.py</code> (a task call starts the
-    executable its catalog override names with <code>--json-run -</code>, streams its
-    log, and leaves Last untouched on success, failure and interruption) and
-    <code>test_task_end_to_end.py</code> (a real executable, found in a development
-    checkout's build);
-  - <code>scripts/test-task-cli-hosts.py</code> (every catalog executable is on the
-    shared task front end and answers its machine actions);
-  - the command line's Last lifecycle and its equivalence with <code>--json-run</code>:
-    the front end's tests in <code>casa-task-runtime</code>,
-    <code>crates/casars-imexplore/tests/imexplore_cli.rs</code> and the imager's
-    <code>t1::routes</code>;
-  - the provider-contract and catalog tests (26 task surfaces, every
-    application a task, no launcher, no session kinds), and the resolver's
-    tests in <code>casa-provider-contracts</code>;
-- lint/import/dependency rules: none beyond the workspace manifests;
-- CI checks: <code>just quick</code>, <code>scripts/test-python-package.sh</code> in the
-  <code>python_package</code> job (its binding snapshots pin what the binding returns to
-  Python, and it tests the built wheel and sdist), the <code>suite_install</code> job
-  (<code>scripts/test-install-suite.sh --hide-checkout</code>: the installed suite's
-  commands and Python, with the checkout moved aside), <code>just docs-check</code>;
-- review trigger: any pull request that adds a UI, rendering or session
-  dependency or crate.</p>
-<h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
-<p>Suspect drift if:
-- <code>Cargo.lock</code> gains <code>ratatui</code>, <code>crossterm</code>, <code>plotters</code>, <code>image</code>, <code>printpdf</code>
-  or <code>uniffi</code>;
-- a parameter surface or provider declares a non-task kind;
-- a second native module appears beside <code>casars._core</code>;
-- a crate spawns catalog executables on Python's behalf.</p>
-<p>These pair with the direct-launch, no-Last and command-line-equivalence
-tests above.</p>
+Supersedes: ADR-0018 and ADR-0019; their original text is in Git history.</p>
+<p>The product is the <code>casars</code> Python package and the cataloged headless task
+executables. Use existing Python tools for notebooks, interactive inspection,
+and plot rendering. Rust produces typed plot data. casa-rs ships no separate
+GUI, terminal UI, session provider, or launcher.</p>
+<ul>
+<li>Rust owns computation, persistence, and parallelism, including the
+  orchestration CASA implements in Python. Keep Rust APIs idiomatic.</li>
+<li><code>casars.tasks</code> presents CASA's names, signatures, and return shapes.
+  Python converts arguments and results, maps errors, and starts each
+  task's executable directly. The shared task runtime owns defaults,
+  normalization, and validation (ADR-0006). Ordinary Python task calls do
+  not load or write managed Last state.</li>
+<li><code>casars.tools</code> exposes CASA-named PyO3 classes through <code>casars._core</code>,
+  the sole native extension. Declare signatures and effective defaults in
+  Rust and compare with the installed CASA binding. Share conversions.
+  CASA-independent resource controls are keyword-only constructor
+  arguments, with no environment lookup. Tool state is <code>Send</code>; release the
+  GIL during disk access, array copies, and long calls. Legacy
+  <code>casars.data.Image</code> and <code>Table</code> are tracked separately in #839.</li>
+<li>Do not ship <code>casatasks</code> or <code>casatools</code> alias packages; they would shadow
+  CASA. CASA itself is used only for tests and evidence.</li>
+</ul>
+<p>The Python package and task CLI tests cover the boundary and compare the
+observable behavior with CASA. See <a href="../../provider-contracts/">Provider Contracts</a>
+for invocation and discovery details.</p>
 
 
 

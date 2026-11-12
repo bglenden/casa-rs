@@ -2,7 +2,7 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! The tool surfaces: each CASA tool's methods with their parameters, value
 <a href=#3 id=3 data-nosnippet>3</a>//! kinds and the installed CASA binding's effective defaults, and the
 <a href=#4 id=4 data-nosnippet>4</a>//! object-surface contract, Python projection and annotations built from
-<a href=#5 id=5 data-nosnippet>5</a>//! them (ADR-0019).
+<a href=#5 id=5 data-nosnippet>5</a>//! them (ADR-0017).
 <a href=#6 id=6 data-nosnippet>6</a>//!
 <a href=#7 id=7 data-nosnippet>7</a>//! Each tool keeps one [`ToolSurface`] table. The pyo3 declarations carry the
 <a href=#8 id=8 data-nosnippet>8</a>//! same names and defaults (`signature` and `text_signature` must be
@@ -213,7 +213,7 @@
 <a href=#213 id=213 data-nosnippet>213</a>    <span class="doccomment">/// The Python module that exposes the class.
 <a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) module: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
 <a href=#215 id=215 data-nosnippet>215</a>    <span class="doccomment">/// The constructor's parameters: keyword-only casa-rs controls
-<a href=#216 id=216 data-nosnippet>216</a>    /// (ADR-0019 item 3); CASA's tool constructors take none.
+<a href=#216 id=216 data-nosnippet>216</a>    /// (ADR-0017); CASA's tool constructors take none.
 <a href=#217 id=217 data-nosnippet>217</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) constructor: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[Parameter],
 <a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// Every public method of CASA's class.
 <a href=#219 id=219 data-nosnippet>219</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) methods: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[Method],
