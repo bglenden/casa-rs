@@ -246,6 +246,17 @@ impl DataPhase {
         })
     }
 
+    pub(crate) fn predicts_scan(&self, scan: usize) -> bool {
+        self.steps_for_scan(scan).iter().any(|step| {
+            matches!(
+                step,
+                DataStep::Predict { .. }
+                    | DataStep::PredictComponents { .. }
+                    | DataStep::PredictSingleDish { .. }
+            )
+        })
+    }
+
     /// The steps covering scan `scan`, in the order they were taken: the
     /// last ones.
     pub(crate) fn steps_for_scan(&self, scan: usize) -> &[DataStep] {

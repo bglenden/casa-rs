@@ -87,6 +87,8 @@ struct PatchShape {
     reads_data: bool,
     /// Whether image or total-power predictions need sample flags.
     reads_flags: bool,
+    /// Preserve MODEL_DATA and CORRECTED_DATA outside selected operations.
+    reads_scratch: [bool; 2],
     /// Columns written: DATA and the scratch columns kept in step.
     columns: usize,
     /// Antennas of the MeasurementSet.
@@ -164,6 +166,10 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         channels,
         reads_data: !plan.replaced(),
         reads_flags: plan.predicts_images() || plan.predicts_single_dish(),
+        reads_scratch: [
+            plan.has_selection() && !plan.replaced() && opened.model_data && plan.predicts(),
+            plan.has_selection() && !plan.replaced() && opened.corrected_data,
+        ],
         columns: columns.len(),
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
@@ -384,8 +390,9 @@ impl Patch<'_> {
             .map(|&name| MeasurementSetMutationColumnBatch {
                 name: name.to_string(),
                 values: MeasurementSetMutationColumnValues::Arrays(match name {
-                    "MODEL_DATA" => vec![one.clone(); rows.len()],
-                    _ => data.clone(),
+                    "MODEL_DATA" if !self.shape.reads_scratch[0] => vec![one.clone(); rows.len()],
+                    "CORRECTED_DATA" if !self.shape.reads_scratch[1] => data.clone(),
+                    _ => self.scratch_values(name, &data, &one),
                 }),
             })
             .collect();
@@ -400,6 +407,51 @@ impl Patch<'_> {
             row_indices: rows,
             columns,
         }
+    }
+
+    fn scratch_values(
+        &self,
+        column: &str,
+        data: &[ArrayValue],
+        one: &ArrayValue,
+    ) -> Vec<ArrayValue> {
+        let model = column == "MODEL_DATA";
+        let stored = if model {
+            &self.reader.model_data
+        } else {
+            &self.reader.corrected_data
+        };
+        let samples = self.shape.samples();
+        let mut values = Vec::with_capacity(data.len());
+        for &(scan, start, count) in &self.runs {
+            let changed = if model {
+                self.session
+                    .data_plan()
+                    .predicts_scan(scan, &self.session.scans()[scan])
+            } else {
+                self.session
+                    .data_plan()
+                    .touches_scan(scan, &self.session.scans()[scan])
+            };
+            for row in start..start + count {
+                values.push(if changed {
+                    if model {
+                        one.clone()
+                    } else {
+                        data[row].clone()
+                    }
+                } else {
+                    ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(
+                            IxDyn(&[self.shape.correlations, self.shape.channels]).f(),
+                            stored[row * samples..(row + 1) * samples].to_vec(),
+                        )
+                        .expect("stored scratch cell"),
+                    )
+                });
+            }
+        }
+        values
     }
 }
 
@@ -418,6 +470,8 @@ struct BatchReader {
     exposure: Vec<f64>,
     /// DATA, `[row][channel][correlation]`, when the fold starts from it.
     data: Vec<Complex32>,
+    model_data: Vec<Complex32>,
+    corrected_data: Vec<Complex32>,
     geometry: Vec<RowGeometry>,
     /// The antennas' airmasses at the last integration `fill_airmass`
     /// computed, and its scan and TIME.
@@ -537,6 +591,30 @@ impl BatchReader {
                 return Err(SimulatorError::raised(
                     "read MAIN DATA: a cell is not of the shape its window gives",
                 ));
+            }
+        }
+        for (slot, name, destination) in [
+            (0, "MODEL_DATA", &mut self.model_data),
+            (1, "CORRECTED_DATA", &mut self.corrected_data),
+        ] {
+            if !shape.reads_scratch[slot] {
+                continue;
+            }
+            destination.clear();
+            main.column_accessor(name)
+                .and_then(|column| {
+                    column.fill_array_cells_2d_channel_range_typed_uncached(
+                        rows,
+                        0,
+                        shape.channels,
+                        SelectedArray2DCellsMut::RowChannelComplex32(destination),
+                    )
+                })
+                .map_err(error(name))?;
+            if destination.len() != rows.len() * shape.samples() {
+                return Err(SimulatorError::raised(format!(
+                    "read MAIN {name}: scratch cell shape differs"
+                )));
             }
         }
         self.geometry.clear();
@@ -741,8 +819,11 @@ fn pipeline_bytes(shape: &PatchShape, columns: usize, batch_rows: usize) -> u64 
     let samples = shape.samples() as u64;
     let cell = samples * size_of::<Complex32>() as u64;
     let staged = 1 + READ_CELL_COPIES;
+    let scratch = shape.reads_scratch.iter().filter(|&&read| read).count() as u64 * cell;
     let read = staged
-        * (if shape.reads_data { cell } else { 0 } + if shape.reads_flags { samples } else { 0 });
+        * (if shape.reads_data { cell } else { 0 }
+            + if shape.reads_flags { samples } else { 0 }
+            + scratch);
     let times = staged * 8 * (u64::from(shape.times) + u64::from(shape.airmass));
     let written = columns as u64 * MUTATION_CELL_COPIES * (cell + size_of::<ArrayValue>() as u64);
     let row = 4
