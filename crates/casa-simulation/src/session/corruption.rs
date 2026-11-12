@@ -150,8 +150,9 @@ impl Simulator {
     ///
     /// - A mode CASA does not know: CASA logs "unsupported mode … in
     ///   setnoise()" and returns `False`.
-    /// - `OTF=False`: not yet implemented. Tsys modes write an optional
-    ///   table at close, using the model snapshot at this call.
+    /// - `OTF=False` for a Tsys mode: not yet implemented (#1292).
+    ///   Simplenoise reuses a saved additive field; Tsys modes write an
+    ///   optional noise-scale table at close from this call's snapshot.
     /// - No rows observed yet: CASA cannot size the term on an empty
     ///   MeasurementSet and returns `False`, adding no term.
     /// - A Tsys mode with a water vapour above 100 mm, or a zenith Tsys at

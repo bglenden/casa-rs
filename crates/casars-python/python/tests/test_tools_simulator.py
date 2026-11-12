@@ -761,7 +761,7 @@ def test_offline_noise_reuses_its_saved_additive_field(tmp_path: Path) -> None:
     parameters = np.asarray(saved.get_column("CPARAM"))
     data = np.asarray(Table.open(tmp_path / "data.ms").get_column("DATA"))
     assert parameters.shape == (30, 4, 4)
-    assert np.array_equal(data, 2 * parameters[:, [0, 3], :])
+    assert np.array_equal(data, -2 * parameters[:, [0, 3], :])
 
 
 @needs_measures

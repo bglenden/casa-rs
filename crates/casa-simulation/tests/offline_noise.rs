@@ -63,7 +63,8 @@ fn check_table(path: &Path, table: &Path, stokes: &str, repeats: usize) {
         assert!(flags.iter().all(|flag| !*flag));
         for channel in 0..4 {
             for (correlation, &parameter) in parameters.iter().enumerate() {
-                let expected = noise[IxDyn(&[parameter, channel])] * repeats as f32;
+                // CASA corrects zero DATA by A, then adds the model: DATA -= A.
+                let expected = -noise[IxDyn(&[parameter, channel])] * repeats as f32;
                 assert!((data[IxDyn(&[correlation, channel])] - expected).norm() < 1e-6);
             }
         }

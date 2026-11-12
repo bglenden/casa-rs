@@ -150,7 +150,8 @@ impl OfflineNoise {
             let [r1, r2] = receptors[index % receptors.len()];
             let parameter = if reverse { 2 * r2 + r1 } else { 2 * r1 + r2 };
             let noise = self.values[offset + index / receptors.len() * 4 + parameter];
-            *value += if reverse { noise.conj() } else { noise };
+            // VisEquation corrects zero DATA by A before adding the model.
+            *value -= if reverse { noise.conj() } else { noise };
         }
     }
 
@@ -176,9 +177,9 @@ impl OfflineNoise {
                                 spectral_window_id: id as i32,
                                 antennas: [p as i32, q as i32],
                                 values: self.values[offset..offset + window.channels * 4]
-                                    .chunks_exact(4)
-                                    .map(|v| v.try_into().expect("four parameters"))
-                                    .collect(),
+                                    .as_chunks::<4>()
+                                    .0
+                                    .to_vec(),
                             }
                         })
                     })
