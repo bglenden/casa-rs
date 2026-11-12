@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+ "audit_revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -229,7 +229,7 @@
   },
   "corrupt": {
    "status": "Partial",
-   "scope": "Applies the selected noise, gain, leakage, tropospheric and applied-table terms. Refused: a spectral window observed after setgain, setleakage or settrop terms were set, or defined after a tsys-atm setnoise.",
+   "scope": "Applies the selected noise, gain, leakage, tropospheric and applied-table terms. Each corruption step skips a spectral window any Jones term has no solution for, including its noise and corrected-data updates; predictions and later covered steps persist. A covered window defined after a tsys-atm setnoise remains explicitly refused under #1053.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -238,7 +238,8 @@
     "troposphere-20261103",
     "refusals",
     "flagged-samples-20261112",
-    "selection-ordered-data-20261112"
+    "selection-ordered-data-20261112",
+    "corruption-window-coverage-20261112"
    ],
    "issue": 1053
   },
@@ -260,7 +261,7 @@
   },
   "setapply": {
    "status": "Partial",
-   "scope": "Applies two-parameter G/D/B/Df and scalar T/Tf tables with nearest/linear time interpolation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows are explicitly refused under #1053; CASA whole-step coverage remains open. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t/opacity do not affect these terms. Invalid mappings, malformed parameter counts and cubic interior grids with fewer than four valid samples raise. Corrects the documented natural-spline first-knot defect. Other calibration types and higher time/observation-dependent interpolation remain explicit #1053 refusals.",
+   "scope": "Applies two-parameter G/D/B/Df and scalar T/Tf tables with nearest/linear time interpolation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows skip the whole corruption step, including noise and corrected-data updates, as in CASA. Only covered windows allocate applied sample grids. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t/opacity do not affect these terms. Invalid mappings, malformed parameter counts and cubic interior grids on physical axes of four or more channels with fewer than four valid samples raise; shorter physical axes use CASA linear fallback. Corrects the documented natural-spline first-knot defect. Other calibration types and higher time/observation-dependent interpolation remain explicit #1053 refusals.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -269,7 +270,8 @@
     "apply-parameters-20261112",
     "apply-flags-20261112",
     "apply-scalar-20261112",
-    "apply-frequency-20261112"
+    "apply-frequency-20261112",
+    "corruption-window-coverage-20261112"
    ],
    "issue": 1053
   },
@@ -1498,7 +1500,7 @@
    "kind": "Independent frequency-dependent CASA calculations, closed-form spline discriminator and bidirectional native-table consumption",
    "state": "passed",
    "result": "106 successful cases pass CPU W1/W3 (212 runs), including exact-channel flags, physical2/3-channel fallback and the corrected natural spline against an independently sampled CASA control (zero residual). Other cases agree under the unchanged1e-3 NRMS gate; maximum8.26e-4 is the documented raw CASA spline defect. All16 expected mapping/cubic refusals raise with DATA unchanged. CASA C++ reads212 native MS/table pairs and applies106 native tables with zero consumer residual. Both matrices also pass using actual CASA input tables. Full affected suites,36 memory laws, strict Clippy, final wheel71/2 and large-offset C++ checks pass; the ONE local review is resolved without re-review.",
-   "scope": "B/Tf/Df; nearest/linear/cubic/spline frequency interpolation, phase wraps, descending axes, exact half-channel ties, flags/gaps/all-invalid/one-valid samples, default fallback and spectral-window mapping. Exact stored TIME and preserved flags/weights/sigma/MODEL. Header-only metadata sizes wide calibration values before loading. The independent180-row later-window control records the next coverage outcome; native new-window application remains an explicit #1053 refusal, with a panic regression check. Exact-frequency flag registration, short physical-axis fallback, active64-bit AipsIO offsets and the131073-channel spline allocation boundary are checked explicitly.",
+   "scope": "B/Tf/Df; nearest/linear/cubic/spline frequency interpolation, phase wraps, descending axes, exact half-channel ties, flags/gaps/all-invalid/one-valid samples, default fallback and spectral-window mapping. Exact stored TIME and preserved flags/weights/sigma/MODEL. Header-only metadata sizes wide calibration values before loading. The independent180-row later-window control records the next coverage outcome; at that recorded frequency revision, native new-window application remains an explicit #1053 refusal, with a panic regression check. Exact-frequency flag registration, short physical-axis fallback, active64-bit AipsIO offsets and the131073-channel spline allocation boundary are checked explicitly.",
    "links": [
     "tools/simulation/sm_apply_frequency_oracle.py",
     "tools/simulation/sm_apply_frequency_readback.py",
@@ -1518,6 +1520,29 @@
    "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
    "command": "CASAPY tools/simulation/sm_apply_frequency_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_FREQUENCY_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_frequency -- --nocapture; CASA_RS_APPLY_CASA_TABLES=OUT cargo test -p casa-simulation --test apply_frequency frequency_tables_match_casa_with_phase_wraps_and_gaps -- --exact --nocapture; CASAPY tools/simulation/sm_apply_frequency_readback.py --root EXPORT --fixture FIXTURE --out READBACK; cargo clippy -p casa-tables -p casa-calibration -p casa-simulation -p casars-python --all-targets -- -D warnings",
    "receipt": "resources/casa-compat/evidence/sm-apply-frequency-20261112.json"
+  },
+  "corruption-window-coverage-20261112": {
+   "kind": "Independent CASA whole-step spectral-window coverage, bounded grids and actual C++ consumption",
+   "state": "passed",
+   "result": "Four independent180-row cases pass CPU W1/W3 with exact stored TIME, deterministic cells and preserved quality/scratch columns. Seeded worker DATA agree exactly; native/CASA noisy covered-cell variance ratio1.02344. C++ reads8 native MSs and consumes5 native tables across4 scenarios; deterministic consumer cells match exactly and noise variance ratio1.0. Actual Metal max-relative2.37e-7 under1e-4. The former12.89GB uncovered-grid request becomes a2512-byte heap peak under the unchanged256MiB budget/64KiB call allowance. Full native, installed-wheel and broader counting gates pass; details and review state are in the receipt.",
+   "scope": "Applied mapping snapshot, missing table windows, whole-step Jones/noise gating, selected fields, repeated steps, preserved corrected-data cells, nonzero fresh prediction and actual Metal. Existing unsupported calibration/time/layout/noise scopes remain open under #1053.",
+   "links": [
+    "crates/casa-simulation/tests/corruption_coverage.rs",
+    "crates/casa-simulation/tests/session_memory/coverage.rs",
+    "crates/casa-simulation/tests/backends/coverage.rs",
+    "tools/simulation/sm_apply_later_window_oracle.py",
+    "tools/simulation/sm_corruption_coverage_readback.py",
+    "crates/casa-simulation/tests/data/sm_apply_later_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_later_window_noise_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_existing_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_selected_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_repeated_window_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
+   "revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
+   "command": "RUST_TEST_THREADS=1 CASA_RS_COVERAGE_OUT=EXPORT cargo test -p casa-simulation --test corruption_coverage -- --nocapture; cargo test -p casa-simulation --test session_memory coverage:: -- --nocapture; cargo test -p casa-simulation --test backends coverage::actual_metal_prediction_preserves_whole_step_window_coverage -- --exact --nocapture; CASAPY tools/simulation/sm_corruption_coverage_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data --out CPP; cargo test -p casa-simulation -p casars-python",
+   "receipt": "resources/casa-compat/evidence/sm-corruption-window-coverage-20261112.json"
   }
  }
 }

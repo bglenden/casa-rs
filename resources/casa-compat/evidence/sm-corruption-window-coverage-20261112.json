@@ -1,0 +1,293 @@
+{
+ "schema": "sm-corruption-window-coverage-receipt/1",
+ "date": "2026-11-12",
+ "work_issue": 1053,
+ "oracle": "casatools6.7.6-14, casatasks6.7.6.14",
+ "host": "bg-mac-mini, Apple M2, macOS arm64",
+ "base_main_revision": "00e2177f963352e1854b6a1e84fd3f9dcfaa2520",
+ "native_revision": "e511616e1577a1371897c69bf57c0e3f5ff1ea06",
+ "rebased_runtime_revision": "834dc980d90e4f1add5a3b8c520e0c8ec6e6cd56",
+ "checker_revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
+ "source_revision": "f3204c4d8da00ebfbd7a8816fece457c89cecfaa",
+ "source_audit": {
+  "files": 3660,
+  "hash_mismatches": [],
+  "extra_code": [],
+  "rebased_runtime_tree_identical": true,
+  "final_difference_from_native": "Only the opt-in C++ worker comparator changed; Rust/Python package runtime sources are identical.",
+  "cache_ownership": "Own debug/release caches and Python environment; all source mtimes refreshed before first use of copied caches."
+ },
+ "fixtures": {
+  "sm_apply_later_window_casa.json.gz": "0b3425c8a8d829252a16f39950d51b9385f225c628886b50793e86072e8c0140",
+  "sm_apply_later_window_noise_casa.json.gz": "1c450518887cc14eb52e30922e1a92df19ec869ace8f1be0bdca1718cd4c714e",
+  "sm_apply_existing_window_casa.json.gz": "49e1fc300bbe850dd5edc51a1d03782e57e6721628188ee686a78bd280fdbe28",
+  "sm_apply_selected_window_casa.json.gz": "fbdc9796a5609d8f500185c95e2e5b6dcd4038d30b069bff77a905574fa36485",
+  "sm_apply_repeated_window_casa.json.gz": "c8ac58c626952b9e937004396078452847fd03229fd9841fcc8a99ff7994fcf6"
+ },
+ "demonstration": {
+  "ordinary_before_revision": "ec5993c3b",
+  "ordinary_before": "Both nonzero-signal public sequences fail with explicit #1053 NIY: newly added and unavailable calibration windows.",
+  "grid_before_revision": "75c4ae1c17cef3c20ceead10efe2d7425b96f72e",
+  "grid_before": {
+   "required": 12889221048,
+   "available": 268432800,
+   "budget": 268435456
+  },
+  "grid_after": {
+   "heap_peak": 2512,
+   "admitted": 2072,
+   "maximum_excess": 824,
+   "left": 2512,
+   "kept": 1688,
+   "unchanged_allowance": 65536
+  },
+  "scope": "Four independent180-row CASA cases: ordinary G2 coverage, simple noise, field selection and repeated G2/G3 steps. Fresh nonzero image prediction and actual Metal composition additionally check skipping the full step."
+ },
+ "validation": {
+  "full_native": {
+   "revision": "e511616e1577a1371897c69bf57c0e3f5ff1ea06",
+   "crates": [
+    "casa-simulation",
+    "casars-python"
+   ],
+   "reported_process_results": 73,
+   "reported_passed": 460,
+   "failed": 0,
+   "ignored": 2,
+   "scope": "Library, integration and doctests; reported results include38 isolated-law subprocesses, two parent-executed helper ignores."
+  },
+  "installed_wheel": {
+   "passed": 71,
+   "failed": 0,
+   "skipped": 2
+  },
+  "strict_checks": "All-target clippy -D warnings, fmt, architecture and docs pass; final metadata generator/check run recorded by its commit.",
+  "metal": {
+   "backend": "Actual Metal, pass summary verified",
+   "max_relative": 2.3713453e-07,
+   "limit": 0.0001
+  },
+  "cpp": {
+   "casa_version": "6.7.6.14",
+   "runs": [
+    {
+     "variant": "noise",
+     "workers": 3,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved",
+      "noise_variance_ratio": 1.023441788608942
+     }
+    },
+    {
+     "variant": "selected",
+     "workers": 1,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     },
+     "casa_consumes_native_tables": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     }
+    },
+    {
+     "variant": "selected",
+     "workers": 3,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     }
+    },
+    {
+     "variant": "noise",
+     "workers": 1,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved",
+      "noise_variance_ratio": 1.023441788608942
+     },
+     "casa_consumes_native_tables": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved",
+      "noise_variance_ratio": 1.0
+     }
+    },
+    {
+     "variant": "repeat",
+     "workers": 3,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     }
+    },
+    {
+     "variant": "plain",
+     "workers": 1,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     },
+     "casa_consumes_native_tables": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     }
+    },
+    {
+     "variant": "repeat",
+     "workers": 1,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     },
+     "casa_consumes_native_tables": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     }
+    },
+    {
+     "variant": "plain",
+     "workers": 3,
+     "native_ms": {
+      "rows": 180,
+      "data_nrms": 0.0,
+      "stored_time": "exact",
+      "quality_and_scratch": "preserved"
+     }
+    }
+   ],
+   "worker_comparison": {
+    "plain": {
+     "max_relative": 0.0,
+     "limit": 0.0001
+    },
+    "noise": {
+     "max_relative": 0.0,
+     "limit": 0.0001
+    },
+    "selected": {
+     "max_relative": 0.0,
+     "limit": 0.0001
+    },
+    "repeat": {
+     "max_relative": 0.0,
+     "limit": 0.0001
+    }
+   }
+  },
+  "cpp_ms_readbacks": 8,
+  "cpp_table_applications": 5,
+  "standalone_casacore_digest": "Not run: casacore development package unavailable. Actual installed CASA opens all eight native MSs and consumes native tables for four scenarios.",
+  "review": "pending ONE fresh-context local review"
+ },
+ "memory": {
+  "unchanged_close_allowance": 524288,
+  "unchanged_row_growth_allowance": 262144,
+  "fresh_60": {
+   "heap": 46898599,
+   "admitted": 48295592
+  },
+  "fresh_600": {
+   "heap": 47109614,
+   "admitted": 48253849
+  },
+  "opened_60": {
+   "heap": 13494670,
+   "admitted": 28038888
+  },
+  "opened_600": {
+   "heap": 30901480,
+   "admitted": 60424980
+  },
+  "uncovered_frequency": "131073 channels and1024 integrations in an uncovered window reserve no sample grid; covered window has four channels/four integrations."
+ },
+ "performance": {
+  "before": {
+   "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "module": "/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-apply-frequency/python-env/lib/python3.13/site-packages/casars/__init__.py",
+   "package": "0.27.0",
+   "numpy": "2.5.4",
+   "backend": "CPU",
+   "workers": 1,
+   "budget_requested": 2147483648,
+   "antennas": 43,
+   "channels": 64,
+   "integrations": 30,
+   "rows": 28380,
+   "wall_s": 0.5497582079842687,
+   "user_s": 0.13943299999999997,
+   "system_s": 0.219834,
+   "process_peak_rss_bytes": 267141120,
+   "boundary": "First simulator constructor/open through final existing-MS calibration close; imports and diagnostic readback excluded.",
+   "fft": "No FFT: random gains and simple noise only."
+  },
+  "after": {
+   "revision": "e511616e1",
+   "module": "/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-cloud/targets/codex-1053-corruption-window-coverage/python-env/lib/python3.13/site-packages/casars/__init__.py",
+   "package": "0.27.0",
+   "numpy": "2.5.4",
+   "backend": "CPU",
+   "workers": 1,
+   "budget_requested": 2147483648,
+   "antennas": 43,
+   "channels": 64,
+   "integrations": 30,
+   "rows": 28380,
+   "wall_s": 0.4729912499897182,
+   "user_s": 0.13986300000000002,
+   "system_s": 0.20928,
+   "process_peak_rss_bytes": 267337728,
+   "boundary": "First simulator constructor/open through final existing-MS calibration close; imports and diagnostic readback excluded.",
+   "fft": "No FFT: random gains and simple noise only."
+  },
+  "comparisons": {
+   "DATA": {
+    "nrms": 0.0
+   },
+   "TIME": "exact",
+   "FLAG": "exact",
+   "FLAG_ROW": "exact",
+   "WEIGHT": "exact",
+   "SIGMA": "exact"
+  },
+  "wall_ratio": 0.8603623249646013,
+  "observations": "One matched CPU W1 before/after observation, quiet host; no FFT, no statistical speedup claim.",
+  "wheel_sha256": {
+   "casa_rs_python-0.27.0-cp313-cp313-macosx_11_0_arm64.whl": "cf277ba32cc7e48c5e0e3a8b8188a79f7b79194b88fe48464ef12d7e8098eec8"
+  }
+ },
+ "upstream": {
+  "revision": "9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2",
+  "repository": "https://open-bitbucket.nrao.edu/scm/casa/casa6.git",
+  "path": "casatools/src/code/synthesis/MeasurementEquations/Simulator.cc",
+  "behavior": "Simulator::corrupt gates collapseForSim and DATA/CORRECTED/weight writes on ve_p.spwOK."
+ },
+ "decisions": [
+  "Filter each corruption step by all of its Jones coverage, including its noise; keep independent prediction and later covered steps. This follows installed CASA and exact release source.",
+  "Retain per-row touched/predicted masks only for partial selections or coverage. Admit masks and preserved scratch cells through the existing batch policy; ordinary all-covered workloads retain their existing path.",
+  "Skip unavailable applied windows before sizing/evaluating sample grids. Missing antennas and invalid parameters within an available window retain existing neutral-parameter behavior.",
+  "No new format, dependency, runtime CASA delegation or tolerance relaxation. Higher time interpolation, other calibration families and existing layout/noise constraints remain unfinished under #1053."
+ ]
+}
