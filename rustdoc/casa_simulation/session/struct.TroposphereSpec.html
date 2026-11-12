@@ -9,7 +9,7 @@
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The arguments of <code>sm.settrop</code>.</p>
 </div></details><h2 id="fields" class="fields section-header">Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.mode" class="structfield section-header"><a href="#structfield.mode" class="anchor field">§</a><code>mode: <a class="struct" href="https://doc.rust-lang.org/1.100.0/alloc/string/struct.String.html" title="struct alloc::string::String">String</a></code></span><div class="docblock"><p><code>mode</code>: <code>individual</code>, a series of its own above each antenna, or
 <code>screen</code>, one screen blown over the array; <code>test</code> (CASA’s debugging
-ramp) is not implemented.</p>
+ramp), sampled at the observed integrations.</p>
 </div><span id="structfield.table" class="structfield section-header"><a href="#structfield.table" class="anchor field">§</a><code>table: <a class="struct" href="https://doc.rust-lang.org/1.100.0/alloc/string/struct.String.html" title="struct alloc::string::String">String</a></code></span><div class="docblock"><p><code>table</code>: the <code>Tf Jones</code> calibration table the simulated phases are
 written to, or <code>''</code> for none. CASA writes it at once; casa-rs at
 <code>close</code>.</p>
