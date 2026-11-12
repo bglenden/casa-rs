@@ -15,6 +15,7 @@ use super::resources::NoiseScales;
 use crate::session::Simulator;
 use crate::session::error::SimulatorResult;
 use crate::session::plan::DataPhase;
+use crate::session::selection::{QueryWorkspace, RowHeader};
 
 type Run = (usize, usize, usize);
 
@@ -56,6 +57,9 @@ pub(super) struct DataStage<'s> {
     selected_runs: Vec<Run>,
     last_host_noise: bool,
     receptors: Vec<Vec<[usize; 2]>>,
+    query: Option<QueryWorkspace>,
+    touched: Vec<bool>,
+    predicted: Vec<bool>,
 }
 
 impl<'s> DataStage<'s> {
@@ -94,6 +98,9 @@ impl<'s> DataStage<'s> {
             selected_runs: Vec::new(),
             last_host_noise: false,
             receptors: super::window_receptors(session),
+            query: session.data_plan().has_query().then(QueryWorkspace::new),
+            touched: Vec::new(),
+            predicted: Vec::new(),
         }))
     }
 
@@ -155,7 +162,12 @@ impl<'s> DataStage<'s> {
             0
         };
         let runs = if self.session.data_plan().has_selection() {
-            batch_rows.min(self.session.scans().len()) * size_of::<Run>()
+            let count = if self.query.is_some() {
+                batch_rows
+            } else {
+                batch_rows.min(self.session.scans().len())
+            };
+            count * size_of::<Run>() + 2 * batch_rows * size_of::<bool>()
         } else {
             0
         };
@@ -165,9 +177,27 @@ impl<'s> DataStage<'s> {
                 .iter()
                 .map(|window| window.capacity() * size_of::<[usize; 2]>())
                 .sum::<usize>();
+        let query = self.query.as_ref().map_or(0, QueryWorkspace::bytes)
+            + self
+                .session
+                .data_plan()
+                .phases()
+                .iter()
+                .map(|phase| phase.selection.evaluation_bytes())
+                .max()
+                .unwrap_or(0);
+        let jobs = if self.query.is_some() {
+            batch_rows * (super::components::JOB_BYTES + size_of::<super::pipeline::NoiseJob<'_>>())
+        } else {
+            0
+        };
         stages
-            + (scratch + runs + receptors + self.phases.capacity() * size_of::<PhaseStage<'_>>())
-                as u64
+            + query
+            + (scratch
+                + runs
+                + jobs
+                + receptors
+                + self.phases.capacity() * size_of::<PhaseStage<'_>>()) as u64
     }
 
     pub(super) fn start(
@@ -181,7 +211,14 @@ impl<'s> DataStage<'s> {
             self.scratch = Vec::with_capacity(batch_rows * self.samples);
         }
         if self.session.data_plan().has_selection() {
-            self.selected_runs = Vec::with_capacity(batch_rows.min(self.session.scans().len()));
+            let count = if self.query.is_some() {
+                batch_rows
+            } else {
+                batch_rows.min(self.session.scans().len())
+            };
+            self.selected_runs = Vec::with_capacity(count);
+            self.touched = Vec::with_capacity(batch_rows);
+            self.predicted = Vec::with_capacity(batch_rows);
         }
         let mut extra = grid_bytes.saturating_sub(self.minimum_grid_bytes());
         for phase in &mut self.phases {
@@ -207,6 +244,14 @@ impl<'s> DataStage<'s> {
         }
     }
 
+    pub(super) fn row_touched(&self, row: usize) -> bool {
+        self.touched.get(row).copied().unwrap_or(true)
+    }
+
+    pub(super) fn row_predicted(&self, row: usize) -> bool {
+        self.predicted.get(row).copied().unwrap_or(true)
+    }
+
     pub(super) fn apply(
         &mut self,
         team: &WorkerTeam,
@@ -217,19 +262,36 @@ impl<'s> DataStage<'s> {
     ) -> SimulatorResult<()> {
         let last = self.phases.len() - 1;
         let scans = self.session.scans();
+        if self.session.data_plan().has_selection() {
+            self.touched.clear();
+            self.touched.resize(batch.rows.len(), false);
+            self.predicted.clear();
+            self.predicted.resize(batch.rows.len(), false);
+        }
         for (index, phase) in self.phases.iter_mut().enumerate() {
-            let runs =
-                if phase.phase.selection.is_all() {
-                    batch.runs
-                } else {
-                    self.selected_runs.clear();
-                    self.selected_runs.extend(
-                        batch.runs.iter().copied().filter(|&(scan, _, _)| {
-                            phase.phase.selection.contains_scan(&scans[scan])
-                        }),
-                    );
-                    &self.selected_runs
-                };
+            let runs = if phase.phase.selection.is_all() {
+                batch.runs
+            } else {
+                self.selected_runs.clear();
+                select_runs(
+                    self.session,
+                    phase.phase,
+                    &batch,
+                    self.query.as_mut(),
+                    &mut self.selected_runs,
+                )?;
+                &self.selected_runs
+            };
+            if !self.touched.is_empty() {
+                for &(scan, start, count) in runs {
+                    if !phase.phase.steps_for_scan(scan).is_empty() {
+                        self.touched[start..start + count].fill(true);
+                    }
+                    if phase.phase.predicts_scan(scan) {
+                        self.predicted[start..start + count].fill(true);
+                    }
+                }
+            }
             let host_noise = batch.stored.is_some()
                 || (index > 0 && !phase.phase.replace)
                 || batch
@@ -291,6 +353,48 @@ impl<'s> DataStage<'s> {
         }
         Ok(())
     }
+}
+
+fn select_runs(
+    session: &Simulator,
+    phase: &DataPhase,
+    batch: &DataBatch<'_>,
+    mut workspace: Option<&mut QueryWorkspace>,
+    selected: &mut Vec<Run>,
+) -> SimulatorResult<()> {
+    for &(scan, start, count) in batch.runs {
+        let metadata = &session.scans()[scan];
+        if !phase.selection.contains_scan(metadata) || phase.steps_for_scan(scan).is_empty() {
+            continue;
+        }
+        if !phase.selection.has_query() {
+            selected.push((scan, start, count));
+            continue;
+        }
+        let workspace = workspace.as_deref_mut().expect("query workspace admitted");
+        for row in start..start + count {
+            let geometry = &batch.rows[row];
+            if phase.selection.matches_row(
+                metadata,
+                RowHeader {
+                    antennas: [geometry.antenna1, geometry.antenna2],
+                    time_s: geometry.time_s,
+                },
+                workspace,
+                &session.options().measures,
+            )? {
+                match selected.last_mut() {
+                    Some((previous, first, length))
+                        if *previous == scan && *first + *length == row =>
+                    {
+                        *length += 1
+                    }
+                    _ => selected.push((scan, row, 1)),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn predict_phase(

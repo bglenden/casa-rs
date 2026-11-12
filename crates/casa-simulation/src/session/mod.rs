@@ -44,7 +44,7 @@ pub mod observe;
 pub(crate) mod plan;
 pub(crate) mod prediction;
 pub mod resources;
-mod selection;
+pub(crate) mod selection;
 mod single_dish;
 pub mod spectral;
 #[cfg(test)]
@@ -493,11 +493,6 @@ impl Simulator {
         ms_select: &str,
     ) -> SimulatorResult<()> {
         tracing::info!("Selecting data");
-        if !ms_select.trim().is_empty() {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#1053)"
-            )));
-        }
         let windows: Vec<usize> = (0..self.spectral_windows.len())
             .filter(|window| spectral_window_ids.contains(&(*window as i64)))
             .collect();
@@ -514,7 +509,21 @@ impl Simulator {
         } else {
             selection::DataSelection::fields(field_ids, windows)
         };
-        self.data_plan.select(selection);
+        // CASA installs the field/window selection before parsing TaQL.
+        self.data_plan.select(selection.clone());
+        if !ms_select.is_empty() && !ms_select.chars().all(|ch| ch == ' ') {
+            let query = selection::DataSelection::Query {
+                base: Arc::new(selection),
+                query: Arc::new(selection::RowQuery::parse(ms_select)?),
+            };
+            if self.query_keeps_rows(&query)? {
+                self.data_plan.select(query);
+            } else {
+                tracing::warn!(
+                    "Selection string results in empty MS: reverting to original MeasurementSet"
+                );
+            }
+        }
         Ok(())
     }
 

@@ -9,11 +9,13 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_ms::MeasurementSet;
-use casa_simulation::{PredictSpec, Simulator, SimulatorOptions, SpectralWindowSpec};
-use casa_types::ArrayValue;
+use casa_simulation::{
+    CasaOutcome, NoiseSpec, PredictSpec, Simulator, SimulatorOptions, SpectralWindowSpec,
+};
 use casa_types::Complex32;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
+use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use predict_support::{
     CHANNEL_HZ, FREQUENCY_HZ, N, read_main, resources, scan, session, write_model, write_model_of,
@@ -80,33 +82,78 @@ fn ids(step: &Value, name: &str) -> Vec<i64> {
         .collect()
 }
 
-fn apply_steps(sm: &mut Simulator, case: &Value, images: &[PathBuf; 2]) {
+fn apply_steps(sm: &mut Simulator, case: &Value, images: &[PathBuf; 2], path: &Path) {
     for step in case["steps"].as_array().unwrap() {
         match step["op"].as_str().unwrap() {
-            "setdata" => sm
-                .set_data(
-                    &ids(step, "spwid"),
-                    &ids(step, "fieldid"),
-                    step["msselect"].as_str().unwrap(),
-                )
-                .unwrap(),
-            "predict" => sm
-                .predict(&PredictSpec {
+            "setdata" => {
+                let mut query = step["msselect"].as_str().unwrap().to_string();
+                if query.contains("MID_TIME") {
+                    let ms = MeasurementSet::open(path).unwrap();
+                    let ScalarValue::Float64(time) = ms
+                        .main_table()
+                        .cell_accessor(0, "TIME")
+                        .unwrap()
+                        .scalar()
+                        .unwrap()
+                    else {
+                        panic!("TIME type")
+                    };
+                    query = query.replace("MID_TIME", &(time + 10.0).to_string());
+                }
+                let result = sm.set_data(&ids(step, "spwid"), &ids(step, "fieldid"), &query);
+                if step["expected_return"] == false {
+                    assert_eq!(result.unwrap_err().outcome(), CasaOutcome::ReturnsFalse);
+                } else {
+                    result.unwrap();
+                }
+            }
+            "predict" => {
+                let point = images[0].parent().unwrap().join("point.cl");
+                let components = step["components"].as_bool().unwrap();
+                if components && !point.exists() {
+                    predict_support::write_point_list(&point, predict_support::CENTRE_RAD, 0.25);
+                }
+                sm.predict(&PredictSpec {
                     images: step["images"]
                         .as_array()
                         .unwrap()
                         .iter()
-                        .map(|name| images[usize::from(name == "b")].clone())
+                        .map(|name| match name.as_str().unwrap() {
+                            "a" => images[0].clone(),
+                            "b" => images[1].clone(),
+                            name => panic!("model {name}"),
+                        })
                         .collect(),
+                    component_lists: if components { vec![point] } else { vec![] },
                     incremental: step["incremental"].as_bool().unwrap(),
-                    ..PredictSpec::default()
                 })
-                .unwrap(),
+                .unwrap();
+            }
             "observe" => {
-                let mut spec = scan("target", 80.0, 100.0);
-                spec.spectral_window = "band6b".to_string();
+                let seconds = |key: &str| {
+                    step[key]
+                        .as_str()
+                        .unwrap()
+                        .trim_end_matches('s')
+                        .parse::<f64>()
+                        .unwrap()
+                        + 37.0
+                };
+                let mut spec = scan(
+                    step["sourcename"].as_str().unwrap(),
+                    seconds("starttime"),
+                    seconds("stoptime"),
+                );
+                spec.spectral_window = step["spwname"].as_str().unwrap().to_string();
                 sm.observe(&spec).unwrap();
             }
+            "setseed" => sm.set_seed(step["seed"].as_i64().unwrap() as i32),
+            "setnoise" => {
+                assert_eq!(step["mode"], "simplenoise");
+                assert_eq!(step["simplenoise"], "0.1Jy");
+                sm.set_noise(&NoiseSpec::simple(0.1)).unwrap();
+            }
+            "corrupt" => sm.corrupt().unwrap(),
             operation => panic!("unexpected selection operation {operation}"),
         }
     }
@@ -117,7 +164,7 @@ fn fresh_case(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     let images = models(directory.path());
     let path = directory.path().join("selection.ms");
     let mut sm = observed(&path, workers);
-    apply_steps(&mut sm, case, &images);
+    apply_steps(&mut sm, case, &images, &path);
     sm.close().unwrap();
     let (actual, correlations) = read_main(&path);
     assert_eq!(correlations, 2);
@@ -170,30 +217,22 @@ fn fresh_selection_and_observe_reset_match_casa() {
     }
 }
 
-#[test]
-fn selected_existing_rows_preserve_data_and_scratch_columns() {
-    let fixture = fixture();
-    let case = fixture["cases"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|case| case["name"] == "field_replace")
-        .unwrap();
+fn opened_case(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     let directory = tempfile::tempdir().unwrap();
     let images = models(directory.path());
     let path = directory.path().join("existing.ms");
-    observed(&path, 1).close().unwrap();
+    observed(&path, workers).close().unwrap();
     input::prepare(&path);
     let mut sm = Simulator::open_from_ms(
         &path,
         SimulatorOptions {
             measures: casa_test_support::deterministic_measures_provider(),
-            resources: resources(1, 2 << 30),
+            resources: resources(workers, 2 << 30),
             now: MEpoch::from_mjd(predict_support::REFERENCE_MJD, EpochRef::UTC),
         },
     )
     .unwrap();
-    apply_steps(&mut sm, case, &images);
+    apply_steps(&mut sm, case, &images, &path);
     sm.close().unwrap();
     let (rows, correlations) = read_main(&path);
     assert_eq!(correlations, 2);
@@ -206,6 +245,40 @@ fn selected_existing_rows_preserve_data_and_scratch_columns() {
         .zip(case["rows"].as_array().unwrap())
         .enumerate()
     {
+        assert_eq!(actual.field, expected["field"].as_u64().unwrap() as usize);
+        assert_eq!(
+            actual.antennas,
+            [
+                expected["antennas"][0].as_u64().unwrap() as u32,
+                expected["antennas"][1].as_u64().unwrap() as u32
+            ]
+        );
+        assert_eq!(actual.flag_row, expected["flag_row"].as_bool().unwrap());
+        for (column, key) in [("WEIGHT", "weight"), ("SIGMA", "sigma")] {
+            let ArrayValue::Float32(values) =
+                table.cell_accessor(index, column).unwrap().array().unwrap()
+            else {
+                panic!("weight type")
+            };
+            assert_eq!(values.len(), expected[key].as_array().unwrap().len());
+            for (&value, expected) in values.iter().zip(expected[key].as_array().unwrap()) {
+                assert_eq!(value, expected.as_f64().unwrap() as f32);
+            }
+        }
+        let ArrayValue::Bool(flags) = table.cell_accessor(index, "FLAG").unwrap().array().unwrap()
+        else {
+            panic!("FLAG type")
+        };
+        for channel in 0..4 {
+            for correlation in 0..2 {
+                assert_eq!(
+                    flags[[correlation, channel]],
+                    expected["flags"][channel * 2 + correlation]
+                        .as_bool()
+                        .unwrap()
+                );
+            }
+        }
         assert_eq!(
             actual.data.len(),
             expected["data"].as_array().unwrap().len()
@@ -253,5 +326,27 @@ fn selected_existing_rows_preserve_data_and_scratch_columns() {
             }
         }
     }
-    assert!(power > 0.0 && (error / power).sqrt() <= 1e-3);
+    assert!(power > 0.0);
+    let nrms = (error / power).sqrt();
+    println!("{} W{workers}: selected DATA NRMS {nrms:e}", case["name"]);
+    assert!(nrms <= 1e-3);
+    rows.into_iter().map(|row| row.data).collect()
+}
+
+#[test]
+fn selected_existing_rows_preserve_data_and_scratch_columns() {
+    let fixture = fixture();
+    for case in fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["fresh"] != true && case["noise"] != true)
+    {
+        assert_eq!(
+            opened_case(case, 1),
+            opened_case(case, 3),
+            "CPU workers for {}",
+            case["name"]
+        );
+    }
 }

@@ -173,7 +173,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         columns: columns.len(),
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
-        times: noise_varies_by_row(plan) || plan.corrupts_by_jones(),
+        times: noise_varies_by_row(plan) || plan.corrupts_by_jones() || plan.has_query(),
         noise_scales: NoiseScales::of(plan, channels, None),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;
@@ -423,33 +423,24 @@ impl Patch<'_> {
         };
         let samples = self.shape.samples();
         let mut values = Vec::with_capacity(data.len());
-        for &(scan, start, count) in &self.runs {
+        let stage = self.prediction.as_ref().expect("nonempty DATA steps");
+        for (row, value) in data.iter().enumerate() {
             let changed = if model {
-                self.session
-                    .data_plan()
-                    .predicts_scan(scan, &self.session.scans()[scan])
+                stage.row_predicted(row)
             } else {
-                self.session
-                    .data_plan()
-                    .touches_scan(scan, &self.session.scans()[scan])
+                stage.row_touched(row)
             };
-            for row in start..start + count {
-                values.push(if changed {
-                    if model {
-                        one.clone()
-                    } else {
-                        data[row].clone()
-                    }
-                } else {
-                    ArrayValue::Complex32(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[self.shape.correlations, self.shape.channels]).f(),
-                            stored[row * samples..(row + 1) * samples].to_vec(),
-                        )
-                        .expect("stored scratch cell"),
+            values.push(if changed {
+                if model { one.clone() } else { value.clone() }
+            } else {
+                ArrayValue::Complex32(
+                    ArrayD::from_shape_vec(
+                        IxDyn(&[self.shape.correlations, self.shape.channels]).f(),
+                        stored[row * samples..(row + 1) * samples].to_vec(),
                     )
-                });
-            }
+                    .expect("stored scratch cell"),
+                )
+            });
         }
         values
     }

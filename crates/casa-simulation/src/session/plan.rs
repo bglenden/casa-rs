@@ -9,7 +9,6 @@ pub(crate) use phase::{DataPhase, NoiseTerm};
 
 use std::sync::Arc;
 
-use super::observe::Scan;
 use super::prediction::Prediction;
 use super::selection::DataSelection;
 use crate::corrupt::NoiseApplication;
@@ -129,15 +128,7 @@ impl DataPlan {
         self.phases.iter().any(|phase| !phase.selection.is_all())
     }
 
-    pub(crate) fn touches_scan(&self, index: usize, scan: &Scan) -> bool {
-        self.phases.iter().any(|phase| {
-            phase.selection.contains_scan(scan) && !phase.steps_for_scan(index).is_empty()
-        })
-    }
-
-    pub(crate) fn predicts_scan(&self, index: usize, scan: &Scan) -> bool {
-        self.phases
-            .iter()
-            .any(|phase| phase.selection.contains_scan(scan) && phase.predicts_scan(index))
+    pub(crate) fn has_query(&self) -> bool {
+        self.phases.iter().any(|phase| phase.selection.has_query())
     }
 }

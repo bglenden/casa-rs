@@ -106,6 +106,7 @@ impl NoiseScales {
         channels: usize,
         integrations: Option<(usize, usize)>,
     ) -> Self {
+        let integrations = if plan.has_query() { None } else { integrations };
         let mut models: Vec<*const TsysAtm> = plan
             .phases()
             .iter()

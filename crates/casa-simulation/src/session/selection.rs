@@ -3,6 +3,10 @@
 //! change an earlier operation's selected rows.
 
 use std::sync::Arc;
+mod query;
+use super::error::SimulatorResult;
+use casa_types::measures::MeasuresProvider;
+pub(crate) use query::{QueryWorkspace, RowHeader, RowQuery};
 
 use super::observe::Scan;
 
@@ -13,6 +17,10 @@ pub(crate) enum DataSelection {
     Fields {
         fields: Arc<[i64]>,
         windows: Arc<[usize]>,
+    },
+    Query {
+        base: Arc<DataSelection>,
+        query: Arc<RowQuery>,
     },
 }
 
@@ -41,6 +49,34 @@ impl DataSelection {
                     && (windows.is_empty()
                         || windows.binary_search(&scan.spectral_window_id).is_ok())
             }
+            Self::Query { base, .. } => base.contains_scan(scan),
+        }
+    }
+
+    pub(crate) fn has_query(&self) -> bool {
+        matches!(self, Self::Query { .. })
+    }
+
+    pub(crate) fn evaluation_bytes(&self) -> u64 {
+        match self {
+            Self::Query { query, .. } => query.scratch_bytes(),
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn matches_row(
+        &self,
+        scan: &Scan,
+        header: RowHeader,
+        workspace: &mut QueryWorkspace,
+        measures: &Arc<dyn MeasuresProvider>,
+    ) -> SimulatorResult<bool> {
+        if !self.contains_scan(scan) {
+            return Ok(false);
+        }
+        match self {
+            Self::Query { query, .. } => workspace.evaluate(query, scan, header, measures),
+            _ => Ok(true),
         }
     }
 }
