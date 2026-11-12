@@ -466,6 +466,14 @@ pub enum PrepareError {
     /// cross-correlation sample, and the selection has none.
     #[error("native AW has no unflagged cross-correlation sample")]
     NoCrossCorrelationRow,
+    /// Native cache generation at a non-default PA compute step outside its verified scope.
+    #[error(
+        "native computepastep currently supports MFS with one selected EVLA field and spectral window (#1070)"
+    )]
+    NativeAwPaScope,
+    /// CASA cannot reload both generated PA buffers at this spacing.
+    #[error("computepastep cannot preserve native PA coverage when CASA reloads the cache (#1070)")]
+    NativeAwPaSpacing,
     /// Runtime rotation's remaining imaging combinations.
     #[error(
         "rotatepastep currently supports dirty imported AW continuum for VLA or EVLA with the aperture, default computepastep, one selected field and spectral window, and both PSF and residual computed (#1070)"

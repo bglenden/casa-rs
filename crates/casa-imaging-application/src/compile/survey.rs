@@ -6,7 +6,7 @@
 //!
 //! The traversal reads each partition's selected fields' times and, when a
 //! UV-distance interval or a W-projecting gridder needs them, the samples'
-//! UVW. AW rotation also identifies each buffer with an unflagged
+//! UVW. AW PA stepping also identifies each buffer with an unflagged
 //! cross-correlation. A time's field comes with the batch, and a
 //! partition's samples share one spectral window and observing session, so
 //! the survey learns the selected fields, observations, times and windows
@@ -172,8 +172,8 @@ pub(super) struct SurveyPlan<'a> {
     pub(super) w_range: bool,
     /// Whether analytic PB selection needs the antennas of actual rows.
     pub(super) track_pb_antennas: bool,
-    /// Whether AW rotation needs the epochs CASA accepts into its major cycle.
-    pub(super) track_rotation_epochs: bool,
+    /// Whether AW needs the epochs CASA accepts into its major cycle for PA stepping.
+    pub(super) track_aw_pa_epochs: bool,
     /// Whether native AW needs its first cross-correlation sample.
     pub(super) first_cross: bool,
 }
@@ -307,7 +307,7 @@ impl SurveyPlan<'_> {
             data_group: self.candidates.data_group.clone(),
             roles: Roles {
                 values: false,
-                flags: flags || (self.track_rotation_epochs && self.stored_padding()),
+                flags: flags || (self.track_aw_pa_epochs && self.stored_padding()),
                 weights: !flags && self.stored_padding(),
                 // A partition of several arrays tells its rows apart
                 // sample by sample, padding by its NaN UVW.
@@ -560,7 +560,7 @@ fn survey_partition(
     let array = plan.partition_array(candidate);
     let per_sample = plan.reads_uvw()
         || plan.track_pb_antennas
-        || plan.track_rotation_epochs
+        || plan.track_aw_pa_epochs
         || plan.stored_padding()
         || array.is_none();
     let counted = tested || plan.stored_padding() || array.is_none();
@@ -731,7 +731,7 @@ fn observe_time(
         }
         // The synthesis major cycle skips a buffer with no valid cross-row
         // before AW can inspect its PA (SynthesisUtilMethods::validate).
-        if plan.track_rotation_epochs && !has_unflagged_cross && !baseline.is_auto() {
+        if plan.track_aw_pa_epochs && !has_unflagged_cross && !baseline.is_auto() {
             let epoch = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
             has_unflagged_cross = unflagged_row(plan, candidate, batch, sample, epoch, baseline)?;
         }
@@ -965,7 +965,7 @@ mod tests {
                     image_row_epoch: false,
                     w_range: false,
                     track_pb_antennas,
-                    track_rotation_epochs: false,
+                    track_aw_pa_epochs: false,
                     first_cross: false,
                 },
                 super::super::selection::spectral_windows(catalogue, [window]),
@@ -1052,7 +1052,7 @@ mod tests {
                 image_row_epoch: false,
                 w_range: true,
                 track_pb_antennas: false,
-                track_rotation_epochs: false,
+                track_aw_pa_epochs: false,
                 first_cross: false,
             };
             let mut facts = Facts {
@@ -1188,7 +1188,7 @@ mod tests {
             image_row_epoch: false,
             w_range: false,
             track_pb_antennas: false,
-            track_rotation_epochs: true,
+            track_aw_pa_epochs: true,
             first_cross: true,
         };
         let request = plan.request(&candidate, entry, false, 1 << 20);
@@ -1234,7 +1234,7 @@ mod tests {
             image_row_epoch: false,
             w_range: false,
             track_pb_antennas: false,
-            track_rotation_epochs: false,
+            track_aw_pa_epochs: false,
             first_cross: false,
         };
         let catalogue = observation.catalogue();
@@ -1337,7 +1337,7 @@ mod tests {
             image_row_epoch: false,
             w_range: false,
             track_pb_antennas: false,
-            track_rotation_epochs: false,
+            track_aw_pa_epochs: false,
             first_cross: false,
         };
         let catalogue = observation.catalogue();

@@ -23,6 +23,7 @@ pub(super) fn resolve(
     aw: &AwProjection,
     surveyed: &Surveyed<'_>,
     first_cross: FirstCrossSample,
+    context: &crate::RunContext,
 ) -> Result<NativeAwRequestInput, PrepareError> {
     let AwCfSource::NativeEvla {
         evla_surface,
@@ -57,19 +58,48 @@ pub(super) fn resolve(
     let (w_values, w_increment) = w_grid(planes, sky_cell);
     let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize[0] as f64
         / *native_cf_working_size as f64;
-    let pa = surveyed.engine.parallactic_angle(
-        first_cross.time_mjd_seconds,
-        usize::try_from(first_cross.field_id).expect("a surveyed field is a FIELD row"),
-        0,
-    )? as f32;
+    let mueller_elements = mueller_elements(&request.stokes)?;
+    let pa_values = if aw.computepastep == 360.0 {
+        vec![f64::from(feed_pa(
+            surveyed,
+            first_cross.time_mjd_seconds,
+            first_cross.field_id,
+            feed_angle,
+        )?)]
+    } else {
+        let [window] = surveyed.survey.spectral_windows.as_slice() else {
+            return Err(PrepareError::NativeAwPaScope);
+        };
+        if surveyed.survey.fields.len() != 1 || request.specmode != crate::SpecMode::Mfs {
+            return Err(PrepareError::NativeAwPaScope);
+        }
+        let groups_per_pa = frequencies.len() * w_values.len();
+        let cell_limit = *native_cf_maximum_cells / (groups_per_pa * mueller_elements.len());
+        let key_limit = (usize::from(u16::MAX) + 1) / groups_per_pa;
+        let epochs = surveyed.survey.window_epochs(window.spw_id);
+        let limit = cell_limit.min(key_limit).min(epochs.len());
+        let _admission = casa_imaging_runtime::admit(
+            &context.host,
+            &context.policy,
+            &casa_imaging_runtime::Demand {
+                phase: "native AW PA centres",
+                memory: (2 * limit * size_of::<f64>()) as u64,
+            },
+        )?;
+        let angles = epochs
+            .iter()
+            .filter(|epoch| epoch.has_unflagged_cross)
+            .map(|epoch| feed_pa(surveyed, epoch.time_mjd_seconds, epoch.field_id, feed_angle));
+        planned_pa_centres(angles, aw.pa_tolerance_rad(), limit)?
+    };
     Ok(NativeAwRequestInput {
         surface,
         antenna_diameter_m: 25.0,
         frequencies,
         w_values,
         w_increment,
-        pa_values: vec![f64::from(pa + feed_angle)],
-        mueller_elements: mueller_elements(&request.stokes)?,
+        pa_values,
+        mueller_elements,
         reference_frequency_hz,
         grid: NativeAwGrid {
             size: *native_cf_working_size,
@@ -87,6 +117,62 @@ pub(super) fn resolve(
         },
         maximum_cells: *native_cf_maximum_cells,
     })
+}
+
+/// Antenna zero's Float physical PA plus feed zero's first receptor angle.
+pub(super) fn feed_pa(
+    surveyed: &Surveyed<'_>,
+    time_s: f64,
+    field: i32,
+    feed_rad: f32,
+) -> Result<f32, PrepareError> {
+    let field = usize::try_from(field).expect("a surveyed field is a FIELD row");
+    let angle = surveyed.engine.parallactic_angle(time_s, field, 0)? as f32;
+    Ok(angle + feed_rad)
+}
+
+/// Generate a centre at the first uncovered selected feed angle.
+/// `AWProjectFT::findConvFunction` fills a cache miss with that angle.
+/// Check the persisted Float-degree centres so native cold and warm
+/// lookups have the same coverage and first-candidate order.
+fn planned_pa_centres(
+    samples: impl IntoIterator<Item = Result<f32, PrepareError>>,
+    step_rad: f32,
+    limit: usize,
+) -> Result<Vec<f64>, PrepareError> {
+    use casa_imaging_model::NativeAwRequestError;
+    use casa_imaging_operator::{first_covered_pa, stored_pa_rad};
+
+    let import_tolerance = 1.0_f32.to_radians();
+    let mut centres_deg = Vec::with_capacity(limit);
+    for pa in samples {
+        let pa = pa?;
+        if !pa.is_finite() {
+            return Err(NativeAwRequestError::InvalidSampling.into());
+        }
+        if first_covered_pa(&centres_deg, pa, step_rad).is_some() {
+            continue;
+        }
+        let degrees = f64::from(pa).to_degrees();
+        let stored = stored_pa_rad(degrees);
+        if (stored - pa).abs() >= step_rad
+            || first_covered_pa(&centres_deg, stored, import_tolerance).is_some()
+        {
+            return Err(PrepareError::NativeAwPaSpacing);
+        }
+        if centres_deg.len() == limit {
+            return Err(NativeAwRequestError::InvalidCatalog.into());
+        }
+        let at = centres_deg.partition_point(|centre| *centre < degrees);
+        centres_deg.insert(at, degrees);
+    }
+    // The original Float radians generated each Double degree header.
+    // Converting back recovers the input Float used to build the aperture.
+    for centre in &mut centres_deg {
+        *centre = f64::from(centre.to_radians() as f32);
+    }
+    centres_deg.shrink_to_fit();
+    Ok(centres_deg)
 }
 
 /// The EVLA dish surface, after checking that the observation is EVLA with
@@ -287,6 +373,43 @@ mod tests {
     use casa_types::{ArrayValue, ScalarValue, Value};
 
     use super::*;
+
+    #[test]
+    fn generated_pa_centres_cover_strict_endpoints_and_revisits() {
+        let step = 5.0_f32.to_radians();
+        let angles = [0.0, step.next_down(), step, -step, step / 2.0, -step / 2.0];
+        let centres = planned_pa_centres(angles.into_iter().map(Ok), step, 4).expect("plan");
+        assert_eq!(centres, [-f64::from(step), 0.0, f64::from(step)]);
+    }
+
+    #[test]
+    fn generated_pa_centres_respect_the_cell_bound_and_casa_reload_spacing() {
+        assert!(matches!(
+            planned_pa_centres([Ok(0.0), Ok(0.25)], 0.125, 1),
+            Err(PrepareError::NativeAwRequest(
+                casa_imaging_model::NativeAwRequestError::InvalidCatalog
+            ))
+        ));
+        assert!(matches!(
+            planned_pa_centres([Ok(0.0), Ok(0.5_f32.to_radians())], 0.1_f32.to_radians(), 2),
+            Err(PrepareError::NativeAwPaSpacing)
+        ));
+    }
+
+    #[test]
+    fn generated_pa_centre_must_cover_its_original_float_angle_after_reload() {
+        let original = f32::from_bits(0x3f0e_faa2);
+        // The cache's Float degrees round this angle up by one Float radian ULP.
+        let gap = original.next_up() - original;
+        assert!(matches!(
+            planned_pa_centres([Ok(original)], gap, 1),
+            Err(PrepareError::NativeAwPaSpacing)
+        ));
+        assert_eq!(
+            planned_pa_centres([Ok(original)], gap.next_up(), 1).expect("covered"),
+            [f64::from(original)]
+        );
+    }
 
     /// `AWConvFunc::makeConvFunction`: `wScale = (n−1)²/maxUVW` over more
     /// than one plane, `w = i²/wScale`; one plane is w = 0 with no scale.

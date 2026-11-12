@@ -1079,12 +1079,6 @@ impl AwProjection {
             ..
         } = &self.cf_source
         {
-            if self.computepastep != 360.0 {
-                return invalid(
-                    "computepastep",
-                    "native generation at a non-default PA step is unfinished (#1070)",
-                );
-            }
             if self.rotatepastep != 360.0 {
                 return invalid(
                     "rotatepastep",

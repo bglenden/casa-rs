@@ -517,6 +517,29 @@ fields. CASA's separate one-degree coalescence in
 `CFCache::fillCFListFromDisk` and `CFStore2::resize` remains unverified for
 densely spaced imported headers (#1070).
 
+## AW cache creation and reopening can select different PA buffers
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 cold and warm selection differs when PA coverage
+  intervals overlap. Casa-rs uses the sorted cache order in both runs (#1070).
+- Affected code: `TransformMachines2/AWProjectFT.cc` (`findConvFunction`),
+  `CFStore2.cc` (`resize`, `nearestPA`) and `CFCache.cc`
+  (`fillCFListFromDisk`).
+
+CASA adds generated buffers in observation order and picks the first PA
+strictly inside `computepastep`. Reloading sorts the cache by PA before
+applying the same first-match rule. On FIELD 0 of `refim_mawproject.ms`
+at 5 degrees, both orders cover all 108 selected integrations using
+the same 19 buffers. They select different buffers at 57 integrations.
+CASA's cold and warm residuals differ by 3.284e-3 NRMS and 16 mask
+pixels. With the same cache pixels, a temporary insertion-order
+selector matches all seven CASA cold products. The sorted selector
+matches all seven warm products, with exact masks in both comparisons.
+
+Native cache generation plans a centre at each uncovered selected feed
+angle and uses CASA's sorted replay order for both fresh and reused
+cells. Its cold and warm outputs agree with the CASA warm reference.
+
 ## AW aperture rotation can regrid an already rotated cell
 
 - Date noted: 2026-11-12
@@ -4621,3 +4644,21 @@ the formula through independent CASA ATM;
 `crates/casa-simulation/tests/trop_test_ramp.rs` compares native Tf parameters
 and DATA to that reference, including repeated corruption and reopened data.
 The existing wet-delay and channel-frequency corrections still apply.
+
+
+### Simulator on-the-fly simple noise crashes on a newly defined window
+
+In CASA 6.7.6.14, observe four integrations, call
+`setnoise(mode="simplenoise", OTF=True)`, define another spectral window,
+observe it and call `corrupt`: the process exits with signal 11. The same
+control succeeds on the original window. The other five combinations of
+simple/manual/atmospheric noise and OTF on/off safely skip the added window;
+all six combinations apply their original solutions to later integrations
+on an existing window.
+
+casa-rs gates the noise term to the windows present when it was created,
+preserving the new window's DATA and predictions. This corrects the crash
+under the standing crash rule. `tools/simulation/sm_later_noise_oracle.py`
+records each control in a separate CASA process; the native regression is
+`crates/casa-simulation/tests/later_noise.rs`, with actual Metal coverage in
+`tests/backends/offline_noise.rs`.

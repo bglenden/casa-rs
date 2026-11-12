@@ -998,3 +998,48 @@ fn imported_aw_runtime_pa_rotation_changes_the_residual_and_psf() {
     );
     assert!(!observation.scratch("rotation-clean.image").exists());
 }
+
+/// A native cache is generated over all covered PA groups and reopened
+/// through the same sorted selection rule.
+#[test]
+fn native_aw_generates_and_reuses_multiple_pa_buffers() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("native-pa-cf");
+    let mut request = cached_clean("0", &cache, &surface);
+    request["niter"] = json!(0);
+    request["wprojplanes"] = json!(1);
+    request["computepastep"] = json!(2.0);
+    let (_, cold) = observation.image("native-pa-cold", request.clone());
+    let payloads = || {
+        entries(&cache)
+            .into_iter()
+            .filter(|name| name.starts_with("CFS_") || name.starts_with("WTCFS_"))
+            .map(|name| {
+                let meta =
+                    std::fs::metadata(cache.join(&name).join("table.dat")).expect("cell header");
+                (
+                    name,
+                    meta.len(),
+                    meta.modified().expect("cell modification time"),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = payloads();
+    assert!(before.len() > 4, "expected at least two PA buffers");
+    request["native_cf_policy"] = json!("reuse-only");
+    let (_, warm) = observation.image("native-pa-warm", request.clone());
+    assert_same_products(&warm, &cold);
+    assert_eq!(payloads(), before, "warm replay preserves the cell payload");
+
+    request["spw"] = json!("0,1");
+    let Err(error) = observation.try_image("native-pa-two-windows", request) else {
+        panic!("non-default native PA accepted two windows");
+    };
+    assert!(
+        error.contains("native computepastep currently supports MFS"),
+        "{error}"
+    );
+}
