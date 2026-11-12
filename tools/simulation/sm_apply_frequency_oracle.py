@@ -16,7 +16,7 @@ import numpy as np
 import sm_apply_parameters_oracle as parameters
 
 GAIN_FACTORS = (1 + 0j, 1.1 + 0.7j, -0.6 + 1.5j, -1.4 - 0.3j)
-LEAKAGE_OFFSETS = (0j, 0.03 + 0.02j, -0.08 + 0.05j, 0.12 - 0.04j)
+LEAKAGE_OFFSETS = (0j, 0.06 + 0.04j, -0.16 + 0.10j, 0.24 - 0.08j)
 CASES = [{"name": f"{kind}_{interp}_{probe}", "kind": kind, "interp": interp,
           "options": {}, "probe": probe}
          for kind in ("B", "Tf", "Df") for interp in ("nearest", "linear")
