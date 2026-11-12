@@ -272,11 +272,15 @@ impl Simulator {
             return Ok(());
         }
         self.check_visibility_correlations("corrupted")?;
-        // A `setapply` table is evaluated over the scans observed by now.
+        // CASA gates the complete step before evaluating any term. The
+        // predicate intersects simulated and applied metadata without a
+        // per-window allocation; an excluded window forms no table grid.
+        let covered = |window| self.jones_terms.iter().all(|source| source.covers(window));
+        // A `setapply` table is evaluated over the covered scans observed now.
         let terms = self
             .jones_terms
             .iter()
-            .map(|source| self.jones_term(source))
+            .map(|source| self.jones_term(source, &covered))
             .collect::<SimulatorResult<Vec<_>>>()?;
         self.check_jones_coverage(&terms)?;
         self.check_noise_coverage(&terms)?;

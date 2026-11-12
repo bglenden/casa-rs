@@ -78,6 +78,16 @@ pub(crate) enum JonesSource {
     Applied(AppliedTable),
 }
 
+impl JonesSource {
+    /// Metadata-only coverage, before any applied solutions are formed.
+    pub(super) fn covers(&self, window: usize) -> bool {
+        match self {
+            Self::Simulated(term) => term.covers(window),
+            Self::Applied(table) => table.calibration_window(window).is_some(),
+        }
+    }
+}
+
 /// A loaded table's mathematical operator. A scalar T parameter expands
 /// to the same gain on both receptors; it shares the gain kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,14 +305,20 @@ impl Simulator {
     /// set, a table's evaluated over the scans observed so far. An
     /// evaluated term is admitted as a simulated one is, before it is
     /// formed, and keeps its share while a step applies it.
-    pub(super) fn jones_term(&self, source: &JonesSource) -> SimulatorResult<Arc<HeldTerm>> {
+    pub(super) fn jones_term(
+        &self,
+        source: &JonesSource,
+        covered: &impl Fn(usize) -> bool,
+    ) -> SimulatorResult<Arc<HeldTerm>> {
         match source {
             JonesSource::Simulated(term) => Ok(Arc::clone(term)),
             JonesSource::Applied(table) => {
                 let antennas = self.antennas.len();
                 let (mut per_window, _) = self.integration_counts();
+                // Definitions without observed rows still own a window slot.
+                per_window.resize(self.spectral_windows.len(), 0);
                 for (window, count) in per_window.iter_mut().enumerate() {
-                    if table.calibration_window(window).is_none() {
+                    if !covered(window) {
                         *count = 0;
                     }
                 }
@@ -394,6 +410,9 @@ impl Simulator {
             Vec::new()
         };
         for (index, scan) in self.scans.iter().enumerate() {
+            if per_window[scan.spectral_window_id] == 0 {
+                continue;
+            }
             let Some(window) = table.calibration_window(scan.spectral_window_id) else {
                 continue;
             };

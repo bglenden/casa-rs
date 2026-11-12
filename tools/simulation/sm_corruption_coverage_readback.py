@@ -17,12 +17,14 @@ FIXTURES={
     "noise":"sm_apply_later_window_noise_casa.json.gz",
     "selected":"sm_apply_selected_window_casa.json.gz",
     "repeat":"sm_apply_repeated_window_casa.json.gz",
+    "unobserved":"sm_apply_unobserved_window_casa.json.gz",
+    "overlap":"sm_apply_overlapping_terms_casa.json.gz",
 }
 
 
 def compare(path,reference,noise):
     measurement=ms();assert measurement.open(str(path));measurement.close()
-    rows=read_rows(path);expected=reference["rows"];assert len(rows)==len(expected)==180
+    rows=read_rows(path);expected=reference["rows"];assert len(rows)==len(expected) and len(rows) in (144,180)
     tool=table();tool.open(str(path))
     times,windows=tool.getcol("TIME"),tool.getcol("DATA_DESC_ID");tool.close()
     error=power=native_noise=casa_noise=0.0
@@ -49,9 +51,12 @@ def consume(directory,variant,out):
     out.mkdir(parents=True)
     path=out/"casa.ms";sm=make_session(path,stokes="XX XY YX YY")
     assert sm.setspwindow(spwname="later",freq="230GHz",deltafreq="15.625MHz",freqresolution="15.625MHz",refcode="TOPO",nchannels=4,stokes="XX XY YX YY")
-    assert sm.observe(sourcename="target",spwname="later",starttime="3s",stoptime="13s")
+    if variant!="unobserved":
+        assert sm.observe(sourcename="target",spwname="later",starttime="3s",stoptime="13s")
     sm.close();initialize(path);sm=simulator();assert sm.openfromms(str(path))
     assert sm.setapply(table=str((directory/"g.cal").resolve()),interp="nearest",spwmap=[-1],calwt=False)
+    if variant=="overlap":
+        assert sm.setapply(table=str((directory/"g.cal").resolve()),interp="nearest",spwmap=[0],calwt=False)
     if variant=="noise":
         assert sm.setseed(5);assert sm.setnoise(simplenoise="0.1Jy")
     if variant=="selected":assert sm.setdata(fieldid=[0])
@@ -91,8 +96,8 @@ def main():
         difference=float(np.max(np.linalg.norm(a-b,axis=-1))/np.max(np.linalg.norm(a,axis=-1)))
         assert difference<=1e-4,(variant,difference)
         workers[variant]={"max_relative":difference,"limit":1e-4}
-    (args.out/"report.json").write_text(json.dumps({"casa_version":"6.7.6.14","runs":reports,"worker_comparison":workers},indent=1)+"\n")
-    print("C++ reads8 native MSs and consumes5 native calibration tables across4 scenarios",flush=True)
+    (args.out/"report.json").write_text(json.dumps({"casa_version":"6.7.6.14","runs":reports,"worker_comparison":workers,"native_ms_reads":len(reports),"table_applications":sum(2 if variant in ("repeat","overlap") else 1 for variant in FIXTURES)},indent=1)+"\n")
+    print(f"C++ reads{len(reports)} native MSs and consumes8 native calibration tables across{len(FIXTURES)} scenarios",flush=True)
 
 
 if __name__=="__main__":main()
