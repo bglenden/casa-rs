@@ -134,8 +134,7 @@ pub(crate) struct AppliedTable {
 
 impl AppliedTable {
     fn channel_dependent(&self) -> bool {
-        self.frequency.is_some()
-            || matches!(self.kind, AppliedKind::Delay | AppliedKind::AntennaPosition)
+        self.frequency.is_some() || self.kind == AppliedKind::Delay
     }
 
     fn calibration_window(&self, window: usize) -> Option<usize> {
@@ -365,7 +364,7 @@ impl Simulator {
                         }
                     })
                     .collect::<Vec<_>>();
-                let bytes = if table.channel_dependent() {
+                let mut bytes = if table.channel_dependent() {
                     TermBytes::frequency(
                         &per_window,
                         &channels,
@@ -375,6 +374,9 @@ impl Simulator {
                 } else {
                     TermBytes::per_chunk(&per_window, antennas)
                 };
+                if table.kind == AppliedKind::Opacity {
+                    bytes.forming += (antennas * size_of::<f64>()) as u64;
+                }
                 let mut reservation = self.admit_term(bytes)?;
                 let evaluated = self.applied_solutions(table, &per_window)?;
                 reservation.retain(bytes.kept);

@@ -6,7 +6,6 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 
 pub(super) struct Geometry {
-    source_itrf: [f64; 3],
     sine_elevation: Vec<f64>,
 }
 
@@ -18,10 +17,9 @@ impl Geometry {
         time: f64,
     ) -> SimulatorResult<Self> {
         let mut result = Self {
-            source_itrf: [0.; 3],
             sine_elevation: Vec::new(),
         };
-        if !matches!(kind, AppliedKind::AntennaPosition | AppliedKind::Opacity) {
+        if kind != AppliedKind::Opacity {
             return Ok(result);
         }
         let [ra, dec] = sm.fields[field].direction_rad;
@@ -33,13 +31,6 @@ impl Geometry {
                 .with_epoch(epoch.clone())
                 .with_position(MPosition::new_itrf(x, y, z))
                 .with_measures(sm.options.measures.clone());
-            if kind == AppliedKind::AntennaPosition {
-                result.source_itrf = direction
-                    .convert_to(DirectionRef::ITRF, &frame)
-                    .map_err(raised)?
-                    .cosines();
-                break;
-            }
             debug_assert_eq!(index, result.sine_elevation.len());
             let elevation = direction
                 .convert_to(DirectionRef::AZEL, &frame)
@@ -74,16 +65,10 @@ impl Geometry {
                 Complex32::new(phase.cos() as f32, phase.sin() as f32)
             })),
             AppliedKind::AntennaPosition => {
-                let w: f64 = (0..3)
-                    .map(|axis| f64::from(solution.value(axis, 0).re) * self.source_itrf[axis])
-                    .sum();
-                let phase = std::f64::consts::TAU * w * frequency / 299_792_458.;
-                let gain = if solution.flags.iter().any(|&flag| flag) {
-                    one
-                } else {
-                    Complex32::new(phase.cos() as f32, phase.sin() as f32)
-                };
-                Some([gain; 2])
+                // collapseForSim's pivot is B. KAntPos lies below it and
+                // corrects the zeroed DATA, before the corrupted model is
+                // added. Therefore supplied offsets do not change DATA.
+                Some([one; 2])
             }
             AppliedKind::Opacity => {
                 let sine = self.sine_elevation[antenna];
