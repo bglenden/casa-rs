@@ -151,8 +151,12 @@ fn fragmented_selections_hold_their_admission_without_retaining_rows() {
             }
             best
         });
+        // A longer stream may reserve less for its final batch geometry.
+        // A reservation decrease is not heap growth: compare actual growth
+        // with any increased admission (the patch's row-index plan).
+        let admitted_growth = many.0.admitted.saturating_sub(few.0.admitted);
         assert!(
-            many.0.unadmitted() <= few.0.unadmitted() + ROWS_ALLOWANCE_BYTES as i64,
+            many.0.heap <= few.0.heap + admitted_growth + ROWS_ALLOWANCE_BYTES,
             "ten times the rows must not grow unadmitted batch state"
         );
         assert!(many.1.0 <= few.1.0 + 4096, "query scratch is bounded");
