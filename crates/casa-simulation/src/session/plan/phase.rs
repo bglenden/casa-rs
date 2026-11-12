@@ -229,6 +229,29 @@ impl DataPhase {
             })
     }
 
+    /// CASA gates an entire corruption step on every Jones term's coverage,
+    /// including the noise that follows its Jones operators.
+    pub(crate) fn corruptions_for_window(
+        &self,
+        scan: usize,
+        window: usize,
+    ) -> impl Iterator<Item = (&[NoiseApplication], &[Arc<HeldTerm>])> {
+        self.corruptions_for_scan(scan)
+            .filter(move |(_, jones)| jones.iter().all(|term| term.covers(window)))
+    }
+
+    /// Whether this phase changes rows of the given scan/window. An
+    /// uncovered Jones term gates only its corruption step, not predictions
+    /// or another corruption step in the same phase.
+    pub(crate) fn touches_window(&self, scan: usize, window: usize) -> bool {
+        self.predicts_scan(scan) || self.corruptions_for_window(scan, window).next().is_some()
+    }
+
+    pub(crate) fn has_uncovered_corruption(&self, scan: usize, window: usize) -> bool {
+        self.corruptions_for_scan(scan)
+            .any(|(_, jones)| jones.iter().any(|term| !term.covers(window)))
+    }
+
     /// Whether no step was taken (or every one was replaced by nothing).
     pub(crate) fn is_empty(&self) -> bool {
         self.steps.is_empty()

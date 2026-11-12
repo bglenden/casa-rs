@@ -264,9 +264,9 @@ impl Simulator {
     ///   4, which CASA cannot corrupt ("No such VisVector type"); leakage on
     ///   a scan without all four correlations (CASA's `JonesGenLin` raises);
     ///   or a noise term applied 2²⁴ times.
-    /// - A scan in a spectral window a gain or leakage term has no solution
-    ///   for, which CASA leaves uncorrupted, or one defined after a
-    ///   `tsys-atm` term was set: not yet implemented.
+    /// - A covered scan defined after a `tsys-atm` term was set: not yet
+    ///   implemented. A window any Jones term has no solution for skips
+    ///   the entire step, including noise and corrected-data updates.
     pub fn corrupt(&mut self) -> SimulatorResult<()> {
         if self.noise_terms.is_empty() && self.jones_terms.is_empty() {
             return Ok(());
@@ -279,7 +279,7 @@ impl Simulator {
             .map(|source| self.jones_term(source))
             .collect::<SimulatorResult<Vec<_>>>()?;
         self.check_jones_coverage(&terms)?;
-        self.check_noise_coverage()?;
+        self.check_noise_coverage(&terms)?;
         if self
             .noise_terms
             .iter()
@@ -310,12 +310,18 @@ impl Simulator {
         Ok(())
     }
 
-    /// Refuse gains or leakage on a scan observed so far that they cannot
-    /// corrupt as CASA does: leakage without all four correlations, which
-    /// CASA's `JonesGenLin` raises on, and a spectral window a term has no
-    /// solution for, which CASA leaves wholly uncorrupted.
+    /// Validate the correlations of covered scans. CASA gates the entire
+    /// corruption step before checking or applying any Jones operator.
     fn check_jones_coverage(&self, terms: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
         for scan in &self.scans {
+            // VisEquation::spwOK gates the entire step: no term is
+            // applied when any Jones term has no solution in this window.
+            if terms
+                .iter()
+                .any(|term| !term.covers(scan.spectral_window_id))
+            {
+                continue;
+            }
             let window = &self.spectral_windows[scan.spectral_window_id];
             let products = window.correlation_products();
             // The linearised D takes the parallel hands into the cross
@@ -329,14 +335,6 @@ impl Simulator {
                         "JonesGenLin matrix apply (J::aR) incompatible with VisVector.",
                     ));
                 }
-                if !term.covers(scan.spectral_window_id) {
-                    return Err(SimulatorError::not_yet_implemented(format!(
-                        "corrupt of spectral window {}, observed after a setgain, setleakage or \
-                         settrop term was set, is not yet implemented in casa-rs (#1053): \
-                         CASA leaves it uncorrupted",
-                        window.name
-                    )));
-                }
             }
         }
         Ok(())
@@ -345,16 +343,17 @@ impl Simulator {
     /// Refuse a scan observed so far in a spectral window defined after a
     /// `tsys-atm` term was set: as CASA's corruptor, the term built its
     /// atmosphere for the windows defined then.
-    fn check_noise_coverage(&self) -> SimulatorResult<()> {
+    fn check_noise_coverage(&self, terms: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
         for term in &self.noise_terms {
             let NoiseLevel::TsysAtm(model) = &term.level else {
                 continue;
             };
-            if let Some(scan) = self
-                .scans
-                .iter()
-                .find(|scan| !model.covers(scan.spectral_window_id))
-            {
+            if let Some(scan) = self.scans.iter().find(|scan| {
+                terms
+                    .iter()
+                    .all(|term| term.covers(scan.spectral_window_id))
+                    && !model.covers(scan.spectral_window_id)
+            }) {
                 return Err(SimulatorError::not_yet_implemented(format!(
                     "corrupt of spectral window {}, defined after a setnoise(mode='tsys-atm') \
                      term was set, is not yet implemented in casa-rs (#1053): \
