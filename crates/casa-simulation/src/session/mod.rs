@@ -478,14 +478,19 @@ impl Simulator {
     ///   names, when it names any (casa-rs's data description `w` is
     ///   window `w`);
     /// - then the TaQL `msselect` applies;
-    /// - a selection that keeps no row reverts to every row, with a warning.
+    /// - empty field/window results revert to all rows; an empty TaQL result
+    ///   retains the field/window selection, with a warning.
     ///
     /// Each DATA operation retains the selection in force at that call;
     /// later selections leave earlier operations unchanged.
     ///
     /// # Errors
     ///
-    /// Not yet implemented: a non-blank `msselect`.
+    /// Metadata predicates support ANTENNA1, ANTENNA2, TIME, FIELD_ID,
+    /// DATA_DESC_ID and SCAN_NUMBER, numeric operators and abs/near/nearabs.
+    /// Other columns, row-number/random predicates and additional query
+    /// clauses are not yet implemented. Invalid predicates return CASA's
+    /// `False` after installing the field/window selection.
     pub fn set_data(
         &mut self,
         spectral_window_ids: &[i64],

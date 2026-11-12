@@ -29,7 +29,7 @@ fn fixture() -> Value {
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
-    assert_eq!(fixture["cases"].as_array().unwrap().len(), 26);
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 36);
     fixture
 }
 

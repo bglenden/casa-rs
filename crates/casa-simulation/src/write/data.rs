@@ -261,7 +261,6 @@ impl<'s> DataStage<'s> {
         defer_last_noise: bool,
     ) -> SimulatorResult<()> {
         let last = self.phases.len() - 1;
-        let scans = self.session.scans();
         if self.session.data_plan().has_selection() {
             self.touched.clear();
             self.touched.resize(batch.rows.len(), false);

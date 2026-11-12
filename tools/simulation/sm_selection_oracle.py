@@ -66,6 +66,18 @@ CASES = [
     {"name": "observe_resets_selection", "fresh": True, "steps": [select(field=[1]), predict(),
      {"op": "observe", "sourcename": "target", "spwname": "band6b", "starttime": "43s", "stoptime": "63s"},
      predict(["b"], incremental=True)]},
+    {"name": "absolute_cross_correlations", "steps": [select(query="abs(ANTENNA1 - ANTENNA2) > 0"), predict()]},
+    {"name": "near_integration", "steps": [select(query="near(TIME, MID_TIME, 1e-13)"), predict()]},
+    {"name": "nearabs_integration", "steps": [select(query="nearabs(TIME, MID_TIME, 0.001)"), predict()]},
+    {"name": "numeric_predicate_keeps_field", "steps": [select(field=[1], query="1", returned=False), predict()]},
+    {"name": "lowercase_column_keeps_field", "steps": [select(field=[1], query="antenna1 != antenna2", returned=False), predict()]},
+    {"name": "true_predicate_keeps_field", "steps": [select(field=[1], query="TRUE"), predict()]},
+    {"name": "query_replacement_overlaps_fields", "steps": [select(query="ANTENNA1 != ANTENNA2"), predict(), select(field=[1]), predict(["b"])]},
+    {"name": "query_increment_preserves_other_rows", "steps": [predict(), select(query="ANTENNA1 != ANTENNA2"), predict(["b"], incremental=True)]},
+    {"name": "observe_resets_row_query", "fresh": True, "steps": [select(query="ANTENNA1 != ANTENNA2"), predict(),
+     {"op": "observe", "sourcename": "target", "spwname": "band6b", "starttime": "43s", "stoptime": "63s"},
+     predict(["b"], incremental=True)]},
+    {"name": "query_noise", "noise": True, "steps": [select(query="ANTENNA1 != ANTENNA2"), *NOISE]},
 ]
 
 
