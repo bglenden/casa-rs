@@ -47,6 +47,16 @@ fn plan(rows: usize, columns: &[&str], create: bool) -> MeasurementSetWritePlan 
 pub(super) fn prepare(path: &Path) {
     let mut ms = MeasurementSet::open(path).unwrap();
     let rows = ms.row_count();
+    let shape = match ms
+        .main_table()
+        .cell_accessor(0, "DATA")
+        .unwrap()
+        .array()
+        .unwrap()
+    {
+        ArrayValue::Complex32(values) => values.shape().to_vec(),
+        _ => panic!("DATA type"),
+    };
     for name in ["MODEL_DATA", "CORRECTED_DATA"] {
         ms.main_table_mut()
             .add_column(
@@ -73,14 +83,14 @@ pub(super) fn prepare(path: &Path) {
                 MeasurementSetMutationColumnValues::Scalars(vec![ScalarValue::Bool(false); rows])
             } else {
                 let cell = if name == "FLAG" {
-                    ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[2, 4]).f(), false))
+                    ArrayValue::Bool(ArrayD::from_elem(IxDyn(&shape).f(), false))
                 } else {
                     let value = match name {
                         "DATA" => Complex32::new(3.0, 4.0),
                         "MODEL_DATA" => Complex32::new(7.0, -2.0),
                         _ => Complex32::new(-5.0, 6.0),
                     };
-                    ArrayValue::Complex32(ArrayD::from_elem(IxDyn(&[2, 4]).f(), value))
+                    ArrayValue::Complex32(ArrayD::from_elem(IxDyn(&shape).f(), value))
                 };
                 MeasurementSetMutationColumnValues::Arrays(vec![cell; rows])
             };
@@ -119,8 +129,10 @@ pub(super) fn fixed_gains(path: &Path, output: &Path, gain: f32) {
         ScalarValue::Float64(time) => *time,
         _ => panic!("TIME type"),
     };
-    let rows = (0..2).flat_map(|spw| {
-        (0..8).map(move |antenna| SimulatedSolution {
+    let antennas = ms.antenna().unwrap().row_count() as i32;
+    let windows = ms.spectral_window().unwrap().row_count() as i32;
+    let rows = (0..windows).flat_map(|spw| {
+        (0..antennas).map(move |antenna| SimulatedSolution {
             time_s: time,
             field_id: 0,
             spectral_window_id: spw,
