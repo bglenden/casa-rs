@@ -40,6 +40,7 @@ CASA behaviours casa-rs does not follow:
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [a mosaic's single-precision weight image](#a-mosaics-weight-image-is-transformed-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[the standard gridder dropping the final Fourier-grid row and column](#the-standard-gridder-drops-the-final-fourier-grid-row-and-column),
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
 [a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
 [a TOPO cube's cache-dependent endpoint selection](#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history),
@@ -3769,6 +3770,33 @@ their PSFs 3.6% and 5.3% apart in normalized RMS; they now agree with CASA
 0-based column 0, so that a tap one column below the grid would be written
 before it and weighed, mistook `findGridSector`'s start before its final
 increment for the start it returns.)
+
+## The standard gridder drops the final Fourier-grid row and column
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. Casa-rs keeps the full support of samples that fit the standard grid. [MVC comparison](https://github.com/bglenden/casa-rs/issues/1069#issuecomment-6801927969)
+- Affected code: `synthesis/TransformMachines2/GridFT.cc` (`put`),
+  `FTMachine.cc` (`findGridSector`) and `synthesis/fortran/fgridft.f`
+  (`sectggridd`, `onmygrid`).
+
+`onmygrid` accepts a standard-kernel support that fits the entire grid.
+`findGridSector` shortens the final sector by one extra cell before it
+converts the sector start to one-based indices. For one sector on a
+320-square grid, CASA passes `(x0, y0, nxsub, nysub) = (1, 1, 319, 319)`.
+The sectioned Fortran kernel consequently drops taps on the final row or
+column and omits their fraction of the weight. The omitted taps shift the
+cube PSF and residual upstream of spectral-index masking.
+
+In the frozen 256-square, 0.3-arcsec, three-channel dirty MVC comparison,
+CASA's unmodified replay reproduces the reference exactly. Its `.alpha`
+and `.alpha.error` validity masks differ from casa-rs at the same two
+pixels near the strict residual-peak cutoff. Replaying the captured CASA
+gridding inputs with its short sector reconstructs its Fourier grid to
+`6.1e-16` normalized RMS. Extending only those two sector lengths to 320
+in a diagnostic CASA process yields agreement on all 19 products under
+the existing limits, with identical masks and maximum NRMS `7.27e-6`.
+The standard operator's edge regression keeps nonzero taps and full
+weight on both boundaries.
 
 ## A CRTF spectral range rounds each end to a channel, toward zero
 
