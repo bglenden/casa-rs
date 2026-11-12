@@ -568,7 +568,7 @@ fn outcome(result: SimulatorResult<()>) -> (CasaOutcome, String) {
     (error.outcome(), error.message().to_string())
 }
 
-/// Refused noise configurations add no term: `OTF=False`, water vapour above 100 mm
+/// Refused noise configurations add no term: water vapour above 100 mm in either generation mode
 /// and an undefined zenith Tsys, which CASA refuses after adding a unit-σ
 /// term (`docs/CASA (C++) bugs.md`).
 #[test]
@@ -581,11 +581,11 @@ fn refusals_add_no_term() {
         change(&mut spec);
         spec
     };
-    let otf = spec(&|spec| spec.on_the_fly = false);
-    assert_eq!(
-        outcome(sm.set_noise(&otf)).0,
-        CasaOutcome::NotYetImplemented
-    );
+    let otf = spec(&|spec| {
+        spec.on_the_fly = false;
+        spec.water_vapour_mm = 200.;
+    });
+    assert_eq!(outcome(sm.set_noise(&otf)).0, CasaOutcome::ReturnsFalse);
     let wet = spec(&|spec| spec.water_vapour_mm = 200.0);
     assert_eq!(
         outcome(sm.set_noise(&wet)),
