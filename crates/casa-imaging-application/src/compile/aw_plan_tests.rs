@@ -98,6 +98,8 @@ fn plan_for(
         indexing: AwIndexing {
             conjugate_beams: true,
             image_reference_hz: REFERENCE_HZ,
+            pa_tolerance_rad: 360.0_f32.to_radians(),
+            feed_zero_angles_rad: None,
         },
         resident_bytes: 1 << 20,
         automatic: false,

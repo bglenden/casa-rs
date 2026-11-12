@@ -485,7 +485,7 @@ fn kernel_set(
             })?;
             let catalog = AwCatalog::open_casa(
                 &deployment.root,
-                deployment.indexing,
+                deployment.indexing.clone(),
                 geometry,
                 polarization,
                 deployment.resident_bytes,

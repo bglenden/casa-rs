@@ -1088,12 +1088,25 @@ fn aw_plan(
             (native_cf_cache.clone(), Some((*native_cf_policy, input)))
         }
     };
+    let feed_zero_angles_rad = if native.is_none() {
+        let mut feed_zero_angles = vec![0.0; surveyed.catalogue.windows.len()];
+        for window in &surveyed.survey.spectral_windows {
+            let spw = u32::try_from(window.spw_id).expect("a surveyed window fits u32");
+            feed_zero_angles[window.spw_id] =
+                native_aw::receptor_zero_angle(surveyed.catalogue, surveyed.msv2, spw)? as f32;
+        }
+        Some(feed_zero_angles.into())
+    } else {
+        None
+    };
     Ok(AwPlan {
         root,
         native,
         indexing: AwIndexing {
             conjugate_beams: aw.conjbeams,
             image_reference_hz: surveyed.spectral.reference_frequency_hz,
+            pa_tolerance_rad: aw.pa_tolerance_rad(),
+            feed_zero_angles_rad,
         },
         resident_bytes: match aw.cf_resident_mb {
             Some(megabytes) => megabytes

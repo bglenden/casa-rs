@@ -109,6 +109,8 @@ fn indexing(conjugate_beams: bool) -> AwIndexing {
     AwIndexing {
         conjugate_beams,
         image_reference_hz: REFERENCE_HZ,
+        pa_tolerance_rad: 360.0_f32.to_radians(),
+        feed_zero_angles_rad: None,
     }
 }
 
@@ -119,7 +121,6 @@ fn context(pa_deg: f64, spectral_window: u32) -> RowContext {
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types: [0, 0],
-        // CASA's operator angle is the negative of the physical angle.
         parallactic_angle_rad: [-pa_deg.to_radians(); 2],
         field: 0,
         spectral_window,
@@ -227,12 +228,12 @@ fn generated_cells_open_with_casa_index_rules_and_swapped_mueller_tables() {
     assert_eq!(catalog.w_cell(w_of(0.49)), 0);
     assert_eq!(catalog.w_cell(-w_of(0.51)), 1);
     assert_eq!(catalog.w_cell(w_of(40.0)), W_PLANES - 1);
-    // The frequency cell is the nearest listed value; the PA cell the
-    // nearest angle on the circle.
+    // The frequency cell is the nearest listed value. The PA lookup
+    // takes the first angle within the absolute tolerance.
     assert_eq!(catalog.frequency_cell(1.49e9), 0);
     assert_eq!(catalog.frequency_cell(1.51e9), 1);
-    assert_eq!(catalog.pa_cell(17.0), 0);
-    assert_eq!(catalog.pa_cell(-350.0), 0);
+    assert_eq!(catalog.pa_cell(17.0_f32.to_radians()), Some(0));
+    assert_eq!(catalog.pa_cell((-350.0_f32).to_radians()), None);
     // Keys: the same group for ±w; the cube field names the native-frequency
     // cell, which without conjugate beams is the gridding cell itself.
     let key = catalog.key(&context(17.0, 1), 1.6e9, w_of(0.9));
