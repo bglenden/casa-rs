@@ -1,8 +1,8 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-11-02
-Verification: just verify
+Last reality check: 2026-11-12
+Verification: just docs-check (policy); applicable domain gates below (code)
 
 ## Test categories
 
@@ -68,7 +68,13 @@ Verification: just verify
 
 ## Commands and CI
 
-- Fast local gate: `just quick`; full pre-review gate: `just verify`
+- During development, use the cheapest meaningful regression/demonstration
+  check. Before pushing a stable diff, run one affected validation batch as
+  described in `AGENTS.md`, "Checks And Merging". Docs-only changes need
+  `just docs-check`. CI supplies full-crate/workspace coverage; do not repeat
+  it locally by default. `just quick` reproduces the broad local gate;
+  `just verify` is for an explicitly required milestone or release, not
+  every review.
 - Imaging T1 end-to-end tier: `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
 - Performance and evidence tool tests (`tools/perf/imager`, pytest):
   `just perf-tools-test`. CI's `perf_tools` job enforces them; `just quick`
@@ -124,10 +130,11 @@ a failure, resolve genuine platform-specific uncertainty, or satisfy an
 explicit user request. A narrower hosted job cannot stand in for a broader
 required gate such as `just verify`.
 
-Evidence reuse does not end the authorized task. While hosted checks run,
-continue independent work and handle failures under AGENTS.md's "While
-Checks Run"; a passing local result does not waive investigating a reported
-failure.
+Work while hosted checks run follows AGENTS.md's bounded assignment and
+budget. Take only a listed independent behavior that fits the remaining
+budget; otherwise stop active model work with one short pending-result
+handoff. Retain PR ownership and handle reported failures on resumption;
+a passing local result does not waive investigating a reported failure.
 
 Green evidence remains valid until a code, test, build, dependency, or
 runtime-configuration change could affect that gate. Review inspects the
