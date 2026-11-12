@@ -79,11 +79,17 @@ def initialize(path, correlations):
         tb.close()
 
 
-def save(path, cases):
+REFUSALS = [{"name": f"G_{interp}_malformed_scalar", "kind": "G", "interp": interp,
+             "stokes": LAYOUTS["full"], "probe": "control", "options": {}}
+            for interp in ("nearest", "linear")]
+
+
+def save(path, cases, refusals=()):
     import casatasks
 
     record = {"casa_version": casatasks.version_string(), "work_issue": 1053,
-              "recipe": "tools/simulation/sm_apply_scalar_oracle.py", "cases": cases}
+              "recipe": "tools/simulation/sm_apply_scalar_oracle.py", "cases": cases,
+              "refusals": refusals}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as stream:
         stream.write((json.dumps(record, separators=(",", ":"), allow_nan=False) + "\n").encode())
@@ -104,8 +110,24 @@ def worker(spec, out, fixture):
     bounds = float(min(times)), float(max(times))
     tb.close()
     info = calibration(sm, out / "terms.cal", bounds, spec["probe"])
+    if spec["kind"] == "G":
+        tb.open(str(out / "terms.cal"), nomodify=False)
+        tb.putkeyword("VisCal", "G Jones")
+        information = tb.info()
+        information["subType"] = "G Jones"
+        tb.putinfo(information)
+        tb.close()
     options = {"calwt": False, "t": 0.0, "opacity": 0.0, **spec["options"]}
     assert sm.setapply(table=str(out / "terms.cal"), interp=spec["interp"], **options)
+    if spec["kind"] == "G":
+        try:
+            sm.corrupt()
+        except RuntimeError as error:
+            save(fixture, [], [{**spec, "calibration": info, "outcome": "raises",
+                                "error": str(error)}])
+            sm.close()
+            return
+        raise AssertionError("CASA accepted a malformed one-parameter G table")
     assert sm.corrupt()
     sm.close()
     rows = read_rows(path)
@@ -122,17 +144,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--fixture", type=pathlib.Path, required=True)
-    parser.add_argument("--only", choices=[case["name"] for case in CASES])
+    parser.add_argument("--only", choices=[case["name"] for case in CASES + REFUSALS])
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     assert casatasks.version_string() == "6.7.6.14"
     args.out.mkdir(parents=True, exist_ok=True)
-    selected = [case for case in CASES if not args.only or case["name"] == args.only]
+    selected = [case for case in CASES + REFUSALS if not args.only or case["name"] == args.only]
     if args.worker:
         assert len(selected) == 1
         worker(selected[0], args.out, args.fixture)
         return
-    results = []
+    results, refusals = [], []
     for case in selected:
         out = args.out / case["name"]
         out.mkdir()
@@ -142,8 +164,10 @@ def main():
                             "--only", case["name"], "--worker"], stdout=log, stderr=subprocess.STDOUT,
                            check=True)
         with gzip.open(fixture, "rt") as handle:
-            results.extend(json.load(handle)["cases"])
-        save(args.fixture, results)
+            record = json.load(handle)
+            results.extend(record["cases"])
+            refusals.extend(record.get("refusals", []))
+        save(args.fixture, results, refusals)
         print(case["name"], "passed", flush=True)
 
 
