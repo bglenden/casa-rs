@@ -212,7 +212,8 @@ major cycle. A single-term mosaic or an AW-projected MT-MFS continuum
 run that reuses the PSF while forming a residual also reads the saved
 sensitivity and primary-beam mask. In a saved Taylor family only the
 principal weight image needs its scale restored. Higher moments are
-already stored in gridding units.
+already stored in gridding units. Two-term AW continuation uses the
+saved principal PB for correction and keeps an existing auxiliary PB.
 
 `backend` (`auto`, `cpu`, `gpu`) resolves once the problem is compiled.
 `auto` takes the GPU only for problems a T1 Metal law compares with the CPU

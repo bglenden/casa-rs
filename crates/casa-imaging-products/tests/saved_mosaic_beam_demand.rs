@@ -26,7 +26,8 @@ fn a_saved_mosaic_beam_read_is_charged_per_product_lane() {
     let output = ImageOutput::for_problem(&problem);
     let storage = ProductStoragePlan::new(1, 8).unwrap();
     let scratch = |read_bytes| {
-        let controls = ContinuumProductControls::default().preserving_mosaic_products(read_bytes);
+        let controls =
+            ContinuumProductControls::default().preserving_mosaic_products(read_bytes, false);
         let plan = PlannedContinuumGeneration::for_problem(&problem, &controls).unwrap();
         let demand = plan.planned_demand(&problem, storage, &output).unwrap();
         assert_eq!(demand.storage_plan().maximum_workers(), 2);
