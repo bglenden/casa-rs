@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>//!
 <a href=#7 id=7 data-nosnippet>7</a>//! The traversal reads each partition's selected fields' times and, when a
 <a href=#8 id=8 data-nosnippet>8</a>//! UV-distance interval or a W-projecting gridder needs them, the samples'
-<a href=#9 id=9 data-nosnippet>9</a>//! UVW. AW rotation also identifies each buffer with an unflagged
+<a href=#9 id=9 data-nosnippet>9</a>//! UVW. AW PA stepping also identifies each buffer with an unflagged
 <a href=#10 id=10 data-nosnippet>10</a>//! cross-correlation. A time's field comes with the batch, and a
 <a href=#11 id=11 data-nosnippet>11</a>//! partition's samples share one spectral window and observing session, so
 <a href=#12 id=12 data-nosnippet>12</a>//! the survey learns the selected fields, observations, times and windows
@@ -172,8 +172,8 @@
 <a href=#172 id=172 data-nosnippet>172</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) w_range: bool,
 <a href=#173 id=173 data-nosnippet>173</a>    <span class="doccomment">/// Whether analytic PB selection needs the antennas of actual rows.
 <a href=#174 id=174 data-nosnippet>174</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) track_pb_antennas: bool,
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Whether AW rotation needs the epochs CASA accepts into its major cycle.
-<a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) track_rotation_epochs: bool,
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Whether AW needs the epochs CASA accepts into its major cycle for PA stepping.
+<a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) track_aw_pa_epochs: bool,
 <a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Whether native AW needs its first cross-correlation sample.
 <a href=#178 id=178 data-nosnippet>178</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) first_cross: bool,
 <a href=#179 id=179 data-nosnippet>179</a>}
@@ -307,7 +307,7 @@
 <a href=#307 id=307 data-nosnippet>307</a>            data_group: <span class="self">self</span>.candidates.data_group.clone(),
 <a href=#308 id=308 data-nosnippet>308</a>            roles: Roles {
 <a href=#309 id=309 data-nosnippet>309</a>                values: <span class="bool-val">false</span>,
-<a href=#310 id=310 data-nosnippet>310</a>                flags: flags || (<span class="self">self</span>.track_rotation_epochs &amp;&amp; <span class="self">self</span>.stored_padding()),
+<a href=#310 id=310 data-nosnippet>310</a>                flags: flags || (<span class="self">self</span>.track_aw_pa_epochs &amp;&amp; <span class="self">self</span>.stored_padding()),
 <a href=#311 id=311 data-nosnippet>311</a>                weights: !flags &amp;&amp; <span class="self">self</span>.stored_padding(),
 <a href=#312 id=312 data-nosnippet>312</a>                <span class="comment">// A partition of several arrays tells its rows apart
 <a href=#313 id=313 data-nosnippet>313</a>                // sample by sample, padding by its NaN UVW.
@@ -560,7 +560,7 @@
 <a href=#560 id=560 data-nosnippet>560</a>    </span><span class="kw">let </span>array = plan.partition_array(candidate);
 <a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span>per_sample = plan.reads_uvw()
 <a href=#562 id=562 data-nosnippet>562</a>        || plan.track_pb_antennas
-<a href=#563 id=563 data-nosnippet>563</a>        || plan.track_rotation_epochs
+<a href=#563 id=563 data-nosnippet>563</a>        || plan.track_aw_pa_epochs
 <a href=#564 id=564 data-nosnippet>564</a>        || plan.stored_padding()
 <a href=#565 id=565 data-nosnippet>565</a>        || array.is_none();
 <a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span>counted = tested || plan.stored_padding() || array.is_none();
@@ -731,7 +731,7 @@
 <a href=#731 id=731 data-nosnippet>731</a>        }
 <a href=#732 id=732 data-nosnippet>732</a>        <span class="comment">// The synthesis major cycle skips a buffer with no valid cross-row
 <a href=#733 id=733 data-nosnippet>733</a>        // before AW can inspect its PA (SynthesisUtilMethods::validate).
-<a href=#734 id=734 data-nosnippet>734</a>        </span><span class="kw">if </span>plan.track_rotation_epochs &amp;&amp; !has_unflagged_cross &amp;&amp; !baseline.is_auto() {
+<a href=#734 id=734 data-nosnippet>734</a>        </span><span class="kw">if </span>plan.track_aw_pa_epochs &amp;&amp; !has_unflagged_cross &amp;&amp; !baseline.is_auto() {
 <a href=#735 id=735 data-nosnippet>735</a>            <span class="kw">let </span>epoch = batch.time.seconds_since(time, MjdHighPrec::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
 <a href=#736 id=736 data-nosnippet>736</a>            has_unflagged_cross = unflagged_row(plan, candidate, batch, sample, epoch, baseline)<span class="question-mark">?</span>;
 <a href=#737 id=737 data-nosnippet>737</a>        }
@@ -965,7 +965,7 @@
 <a href=#965 id=965 data-nosnippet>965</a>                    image_row_epoch: <span class="bool-val">false</span>,
 <a href=#966 id=966 data-nosnippet>966</a>                    w_range: <span class="bool-val">false</span>,
 <a href=#967 id=967 data-nosnippet>967</a>                    track_pb_antennas,
-<a href=#968 id=968 data-nosnippet>968</a>                    track_rotation_epochs: <span class="bool-val">false</span>,
+<a href=#968 id=968 data-nosnippet>968</a>                    track_aw_pa_epochs: <span class="bool-val">false</span>,
 <a href=#969 id=969 data-nosnippet>969</a>                    first_cross: <span class="bool-val">false</span>,
 <a href=#970 id=970 data-nosnippet>970</a>                },
 <a href=#971 id=971 data-nosnippet>971</a>                <span class="kw">super</span>::<span class="kw">super</span>::selection::spectral_windows(catalogue, [window]),
@@ -1052,7 +1052,7 @@
 <a href=#1052 id=1052 data-nosnippet>1052</a>                image_row_epoch: <span class="bool-val">false</span>,
 <a href=#1053 id=1053 data-nosnippet>1053</a>                w_range: <span class="bool-val">true</span>,
 <a href=#1054 id=1054 data-nosnippet>1054</a>                track_pb_antennas: <span class="bool-val">false</span>,
-<a href=#1055 id=1055 data-nosnippet>1055</a>                track_rotation_epochs: <span class="bool-val">false</span>,
+<a href=#1055 id=1055 data-nosnippet>1055</a>                track_aw_pa_epochs: <span class="bool-val">false</span>,
 <a href=#1056 id=1056 data-nosnippet>1056</a>                first_cross: <span class="bool-val">false</span>,
 <a href=#1057 id=1057 data-nosnippet>1057</a>            };
 <a href=#1058 id=1058 data-nosnippet>1058</a>            <span class="kw">let </span><span class="kw-2">mut </span>facts = Facts {
@@ -1188,7 +1188,7 @@
 <a href=#1188 id=1188 data-nosnippet>1188</a>            image_row_epoch: <span class="bool-val">false</span>,
 <a href=#1189 id=1189 data-nosnippet>1189</a>            w_range: <span class="bool-val">false</span>,
 <a href=#1190 id=1190 data-nosnippet>1190</a>            track_pb_antennas: <span class="bool-val">false</span>,
-<a href=#1191 id=1191 data-nosnippet>1191</a>            track_rotation_epochs: <span class="bool-val">true</span>,
+<a href=#1191 id=1191 data-nosnippet>1191</a>            track_aw_pa_epochs: <span class="bool-val">true</span>,
 <a href=#1192 id=1192 data-nosnippet>1192</a>            first_cross: <span class="bool-val">true</span>,
 <a href=#1193 id=1193 data-nosnippet>1193</a>        };
 <a href=#1194 id=1194 data-nosnippet>1194</a>        <span class="kw">let </span>request = plan.request(<span class="kw-2">&amp;</span>candidate, entry, <span class="bool-val">false</span>, <span class="number">1 </span>&lt;&lt; <span class="number">20</span>);
@@ -1234,7 +1234,7 @@
 <a href=#1234 id=1234 data-nosnippet>1234</a>            image_row_epoch: <span class="bool-val">false</span>,
 <a href=#1235 id=1235 data-nosnippet>1235</a>            w_range: <span class="bool-val">false</span>,
 <a href=#1236 id=1236 data-nosnippet>1236</a>            track_pb_antennas: <span class="bool-val">false</span>,
-<a href=#1237 id=1237 data-nosnippet>1237</a>            track_rotation_epochs: <span class="bool-val">false</span>,
+<a href=#1237 id=1237 data-nosnippet>1237</a>            track_aw_pa_epochs: <span class="bool-val">false</span>,
 <a href=#1238 id=1238 data-nosnippet>1238</a>            first_cross: <span class="bool-val">false</span>,
 <a href=#1239 id=1239 data-nosnippet>1239</a>        };
 <a href=#1240 id=1240 data-nosnippet>1240</a>        <span class="kw">let </span>catalogue = observation.catalogue();
@@ -1337,7 +1337,7 @@
 <a href=#1337 id=1337 data-nosnippet>1337</a>            image_row_epoch: <span class="bool-val">false</span>,
 <a href=#1338 id=1338 data-nosnippet>1338</a>            w_range: <span class="bool-val">false</span>,
 <a href=#1339 id=1339 data-nosnippet>1339</a>            track_pb_antennas: <span class="bool-val">false</span>,
-<a href=#1340 id=1340 data-nosnippet>1340</a>            track_rotation_epochs: <span class="bool-val">false</span>,
+<a href=#1340 id=1340 data-nosnippet>1340</a>            track_aw_pa_epochs: <span class="bool-val">false</span>,
 <a href=#1341 id=1341 data-nosnippet>1341</a>            first_cross: <span class="bool-val">false</span>,
 <a href=#1342 id=1342 data-nosnippet>1342</a>        };
 <a href=#1343 id=1343 data-nosnippet>1343</a>        <span class="kw">let </span>catalogue = observation.catalogue();

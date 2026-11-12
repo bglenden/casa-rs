@@ -983,6 +983,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#aw-cache-creation-and-reopening-can-select-different-pa-buffers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AW cache creation and reopening can select different PA buffers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#aw-aperture-rotation-can-regrid-an-already-rotated-cell" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1528,6 +1539,27 @@ with exact masks. The default 360-degree control also matches across both
 fields. CASA's separate one-degree coalescence in
 <code>CFCache::fillCFListFromDisk</code> and <code>CFStore2::resize</code> remains unverified for
 densely spaced imported headers (#1070).</p>
+<h2 id="aw-cache-creation-and-reopening-can-select-different-pa-buffers">AW cache creation and reopening can select different PA buffers<a class="headerlink" href="#aw-cache-creation-and-reopening-can-select-different-pa-buffers" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: CASA 6.7.6.14 cold and warm selection differs when PA coverage
+  intervals overlap. Casa-rs uses the sorted cache order in both runs (#1070).</li>
+<li>Affected code: <code>TransformMachines2/AWProjectFT.cc</code> (<code>findConvFunction</code>),
+  <code>CFStore2.cc</code> (<code>resize</code>, <code>nearestPA</code>) and <code>CFCache.cc</code>
+  (<code>fillCFListFromDisk</code>).</li>
+</ul>
+<p>CASA adds generated buffers in observation order and picks the first PA
+strictly inside <code>computepastep</code>. Reloading sorts the cache by PA before
+applying the same first-match rule. On FIELD 0 of <code>refim_mawproject.ms</code>
+at 5 degrees, both orders cover all 108 selected integrations using
+the same 19 buffers. They select different buffers at 57 integrations.
+CASA's cold and warm residuals differ by 3.284e-3 NRMS and 16 mask
+pixels. With the same cache pixels, a temporary insertion-order
+selector matches all seven CASA cold products. The sorted selector
+matches all seven warm products, with exact masks in both comparisons.</p>
+<p>Native cache generation plans a centre at each uncovered selected feed
+angle and uses CASA's sorted replay order for both fresh and reused
+cells. Its cold and warm outputs agree with the CASA warm reference.</p>
 <h2 id="aw-aperture-rotation-can-regrid-an-already-rotated-cell">AW aperture rotation can regrid an already rotated cell<a class="headerlink" href="#aw-aperture-rotation-can-regrid-an-already-rotated-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>

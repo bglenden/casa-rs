@@ -10492,7 +10492,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>360.0</code></td>
 <td><code>360.0</code>; <code>computepastep</code> → <code>computepastep</code></td>
 <td>Default only</td>
-<td>Imported awproject uses the first sorted PA strictly inside this angle and fails if a selected row lacks coverage. CASA's one-degree coalescence of densely spaced cache headers remains unverified. Native EVLA cache generation supports the default step. Other applicable AW families retain their own restrictions (#1070). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when (gridder='awphpg' or gridder='awprojectft' or gridder='awp2') (#1070)</td>
+<td>Imported awproject uses the first sorted PA strictly inside this angle and fails if a selected row lacks coverage. CASA's one-degree coalescence of densely spaced cache headers remains unverified. Explicit native EVLA generation also supports non-default steps for MFS with one selected field and spectral window. It generates every required PA and uses the sorted order on cold and warm runs. Other applicable AW families retain their own restrictions (#1070). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when (gridder='awphpg' or gridder='awprojectft' or gridder='awp2') (#1070)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
