@@ -52,6 +52,11 @@ CASES += [{"name": f"{kind}_nearest_{mode}_{probe}", "kind": kind,
               ("linear", "one_valid"), ("nearest", "one_valid"),
           ]]
 
+CASES += [{"name": f"{kind}_spw_{name}", "kind": kind, "interp": "linear,linear",
+           "options": {"spwmap": mapping}, "probe": "spw_mapping", "data_window": 1}
+          for kind in ("B", "Tf", "Df")
+          for name, mapping in (("broadcast", [0]), ("explicit", [0, 0]), ("fanout", [-999]))]
+
 
 def calibration(sm, path, kind, bounds, probe):
     from casatools import table
@@ -82,6 +87,8 @@ def calibration(sm, path, kind, bounds, probe):
                     values[:, :, selected] = True
                     values[:, 2, selected] = False
             tb.putcol(column, values)
+        if probe == "spw_mapping":
+            tb.putcol("SPECTRAL_WINDOW_ID", np.zeros(tb.nrows(), dtype=np.int32))
         tb.putkeyword("VisCal", kind + " Jones")
         information = tb.info()
         information["subType"] = kind + " Jones"
@@ -121,6 +128,29 @@ def save(path, cases):
 
 def worker(spec, out, fixture):
     original = parameters.calibration
+    original_session = parameters.make_session
+    if spec.get("data_window") == 1:
+        def make_second_window(path, stokes):
+            from casatools import simulator, table
+            sm = original_session(path, stokes=stokes)
+            sm.close()
+            for subtable, column in (("SPECTRAL_WINDOW", "NAME"), ("DATA_DESCRIPTION", "SPECTRAL_WINDOW_ID")):
+                tb = table()
+                tb.open(str(path / subtable), nomodify=False)
+                record = {name: tb.getcell(name, 0) for name in tb.colnames() if tb.iscelldefined(name, 0)}
+                tb.addrows(1)
+                for name, value in record.items():
+                    tb.putcell(name, 1, value)
+                tb.putcell(column, 1, "second" if column == "NAME" else 1)
+                tb.close()
+            tb = table()
+            tb.open(str(path), nomodify=False)
+            tb.putcol("DATA_DESC_ID", np.ones(tb.nrows(), dtype=np.int32))
+            tb.close()
+            sm = simulator()
+            assert sm.openfromms(str(path))
+            return sm
+        parameters.make_session = make_second_window
     def build(sm, path, kind, bounds):
         parameters.calibration = original
         try:

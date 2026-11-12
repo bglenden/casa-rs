@@ -143,8 +143,28 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
         case["stokes"].as_str().unwrap_or("XX XY YX YY"),
         resources(workers, 2 << 30),
     );
-    sm.observe(&scan("target", 0.0, 20.0)).unwrap();
-    sm.observe(&scan("offset", 20.0, 40.0)).unwrap();
+    let second_window = case["data_window"] == 1;
+    if second_window {
+        use super::predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
+        use casa_types::measures::frequency::FrequencyRef;
+        sm.set_spectral_window(&casa_simulation::SpectralWindowSpec {
+            name: "second".to_string(),
+            start_frequency_hz: FREQUENCY_HZ,
+            channel_width_hz: CHANNEL_HZ,
+            resolution_hz: CHANNEL_HZ,
+            frame: FrequencyRef::TOPO,
+            channel_count: 4,
+            stokes: "XX XY YX YY".to_string(),
+        })
+        .unwrap();
+    }
+    for (source, start, stop) in [("target", 0.0, 20.0), ("offset", 20.0, 40.0)] {
+        let mut spec = scan(source, start, stop);
+        if second_window {
+            spec.spectral_window = "second".to_string();
+        }
+        sm.observe(&spec).unwrap();
+    }
     sm.close().unwrap();
     input::prepare(&path);
     let calibration = directory.path().join("terms.cal");
@@ -164,7 +184,10 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
         interval_s: case["options"]["t"].as_f64().unwrap_or(0.0),
         interp: case["interp"].as_str().unwrap().to_string(),
         calwt: case["options"]["calwt"].as_bool().unwrap_or(false),
-        spwmap: vec![-1],
+        spwmap: case["options"]["spwmap"]
+            .as_array()
+            .map(|values| values.iter().map(|value| value.as_i64().unwrap()).collect())
+            .unwrap_or_else(|| vec![-1]),
         opacity: case["options"]["opacity"].as_f64().unwrap_or(0.0),
     })
     .unwrap();

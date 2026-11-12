@@ -18,7 +18,7 @@ fn frequency_tables_match_casa_with_phase_wraps_and_gaps() {
     let fixture: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 66);
+    assert_eq!(cases.len(), 75);
     for kind in ["B", "Tf", "Df"] {
         let case = |mode: &str| {
             cases
