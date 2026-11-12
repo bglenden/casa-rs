@@ -395,8 +395,9 @@ impl ImageDomainSpec {
 pub enum MissingPointingPolicy {
     /// Reject missing pointing metadata.
     Reject,
-    /// Explicitly substitute the phase-tracking centre.
-    UsePhaseTrackingCentre,
+    /// Substitute the visibility field's phase direction when an antenna
+    /// has no pointing sample, as CASA AW projection does.
+    UseFieldPhaseCentre,
     /// Point every row at its field's direction when the store holds no
     /// pointing sample at all (no POINTING table, or an empty one), as
     /// CASA's mosaic does (`SimplePBConvFunc::pointingDirAnt1` takes the

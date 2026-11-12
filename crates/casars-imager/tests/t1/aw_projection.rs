@@ -889,3 +889,44 @@ fn aw_projection_images_on_its_pointing_table() {
     controls["usepointing"] = json!(true);
     observation.image("aw-pointing-image", controls);
 }
+
+/// AW uses each visibility's FIELD phase direction when `usepointing` has
+/// no antenna pointing sample, even with a different requested phasecentre
+/// (`VisBufferUtil::getPointingDir`, #1070).
+#[test]
+fn aw_without_pointing_samples_points_at_its_fields() {
+    use casa_ms::{MeasurementSet, SubtableId};
+
+    let setup = Setup {
+        fields: vec![
+            Setup::pointing([0.002, -0.001]),
+            Setup::pointing([-0.002, 0.001]),
+        ],
+        ..two_window_setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).expect("ms");
+        let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+        let rows: Vec<_> = (0..pointing.row_count()).collect();
+        assert!(!rows.is_empty(), "fixture initially has pointing samples");
+        pointing.remove_rows(&rows).expect("empty POINTING");
+        ms.save().expect("save");
+    }
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
+    controls["niter"] = json!(0);
+    controls["pbcor"] = json!(false);
+    let [ra, dec] = Setup::pointing([0.0003, 0.0007]);
+    controls["phasecenter"] = json!(format!("J2000 {ra}rad {dec}rad"));
+    let (_, fields) = observation.image("aw-field-directions", controls.clone());
+    controls["usepointing"] = json!(true);
+    let (_, pointed) = observation.image("aw-empty-pointing", controls);
+    let expected = fields.get(".weight").values();
+    let actual = pointed.get(".weight").values();
+    let scale = expected.mapv(|pixel| pixel.powi(2)).sum();
+    let squared_error = (&actual - &expected).mapv(|pixel| pixel.powi(2)).sum();
+    let nrms = (squared_error / scale).sqrt();
+    assert!(scale > 0.0 && nrms < 1.0e-5, "AW weight NRMS {nrms}");
+}
