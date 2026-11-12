@@ -129,6 +129,29 @@ fn table(path: &Path, output: &Path, case: &Value) {
     }
 }
 
+pub(super) fn leakage_fixture(path: &Path, output: &Path) {
+    let ms = MeasurementSet::open(path).unwrap();
+    let time = |row| match ms
+        .main_table()
+        .cell_accessor(row, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+    {
+        ScalarValue::Float64(value) => *value,
+        _ => panic!("TIME"),
+    };
+    table(
+        path,
+        output,
+        &serde_json::json!({
+            "kind": "D", "calibration": {
+                "first_time_s": time(0), "last_time_s": time(ms.row_count()-1), "rows": 2*ANTENNAS,
+            },
+        }),
+    );
+}
+
 pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     let export = std::env::var_os(if frequency::is_frequency(case["kind"].as_str().unwrap()) {
         "CASA_RS_APPLY_FREQUENCY_OUT"

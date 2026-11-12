@@ -111,6 +111,8 @@ enum AppliedKind {
     SystemTemperature,
     General,
     FullLeakage,
+    CrossPhase,
+    SkyReceptorGain,
 }
 
 impl AppliedKind {
@@ -125,13 +127,15 @@ impl AppliedKind {
             | Self::SystemTemperature => JonesKind::Gain,
             Self::Leakage | Self::FullLeakage => JonesKind::Leakage,
             Self::General => JonesKind::General,
-            Self::GainCurve | Self::PowerCurve => JonesKind::SkyGain,
+            Self::GainCurve | Self::PowerCurve | Self::CrossPhase | Self::SkyReceptorGain => {
+                JonesKind::SkyGain
+            }
         }
     }
 
     fn receptors(self) -> usize {
         match self {
-            Self::Scalar | Self::Opacity => 1,
+            Self::Scalar | Self::Opacity | Self::CrossPhase => 1,
             Self::AntennaPosition => 3,
             Self::GainCurve => 8,
             Self::PowerCurve => 16,
@@ -275,7 +279,7 @@ impl Simulator {
         };
         let frequency = matches!(
             kind.as_str(),
-            "B" | "TF" | "DF" | "B TSYS" | "JF" | "DFGEN" | "TFOPAC"
+            "B" | "TF" | "DF" | "B TSYS" | "JF" | "DFGEN" | "TFOPAC" | "XF" | "GLINXPHF"
         )
         .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
@@ -291,6 +295,8 @@ impl Simulator {
             "B TSYS" => AppliedKind::SystemTemperature,
             "J" | "JF" => AppliedKind::General,
             "DGEN" | "DFGEN" => AppliedKind::FullLeakage,
+            "X" | "XF" => AppliedKind::CrossPhase,
+            "GLINXPH" | "GLINXPHF" => AppliedKind::SkyReceptorGain,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
         let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;

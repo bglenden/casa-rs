@@ -14,7 +14,11 @@ use std::path::{Path, PathBuf};
 
 fn parameters(kind: &str, antenna: usize, channel: usize) -> Vec<Complex32> {
     let a = antenna as f64;
-    let values: Vec<(f64, f64)> = if matches!(kind, "J" | "Jf") {
+    let values: Vec<(f64, f64)> = if matches!(kind, "X" | "Xf") {
+        vec![(1.1 + 0.03 * a, 0.2)]
+    } else if matches!(kind, "GlinXph" | "GlinXphf") {
+        vec![(1.1 + 0.03 * a, 0.2), (0.8 + 0.02 * a, -0.1)]
+    } else if matches!(kind, "J" | "Jf") {
         vec![
             (1.1 + 0.03 * a, 0.2),
             (0.02 * a, 0.03),
@@ -196,7 +200,7 @@ pub(super) fn run(case: &Json, workers: usize) -> Vec<Vec<Complex32>> {
     } else {
         calibration
     };
-    sm.set_apply(&ApplySpec {
+    let spec = ApplySpec {
         table: calibration.to_string_lossy().into_owned(),
         kind: String::new(),
         interval_s: 0.,
@@ -204,8 +208,17 @@ pub(super) fn run(case: &Json, workers: usize) -> Vec<Vec<Complex32>> {
         calwt: false,
         spwmap: vec![-1],
         opacity: 0.,
-    })
-    .unwrap();
+    };
+    if case["leakage"] == true {
+        let leakage = root.path().join("leakage.cal");
+        support::leakage_fixture(&path, &leakage);
+        sm.set_apply(&ApplySpec {
+            table: leakage.to_string_lossy().into_owned(),
+            ..spec.clone()
+        })
+        .unwrap();
+    }
+    sm.set_apply(&spec).unwrap();
     sm.corrupt().unwrap();
     sm.close().unwrap();
     let rows = support::compare(&path, case);

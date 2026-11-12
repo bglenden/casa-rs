@@ -22,7 +22,7 @@ fn full_polarized_table_errors_match_casa() {
     let fixture: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 5);
+    assert_eq!(cases.len(), 10);
     for case in cases {
         assert_eq!(case["outcome"], "returned");
         assert_eq!(

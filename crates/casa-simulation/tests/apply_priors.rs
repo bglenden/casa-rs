@@ -7,10 +7,7 @@ mod predict_support;
 #[allow(dead_code, reason = "reuse the complete MS comparison")]
 mod support;
 
-use casa_calibration::{
-    GencalRequest, GencalType, SimulatedJones, SimulatedSolution, SolutionValues, gencal,
-    write_simulated_jones_table,
-};
+use casa_calibration::{GencalRequest, GencalType, gencal};
 use casa_simulation::{ApplySpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::{EpochRef, MEpoch};
@@ -197,29 +194,6 @@ fn time_axis(path: &Path, case: &Json) {
     table.save(TableOptions::new(path)).unwrap();
 }
 
-fn leakage_table(ms: &Path, output: &Path, case: &Json) {
-    let ms = casa_ms::MeasurementSet::open(ms).unwrap();
-    let times = [
-        case["rows"][0]["time_s"].as_f64().unwrap(),
-        case["rows"].as_array().unwrap().last().unwrap()["time_s"]
-            .as_f64()
-            .unwrap(),
-    ];
-    let rows = times.into_iter().enumerate().flat_map(|(field, time_s)| {
-        (0..predict_support::ANTENNAS).map(move |antenna| SimulatedSolution {
-            time_s,
-            field_id: field as i32,
-            spectral_window_id: 0,
-            antenna: antenna as i32,
-            values: SolutionValues::Receptors(
-                support::receptor_values_f64("D", antenna, time_s - times[0])
-                    .map(|value| casa_types::Complex32::new(value.re as f32, value.im as f32)),
-            ),
-        })
-    });
-    write_simulated_jones_table(&ms, output, SimulatedJones::Leakage, rows).unwrap();
-}
-
 fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
     let export = std::env::var_os("CASA_RS_APPLY_PRIORS_OUT");
     let root = if let Some(out) = &export {
@@ -314,7 +288,7 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
     };
     if case["leakage"] == true {
         let leakage = root.path().join("leakage.cal");
-        leakage_table(&path, &leakage, case);
+        support::leakage_fixture(&path, &leakage);
         sm.set_apply(&ApplySpec {
             table: leakage.to_string_lossy().into_owned(),
             ..spec.clone()

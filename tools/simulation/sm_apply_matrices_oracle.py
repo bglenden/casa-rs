@@ -7,7 +7,7 @@ import numpy as np
 from casatools import simulator, table
 from casatasks import version_string
 from sm_multiple_models_oracle import make_session
-from sm_apply_parameters_oracle import initialize
+from sm_apply_parameters_oracle import initialize, calibration as leakage_table
 from sm_flagged_samples_oracle import read_rows
 from sm_apply_time_oracle import write
 
@@ -15,12 +15,21 @@ CASES=[dict(name='general_jones',kind='J',channels=1),
        dict(name='flagged_general_jones',kind='J',channels=1,flag=True),
        dict(name='spectral_general_jones',kind='Jf',channels=4),
        dict(name='full_leakage',kind='Dgen',channels=1),
-       dict(name='spectral_full_leakage',kind='Dfgen',channels=4)]
+       dict(name='spectral_full_leakage',kind='Dfgen',channels=4),
+       dict(name='cross_hand_phase',kind='X',channels=1),
+       dict(name='spectral_cross_hand_phase',kind='Xf',channels=4),
+       dict(name='polarized_phase_gains',kind='GlinXph',channels=1),
+       dict(name='spectral_polarized_phase_gains',kind='GlinXphf',channels=4),
+       dict(name='phase_gains_with_leakage',kind='GlinXph',channels=1,leakage=True)]
 
 
 def parameters(kind, antenna, channel):
     a=float(antenna)
-    if kind in ('J','Jf'):
+    if kind in ('X','Xf'):
+        values=[1.1+.03*a+.2j]
+    elif kind in ('GlinXph','GlinXphf'):
+        values=[1.1+.03*a+.2j,.8+.02*a-.1j]
+    elif kind in ('J','Jf'):
         values=[1.1+.03*a+.2j,.02*a+.03j,-.01*a+.01j,.8+.02*a-.1j]
     else:
         values=[.02+.01*a+.03j,-.01*a+.01j]
@@ -55,6 +64,9 @@ def main():
             for column in ('CHAN_WIDTH','RESOLUTION','EFFECTIVE_BW'):tb.putcell(column,0,np.full(4,15.625e6))
             tb.close()
         sm=simulator();assert sm.openfromms(str(path));record={**spec,'calibration_rows':count};stage='setapply'
+        if spec.get('leakage'):
+            leakage=directory/'leakage.cal';leakage_table(sm,leakage,'D',(float(min(times)),float(max(times))))
+            assert sm.setapply(table=str(leakage),interp='linear',calwt=False)
         try:
             assert sm.setapply(table=str(terms),interp='linear,nearest',calwt=False);stage='corrupt';assert sm.corrupt();record['outcome']='returned'
         except RuntimeError as error:record.update(outcome='raises',stage=stage,error=str(error))

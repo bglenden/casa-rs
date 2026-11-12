@@ -34,6 +34,7 @@ def check_table(path, case):
 def consume(directory, case, output):
     sm=make_session(output,stokes='XX XY YX YY');sm.close();initialize(output);initialize_matrix_data(output)
     sm=simulator();assert sm.openfromms(str(output))
+    if case.get('leakage'):assert sm.setapply(table=str((directory/'leakage.cal').resolve()),interp='linear',calwt=False)
     assert sm.setapply(table=str((directory/'terms.cal').resolve()),interp='linear,nearest',calwt=False)
     assert sm.corrupt();sm.close();return compare(output,case)
 

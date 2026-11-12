@@ -55,6 +55,11 @@ impl Geometry {
     ) -> Option<[Complex32; 2]> {
         let one = Complex32::new(1., 0.);
         match kind {
+            AppliedKind::CrossPhase => Some(if solution.flags[channel] {
+                [one; 2]
+            } else {
+                [solution.value(0, channel), one]
+            }),
             AppliedKind::Delay | AppliedKind::MultiBandDelay => {
                 Some(std::array::from_fn(|receptor| {
                     if solution.flags[receptor] {
