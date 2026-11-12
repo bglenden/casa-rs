@@ -416,106 +416,44 @@ fn read_times(path: &Path) -> Vec<f64> {
         .collect()
 }
 
-/// CASA snapshots window coverage at setapply. An added window remains
-/// unchanged, while the earlier window still takes the constant gain.
+/// The open new-window coverage scope must return its explicit refusal,
+/// rather than indexing beyond the mapping captured by setapply.
 #[test]
-fn a_new_window_after_setapply_matches_casas_coverage_snapshot() {
+fn a_new_window_after_setapply_refuses_with_an_issue_instead_of_panicking() {
     use casa_simulation::SpectralWindowSpec;
     use casa_types::measures::frequency::FrequencyRef;
-    use flate2::read::GzDecoder;
     use predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
-    use std::io::Read;
-    let mut text = String::new();
-    GzDecoder::new(&include_bytes!("data/sm_apply_later_window_casa.json.gz")[..])
-        .read_to_string(&mut text)
-        .unwrap();
-    let reference: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(reference["casa_version"], "6.7.6.14");
-    let factors = reference["data_gain_factors_by_window"].as_array().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let point = point(directory.path());
     let (reference, times) = observed_times(directory.path(), &point);
     let gains = directory.path().join("gains.cal");
     write_gains(&reference, &gains, &[(times[0], 0, 2.0)]);
-    let run = |name: &str, calibrated: bool| {
-        let path = directory.path().join(name);
-        let mut sm = observed(&path, "XX YY", &point, 10.0);
-        if calibrated {
-            let mut spec = apply(&gains, "linear");
-            spec.spwmap = vec![0];
-            sm.set_apply(&spec).unwrap();
-        }
-        sm.set_spectral_window(&SpectralWindowSpec {
-            name: "later".into(),
-            start_frequency_hz: FREQUENCY_HZ,
-            channel_width_hz: CHANNEL_HZ,
-            resolution_hz: CHANNEL_HZ,
-            frame: FrequencyRef::TOPO,
-            channel_count: 4,
-            stokes: "XX YY".into(),
-        })
-        .unwrap();
-        let mut later = scan("target", 180.0, 190.0);
-        later.spectral_window = "later".into();
-        sm.observe(&later).unwrap();
-        sm.predict(&PredictSpec {
-            images: vec![],
-            component_lists: vec![point.clone()],
-            incremental: false,
-        })
-        .unwrap();
-        if calibrated {
-            sm.corrupt().unwrap();
-        }
-        sm.close().unwrap();
-        let ms = casa_ms::MeasurementSet::open(&path).unwrap();
-        assert!((0..ms.row_count()).any(|row| {
-            matches!(
-                ms.main_table()
-                    .cell_accessor(row, "DATA_DESC_ID")
-                    .unwrap()
-                    .scalar()
-                    .unwrap(),
-                casa_types::ScalarValue::Int32(1)
-            )
-        }));
-        let windows = (0..ms.row_count())
-            .map(|row| {
-                match ms
-                    .main_table()
-                    .cell_accessor(row, "DATA_DESC_ID")
-                    .unwrap()
-                    .scalar()
-                    .unwrap()
-                {
-                    casa_types::ScalarValue::Int32(window) => *window,
-                    _ => panic!("DATA_DESC_ID"),
-                }
-            })
-            .collect::<Vec<_>>();
-        (read_main(&path).0, windows)
-    };
-    let (plain, windows) = run("plain.ms", false);
-    let (applied, applied_windows) = run("applied.ms", true);
-    assert_eq!(windows, applied_windows);
-    assert_eq!(plain.len(), applied.len());
-    let mut power = 0.0f64;
-    let mut by_window = [0.0f64; 2];
-    let mut error = 0.0f64;
-    for ((plain, applied), window) in plain.iter().zip(&applied).zip(windows) {
-        for (plain, applied) in plain.data.iter().zip(&applied.data) {
-            let expected = *plain * factors[window as usize].as_f64().unwrap() as f32;
-            power += f64::from(expected.norm_sqr());
-            by_window[window as usize] += f64::from(expected.norm_sqr());
-            error += f64::from((*applied - expected).norm_sqr());
-        }
-    }
-    assert!(
-        by_window.iter().all(|&power| power > 0.0),
-        "both windows carry a signal"
+    let mut sm = observed(
+        &directory.path().join("new-window.ms"),
+        "XX YY",
+        &point,
+        10.0,
     );
-    assert!(
-        power > 0.0 && (error / power).sqrt() < 1e-6,
-        "CASA applies gain2 to its original window and leaves the later window unchanged"
-    );
+    let mut spec = apply(&gains, "linear");
+    spec.spwmap = vec![0];
+    sm.set_apply(&spec).unwrap();
+    sm.set_spectral_window(&SpectralWindowSpec {
+        name: "later".into(),
+        start_frequency_hz: FREQUENCY_HZ,
+        channel_width_hz: CHANNEL_HZ,
+        resolution_hz: CHANNEL_HZ,
+        frame: FrequencyRef::TOPO,
+        channel_count: 4,
+        stokes: "XX YY".into(),
+    })
+    .unwrap();
+    let mut later = scan("target", 180.0, 190.0);
+    later.spectral_window = "later".into();
+    sm.observe(&later).unwrap();
+    let error = sm
+        .corrupt()
+        .expect_err("new-window corruption is explicitly unfinished");
+    assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
+    assert!(error.message().contains("#1053"));
+    sm.close().unwrap();
 }

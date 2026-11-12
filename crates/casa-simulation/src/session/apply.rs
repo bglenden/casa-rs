@@ -177,9 +177,9 @@ impl Simulator {
     ///   channels raises at `corrupt`, as CASA does.
     /// - No rows observed yet: refused, as `setgain` refuses.
     ///
-    /// The term covers the spectral windows present at `setapply`. Later
-    /// scans in those windows take their row-time solutions; a window
-    /// configured afterward is left unchanged by this term, as in CASA.
+    /// A spectral window observed after `setapply` remains an explicit
+    /// #1053 refusal. CASA skips the whole corruption step in that window,
+    /// including noise; that stateful coverage combination is unfinished.
     ///
     /// Flagged G/T parameters and missing G/T antennas use unit gains,
     /// as in CASA. A scalar T parameter applies equally to all correlations.
@@ -290,12 +290,7 @@ impl Simulator {
             JonesSource::Simulated(term) => Ok(Arc::clone(term)),
             JonesSource::Applied(table) => {
                 let antennas = self.antennas.len();
-                let (mut per_window, _) = self.integration_counts();
-                // CASA's simulated calibration term covers the MS windows
-                // present at setapply; later windows are left unchanged.
-                for count in per_window.iter_mut().skip(table.spwmap.len()) {
-                    *count = 0;
-                }
+                let (per_window, _) = self.integration_counts();
                 let channels = self
                     .spectral_windows
                     .iter()
@@ -377,9 +372,11 @@ impl Simulator {
             Vec::new()
         };
         for (index, scan) in self.scans.iter().enumerate() {
-            let Some(&window) = table.spwmap.get(scan.spectral_window_id) else {
-                continue;
-            };
+            let window = table
+                .spwmap
+                .get(scan.spectral_window_id)
+                .copied()
+                .ok_or_else(|| not_yet("with a spectral window observed after setapply"))?;
             let output_hz = if table.frequency.is_some() {
                 self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
             } else {
