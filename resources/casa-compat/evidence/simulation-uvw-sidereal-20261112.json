@@ -1880,5 +1880,16 @@
    "spectral_windows": null,
    "measurement_sets": []
   }
- ]
+ ],
+ "merged_main_integration": {
+  "source_revision": "a372cfad1e97baed85aa28cd6a2e2497592f4efc",
+  "main_revision": "07beee7e7d69b1293d480784e670b709702ec9c8",
+  "source_audit": "All tracked file hashes match; no extra Rust/Python/TOML sources.",
+  "reviewed_production_helper_unchanged": true,
+  "clippy": "casa-types and casa-simulation, all targets, -D warnings: passed",
+  "passed": 29,
+  "ignored": 1,
+  "tests": "Independent sidereal 1; backend 5; new flagged-sample matrix 3; existing-MS 14; numerical quick PSF 3; patch memory laws 3. One PSF subprocess helper is executed by its parent.",
+  "meaning": "Merged the landed flagged-sample fix and ordinary-MFS restart changes from main. Both numerical changes pass together on CPU/actual Metal, existing MSs and the admitted patch buffers. The original 1514-test and 17-scenario receipts keep their original exact source revisions."
+ }
 }
