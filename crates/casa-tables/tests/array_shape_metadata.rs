@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shapes come from storage headers, with row order and undefinedness intact.
-use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
+use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use std::path::Path;
 
 fn table(shapes: &[Option<Vec<usize>>], fixed: bool) -> Table {
     let column = if fixed {
@@ -27,6 +28,27 @@ fn table(shapes: &[Option<Vec<usize>>], fixed: bool) -> Table {
         table.add_row(RecordValue::new(fields)).unwrap();
     }
     table
+}
+
+fn save(table: &Table, path: &Path, manager: DataManagerKind) {
+    let tile_shape = if manager == DataManagerKind::TiledCellStMan {
+        vec![2, 4]
+    } else {
+        vec![2, 4, 2]
+    };
+    let bindings = std::collections::HashMap::from([(
+        "DATA".to_string(),
+        ColumnBinding {
+            data_manager: manager,
+            tile_shape: Some(tile_shape),
+        },
+    )]);
+    table
+        .save_with_bindings(
+            TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+        )
+        .unwrap_or_else(|error| panic!("{manager:?} input: {error}"));
 }
 
 #[test]
@@ -54,9 +76,7 @@ fn metadata_shapes_preserve_rows_duplicates_and_undefined_cells() {
         };
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("arrays");
-        table(&shapes, fixed)
-            .save(TableOptions::new(&path).with_data_manager(manager))
-            .unwrap();
+        save(&table(&shapes, fixed), &path, manager);
         let reopened = Table::open(TableOptions::new(&path)).unwrap();
         let column = reopened.column_accessor("DATA").unwrap();
         let selected = [3, 0, 1, 3, 2];
@@ -99,9 +119,7 @@ fn tiled_shape_metadata_never_reads_the_numerical_files() {
         };
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("arrays");
-        table(&shapes, fixed)
-            .save(TableOptions::new(&path).with_data_manager(manager))
-            .unwrap();
+        save(&table(&shapes, fixed), &path, manager);
         let mut removed = 0;
         for entry in std::fs::read_dir(&path).unwrap() {
             let entry = entry.unwrap();
