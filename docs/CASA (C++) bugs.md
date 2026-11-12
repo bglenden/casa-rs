@@ -491,6 +491,31 @@ the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
 
+## AW pointing can reuse the origin of an earlier convolution buffer
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. casa-rs uses the current buffer's origin (#1070).
+- Affected code: `TransformMachines2/VB2CFBMap.cc`, `PhaseGrad.cc`
+  (`needsNewPhaseGrad`, `ComputeFieldPointingGrad`) and the resampler's
+  `accumulateToGrid.inc` and `accumulateFromGrid.inc`.
+
+The gradient array uses the selected PA buffer's maximum CF width. Its
+origin is `width/2` for an even width and `width/2+1` for an odd width.
+The resampler reads the gradient about `width/2` in either case. A wider
+array can survive a switch to a smaller CF buffer on the same field.
+PSF formation visits the weight buffer first, and the residual can use its
+origin when the two buffers have opposite parity.
+
+On the offset field of `refim_oneshiftpoint.mosaic.ms`, making the imaging
+or weight buffer even produces a 0.0325 NRMS change in `.residual.tt0`
+between fresh PSF formation and `calcpsf=False,calcres=True` with that same
+PSF. The PSF, weights, inputs and cache are identical between each pair.
+The uniformly odd control produces identical CASA residuals. Casa-rs uses
+the maximum width of each selected imaging or weight buffer independently.
+Its fresh and saved-PSF runs agree with all 21 CASA products from the
+saved-PSF control, including masks and both PB-corrected Taylor images.
+Prediction uses the conjugate of the imaging phase.
+
 ## AW MT-MFS restart multiplies saved higher Taylor weights again
 
 - Date noted: 2026-11-12
