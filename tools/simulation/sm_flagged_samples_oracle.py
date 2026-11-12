@@ -139,6 +139,71 @@ def worker(spec, out, fixture):
     save(fixture, [case])
 
 
+def verify_native(root, fixture, out):
+    """C++ readback of every exported native MS, including flagged DATA."""
+    with gzip.open(fixture, "rt") as handle:
+        cases = {case["name"]: case for case in json.load(handle)["cases"]}
+    reports = []
+    for manifest in sorted(root.glob("*/case.json")):
+        run = json.loads(manifest.read_text())
+        case = cases[run["name"]]
+        rows = read_rows(manifest.parent / "flagged.ms")
+        assert len(rows) == len(case["rows"])
+        data = np.array([row["data"] for row in rows])
+        actual = data[..., 0] + 1j * data[..., 1]
+        expected = np.array([row["data"] for row in case["rows"]])
+        expected = expected[..., 0] + 1j * expected[..., 1]
+        is_noise = case.get("kind") == "noise" or case.get("noise")
+        incremental = case.get("incremental", False)
+        if case.get("kind") == "mixed":
+            parts = [np.array([row["data"] for row in cases[name]["rows"]])
+                     for name in ("ft_replace", "components_replace")]
+            expected = sum(part[..., 0] + 1j * part[..., 1] for part in parts)
+            if incremental:
+                expected += 3 + 4j
+        if case.get("machine") == "sd":
+            for index, row in enumerate(rows):
+                if row["antennas"][0] != row["antennas"][1]:
+                    expected[index, :] = 3 + 4j if incremental else 0
+        for row, reference in zip(rows, case["rows"]):
+            for name in ("antennas", "field", "flag_row", "flags", "weight", "sigma", "model_data"):
+                assert row[name] == reference[name], (run, name)
+            assert row["corrected_data"] == row["data"], run
+        assert np.isfinite(actual).all()
+        if is_noise:
+            if case.get("kind") == "noise":
+                baseline = np.full_like(actual, 3 + 4j)
+            else:
+                control = cases["ft_increment" if incremental else "ft_replace"]
+                baseline = np.array([row["data"] for row in control["rows"]])
+                baseline = baseline[..., 0] + 1j * baseline[..., 1]
+            residual = actual - baseline
+            statistics = []
+            for flagged in (False, True):
+                draws = []
+                for index, row in enumerate(rows):
+                    if row["antennas"][0] == row["antennas"][1]:
+                        assert np.max(np.abs(residual[index].imag)) < 1e-6
+                        continue
+                    for sample, flag in enumerate(row["flags"]):
+                        if (row["flag_row"] or flag) == flagged:
+                            draws.extend([residual[index, sample].real, residual[index, sample].imag])
+                mean, variance = float(np.mean(draws)), float(np.var(draws))
+                assert len(draws) > 300 and abs(mean) < 5 * 0.1 / np.sqrt(len(draws))
+                assert 0.006 < variance < 0.014, (run, flagged, variance)
+                statistics.append({"flagged": flagged, "draws": len(draws), "mean": mean, "variance": variance})
+            reports.append({**run, "noise": statistics})
+        else:
+            error, power = np.sum(np.abs(actual - expected) ** 2), np.sum(np.abs(expected) ** 2)
+            nrms = float(np.sqrt(error / power))
+            assert np.all(actual[expected == 0] == 0) and nrms <= 1e-3, (run, nrms)
+            reports.append({**run, "data_nrms": nrms})
+    assert len(reports) == 44, f"Expected 34 CPU and 10 actual Metal outputs, got {len(reports)}"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "cpp-readback.json").write_text(json.dumps({"runs": reports}, indent=2) + "\n")
+    print("C++ readback:", len(reports), "native outputs passed", flush=True)
+
+
 def main():
     import casatasks
 
@@ -146,12 +211,17 @@ def main():
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--fixture", type=pathlib.Path, required=True)
     parser.add_argument("--only", choices=[c["name"] for c in CASES])
+    parser.add_argument("--verify-native", type=pathlib.Path,
+                        help="Read exported CASA_RS_FLAGGED_SAMPLES_OUT MSs through CASA C++")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if casatasks.version_string() != "6.7.6.14":
         raise RuntimeError("Expected CASA 6.7.6.14")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
+    if args.verify_native is not None:
+        verify_native(args.verify_native, args.fixture, out)
+        return
     selected = [c for c in CASES if args.only is None or c["name"] == args.only]
     if args.worker:
         worker(selected[0], out, args.fixture)

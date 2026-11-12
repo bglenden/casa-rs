@@ -201,7 +201,13 @@ fn options(workers: usize, backend: BackendRequest) -> SimulatorOptions {
 }
 
 fn run_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Row> {
-    let directory = tempfile::tempdir().unwrap();
+    let export = std::env::var_os("CASA_RS_FLAGGED_SAMPLES_OUT");
+    let directory = if let Some(root) = &export {
+        std::fs::create_dir_all(root).unwrap();
+        tempfile::tempdir_in(root).unwrap()
+    } else {
+        tempfile::tempdir().unwrap()
+    };
     let a = write_model(
         directory.path(),
         "a.image",
@@ -263,7 +269,15 @@ fn run_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Row> {
         assert_eq!(summary.unwrap().backend, "Some(Metal)");
     }
     check_columns(&path, case);
-    read_main(&path).0
+    let rows = read_main(&path).0;
+    if export.is_some() {
+        let record = serde_json::json!({
+            "name": case["name"], "workers": workers, "backend": format!("{backend:?}"),
+        });
+        std::fs::write(directory.path().join("case.json"), record.to_string()).unwrap();
+        let _kept = directory.keep();
+    }
+    rows
 }
 
 fn complex(value: &Value) -> Complex32 {
