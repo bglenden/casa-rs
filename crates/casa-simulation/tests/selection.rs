@@ -411,6 +411,11 @@ fn close(sm: Simulator, case: &Value, backend: BackendRequest) {
         } else {
             "Cpu"
         };
+        let expected = if case["fresh"] == true {
+            expected.to_string()
+        } else {
+            format!("Some({expected})")
+        };
         assert_eq!(summary.unwrap().backend, expected);
     }
 }
