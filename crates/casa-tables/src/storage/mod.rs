@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![allow(dead_code)]
 
+mod array_shapes;
 mod array_sources;
 pub(crate) mod canonical;
 mod cell_elements;
@@ -3160,67 +3161,6 @@ impl CompositeStorage {
             }
             _ => Ok(None),
         }
-    }
-
-    pub(crate) fn plain_array_cell_is_defined_uncached(
-        &self,
-        table_dat: &TableDatContents,
-        read_metadata: &TiledReadMetadata,
-        column: &str,
-        row_index: usize,
-    ) -> Result<bool, StorageError> {
-        let desc_idx = table_dat
-            .table_desc
-            .columns
-            .iter()
-            .position(|desc| desc.col_name == column)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!("array column '{column}' not found"))
-            })?;
-        if !table_dat.table_desc.columns[desc_idx].is_array {
-            return Err(StorageError::FormatMismatch(format!(
-                "column '{column}' is not an array column"
-            )));
-        }
-        let dm_seq_nr = table_dat
-            .column_set
-            .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "array column '{column}' missing ColumnSet binding"
-                ))
-            })?
-            .dm_seq_nr;
-        let dm = table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .find(|manager| manager.seq_nr == dm_seq_nr)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "array column '{column}' missing data manager {dm_seq_nr}"
-                ))
-            })?;
-        if dm.type_name != "TiledShapeStMan" {
-            return Err(StorageError::FormatMismatch(format!(
-                "metadata-only array-cell definedness for column '{column}' requires TiledShapeStMan, found {}",
-                dm.type_name
-            )));
-        }
-        let target_col_idx = table_dat
-            .column_set
-            .columns
-            .iter()
-            .filter(|entry| entry.dm_seq_nr == dm_seq_nr)
-            .position(|entry| entry.original_name == column)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "array column '{column}' missing data-manager column binding"
-                ))
-            })?;
-        read_metadata.shape_cell_is_defined(dm_seq_nr, target_col_idx, row_index)
     }
 
     fn load_plain_array_column_rows_2d_channel_range_typed(
