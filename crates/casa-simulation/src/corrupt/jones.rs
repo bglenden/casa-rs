@@ -786,14 +786,14 @@ impl ScreenFft {
         let bins = self.slots / 2 - 1;
         let reference = if beta < 0.0 { bins as f64 } else { 1.0 };
         // `F(i)` for `i < N/2 - 1`, the rest zero.
-        for bin in 0..bins {
+        for (bin, storage) in self.storage[..bins].iter_mut().enumerate() {
             let mut bin_counter = counter;
             bin_counter[2] = bin as u32;
             let phase = 2.0 * std::f64::consts::PI * uniform(key, bin_counter);
             bin_counter[3] = 1;
             let [normal, _] = normal_pair(key, bin_counter);
             let amplitude = ((bin + 1) as f64 / reference).powf(-0.5 * beta) * normal;
-            self.storage[bin] = Complex64::from_polar(amplitude, phase);
+            *storage = Complex64::from_polar(amplitude, phase);
         }
         fft.inverse(&mut self.storage)
             .expect("a one-row real transform");
