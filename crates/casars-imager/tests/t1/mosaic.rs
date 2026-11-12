@@ -278,13 +278,24 @@ fn a_mosaic_excludes_pointings_outside_the_image_from_gridding_and_prediction() 
     controls["field"] = json!("0,1,2");
     controls["savemodel"] = json!("modelcolumn");
     let (_, all) = observation.image("mosaic-with-outside-pointing", controls);
-    assert!(inside.get(".sumwt").channel_values()[0] > 0.0);
-    for suffix in [".sumwt", ".psf", ".residual", ".pb", ".weight"] {
-        assert_eq!(
-            inside.get(suffix).pixels,
-            all.get(suffix).pixels,
-            "{suffix}"
-        );
+    let sum_weights = inside.get(".sumwt").channel_values();
+    assert!(sum_weights[0] > 0.0);
+    assert_eq!(all.get(".sumwt").channel_values(), sum_weights, ".sumwt");
+    // Separate runs can differ in their floating-point FFT and reduction order.
+    for suffix in [".psf", ".residual", ".pb", ".weight"] {
+        let expected = inside.get(suffix);
+        let actual = all.get(suffix);
+        assert_eq!(actual.pixels.shape(), expected.pixels.shape(), "{suffix}");
+        assert_eq!(actual.mask(), expected.mask(), "{suffix} mask");
+        let mut error_squared = 0.0;
+        let mut reference_squared = 0.0;
+        for (&actual, &expected) in actual.pixels.iter().zip(&expected.pixels) {
+            let expected = f64::from(expected);
+            error_squared += (f64::from(actual) - expected).powi(2);
+            reference_squared += expected.powi(2);
+        }
+        let nrms = (error_squared / reference_squared).sqrt();
+        assert!(nrms < 1e-5, "{suffix} normalized RMS {nrms:.3e}");
     }
 
     let ms = MeasurementSet::open(observation.measurement_set()).expect("imaged MS");
