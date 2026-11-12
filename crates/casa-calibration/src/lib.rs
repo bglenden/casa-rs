@@ -93,9 +93,9 @@ pub use session::{
     solve_calibration,
 };
 pub use simulated::{
-    SIMULATED_TABLE_ROW_BYTES, SIMULATED_TABLE_VALUE_BYTES, SimulatedJones, SimulatedSolution,
-    SolutionValues, check_simulated_table_destination, simulated_table_bytes,
-    write_simulated_jones_table,
+    SIMULATED_TABLE_ROW_BYTES, SIMULATED_TABLE_VALUE_BYTES, SimulatedJones, SimulatedNoiseSolution,
+    SimulatedSolution, SolutionValues, check_simulated_table_destination, simulated_table_bytes,
+    write_simulated_jones_table, write_simulated_noise_table,
 };
 pub use solve::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,

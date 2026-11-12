@@ -69,7 +69,13 @@ use crate::session::prediction::{FieldGrids, Prediction};
 /// the device's noise saves the host's pass (#886 follow-up: 0.34 s of a
 /// 2.1 s Metal `close`).
 pub(super) fn device_noise(plan: &DataPlan, scan: usize, from_disk: bool) -> &[NoiseApplication] {
-    if from_disk || plan.has_jones_for_scan(scan) {
+    if from_disk
+        || plan.has_jones_for_scan(scan)
+        || plan
+            .noise_for_scan(scan)
+            .iter()
+            .any(|noise| noise.fixed().is_some())
+    {
         &[]
     } else {
         plan.noise_for_scan(scan)

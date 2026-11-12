@@ -42,6 +42,8 @@
 mod apply_frequency;
 #[path = "backends/coverage.rs"]
 mod coverage;
+#[path = "backends/offline_noise.rs"]
+mod offline_noise;
 mod pass_summary;
 mod predict_support;
 

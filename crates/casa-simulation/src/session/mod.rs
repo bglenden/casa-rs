@@ -41,6 +41,7 @@ mod from_ms;
 mod gains;
 mod mosaic;
 pub mod observe;
+mod offline_noise;
 pub(crate) mod plan;
 pub(crate) mod prediction;
 pub mod resources;
@@ -152,6 +153,8 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
+    /// Saved A Noise fields requested by setnoise, retained across reset.
+    offline_tables: Vec<(PathBuf, Arc<crate::corrupt::offline::OfflineNoise>)>,
     /// The antenna-based terms `setgain`, `setleakage` and `setapply` set,
     /// in the order they were set, until `reset`.
     jones_terms: Vec<apply::JonesSource>,
@@ -209,6 +212,7 @@ impl Simulator {
             scans: Vec::new(),
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
+            offline_tables: Vec::new(),
             jones_terms: Vec::new(),
             jones_tables: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
@@ -546,7 +550,8 @@ impl Simulator {
         } else {
             write::write_measurement_set(&self)?;
         }
-        self.write_jones_tables()
+        self.write_jones_tables()?;
+        self.write_offline_tables()
     }
 
     /// `direction` in J2000, as `[ra, dec]` radians with the longitude in

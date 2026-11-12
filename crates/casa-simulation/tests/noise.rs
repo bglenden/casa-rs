@@ -501,6 +501,7 @@ fn setnoise_refuses_as_casa_does_and_names_later_phases() {
     // The Tsys modes are implemented (`tests/tsys_noise.rs`,
     // `tests/tsys_atm_noise.rs`).
     let table = NoiseSpec {
+        mode: "tsys-manual".into(),
         on_the_fly: false,
         ..simple_noise(SIGMA_JY)
     };

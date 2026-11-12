@@ -503,6 +503,7 @@ pub(super) fn noise_jobs<'a>(
                 rows: &rows[start..],
                 noise,
                 window,
+                receptors: &receptors[window.spectral_window_id],
                 antennas: context.antennas,
                 scales,
                 corruption,
@@ -585,6 +586,7 @@ pub(super) struct NoiseJob<'a> {
     noise: &'a [NoiseApplication],
     /// What the scan's spectral window gives the noise.
     window: WindowNoise,
+    receptors: &'a [[usize; 2]],
     /// The antennas, whose dishes the Tsys modes' σ takes.
     antennas: &'a [Antenna],
     /// The batch's `tsys-atm` antenna scales.
@@ -639,6 +641,18 @@ impl NoiseJob<'_> {
     fn add_noise(&mut self, noise: &[NoiseApplication], correlations: usize, samples: usize) {
         let mut scratch = NoiseScratch::new(self.scales);
         for application in noise {
+            if let Some(fixed) = application.fixed() {
+                for (cell, row) in self.cells.chunks_exact_mut(samples).zip(self.rows) {
+                    fixed.add_to_cell(
+                        self.window.spectral_window_id,
+                        row.time_s,
+                        (row.antenna1, row.antenna2),
+                        self.receptors,
+                        cell,
+                    );
+                }
+                continue;
+            }
             let noise = application.for_window(&self.window);
             for (offset, (cell, row)) in self
                 .cells

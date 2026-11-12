@@ -69,9 +69,9 @@ pub struct NoiseSpec {
     /// `tsys-atm`'s site and atmosphere (`pground`, `relhum`, `altitude`,
     /// `waterheight`); the ground's temperature is `tsys`'s `tground`.
     pub atmosphere: AtmosphereSpec,
-    /// `OTF`: corrupt on the fly. CASA writes no calibration table then,
-    /// whatever `table` says; without it, it writes one, which casa-rs does
-    /// not yet.
+    /// `OTF`: draw fresh additive noise at each corrupt. False reuses a
+    /// precomputed A Noise field for simplenoise; Tsys false remains unfinished
+    /// (#1292). A named field is saved as `<root>.A.cal`.
     pub on_the_fly: bool,
 }
 
@@ -173,9 +173,12 @@ impl Simulator {
             }
         };
         if !spec.on_the_fly {
+            if mode == NoiseMode::Simple {
+                return self.set_offline_noise(spec);
+            }
             return Err(SimulatorError::not_yet_implemented(
                 "setnoise(OTF=False), which writes a calibration table, is not yet implemented \
-                 in casa-rs (#1053)",
+                 for Tsys modes in casa-rs (#1292)",
             ));
         }
         if mode == NoiseMode::Simple {
@@ -354,6 +357,19 @@ impl Simulator {
     /// atmosphere for the windows defined then.
     fn check_noise_coverage(&self, terms: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
         for term in &self.noise_terms {
+            if let NoiseLevel::Fixed(field) = &term.level {
+                if self.scans.iter().enumerate().any(|(index, scan)| {
+                    terms
+                        .iter()
+                        .all(|term| term.covers(scan.spectral_window_id))
+                        && (index >= field.scans || !field.covers(scan.spectral_window_id))
+                }) {
+                    return Err(SimulatorError::not_yet_implemented(
+                        "OTF=False noise on observations added after setnoise is not yet implemented (#1292)",
+                    ));
+                }
+                continue;
+            }
             let NoiseLevel::TsysAtm(model) = &term.level else {
                 continue;
             };
@@ -449,7 +465,7 @@ fn check_tsys_spec(spec: &NoiseSpec) -> SimulatorResult<()> {
 /// The root of the calibration table `setnoise` writes for `table`, as
 /// `Simulator::setnoise` trims it (blanks, then a trailing `cal`, `.` and
 /// `_`), or `None` when it writes none (a root of at most one character).
-fn calibration_table_root(table: &str) -> Option<&str> {
+pub(super) fn calibration_table_root(table: &str) -> Option<&str> {
     let mut root = table.trim();
     if root.len() > 3 {
         root = root.strip_suffix("cal").unwrap_or(root);

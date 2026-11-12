@@ -718,7 +718,7 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
     assert caplog.messages[0].startswith("Caught exception: Error in Simulator::create_corrupt")
     assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
     with pytest.raises(NotImplementedError, match="OTF=False"):
-        sm.setnoise(simplenoise="0.1Jy", OTF=False)
+        sm.setnoise(mode="tsys-manual", OTF=False)
     # CASA writes a Tsys mode's T term to <table>.T.cal; casa-rs not yet.
     for mode in ["tsys-manual", "tsys-atm"]:
         with pytest.raises(NotImplementedError, match=r"noisy\.T\.cal"):
@@ -747,6 +747,25 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
     sm.close()
     data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
     assert np.all(data == 0)
+
+
+@needs_measures
+def test_offline_noise_reuses_its_saved_additive_field(tmp_path: Path) -> None:
+    sm = simulator()
+    assert sm.open(str(tmp_path / "data.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setseed(19)
+    assert sm.setnoise(simplenoise="0.25Jy", OTF=False, table=str(tmp_path / "noise.cal"))
+    assert sm.corrupt() and sm.corrupt()
+    assert sm.close()
+    saved = Table.open(tmp_path / "noise.A.cal")
+    assert saved.keywords["VisCal"] == "A Noise"
+    assert saved.row_count == 3 * 10
+    parameters = np.asarray(saved.get_column("CPARAM"))
+    data = np.asarray(Table.open(tmp_path / "data.ms").get_column("DATA"))
+    assert parameters.shape == (30, 4, 4)
+    assert np.array_equal(data, 2 * parameters[:, [0, 3], :])
 
 
 def tsys_atm_data(path: Path, **site: Any) -> np.ndarray:
