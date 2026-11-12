@@ -8,6 +8,12 @@ fn metal_prediction_composes_with_the_test_troposphere() {
     if !metal_device() {
         return;
     }
+    for simint_s in [-1., 25.] {
+        compare(simint_s);
+    }
+}
+
+fn compare(simint_s: f64) {
     let root = tempfile::tempdir().unwrap();
     let model = cube(root.path());
     let run = |name: &str, backend| {
@@ -19,6 +25,7 @@ fn metal_prediction_composes_with_the_test_troposphere() {
         sm.set_seed(19);
         sm.set_trop(&TroposphereSpec {
             mode: "test".into(),
+            simint_s,
             water_vapour_mm: 0.01,
             ..TroposphereSpec::default()
         })

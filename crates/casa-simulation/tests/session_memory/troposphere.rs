@@ -47,7 +47,12 @@ const SETTER_ALLOWANCE_BYTES: u64 = 64 * 1024;
 
 /// The setter law's sessions: (mode, integrations of 10 s). The screen
 /// spans 4,000 s of a 7 m/s wind in 6 m pixels.
-const SETTERS: [(&str, usize); 3] = [("individual", 20_000), ("screen", 400), ("test", 20_000)];
+const SETTERS: [(&str, usize, f64); 4] = [
+    ("individual", 20_000, -1.),
+    ("screen", 400, -1.),
+    ("test", 20_000, -1.),
+    ("test", 20_000, 25.),
+];
 
 fn trop(mode: &str) -> TroposphereSpec {
     TroposphereSpec {
@@ -65,7 +70,11 @@ fn settrop_admits_what_it_forms_and_keeps_it_with_the_term() {
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
-    for (mode, integrations) in SETTERS {
+    for (mode, integrations, simint_s) in SETTERS {
+        let spec = TroposphereSpec {
+            simint_s,
+            ..trop(mode)
+        };
         let mut sm = configured(
             &root.path().join(format!("{mode}.ms")),
             &measures,
@@ -76,7 +85,7 @@ fn settrop_admits_what_it_forms_and_keeps_it_with_the_term() {
         // Once unmeasured, so the log's callsites, the planner's and the
         // worker team's state are the process's before anything is
         // measured.
-        sm.set_trop(&trop(mode)).expect("settrop");
+        sm.set_trop(&spec).expect("settrop");
         sm.reset();
         let unset = reserved_memory();
         let baseline = LIVE.load(Ordering::Relaxed);
@@ -84,14 +93,14 @@ fn settrop_admits_what_it_forms_and_keeps_it_with_the_term() {
         let window = ReservationWindow::open();
         let before = excess_now();
         EXCESS.store(before, Ordering::Relaxed);
-        sm.set_trop(&trop(mode)).expect("settrop");
+        sm.set_trop(&spec).expect("settrop");
         let admitted = window.close() - unset;
         let beyond = EXCESS.load(Ordering::Relaxed) - before;
         let peak = PEAK.load(Ordering::Relaxed) - baseline;
         let left = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
         let kept = reserved_memory() - unset;
         println!(
-            "settrop {mode}: heap peak {peak}, admitted {admitted}, at most {beyond} beyond; \
+            "settrop {mode} simint={simint_s}: heap peak {peak}, admitted {admitted}, at most {beyond} beyond; \
              left {left}, kept {kept}"
         );
         assert!(

@@ -43,7 +43,7 @@ const LARGEST_DELTA_PWV: f64 = 1.0;
 pub struct TroposphereSpec {
     /// `mode`: `individual`, a series of its own above each antenna, or
     /// `screen`, one screen blown over the array; `test` (CASA's debugging
-    /// ramp), sampled at the observed integrations.
+    /// ramp), sampled at integrations or custom `simint` chunks.
     pub mode: String,
     /// `table`: the `Tf Jones` calibration table the simulated phases are
     /// written to, or `''` for none. CASA writes it at once; casa-rs at
@@ -60,6 +60,8 @@ pub struct TroposphereSpec {
     /// `windspeed`: the speed `screen` mode blows its screen at, m/s.
     pub windspeed_m_s: f64,
     /// `simint`: the screens' time step, s; not positive for CASA's 10 s.
+    /// In `test` mode a positive value groups integrations within each scan;
+    /// non-positive values keep one solution per integration.
     pub simint_s: f64,
 }
 
@@ -92,8 +94,7 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// - An unknown mode is refused as CASA's "unsupported mode"; a positive
-    ///   custom `simint` for `test` remains unfinished (#1292).
+    /// - An unknown mode is refused as CASA's "unsupported mode".
     /// - No rows observed yet; a `pwv` that is not positive; integrations
     ///   spanning less than one slot (CASA's `setEvenSlots` "logic
     ///   problem"): refused.

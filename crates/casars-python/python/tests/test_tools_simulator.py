@@ -1091,14 +1091,17 @@ def test_settrop_follows_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) 
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.settrop(mode="individual", simint=120.0) is False
     assert "setEvenSlots" in caplog.messages[-1]
-    with pytest.raises(NotImplementedError, match="custom positive simint"):
-        sm.settrop(mode="test", simint=20.0)
+    assert sm.settrop(mode="test", pwv=0.01, simint=20.0, table=str(tmp_path / "custom.cal"))
+    assert sm.reset()
     assert sm.settrop(mode="test", pwv=0.01, table=str(tmp_path / "ramp.cal"))
     assert sm.reset()
     assert sm.settrop(mode="individual", table=str(tmp_path / "t.cal"), pwv=1.0) is True
     assert sm.settrop(pwv=1.0, deltapwv=0.01) is True
     assert sm.corrupt() is True
     sm.close()
+    custom = Table.open(tmp_path / "custom.cal")
+    assert custom.row_count == 3 * 4
+    assert np.array_equal(np.diff(np.unique(custom.get_column("TIME"))), [20., 20.])
     # The individual term's table, written at close: a Tf Jones row for each
     # of the 6 integrations and 4 antennas, phase only, a value a channel.
     ramp = Table.open(tmp_path / "ramp.cal")
