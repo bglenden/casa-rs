@@ -172,12 +172,9 @@ fn inverse_aberration_shift(
     phase_center: &MDirection,
     frame: &MeasFrame,
 ) -> Result<[f64; 3], MeasureError> {
-    const C_AU_PER_DAY: f64 = 173.144_632_674_240_34;
-
-    let tt = epoch_jd_pair(frame, EpochRef::TT)?;
-    let (_, earth_bary) =
-        sofars::eph::epv00(tt.0, tt.1).ok_or_else(|| ephemeris_error("aberration"))?;
-    let velocity = scale_vector(earth_bary[1], 1.0 / C_AU_PER_DAY);
+    // MeasMath::deapplyAberration uses Aberration::STANDARD at TDB, as the
+    // phase-centre direction conversion does. Reuse its cached velocity.
+    let velocity = super::direction::casacore_aberration_beta(frame)?;
     let beta_inv = (1.0 - dot(velocity, velocity)).sqrt();
     let source = phase_center.cosines();
     let mut solution = subtract_vectors(source, velocity);
@@ -193,15 +190,16 @@ fn inverse_aberration_shift(
         );
         trial = normalize(trial);
         let residual = subtract_vectors(trial, source);
-        if vector_norm(residual) <= 1.0e-10 {
-            break;
-        }
         for idx in 0..3 {
             let component = velocity[idx];
             solution[idx] -= residual[idx]
                 / (((beta_inv + component * component / (1.0 + beta_inv))
                     - component * trial[idx])
                     / (1.0 + dot_sv));
+        }
+        // Casacore applies this Newton correction before checking convergence.
+        if vector_norm(residual) <= 1.0e-10 {
+            break;
         }
     }
 
