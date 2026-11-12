@@ -20,18 +20,14 @@ const TEXTS: &[&str] = &[
     "+1", ">1",
 ];
 
-fn profile_session(
-    version: u32,
-    surface: &str,
-    name: &str,
-    text: Option<&str>,
-) -> ParameterSession {
+fn profile_session(name: &str, text: Option<&str>) -> ParameterSession {
+    let bundle = builtin_surface_bundle("tclean").unwrap();
+    let version = bundle.surface.contract_version();
     let selector = text.map_or_else(String::new, |text| format!("{name} = {}\n", json!(text)));
     let source = format!(
-        "[casars]\nformat = 1\nsurface = {surface:?}\nkind = \"task\"\ncontract = {version}\n\n[parameters]\nvis = \"unused.ms\"\nimagename = \"unused\"\ncell = \"1arcsec\"\n{selector}",
+        "[casars]\nformat = 1\nsurface = \"tclean\"\nkind = \"task\"\ncontract = {version}\n\n[parameters]\nvis = \"unused.ms\"\nimagename = \"unused\"\ncell = \"1arcsec\"\n{selector}",
     );
     let profile = parse_profile(&source).unwrap();
-    let bundle = builtin_surface_bundle("tclean").unwrap();
     let resolved = resolve_profile(&profile, &bundle).unwrap();
     let session =
         ParameterSession::from_profile(bundle, BaseSource::File("input.toml".into()), &profile)
@@ -103,9 +99,9 @@ fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
 #[test]
 fn current_profiles_and_provider_projection_preserve_selector_text() {
     for name in SELECTORS {
-        assert_transports(&profile_session(40, "tclean", name, None), name, "");
+        assert_transports(&profile_session(name, None), name, "");
         for &text in TEXTS {
-            assert_transports(&profile_session(40, "tclean", name, Some(text)), name, text);
+            assert_transports(&profile_session(name, Some(text)), name, text);
         }
     }
 }
