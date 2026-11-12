@@ -154,8 +154,8 @@ locations are in `docs/agent-reference.md`.
   the parent, catalogs or new files, or reset valid completed work.
   Keep one bounded behavior under implementation and queue unrelated findings
   on the appropriate backlog. While checks run, take only an already listed,
-  independent behavior that fits the remaining work budget. Report merged
-  behaviors and issue totals separately; do not equate an open broad issue
+  independent behavior. Report merged behaviors and issue totals separately;
+  do not equate an open broad issue
   with zero delivery or create completed issues retrospectively.
   Keep this bookkeeping cheap: no duplicate ledgers, SHA/hash inventories,
   tracking contracts, sealing steps or new administrative completion gates.
@@ -183,21 +183,38 @@ locations are in `docs/agent-reference.md`.
 
 Always be closing: optimize for merged, scientifically sound behavior.
 Choose a finishable delivery from the authorized work and bring it to its
-stated endpoint. A large programme is not one unbounded agent invocation.
+stated endpoint. Organize a large programme into bounded deliveries;
+elapsed time alone is not a reason to stop useful work.
 
 - Before implementation, put three short items in the existing issue or PR:
   the observable behavior, its independent reference case and the done
   condition. Freeze that scope. Do not start a new planning document.
-- Default to a 30-minute work budget per invocation, including investigation,
-  implementation, verification and review coordination. Use a smaller unit
-  if the work will not fit. Only the owner can set a larger budget; do not
-  reset the clock through new turns, agents or self-assigned follow-ons.
-  At the limit, stop with a ready change or the precise blocker and next
-  action. A budget limit never permits weaker acceptance or a false closure.
+- Use progress checkpoints, not a default time limit. At about 30 minutes
+  of active work, check what concrete evidence has advanced the frozen done
+  condition. If progress is unclear, investigation is expanding or the same
+  checks keep repeating, request an independent progress check then.
+  Otherwise request one at about 60 minutes of active work, and every
+  60 minutes thereafter while the delivery remains open. Passive CI/runtime
+  waits do not trigger these checks. Honor any explicit owner spending limit.
+- The progress reviewer uses fresh, concise context: the frozen target,
+  changes/results since the last checkpoint, current blocker and next action.
+  Use one cheap, capable reviewer for a brief scope/progress assessment,
+  checking the actual diff/results as needed to verify claimed progress,
+  without another code audit, test run or research project. It reports either
+  on-target progress or a concrete redirection toward closure. Act on that
+  redirection within the existing scope. Keep at most a short note in the
+  existing issue/PR; no new tracker or report. A progress check cannot waive
+  acceptance or authorize scope expansion.
 - Finish the selected behavior before exploring another. A factory listing,
   adjacent capability or new oracle case does not expand the assignment.
-  Record material discoveries briefly on the existing backlog and continue
-  toward the frozen done condition. Expanding it needs owner direction.
+  Capture worthwhile discoveries as non-blocking ideas in the existing
+  issue/backlog, or a separate issue when an independently useful future
+  outcome merits one. A sentence about the behavior and its value is enough;
+  no investigation, design, triage or extra tracking is required now.
+  Recording an idea does not add it to the current delivery. Defer it and
+  continue toward the frozen done condition. Treat it as a current blocker
+  only when evidence shows that condition cannot be met without it.
+  Expanding the selected behavior needs owner direction.
 - Close the issue when its stated criteria are met. Until then, ship completed
   behaviors through bounded PRs and keep an explicit remaining list. Do not
   narrow the issue's acceptance or invent retrospective tickets to claim success.
@@ -207,16 +224,19 @@ stated endpoint. A large programme is not one unbounded agent invocation.
   ordinary follow-up work.
 - Act on authorized work without routine confirmation. A recommendation is
   not a substitute for implementation when implementation was requested.
-  Stop when the bounded delivery is complete, its budget is exhausted, or
-  only an external result or owner decision remains. Do not invent work to
-  keep a session active. Follow "While Checks Run" for pending ownership.
+  Continue useful authorized work through progress checkpoints without
+  asking the owner to say "please continue". Stop when the bounded delivery
+  is complete or a real blocker, external result or owner decision prevents
+  further useful authorized work. Follow "While Checks Run" for pending
+  ownership; do not invent work to keep a session active.
 - Use the cheapest capable model and effort for the work. No additional
-  agents or expensive reviews by default; use one reviewer when Review
-  requires it or the owner asks. No speculative parallel investigations.
+  agents or expensive reviews by default; use one reviewer for the progress
+  checks above, when Review requires it, or when the owner asks. No speculative
+  parallel investigations.
 - Before a long or overnight run, check what fails cheaply first (inputs,
   admission, a short dry run), then schedule it yourself.
-- Fix a small defect in the PR when it blocks the selected behavior and fits
-  the budget; queue unrelated defects without expanding the implementation.
+- Fix a small defect in the PR when it blocks the selected behavior; queue
+  unrelated defects without expanding the implementation.
 - Keep long work's state in one status comment on its issue, edited in
   place. A handoff is that comment plus a startup prompt naming no model or
   host-specific tool. A resumed branch follows `AGENTS.md` on `origin/main`.
@@ -226,7 +246,7 @@ stated endpoint. A large programme is not one unbounded agent invocation.
   its issue and the PR does not claim it; that includes relaxations
   `TESTING.md` reserves for the owner.
 
-Owner direction is required to expand the frozen behavior or budget;
+Owner direction is required to expand the frozen behavior;
 existing explicit direction is sufficient. Otherwise ask the owner only
 before these, asynchronously where the host allows:
 
@@ -242,8 +262,8 @@ before these, asynchronously where the host allows:
    cannot prevent it; this floor does not apply in a cloud environment;
 5. handling credentials, secrets or non-public data.
 
-Everything else is decided and recorded within the frozen behavior and
-budget, including APIs between workspace crates, current profile versions,
+Everything else is decided and recorded within the frozen behavior,
+including APIs between workspace crates, current profile versions,
 algorithms and CASA deviations.
 
 ### CASA deviations
@@ -286,9 +306,10 @@ By how far a change reaches:
    at `xhigh` for Codex-led work). Post the design and a self-contained
    brief on its issue and ask the owner to arrange the review.
 
-No loops: at most one review per change, one round. Fix blocking and
-should-fix findings, each with a test, or answer them; decline optional
-ones with a reason. Fixes are never reviewed again. A finding that needs a
+No loops: at most one code/design review per change, one round. Periodic
+progress checks above assess direction and closure, and do not reopen code
+review. Fix blocking and should-fix findings, each with a test, or answer
+them; decline optional ones with a reason. Fixes are never reviewed again. A finding that needs a
 redesign or new scope becomes a follow-up issue at its own level. A design
 reviewed externally is not reviewed again when built; its implementation
 takes level 1 or 2.
@@ -316,7 +337,7 @@ isolated, strengthen its demonstration test instead of adding a review.
   any review is resolved, mark it ready and set
   `gh pr merge --auto --squash`: ready means merge when green, and GitHub
   merges it once its required checks pass. Additional implementation follows
-  the bounded assignment and budget rules, not the duration of CI.
+  the bounded assignment and progress-check rules, not the duration of CI.
 - Keep responsibility for the PR until it merges or is explicitly handed
   off. When CI fails, investigate and fix failures caused by the change;
   rerun a known flaky job (noting it on the flake's issue) or a timing gate
@@ -342,8 +363,8 @@ isolated, strengthen its demonstration test instead of adding a review.
 ### While Checks Run
 
 - Run CI and reviews alongside the next independent, authorized work.
-  It must already be listed and fit the remaining invocation budget. Preserve
-  the revision under test; use a separate branch for independent deliveries.
+  It must already be listed. Preserve the revision under test; use a separate
+  branch for independent deliveries.
 - When only an external result remains, stop active model work. Use existing
   result notifications when available. Otherwise leave one short handoff in
   the existing issue/PR: link, pending result and next action. State that a

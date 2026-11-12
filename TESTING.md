@@ -131,9 +131,9 @@ explicit user request. A narrower hosted job cannot stand in for a broader
 required gate such as `just verify`.
 
 Work while hosted checks run follows AGENTS.md's bounded assignment and
-budget. Take only a listed independent behavior that fits the remaining
-budget; otherwise stop active model work with one short pending-result
-handoff. Retain PR ownership and handle reported failures on resumption;
+progress-check rules. Take only a listed independent behavior; otherwise
+stop active model work with one short pending-result handoff. Retain PR
+ownership and handle reported failures on resumption;
 a passing local result does not waive investigating a reported failure.
 
 Green evidence remains valid until a code, test, build, dependency, or
