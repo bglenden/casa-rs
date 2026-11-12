@@ -22,6 +22,10 @@ CASES=[
     dict(name='system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',values=[4.,9.]),
     dict(name='negative_system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',values=[-4.,9.]),
     dict(name='spectral_system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',channels=3,values=[-4.,9.,16.,25.,4.,36.]),
+    dict(name='cross_hand_delay',caltype='sbd',parameter=[1.2,-.8],antenna='0',pol='X,Y',subtype='Kcross Jones',values=[1.2,-.8]),
+    dict(name='multi_band_delay',caltype='sbd',parameter=[.0012,-.0008],antenna='0',pol='X,Y',subtype='KMBD Jones',values=[.0012,-.0008]),
+    dict(name='spectral_opacity',caltype='opac',parameter=[.05],antenna='',subtype='TfOpac',channels=4,values=[.03,.05,.08,.12]),
+    dict(name='power_curve',caltype='opac',parameter=[.05],antenna='',subtype='EPowerCurve',values=[1.,.001,-.00001,0.,1e-8,0.,0.,1e-13,1.2,-.001,.00002,0.,0.,-1e-10,0.,0.]),
 ]
 
 
@@ -40,12 +44,13 @@ def main():
             tb=table();tb.open(str(terms),nomodify=False);info=tb.info();info['subType']=spec['subtype'];tb.putinfo(info);tb.putkeyword('VisCal',spec['subtype'])
             values=np.array(spec['values'],dtype=np.float32).reshape(-1,spec.get('channels',1))
             for row in range(tb.nrows()):
-                for column,data in [('FPARAM',values),('FLAG',np.zeros_like(values,dtype=bool)),('PARAMERR',np.zeros_like(values)),('SNR',np.ones_like(values))]:tb.putcell(column,row,data)
+                row_values=np.zeros_like(values) if spec['caltype']=='sbd' and tb.getcell('ANTENNA1',row)!=0 else values
+                for column,data in [('FPARAM',row_values),('FLAG',np.zeros_like(values,dtype=bool)),('PARAMERR',np.zeros_like(values)),('SNR',np.ones_like(values))]:tb.putcell(column,row,data)
             tb.close()
             if spec.get('channels',1)>1:
                 tb.open(str(terms/'SPECTRAL_WINDOW'),nomodify=False);channels=spec['channels']
                 tb.putcell('NUM_CHAN',0,channels);tb.putcell('CHAN_FREQ',0,np.linspace(230e9,230e9+3*15.625e6,channels))
-                for column in ('CHAN_WIDTH','RESOLUTION','EFFECTIVE_BW'):tb.putcell(column,0,np.full(channels,1.5*15.625e6))
+                for column in ('CHAN_WIDTH','RESOLUTION','EFFECTIVE_BW'):tb.putcell(column,0,np.full(channels,3*15.625e6/(channels-1)))
                 tb.close()
         if 'time_values' in spec:
             tb=table();tb.open(str(terms),nomodify=False)

@@ -23,21 +23,13 @@ use std::path::Path;
 
 fn patch_table(path: &Path, case: &Json) {
     let delay = case["caltype"] == "sbd";
-    let kind = if delay {
-        "K Jones"
-    } else {
-        case["subtype"].as_str().unwrap()
-    };
-    let recipe: Vec<f32> = if delay {
-        vec![1.2, -0.8]
-    } else {
-        case["values"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_f64().unwrap() as f32)
-            .collect()
-    };
+    let kind = case["subtype"].as_str().unwrap_or("K Jones");
+    let recipe: Vec<f32> = case["values"]
+        .as_array()
+        .unwrap_or_else(|| case["parameter"].as_array().unwrap())
+        .iter()
+        .map(|v| v.as_f64().unwrap() as f32)
+        .collect();
     let channels = case["channels"].as_u64().unwrap_or(1) as usize;
     let shape = IxDyn(&[recipe.len() / channels, channels]);
     let mut table = Table::open(TableOptions::new(path)).unwrap();
@@ -136,7 +128,7 @@ fn patch_table(path: &Path, case: &Json) {
                 .unwrap()
                 .set(Value::Array(ArrayValue::Float64(ArrayD::from_elem(
                     IxDyn(&[channels]),
-                    1.5 * predict_support::CHANNEL_HZ,
+                    3. * predict_support::CHANNEL_HZ / (channels - 1) as f64,
                 ))))
                 .unwrap();
         }
@@ -354,7 +346,7 @@ fn supplied_physical_error_tables_match_casa() {
     let fixture: Json = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 10);
+    assert_eq!(cases.len(), 14);
     for case in cases {
         assert_eq!(case["outcome"], "returned");
         assert_eq!(run(case, 1), run(case, 3), "{}", case["name"]);

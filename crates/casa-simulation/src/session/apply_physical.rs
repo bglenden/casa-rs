@@ -19,7 +19,10 @@ impl Geometry {
         let mut result = Self {
             elevations: Vec::new(),
         };
-        if !matches!(kind, AppliedKind::Opacity | AppliedKind::GainCurve) {
+        if !matches!(
+            kind,
+            AppliedKind::Opacity | AppliedKind::GainCurve | AppliedKind::PowerCurve
+        ) {
             return Ok(result);
         }
         let [ra, dec] = sm.fields[field].direction_rad;
@@ -52,15 +55,22 @@ impl Geometry {
     ) -> Option<[Complex32; 2]> {
         let one = Complex32::new(1., 0.);
         match kind {
-            AppliedKind::Delay => Some(std::array::from_fn(|receptor| {
-                if solution.flags[receptor] {
-                    return one;
-                }
-                let phase = std::f64::consts::TAU
-                    * f64::from(solution.value(receptor, 0).re)
-                    * ((frequency - reference) / 1e9);
-                Complex32::new(phase.cos() as f32, phase.sin() as f32)
-            })),
+            AppliedKind::Delay | AppliedKind::MultiBandDelay => {
+                Some(std::array::from_fn(|receptor| {
+                    if solution.flags[receptor] {
+                        return one;
+                    }
+                    let reference = if kind == AppliedKind::MultiBandDelay {
+                        0.
+                    } else {
+                        reference
+                    };
+                    let phase = std::f64::consts::TAU
+                        * f64::from(solution.value(receptor, 0).re)
+                        * ((frequency - reference) / 1e9);
+                    Complex32::new(phase.cos() as f32, phase.sin() as f32)
+                }))
+            }
             AppliedKind::AntennaPosition => {
                 // collapseForSim's pivot is B. KAntPos lies below it and
                 // corrects the zeroed DATA, before the corrupted model is
@@ -69,20 +79,34 @@ impl Geometry {
             }
             AppliedKind::Opacity => {
                 let sine = self.elevations[antenna].sin();
-                let gain = if solution.flags[0] || sine <= 0. {
+                let gain = if solution.flags[channel] || sine <= 0. {
                     1.
                 } else {
-                    (-f64::from(solution.value(0, 0).re) / (2. * sine)).exp() as f32
+                    (-f64::from(solution.value(0, channel).re) / (2. * sine)).exp() as f32
                 };
                 Some([Complex32::new(gain, 0.); 2])
             }
-            AppliedKind::GainCurve => {
+            AppliedKind::GainCurve | AppliedKind::PowerCurve => {
                 let zenith = 90. - self.elevations[antenna].to_degrees();
                 Some(std::array::from_fn(|receptor| {
-                    let gain = (0..4).rev().fold(0., |gain, coefficient| {
-                        gain * zenith + f64::from(solution.value(4 * receptor + coefficient, 0).re)
+                    let coefficients = if kind == AppliedKind::PowerCurve {
+                        8
+                    } else {
+                        4
+                    };
+                    let gain = (0..coefficients).rev().fold(0., |gain, coefficient| {
+                        gain * zenith
+                            + f64::from(solution.value(coefficients * receptor + coefficient, 0).re)
                     });
-                    Complex32::new(gain as f32, 0.)
+                    if kind == AppliedKind::PowerCurve {
+                        if gain < 0. {
+                            one
+                        } else {
+                            Complex32::new(gain.sqrt() as f32, 0.)
+                        }
+                    } else {
+                        Complex32::new(gain as f32, 0.)
+                    }
                 }))
             }
             AppliedKind::SystemTemperature => Some(std::array::from_fn(|receptor| {

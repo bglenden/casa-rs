@@ -103,9 +103,11 @@ enum AppliedKind {
     Leakage,
     Scalar,
     Delay,
+    MultiBandDelay,
     AntennaPosition,
     Opacity,
     GainCurve,
+    PowerCurve,
     SystemTemperature,
     General,
     FullLeakage,
@@ -117,12 +119,13 @@ impl AppliedKind {
             Self::Gain
             | Self::Scalar
             | Self::Delay
+            | Self::MultiBandDelay
             | Self::AntennaPosition
             | Self::Opacity
             | Self::SystemTemperature => JonesKind::Gain,
             Self::Leakage | Self::FullLeakage => JonesKind::Leakage,
             Self::General => JonesKind::General,
-            Self::GainCurve => JonesKind::SkyGain,
+            Self::GainCurve | Self::PowerCurve => JonesKind::SkyGain,
         }
     }
 
@@ -131,6 +134,7 @@ impl AppliedKind {
             Self::Scalar | Self::Opacity => 1,
             Self::AntennaPosition => 3,
             Self::GainCurve => 8,
+            Self::PowerCurve => 16,
             Self::General => 4,
             _ => 2,
         }
@@ -154,7 +158,8 @@ pub(crate) struct AppliedTable {
 
 impl AppliedTable {
     fn channel_dependent(&self) -> bool {
-        self.frequency.is_some() || self.kind == AppliedKind::Delay
+        self.frequency.is_some()
+            || matches!(self.kind, AppliedKind::Delay | AppliedKind::MultiBandDelay)
     }
 
     fn calibration_window(&self, window: usize) -> Option<usize> {
@@ -268,16 +273,21 @@ impl Simulator {
                 )));
             }
         };
-        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF" | "B TSYS" | "JF" | "DFGEN")
-            .then(|| frequency_interpolation(&spec.interp));
+        let frequency = matches!(
+            kind.as_str(),
+            "B" | "TF" | "DF" | "B TSYS" | "JF" | "DFGEN" | "TFOPAC"
+        )
+        .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
             "G" | "B" => AppliedKind::Gain,
             "D" | "DF" => AppliedKind::Leakage,
             "T" | "TF" => AppliedKind::Scalar,
-            "K" => AppliedKind::Delay,
+            "K" | "KCROSS" => AppliedKind::Delay,
+            "KMBD" => AppliedKind::MultiBandDelay,
             "KANTPOS" => AppliedKind::AntennaPosition,
-            "TOPAC" => AppliedKind::Opacity,
+            "TOPAC" | "TFOPAC" => AppliedKind::Opacity,
             "EGAINCURVE" => AppliedKind::GainCurve,
+            "EPOWERCURVE" => AppliedKind::PowerCurve,
             "B TSYS" => AppliedKind::SystemTemperature,
             "J" | "JF" => AppliedKind::General,
             "DGEN" | "DFGEN" => AppliedKind::FullLeakage,
@@ -401,8 +411,14 @@ impl Simulator {
                 } else {
                     TermBytes::per_chunk(&per_window, antennas)
                 };
-                if matches!(table.kind, AppliedKind::Opacity | AppliedKind::GainCurve) {
+                if matches!(
+                    table.kind,
+                    AppliedKind::Opacity | AppliedKind::GainCurve | AppliedKind::PowerCurve
+                ) {
                     bytes.forming += (antennas * size_of::<f64>()) as u64;
+                }
+                if !table.channel_dependent() && !table.kind.matrix() {
+                    bytes.forming += (table.lookup.max_cell_values.saturating_sub(2) * 16) as u64;
                 }
                 if table.kind.matrix() {
                     let count: usize = per_window
@@ -576,7 +592,7 @@ impl Simulator {
                             .get(window)
                             .map(Vec::as_slice)
                             .unwrap_or(&[]);
-                        if kind == AppliedKind::SystemTemperature {
+                        if matches!(kind, AppliedKind::SystemTemperature | AppliedKind::Opacity) {
                             solution.resample_real_frequency(input_hz, &output_hz, mode)
                         } else {
                             solution.resample_frequency(input_hz, &output_hz, mode)
