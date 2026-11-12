@@ -176,11 +176,10 @@ fn leakage_table(ms: &Path, output: &Path, case: &Json) {
             field_id: field as i32,
             spectral_window_id: 0,
             antenna: antenna as i32,
-            values: SolutionValues::Receptors(support::receptor_values(
-                "D",
-                antenna,
-                time_s - times[0],
-            )),
+            values: SolutionValues::Receptors(
+                support::receptor_values_f64("D", antenna, time_s - times[0])
+                    .map(|value| casa_types::Complex32::new(value.re as f32, value.im as f32)),
+            ),
         })
     });
     write_simulated_jones_table(&ms, output, SimulatedJones::Leakage, rows).unwrap();
