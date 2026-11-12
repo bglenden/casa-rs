@@ -40,6 +40,8 @@
 
 #[path = "backends/apply_frequency.rs"]
 mod apply_frequency;
+#[path = "backends/coverage.rs"]
+mod coverage;
 mod pass_summary;
 mod predict_support;
 
