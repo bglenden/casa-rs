@@ -16,7 +16,9 @@ fn simulation_sidereal_time_follows_casa_across_dates() {
         position[2].as_f64().unwrap(),
     );
     let mut maximum_error = 0.0_f64;
-    for case in reference["cases"].as_array().unwrap() {
+    let cases = reference["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 5);
+    for case in cases {
         let frame = MeasFrame::new()
             .with_position(position.clone())
             .with_epoch(MEpoch::from_mjd(
@@ -25,6 +27,7 @@ fn simulation_sidereal_time_follows_casa_across_dates() {
             ));
         let actual = local_apparent_sidereal_time(&frame).unwrap();
         let expected = case["last_rad"].as_f64().unwrap();
+        assert!(actual.is_finite() && expected.is_finite());
         let error = ((actual - expected + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
             - std::f64::consts::PI)
             .abs();
