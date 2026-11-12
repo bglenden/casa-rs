@@ -92,6 +92,8 @@
 mod apply;
 #[path = "session_memory/apply_frequency.rs"]
 mod apply_frequency;
+#[path = "session_memory/coverage.rs"]
+mod coverage;
 #[path = "session_memory/field_grids.rs"]
 mod field_grids;
 #[path = "session_memory/gain_setters.rs"]

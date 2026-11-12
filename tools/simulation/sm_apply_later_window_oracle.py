@@ -75,4 +75,4 @@ record={"casa_version":casatasks.version_string(),"work_issue":1053,
 args.fixture.parent.mkdir(parents=True,exist_ok=True)
 with args.fixture.open("wb") as raw,gzip.GzipFile(filename="",fileobj=raw,mode="wb",mtime=0) as stream:
     stream.write((json.dumps(record,separators=(",",":"),allow_nan=False)+"\n").encode())
-print("CASA later-window coverage:180 rows; original window DATA×4, later window unchanged",flush=True)
+print(f"CASA window coverage:180 rows; DATA factors {factors}; selected={args.selected}; repeat={args.repeat}",flush=True)
