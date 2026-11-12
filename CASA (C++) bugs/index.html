@@ -1099,6 +1099,7 @@ Simulator behaviours casa-rs does not follow:
 <a href="#setgainmoderandom-draws-gains-about-zero">random gains about zero</a>,
 <a href="#an-autocorrelation-row-resets-its-antennas-simulated-term">the last antenna's unit gain or leakage</a>,
 <a href="#setleakage-simulates-only-the-first-two-spectral-windows">leakage for two windows only</a>,
+<a href="#invalid-leakage-solutions-become-unit-leakage">invalid leakage becoming one</a>,
 <a href="#a-simulated-terms-table-is-written-when-the-term-is-set">a simulated term's table written when it is set</a>.
 Measures behaviours casa-rs follows for parity:
 <a href="#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities">IAU 1980 sidereal time and obliquities under IAU 2000</a>.
@@ -5139,6 +5140,37 @@ image by 0.6723. The number of pixels above PB 0.2 falls from 16,384 to
 table, standard continuum imaging chooses the analytic primary beam
 from the selected cross-correlations. It refuses a selection that
 requires both classes.</p>
+<h2 id="invalid-leakage-solutions-become-unit-leakage">Invalid leakage solutions become unit leakage<a class="headerlink" href="#invalid-leakage-solutions-become-unit-leakage" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: CASA defect corrected under the standing data-corruption rule (#1053)</li>
+<li>Affected code: <code>JonesGenLin::setMatByOk</code> in
+  <code>code/synthesis/MeasurementComponents/Jones.cc</code>, called by
+  <code>VisJones::syncJones</code> while <code>Simulator::corrupt</code> applies a D table.</li>
+<li>Reference: CASA 6.7.6.14; historical public C++ revision
+  <code>4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef</code> reproduces the mechanism.</li>
+</ul>
+<p>With either receptor flagged, <code>JonesGenLin::setMatByOk</code> replaces both
+leakage coefficients with complex one. A missing antenna solution has the
+same effect. For diagonal gains, one is the neutral coefficient; for linear
+leakage, zero is neutral. <code>JonesGenLin::applyRight/applyLeft</code> therefore add
+the parallel hands into the cross hands. With all correlations initially
+<code>3+4j</code>, an autocorrelation with one flagged D receptor becomes <code>9+12j</code> in
+both cross hands. The simulator does not persist the temporary calibration
+flags, so those large artificial signals remain unflagged.</p>
+<p>casa-rs uses zero for both D coefficients when either interpolated receptor
+is invalid, and for an antenna with no solution. Other antennas retain
+their requested time interpolation. G tables retain CASA's per-receptor unit
+substitution. Both paths preserve the input data flags, weights and sigma.
+This corrects fabricated leakage without changing valid D or G solutions.</p>
+<p><code>tools/simulation/sm_apply_flags_oracle.py</code> preserves unmodified CASA outputs
+and independent CASA controls with explicit zero leakage for the affected
+antenna. The native comparison uses those neutral controls only at times
+whose interpolated solution is invalid; valid times use the original valid
+CASA table control. C++ consumption of native invalid-solution tables is
+compared with the unmodified defective CASA outputs separately. The
+reference fixture retains both results so this exception cannot silently
+become a relaxed numerical tolerance.</p>
 
 
 

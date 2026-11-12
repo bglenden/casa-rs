@@ -132,166 +132,181 @@
 <a href=#132 id=132 data-nosnippet>132</a>    ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
 <a href=#133 id=133 data-nosnippet>133</a>    ///   raises.
 <a href=#134 id=134 data-nosnippet>134</a>    /// - A table of other than `G` or `D` solutions, or an interpolation
-<a href=#135 id=135 data-nosnippet>135</a>    ///   other than `linear` or `nearest`: not yet implemented. (A table
-<a href=#136 id=136 data-nosnippet>136</a>    ///   without a solution, or with a flagged one, for an antenna and integration is refused at
-<a href=#137 id=137 data-nosnippet>137</a>    ///   `corrupt`.)
-<a href=#138 id=138 data-nosnippet>138</a>    /// - No rows observed yet: refused, as `setgain` refuses.
-<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">pub fn </span>set_apply(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ApplySpec) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">let </span>interp = apply_interpolation(<span class="kw-2">&amp;</span>spec.interp)<span class="question-mark">?</span>;
-<a href=#141 id=141 data-nosnippet>141</a>        <span class="comment">// VisCal::corrupt turns weight calibration off. G/D table lookup
-<a href=#142 id=142 data-nosnippet>142</a>        // uses each row's time regardless of t, and only TOPAC reads opacity.
-<a href=#143 id=143 data-nosnippet>143</a>        </span><span class="kw">if </span>spec.table.is_empty() {
-<a href=#144 id=144 data-nosnippet>144</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"No calibration table given."</span>));
-<a href=#145 id=145 data-nosnippet>145</a>        }
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>path = std::path::absolute(<span class="kw-2">&amp;</span>spec.table).map_err(raised)<span class="question-mark">?</span>;
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span>lookup = <span class="self">self</span>.load_table(<span class="kw-2">&amp;</span>path, interp)<span class="question-mark">?</span>;
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">let </span>table_kind = table_type(lookup.lookup.subtype());
-<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span>kind = <span class="kw">match </span>spec.kind.to_uppercase() {
-<a href=#150 id=150 data-nosnippet>150</a>            requested <span class="kw">if </span>requested.is_empty() || requested == table_kind =&gt; table_kind,
-<a href=#151 id=151 data-nosnippet>151</a>            requested =&gt; {
-<a href=#152 id=152 data-nosnippet>152</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#153 id=153 data-nosnippet>153</a>                    <span class="string">"{} is a {} table, not {requested}."</span>,
-<a href=#154 id=154 data-nosnippet>154</a>                    spec.table,
-<a href=#155 id=155 data-nosnippet>155</a>                    lookup.lookup.subtype()
-<a href=#156 id=156 data-nosnippet>156</a>                )));
-<a href=#157 id=157 data-nosnippet>157</a>            }
-<a href=#158 id=158 data-nosnippet>158</a>        };
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">let </span>kind = <span class="kw">match </span>kind.as_str() {
-<a href=#160 id=160 data-nosnippet>160</a>            <span class="string">"G" </span>=&gt; JonesKind::Gain,
-<a href=#161 id=161 data-nosnippet>161</a>            <span class="string">"D" </span>=&gt; JonesKind::Leakage,
-<a href=#162 id=162 data-nosnippet>162</a>            other =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="macro">format!</span>(<span class="string">"of a {other} table"</span>))),
-<a href=#163 id=163 data-nosnippet>163</a>        };
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="self">self</span>.require_rows()<span class="question-mark">?</span>;
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">tracing::info!</span>(
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="string">"Arranging to CORRUPT with: {} ({})"</span>,
-<a href=#167 id=167 data-nosnippet>167</a>            spec.table,
-<a href=#168 id=168 data-nosnippet>168</a>            lookup.lookup.subtype()
-<a href=#169 id=169 data-nosnippet>169</a>        );
-<a href=#170 id=170 data-nosnippet>170</a>        <span class="self">self</span>.jones_terms.push(JonesSource::Applied(AppliedTable {
-<a href=#171 id=171 data-nosnippet>171</a>            path,
-<a href=#172 id=172 data-nosnippet>172</a>            lookup: Arc::new(lookup),
-<a href=#173 id=173 data-nosnippet>173</a>            kind,
-<a href=#174 id=174 data-nosnippet>174</a>            spwmap: spec.spwmap.clone(),
-<a href=#175 id=175 data-nosnippet>175</a>        }));
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="prelude-val">Ok</span>(())
-<a href=#177 id=177 data-nosnippet>177</a>    }
-<a href=#178 id=178 data-nosnippet>178</a>
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Load the table at `path` to look its solutions up across its fields
-<a href=#180 id=180 data-nosnippet>180</a>    /// with `interp`, its memory admitted before it is read: what reading
-<a href=#181 id=181 data-nosnippet>181</a>    /// it holds, and what the lookup keeps, which it holds on to.
-<a href=#182 id=182 data-nosnippet>182</a>    </span><span class="kw">fn </span>load_table(
-<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#184 id=184 data-nosnippet>184</a>        path: <span class="kw-2">&amp;</span>std::path::Path,
-<a href=#185 id=185 data-nosnippet>185</a>        interp: ApplyInterpolationMode,
-<a href=#186 id=186 data-nosnippet>186</a>    ) -&gt; SimulatorResult&lt;HeldLookup&gt; {
-<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">let </span>rows = CalibrationTableLookup::rows_on_disk(path).map_err(raised)<span class="question-mark">?</span>;
-<a href=#188 id=188 data-nosnippet>188</a>        <span class="kw">let </span>kept = CalibrationTableLookup::kept_bytes(rows);
-<a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">let </span>resources = <span class="kw-2">&amp;</span><span class="self">self</span>.options.resources;
-<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span><span class="kw-2">mut </span>reservation = admit(
-<a href=#191 id=191 data-nosnippet>191</a>            resources.host(),
-<a href=#192 id=192 data-nosnippet>192</a>            resources.policy(),
-<a href=#193 id=193 data-nosnippet>193</a>            <span class="kw-2">&amp;</span>Demand {
-<a href=#194 id=194 data-nosnippet>194</a>                phase: LOOKUP_PHASE,
-<a href=#195 id=195 data-nosnippet>195</a>                memory: CalibrationTableLookup::loading_bytes(rows) + kept,
-<a href=#196 id=196 data-nosnippet>196</a>            },
-<a href=#197 id=197 data-nosnippet>197</a>        )
-<a href=#198 id=198 data-nosnippet>198</a>        .map_err(SimulatorError::admission)<span class="question-mark">?</span>;
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>lookup = CalibrationTableLookup::open_with(path, interp, FieldSelection::AnyField)
-<a href=#200 id=200 data-nosnippet>200</a>            .map_err(raised)<span class="question-mark">?</span>;
-<a href=#201 id=201 data-nosnippet>201</a>        reservation.retain(kept);
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="prelude-val">Ok</span>(HeldLookup {
-<a href=#203 id=203 data-nosnippet>203</a>            lookup,
-<a href=#204 id=204 data-nosnippet>204</a>            _reservation: reservation,
-<a href=#205 id=205 data-nosnippet>205</a>        })
-<a href=#206 id=206 data-nosnippet>206</a>    }
-<a href=#207 id=207 data-nosnippet>207</a>
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="doccomment">/// The term `source` is at this `corrupt`: a simulated one as it was
-<a href=#209 id=209 data-nosnippet>209</a>    /// set, a table's evaluated over the scans observed so far. An
-<a href=#210 id=210 data-nosnippet>210</a>    /// evaluated term is admitted as a simulated one is, before it is
-<a href=#211 id=211 data-nosnippet>211</a>    /// formed, and keeps its share while a step applies it.
-<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>jones_term(<span class="kw-2">&amp;</span><span class="self">self</span>, source: <span class="kw-2">&amp;</span>JonesSource) -&gt; SimulatorResult&lt;Arc&lt;HeldTerm&gt;&gt; {
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">match </span>source {
-<a href=#214 id=214 data-nosnippet>214</a>            JonesSource::Simulated(term) =&gt; <span class="prelude-val">Ok</span>(Arc::clone(term)),
-<a href=#215 id=215 data-nosnippet>215</a>            JonesSource::Applied(table) =&gt; {
-<a href=#216 id=216 data-nosnippet>216</a>                <span class="kw">let </span>antennas = <span class="self">self</span>.antennas.len();
-<a href=#217 id=217 data-nosnippet>217</a>                <span class="kw">let </span>(per_window, <span class="kw">_</span>) = <span class="self">self</span>.integration_counts();
-<a href=#218 id=218 data-nosnippet>218</a>                <span class="kw">let </span>bytes = TermBytes::per_chunk(<span class="kw-2">&amp;</span>per_window, antennas);
-<a href=#219 id=219 data-nosnippet>219</a>                <span class="kw">let </span><span class="kw-2">mut </span>reservation = <span class="self">self</span>.admit_term(bytes)<span class="question-mark">?</span>;
-<a href=#220 id=220 data-nosnippet>220</a>                <span class="kw">let </span>(chunks, values) =
-<a href=#221 id=221 data-nosnippet>221</a>                    <span class="self">self</span>.applied_solutions(<span class="kw-2">&amp;</span>table.lookup.lookup, <span class="kw-2">&amp;</span>table.spwmap, <span class="kw-2">&amp;</span>per_window)<span class="question-mark">?</span>;
-<a href=#222 id=222 data-nosnippet>222</a>                reservation.retain(bytes.kept);
-<a href=#223 id=223 data-nosnippet>223</a>                <span class="prelude-val">Ok</span>(Arc::new(HeldTerm::new(
-<a href=#224 id=224 data-nosnippet>224</a>                    applied(table.kind, antennas, chunks, values),
-<a href=#225 id=225 data-nosnippet>225</a>                    reservation,
-<a href=#226 id=226 data-nosnippet>226</a>                )))
-<a href=#227 id=227 data-nosnippet>227</a>            }
-<a href=#228 id=228 data-nosnippet>228</a>        }
-<a href=#229 id=229 data-nosnippet>229</a>    }
-<a href=#230 id=230 data-nosnippet>230</a>
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="doccomment">/// Each integration observed so far as a chunk, counted `per_window`,
-<a href=#232 id=232 data-nosnippet>232</a>    /// with each antenna's solution from `lookup` at its time, field and
-<a href=#233 id=233 data-nosnippet>233</a>    /// window (mapped by `spwmap`).
-<a href=#234 id=234 data-nosnippet>234</a>    </span><span class="kw">fn </span>applied_solutions(
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#236 id=236 data-nosnippet>236</a>        lookup: <span class="kw-2">&amp;</span>CalibrationTableLookup,
-<a href=#237 id=237 data-nosnippet>237</a>        spwmap: <span class="kw-2">&amp;</span>[i64],
-<a href=#238 id=238 data-nosnippet>238</a>        per_window: <span class="kw-2">&amp;</span>[usize],
-<a href=#239 id=239 data-nosnippet>239</a>    ) -&gt; SimulatorResult&lt;(Chunks, Vec&lt;[Complex32; <span class="number">2</span>]&gt;)&gt; {
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>table_window = |window: usize| {
-<a href=#241 id=241 data-nosnippet>241</a>            spwmap
-<a href=#242 id=242 data-nosnippet>242</a>                .get(window)
-<a href=#243 id=243 data-nosnippet>243</a>                .and_then(|<span class="kw-2">&amp;</span>mapped| usize::try_from(mapped).ok())
-<a href=#244 id=244 data-nosnippet>244</a>                .unwrap_or(window)
-<a href=#245 id=245 data-nosnippet>245</a>        };
-<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span><span class="kw-2">mut </span>chunks = Chunks::with_capacity(per_window);
-<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(per_window.iter().sum::&lt;usize&gt;() * <span class="self">self</span>.antennas.len());
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().enumerate() {
-<a href=#249 id=249 data-nosnippet>249</a>            <span class="kw">let </span>window = table_window(scan.spectral_window_id);
-<a href=#250 id=250 data-nosnippet>250</a>            <span class="kw">for </span>time_s <span class="kw">in </span><span class="self">self</span>.integration_times_s(index) {
-<a href=#251 id=251 data-nosnippet>251</a>                chunks.push(scan.spectral_window_id, time_s, scan.field_id);
-<a href=#252 id=252 data-nosnippet>252</a>                <span class="kw">for </span>antenna <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.antennas.len() {
-<a href=#253 id=253 data-nosnippet>253</a>                    <span class="kw">let </span>solution = lookup
-<a href=#254 id=254 data-nosnippet>254</a>                        .solution(scan.field_id <span class="kw">as </span>i32, window <span class="kw">as </span>i32, antenna <span class="kw">as </span>i32, time_s)
-<a href=#255 id=255 data-nosnippet>255</a>                        .map_err(raised)<span class="question-mark">?
-<a href=#256 id=256 data-nosnippet>256</a>                        </span>.ok_or_else(|| {
-<a href=#257 id=257 data-nosnippet>257</a>                            not_yet(<span class="macro">format!</span>(
-<a href=#258 id=258 data-nosnippet>258</a>                                <span class="string">"of a table without a solution for antenna {antenna} in spectral \
-<a href=#259 id=259 data-nosnippet>259</a>                                 window {window} (CASA leaves the window uncorrupted)"
-<a href=#260 id=260 data-nosnippet>260</a>                            </span>))
-<a href=#261 id=261 data-nosnippet>261</a>                        })<span class="question-mark">?</span>;
-<a href=#262 id=262 data-nosnippet>262</a>                    <span class="kw">if </span>solution.channels != <span class="number">1 </span>{
-<a href=#263 id=263 data-nosnippet>263</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"of a table of solutions per channel"</span>));
-<a href=#264 id=264 data-nosnippet>264</a>                    }
-<a href=#265 id=265 data-nosnippet>265</a>                    <span class="kw">if </span>solution.flags.iter().any(|<span class="kw-2">&amp;</span>flag| flag) {
-<a href=#266 id=266 data-nosnippet>266</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"of a table with flagged solutions"</span>));
-<a href=#267 id=267 data-nosnippet>267</a>                    }
-<a href=#268 id=268 data-nosnippet>268</a>                    <span class="kw">if </span>solution.receptors != <span class="number">2 </span>{
-<a href=#269 id=269 data-nosnippet>269</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="macro">format!</span>(
-<a href=#270 id=270 data-nosnippet>270</a>                            <span class="string">"of {}-receptor solutions"</span>,
-<a href=#271 id=271 data-nosnippet>271</a>                            solution.receptors
-<a href=#272 id=272 data-nosnippet>272</a>                        )));
-<a href=#273 id=273 data-nosnippet>273</a>                    }
-<a href=#274 id=274 data-nosnippet>274</a>                    values.push([solution.value(<span class="number">0</span>, <span class="number">0</span>), solution.value(<span class="number">1</span>, <span class="number">0</span>)]);
-<a href=#275 id=275 data-nosnippet>275</a>                }
-<a href=#276 id=276 data-nosnippet>276</a>            }
-<a href=#277 id=277 data-nosnippet>277</a>        }
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="prelude-val">Ok</span>((chunks.sorted(), values))
-<a href=#279 id=279 data-nosnippet>279</a>    }
-<a href=#280 id=280 data-nosnippet>280</a>}
-<a href=#281 id=281 data-nosnippet>281</a>
-<a href=#282 id=282 data-nosnippet>282</a><span class="doccomment">/// `interp`'s time interpolation (`linear[,…]` or `nearest[,…]`; empty is
-<a href=#283 id=283 data-nosnippet>283</a>/// `linear`), refusing CASA's deprecated `aipslin` as CASA does.
-<a href=#284 id=284 data-nosnippet>284</a></span><span class="kw">fn </span>apply_interpolation(interp: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;ApplyInterpolationMode&gt; {
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">if </span>interp.contains(<span class="string">"aips"</span>) {
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#287 id=287 data-nosnippet>287</a>            <span class="string">"The (peculiar) 'aipslin' interpolation type was deprecated in CASA v3.4; use \
-<a href=#288 id=288 data-nosnippet>288</a>             'linear'."</span>,
-<a href=#289 id=289 data-nosnippet>289</a>        ));
-<a href=#290 id=290 data-nosnippet>290</a>    }
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">match </span>interp.split(<span class="string">','</span>).next().unwrap_or(<span class="string">""</span>).trim() {
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="string">"" </span>| <span class="string">"linear" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyInterpolationMode::Linear),
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="string">"nearest" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyInterpolationMode::Nearest),
-<a href=#294 id=294 data-nosnippet>294</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="macro">format!</span>(<span class="string">"with interp='{other}'"</span>))),
-<a href=#295 id=295 data-nosnippet>295</a>    }
-<a href=#296 id=296 data-nosnippet>296</a>}
+<a href=#135 id=135 data-nosnippet>135</a>    ///   other than `linear` or `nearest`: not yet implemented.
+<a href=#136 id=136 data-nosnippet>136</a>    /// - No rows observed yet: refused, as `setgain` refuses.
+<a href=#137 id=137 data-nosnippet>137</a>    ///
+<a href=#138 id=138 data-nosnippet>138</a>    /// Flagged G receptors and missing G antennas use unit gains, as in
+<a href=#139 id=139 data-nosnippet>139</a>    /// CASA. For D tables an invalid receptor or missing antenna uses
+<a href=#140 id=140 data-nosnippet>140</a>    /// neutral leakage (both coefficients zero), correcting CASA's unit
+<a href=#141 id=141 data-nosnippet>141</a>    /// leakage substitution. Input data flags, weights and sigma persist.
+<a href=#142 id=142 data-nosnippet>142</a>    </span><span class="kw">pub fn </span>set_apply(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ApplySpec) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">let </span>interp = apply_interpolation(<span class="kw-2">&amp;</span>spec.interp)<span class="question-mark">?</span>;
+<a href=#144 id=144 data-nosnippet>144</a>        <span class="comment">// VisCal::corrupt turns weight calibration off. G/D table lookup
+<a href=#145 id=145 data-nosnippet>145</a>        // uses each row's time regardless of t, and only TOPAC reads opacity.
+<a href=#146 id=146 data-nosnippet>146</a>        </span><span class="kw">if </span>spec.table.is_empty() {
+<a href=#147 id=147 data-nosnippet>147</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"No calibration table given."</span>));
+<a href=#148 id=148 data-nosnippet>148</a>        }
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span>path = std::path::absolute(<span class="kw-2">&amp;</span>spec.table).map_err(raised)<span class="question-mark">?</span>;
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span>lookup = <span class="self">self</span>.load_table(<span class="kw-2">&amp;</span>path, interp)<span class="question-mark">?</span>;
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span>table_kind = table_type(lookup.lookup.subtype());
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">let </span>kind = <span class="kw">match </span>spec.kind.to_uppercase() {
+<a href=#153 id=153 data-nosnippet>153</a>            requested <span class="kw">if </span>requested.is_empty() || requested == table_kind =&gt; table_kind,
+<a href=#154 id=154 data-nosnippet>154</a>            requested =&gt; {
+<a href=#155 id=155 data-nosnippet>155</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#156 id=156 data-nosnippet>156</a>                    <span class="string">"{} is a {} table, not {requested}."</span>,
+<a href=#157 id=157 data-nosnippet>157</a>                    spec.table,
+<a href=#158 id=158 data-nosnippet>158</a>                    lookup.lookup.subtype()
+<a href=#159 id=159 data-nosnippet>159</a>                )));
+<a href=#160 id=160 data-nosnippet>160</a>            }
+<a href=#161 id=161 data-nosnippet>161</a>        };
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>kind = <span class="kw">match </span>kind.as_str() {
+<a href=#163 id=163 data-nosnippet>163</a>            <span class="string">"G" </span>=&gt; JonesKind::Gain,
+<a href=#164 id=164 data-nosnippet>164</a>            <span class="string">"D" </span>=&gt; JonesKind::Leakage,
+<a href=#165 id=165 data-nosnippet>165</a>            other =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="macro">format!</span>(<span class="string">"of a {other} table"</span>))),
+<a href=#166 id=166 data-nosnippet>166</a>        };
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="self">self</span>.require_rows()<span class="question-mark">?</span>;
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="macro">tracing::info!</span>(
+<a href=#169 id=169 data-nosnippet>169</a>            <span class="string">"Arranging to CORRUPT with: {} ({})"</span>,
+<a href=#170 id=170 data-nosnippet>170</a>            spec.table,
+<a href=#171 id=171 data-nosnippet>171</a>            lookup.lookup.subtype()
+<a href=#172 id=172 data-nosnippet>172</a>        );
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="self">self</span>.jones_terms.push(JonesSource::Applied(AppliedTable {
+<a href=#174 id=174 data-nosnippet>174</a>            path,
+<a href=#175 id=175 data-nosnippet>175</a>            lookup: Arc::new(lookup),
+<a href=#176 id=176 data-nosnippet>176</a>            kind,
+<a href=#177 id=177 data-nosnippet>177</a>            spwmap: spec.spwmap.clone(),
+<a href=#178 id=178 data-nosnippet>178</a>        }));
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="prelude-val">Ok</span>(())
+<a href=#180 id=180 data-nosnippet>180</a>    }
+<a href=#181 id=181 data-nosnippet>181</a>
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="doccomment">/// Load the table at `path` to look its solutions up across its fields
+<a href=#183 id=183 data-nosnippet>183</a>    /// with `interp`, its memory admitted before it is read: what reading
+<a href=#184 id=184 data-nosnippet>184</a>    /// it holds, and what the lookup keeps, which it holds on to.
+<a href=#185 id=185 data-nosnippet>185</a>    </span><span class="kw">fn </span>load_table(
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#187 id=187 data-nosnippet>187</a>        path: <span class="kw-2">&amp;</span>std::path::Path,
+<a href=#188 id=188 data-nosnippet>188</a>        interp: ApplyInterpolationMode,
+<a href=#189 id=189 data-nosnippet>189</a>    ) -&gt; SimulatorResult&lt;HeldLookup&gt; {
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>rows = CalibrationTableLookup::rows_on_disk(path).map_err(raised)<span class="question-mark">?</span>;
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>kept = CalibrationTableLookup::kept_bytes(rows);
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>resources = <span class="kw-2">&amp;</span><span class="self">self</span>.options.resources;
+<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">let </span><span class="kw-2">mut </span>reservation = admit(
+<a href=#194 id=194 data-nosnippet>194</a>            resources.host(),
+<a href=#195 id=195 data-nosnippet>195</a>            resources.policy(),
+<a href=#196 id=196 data-nosnippet>196</a>            <span class="kw-2">&amp;</span>Demand {
+<a href=#197 id=197 data-nosnippet>197</a>                phase: LOOKUP_PHASE,
+<a href=#198 id=198 data-nosnippet>198</a>                memory: CalibrationTableLookup::loading_bytes(rows) + kept,
+<a href=#199 id=199 data-nosnippet>199</a>            },
+<a href=#200 id=200 data-nosnippet>200</a>        )
+<a href=#201 id=201 data-nosnippet>201</a>        .map_err(SimulatorError::admission)<span class="question-mark">?</span>;
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span>lookup = CalibrationTableLookup::open_with(path, interp, FieldSelection::AnyField)
+<a href=#203 id=203 data-nosnippet>203</a>            .map_err(raised)<span class="question-mark">?</span>;
+<a href=#204 id=204 data-nosnippet>204</a>        reservation.retain(kept);
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="prelude-val">Ok</span>(HeldLookup {
+<a href=#206 id=206 data-nosnippet>206</a>            lookup,
+<a href=#207 id=207 data-nosnippet>207</a>            _reservation: reservation,
+<a href=#208 id=208 data-nosnippet>208</a>        })
+<a href=#209 id=209 data-nosnippet>209</a>    }
+<a href=#210 id=210 data-nosnippet>210</a>
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// The term `source` is at this `corrupt`: a simulated one as it was
+<a href=#212 id=212 data-nosnippet>212</a>    /// set, a table's evaluated over the scans observed so far. An
+<a href=#213 id=213 data-nosnippet>213</a>    /// evaluated term is admitted as a simulated one is, before it is
+<a href=#214 id=214 data-nosnippet>214</a>    /// formed, and keeps its share while a step applies it.
+<a href=#215 id=215 data-nosnippet>215</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>jones_term(<span class="kw-2">&amp;</span><span class="self">self</span>, source: <span class="kw-2">&amp;</span>JonesSource) -&gt; SimulatorResult&lt;Arc&lt;HeldTerm&gt;&gt; {
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">match </span>source {
+<a href=#217 id=217 data-nosnippet>217</a>            JonesSource::Simulated(term) =&gt; <span class="prelude-val">Ok</span>(Arc::clone(term)),
+<a href=#218 id=218 data-nosnippet>218</a>            JonesSource::Applied(table) =&gt; {
+<a href=#219 id=219 data-nosnippet>219</a>                <span class="kw">let </span>antennas = <span class="self">self</span>.antennas.len();
+<a href=#220 id=220 data-nosnippet>220</a>                <span class="kw">let </span>(per_window, <span class="kw">_</span>) = <span class="self">self</span>.integration_counts();
+<a href=#221 id=221 data-nosnippet>221</a>                <span class="kw">let </span>bytes = TermBytes::per_chunk(<span class="kw-2">&amp;</span>per_window, antennas);
+<a href=#222 id=222 data-nosnippet>222</a>                <span class="kw">let </span><span class="kw-2">mut </span>reservation = <span class="self">self</span>.admit_term(bytes)<span class="question-mark">?</span>;
+<a href=#223 id=223 data-nosnippet>223</a>                <span class="kw">let </span>(chunks, values) = <span class="self">self</span>.applied_solutions(
+<a href=#224 id=224 data-nosnippet>224</a>                    <span class="kw-2">&amp;</span>table.lookup.lookup,
+<a href=#225 id=225 data-nosnippet>225</a>                    <span class="kw-2">&amp;</span>table.spwmap,
+<a href=#226 id=226 data-nosnippet>226</a>                    <span class="kw-2">&amp;</span>per_window,
+<a href=#227 id=227 data-nosnippet>227</a>                    table.kind,
+<a href=#228 id=228 data-nosnippet>228</a>                )<span class="question-mark">?</span>;
+<a href=#229 id=229 data-nosnippet>229</a>                reservation.retain(bytes.kept);
+<a href=#230 id=230 data-nosnippet>230</a>                <span class="prelude-val">Ok</span>(Arc::new(HeldTerm::new(
+<a href=#231 id=231 data-nosnippet>231</a>                    applied(table.kind, antennas, chunks, values),
+<a href=#232 id=232 data-nosnippet>232</a>                    reservation,
+<a href=#233 id=233 data-nosnippet>233</a>                )))
+<a href=#234 id=234 data-nosnippet>234</a>            }
+<a href=#235 id=235 data-nosnippet>235</a>        }
+<a href=#236 id=236 data-nosnippet>236</a>    }
+<a href=#237 id=237 data-nosnippet>237</a>
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="doccomment">/// Each integration observed so far as a chunk, counted `per_window`,
+<a href=#239 id=239 data-nosnippet>239</a>    /// with each antenna's solution from `lookup` at its time, field and
+<a href=#240 id=240 data-nosnippet>240</a>    /// window (mapped by `spwmap`).
+<a href=#241 id=241 data-nosnippet>241</a>    </span><span class="kw">fn </span>applied_solutions(
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#243 id=243 data-nosnippet>243</a>        lookup: <span class="kw-2">&amp;</span>CalibrationTableLookup,
+<a href=#244 id=244 data-nosnippet>244</a>        spwmap: <span class="kw-2">&amp;</span>[i64],
+<a href=#245 id=245 data-nosnippet>245</a>        per_window: <span class="kw-2">&amp;</span>[usize],
+<a href=#246 id=246 data-nosnippet>246</a>        kind: JonesKind,
+<a href=#247 id=247 data-nosnippet>247</a>    ) -&gt; SimulatorResult&lt;(Chunks, Vec&lt;[Complex32; <span class="number">2</span>]&gt;)&gt; {
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">let </span>table_window = |window: usize| {
+<a href=#249 id=249 data-nosnippet>249</a>            spwmap
+<a href=#250 id=250 data-nosnippet>250</a>                .get(window)
+<a href=#251 id=251 data-nosnippet>251</a>                .and_then(|<span class="kw-2">&amp;</span>mapped| usize::try_from(mapped).ok())
+<a href=#252 id=252 data-nosnippet>252</a>                .unwrap_or(window)
+<a href=#253 id=253 data-nosnippet>253</a>        };
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="comment">// JonesDiag::setMatByOk substitutes unit gains per receptor.
+<a href=#255 id=255 data-nosnippet>255</a>        // JonesGenLin instead substitutes one for BOTH leakage values;
+<a href=#256 id=256 data-nosnippet>256</a>        // correct that data-corrupting defect with the neutral zero pair.
+<a href=#257 id=257 data-nosnippet>257</a>        </span><span class="kw">let </span>neutral = Complex32::new(<span class="kw">if </span>kind == JonesKind::Gain { <span class="number">1.0 </span>} <span class="kw">else </span>{ <span class="number">0.0 </span>}, <span class="number">0.0</span>);
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span><span class="kw-2">mut </span>chunks = Chunks::with_capacity(per_window);
+<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(per_window.iter().sum::&lt;usize&gt;() * <span class="self">self</span>.antennas.len());
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().enumerate() {
+<a href=#261 id=261 data-nosnippet>261</a>            <span class="kw">let </span>window = table_window(scan.spectral_window_id);
+<a href=#262 id=262 data-nosnippet>262</a>            <span class="kw">for </span>time_s <span class="kw">in </span><span class="self">self</span>.integration_times_s(index) {
+<a href=#263 id=263 data-nosnippet>263</a>                chunks.push(scan.spectral_window_id, time_s, scan.field_id);
+<a href=#264 id=264 data-nosnippet>264</a>                <span class="kw">for </span>antenna <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.antennas.len() {
+<a href=#265 id=265 data-nosnippet>265</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(solution) = lookup
+<a href=#266 id=266 data-nosnippet>266</a>                        .solution(scan.field_id <span class="kw">as </span>i32, window <span class="kw">as </span>i32, antenna <span class="kw">as </span>i32, time_s)
+<a href=#267 id=267 data-nosnippet>267</a>                        .map_err(raised)<span class="question-mark">?
+<a href=#268 id=268 data-nosnippet>268</a>                    </span><span class="kw">else </span>{
+<a href=#269 id=269 data-nosnippet>269</a>                        values.push([neutral; <span class="number">2</span>]);
+<a href=#270 id=270 data-nosnippet>270</a>                        <span class="kw">continue</span>;
+<a href=#271 id=271 data-nosnippet>271</a>                    };
+<a href=#272 id=272 data-nosnippet>272</a>                    <span class="kw">if </span>solution.channels != <span class="number">1 </span>{
+<a href=#273 id=273 data-nosnippet>273</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"of a table of solutions per channel"</span>));
+<a href=#274 id=274 data-nosnippet>274</a>                    }
+<a href=#275 id=275 data-nosnippet>275</a>                    <span class="kw">if </span>solution.receptors != <span class="number">2 </span>{
+<a href=#276 id=276 data-nosnippet>276</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="macro">format!</span>(
+<a href=#277 id=277 data-nosnippet>277</a>                            <span class="string">"of {}-receptor solutions"</span>,
+<a href=#278 id=278 data-nosnippet>278</a>                            solution.receptors
+<a href=#279 id=279 data-nosnippet>279</a>                        )));
+<a href=#280 id=280 data-nosnippet>280</a>                    }
+<a href=#281 id=281 data-nosnippet>281</a>                    <span class="kw">let </span>invalid_leakage =
+<a href=#282 id=282 data-nosnippet>282</a>                        kind == JonesKind::Leakage &amp;&amp; solution.flags.iter().any(|<span class="kw-2">&amp;</span>flag| flag);
+<a href=#283 id=283 data-nosnippet>283</a>                    values.push(std::array::from_fn(|receptor| {
+<a href=#284 id=284 data-nosnippet>284</a>                        <span class="kw">if </span>invalid_leakage || solution.flags[receptor] {
+<a href=#285 id=285 data-nosnippet>285</a>                            neutral
+<a href=#286 id=286 data-nosnippet>286</a>                        } <span class="kw">else </span>{
+<a href=#287 id=287 data-nosnippet>287</a>                            solution.value(receptor, <span class="number">0</span>)
+<a href=#288 id=288 data-nosnippet>288</a>                        }
+<a href=#289 id=289 data-nosnippet>289</a>                    }));
+<a href=#290 id=290 data-nosnippet>290</a>                }
+<a href=#291 id=291 data-nosnippet>291</a>            }
+<a href=#292 id=292 data-nosnippet>292</a>        }
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="prelude-val">Ok</span>((chunks.sorted(), values))
+<a href=#294 id=294 data-nosnippet>294</a>    }
+<a href=#295 id=295 data-nosnippet>295</a>}
+<a href=#296 id=296 data-nosnippet>296</a>
+<a href=#297 id=297 data-nosnippet>297</a><span class="doccomment">/// `interp`'s time interpolation (`linear[,…]` or `nearest[,…]`; empty is
+<a href=#298 id=298 data-nosnippet>298</a>/// `linear`), refusing CASA's deprecated `aipslin` as CASA does.
+<a href=#299 id=299 data-nosnippet>299</a></span><span class="kw">fn </span>apply_interpolation(interp: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;ApplyInterpolationMode&gt; {
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">if </span>interp.contains(<span class="string">"aips"</span>) {
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="string">"The (peculiar) 'aipslin' interpolation type was deprecated in CASA v3.4; use \
+<a href=#303 id=303 data-nosnippet>303</a>             'linear'."</span>,
+<a href=#304 id=304 data-nosnippet>304</a>        ));
+<a href=#305 id=305 data-nosnippet>305</a>    }
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">match </span>interp.split(<span class="string">','</span>).next().unwrap_or(<span class="string">""</span>).trim() {
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="string">"" </span>| <span class="string">"linear" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyInterpolationMode::Linear),
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="string">"nearest" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyInterpolationMode::Nearest),
+<a href=#309 id=309 data-nosnippet>309</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="macro">format!</span>(<span class="string">"with interp='{other}'"</span>))),
+<a href=#310 id=310 data-nosnippet>310</a>    }
+<a href=#311 id=311 data-nosnippet>311</a>}
 </code></pre></div></section></main></body></html>
