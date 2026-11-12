@@ -1443,7 +1443,7 @@ def test_noise_later_observations_keep_original_window_coverage(tmp_path: Path, 
     configure(sm)
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
     assert sm.setseed(19)
-    assert sm.setnoise(mode=mode, OTF=otf, pwv="1mm", table=str(tmp_path / "noise.cal"))
+    assert sm.setnoise(mode=mode, OTF=otf, simplenoise="1Jy", pwv="1mm", table=str(tmp_path / "noise.cal"))
     assert sm.observe("F", "L", starttime="3600s", stoptime="3620s")
     assert sm.setspwindow(spwname="later", freq="1.4GHz", deltafreq="1MHz",
                           freqresolution="1MHz", nchannels=4, stokes="RR LL")
