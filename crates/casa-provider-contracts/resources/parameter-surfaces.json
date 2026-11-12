@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 41,
+      "contract_version": 42,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -9886,6 +9886,12 @@
         {
           "from_contract": 40,
           "to_contract": 41,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 41,
+          "to_contract": 42,
           "steps": [],
           "changed_defaults": []
         }
