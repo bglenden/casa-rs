@@ -39,7 +39,7 @@ pub enum AnalyticPrimaryBeamModel {
 pub struct ContinuumProductControls {
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
-    preserve_mosaic_products: bool,
+    saved_mosaic_beam_read_bytes: Option<u64>,
 }
 
 impl ContinuumProductControls {
@@ -67,9 +67,10 @@ impl ContinuumProductControls {
     /// Keep the PSF, weight, sum of weights and primary beam already on
     /// disk when a mosaic continuation reads them instead of forming them.
     /// The scientific product dependencies still include their response.
+    /// `read_bytes` bounds one worker's PB or pixel mask read.
     #[must_use]
-    pub const fn preserving_mosaic_products(mut self) -> Self {
-        self.preserve_mosaic_products = true;
+    pub const fn preserving_mosaic_products(mut self, read_bytes: u64) -> Self {
+        self.saved_mosaic_beam_read_bytes = Some(read_bytes);
         self
     }
 
@@ -132,7 +133,7 @@ impl Default for ContinuumProductControls {
         Self {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
             primary_beam_model: None,
-            preserve_mosaic_products: false,
+            saved_mosaic_beam_read_bytes: None,
         }
     }
 }
@@ -163,6 +164,7 @@ pub struct PlannedContinuumGeneration {
     pub(crate) psf_cutoff: f32,
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     pub(crate) uses_weight_image: bool,
+    pub(crate) saved_mosaic_beam_read_bytes: u64,
     pub(crate) members: Box<[PlannedMember]>,
 }
 
@@ -197,7 +199,7 @@ impl PlannedContinuumGeneration {
         let mut members = Vec::with_capacity(list.publication().members().len());
         for id in list.publication().members() {
             let entry = &list.entries()[id.ordinal()];
-            if controls.preserve_mosaic_products
+            if controls.saved_mosaic_beam_read_bytes.is_some()
                 && matches!(
                     entry.role(),
                     ProductRole::Psf(_)
@@ -246,6 +248,7 @@ impl PlannedContinuumGeneration {
         Ok(Self {
             psf_cutoff: controls.psf_cutoff(),
             primary_beam_model: controls.primary_beam_model(),
+            saved_mosaic_beam_read_bytes: controls.saved_mosaic_beam_read_bytes.unwrap_or(0),
             uses_weight_image: list
                 .entries()
                 .iter()

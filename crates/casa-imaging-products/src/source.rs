@@ -46,7 +46,7 @@ pub struct ContinuumProductInputs<'a> {
     vla_selection_hz: Option<f64>,
     facet_sum_weights: Option<&'a FacetSumWeights>,
     saved_psf_beams: Option<&'a [RestoringBeam]>,
-    saved_mosaic_beam: Option<(&'a [f32], &'a [bool])>,
+    saved_mosaic_beam: Option<&'a crate::SavedMosaicBeam>,
 }
 
 /// Each faceted image domain's facets' own sums of weights, by domain
@@ -268,36 +268,35 @@ impl<'a> ContinuumProductInputs<'a> {
     /// continuation, polarization-major with x-major image planes.
     ///
     /// # Errors
-    /// The completion is outside the MFS mosaic layout, or the beam shape,
-    /// pixel mask shape, or values are invalid.
+    /// The completion is outside the single-term mosaic layout, or the
+    /// saved PB does not match its grid.
     pub fn with_saved_mosaic_beam(
         mut self,
-        values: &'a [f32],
-        mask: &'a [bool],
+        beam: &'a crate::SavedMosaicBeam,
     ) -> Result<Self, crate::ProductsError> {
         let normal = self.normal_state;
         let [width, height] = normal.shape();
-        let expected = width * height * normal.polarization_count();
-        if normal.basis() != NormalBasis::Constant
-            || normal.domain_count() != 1
-            || values.len() != expected
-            || mask.len() != expected
-            || values
-                .iter()
-                .any(|value| !value.is_finite() || *value < 0.0)
-        {
-            return Err(crate::ProductsError::InvalidSavedMosaicBeam);
+        let expected = [
+            width,
+            height,
+            normal.polarization_count(),
+            normal.channel_count(),
+        ];
+        if normal.basis() == NormalBasis::Taylor || normal.domain_count() != 1 {
+            return Err(crate::ProductsError::UnsupportedProblem);
         }
-        self.saved_mosaic_beam = Some((values, mask));
+        if beam.shape() != expected {
+            return Err(crate::ProductsError::SavedMosaicBeamShape {
+                saved: beam.shape(),
+                expected,
+            });
+        }
+        self.saved_mosaic_beam = Some(beam);
         Ok(self)
     }
 
-    pub(crate) fn saved_mosaic_beam(&self, polarization: usize) -> Option<(&'a [f32], &'a [bool])> {
-        let (values, mask) = self.saved_mosaic_beam?;
-        let [width, height] = self.normal_state.shape();
-        let cells = width * height;
-        let plane = polarization * cells..(polarization + 1) * cells;
-        Some((&values[plane.clone()], &mask[plane]))
+    pub(crate) fn saved_mosaic_beam(&self) -> Option<&'a crate::SavedMosaicBeam> {
+        self.saved_mosaic_beam
     }
 
     /// The main image's saved PSF beams, channel-major.
