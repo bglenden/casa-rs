@@ -77,7 +77,10 @@ impl Simulator {
         level: &NoiseLevel,
         name: &str,
     ) -> SimulatorResult<Option<NoiseTable>> {
-        if matches!(level, NoiseLevel::Simple(_) | NoiseLevel::Fixed(_)) {
+        if matches!(
+            level,
+            NoiseLevel::Simple(_) | NoiseLevel::Fixed(_) | NoiseLevel::ScaledFixed { .. }
+        ) {
             return Ok(None);
         }
         let Some(root) = calibration_table_root(name) else {
@@ -186,7 +189,9 @@ impl Simulator {
                             (noise_window.channel_bandwidth_hz, exposure),
                             output,
                         ),
-                        NoiseLevel::Simple(_) | NoiseLevel::Fixed(_) => {
+                        NoiseLevel::Simple(_)
+                        | NoiseLevel::Fixed(_)
+                        | NoiseLevel::ScaledFixed { .. } => {
                             unreachable!("simple noise writes no T table")
                         }
                     }

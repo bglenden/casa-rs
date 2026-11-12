@@ -126,6 +126,17 @@ impl OfflineNoise {
         receptors: &[[usize; 2]],
         cell: &mut [Complex32],
     ) {
+        self.add_scaled_to_cell((window, time), antennas, receptors, cell, |_| 1.);
+    }
+
+    pub(crate) fn add_scaled_to_cell(
+        &self,
+        (window, time): (usize, f64),
+        antennas: (usize, usize),
+        receptors: &[[usize; 2]],
+        cell: &mut [Complex32],
+        sigma: impl Fn(usize) -> f32,
+    ) {
         let Some(window) = self.windows.get(window).filter(|w| !w.chunks.is_empty()) else {
             return;
         };
@@ -151,7 +162,7 @@ impl OfflineNoise {
             let parameter = if reverse { 2 * r2 + r1 } else { 2 * r1 + r2 };
             let noise = self.values[offset + index / receptors.len() * 4 + parameter];
             // VisEquation corrects zero DATA by A before adding the model.
-            *value -= if reverse { noise.conj() } else { noise };
+            *value -= (if reverse { noise.conj() } else { noise }) * sigma(index / receptors.len());
         }
     }
 

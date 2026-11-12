@@ -503,11 +503,12 @@ fn setnoise_refuses_as_casa_does_and_names_later_phases() {
     let table = NoiseSpec {
         mode: "tsys-manual".into(),
         on_the_fly: false,
+        water_vapour_mm: 200.,
         ..simple_noise(SIGMA_JY)
     };
     assert_eq!(
         outcome(session.set_noise(&table)).0,
-        CasaOutcome::NotYetImplemented
+        CasaOutcome::ReturnsFalse
     );
     // None of these added a term.
     session.corrupt().expect("corrupt");

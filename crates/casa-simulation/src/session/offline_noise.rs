@@ -13,7 +13,11 @@ use casa_ms::MeasurementSet;
 use std::sync::Arc;
 
 impl Simulator {
-    pub(super) fn set_offline_noise(&mut self, spec: &NoiseSpec) -> SimulatorResult<()> {
+    pub(super) fn set_offline_noise(
+        &mut self,
+        spec: &NoiseSpec,
+        level: NoiseLevel,
+    ) -> SimulatorResult<()> {
         self.require_rows()?;
         let path = calibration_table_root(&spec.table)
             .map(|root| self.table_path(&format!("{root}.A.cal")))
@@ -39,6 +43,11 @@ impl Simulator {
             &channels,
             reservation,
         );
+        let sigma = if let NoiseLevel::Simple(sigma) = &level {
+            *sigma
+        } else {
+            1.
+        };
         for (index, scan) in self.scans.iter().enumerate() {
             for time in self.integration_times_s(index) {
                 field.push(
@@ -46,7 +55,7 @@ impl Simulator {
                     time,
                     scan.field_id as i32,
                     self.seed,
-                    spec.simple_noise_jy as f32,
+                    sigma,
                 );
             }
         }
@@ -59,7 +68,13 @@ impl Simulator {
         }
         self.noise_terms.push(NoiseTerm {
             seed: self.seed,
-            level: NoiseLevel::Fixed(field),
+            level: match level {
+                NoiseLevel::Simple(_) => NoiseLevel::Fixed(field),
+                scale => NoiseLevel::ScaledFixed {
+                    field,
+                    scale: Arc::new(scale),
+                },
+            },
             applications: 0,
         });
         Ok(())
