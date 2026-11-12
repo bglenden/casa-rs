@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA 6.7.6.14 OTF=False controls: a full A Noise field, reused on corrupt.
 mod predict_support;
-use casa_simulation::{NoiseSpec, Simulator};
+use casa_simulation::{NoiseSpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, Complex32, ScalarValue};
 use ndarray::IxDyn;
@@ -198,4 +198,49 @@ fn later_observation_refusal_is_atomic_and_reset_preserves_output() {
             .unwrap(),
         &ScalarValue::Int32(0)
     );
+}
+
+#[test]
+fn an_opened_measurement_set_uses_each_integrations_saved_field() {
+    let reference = run("XX YY", 1, 1, false);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("data.ms");
+    observed(&path, 1, "XX YY").close().unwrap();
+    let mut sm = Simulator::open_from_ms(
+        &path,
+        SimulatorOptions {
+            measures: casa_test_support::deterministic_measures_provider(),
+            resources: predict_support::resources(3, 512 << 20),
+            now: casa_types::measures::MEpoch::from_mjd(
+                predict_support::REFERENCE_MJD,
+                casa_types::measures::EpochRef::UTC,
+            ),
+        },
+    )
+    .unwrap();
+    let spec = NoiseSpec {
+        simple_noise_jy: 0.25,
+        on_the_fly: false,
+        table: root.path().join("noise.cal").to_string_lossy().into_owned(),
+        ..NoiseSpec::default()
+    };
+    sm.set_noise(&spec).unwrap();
+    sm.reset();
+    sm.set_noise(&NoiseSpec {
+        simple_noise_jy: 0.5,
+        ..spec
+    })
+    .unwrap();
+    sm.corrupt().unwrap();
+    sm.close().unwrap();
+    check_table(&path, &root.path().join("noise.A.cal"), "XX YY", 1);
+    for (actual, reference) in predict_support::read_main(&path).0.iter().zip(&reference) {
+        for (actual, reference) in actual.data.iter().zip(&reference.data) {
+            assert_eq!(
+                *actual,
+                *reference * 2.,
+                "the newest snapshot uses sigma 0.5 Jy"
+            );
+        }
+    }
 }

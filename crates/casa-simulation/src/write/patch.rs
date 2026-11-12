@@ -176,7 +176,13 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         columns: columns.len(),
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
-        times: noise_varies_by_row(plan) || plan.corrupts_by_jones() || plan.has_query(),
+        times: plan
+            .phases()
+            .iter()
+            .flat_map(|phase| phase.noise_for_scan(0))
+            .any(|noise| noise.varies_by_row() || noise.fixed().is_some())
+            || plan.corrupts_by_jones()
+            || plan.has_query(),
         noise_scales: NoiseScales::of(plan, channels, None),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;

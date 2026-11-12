@@ -52,6 +52,9 @@ impl Simulator {
         }
         let field = Arc::new(field.sorted());
         if let Some(path) = path {
+            // Active terms and recorded applications own their fields separately.
+            // Only the latest snapshot is written to a given destination.
+            self.offline_tables.retain(|(saved, _)| saved != &path);
             self.offline_tables.push((path, Arc::clone(&field)));
         }
         self.noise_terms.push(NoiseTerm {

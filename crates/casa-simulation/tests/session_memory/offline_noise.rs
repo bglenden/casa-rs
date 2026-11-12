@@ -41,7 +41,21 @@ fn additive_fields_hold_their_admission_and_reset_releases_unsaved_fields() {
         check("a saved additive field", &call);
         sm.reset();
         if named {
-            assert!(reserved_memory() > before + 1_000_000);
+            let retained = reserved_memory();
+            assert!(retained > before + 1_000_000);
+            sm.set_noise(&NoiseSpec {
+                simple_noise_jy: 0.5,
+                on_the_fly: false,
+                table: root.path().join("noise.cal").to_string_lossy().into_owned(),
+                ..NoiseSpec::default()
+            })
+            .unwrap();
+            sm.reset();
+            assert_eq!(
+                reserved_memory(),
+                retained,
+                "only the newest export stays charged"
+            );
         } else {
             assert_eq!(reserved_memory(), before);
         }
