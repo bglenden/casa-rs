@@ -404,11 +404,13 @@ fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
 fn a_close_refused_admission_writes_nothing() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("refused.ms");
-    let error = session(&path, resources(1, 1 << 20), true)
-        .close()
-        .expect_err("a megabyte does not hold the writer");
+    let sm = session(&path, resources(1, 1 << 20), true);
+    // The original noise-window metadata now holds a live reservation.
+    let policy = &sm.options().resources;
+    let available = casa_imaging_runtime::free_memory(policy.host(), policy.policy());
+    let error = sm.close().expect_err("a megabyte does not hold the writer");
     let refusal = error.admission_refused().expect("an admission refusal");
-    assert_eq!(refusal.available, 1 << 20);
+    assert_eq!(refusal.available, available);
     assert!(refusal.required > 1 << 20);
     assert!(
         std::fs::read_dir(directory.path())

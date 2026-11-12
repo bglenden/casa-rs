@@ -193,9 +193,20 @@ fn resolved(path: &Path) -> PathBuf {
     base
 }
 
+/// Metadata rows that existed when a simulator generated its solutions.
+/// Later fields and windows must not appear in its saved calibration table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimulatedTableMetadata {
+    /// Original FIELD row count.
+    pub fields: usize,
+    /// Original SPECTRAL_WINDOW row count, including unobserved windows.
+    pub spectral_windows: usize,
+}
+
 /// Write `solutions` of `kind` as the calibration table `output` of the
 /// MeasurementSet `ms`, replacing a table already there once the new one is
-/// saved. The rows are formed one at a time from `solutions`.
+/// saved. The rows are formed one at a time from `solutions`. `metadata`
+/// keeps the creation-time metadata prefix; `None` copies the full MS.
 ///
 /// # Errors
 ///
@@ -207,12 +218,13 @@ pub fn write_simulated_jones_table(
     output: &Path,
     kind: SimulatedJones,
     solutions: impl IntoIterator<Item = SimulatedSolution>,
+    metadata: Option<SimulatedTableMetadata>,
 ) -> Result<(), CalibrationTableWriteError> {
     let mut writer = simulated_writer(ms, output, kind.vis_cal())?;
     for solution in solutions {
         writer.append(row(&solution))?;
     }
-    finish_simulated_table(writer, kind.depends_on_frequency())
+    finish_simulated_table(writer, kind.depends_on_frequency(), metadata)
 }
 
 /// One baseline's additive A Noise parameters, four correlations per channel.
@@ -231,6 +243,7 @@ pub struct SimulatedNoiseSolution {
 }
 
 /// Write CASA's channel-dependent A Noise table from simulated baselines.
+/// `metadata` keeps the creation-time metadata prefix; `None` copies the full MS.
 ///
 /// # Errors
 /// The destination conflicts with the MS, or the table cannot be written.
@@ -238,6 +251,7 @@ pub fn write_simulated_noise_table(
     ms: &MeasurementSet,
     output: &Path,
     solutions: impl IntoIterator<Item = SimulatedNoiseSolution>,
+    metadata: Option<SimulatedTableMetadata>,
 ) -> Result<(), CalibrationTableWriteError> {
     let mut writer = simulated_writer(ms, output, "A Noise")?;
     for solution in solutions {
@@ -253,7 +267,7 @@ pub fn write_simulated_noise_table(
             solution.values.into_flattened(),
         ))?;
     }
-    finish_simulated_table(writer, true)
+    finish_simulated_table(writer, true, metadata)
 }
 
 fn simulated_writer<'a>(
@@ -285,6 +299,7 @@ fn simulated_writer<'a>(
 fn finish_simulated_table(
     writer: CalibrationTableWriter,
     frequency_dependent: bool,
+    metadata: Option<SimulatedTableMetadata>,
 ) -> Result<(), CalibrationTableWriteError> {
     writer.copy_subtables(&[
         (SubtableId::Observation, "OBSERVATION"),
@@ -293,10 +308,31 @@ fn finish_simulated_table(
         (SubtableId::History, "HISTORY"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
     ])?;
+    if let Some(metadata) = metadata {
+        trim_metadata(&writer.output_path().join("FIELD"), metadata.fields)?;
+        trim_metadata(
+            &writer.output_path().join("SPECTRAL_WINDOW"),
+            metadata.spectral_windows,
+        )?;
+    }
     if !frequency_dependent {
         make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"))?;
     }
     writer.save_main()
+}
+
+fn trim_metadata(path: &Path, rows: usize) -> Result<(), CalibrationTableWriteError> {
+    let failed = |source: TableError| CalibrationTableWriteError::Save {
+        path: path.display().to_string(),
+        source: Box::new(source),
+    };
+    let mut table = Table::open(TableOptions::new(path)).map_err(failed)?;
+    let extra: Vec<usize> = (rows..table.row_count()).collect();
+    if !extra.is_empty() {
+        table.remove_rows(&extra).map_err(failed)?;
+        table.flush().map_err(failed)?;
+    }
+    Ok(())
 }
 
 /// Reduce every spectral window of the SPECTRAL_WINDOW subtable at `path`

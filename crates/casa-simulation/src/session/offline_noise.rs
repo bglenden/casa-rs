@@ -17,6 +17,8 @@ impl Simulator {
         &mut self,
         spec: &NoiseSpec,
         level: NoiseLevel,
+        domain: Arc<crate::corrupt::noise_domain::NoiseDomain>,
+        snapshot: Option<Arc<crate::corrupt::tsys_snapshot::TsysSnapshot>>,
     ) -> SimulatorResult<()> {
         self.require_rows()?;
         let path = calibration_table_root(&spec.table)
@@ -38,10 +40,10 @@ impl Simulator {
         let reservation = self.admit_term(TermBytes { kept, forming: 0 })?;
         let mut field = OfflineNoise::new(
             self.antennas.len(),
-            self.scans.len(),
             &counts,
             &channels,
             reservation,
+            domain.metadata(),
         );
         let sigma = if let NoiseLevel::Simple(sigma) = &level {
             *sigma
@@ -67,6 +69,8 @@ impl Simulator {
             self.offline_tables.push((path, Arc::clone(&field)));
         }
         self.noise_terms.push(NoiseTerm {
+            domain,
+            snapshot,
             seed: self.seed,
             level: match level {
                 NoiseLevel::Simple(_) => NoiseLevel::Fixed(field),
@@ -102,7 +106,7 @@ impl Simulator {
         let ms = MeasurementSet::open(self.path())
             .map_err(|error| SimulatorError::raised(error.to_string()))?;
         for (path, field) in &self.offline_tables {
-            write_simulated_noise_table(&ms, path, field.solutions())
+            write_simulated_noise_table(&ms, path, field.solutions(), Some(field.metadata))
                 .map_err(|error| SimulatorError::raised(format!("write A Noise table: {error}")))?;
         }
         Ok(())

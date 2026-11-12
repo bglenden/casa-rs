@@ -159,7 +159,7 @@ fn saved_and_unsaved_fields_repeat_casas_fixed_draws() {
 }
 
 #[test]
-fn later_observation_refusal_is_atomic_and_reset_preserves_output() {
+fn reset_preserves_original_output_after_later_observation() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("data.ms");
     let mut sm = observed(&path, 1, "XX YY");
@@ -172,14 +172,6 @@ fn later_observation_refusal_is_atomic_and_reset_preserves_output() {
     .unwrap();
     sm.observe(&predict_support::scan("target", 40., 50.))
         .unwrap();
-    let error = sm
-        .corrupt()
-        .expect_err("later observations remain explicitly unfinished");
-    assert_eq!(
-        error.outcome(),
-        casa_simulation::CasaOutcome::NotYetImplemented
-    );
-    assert!(error.message().contains("#1292"));
     sm.reset();
     sm.close().unwrap();
     assert!(

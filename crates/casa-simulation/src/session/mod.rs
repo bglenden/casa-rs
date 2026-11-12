@@ -39,6 +39,7 @@ mod feeds;
 pub mod fields;
 mod from_ms;
 mod gains;
+mod later_noise;
 mod mosaic;
 mod noise_tables;
 pub mod observe;

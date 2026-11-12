@@ -180,7 +180,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             .phases()
             .iter()
             .flat_map(|phase| phase.noise_for_scan(0))
-            .any(|noise| noise.varies_by_row() || noise.fixed().is_some())
+            .any(crate::corrupt::NoiseApplication::needs_time)
             || plan.corrupts_by_jones()
             || plan.has_query(),
         noise_scales: NoiseScales::of(plan, channels, None),

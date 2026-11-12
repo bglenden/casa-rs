@@ -439,7 +439,7 @@ impl super::Simulator {
         }
         let feeds = self.feeds.len() / self.antennas.len();
         if feeds == 0
-            || self.feeds.len() % self.antennas.len() != 0
+            || !self.feeds.len().is_multiple_of(self.antennas.len())
             || self.feeds.iter().enumerate().any(|(row, feed)| {
                 feed.antenna_id != (row / feeds) as i32 || feed.feed_id != (row % feeds) as i32
             })

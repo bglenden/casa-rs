@@ -4642,6 +4642,23 @@ and DATA to that reference, including repeated corruption and reopened data.
 The existing wet-delay and channel-frequency corrections still apply.
 
 
+### Simulator on-the-fly simple noise crashes on a newly defined window
+
+In CASA 6.7.6.14, observe four integrations, call
+`setnoise(mode="simplenoise", OTF=True)`, define another spectral window,
+observe it and call `corrupt`: the process exits with signal 11. The same
+control succeeds on the original window. The other five combinations of
+simple/manual/atmospheric noise and OTF on/off safely skip the added window;
+all six combinations apply their original solutions to later integrations
+on an existing window.
+
+casa-rs gates the noise term to the windows present when it was created,
+preserving the new window's DATA and predictions. This corrects the crash
+under the standing crash rule. `tools/simulation/sm_later_noise_oracle.py`
+records each control in a separate CASA process; the native regression is
+`crates/casa-simulation/tests/later_noise.rs`, with actual Metal coverage in
+`tests/backends/offline_noise.rs`.
+
 ### Multi-feed observations accumulate the previous feed rotation
 
 CASA 6.7.6.14's `NewMSSimulator::observe` loads a feed's fixed BEAM_OFFSET

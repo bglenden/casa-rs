@@ -140,5 +140,5 @@ pub(super) fn fixed_gains(path: &Path, output: &Path, gain: f32) {
             values: SolutionValues::Receptors([Complex32::new(gain, 0.0); 2]),
         })
     });
-    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).unwrap();
+    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows, None).unwrap();
 }

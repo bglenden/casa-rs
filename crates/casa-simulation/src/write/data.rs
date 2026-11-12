@@ -38,12 +38,22 @@ pub(super) struct PendingNoise<'a, 's> {
     pub(super) runs: &'a [Run],
     prediction: Option<&'a PredictionStage<'s>>,
     host_noise: bool,
+    scans: &'s [crate::session::observe::Scan],
 }
 
 impl PendingNoise<'_, '_> {
     pub(super) fn noised(&self, scan: usize) -> bool {
-        self.prediction
-            .is_some_and(|stage| stage.noised(scan, device_noise(self.plan, scan, self.host_noise)))
+        self.prediction.is_some_and(|stage| {
+            stage.noised(
+                scan,
+                device_noise(
+                    self.plan,
+                    scan,
+                    self.scans[scan].spectral_window_id,
+                    self.host_noise,
+                ),
+            )
+        })
     }
 }
 
@@ -242,6 +252,7 @@ impl<'s> DataStage<'s> {
     pub(super) fn pending_noise<'a>(&'a self, runs: &'a [Run]) -> PendingNoise<'a, 's> {
         let phase = self.phases.last().expect("nonempty DATA program");
         PendingNoise {
+            scans: self.session.scans(),
             plan: phase.phase,
             runs: if phase.phase.selection.is_all() {
                 runs
@@ -346,6 +357,7 @@ impl<'s> DataStage<'s> {
             }
             if !defer_last_noise || index != last {
                 let pending = PendingNoise {
+                    scans: self.session.scans(),
                     plan: phase.phase,
                     runs,
                     prediction: phase.prediction.as_ref(),
@@ -426,7 +438,7 @@ fn predict_phase(
             runs,
             batch.first_row,
             data,
-            |scan| device_noise(plan, scan, host_noise),
+            |scan| device_noise(plan, scan, scans[scan].spectral_window_id, host_noise),
         )?;
     }
     if plan.predicts_single_dish() {
