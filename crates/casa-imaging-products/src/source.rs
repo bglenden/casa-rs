@@ -46,6 +46,7 @@ pub struct ContinuumProductInputs<'a> {
     vla_selection_hz: Option<f64>,
     facet_sum_weights: Option<&'a FacetSumWeights>,
     saved_psf_beams: Option<&'a [RestoringBeam]>,
+    saved_mosaic_beam: Option<(&'a [f32], &'a [bool])>,
 }
 
 /// Each faceted image domain's facets' own sums of weights, by domain
@@ -121,6 +122,7 @@ impl<'a> ContinuumProductInputs<'a> {
             vla_selection_hz: None,
             facet_sum_weights: None,
             saved_psf_beams: None,
+            saved_mosaic_beam: None,
         }
     }
 
@@ -260,6 +262,42 @@ impl<'a> ContinuumProductInputs<'a> {
         }
         self.saved_psf_beams = Some(beams);
         Ok(self)
+    }
+
+    /// Bind an earlier MFS mosaic's PB and pixel mask for the products of a
+    /// continuation, polarization-major with x-major image planes.
+    ///
+    /// # Errors
+    /// The completion is outside the MFS mosaic layout, or the beam shape,
+    /// pixel mask shape, or values are invalid.
+    pub fn with_saved_mosaic_beam(
+        mut self,
+        values: &'a [f32],
+        mask: &'a [bool],
+    ) -> Result<Self, crate::ProductsError> {
+        let normal = self.normal_state;
+        let [width, height] = normal.shape();
+        let expected = width * height * normal.polarization_count();
+        if normal.basis() != NormalBasis::Constant
+            || normal.domain_count() != 1
+            || values.len() != expected
+            || mask.len() != expected
+            || values
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return Err(crate::ProductsError::InvalidSavedMosaicBeam);
+        }
+        self.saved_mosaic_beam = Some((values, mask));
+        Ok(self)
+    }
+
+    pub(crate) fn saved_mosaic_beam(&self, polarization: usize) -> Option<(&'a [f32], &'a [bool])> {
+        let (values, mask) = self.saved_mosaic_beam?;
+        let [width, height] = self.normal_state.shape();
+        let cells = width * height;
+        let plane = polarization * cells..(polarization + 1) * cells;
+        Some((&values[plane.clone()], &mask[plane]))
     }
 
     /// The main image's saved PSF beams, channel-major.

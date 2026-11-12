@@ -72,6 +72,9 @@ pub enum ProductsError {
         "a cube Taylor primary beam needs a finite non-negative plane and a single-domain, single-polarization cube"
     )]
     InvalidCubeTaylorPrimaryBeam,
+    /// A saved mosaic beam or its default mask is invalid.
+    #[error("the saved mosaic primary beam and its mask must match the finite MFS image planes")]
+    InvalidSavedMosaicBeam,
     /// A supplied Taylor residual normalization divisor is invalid.
     #[error("Taylor residual normalization needs a positive finite divisor and a Taylor family")]
     InvalidTaylorResidualSumWeight,

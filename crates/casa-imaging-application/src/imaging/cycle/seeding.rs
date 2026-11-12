@@ -90,14 +90,17 @@ impl Run<'_> {
             }
             (false, true) => {
                 self.measure_row_work()?;
-                let read = self.read_existing()?;
+                let read = self.read_existing(self.reseed.is_none())?;
+                if let Some(response) = self.reseed {
+                    return self.reseed(read, response, last);
+                }
                 return self.refresh(
                     read.completion,
                     (Vec::new(), Vec::new(), Reservation::none()),
                     last,
                 );
             }
-            (false, false) => return self.read_existing(),
+            (false, false) => return self.read_existing(true),
         }
         self.measure_row_work()?;
         match self.reseed {

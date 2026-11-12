@@ -274,7 +274,13 @@ pub(crate) fn prepare(
         aw_catalog,
     } = native;
     publication.controls.validate_for_problem(problem)?;
-    let products = products_floor(problem, &publication)?;
+    let mut products = products_floor(problem, &publication)?;
+    if let Some(existing) = &input.existing
+        && existing.reads_mosaic_beam()
+    {
+        let (read, retain) = existing.mosaic_beam_bytes();
+        products = read.max(products.saturating_add(retain));
+    }
     let Admitted {
         value: route,
         reservation: source,
@@ -329,6 +335,10 @@ pub(crate) fn run(
         image_response,
         virtual_model,
     } = run;
+    let saved_mosaic_beam = existing
+        .as_ref()
+        .filter(|input| input.reads_mosaic_beam())
+        .cloned();
     let saved_psf_beams = existing
         .as_ref()
         .and_then(crate::restart::ExistingProducts::psf_beams);
@@ -345,14 +355,9 @@ pub(crate) fn run(
         && psf_beams.is_none()
         && problem.reconstruction().controls().max_minor_iterations() > 0
     {
-        let model = publication.controls.primary_beam_model();
-        let mut controls = casa_imaging_products::ContinuumProductControls::new(
-            casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF,
-        )?;
-        if let Some(model) = model {
-            controls = controls.with_primary_beam_model(model);
-        }
-        publication.controls = controls;
+        publication.controls = publication
+            .controls
+            .with_psf_cutoff(casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF)?;
     }
     // CASA selects the cube's VLA aperture through its LSRK conversion layer,
     // but evaluates it at each output plane's own frequency.
@@ -448,6 +453,10 @@ pub(crate) fn run(
         runtime.diagnostics,
         summary,
         || {
+            let saved = saved_mosaic_beam
+                .as_ref()
+                .map(|input| read_saved_mosaic_beam(input, &runtime))
+                .transpose()?;
             publish_run_products(
                 RunProductInputs {
                     problem,
@@ -458,7 +467,9 @@ pub(crate) fn run(
                         mem_alpha: outcome.mem_alpha,
                         saved_psf_beams,
                         vla_selection_hz,
-                        mvc_beam: None,
+                        primary_beam: saved.as_ref().map(|beam| {
+                            ProductPrimaryBeam::SavedMosaic(&beam.value.values, &beam.value.mask)
+                        }),
                     },
                     taylor_view: mvc_taylor,
                     taylor_completion: outcome.mvc_taylor,
@@ -514,6 +525,29 @@ pub(crate) fn run(
         mvc_taylor_names: taylor_names,
         mvc_run,
         _retained: retained,
+    })
+}
+
+/// Load the saved mosaic PB and its mask under admission before product
+/// generation. The reservation stays with the pixels while it borrows them.
+fn read_saved_mosaic_beam(
+    input: &crate::restart::ExistingProducts,
+    runtime: &ApplicationRuntime,
+) -> Result<Admitted<crate::restart::SavedMosaicBeam>, NativeError> {
+    let (reading, resident) = input.mosaic_beam_bytes();
+    let mut charge = admit(
+        &runtime.host,
+        &runtime.resource_policy,
+        &Demand {
+            phase: "saved mosaic primary beam",
+            memory: reading,
+        },
+    )?;
+    let beam = input.read_mosaic_beam().map_err(ImagingError::Existing)?;
+    charge.retain(resident);
+    Ok(Admitted {
+        value: beam,
+        reservation: charge,
     })
 }
 
@@ -613,9 +647,10 @@ struct Products {
 /// What the products are formed from: the final completion, its
 /// reconstruction masks and the faceted domains' facets' own sums of
 /// weights.
-enum MvcProductBeam<'a> {
-    Cube(&'a [f32]),
-    Taylor(&'a [f32]),
+enum ProductPrimaryBeam<'a> {
+    MvcCube(&'a [f32]),
+    MvcTaylor(&'a [f32]),
+    SavedMosaic(&'a [f32], &'a [bool]),
 }
 
 struct ProductSource<'a> {
@@ -625,8 +660,8 @@ struct ProductSource<'a> {
     mem_alpha: Option<f32>,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     vla_selection_hz: Option<f64>,
-    /// A separately admitted common PB, borrowed until the family is staged.
-    mvc_beam: Option<MvcProductBeam<'a>>,
+    /// A separately admitted PB, borrowed until the family is staged.
+    primary_beam: Option<ProductPrimaryBeam<'a>>,
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -743,7 +778,7 @@ fn publish_mvc_products(
         mem_alpha: _,
         saved_psf_beams,
         vla_selection_hz,
-        mvc_beam: _,
+        primary_beam: _,
     } = cube;
     let taylor_publication = ApplicationPublication {
         controls: publication.controls,
@@ -760,7 +795,7 @@ fn publish_mvc_products(
             mem_alpha: None,
             saved_psf_beams,
             vla_selection_hz,
-            mvc_beam: Some(MvcProductBeam::Cube(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcCube(&primary_beam)),
         },
         runtime,
         &publication,
@@ -777,7 +812,7 @@ fn publish_mvc_products(
             mem_alpha: None,
             saved_psf_beams: None,
             vla_selection_hz: None,
-            mvc_beam: Some(MvcProductBeam::Taylor(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcTaylor(&primary_beam)),
         },
         runtime,
         &taylor_publication,
@@ -844,15 +879,18 @@ fn stage_products(
         mem_alpha: _,
         saved_psf_beams,
         vla_selection_hz,
-        mvc_beam,
+        primary_beam,
     } = source;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
-    if let Some(beam) = mvc_beam {
+    if let Some(beam) = primary_beam {
         inputs = match beam {
-            MvcProductBeam::Cube(beam) => inputs.with_cube_taylor_primary_beam(beam)?,
-            MvcProductBeam::Taylor(beam) => inputs
+            ProductPrimaryBeam::MvcCube(beam) => inputs.with_cube_taylor_primary_beam(beam)?,
+            ProductPrimaryBeam::MvcTaylor(beam) => inputs
                 .with_taylor_primary_beam(beam)?
                 .with_taylor_residual_sum_weight(1.0)?,
+            ProductPrimaryBeam::SavedMosaic(beam, mask) => {
+                inputs.with_saved_mosaic_beam(beam, mask)?
+            }
         };
     }
     if let Some(frequency) = vla_selection_hz {

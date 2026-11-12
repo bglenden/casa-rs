@@ -7,6 +7,7 @@
 //! (`MeasurementSetWritePlan::selected_row_mutation`), a batch of rows at a
 //! time:
 //! 1. **Rows.** The batch's ANTENNA1, ANTENNA2, FLAG_ROW and UVW are read,
+//!    and FLAG when it predicts images or total power,
 //!    and its DATA when the fold starts from it: when no replacing
 //!    `predict` cleared the plan. A `tsys-manual` term's σ also reads TIME
 //!    and EXPOSURE, and each row's antennas' airmasses at its scan's phase
@@ -15,8 +16,9 @@
 //!    their solution.
 //! 2. **Prediction and corruption**, as for a new MeasurementSet
 //!    ([`super::pipeline`]): the steps covering the batch's scans are
-//!    predicted into zeroed DATA and the component lists' and total
-//!    power's visibilities added; then the DATA read from disk; then each
+//!    predicted into zeroed DATA, total power added and flagged samples
+//!    zeroed; then the component lists' visibilities, which CASA predicts
+//!    regardless of flags; then the DATA read from disk; then each
 //!    scan's corruptions, gains and leakage then noise, whose draws depend
 //!    only on the term, the MAIN row, the channel and the correlation.
 //! 3. **Write.** DATA, and the scratch columns MAIN has, as CASA's steps
@@ -26,10 +28,9 @@
 //!    FLAG_ROW, WEIGHT and SIGMA stay as they are, as CASA's simple noise
 //!    leaves WEIGHT.
 //!
-//! Before anything is written, FLAG is read through once: a row whose
-//! samples are flagged without FLAG_ROW is not yet predicted as CASA
-//! predicts it, and is refused, so a refusal leaves the MeasurementSet as
-//! it was. A session with no DATA step writes nothing.
+//! Image prediction respects sample flags independently of FLAG_ROW.
+//! Components and corruption act on flagged samples too. A session with no
+//! DATA step writes nothing.
 //!
 //! On the CPU a row's prediction depends only on the row and the steps, and
 //! its noise on its MAIN row, so a MeasurementSet created and then patched
@@ -84,6 +85,8 @@ struct PatchShape {
     channels: usize,
     /// Whether the fold starts from the DATA on disk.
     reads_data: bool,
+    /// Whether image or total-power predictions need sample flags.
+    reads_flags: bool,
     /// Columns written: DATA and the scratch columns kept in step.
     columns: usize,
     /// Antennas of the MeasurementSet.
@@ -160,6 +163,7 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         correlations,
         channels,
         reads_data: !plan.replaced(),
+        reads_flags: prediction.is_some() || plan.predicts_single_dish(),
         columns: columns.len(),
         antennas: session.antennas().len(),
         airmass: noise_varies_by_row(plan),
@@ -176,7 +180,6 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             shape.rows
         )));
     }
-    refuse_partly_flagged_rows(&ms, &shape, admission.plan.batch_rows().max(1))?;
     if let Some(stage) = &mut prediction {
         stage.start(
             admission.block_rows,
@@ -320,6 +323,9 @@ impl Patch<'_> {
         let geometry = &self.reader.geometry;
         // The noise follows the DATA read from disk.
         let reads_data = self.shape.reads_data;
+        // Mask only the sky-image prediction. Noise still reaches every
+        // sample, so a flagged batch's noise follows masking on the host.
+        let host_noise = reads_data || self.reader.flags.iter().any(|&flag| flag);
         if let Some(stage) = &mut self.prediction {
             stage.predict(
                 team,
@@ -327,16 +333,7 @@ impl Patch<'_> {
                 runs,
                 first as u64,
                 &mut self.data,
-                |scan| device_noise(plan, scan, reads_data),
-            )?;
-        }
-        if plan.predicts_components() {
-            add_components(
-                team,
-                (scans, geometry),
-                plan,
-                runs,
-                (&mut self.data, samples),
+                |scan| device_noise(plan, scan, host_noise),
             )?;
         }
         if plan.predicts_single_dish() {
@@ -347,6 +344,20 @@ impl Patch<'_> {
                 (&mut self.data, samples),
             );
         }
+        for (value, &flag) in self.data.iter_mut().zip(&self.reader.flags) {
+            if flag {
+                *value = Complex32::new(0.0, 0.0);
+            }
+        }
+        if plan.predicts_components() {
+            add_components(
+                team,
+                (scans, geometry),
+                plan,
+                runs,
+                (&mut self.data, samples),
+            )?;
+        }
         if reads_data {
             for (value, stored) in self.data.iter_mut().zip(&self.reader.data) {
                 *value += *stored;
@@ -356,7 +367,7 @@ impl Patch<'_> {
         let noised = |scan| {
             prediction
                 .as_ref()
-                .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, reads_data)))
+                .is_some_and(|stage| stage.noised(scan, device_noise(plan, scan, host_noise)))
         };
         let scales = batch_scales(
             (plan, NoiseContext::of(session), team),
@@ -451,6 +462,8 @@ struct BatchReader {
     antenna1: Vec<i32>,
     antenna2: Vec<i32>,
     flag_row: Vec<bool>,
+    /// FLAG, `[row][channel][correlation]`, for image predictions only.
+    flags: Vec<bool>,
     uvw: Vec<f64>,
     /// TIME and EXPOSURE, when the noise needs them.
     time: Vec<f64>,
@@ -542,6 +555,24 @@ impl BatchReader {
                 "read MAIN UVW: a cell does not hold 3 values",
             ));
         }
+        self.flags.clear();
+        if shape.reads_flags {
+            main.column_accessor("FLAG")
+                .and_then(|column| {
+                    column.fill_array_cells_2d_channel_range_typed_uncached(
+                        rows,
+                        0,
+                        shape.channels,
+                        SelectedArray2DCellsMut::RowChannelBool(&mut self.flags),
+                    )
+                })
+                .map_err(error("FLAG"))?;
+            if self.flags.len() != rows.len() * shape.samples() {
+                return Err(SimulatorError::raised(
+                    "read MAIN FLAG: a cell is not of the shape its window gives",
+                ));
+            }
+        }
         if shape.reads_data {
             self.data.clear();
             main.column_accessor("DATA")
@@ -611,57 +642,6 @@ impl BatchReader {
         }
         Ok(())
     }
-}
-
-/// Refuse, before anything is written, a row with flagged samples but no
-/// FLAG_ROW: CASA predicts its flagged samples zero, and the prediction
-/// takes each row's flag alone. Both simulators flag whole rows.
-fn refuse_partly_flagged_rows(
-    ms: &MeasurementSet,
-    shape: &PatchShape,
-    batch_rows: usize,
-) -> SimulatorResult<()> {
-    let main = ms.main_table();
-    let error =
-        |error: casa_tables::TableError| SimulatorError::raised(format!("read MAIN FLAG: {error}"));
-    let (mut flag_row, mut flags, mut rows) = (Vec::new(), Vec::new(), Vec::new());
-    let samples = shape.samples();
-    for first in (0..shape.rows).step_by(batch_rows) {
-        rows.clear();
-        rows.extend(first..shape.rows.min(first + batch_rows));
-        flag_row.clear();
-        main.required_scalar_columns_for_rows_into(
-            &rows,
-            &mut [RequiredScalarColumnDestination::new(
-                "FLAG_ROW",
-                RequiredScalarColumnValuesMut::Bool(&mut flag_row),
-            )],
-        )
-        .map_err(error)?;
-        flags.clear();
-        main.column_accessor("FLAG")
-            .and_then(|column| {
-                column.fill_array_cells_2d_channel_range_typed_uncached(
-                    &rows,
-                    0,
-                    shape.channels,
-                    SelectedArray2DCellsMut::RowChannelBool(&mut flags),
-                )
-            })
-            .map_err(error)?;
-        let partly = flags
-            .chunks_exact(samples)
-            .zip(&flag_row)
-            .position(|(cell, &row_flag)| !row_flag && cell.iter().any(|&flag| flag));
-        if let Some(offset) = partly {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict or corrupt after openfromms on MAIN row {}, whose samples are \
-                 flagged without FLAG_ROW, is not yet implemented in casa-rs (#1053)",
-                first + offset
-            )));
-        }
-    }
-    Ok(())
 }
 
 /// Admit the patch for `shape`, writing `columns`, within `resources`, the
@@ -802,8 +782,8 @@ const AIRMASS_ANTENNA_BYTES: u64 = size_of::<MPosition>() as u64 + 64;
 /// Bytes the patch holds beside its writer for batches of `batch_rows`
 /// rows writing `columns` columns: the columns read (ANTENNA1, ANTENNA2,
 /// FLAG_ROW, UVW, TIME when the corruption needs it, EXPOSURE when the
-/// noise needs airmasses, and DATA when the fold starts from it, or FLAG
-/// while it is checked) and
+/// noise needs airmasses, DATA when the fold starts from it, and FLAG for
+/// image predictions) and
 /// their staging, the rows' geometry, the new DATA, the mutation's copies
 /// of the cells written, the tiled managers' I/O, the batch's runs and
 /// jobs, and the airmasses' antennas.
@@ -811,7 +791,8 @@ fn pipeline_bytes(shape: &PatchShape, columns: usize, batch_rows: usize) -> u64 
     let samples = shape.samples() as u64;
     let cell = samples * size_of::<Complex32>() as u64;
     let staged = 1 + READ_CELL_COPIES;
-    let read = staged * if shape.reads_data { cell } else { 0 }.max(samples);
+    let read = staged
+        * (if shape.reads_data { cell } else { 0 } + if shape.reads_flags { samples } else { 0 });
     let times = staged * 8 * (u64::from(shape.times) + u64::from(shape.airmass));
     let written = columns as u64 * MUTATION_CELL_COPIES * (cell + size_of::<ArrayValue>() as u64);
     let row = 4

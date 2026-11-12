@@ -13,7 +13,7 @@
 //! earlier products are preserved.
 
 mod existing;
-pub(crate) use existing::ExistingProducts;
+pub(crate) use existing::{ExistingProducts, SavedMosaicBeam};
 mod grid;
 pub(crate) use grid::check_grid;
 mod mask;
@@ -152,6 +152,16 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
     Ok(())
 }
 
+/// An ordinary continuum mosaic can carry forward the saved PSF, weights,
+/// and PB while forming a new residual (`calcpsf=False, calcres=True`).
+pub(crate) fn reuses_mosaic_psf(request: &ImagingRequest) -> bool {
+    !request.calcpsf
+        && request.calcres
+        && request.specmode == crate::SpecMode::Mfs
+        && Family::of(request) == Family::Single
+        && matches!(request.gridder, Gridder::Mosaic { .. })
+}
+
 /// Check that what `calcpsf=False` and `calcres=False` read exists and that
 /// casa-rs reads it for the request's gridder; `continuing` is whether the
 /// run continues on existing products at all.
@@ -171,6 +181,7 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             Some("with facets")
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
+        Gridder::Mosaic { .. } if reuses_mosaic_psf(request) => None,
         Gridder::Mosaic { .. } => Some("with the mosaic gridder"),
         Gridder::Awproject(_) => Some("with A-projection"),
     };
@@ -195,6 +206,17 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
                     path,
                     "calcpsf=False reads the PSF and sums of weights an earlier run left at \
                      imagename, and this one does not exist"
+                        .into(),
+                );
+            }
+        }
+    }
+    if reuses_mosaic_psf(request) {
+        for base in ["weight", "pb"] {
+            if let Some(path) = missing(base) {
+                return refuse(
+                    path,
+                    "calcpsf=False with the mosaic gridder requires the saved weight and PB images"
                         .into(),
                 );
             }
