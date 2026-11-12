@@ -711,7 +711,9 @@ impl PySimulator {
     /// each later `corrupt`, its solutions taken at each integration
     /// observed by then and interpolated in time by `interp` (`linear`,
     /// amplitude and phase apart, or `nearest`); `spwmap` maps each data
-    /// window to the table's. `field` is not read, as in CASA.
+    /// window to the table's. `field` is not read, as in CASA. G/D corruption
+    /// preserves weights for either `calwt` setting; `t` and `opacity` leave
+    /// these tables' per-row interpolation unchanged, as in CASA.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
