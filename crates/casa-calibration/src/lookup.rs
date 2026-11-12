@@ -315,6 +315,19 @@ impl CalibrationTableLookup {
         })
     }
 
+    /// Whether this spectral window has any loaded solution series.
+    ///
+    /// A missing antenna is distinct from a missing entire window: CASA
+    /// substitutes neutral antenna values in the former case, but skips a
+    /// whole corruption step in the latter.
+    #[must_use]
+    pub fn has_spectral_window(&self, window: i32) -> bool {
+        self.table
+            .solutions
+            .keys()
+            .any(|&(_, spw, _)| spw == window)
+    }
+
     /// First spectral-window id with actual calibration solutions.
     /// CASA's automatic `spwmap=[-999]` fans this window out to all data windows.
     #[must_use]

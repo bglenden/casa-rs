@@ -377,6 +377,11 @@ impl Simulator {
                 .get(scan.spectral_window_id)
                 .copied()
                 .ok_or_else(|| not_yet("with a spectral window observed after setapply"))?;
+            if !lookup.has_spectral_window(window as i32) {
+                return Err(not_yet(
+                    "for an unavailable calibration spectral window (whole-step coverage)",
+                ));
+            }
             let output_hz = if table.frequency.is_some() {
                 self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
             } else {

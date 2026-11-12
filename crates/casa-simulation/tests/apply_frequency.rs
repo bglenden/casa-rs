@@ -141,3 +141,39 @@ fn external_frequency_grid_is_loaded_and_held_at_setapply() {
     sm.close().unwrap();
     support::compare(&path, case);
 }
+
+#[test]
+fn unavailable_table_window_stays_explicit_and_preserves_data() {
+    use casa_simulation::CasaOutcome;
+    let mut text = String::new();
+    GzDecoder::new(&include_bytes!("data/sm_apply_frequency_casa.json.gz")[..])
+        .read_to_string(&mut text)
+        .unwrap();
+    let fixture: Value = serde_json::from_str(&text).unwrap();
+    let mut case = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "B_spw_broadcast")
+        .unwrap()
+        .clone();
+    // This MS uses window1; the table has actual solutions only in0.
+    // Identity mapping therefore reaches the unfinished whole-step scope.
+    case["options"]["spwmap"] = serde_json::json!([-1]);
+    let directory = tempfile::tempdir().unwrap();
+    let (path, mut sm, spec) = support::prepared(directory.path(), &case, 1);
+    sm.set_apply(&spec).unwrap();
+    let error = sm
+        .corrupt()
+        .expect_err("whole-window coverage is unfinished");
+    assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
+    assert!(error.message().contains("#1053"));
+    sm.close().unwrap();
+    for row in predict_support::read_main(&path).0 {
+        assert!(
+            row.data
+                .iter()
+                .all(|&value| value == num_complex::Complex32::new(3.0, 4.0))
+        );
+    }
+}
