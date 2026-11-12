@@ -43,7 +43,7 @@ const LARGEST_DELTA_PWV: f64 = 1.0;
 pub struct TroposphereSpec {
     /// `mode`: `individual`, a series of its own above each antenna, or
     /// `screen`, one screen blown over the array; `test` (CASA's debugging
-    /// ramp) is not implemented.
+    /// ramp), sampled at the observed integrations.
     pub mode: String,
     /// `table`: the `Tf Jones` calibration table the simulated phases are
     /// written to, or `''` for none. CASA writes it at once; casa-rs at
@@ -80,7 +80,7 @@ impl Default for TroposphereSpec {
 
 /// `settrop`'s refusals of a term CASA cannot form: `create_corrupt`'s
 /// exception, as `settrop` logs it.
-fn not_formed(reason: &str) -> SimulatorError {
+pub(super) fn not_formed(reason: &str) -> SimulatorError {
     SimulatorError::refused(format!(
         "Caught exception: Error in Simulator::create_corrupt: {reason}"
     ))
@@ -92,8 +92,8 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// - An unknown mode is refused as CASA's "unsupported mode";
-    ///   `mode='test'` is not yet implemented.
+    /// - An unknown mode is refused as CASA's "unsupported mode"; a positive
+    ///   custom `simint` for `test` remains unfinished (#1292).
     /// - No rows observed yet; a `pwv` that is not positive; integrations
     ///   spanning less than one slot (CASA's `setEvenSlots` "logic
     ///   problem"): refused.
@@ -111,9 +111,7 @@ impl Simulator {
             "individual" => false,
             "screen" => true,
             "test" => {
-                return Err(SimulatorError::not_yet_implemented(
-                    "settrop(mode='test'), CASA's debugging ramp, is not implemented in casa-rs (#1053)",
-                ));
+                return self.set_test_trop(spec);
             }
             other => {
                 return Err(SimulatorError::refused(format!(
@@ -201,7 +199,7 @@ impl Simulator {
         let chunks = self.integration_chunks(&per_window);
         let term = tropospheric(
             antennas,
-            (chunks, &slots),
+            (chunks, Some(&slots)),
             TroposphericPhase::new(excess, delays),
         );
         self.hold_term(term, (reservation, bytes), table);
@@ -223,13 +221,7 @@ impl Simulator {
             .iter()
             .map(|window| window.channel_count)
             .collect();
-        let layers = AtmosphereProfile::new(&ProfileParameters::default())
-            .map_or(0, |atmosphere| atmosphere.layers().len());
-        let atmosphere = channels
-            .iter()
-            .map(|&channels| building_bytes(channels, layers))
-            .max()
-            .unwrap_or(0);
+        let atmosphere = self.wet_delays_building_bytes();
         let excess = layout.map_or_else(
             || TermBytes::fbm(&[], slots.count, 0).forming,
             |layout| {
@@ -246,11 +238,22 @@ impl Simulator {
         )
     }
 
+    /// Peak temporary storage of the largest window's atmosphere.
+    pub(super) fn wet_delays_building_bytes(&self) -> u64 {
+        let layers = AtmosphereProfile::new(&ProfileParameters::default())
+            .map_or(0, |atmosphere| atmosphere.layers().len());
+        self.spectral_windows
+            .iter()
+            .map(|window| building_bytes(window.channel_count, layers))
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Each spectral window's zenith wet phase delay per channel, radians,
     /// for a water column of `water_column_m` at `settrop`'s site (CASA's
     /// simulator defaults, which `settrop` fixes), at each channel's
     /// frequency.
-    fn wet_delays(&self, water_column_m: f64) -> SimulatorResult<Vec<Option<Vec<f64>>>> {
+    pub(super) fn wet_delays(&self, water_column_m: f64) -> SimulatorResult<Vec<Option<Vec<f64>>>> {
         let atmosphere_error = |error: casa_atmosphere::AtmosphereError| {
             not_formed(&format!("error in ATM setup - {error}"))
         };
@@ -281,7 +284,7 @@ impl Simulator {
 /// blow the screen off its west end (CASA's screen shrinks and its antennas
 /// read pixels before its first). A `deltapwv` past single precision is
 /// held to 1, as any above 1 is.
-fn check_numbers(spec: &TroposphereSpec, screen: bool) -> SimulatorResult<()> {
+pub(super) fn check_numbers(spec: &TroposphereSpec, screen: bool) -> SimulatorResult<()> {
     for (name, value, held) in [
         ("pwv", spec.water_vapour_mm, single(spec.water_vapour_mm)),
         ("deltapwv", spec.delta_pwv, spec.delta_pwv),
