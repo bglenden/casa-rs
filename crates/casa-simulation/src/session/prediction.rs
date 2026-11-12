@@ -543,14 +543,6 @@ impl Simulator {
         } else {
             tracing::info!("The data column will be replaced");
         }
-        // The plan corrupts by gains and leakage after every prediction
-        // (`session::plan`).
-        if spec.incremental && self.data_plan.corrupts_by_jones() {
-            return Err(SimulatorError::not_yet_implemented(
-                "an incremental predict after a corrupt with setgain or setleakage terms is not \
-                 yet implemented in casa-rs (#1053)",
-            ));
-        }
         if images.is_empty() && lists.is_empty() {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: No model images found",
@@ -618,9 +610,7 @@ impl Simulator {
             let predictions = opened_models(model, &images)
                 .map(|model| self.prepare_single_dish(model?, kernel, beam))
                 .collect::<SimulatorResult<Vec<_>>>()?;
-            if !spec.incremental {
-                self.data_plan.clear();
-            }
+            self.data_plan.begin_prediction(spec.incremental);
             for prediction in predictions {
                 self.data_plan
                     .predict_single_dish(Arc::new(prediction), self.scans.len());
@@ -633,10 +623,7 @@ impl Simulator {
         let predictions = opened_models(model, &images)
             .map(|model| self.prepare_image(model?, &correlations, beam))
             .collect::<SimulatorResult<Vec<_>>>()?;
-        if !spec.incremental {
-            // Every step so far covers a prefix of the scans this one covers.
-            self.data_plan.clear();
-        }
+        self.data_plan.begin_prediction(spec.incremental);
         let scans = self.scans.len();
         if let Some(components) = components {
             self.data_plan

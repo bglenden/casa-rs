@@ -50,7 +50,7 @@ use crate::predict::FtMachine;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
-use crate::session::plan::DataPlan;
+use crate::session::plan::DataPhase as DataPlan;
 use crate::session::prediction::{FieldGrids, Prediction};
 
 /// The noise of scan `scan` in `plan` that a stage predicting the scan may
@@ -196,8 +196,8 @@ impl<'s> PredictionStage<'s> {
         session: &'s Simulator,
         (correlations, channels): (usize, usize),
         backend: BackendChoice,
+        plan: &'s DataPlan,
     ) -> SimulatorResult<Option<Self>> {
-        let plan = session.data_plan();
         let predictions: Vec<&'s Prediction> = plan
             .predictions()
             .map(|(prediction, _)| prediction)
@@ -223,6 +223,10 @@ impl<'s> PredictionStage<'s> {
         // run of scans of one segment.
         let mut visits: HashMap<GridKey, Vec<usize>> = HashMap::new();
         for (index, scan) in session.scans().iter().enumerate() {
+            if !plan.selection.contains_scan(scan) {
+                scan_segments.push(None);
+                continue;
+            }
             let steps = plan.predictions_for_scan(index);
             if steps.is_empty() {
                 scan_segments.push(None);

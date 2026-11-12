@@ -510,9 +510,10 @@ impl PySimulator {
     }
 
     /// Select the rows the next `predict` and `corrupt` act on, until the
-    /// next `observe`. casa-rs takes a selection that keeps every row
-    /// observed so far (`simobserve`'s); one that keeps fewer, or a TaQL
-    /// `msselect`, raises `NotImplementedError`.
+    /// next `observe`. Supports field/window subsets and TaQL predicates on
+    /// ANTENNA1, ANTENNA2, TIME, FIELD_ID, DATA_DESC_ID and SCAN_NUMBER.
+    /// Other columns and unsupported query forms raise `NotImplementedError`.
+    /// Invalid predicates return False after installing the field/window selection.
     #[pyo3(
         signature = (spwid = IntList::of(&[0]), fieldid = IntList::of(&[0]), msselect = ""),
         text_signature = "($self, spwid=[0], fieldid=[0], msselect='')"
@@ -535,10 +536,10 @@ impl PySimulator {
 
     /// Predict the model image and the component list into the rows observed
     /// so far, replacing their DATA or, with `incremental`, adding to it;
-    /// written at `close`. One CASA image (Stokes I, J2000) and a CASA
-    /// component list of J2000 points, Gaussians and disks are implemented;
-    /// several images, a limb-darkened disk or another frame raise
-    /// `NotImplementedError`.
+    /// written at `close`. Supports multiple CASA images (Stokes I, J2000)
+    /// and J2000 point, Gaussian and disk component lists, including an
+    /// increment after corruption. Limb-darkened disks and other component
+    /// frames raise `NotImplementedError`.
     #[pyo3(
         signature = (imagename = StringList::of(&[]), complist = "", incremental = false),
         text_signature = "($self, imagename=[], complist='', incremental=False)"
