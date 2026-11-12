@@ -194,6 +194,62 @@ fn mvc_compiles_both_views_from_one_survey_with_distinct_taylor_reference() {
     assert!((default.expansion_reference_hz - 44.320e9).abs() < 1.0);
 }
 
+/// CASA's `copy_image` derives the Taylor spectral header from the cube
+/// WCS. An offset phase centre makes the cube conversion differ from the
+/// LSRK envelope of the observed field.
+#[test]
+fn mvc_taylor_header_uses_the_published_cube_axis() {
+    use casa_coordinates::CoordinateType;
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = synthetic_observation::two_window_observation(root.path(), 6);
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    for spw in 0..2 {
+        ms.spectral_window_mut()
+            .unwrap()
+            .set_i32(spw, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+            .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let mut request = crate::request::tests::request(json!({
+        "vis": path, "imagename": root.path().join("mvc-axis"),
+        "specmode": "mfs", "deconvolver": "mtmfs", "nterms": 2,
+        "phasecenter": "J2000 18h00m00.000 -23d15m00.000",
+        "niter": 0, "backend": "cpu", "imsize": 64, "cell": "0.3arcsec",
+    }));
+    request.mvc_output_channels = std::num::NonZeroUsize::new(3);
+    let context = RunContext {
+        host: HostResources::detect().unwrap(),
+        policy: request.resource_policy(),
+        cancel: Cancel::default(),
+        summary: None,
+    };
+    let resolved = std::cell::Cell::new(None);
+    let (cube, input, _, _resident) = crate::compile_run(&request, &context, &resolved).unwrap();
+    let spectral = cube.geometry().spectral();
+    let first = spectral.channel_centre_hz(0).unwrap();
+    let last = spectral.channel_centre_hz(2).unwrap();
+    let width = spectral.channel_centre_hz(1).unwrap() - first;
+    let midpoint = (first + last) / 2.0;
+    let taylor = input.mvc_taylor.unwrap();
+    assert!((taylor.expansion_reference_hz - midpoint).abs() > 1.0);
+    let coordinates = &taylor.coordinates[0].1;
+    let axis = coordinates.coordinate(
+        coordinates
+            .find_coordinate(CoordinateType::Spectral)
+            .unwrap(),
+    );
+    let reference = axis.reference_value()[0];
+    assert!(
+        (reference - midpoint).abs() < 1e-3,
+        "Taylor reference {reference}, cube midpoint {midpoint}"
+    );
+    assert!((axis.increment()[0] - 3.0 * width).abs() < 1e-3);
+}
+
 /// The native MVC handoff keeps its Taylor completion and PB under a memory
 /// reservation and uses the same bounded reduction as the product laws.
 #[test]

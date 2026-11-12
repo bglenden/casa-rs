@@ -152,8 +152,8 @@ pub(super) struct TaylorInputs<'a> {
 }
 
 /// Build the Taylor image view without opening or surveying the observation
-/// again. CASA keeps its Taylor image WCS at the band centre while the
-/// supplied `reffreq` governs its cube-to-Taylor expansion.
+/// again. The published Taylor axis spans the cube channels. The expansion
+/// uses `reffreq` or the midpoint of the surveyed band.
 pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, super::PrepareError> {
     use casa_imaging_model::{ModelBounds, ModelLifecycleRequirements, NumericPrecision};
     let TaylorInputs {
@@ -191,11 +191,14 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
         None,
         None,
     )?;
-    // CASA's `cube2tt` copies the cube image coordinates and changes only
-    // the spectral reference pixel, value and increment. The rest-frequency
-    // label therefore comes from the cube, not the independently prepared
-    // continuum axis (`PyMtmfsViaCubeSynthesisImager::copy_image`).
-    spectral.image.rest_frequency_hz = surveyed.spectral.image.rest_frequency_hz;
+    // CASA's `PyMtmfsViaCubeSynthesisImager::copy_image` gives the Taylor
+    // plane the cube's end-channel midpoint, full width and rest label.
+    let cube = surveyed.spectral;
+    let first_hz = cube.image.reference_frequency_hz;
+    let last_hz = first_hz + (cube.output_channels - 1) as f64 * cube.image.increment_hz;
+    spectral.image.reference_frequency_hz = (first_hz + last_hz) / 2.0;
+    spectral.image.increment_hz = cube.output_channels as f64 * cube.image.increment_hz;
+    spectral.image.rest_frequency_hz = cube.image.rest_frequency_hz;
     let taylor_surveyed = super::Surveyed {
         stores: surveyed.stores,
         reference: surveyed.reference,
