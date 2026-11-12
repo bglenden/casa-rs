@@ -85,6 +85,16 @@ fn wide_phase_delay_cycle_arrays_hold_their_admission() {
     }
     run_case(("B", 8192, 16), 4, 4, true, "nearestPD,linear");
 }
+
+#[test]
+fn wide_real_time_and_frequency_interpolation_holds_its_admission() {
+    if !super::alone(
+        "apply_frequency::wide_real_time_and_frequency_interpolation_holds_its_admission",
+    ) {
+        return;
+    }
+    run_case(("B TSYS", 8192, 16), 4, 4, true, "spline,spline");
+}
 fn run_case(
     (kind, channels, slots): (&str, usize, usize),
     data_channels: usize,
@@ -143,7 +153,7 @@ fn run_case(
         })
     });
     write_simulated_jones_table(&reference_ms, &table, SimulatedJones::Troposphere, rows).unwrap();
-    if kind == "B" {
+    if matches!(kind, "B" | "B TSYS") {
         use casa_tables::{Table, TableOptions};
         use casa_types::{ArrayValue, ScalarValue, Value};
         use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -191,6 +201,9 @@ fn run_case(
         info.sub_type = "B Jones".into();
         calibration.set_info(info);
         calibration.save(TableOptions::new(&table)).unwrap();
+    }
+    if kind == "B TSYS" {
+        real_parameters(&table);
     }
     if channels != reference_channels {
         // The calibration axis, rather than a huge unrelated reference MS,
@@ -271,4 +284,38 @@ fn run_case(
     result.unwrap().unwrap();
     let corrupted = measured(|| sm.corrupt().unwrap());
     check("wide corrupt", &corrupted);
+}
+
+fn real_parameters(path: &std::path::Path) {
+    use casa_tables::{ColumnSchema, Table, TableOptions};
+    use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
+    let mut table = Table::open(TableOptions::new(path)).unwrap();
+    table
+        .add_column(
+            ColumnSchema::array_variable("FPARAM", PrimitiveType::Float32, Some(2)),
+            None,
+        )
+        .unwrap();
+    for row in 0..table.row_count() {
+        let ArrayValue::Complex32(values) =
+            table.cell_accessor(row, "CPARAM").unwrap().array().unwrap()
+        else {
+            panic!("CPARAM");
+        };
+        let values = values.mapv(|value| 2. + value.norm());
+        table
+            .cell_accessor_mut(row, "FPARAM")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Float32(values)))
+            .unwrap();
+    }
+    let mut info = table.info().clone();
+    info.sub_type = "B TSYS".into();
+    table.set_info(info);
+    for (key, value) in [("VisCal", "B TSYS"), ("ParType", "Float")] {
+        table
+            .keywords_mut()
+            .upsert(key, Value::Scalar(ScalarValue::String(value.into())));
+    }
+    table.save(TableOptions::new(path)).unwrap();
 }

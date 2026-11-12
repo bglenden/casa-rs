@@ -21,6 +21,7 @@ CASES=[
     dict(name='gain_curve_with_leakage',caltype='opac',parameter=[.05],antenna='',subtype='EGainCurve',values=[1.,.001,-.00001,0.,1.2,-.001,.00002,0.],leakage=True),
     dict(name='system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',values=[4.,9.]),
     dict(name='negative_system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',values=[-4.,9.]),
+    dict(name='spectral_system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',channels=3,values=[-4.,9.,16.,25.,4.,36.]),
 ]
 
 
@@ -37,10 +38,15 @@ def main():
         gencal(vis=str(path),caltable=str(terms),caltype=spec['caltype'],parameter=spec['parameter'],antenna=spec['antenna'],pol=spec.get('pol',''))
         if 'subtype' in spec:
             tb=table();tb.open(str(terms),nomodify=False);info=tb.info();info['subType']=spec['subtype'];tb.putinfo(info);tb.putkeyword('VisCal',spec['subtype'])
-            values=np.array(spec['values'],dtype=np.float32).reshape(-1,1)
+            values=np.array(spec['values'],dtype=np.float32).reshape(-1,spec.get('channels',1))
             for row in range(tb.nrows()):
                 for column,data in [('FPARAM',values),('FLAG',np.zeros_like(values,dtype=bool)),('PARAMERR',np.zeros_like(values)),('SNR',np.ones_like(values))]:tb.putcell(column,row,data)
             tb.close()
+            if spec.get('channels',1)>1:
+                tb.open(str(terms/'SPECTRAL_WINDOW'),nomodify=False);channels=spec['channels']
+                tb.putcell('NUM_CHAN',0,channels);tb.putcell('CHAN_FREQ',0,np.linspace(230e9,230e9+3*15.625e6,channels))
+                for column in ('CHAN_WIDTH','RESOLUTION','EFFECTIVE_BW'):tb.putcell(column,0,np.full(channels,1.5*15.625e6))
+                tb.close()
         if 'time_values' in spec:
             tb=table();tb.open(str(terms),nomodify=False)
             count=tb.nrows();templates=[{key:tb.getcell(key,row) for key in tb.colnames() if tb.iscelldefined(key,row)} for row in range(count)]

@@ -97,12 +97,7 @@ impl CalibrationTableLookup {
         let path = path.as_ref();
         let table =
             Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
-        let real = table.schema().is_some_and(|schema| {
-            schema
-                .columns()
-                .iter()
-                .any(|column| column.name() == "FPARAM")
-        });
+        let real = real_parameters(&table);
         drop(table);
         let mut layout = Self::parameter_layout(path, if real { "FPARAM" } else { "CPARAM" })?;
         if (options.phase_delay || real)
@@ -133,12 +128,7 @@ impl CalibrationTableLookup {
         let path = path.as_ref();
         let table =
             Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
-        let real = table.schema().is_some_and(|schema| {
-            schema
-                .columns()
-                .iter()
-                .any(|column| column.name() == "FPARAM")
-        });
+        let real = real_parameters(&table);
         drop(table);
         let mut lookup = Self::open_parameters(path, basic, FieldSelection::AnyField, real)?;
         if real
@@ -413,4 +403,16 @@ fn phase_cycles(
         }
     }
     Ok(cycles)
+}
+
+fn real_parameters(table: &Table) -> bool {
+    use casa_types::{ScalarValue, Value};
+    match table.keywords().get("ParType") {
+        Some(Value::Scalar(ScalarValue::String(kind))) if kind == "Float" => true,
+        Some(Value::Scalar(ScalarValue::String(kind))) if kind == "Complex" => false,
+        _ => table.schema().is_some_and(|schema| {
+            let contains = |name: &str| schema.columns().iter().any(|column| column.name() == name);
+            contains("FPARAM") && !contains("CPARAM")
+        }),
+    }
 }

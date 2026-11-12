@@ -38,7 +38,8 @@ fn patch_table(path: &Path, case: &Json) {
             .map(|v| v.as_f64().unwrap() as f32)
             .collect()
     };
-    let shape = IxDyn(&[recipe.len(), 1]);
+    let channels = case["channels"].as_u64().unwrap_or(1) as usize;
+    let shape = IxDyn(&[recipe.len() / channels, channels]);
     let mut table = Table::open(TableOptions::new(path)).unwrap();
     let mut info = table.info().clone();
     info.sub_type = kind.into();
@@ -83,9 +84,6 @@ fn patch_table(path: &Path, case: &Json) {
         }
     }
     table.save(TableOptions::new(path)).unwrap();
-    if !delay {
-        return;
-    }
     // gencal's single-band delay reference is the native band's centroid.
     let spectral = path.join("SPECTRAL_WINDOW");
     let mut table = Table::open(TableOptions::new(&spectral)).unwrap();
@@ -94,10 +92,55 @@ fn patch_table(path: &Path, case: &Json) {
         .cell_accessor_mut(0, "CHAN_FREQ")
         .unwrap()
         .set(Value::Array(ArrayValue::Float64(ArrayD::from_elem(
-            IxDyn(&[1]),
+            IxDyn(&[channels]),
             centroid,
         ))))
         .unwrap();
+    table
+        .cell_accessor_mut(0, "NUM_CHAN")
+        .unwrap()
+        .set(Value::Scalar(ScalarValue::Int32(channels as i32)))
+        .unwrap();
+    for column in ["CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
+        table
+            .cell_accessor_mut(0, column)
+            .unwrap()
+            .set(Value::Array(ArrayValue::Float64(ArrayD::from_elem(
+                IxDyn(&[channels]),
+                predict_support::CHANNEL_HZ,
+            ))))
+            .unwrap();
+    }
+    if channels > 1 {
+        let axis: Vec<_> = (0..channels)
+            .map(|i| {
+                predict_support::FREQUENCY_HZ
+                    + 3. * predict_support::CHANNEL_HZ * i as f64 / (channels - 1) as f64
+            })
+            .collect();
+        table
+            .cell_accessor_mut(0, "CHAN_FREQ")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[channels]), axis).unwrap(),
+            )))
+            .unwrap();
+        table
+            .cell_accessor_mut(0, "NUM_CHAN")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(channels as i32)))
+            .unwrap();
+        for column in ["CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
+            table
+                .cell_accessor_mut(0, column)
+                .unwrap()
+                .set(Value::Array(ArrayValue::Float64(ArrayD::from_elem(
+                    IxDyn(&[channels]),
+                    1.5 * predict_support::CHANNEL_HZ,
+                ))))
+                .unwrap();
+        }
+    }
     table.save(TableOptions::new(&spectral)).unwrap();
 }
 
@@ -292,7 +335,7 @@ fn supplied_physical_error_tables_match_casa() {
     let fixture: Json = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 9);
+    assert_eq!(cases.len(), 10);
     for case in cases {
         assert_eq!(case["outcome"], "returned");
         assert_eq!(run(case, 1), run(case, 3), "{}", case["name"]);

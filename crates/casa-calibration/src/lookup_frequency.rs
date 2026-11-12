@@ -69,6 +69,30 @@ impl ComplexSolution {
         output_hz: &[f64],
         mode: FrequencyInterpolation,
     ) -> Result<Self, ApplyExecutionError> {
+        self.resample_parameters(input_hz, output_hz, mode, false)
+    }
+
+    /// Resample signed FPARAM values directly, before evaluating physical
+    /// Jones factors. Flags and short-axis rules match complex resampling.
+    ///
+    /// # Errors
+    /// As [`Self::resample_frequency`].
+    pub fn resample_real_frequency(
+        &self,
+        input_hz: &[f64],
+        output_hz: &[f64],
+        mode: FrequencyInterpolation,
+    ) -> Result<Self, ApplyExecutionError> {
+        self.resample_parameters(input_hz, output_hz, mode, true)
+    }
+
+    fn resample_parameters(
+        &self,
+        input_hz: &[f64],
+        output_hz: &[f64],
+        mode: FrequencyInterpolation,
+        real: bool,
+    ) -> Result<Self, ApplyExecutionError> {
         let error = |reason: &str| ApplyExecutionError::UnsupportedCalibrationTable {
             path: String::new(),
             reason: reason.to_string(),
@@ -107,7 +131,11 @@ impl ComplexSolution {
             for (channel, &frequency) in input_hz.iter().enumerate().take(self.channels) {
                 if !self.flags[receptor * self.channels + channel] {
                     let value = self.value(receptor, channel);
-                    points.push((frequency / 1.0e9, value.norm(), value.arg()));
+                    points.push((
+                        frequency / 1.0e9,
+                        if real { value.re } else { value.norm() },
+                        if real { 0. } else { value.arg() },
+                    ));
                 }
             }
             let descending = input_hz

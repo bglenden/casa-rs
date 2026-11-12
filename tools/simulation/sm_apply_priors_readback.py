@@ -30,7 +30,7 @@ def check_table(path, case):
                 expected = case['parameter'] if antenna == 0 else [0., 0., 0.]
             else:
                 expected = case.get('values', case['parameter'])
-            np.testing.assert_array_equal(values[:, 0, row], np.array(expected, dtype=np.float32))
+            np.testing.assert_array_equal(values[:, :, row], np.array(expected, dtype=np.float32).reshape(values.shape[:2]))
     finally:
         tb.close()
 
@@ -58,6 +58,7 @@ def main():
         run = json.loads(manifest.read_text()); key = run['name'], run['workers']
         assert key in expected and key not in seen; seen.add(key)
         case = cases[run['name']]; directory = manifest.parent
+        print('C++ checking', run['name'], run['workers'], flush=True)
         check_table(directory / 'terms.cal', case)
         report = {**run, 'native_ms_cpp_nrms': compare(directory / 'data.ms', case)}
         if run['workers'] == 1:

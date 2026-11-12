@@ -515,9 +515,12 @@ impl Simulator {
                             .get(window)
                             .map(Vec::as_slice)
                             .unwrap_or(&[]);
-                        solution
-                            .resample_frequency(input_hz, &output_hz, mode)
-                            .map_err(raised)?
+                        if kind == AppliedKind::SystemTemperature {
+                            solution.resample_real_frequency(input_hz, &output_hz, mode)
+                        } else {
+                            solution.resample_frequency(input_hz, &output_hz, mode)
+                        }
+                        .map_err(raised)?
                     } else {
                         solution
                     };
