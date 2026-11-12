@@ -230,12 +230,15 @@ mod tests {
 
     #[test]
     fn a_profile_for_another_surface_is_refused() {
-        let profile = "[casars]\nformat = 1\nsurface = \"imstat\"\nkind = \"task\"\ncontract = 3\n\n[parameters]\nimagename = [\"x.image\"]\n";
         let imstat = builtin_surface_bundle("imstat").unwrap();
-        let text = validate_profile_text(profile, Some(&imstat)).unwrap();
+        let profile = format!(
+            "[casars]\nformat = 1\nsurface = \"imstat\"\nkind = \"task\"\ncontract = {}\n\n[parameters]\nimagename = [\"x.image\"]\n",
+            imstat.surface.contract_version()
+        );
+        let text = validate_profile_text(&profile, Some(&imstat)).unwrap();
         assert!(text.starts_with("valid task imstat profile"), "{text}");
         let imhead = builtin_surface_bundle("imhead").unwrap();
-        let error = validate_profile_text(profile, Some(&imhead)).unwrap_err();
+        let error = validate_profile_text(&profile, Some(&imhead)).unwrap_err();
         assert!(error.contains("not \"imhead\""), "{error}");
     }
 }
