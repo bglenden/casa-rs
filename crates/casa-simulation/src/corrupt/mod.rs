@@ -58,6 +58,7 @@
 
 mod batch_scales;
 pub(crate) mod jones;
+pub(crate) mod offline;
 #[cfg(test)]
 mod tests;
 pub(crate) mod troposphere;
@@ -90,6 +91,8 @@ pub(crate) enum NoiseLevel {
     /// `simplenoise`: σ of each real and imaginary draw, Jy, held as CASA
     /// holds it.
     Simple(f32),
+    /// A Noise calculated at setnoise and reused by later corrupt calls.
+    Fixed(Arc<offline::OfflineNoise>),
     /// `tsys-manual`: σ of each row from the model ([`tsys`]).
     TsysManual(TsysManual),
     /// `tsys-atm`: σ of each row and channel from the atmosphere
@@ -103,6 +106,7 @@ impl PartialEq for NoiseLevel {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Simple(left), Self::Simple(right)) => left == right,
+            (Self::Fixed(left), Self::Fixed(right)) => Arc::ptr_eq(left, right),
             (Self::TsysManual(left), Self::TsysManual(right)) => left == right,
             (Self::TsysAtm(left), Self::TsysAtm(right)) => Arc::ptr_eq(left, right),
             _ => false,
@@ -140,21 +144,32 @@ impl NoiseApplication {
     pub(crate) fn uniform(&self) -> Option<CellNoise> {
         match self.level {
             NoiseLevel::Simple(sigma_jy) => Some(CellNoise::new(self.key(), sigma_jy)),
-            NoiseLevel::TsysManual(_) | NoiseLevel::TsysAtm(_) => None,
+            NoiseLevel::Fixed(_) | NoiseLevel::TsysManual(_) | NoiseLevel::TsysAtm(_) => None,
         }
     }
 
     /// Whether σ depends on the row (the Tsys modes), which then needs each
     /// row's [`RowNoise`].
     pub(crate) fn varies_by_row(&self) -> bool {
-        !matches!(self.level, NoiseLevel::Simple(_))
+        matches!(
+            self.level,
+            NoiseLevel::TsysManual(_) | NoiseLevel::TsysAtm(_)
+        )
+    }
+
+    pub(crate) fn fixed(&self) -> Option<&offline::OfflineNoise> {
+        if let NoiseLevel::Fixed(noise) = &self.level {
+            Some(noise)
+        } else {
+            None
+        }
     }
 
     /// The `tsys-atm` model, if the term is one.
     pub(crate) fn tsys_atm(&self) -> Option<&TsysAtm> {
         match &self.level {
             NoiseLevel::TsysAtm(model) => Some(model),
-            NoiseLevel::Simple(_) | NoiseLevel::TsysManual(_) => None,
+            NoiseLevel::Fixed(_) | NoiseLevel::Simple(_) | NoiseLevel::TsysManual(_) => None,
         }
     }
 
@@ -164,6 +179,7 @@ impl NoiseApplication {
             key: self.key(),
             level: match &self.level {
                 NoiseLevel::Simple(sigma_jy) => ScanLevel::Simple(*sigma_jy),
+                NoiseLevel::Fixed(_) => unreachable!("fixed fields are added directly"),
                 NoiseLevel::TsysManual(model) => ScanLevel::TsysManual(model.for_window(window)),
                 NoiseLevel::TsysAtm(model) => ScanLevel::TsysAtm {
                     model,

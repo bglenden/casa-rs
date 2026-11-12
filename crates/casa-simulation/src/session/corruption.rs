@@ -69,9 +69,10 @@ pub struct NoiseSpec {
     /// `tsys-atm`'s site and atmosphere (`pground`, `relhum`, `altitude`,
     /// `waterheight`); the ground's temperature is `tsys`'s `tground`.
     pub atmosphere: AtmosphereSpec,
-    /// `OTF`: generate additive noise on the fly. `False`, which saves the
-    /// additive A Noise table, is not yet implemented. This does not control
-    /// the separate Tsys noise-scale table.
+    /// `OTF`: draw fresh additive noise at each corrupt. False reuses a
+    /// precomputed A Noise field for simplenoise; Tsys false remains unfinished
+    /// (#1292). A named field is saved as `<root>.A.cal`. This is separate
+    /// from the optional Tsys noise-scale table.
     pub on_the_fly: bool,
 }
 
@@ -149,8 +150,9 @@ impl Simulator {
     ///
     /// - A mode CASA does not know: CASA logs "unsupported mode … in
     ///   setnoise()" and returns `False`.
-    /// - `OTF=False`: not yet implemented. Tsys modes write an optional
-    ///   table at close, using the model snapshot at this call.
+    /// - `OTF=False` for a Tsys mode: not yet implemented (#1292).
+    ///   Simplenoise reuses a saved additive field; Tsys modes write an
+    ///   optional noise-scale table at close from this call's snapshot.
     /// - No rows observed yet: CASA cannot size the term on an empty
     ///   MeasurementSet and returns `False`, adding no term.
     /// - A Tsys mode with a water vapour above 100 mm, or a zenith Tsys at
@@ -173,9 +175,12 @@ impl Simulator {
             }
         };
         if !spec.on_the_fly {
+            if mode == NoiseMode::Simple {
+                return self.set_offline_noise(spec);
+            }
             return Err(SimulatorError::not_yet_implemented(
                 "setnoise(OTF=False), which writes a calibration table, is not yet implemented \
-                 in casa-rs (#1053)",
+                 for Tsys modes in casa-rs (#1292)",
             ));
         }
         if mode == NoiseMode::Simple {
@@ -359,6 +364,19 @@ impl Simulator {
     /// atmosphere for the windows defined then.
     fn check_noise_coverage(&self, terms: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
         for term in &self.noise_terms {
+            if let NoiseLevel::Fixed(field) = &term.level {
+                if self.scans.iter().enumerate().any(|(index, scan)| {
+                    terms
+                        .iter()
+                        .all(|term| term.covers(scan.spectral_window_id))
+                        && (index >= field.scans || !field.covers(scan.spectral_window_id))
+                }) {
+                    return Err(SimulatorError::not_yet_implemented(
+                        "OTF=False noise on observations added after setnoise is not yet implemented (#1292)",
+                    ));
+                }
+                continue;
+            }
             let NoiseLevel::TsysAtm(model) = &term.level else {
                 continue;
             };

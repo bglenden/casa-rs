@@ -106,6 +106,8 @@ mod jones;
 mod mosaic;
 #[path = "session_memory/noise_tables.rs"]
 mod noise_tables;
+#[path = "session_memory/offline_noise.rs"]
+mod offline_noise;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;

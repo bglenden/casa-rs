@@ -208,6 +208,59 @@ pub fn write_simulated_jones_table(
     kind: SimulatedJones,
     solutions: impl IntoIterator<Item = SimulatedSolution>,
 ) -> Result<(), CalibrationTableWriteError> {
+    let mut writer = simulated_writer(ms, output, kind.vis_cal())?;
+    for solution in solutions {
+        writer.append(row(&solution))?;
+    }
+    finish_simulated_table(writer, kind.depends_on_frequency())
+}
+
+/// One baseline's additive A Noise parameters, four correlations per channel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimulatedNoiseSolution {
+    /// TIME in MJD seconds.
+    pub time_s: f64,
+    /// FIELD_ID of the simulated solution.
+    pub field_id: i32,
+    /// SPECTRAL_WINDOW_ID.
+    pub spectral_window_id: i32,
+    /// ANTENNA1 and ANTENNA2, including autocorrelations.
+    pub antennas: [i32; 2],
+    /// Channel-major XX/XY/YX/YY (or RR/RL/LR/LL) additive errors.
+    pub values: Vec<[Complex32; 4]>,
+}
+
+/// Write CASA's channel-dependent A Noise table from simulated baselines.
+///
+/// # Errors
+/// The destination conflicts with the MS, or the table cannot be written.
+pub fn write_simulated_noise_table(
+    ms: &MeasurementSet,
+    output: &Path,
+    solutions: impl IntoIterator<Item = SimulatedNoiseSolution>,
+) -> Result<(), CalibrationTableWriteError> {
+    let mut writer = simulated_writer(ms, output, "A Noise")?;
+    for solution in solutions {
+        let channels = solution.values.len();
+        writer.append(parameter_row(
+            (
+                solution.time_s,
+                solution.field_id,
+                solution.spectral_window_id,
+                solution.antennas,
+            ),
+            [4, channels],
+            solution.values.into_flattened(),
+        ))?;
+    }
+    finish_simulated_table(writer, true)
+}
+
+fn simulated_writer<'a>(
+    ms: &'a MeasurementSet,
+    output: &'a Path,
+    subtype: &'a str,
+) -> Result<CalibrationTableWriter<'a>, CalibrationTableWriteError> {
     if let Some(path) = ms.path() {
         check_simulated_table_destination(path, output)?;
     }
@@ -215,21 +268,24 @@ pub fn write_simulated_jones_table(
         || "<in-memory>".to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let mut writer = CalibrationTableWriter::create_replacing(
+    CalibrationTableWriter::create_replacing(
         ms,
         CalibrationTableDescriptor {
             output,
             schema: schema(),
-            subtype: kind.vis_cal(),
+            subtype,
             parameter_type: Some("Complex"),
             measurement_set_name,
             include_polarization_basis: true,
             time_extra_precision_column: None,
         },
-    )?;
-    for solution in solutions {
-        writer.append(row(&solution))?;
-    }
+    )
+}
+
+fn finish_simulated_table(
+    writer: CalibrationTableWriter,
+    frequency_dependent: bool,
+) -> Result<(), CalibrationTableWriteError> {
     writer.copy_subtables(&[
         (SubtableId::Observation, "OBSERVATION"),
         (SubtableId::Antenna, "ANTENNA"),
@@ -237,7 +293,7 @@ pub fn write_simulated_jones_table(
         (SubtableId::History, "HISTORY"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
     ])?;
-    if !kind.depends_on_frequency() {
+    if !frequency_dependent {
         make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"))?;
     }
     writer.save_main()
@@ -327,27 +383,40 @@ fn cell<T>(shape: [usize; 2], values: Vec<T>) -> ArrayD<T> {
 }
 
 fn row(solution: &SimulatedSolution) -> RecordValue {
-    let shape = solution.values.shape();
+    parameter_row(
+        (
+            solution.time_s,
+            solution.field_id,
+            solution.spectral_window_id,
+            [solution.antenna, -1],
+        ),
+        solution.values.shape(),
+        solution.values.as_slice().to_vec(),
+    )
+}
+
+fn parameter_row(
+    (time, field, window, antennas): (f64, i32, i32, [i32; 2]),
+    shape: [usize; 2],
+    values: Vec<Complex32>,
+) -> RecordValue {
     let count = shape[0] * shape[1];
     let int =
         |name: &str, value: i32| RecordField::new(name, Value::Scalar(ScalarValue::Int32(value)));
     let double =
         |name: &str, value: f64| RecordField::new(name, Value::Scalar(ScalarValue::Float64(value)));
     RecordValue::new(vec![
-        double(COL_TIME, solution.time_s),
-        int(COL_FIELD_ID, solution.field_id),
-        int(COL_SPECTRAL_WINDOW_ID, solution.spectral_window_id),
-        int(COL_ANTENNA1, solution.antenna),
-        int(COL_ANTENNA2, -1),
+        double(COL_TIME, time),
+        int(COL_FIELD_ID, field),
+        int(COL_SPECTRAL_WINDOW_ID, window),
+        int(COL_ANTENNA1, antennas[0]),
+        int(COL_ANTENNA2, antennas[1]),
         double(COL_INTERVAL, 0.0),
         int(COL_SCAN_NUMBER, -1),
         int(COL_OBSERVATION_ID, 0),
         RecordField::new(
             COL_CPARAM,
-            Value::Array(ArrayValue::Complex32(cell(
-                shape,
-                solution.values.as_slice().to_vec(),
-            ))),
+            Value::Array(ArrayValue::Complex32(cell(shape, values))),
         ),
         RecordField::new(
             COL_PARAMERR,
