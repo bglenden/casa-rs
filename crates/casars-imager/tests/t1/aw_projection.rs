@@ -379,6 +379,53 @@ fn assert_same_products(products: &Products, fresh: &Products) {
     }
 }
 
+/// A dirty run leaves raw higher Taylor weight moments. Recomputing the
+/// PSF during CLEAN must preserve their scale and give the same result as
+/// a fresh CLEAN. CASA can multiply those saved moments by the principal
+/// sum of weights on restart (#1070).
+#[test]
+fn aw_mtmfs_restart_recomputes_taylor_weights() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    controls["deconvolver"] = json!("mtmfs");
+    controls["nterms"] = json!(2);
+    controls["scales"] = json!([0]);
+    controls["reffreq"] = json!("1.45GHz");
+    controls["threshold"] = json!("0Jy");
+    controls["pbcor"] = json!(false);
+    controls["niter"] = json!(0);
+    let (_, dirty) = observation.image("continued", controls.clone());
+
+    controls["niter"] = json!(10);
+    let (continued, products) = observation.image("continued", controls.clone());
+    let (fresh, fresh_products) = observation.image("fresh", controls);
+    assert!(continued.minor_iterations > 0, "the restarted run cleans");
+    assert_eq!(continued.minor_iterations, fresh.minor_iterations);
+    assert_eq!(continued.major_cycles, fresh.major_cycles);
+    for suffix in [".weight.tt1", ".weight.tt2"] {
+        let before = dirty.get(suffix).values();
+        let after = products.get(suffix).values();
+        let peak = before
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(peak > 0.0, "{suffix} must exercise a nonzero weight moment");
+        let difference = before
+            .iter()
+            .zip(&after)
+            .map(|(before, after)| (before - after).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            difference <= 1.0e-6 * peak,
+            "{suffix} changed by {difference} from a dirty peak of {peak}"
+        );
+    }
+    assert_same_products(&products, &fresh_products);
+}
+
 /// #735 end to end: a cell's conjugate beam and its lookup depend on the
 /// whole selected frequency list, so a native cache generated for two SPWs
 /// does not serve a run of one. Run A images both windows into the cache,
