@@ -103,6 +103,8 @@ pub(crate) enum JonesKind {
     Gain,
     /// `D`: polarization leakage.
     Leakage,
+    /// E/T supplied gains act on the sky side of instrumental leakage.
+    SkyGain,
     /// `Tf Jones`: tropospheric phase, per channel
     /// ([`super::troposphere`]).
     Troposphere,
@@ -792,7 +794,7 @@ fn apply_receptors(
     let correlations = receptors.len();
     match kind {
         JonesKind::Troposphere => unreachable!("a tropospheric term has its own values"),
-        JonesKind::Gain => {
+        JonesKind::Gain | JonesKind::SkyGain => {
             // A cell has at most four correlations.
             let mut factors = [Complex32::new(1.0, 0.0); 4];
             for (factor, &[r1, r2]) in factors.iter_mut().zip(receptors) {

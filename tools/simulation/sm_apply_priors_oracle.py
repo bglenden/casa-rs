@@ -16,6 +16,9 @@ CASES=[
     dict(name='antenna_position',caltype='antpos',parameter=[.01,-.02,.03],antenna='0'),
     dict(name='opacity',caltype='opac',parameter=[.05],antenna=''),
     dict(name='opacity_argument',caltype='opac',parameter=[.05],antenna='',opacity=.2),
+    dict(name='gain_curve',caltype='opac',parameter=[.05],antenna='',subtype='EGainCurve',values=[1.,.001,-.00001,0.,1.2,-.001,.00002,0.]),
+    dict(name='system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',values=[4.,9.]),
+    dict(name='negative_system_temperature',caltype='opac',parameter=[.05],antenna='',subtype='B TSYS',values=[-4.,9.]),
 ]
 
 
@@ -29,6 +32,12 @@ def main():
         path=directory/'data.ms';terms=directory/'terms.cal'
         sm=make_session(path,stokes='XX XY YX YY');sm.close();initialize(path)
         gencal(vis=str(path),caltable=str(terms),caltype=spec['caltype'],parameter=spec['parameter'],antenna=spec['antenna'],pol=spec.get('pol',''))
+        if 'subtype' in spec:
+            tb=table();tb.open(str(terms),nomodify=False);info=tb.info();info['subType']=spec['subtype'];tb.putinfo(info);tb.putkeyword('VisCal',spec['subtype'])
+            values=np.array(spec['values'],dtype=np.float32).reshape(-1,1)
+            for row in range(tb.nrows()):
+                for column,data in [('FPARAM',values),('FLAG',np.zeros_like(values,dtype=bool)),('PARAMERR',np.zeros_like(values)),('SNR',np.ones_like(values))]:tb.putcell(column,row,data)
+            tb.close()
         tb=table();tb.open(str(terms));info=tb.info();column='FPARAM' if 'FPARAM' in tb.colnames() else 'CPARAM'
         calibration=dict(kind=tb.getkeyword('VisCal'),rows=tb.nrows(),shape=list(tb.getcell(column,0).shape))
         tb.close();sm=simulator();assert sm.openfromms(str(path))

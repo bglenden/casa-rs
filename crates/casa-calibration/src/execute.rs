@@ -3240,8 +3240,8 @@ pub(crate) struct DelayGrid {
 
 #[derive(Clone)]
 pub(crate) struct AntposGrid {
-    pub(crate) offsets_m: [f32; 3],
-    pub(crate) flagged: bool,
+    offsets_m: [f32; 3],
+    flagged: bool,
 }
 
 #[derive(Clone)]
@@ -3253,8 +3253,8 @@ pub(crate) struct GainCurveGrid {
 
 #[derive(Clone)]
 pub(crate) struct OpacityGrid {
-    pub(crate) tau: f32,
-    pub(crate) flagged: bool,
+    tau: f32,
+    flagged: bool,
 }
 
 impl CalibrationGrid {
@@ -3303,7 +3303,7 @@ impl CalibrationGrid {
 }
 
 impl GainGrid {
-    fn from_arrays(
+    pub(crate) fn from_arrays(
         path: &Path,
         gains: &ArrayValue,
         flags: &ArrayValue,
@@ -3865,6 +3865,20 @@ pub(crate) fn load_calibration_table(
     table_plan: &ApplyCalibrationTablePlan,
     geometry_engine: Option<&Arc<MsCalEngine>>,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
+    load_parameters(table_plan, geometry_engine, false)
+}
+
+pub(crate) fn load_simulator_table(
+    table_plan: &ApplyCalibrationTablePlan,
+) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
+    load_parameters(table_plan, None, true)
+}
+
+fn load_parameters(
+    table_plan: &ApplyCalibrationTablePlan,
+    geometry_engine: Option<&Arc<MsCalEngine>>,
+    real_parameters: bool,
+) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
     if table_plan.summary.table_subtype == "BPOLY" {
         return load_bpoly_calibration_table(table_plan);
     }
@@ -3901,6 +3915,20 @@ pub(crate) fn load_calibration_table(
                 CalibrationGrid::Complex(GainGrid::from_arrays(
                     &table_plan.spec.path,
                     gains,
+                    flags,
+                )?)
+            }
+            CalibrationParameterFamily::Float if real_parameters => {
+                let values = table
+                    .cell_accessor(row_index, COL_FPARAM)
+                    .and_then(|cell| cell.array())
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: table_plan.spec.path.display().to_string(),
+                        source: MsError::from(source),
+                    })?;
+                CalibrationGrid::Complex(GainGrid::from_real_arrays(
+                    &table_plan.spec.path,
+                    values,
                     flags,
                 )?)
             }

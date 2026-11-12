@@ -28,7 +28,7 @@ use casa_types::Complex32;
 
 use crate::execute::{
     ApplyExecutionError, CalibrationGrid, CalibrationSolution, DelayGrid, GainGrid,
-    LoadedCalibrationTable, load_calibration_table,
+    LoadedCalibrationTable, load_calibration_table, load_simulator_table,
 };
 use crate::model::CalibrationParameterFamily;
 use crate::plan::{ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode};
@@ -326,10 +326,11 @@ impl CalibrationTableLookup {
             interp,
             calwt: false,
         };
-        let mut table = load_calibration_table(&plan, None)?;
-        if real {
-            real::parameters(&mut table, path)?;
-        }
+        let table = if real {
+            load_simulator_table(&plan)?
+        } else {
+            load_calibration_table(&plan, None)?
+        };
         let across_fields = (fields == FieldSelection::AnyField).then(|| across_fields(&table));
         Ok(Self {
             path: path.to_path_buf(),

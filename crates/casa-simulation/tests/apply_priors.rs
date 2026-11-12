@@ -18,15 +18,31 @@ use serde_json::Value as Json;
 use std::io::Read;
 use std::path::Path;
 
-fn delay_table(path: &Path) {
+fn patch_table(path: &Path, case: &Json) {
+    let delay = case["caltype"] == "sbd";
+    let kind = if delay {
+        "K Jones"
+    } else {
+        case["subtype"].as_str().unwrap()
+    };
+    let recipe: Vec<f32> = if delay {
+        vec![1.2, -0.8]
+    } else {
+        case["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap() as f32)
+            .collect()
+    };
+    let shape = IxDyn(&[recipe.len(), 1]);
     let mut table = Table::open(TableOptions::new(path)).unwrap();
     let mut info = table.info().clone();
-    info.sub_type = "K Jones".into();
+    info.sub_type = kind.into();
     table.set_info(info);
-    table.keywords_mut().upsert(
-        "VisCal",
-        Value::Scalar(ScalarValue::String("K Jones".into())),
-    );
+    table
+        .keywords_mut()
+        .upsert("VisCal", Value::Scalar(ScalarValue::String(kind.into())));
     for row in 0..table.row_count() {
         let ScalarValue::Int32(antenna) = table
             .cell_accessor(row, "ANTENNA1")
@@ -36,25 +52,25 @@ fn delay_table(path: &Path) {
         else {
             panic!("antenna");
         };
-        let parameters = if *antenna == 0 {
-            vec![1.2, -0.8]
+        let parameters = if delay && *antenna != 0 {
+            vec![0.; recipe.len()]
         } else {
-            vec![0., 0.]
+            recipe.clone()
         };
         for (column, value) in [
             (
                 "FPARAM",
-                ArrayValue::Float32(ArrayD::from_shape_vec(IxDyn(&[2, 1]), parameters).unwrap()),
+                ArrayValue::Float32(ArrayD::from_shape_vec(shape.clone(), parameters).unwrap()),
             ),
             (
                 "FLAG",
-                ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[2, 1]), false)),
+                ArrayValue::Bool(ArrayD::from_elem(shape.clone(), false)),
             ),
             (
                 "PARAMERR",
-                ArrayValue::Float32(ArrayD::zeros(IxDyn(&[2, 1]))),
+                ArrayValue::Float32(ArrayD::zeros(shape.clone())),
             ),
-            ("SNR", ArrayValue::Float32(ArrayD::ones(IxDyn(&[2, 1])))),
+            ("SNR", ArrayValue::Float32(ArrayD::ones(shape.clone()))),
         ] {
             table
                 .cell_accessor_mut(row, column)
@@ -64,6 +80,9 @@ fn delay_table(path: &Path) {
         }
     }
     table.save(TableOptions::new(path)).unwrap();
+    if !delay {
+        return;
+    }
     // gencal's single-band delay reference is the native band's centroid.
     let spectral = path.join("SPECTRAL_WINDOW");
     let mut table = Table::open(TableOptions::new(&spectral)).unwrap();
@@ -80,11 +99,17 @@ fn delay_table(path: &Path) {
 }
 
 fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
-    let root = tempfile::tempdir().unwrap();
+    let export = std::env::var_os("CASA_RS_APPLY_PRIORS_OUT");
+    let root = if let Some(out) = &export {
+        std::fs::create_dir_all(out).unwrap();
+        tempfile::tempdir_in(out).unwrap()
+    } else {
+        tempfile::tempdir().unwrap()
+    };
     let path = root.path().join("data.ms");
     let calibration = root.path().join("terms.cal");
     let resources = predict_support::resources(workers, 2 << 30);
-    let mut sm = predict_support::session(&path, "ALMA", "XX XY YX YY", resources.clone());
+    let mut sm = predict_support::session(&path, "ALMA", "XX XY YX YY", resources);
     for (field, start, stop) in [("target", 0., 20.), ("offset", 20., 40.)] {
         sm.observe(&predict_support::scan(field, start, stop))
             .unwrap();
@@ -116,8 +141,8 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
         gaincurve_table: None,
     })
     .unwrap();
-    if delay {
-        delay_table(&calibration);
+    if delay || case["subtype"].is_string() {
+        patch_table(&calibration, case);
     }
     let mut sm = Simulator::open_from_ms(
         &path,
@@ -128,6 +153,14 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
         },
     )
     .unwrap();
+    let calibration = if let Some(casa) = std::env::var_os("CASA_RS_APPLY_PRIORS_CASA_TABLES") {
+        assert!(export.is_none());
+        std::path::PathBuf::from(casa)
+            .join(case["name"].as_str().unwrap())
+            .join("terms.cal")
+    } else {
+        calibration
+    };
     sm.set_apply(&ApplySpec {
         table: calibration.to_string_lossy().into_owned(),
         kind: String::new(),
@@ -140,7 +173,17 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
     .unwrap();
     sm.corrupt().unwrap();
     sm.close().unwrap();
-    support::compare(&path, case)
+    let output = support::compare(&path, case);
+    if export.is_some() {
+        std::fs::write(
+            root.path().join("case.json"),
+            serde_json::to_vec(&serde_json::json!({"name":case["name"],"workers":workers}))
+                .unwrap(),
+        )
+        .unwrap();
+        root.keep();
+    }
+    output
 }
 
 #[test]
@@ -152,7 +195,7 @@ fn supplied_delay_position_and_opacity_errors_match_casa() {
     let fixture: Json = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 4);
+    assert_eq!(cases.len(), 7);
     for case in cases {
         assert_eq!(case["outcome"], "returned");
         assert_eq!(run(case, 1), run(case, 3), "{}", case["name"]);

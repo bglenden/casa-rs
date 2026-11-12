@@ -100,6 +100,8 @@ enum AppliedKind {
     Delay,
     AntennaPosition,
     Opacity,
+    GainCurve,
+    SystemTemperature,
 }
 
 impl AppliedKind {
@@ -109,6 +111,7 @@ impl AppliedKind {
                 JonesKind::Gain
             }
             Self::Leakage => JonesKind::Leakage,
+            Self::GainCurve | Self::SystemTemperature => JonesKind::SkyGain,
         }
     }
 
@@ -116,6 +119,7 @@ impl AppliedKind {
         match self {
             Self::Scalar | Self::Opacity => 1,
             Self::AntennaPosition => 3,
+            Self::GainCurve => 8,
             _ => 2,
         }
     }
@@ -245,7 +249,7 @@ impl Simulator {
                 )));
             }
         };
-        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF")
+        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF" | "B TSYS")
             .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
             "G" | "B" => AppliedKind::Gain,
@@ -254,6 +258,8 @@ impl Simulator {
             "K" => AppliedKind::Delay,
             "KANTPOS" => AppliedKind::AntennaPosition,
             "TOPAC" => AppliedKind::Opacity,
+            "EGAINCURVE" => AppliedKind::GainCurve,
+            "B TSYS" => AppliedKind::SystemTemperature,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
         let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;
@@ -374,7 +380,7 @@ impl Simulator {
                 } else {
                     TermBytes::per_chunk(&per_window, antennas)
                 };
-                if table.kind == AppliedKind::Opacity {
+                if matches!(table.kind, AppliedKind::Opacity | AppliedKind::GainCurve) {
                     bytes.forming += (antennas * size_of::<f64>()) as u64;
                 }
                 let mut reservation = self.admit_term(bytes)?;
@@ -415,7 +421,7 @@ impl Simulator {
         // JonesGenLin instead substitutes one for BOTH leakage values;
         // correct that data-corrupting defect with the neutral zero pair.
         let neutral = Complex32::new(
-            if kind.operator() == JonesKind::Gain {
+            if kind.operator() != JonesKind::Leakage {
                 1.0
             } else {
                 0.0
@@ -521,7 +527,7 @@ impl Simulator {
                             kind,
                             &solution,
                             antenna,
-                            output_hz.get(channel).copied().unwrap_or(0.),
+                            (channel, output_hz.get(channel).copied().unwrap_or(0.)),
                             reference,
                         ) {
                             values.push(pair);

@@ -251,6 +251,7 @@ impl Simulator {
                 JonesKind::Gain => SimulatedJones::Gain,
                 JonesKind::Leakage => SimulatedJones::Leakage,
                 JonesKind::Troposphere => SimulatedJones::Troposphere,
+                JonesKind::SkyGain => unreachable!("only applied tables have sky gains"),
             };
             write_simulated_jones_table(&ms, path, kind, term.table_solutions()).map_err(
                 |error| {

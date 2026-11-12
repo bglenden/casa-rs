@@ -6,7 +6,7 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 
 pub(super) struct Geometry {
-    sine_elevation: Vec<f64>,
+    elevations: Vec<f64>,
 }
 
 impl Geometry {
@@ -17,9 +17,9 @@ impl Geometry {
         time: f64,
     ) -> SimulatorResult<Self> {
         let mut result = Self {
-            sine_elevation: Vec::new(),
+            elevations: Vec::new(),
         };
-        if kind != AppliedKind::Opacity {
+        if !matches!(kind, AppliedKind::Opacity | AppliedKind::GainCurve) {
             return Ok(result);
         }
         let [ra, dec] = sm.fields[field].direction_rad;
@@ -31,16 +31,13 @@ impl Geometry {
                 .with_epoch(epoch.clone())
                 .with_position(MPosition::new_itrf(x, y, z))
                 .with_measures(sm.options.measures.clone());
-            debug_assert_eq!(index, result.sine_elevation.len());
+            debug_assert_eq!(index, result.elevations.len());
             let elevation = direction
                 .convert_to(DirectionRef::AZEL, &frame)
                 .map_err(raised)?
                 .as_angles()
                 .1;
-            // VisBuffer::azel holds single-precision angles.
-            result
-                .sine_elevation
-                .push(f64::from(elevation as f32).sin());
+            result.elevations.push(elevation);
         }
         Ok(result)
     }
@@ -50,7 +47,7 @@ impl Geometry {
         kind: AppliedKind,
         solution: &ComplexSolution,
         antenna: usize,
-        frequency: f64,
+        (channel, frequency): (usize, f64),
         reference: f64,
     ) -> Option<[Complex32; 2]> {
         let one = Complex32::new(1., 0.);
@@ -71,7 +68,7 @@ impl Geometry {
                 Some([one; 2])
             }
             AppliedKind::Opacity => {
-                let sine = self.sine_elevation[antenna];
+                let sine = self.elevations[antenna].sin();
                 let gain = if solution.flags[0] || sine <= 0. {
                     1.
                 } else {
@@ -79,6 +76,23 @@ impl Geometry {
                 };
                 Some([Complex32::new(gain, 0.); 2])
             }
+            AppliedKind::GainCurve => {
+                let zenith = 90. - self.elevations[antenna].to_degrees();
+                Some(std::array::from_fn(|receptor| {
+                    let gain = (0..4).rev().fold(0., |gain, coefficient| {
+                        gain * zenith + f64::from(solution.value(4 * receptor + coefficient, 0).re)
+                    });
+                    Complex32::new(gain as f32, 0.)
+                }))
+            }
+            AppliedKind::SystemTemperature => Some(std::array::from_fn(|receptor| {
+                let value = solution.value(receptor, channel).re;
+                if value < 0. || solution.flags[receptor * solution.channels + channel] {
+                    one
+                } else {
+                    Complex32::new(value.sqrt(), 0.)
+                }
+            })),
             _ => None,
         }
     }

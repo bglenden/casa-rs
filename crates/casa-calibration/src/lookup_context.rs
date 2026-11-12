@@ -148,7 +148,7 @@ impl CalibrationTableLookup {
                 TimeInterpolation::Cubic | TimeInterpolation::Spline
             )
         {
-            let plan = TimePlan::new(&mut lookup, options)?;
+            let plan = TimePlan::new(&mut lookup, options, real)?;
             lookup.advanced_time = Some(plan);
         }
         Ok(lookup)
@@ -193,6 +193,7 @@ impl TimePlan {
     fn new(
         lookup: &mut CalibrationTableLookup,
         options: TimeInterpolationOptions,
+        real: bool,
     ) -> Result<Self, ApplyExecutionError> {
         let mut scope = TimeScope::All;
         let series = if options.per_observation || options.per_scan {
@@ -239,10 +240,7 @@ impl TimePlan {
         };
         let mut plan = Self {
             mode: options.mode,
-            real: matches!(
-                lookup.subtype.as_str(),
-                "K Jones" | "KAntPos Jones" | "TOpac"
-            ),
+            real,
             scope,
             series,
             splines: HashMap::new(),
