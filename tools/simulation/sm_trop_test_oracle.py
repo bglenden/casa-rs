@@ -51,6 +51,9 @@ def verify_native(root):
 
 
 def main():
+    import casatasks
+
+    assert casatasks.version_string() == "6.7.6.14", casatasks.version_string()
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--out")
