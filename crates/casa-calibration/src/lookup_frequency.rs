@@ -50,7 +50,8 @@ impl ComplexSolution {
     ///
     /// # Errors
     /// A nonconstant grid disagrees with its frequency axis, or its valid
-    /// frequencies are not strictly monotonic.
+    /// frequencies are not strictly monotonic. Cubic interpolation of an
+    /// interior frequency requires at least four valid samples, as in CASA.
     pub fn resample_frequency(
         &self,
         input_hz: &[f64],
@@ -114,6 +115,16 @@ impl ComplexSolution {
             }
             if descending {
                 points.reverse();
+            }
+            if mode.base() == FrequencyInterpolation::Cubic
+                && (2..4).contains(&points.len())
+                && output_hz.iter().any(|frequency| {
+                    frequency / 1e9 > points[0].0 && frequency / 1e9 < points[points.len() - 1].0
+                })
+            {
+                return Err(error(
+                    "cubic frequency interpolation requires four valid samples for an interior output",
+                ));
             }
             let derivatives = if mode.base() == FrequencyInterpolation::Spline {
                 spline_derivatives(&points)

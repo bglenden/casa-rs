@@ -48,7 +48,7 @@ const LOOKUP_PHASE: &str = "loading a setapply calibration table";
 pub struct ApplySpec {
     /// `table`: the calibration table to corrupt by.
     pub table: String,
-    /// `type`: its calibration type (`G`, `D` or scalar `T`); empty takes the table's.
+    /// `type`: its calibration type (`G`, `D`, scalar `T`, `B`, `Tf`, `Df`); empty takes the table's.
     pub kind: String,
     /// `t`: CASA records this interval, but G/D/T table application still
     /// evaluates the requested interpolation at each data time.
@@ -59,8 +59,10 @@ pub struct ApplySpec {
     /// `calwt`: accepted as in CASA; corruption explicitly disables weight
     /// calibration, so both settings preserve WEIGHT and SIGMA.
     pub calwt: bool,
-    /// `spwmap`: each data window's table window; −1, or a window past
-    /// its end, is the data window itself.
+    /// `spwmap`: empty or [-1] preserves data-window ids. One nonnegative
+    /// id broadcasts to every data window; a longer list maps a prefix.
+    /// [-999] broadcasts the first window with solutions. Other negative
+    /// or out-of-range ids raise.
     pub spwmap: Vec<i64>,
     /// `opacity`: used by CASA's TOPAC term; ignored for the supported G/D/T
     /// tables, as their application ignores it in CASA.
@@ -105,7 +107,7 @@ pub(crate) struct AppliedTable {
     lookup: Arc<HeldLookup>,
     kind: AppliedKind,
     frequency: Option<FrequencyInterpolation>,
-    spwmap: Vec<i64>,
+    spwmap: Vec<usize>,
 }
 
 impl std::fmt::Debug for AppliedTable {
@@ -131,6 +133,7 @@ struct HeldLookup {
     lookup: CalibrationTableLookup,
     frequencies: Vec<Vec<f64>>,
     max_cell_values: usize,
+    windows: usize,
     _reservation: Reservation,
 }
 
@@ -166,8 +169,12 @@ impl Simulator {
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
     ///   raises. A table whose parameter count disagrees with its type
     ///   raises at `corrupt`, as CASA does.
-    /// - Other than `G`, `D` or scalar `T` solutions, or interpolation
-    ///   other than `linear` or `nearest`: not yet implemented.
+    /// - Other than `G`, `D`, scalar `T`, `B`, `Tf` and `Df`, or time
+    ///   interpolation other than `linear`/`nearest`: not yet implemented.
+    /// - Frequency interpolation supports nearest, linear, cubic and spline,
+    ///   their flag-retaining forms, and CASA's default linear fallback.
+    ///   Cubic interior interpolation with fewer than four valid input
+    ///   channels raises at `corrupt`, as CASA does.
     /// - No rows observed yet: refused, as `setgain` refuses.
     ///
     /// Flagged G/T parameters and missing G/T antennas use unit gains,
@@ -202,6 +209,7 @@ impl Simulator {
             "T" | "TF" => AppliedKind::Scalar,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
+        let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;
         self.require_rows()?;
         tracing::info!(
             "Arranging to CORRUPT with: {} ({})",
@@ -213,7 +221,7 @@ impl Simulator {
             lookup: Arc::new(lookup),
             kind,
             frequency,
-            spwmap: spec.spwmap.clone(),
+            spwmap,
         }));
         Ok(())
     }
@@ -264,6 +272,7 @@ impl Simulator {
             lookup,
             frequencies,
             max_cell_values: layout.max_cell_values,
+            windows: layout.frequency_windows,
             _reservation: reservation,
         })
     }
@@ -327,13 +336,6 @@ impl Simulator {
     ) -> SimulatorResult<AppliedSolutions> {
         let kind = table.kind;
         let lookup = &table.lookup.lookup;
-        let spwmap = &table.spwmap;
-        let table_window = |window: usize| {
-            spwmap
-                .get(window)
-                .and_then(|&mapped| usize::try_from(mapped).ok())
-                .unwrap_or(window)
-        };
         // JonesDiag::setMatByOk substitutes unit gains per receptor.
         // JonesGenLin instead substitutes one for BOTH leakage values;
         // correct that data-corrupting defect with the neutral zero pair.
@@ -366,7 +368,7 @@ impl Simulator {
             Vec::new()
         };
         for (index, scan) in self.scans.iter().enumerate() {
-            let window = table_window(scan.spectral_window_id);
+            let window = table.spwmap[scan.spectral_window_id];
             let output_hz = if table.frequency.is_some() {
                 self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
             } else {
@@ -488,4 +490,41 @@ fn frequency_interpolation(interp: &str) -> FrequencyInterpolation {
     } else {
         FrequencyInterpolation::Linear
     }
+}
+
+/// CTPatchedInterp::setSpwMap: identity, single-window broadcast, explicit
+/// prefix, or the first available solution window (-999).
+fn mapped_windows(
+    spec: &[i64],
+    lookup: &HeldLookup,
+    windows: usize,
+) -> SimulatorResult<Vec<usize>> {
+    if spec.is_empty() || spec == [-1] {
+        return Ok((0..windows).collect());
+    }
+    if spec[0] == -999 {
+        let first = lookup.lookup.first_spectral_window().ok_or_else(|| {
+            raised("No calibration spectral window is available for automatic fanout")
+        })?;
+        return Ok(vec![first as usize; windows]);
+    }
+    if spec.iter().any(|&window| window < 0) {
+        return Err(raised("Please specify positive indices in spwmap."));
+    }
+    if spec
+        .iter()
+        .any(|&window| window as u64 >= lookup.windows as u64)
+    {
+        return Err(raised(format!(
+            "Please specify spw indices <= maximum available ({})",
+            lookup.windows.saturating_sub(1)
+        )));
+    }
+    Ok((0..windows)
+        .map(|window| {
+            spec.get(if spec.len() == 1 { 0 } else { window })
+                .map(|&window| window as usize)
+                .unwrap_or(window)
+        })
+        .collect())
 }

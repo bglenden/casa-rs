@@ -136,61 +136,8 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     } else {
         tempfile::tempdir().unwrap()
     };
-    let path = directory.path().join("applied.ms");
-    let mut sm = session(
-        &path,
-        "ALMA",
-        case["stokes"].as_str().unwrap_or("XX XY YX YY"),
-        resources(workers, 2 << 30),
-    );
-    let second_window = case["data_window"] == 1;
-    if second_window {
-        use super::predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
-        use casa_types::measures::frequency::FrequencyRef;
-        sm.set_spectral_window(&casa_simulation::SpectralWindowSpec {
-            name: "second".to_string(),
-            start_frequency_hz: FREQUENCY_HZ,
-            channel_width_hz: CHANNEL_HZ,
-            resolution_hz: CHANNEL_HZ,
-            frame: FrequencyRef::TOPO,
-            channel_count: 4,
-            stokes: "XX XY YX YY".to_string(),
-        })
-        .unwrap();
-    }
-    for (source, start, stop) in [("target", 0.0, 20.0), ("offset", 20.0, 40.0)] {
-        let mut spec = scan(source, start, stop);
-        if second_window {
-            spec.spectral_window = "second".to_string();
-        }
-        sm.observe(&spec).unwrap();
-    }
-    sm.close().unwrap();
-    input::prepare(&path);
-    let calibration = directory.path().join("terms.cal");
-    table(&path, &calibration, case);
-    let mut sm = Simulator::open_from_ms(
-        &path,
-        SimulatorOptions {
-            measures: casa_test_support::deterministic_measures_provider(),
-            resources: resources(workers, 2 << 30),
-            now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
-        },
-    )
-    .unwrap();
-    sm.set_apply(&ApplySpec {
-        table: calibration.to_string_lossy().into_owned(),
-        kind: case["options"]["type"].as_str().unwrap_or("").to_string(),
-        interval_s: case["options"]["t"].as_f64().unwrap_or(0.0),
-        interp: case["interp"].as_str().unwrap().to_string(),
-        calwt: case["options"]["calwt"].as_bool().unwrap_or(false),
-        spwmap: case["options"]["spwmap"]
-            .as_array()
-            .map(|values| values.iter().map(|value| value.as_i64().unwrap()).collect())
-            .unwrap_or_else(|| vec![-1]),
-        opacity: case["options"]["opacity"].as_f64().unwrap_or(0.0),
-    })
-    .unwrap();
+    let (path, mut sm, spec) = prepared(directory.path(), case, workers);
+    sm.set_apply(&spec).unwrap();
     sm.corrupt().unwrap();
     sm.close().unwrap();
     let rows = compare(&path, case);
@@ -354,4 +301,76 @@ fn flag_solutions(path: &Path, probe: &str, times: [f64; 2]) {
             .unwrap();
     }
     table.save(TableOptions::new(path)).unwrap();
+}
+
+/// Shared independent input for successful applications and refusal atomicity.
+pub(super) fn prepared(
+    directory: &Path,
+    case: &Value,
+    workers: usize,
+) -> (std::path::PathBuf, Simulator, ApplySpec) {
+    let path = directory.join("applied.ms");
+    let mut sm = session(
+        &path,
+        "ALMA",
+        case["stokes"].as_str().unwrap_or("XX XY YX YY"),
+        resources(workers, 2 << 30),
+    );
+    let second_window = case["data_window"] == 1;
+    if second_window {
+        use super::predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
+        use casa_types::measures::frequency::FrequencyRef;
+        sm.set_spectral_window(&casa_simulation::SpectralWindowSpec {
+            name: "second".to_string(),
+            start_frequency_hz: FREQUENCY_HZ,
+            channel_width_hz: CHANNEL_HZ,
+            resolution_hz: CHANNEL_HZ,
+            frame: FrequencyRef::TOPO,
+            channel_count: 4,
+            stokes: "XX XY YX YY".to_string(),
+        })
+        .unwrap();
+    }
+    for (source, start, stop) in [("target", 0.0, 20.0), ("offset", 20.0, 40.0)] {
+        let mut spec = scan(source, start, stop);
+        if second_window {
+            spec.spectral_window = "second".to_string();
+        }
+        sm.observe(&spec).unwrap();
+    }
+    sm.close().unwrap();
+    input::prepare(&path);
+    let calibration = if let Some(root) = std::env::var_os("CASA_RS_APPLY_CASA_TABLES")
+        .filter(|_| frequency::is_frequency(case["kind"].as_str().unwrap()))
+    {
+        std::path::PathBuf::from(root)
+            .join(case["name"].as_str().unwrap())
+            .join("terms.cal")
+    } else {
+        let calibration = directory.join("terms.cal");
+        table(&path, &calibration, case);
+        calibration
+    };
+    let sm = Simulator::open_from_ms(
+        &path,
+        SimulatorOptions {
+            measures: casa_test_support::deterministic_measures_provider(),
+            resources: resources(workers, 2 << 30),
+            now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
+        },
+    )
+    .unwrap();
+    let spec = ApplySpec {
+        table: calibration.to_string_lossy().into_owned(),
+        kind: case["options"]["type"].as_str().unwrap_or("").to_string(),
+        interval_s: case["options"]["t"].as_f64().unwrap_or(0.0),
+        interp: case["interp"].as_str().unwrap().to_string(),
+        calwt: case["options"]["calwt"].as_bool().unwrap_or(false),
+        spwmap: case["options"]["spwmap"]
+            .as_array()
+            .map(|values| values.iter().map(|value| value.as_i64().unwrap()).collect())
+            .unwrap_or_else(|| vec![-1]),
+        opacity: case["options"]["opacity"].as_f64().unwrap_or(0.0),
+    };
+    (path, sm, spec)
 }

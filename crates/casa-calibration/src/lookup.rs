@@ -14,8 +14,10 @@
 //!
 //! Loading reads the whole table; [`CalibrationTableLookup::rows_on_disk`],
 //! [`CalibrationTableLookup::loading_bytes`] and
-//! [`CalibrationTableLookup::kept_bytes`] size it beforehand, for a caller
-//! that admits the memory first.
+//! [`CalibrationTableLookup::kept_bytes`] size narrow, two-parameter rows.
+//! For wide tables, [`CalibrationTableLookup::layout_on_disk`] inspects
+//! shape headers and counts parameter/frequency values before their payloads
+//! are read, so callers can admit the entire lookup first.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -70,7 +72,7 @@ pub struct CalibrationTableLayout {
     pub max_cell_values: usize,
     /// CHAN_FREQ values needed for frequency-dependent solutions.
     pub frequency_values: usize,
-    /// Frequency-grid rows retained beside those values.
+    /// SPECTRAL_WINDOW rows used for mapping and frequency-grid metadata.
     pub frequency_windows: usize,
 }
 
@@ -235,6 +237,8 @@ impl CalibrationTableLookup {
         let (frequency_windows, frequency_values) = if channels > 1 && spectral.exists() {
             let (windows, values, _, _) = shape_counts(&spectral, "CHAN_FREQ").map_err(error)?;
             (windows, values)
+        } else if spectral.exists() {
+            (Self::rows_on_disk(&spectral)?, 0)
         } else {
             (0, 0)
         };
@@ -308,6 +312,18 @@ impl CalibrationTableLookup {
             interp,
             across_fields,
         })
+    }
+
+    /// First spectral-window id with actual calibration solutions.
+    /// CASA's automatic `spwmap=[-999]` fans this window out to all data windows.
+    #[must_use]
+    pub fn first_spectral_window(&self) -> Option<i32> {
+        self.table
+            .solutions
+            .keys()
+            .map(|&(_, window, _)| window)
+            .filter(|&window| window >= 0)
+            .min()
     }
 
     /// The table's subtype (`G Jones`, `D Jones`, `B Jones`, …).

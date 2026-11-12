@@ -57,6 +57,16 @@ CASES += [{"name": f"{kind}_spw_{name}", "kind": kind, "interp": "linear,linear"
           for kind in ("B", "Tf", "Df")
           for name, mapping in (("broadcast", [0]), ("explicit", [0, 0]), ("fanout", [-999]))]
 
+REFUSALS = [{"name": f"{kind}_spw_{name}_refusal", "kind": kind, "interp": "linear,linear",
+             "options": {"spwmap": mapping}, "probe": "spw_mapping", "data_window": 1,
+             "stage": "setapply", "refusal": True}
+            for kind in ("B", "Tf", "Df")
+            for name, mapping in (("negative", [-2]), ("outside", [2]), ("mixed_negative", [0, -1]))]
+REFUSALS += [{"name": f"{kind}_{mode}_three_valid_refusal", "kind": kind,
+              "interp": "nearest," + mode, "options": {}, "probe": "flag_channel_shifted",
+              "stage": "corrupt", "refusal": True}
+             for kind in ("B", "Tf") for mode in ("cubic", "cubicflag")]
+
 
 def calibration(sm, path, kind, bounds, probe):
     from casatools import table
@@ -116,49 +126,70 @@ def calibration(sm, path, kind, bounds, probe):
     return {**info, "channels": 4, "parameters": receptors, "frequencies_hz": frequencies}
 
 
-def save(path, cases):
+def save(path, cases, refusals=()):
     import casatasks
 
     record = {"casa_version": casatasks.version_string(), "work_issue": 1053,
-              "recipe": "tools/simulation/sm_apply_frequency_oracle.py", "cases": cases}
+              "recipe": "tools/simulation/sm_apply_frequency_oracle.py", "cases": cases, "refusals": refusals}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as stream:
         stream.write((json.dumps(record, separators=(",", ":"), allow_nan=False) + "\n").encode())
 
 
+
+ORIGINAL_SESSION = parameters.make_session
+
+def make_second_window(path, stokes):
+    from casatools import simulator, table
+    sm = ORIGINAL_SESSION(path, stokes=stokes)
+    sm.close()
+    for subtable, column in (("SPECTRAL_WINDOW", "NAME"), ("DATA_DESCRIPTION", "SPECTRAL_WINDOW_ID")):
+        tb = table()
+        tb.open(str(path / subtable), nomodify=False)
+        record = {name: tb.getcell(name, 0) for name in tb.colnames() if tb.iscelldefined(name, 0)}
+        tb.addrows(1)
+        for name, value in record.items():
+            tb.putcell(name, 1, value)
+        tb.putcell(column, 1, "second" if column == "NAME" else 1)
+        tb.close()
+    tb = table()
+    tb.open(str(path), nomodify=False)
+    tb.putcol("DATA_DESC_ID", np.ones(tb.nrows(), dtype=np.int32))
+    tb.close()
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    return sm
+
+
 def worker(spec, out, fixture):
     original = parameters.calibration
-    original_session = parameters.make_session
     if spec.get("data_window") == 1:
-        def make_second_window(path, stokes):
-            from casatools import simulator, table
-            sm = original_session(path, stokes=stokes)
-            sm.close()
-            for subtable, column in (("SPECTRAL_WINDOW", "NAME"), ("DATA_DESCRIPTION", "SPECTRAL_WINDOW_ID")):
-                tb = table()
-                tb.open(str(path / subtable), nomodify=False)
-                record = {name: tb.getcell(name, 0) for name in tb.colnames() if tb.iscelldefined(name, 0)}
-                tb.addrows(1)
-                for name, value in record.items():
-                    tb.putcell(name, 1, value)
-                tb.putcell(column, 1, "second" if column == "NAME" else 1)
-                tb.close()
-            tb = table()
-            tb.open(str(path), nomodify=False)
-            tb.putcol("DATA_DESC_ID", np.ones(tb.nrows(), dtype=np.int32))
-            tb.close()
-            sm = simulator()
-            assert sm.openfromms(str(path))
-            return sm
         parameters.make_session = make_second_window
+    info = {}
     def build(sm, path, kind, bounds):
         parameters.calibration = original
         try:
-            return calibration(sm, path, kind, bounds, spec["probe"])
+            result = calibration(sm, path, kind, bounds, spec["probe"])
+            info.update(result)
+            return result
         finally:
             parameters.calibration = build
     parameters.calibration = build
-    parameters.worker(spec, out, fixture)
+    if not spec.get("refusal"):
+        parameters.worker(spec, out, fixture)
+        return
+    try:
+        parameters.worker(spec, out, fixture)
+    except RuntimeError as error:
+        from sm_flagged_samples_oracle import read_rows
+        rows = read_rows(out / "applied.ms")
+        assert rows and all(value == [3.0, 4.0] for row in rows for value in row["data"])
+        save(fixture, [], [{**spec, "calibration": info, "outcome": "raises",
+                            "exception_class": type(error).__name__, "error": str(error),
+                            "unchanged_data": True}])
+        print(spec["name"], "expected RuntimeError; DATA unchanged", flush=True)
+    else:
+        raise AssertionError("Expected CASA RuntimeError for " + spec["name"])
 
 
 def main():
@@ -167,18 +198,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--fixture", type=pathlib.Path, required=True)
-    parser.add_argument("--only", choices=[case["name"] for case in CASES])
+    parser.add_argument("--only", choices=[case["name"] for case in CASES + REFUSALS])
     parser.add_argument("--resume", action="store_true", help="Reuse existing successful per-case CASA results")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     assert casatasks.version_string() == "6.7.6.14"
     args.out.mkdir(parents=True, exist_ok=True)
-    selected = [case for case in CASES if not args.only or case["name"] == args.only]
+    selected = [case for case in CASES + REFUSALS if not args.only or case["name"] == args.only]
     if args.worker:
         assert len(selected) == 1
         worker(selected[0], args.out, args.fixture)
         return
-    results = []
+    results, refusals = [], []
     for spec in selected:
         out = args.out / spec["name"]
         out.mkdir(exist_ok=args.resume)
@@ -189,8 +220,10 @@ def main():
                                 "--only", spec["name"], "--worker"], stdout=log, stderr=subprocess.STDOUT,
                                check=True)
         with gzip.open(fixture, "rt") as handle:
-            results.extend(json.load(handle)["cases"])
-        save(args.fixture, results)
+            record = json.load(handle)
+            results.extend(record["cases"])
+            refusals.extend(record.get("refusals", []))
+        save(args.fixture, results, refusals)
         print(spec["name"], "passed", flush=True)
 
 
