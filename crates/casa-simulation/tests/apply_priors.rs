@@ -7,7 +7,10 @@ mod predict_support;
 #[allow(dead_code, reason = "reuse the complete MS comparison")]
 mod support;
 
-use casa_calibration::{GencalRequest, GencalType, gencal};
+use casa_calibration::{
+    GencalRequest, GencalType, SimulatedJones, SimulatedSolution, SolutionValues, gencal,
+    write_simulated_jones_table,
+};
 use casa_simulation::{ApplySpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::{EpochRef, MEpoch};
@@ -98,6 +101,91 @@ fn patch_table(path: &Path, case: &Json) {
     table.save(TableOptions::new(&spectral)).unwrap();
 }
 
+fn time_axis(path: &Path, case: &Json) {
+    let Some(parameters) = case["time_values"].as_array() else {
+        return;
+    };
+    let mut table = Table::open(TableOptions::new(path)).unwrap();
+    let count = table.row_count();
+    let rows: Vec<_> = (0..count)
+        .map(|row| table.row_accessor().row(row).unwrap().clone())
+        .collect();
+    for row in rows {
+        table.add_row(row).unwrap();
+    }
+    let times = [
+        case["rows"][0]["time_s"].as_f64().unwrap(),
+        case["rows"].as_array().unwrap().last().unwrap()["time_s"]
+            .as_f64()
+            .unwrap(),
+    ];
+    for row in 0..table.row_count() {
+        let endpoint = row / count;
+        let ScalarValue::Int32(antenna) = table
+            .cell_accessor(row, "ANTENNA1")
+            .unwrap()
+            .scalar()
+            .unwrap()
+        else {
+            panic!("antenna");
+        };
+        let values: Vec<f32> = if *antenna == 0 {
+            parameters[endpoint]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap() as f32)
+                .collect()
+        } else {
+            vec![0.; 2]
+        };
+        for (column, value) in [
+            ("TIME", Value::Scalar(ScalarValue::Float64(times[endpoint]))),
+            (
+                "FIELD_ID",
+                Value::Scalar(ScalarValue::Int32(endpoint as i32)),
+            ),
+            (
+                "FPARAM",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(IxDyn(&[2, 1]), values).unwrap(),
+                )),
+            ),
+        ] {
+            table
+                .cell_accessor_mut(row, column)
+                .unwrap()
+                .set(value)
+                .unwrap();
+        }
+    }
+    table.save(TableOptions::new(path)).unwrap();
+}
+
+fn leakage_table(ms: &Path, output: &Path, case: &Json) {
+    let ms = casa_ms::MeasurementSet::open(ms).unwrap();
+    let times = [
+        case["rows"][0]["time_s"].as_f64().unwrap(),
+        case["rows"].as_array().unwrap().last().unwrap()["time_s"]
+            .as_f64()
+            .unwrap(),
+    ];
+    let rows = times.into_iter().enumerate().flat_map(|(field, time_s)| {
+        (0..predict_support::ANTENNAS).map(move |antenna| SimulatedSolution {
+            time_s,
+            field_id: field as i32,
+            spectral_window_id: 0,
+            antenna: antenna as i32,
+            values: SolutionValues::Receptors(support::receptor_values(
+                "D",
+                antenna,
+                time_s - times[0],
+            )),
+        })
+    });
+    write_simulated_jones_table(&ms, output, SimulatedJones::Leakage, rows).unwrap();
+}
+
 fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
     let export = std::env::var_os("CASA_RS_APPLY_PRIORS_OUT");
     let root = if let Some(out) = &export {
@@ -144,6 +232,7 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
     if delay || case["subtype"].is_string() {
         patch_table(&calibration, case);
     }
+    time_axis(&calibration, case);
     let mut sm = Simulator::open_from_ms(
         &path,
         SimulatorOptions {
@@ -161,7 +250,7 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
     } else {
         calibration
     };
-    sm.set_apply(&ApplySpec {
+    let spec = ApplySpec {
         table: calibration.to_string_lossy().into_owned(),
         kind: String::new(),
         interval_s: 0.,
@@ -169,8 +258,17 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
         calwt: false,
         spwmap: vec![-1],
         opacity: case["opacity"].as_f64().unwrap_or(0.),
-    })
-    .unwrap();
+    };
+    if case["leakage"] == true {
+        let leakage = root.path().join("leakage.cal");
+        leakage_table(&path, &leakage, case);
+        sm.set_apply(&ApplySpec {
+            table: leakage.to_string_lossy().into_owned(),
+            ..spec.clone()
+        })
+        .unwrap();
+    }
+    sm.set_apply(&spec).unwrap();
     sm.corrupt().unwrap();
     sm.close().unwrap();
     let output = support::compare(&path, case);
@@ -187,7 +285,7 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
 }
 
 #[test]
-fn supplied_delay_position_and_opacity_errors_match_casa() {
+fn supplied_physical_error_tables_match_casa() {
     let mut text = String::new();
     GzDecoder::new(&include_bytes!("data/sm_apply_priors_casa.json.gz")[..])
         .read_to_string(&mut text)
@@ -195,7 +293,7 @@ fn supplied_delay_position_and_opacity_errors_match_casa() {
     let fixture: Json = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 7);
+    assert_eq!(cases.len(), 9);
     for case in cases {
         assert_eq!(case["outcome"], "returned");
         assert_eq!(run(case, 1), run(case, 3), "{}", case["name"]);
