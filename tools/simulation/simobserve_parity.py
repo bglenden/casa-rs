@@ -736,7 +736,10 @@ def main() -> int:
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))
-        casa_error = open(error_file, encoding="utf-8").read() if os.path.exists(error_file) else None
+        casa_error = None
+        if os.path.exists(error_file):
+            with open(error_file, encoding="utf-8") as handle:
+                casa_error = handle.read()
         casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
         if casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
