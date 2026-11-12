@@ -932,9 +932,10 @@ def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Pa
     assert tb.putkeyword("VisCal", kind + " Jones")
     assert tb.putinfo({"subType": kind + " Jones"})
     tb.close()
-    frequencies = np.asarray(Table.open(path / "SPECTRAL_WINDOW").get_column("CHAN_FREQ"))
+    window = Table.open(path / "SPECTRAL_WINDOW")
     assert tb.open(str(calibration / "SPECTRAL_WINDOW"), nomodify=False)
-    assert tb.putcol("CHAN_FREQ", frequencies)
+    for column in ("NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+        assert tb.putcol(column, np.asarray(window.get_column(column)))
     tb.close()
     sm = simulator()
     assert sm.openfromms(str(path))
