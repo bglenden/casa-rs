@@ -413,12 +413,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "restfreq",
             "#980",
         ),
-        (
-            json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
-                    "wprojplanes": 32, "facets": 2 }),
-            "facets",
-            "#1070",
-        ),
         (json!({ "projection": "AZP" }), "projection", "#1101"),
         (json!({ "projection": "HPX" }), "projection", "#1101"),
     ] {
@@ -455,6 +449,11 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "wprojplanes",
         ),
         (json!({ "gridder": "mosaic", "facets": 2 }), "facets"),
+        (
+            json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
+                    "wprojplanes": 32, "facets": 2 }),
+            "facets",
+        ),
         (json!({ "datacolumn": "model" }), "datacolumn"),
         (json!({ "specmode": "cube", "nchan": 0 }), "nchan"),
         (
