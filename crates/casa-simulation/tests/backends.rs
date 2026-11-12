@@ -44,6 +44,8 @@ mod apply_frequency;
 mod coverage;
 mod pass_summary;
 mod predict_support;
+#[path = "backends/trop_test_ramp.rs"]
+mod trop_test_ramp;
 
 use std::path::Path;
 

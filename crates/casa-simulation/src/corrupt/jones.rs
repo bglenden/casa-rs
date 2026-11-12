@@ -616,17 +616,20 @@ pub(crate) fn fbm_gains(seed: i32, scale: f64, antennas: usize, chunks: Chunks) 
 }
 
 /// A `settrop` term for `antennas` antennas with the solution `chunks`
-/// (one per integration): each takes the slot of `slots` nearest its time,
-/// and its antennas' phases from `phase`, whose blocks are the slots.
+/// (one per integration): turbulent modes take the nearest screen slot;
+/// the deterministic test ramp keeps each integration's own block.
 pub(crate) fn tropospheric(
     antennas: usize,
-    (chunks, slots): (Chunks, &Slots),
+    (chunks, slots): (Chunks, Option<&Slots>),
     phase: TroposphericPhase,
 ) -> JonesTerm {
     JonesTerm {
         kind: JonesKind::Troposphere,
         antennas,
-        solutions: chunks.on_slots(slots),
+        solutions: match slots {
+            Some(slots) => chunks.on_slots(slots),
+            None => chunks.by_window,
+        },
         values: JonesValues::Troposphere(phase),
     }
 }

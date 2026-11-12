@@ -4515,3 +4515,28 @@ ordinary nearest/linear/cubic method within each partition. These controls
 cover nearest/linear behavior, missing segments, scan-over-observation
 precedence and a short cubic-axis refusal. The ordinary per-observation
 cases run directly in CASA. No tolerance is relaxed.
+
+### Simulator test troposphere initializes before its times exist
+
+`sm.settrop(mode="test", pwv=0.01)` after four 10-second integrations on
+an eight-antenna observation returns False in CASA 6.7.6.14, logging
+`logic error in AtmCorr::init() - slot times not initialized.`
+`SolvableVisCal::setSimulate` calls `TJones::createCorruptor` before filling
+its corruptor's slot times; the test initializer checks that flag immediately.
+The source's explicit deterministic ramp is consequently unreachable.
+
+casa-rs implements the source-defined ramp for default integration sampling:
+for integration i of N and antenna a of A, its excess is
+`(float(i)/N + float(a)/A) * float(pwv) * 10`. It uses the existing corrected
+whole wet phase delay at each channel's CHAN_FREQ, then applies the resulting
+unit phasors through the ordinary Tf path. Seed, beta and deltapwv do not enter
+this debugging formula. Positive custom simint remains explicitly unfinished
+under #1292.
+
+This corrects an initialization-order failure that contradicts the defined
+mode, under AGENTS.md's standing CASA-bug rule. Evidence:
+`tools/simulation/sm_trop_test_oracle.py` records the actual failure and evaluates
+the formula through independent CASA ATM;
+`crates/casa-simulation/tests/trop_test_ramp.rs` compares native Tf parameters
+and DATA to that reference, including repeated corruption and reopened data.
+The existing wet-delay and channel-frequency corrections still apply.

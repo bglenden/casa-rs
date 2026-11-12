@@ -48,6 +48,7 @@ pub mod resources;
 pub(crate) mod selection;
 mod single_dish;
 pub mod spectral;
+mod test_trop;
 #[cfg(test)]
 mod tests;
 mod troposphere;

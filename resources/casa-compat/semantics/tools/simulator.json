@@ -286,7 +286,7 @@
   },
   "settrop": {
    "status": "Partial",
-   "scope": "Individual and screen modes, with tables. Refused: mode='test', CASA's debugging ramp.",
+   "scope": "Individual and screen modes with tables; the source-defined test ramp with default integration sampling, correcting CASA's initialization-order failure. Custom positive test-ramp simint remains unfinished (#1292).",
    "evidence": [
     "signature",
     "binding-tests",
