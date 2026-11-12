@@ -12,7 +12,7 @@ from sm_flagged_samples_oracle import read_rows
 from sm_apply_time_oracle import write
 
 CASES=[
-    dict(name='delay',caltype='sbd',parameter=[1.2,-.8],antenna='0'),
+    dict(name='delay',caltype='sbd',parameter=[1.2,-.8],antenna='0',pol='X,Y'),
     dict(name='antenna_position',caltype='antpos',parameter=[.01,-.02,.03],antenna='0'),
     dict(name='opacity',caltype='opac',parameter=[.05],antenna=''),
     dict(name='opacity_argument',caltype='opac',parameter=[.05],antenna='',opacity=.2),
@@ -28,7 +28,7 @@ def main():
         directory=args.out/spec['name'];directory.mkdir()
         path=directory/'data.ms';terms=directory/'terms.cal'
         sm=make_session(path,stokes='XX XY YX YY');sm.close();initialize(path)
-        gencal(vis=str(path),caltable=str(terms),caltype=spec['caltype'],parameter=spec['parameter'],antenna=spec['antenna'])
+        gencal(vis=str(path),caltable=str(terms),caltype=spec['caltype'],parameter=spec['parameter'],antenna=spec['antenna'],pol=spec.get('pol',''))
         tb=table();tb.open(str(terms));info=tb.info();column='FPARAM' if 'FPARAM' in tb.colnames() else 'CPARAM'
         calibration=dict(kind=tb.getkeyword('VisCal'),rows=tb.nrows(),shape=list(tb.getcell(column,0).shape))
         tb.close();sm=simulator();assert sm.openfromms(str(path))

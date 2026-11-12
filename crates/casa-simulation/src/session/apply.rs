@@ -38,6 +38,8 @@ use num_complex::Complex32;
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency};
+#[path = "apply_physical.rs"]
+mod physical;
 
 /// The phase loading a `setapply` table is admitted as: the table as it is
 /// read, and what the loaded lookup keeps.
@@ -95,18 +97,27 @@ enum AppliedKind {
     Gain,
     Leakage,
     Scalar,
+    Delay,
+    AntennaPosition,
+    Opacity,
 }
 
 impl AppliedKind {
     fn operator(self) -> JonesKind {
         match self {
-            Self::Gain | Self::Scalar => JonesKind::Gain,
+            Self::Gain | Self::Scalar | Self::Delay | Self::AntennaPosition | Self::Opacity => {
+                JonesKind::Gain
+            }
             Self::Leakage => JonesKind::Leakage,
         }
     }
 
     fn receptors(self) -> usize {
-        if self == Self::Scalar { 1 } else { 2 }
+        match self {
+            Self::Scalar | Self::Opacity => 1,
+            Self::AntennaPosition => 3,
+            _ => 2,
+        }
     }
 }
 
@@ -122,6 +133,11 @@ pub(crate) struct AppliedTable {
 }
 
 impl AppliedTable {
+    fn channel_dependent(&self) -> bool {
+        self.frequency.is_some()
+            || matches!(self.kind, AppliedKind::Delay | AppliedKind::AntennaPosition)
+    }
+
     fn calibration_window(&self, window: usize) -> Option<usize> {
         let mapped = *self.spwmap.get(window)?;
         self.lookup
@@ -236,6 +252,9 @@ impl Simulator {
             "G" | "B" => AppliedKind::Gain,
             "D" | "DF" => AppliedKind::Leakage,
             "T" | "TF" => AppliedKind::Scalar,
+            "K" => AppliedKind::Delay,
+            "KANTPOS" => AppliedKind::AntennaPosition,
+            "TOPAC" => AppliedKind::Opacity,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
         let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;
@@ -346,7 +365,7 @@ impl Simulator {
                         }
                     })
                     .collect::<Vec<_>>();
-                let bytes = if table.frequency.is_some() {
+                let bytes = if table.channel_dependent() {
                     TermBytes::frequency(
                         &per_window,
                         &channels,
@@ -359,7 +378,7 @@ impl Simulator {
                 let mut reservation = self.admit_term(bytes)?;
                 let evaluated = self.applied_solutions(table, &per_window)?;
                 reservation.retain(bytes.kept);
-                let term = if table.frequency.is_some() {
+                let term = if table.channel_dependent() {
                     applied_frequency(
                         table.kind.operator(),
                         antennas,
@@ -408,7 +427,7 @@ impl Simulator {
             .map(|(window, count)| {
                 count
                     * self.antennas.len()
-                    * if table.frequency.is_some() {
+                    * if table.channel_dependent() {
                         self.spectral_windows[window].channel_count
                     } else {
                         1
@@ -416,7 +435,7 @@ impl Simulator {
             })
             .sum();
         let mut values = Vec::with_capacity(value_count);
-        let mut offsets = if table.frequency.is_some() {
+        let mut offsets = if table.channel_dependent() {
             Vec::with_capacity(per_window.iter().sum::<usize>() + 1)
         } else {
             Vec::new()
@@ -428,12 +447,12 @@ impl Simulator {
             let Some(window) = table.calibration_window(scan.spectral_window_id) else {
                 continue;
             };
-            let output_hz = if table.frequency.is_some() {
+            let output_hz = if table.channel_dependent() {
                 self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
             } else {
                 Vec::new()
             };
-            let channels = if table.frequency.is_some() {
+            let channels = if table.channel_dependent() {
                 output_hz.len()
             } else {
                 1
@@ -444,10 +463,11 @@ impl Simulator {
                     + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.
             });
             for time_s in self.integration_times_s(index) {
-                if table.frequency.is_some() {
+                if table.channel_dependent() {
                     offsets.push(values.len());
                 }
                 chunks.push(scan.spectral_window_id, time_s, scan.field_id);
+                let geometry = physical::Geometry::new(self, kind, scan.field_id, time_s)?;
                 for antenna in 0..self.antennas.len() {
                     let Some(solution) = lookup
                         .simulation_solution(
@@ -487,7 +507,24 @@ impl Simulator {
                     } else {
                         solution
                     };
+                    let reference = table
+                        .lookup
+                        .frequencies
+                        .get(window)
+                        .and_then(|axis| axis.get(axis.len() / 2))
+                        .copied()
+                        .unwrap_or(0.);
                     for channel in 0..channels {
+                        if let Some(pair) = geometry.values(
+                            kind,
+                            &solution,
+                            antenna,
+                            output_hz.get(channel).copied().unwrap_or(0.),
+                            reference,
+                        ) {
+                            values.push(pair);
+                            continue;
+                        }
                         let invalid_leakage = kind == AppliedKind::Leakage
                             && (0..solution.receptors)
                                 .any(|receptor| solution.flags[receptor * channels + channel]);
@@ -507,7 +544,7 @@ impl Simulator {
                 }
             }
         }
-        if table.frequency.is_some() {
+        if table.channel_dependent() {
             offsets.push(values.len());
         }
         Ok(AppliedSolutions {

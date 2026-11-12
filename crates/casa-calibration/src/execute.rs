@@ -3240,8 +3240,8 @@ pub(crate) struct DelayGrid {
 
 #[derive(Clone)]
 pub(crate) struct AntposGrid {
-    offsets_m: [f32; 3],
-    flagged: bool,
+    pub(crate) offsets_m: [f32; 3],
+    pub(crate) flagged: bool,
 }
 
 #[derive(Clone)]
@@ -3253,8 +3253,8 @@ pub(crate) struct GainCurveGrid {
 
 #[derive(Clone)]
 pub(crate) struct OpacityGrid {
-    tau: f32,
-    flagged: bool,
+    pub(crate) tau: f32,
+    pub(crate) flagged: bool,
 }
 
 impl CalibrationGrid {

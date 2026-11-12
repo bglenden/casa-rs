@@ -95,13 +95,23 @@ impl CalibrationTableLookup {
         options: TimeInterpolationOptions,
     ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
         let path = path.as_ref();
-        let mut layout = Self::layout_on_disk(path)?;
-        if options.phase_delay && layout.frequency_values == 0 {
-            if let Some(spectral) = super::super::spectral_window_path(path)? {
-                layout.frequency_values = super::super::shape_counts(&spectral, "CHAN_FREQ")
-                    .map_err(|e| invalid(path, &e))?
-                    .1;
-            }
+        let table =
+            Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
+        let real = table.schema().is_some_and(|schema| {
+            schema
+                .columns()
+                .iter()
+                .any(|column| column.name() == "FPARAM")
+        });
+        drop(table);
+        let mut layout = Self::parameter_layout(path, if real { "FPARAM" } else { "CPARAM" })?;
+        if (options.phase_delay || real)
+            && layout.frequency_values == 0
+            && let Some(spectral) = super::super::spectral_window_path(path)?
+        {
+            layout.frequency_values = super::super::shape_counts(&spectral, "CHAN_FREQ")
+                .map_err(|e| invalid(path, &e))?
+                .1;
         }
         Ok(layout)
     }
@@ -120,8 +130,19 @@ impl CalibrationTableLookup {
         } else {
             ApplyInterpolationMode::Linear
         };
-        let mut lookup = Self::open_with(path, basic, FieldSelection::AnyField)?;
-        if options.contextual()
+        let path = path.as_ref();
+        let table =
+            Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
+        let real = table.schema().is_some_and(|schema| {
+            schema
+                .columns()
+                .iter()
+                .any(|column| column.name() == "FPARAM")
+        });
+        drop(table);
+        let mut lookup = Self::open_parameters(path, basic, FieldSelection::AnyField, real)?;
+        if real
+            || options.contextual()
             || matches!(
                 options.mode,
                 TimeInterpolation::Cubic | TimeInterpolation::Spline
@@ -218,13 +239,17 @@ impl TimePlan {
         };
         let mut plan = Self {
             mode: options.mode,
+            real: matches!(
+                lookup.subtype.as_str(),
+                "K Jones" | "KAntPos Jones" | "TOpac"
+            ),
             scope,
             series,
             splines: HashMap::new(),
             cycles: HashMap::new(),
             reference_hz: Vec::new(),
         };
-        if options.phase_delay {
+        if options.phase_delay && !plan.real {
             plan.reference_hz = CalibrationTableLookup::frequency_grids_on_disk(&lookup.path)?
                 .iter()
                 .map(|axis| axis.get(axis.len() / 2).copied().unwrap_or(0.))
@@ -232,9 +257,10 @@ impl TimePlan {
         }
         for (&key, rows) in &plan.series {
             if options.mode == TimeInterpolation::Spline && !rows.is_empty() {
-                plan.splines.insert(key, Spline::new(&lookup.path, rows)?);
+                plan.splines
+                    .insert(key, Spline::new(&lookup.path, rows, plan.real)?);
             }
-            if options.phase_delay && !rows.is_empty() {
+            if options.phase_delay && !plan.real && !rows.is_empty() {
                 plan.cycles.insert(key, phase_cycles(&lookup.path, rows)?);
             }
         }
@@ -310,7 +336,7 @@ fn segmented(
     lookup: &CalibrationTableLookup,
     headers: &[[i32; 5]],
     scope: TimeScope,
-) -> Result<HashMap<(i32, i32, i32), Vec<CalibrationSolution>>, ApplyExecutionError> {
+) -> Result<TimeSeries, ApplyExecutionError> {
     let mut positions = HashMap::<(i32, i32, i32), usize>::new();
     let mut grouped = HashMap::<_, Vec<(i32, &CalibrationSolution)>>::new();
     for &[field, window, antenna, observation, scan] in headers {

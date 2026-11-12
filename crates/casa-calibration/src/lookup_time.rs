@@ -77,10 +77,13 @@ impl CalibrationTableLookup {
     }
 }
 
+type TimeSeries = HashMap<(i32, i32, i32), Vec<CalibrationSolution>>;
+
 pub(super) struct TimePlan {
     mode: TimeInterpolation,
+    real: bool,
     scope: TimeScope,
-    series: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
+    series: TimeSeries,
     splines: HashMap<(i32, i32, i32), Spline>,
     cycles: HashMap<(i32, i32, i32), Vec<f32>>,
     reference_hz: Vec<f64>,
@@ -221,10 +224,14 @@ impl TimePlan {
             for (i, row) in stencil.iter().enumerate() {
                 let z = value(grid(path, row)?, index).0;
                 let phase = spline.map_or_else(
-                    || z.arg(),
+                    || if self.real { 0. } else { z.arg() },
                     |s| s.phases[(first + i) * receptors * channels + index],
                 );
-                points[i] = (relative(row.time_seconds, reference), z.norm(), phase);
+                points[i] = (
+                    relative(row.time_seconds, reference),
+                    if self.real { z.re } else { z.norm() },
+                    phase,
+                );
                 if i > 0 && spline.is_none() {
                     points[i].2 = unwrap_phase(points[i - 1].2, points[i].2);
                 }
@@ -267,7 +274,11 @@ struct Spline {
 }
 
 impl Spline {
-    fn new(path: &Path, series: &[CalibrationSolution]) -> Result<Self, ApplyExecutionError> {
+    fn new(
+        path: &Path,
+        series: &[CalibrationSolution],
+        real: bool,
+    ) -> Result<Self, ApplyExecutionError> {
         let base = grid(path, &series[0])?;
         let count = base.receptor_count * base.channel_count;
         let size = series
@@ -303,12 +314,18 @@ impl Spline {
             let mut phase = 0.;
             for (i, row) in series.iter().enumerate() {
                 let z = value(grid(path, row)?, index).0;
-                phase = if i == 0 {
+                phase = if real {
+                    0.
+                } else if i == 0 {
                     z.arg()
                 } else {
                     unwrap_phase(phase, z.arg())
                 };
-                points.push((relative(row.time_seconds, reference), z.norm(), phase));
+                points.push((
+                    relative(row.time_seconds, reference),
+                    if real { z.re } else { z.norm() },
+                    phase,
+                ));
                 result.phases[i * count + index] = phase;
             }
             for (i, second) in spline_derivatives(&points).into_iter().enumerate() {
