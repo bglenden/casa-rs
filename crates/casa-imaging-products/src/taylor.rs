@@ -599,8 +599,11 @@ impl<'a> SolvedFamily<'a> {
             directional,
             &family.weight[0],
         )?;
-        let (primary_beam_validity, pb_corrected) =
+        let (mut primary_beam_validity, pb_corrected) =
             primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
+        if let Some(beam) = inputs.saved_mosaic_beam() {
+            primary_beam_validity = beam.read_mask(0, polarization)?;
+        }
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0;
 

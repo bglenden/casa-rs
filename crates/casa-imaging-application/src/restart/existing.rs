@@ -18,7 +18,7 @@
 //! Direction-independent gridders (standard and W-projection, one facet)
 //! use the sum of weights alone. A single-term continuum or cube mosaic reads its
 //! saved sensitivity and primary beam when it reuses the PSF and forms a
-//! new residual.
+//! new residual, as does an AW-projected MT-MFS continuum image.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -284,13 +284,18 @@ impl ExistingProducts {
     }
 
     /// Bytes the pass images of `channels` channels hold: the residual
-    /// terms, PSF moments and saved mosaic sensitivity in `f32`, plus two
+    /// terms, PSF moments and saved sensitivity in `f32`, plus two
     /// sums of weights per moment.
     pub(crate) fn images_bytes(&self, channels: usize) -> u64 {
         let (terms, moments) = self.terms();
         let planes = channels * self.polarizations;
         let cells = self.shape[0] * self.shape[1];
-        let image_planes = terms + moments + usize::from(self.mosaic_beam.is_some());
+        let weight_planes = if self.mosaic_beam.is_some() {
+            moments
+        } else {
+            0
+        };
+        let image_planes = terms + moments + weight_planes;
         (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
     }
 
@@ -330,21 +335,29 @@ impl ExistingProducts {
                 }
             }
         }
-        // CASA saves `.weight` after dividing by the PSF sum of weights
-        // (`SIImageStore::divideWeightBySumwt`). Restore the unnormalised
-        // sensitivity the normal state expects.
+        // SIImageStore::divideWeightBySumwt normalizes only the principal
+        // weight. The higher Taylor moments on disk already have their raw
+        // scale. Apply the same principal divisor as the restored PSF to
+        // recover the sensitivity the normal state expects.
         let weight = if self.mosaic_beam.is_some() {
-            let read = self.read("weight", channels.clone())?;
-            let mut weight = vec![0.0; channels.len() * pols * cells];
-            for channel in 0..channels.len() {
-                for pol in 0..pols {
-                    let plane = channel * pols + pol;
-                    self.write_plane(
-                        &mut weight[plane * cells..(plane + 1) * cells],
-                        &read,
-                        (channel, pol),
-                        principal(channel, pol),
-                    );
+            let mut weight = vec![0.0; channels.len() * moments * pols * cells];
+            for (moment, name) in self.family.names("weight").iter().enumerate() {
+                let read = self.read(name, channels.clone())?;
+                for channel in 0..channels.len() {
+                    for pol in 0..pols {
+                        let plane = (channel * moments + moment) * pols + pol;
+                        let scale = if moment == 0 {
+                            principal(channel, pol)
+                        } else {
+                            1.0
+                        };
+                        self.write_plane(
+                            &mut weight[plane * cells..(plane + 1) * cells],
+                            &read,
+                            (channel, pol),
+                            scale,
+                        );
+                    }
                 }
             }
             Some(weight)

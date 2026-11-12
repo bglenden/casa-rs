@@ -426,6 +426,119 @@ fn aw_mtmfs_restart_recomputes_taylor_weights() {
     assert_same_products(&products, &fresh_products);
 }
 
+/// The saved AW Taylor PSF and weights stay on disk while the new
+/// residual is formed and cleaned (#1070).
+#[test]
+fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
+    use super::restart::{assert_unchanged, snapshot};
+
+    let source = Component {
+        spectral_index: -0.7,
+        ..CENTRE
+    };
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", source)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    controls["deconvolver"] = json!("mtmfs");
+    controls["nterms"] = json!(2);
+    controls["scales"] = json!([0]);
+    controls["reffreq"] = json!("1.45GHz");
+    controls["threshold"] = json!("0Jy");
+    controls["pbcor"] = json!(false);
+    controls["niter"] = json!(0);
+    let (_, dirty) = observation.image("continued", controls.clone());
+    let [x, y] = observation.geometry().pixel(source);
+    {
+        let mut beam =
+            casa_images::PagedImage::<f32>::open(observation.scratch("continued.pb.tt0")).unwrap();
+        let mask_name = beam.default_mask_name().expect("the saved PB has a mask");
+        let pixel = ndarray::Array4::from_elem((1, 1, 1, 1), false).into_dyn();
+        assert!(dirty.get(".pb.tt0").mask().unwrap()[[x, y, 0, 0]]);
+        beam.put_mask_slice(&mask_name, &pixel, &[x, y, 0, 0])
+            .unwrap();
+        beam.save().unwrap();
+    }
+    for term in [0, 1] {
+        let mut residual = casa_images::PagedImage::<f32>::open(
+            observation.scratch(&format!("continued.residual.tt{term}")),
+        )
+        .unwrap();
+        residual.unset_default_mask().unwrap();
+        residual.save().unwrap();
+    }
+    let saved_paths = dirty
+        .suffixes()
+        .into_iter()
+        .filter(|name| {
+            name.starts_with(".psf")
+                || name.starts_with(".weight")
+                || name.starts_with(".sumwt")
+                || name == ".pb.tt0"
+        })
+        .map(|name| observation.scratch(&format!("continued{name}")))
+        .collect::<Vec<_>>();
+    assert_eq!(saved_paths.len(), 10);
+    let saved = saved_paths
+        .iter()
+        .map(|path| snapshot(path))
+        .collect::<Vec<_>>();
+
+    controls["niter"] = json!(10);
+    let (fresh, fresh_products) = observation.image("fresh", controls.clone());
+    controls["calcpsf"] = json!(false);
+    let missing = observation.scratch("continued.weight.tt1");
+    let parked = observation.scratch("saved-weight-tt1");
+    std::fs::rename(&missing, &parked).unwrap();
+    let error = observation
+        .try_image("continued", controls.clone())
+        .err()
+        .expect("missing weight must refuse");
+    assert!(error.contains("continued.weight.tt1"), "{error}");
+    std::fs::rename(parked, missing).unwrap();
+    for (path, before) in saved_paths.iter().zip(&saved) {
+        assert_unchanged(before, &snapshot(path));
+    }
+
+    let (continued, products) = observation.image("continued", controls);
+    assert!(continued.minor_iterations > 0);
+    assert_eq!(continued.minor_iterations, fresh.minor_iterations);
+    assert_eq!(continued.major_cycles, fresh.major_cycles);
+    assert!(products.suffixes().contains(".image.tt0"));
+    assert_eq!(
+        products.suffixes().len() + saved_paths.len(),
+        fresh_products.suffixes().len()
+    );
+    for suffix in products.suffixes() {
+        let actual = products.get(&suffix).values();
+        let expected = fresh_products.get(&suffix).values();
+        assert_eq!(actual.shape(), expected.shape(), "{suffix} shape");
+        let reference_power = expected
+            .iter()
+            .map(|value| f64::from(*value).powi(2))
+            .sum::<f64>();
+        let difference_power = actual
+            .iter()
+            .zip(&expected)
+            .map(|(actual, expected)| (f64::from(*actual) - f64::from(*expected)).powi(2))
+            .sum::<f64>();
+        assert!(
+            difference_power <= 1.0e-12 * reference_power,
+            "{suffix}: saved-PSF CLEAN differs from fresh CLEAN (error power {difference_power}, reference power {reference_power})"
+        );
+    }
+    for suffix in [".image.tt0", ".residual.tt0"] {
+        assert!(
+            !products.get(suffix).mask().unwrap()[[x, y, 0, 0]],
+            "{suffix}: use the saved PB mask"
+        );
+    }
+    for (path, before) in saved_paths.iter().zip(&saved) {
+        assert_unchanged(before, &snapshot(path));
+    }
+}
+
 /// #735 end to end: a cell's conjugate beam and its lookup depend on the
 /// whole selected frequency list, so a native cache generated for two SPWs
 /// does not serve a run of one. Run A images both windows into the cache,

@@ -15,7 +15,7 @@ use super::{
 };
 
 /// Diagnostic bytes of the small T1 output tree, never a production readback.
-fn snapshot(directory: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+pub(super) fn snapshot(directory: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
     let mut files = BTreeMap::new();
     for entry in fs::read_dir(directory).unwrap() {
         let path = entry.unwrap().path();
@@ -28,7 +28,7 @@ fn snapshot(directory: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
     files
 }
 
-fn assert_unchanged(
+pub(super) fn assert_unchanged(
     before: &BTreeMap<std::path::PathBuf, Vec<u8>>,
     after: &BTreeMap<std::path::PathBuf, Vec<u8>>,
 ) {

@@ -264,12 +264,12 @@ impl<'a> ContinuumProductInputs<'a> {
         Ok(self)
     }
 
-    /// Bind an earlier MFS mosaic's PB and pixel mask for the products of a
-    /// continuation, polarization-major with x-major image planes.
+    /// Bind an earlier direction-dependent run's PB and pixel mask for
+    /// the products of a continuation, with x-major image planes.
     ///
     /// # Errors
-    /// The completion is outside the single-term mosaic layout, or the
-    /// saved PB does not match its grid.
+    /// The completion has multiple domains, or the saved PB does not
+    /// match its grid.
     pub fn with_saved_mosaic_beam(
         mut self,
         beam: &'a crate::SavedMosaicBeam,
@@ -282,7 +282,7 @@ impl<'a> ContinuumProductInputs<'a> {
             normal.polarization_count(),
             normal.channel_count(),
         ];
-        if normal.basis() == NormalBasis::Taylor || normal.domain_count() != 1 {
+        if normal.domain_count() != 1 {
             return Err(crate::ProductsError::UnsupportedProblem);
         }
         if beam.shape() != expected {
