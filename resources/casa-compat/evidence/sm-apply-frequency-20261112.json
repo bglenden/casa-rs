@@ -4,7 +4,7 @@
  "date": "2026-11-12",
  "oracle": "casatools6.7.6-14, casatasks6.7.6.14",
  "host": "bg-mac-mini, macOS arm64, Apple M2",
- "native_revision": "9cec28a0389e0bcabb1e12821097e2b14f825e1f",
+ "native_revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
  "base_main_revision": "bec1812b993742695e38f192d00bd4332e4bb5d8",
  "initial_complete_revision": "51df25069c1f61a897a933cfc1dfd1e78e1b6478",
  "fixture": "crates/casa-simulation/tests/data/sm_apply_frequency_casa.json.gz",
@@ -12,10 +12,10 @@
  "coverage_fixture": "crates/casa-simulation/tests/data/sm_apply_later_window_casa.json.gz",
  "coverage_fixture_sha256": "0b3425c8a8d829252a16f39950d51b9385f225c628886b50793e86072e8c0140",
  "summary": {
-  "successful_frequency_cases": 76,
+  "successful_frequency_cases": 106,
   "expected_refusals": 16,
-  "native_input_runs": 152,
-  "actual_casa_input_table_runs": 152,
+  "native_input_runs": 212,
+  "actual_casa_input_table_runs": 212,
   "workers": [
    1,
    3
@@ -28,10 +28,14 @@
    1,
    2
   ],
-  "calibration_channels": 4,
+  "calibration_channels": [
+   2,
+   3,
+   4
+  ],
   "calibration_rows": 16,
-  "cpp_readbacks": 152,
-  "cpp_table_consumers": 76,
+  "cpp_readbacks": 212,
+  "cpp_table_consumers": 106,
   "cpp_readback_nrms_max": 0.000825968240884883,
   "cpp_consumer_nrms_max": 0,
   "nrms_limit": 0.001,
@@ -54,29 +58,59 @@
    "scope": "Library, integration and doc tests; parent-executed helper ignores. Includes actual Metal composition and all prior G/D/T regressions."
   },
   "final_coverage": {
-   "revision": "f64895b31c47be7bc4d7c604ba680662e5ce8c91",
-   "process_results": 77,
-   "passed": 1691,
+   "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "reported_process_results": 113,
+   "reported_passed": 1765,
    "failed": 0,
    "ignored": 3,
-   "scope": "Full four-crate library/integration/doc gates, including all35 memory laws and actual Metal composition. Final9cec changes only an overlong-window-map refusal, checked separately."
+   "scope": "All four affected crate library/integration/doctest suites, including subprocess reports from36 isolated memory laws; all106 independent CASA successes and16 refusals, large AipsIO shape/ordinary reads and actual Metal composition. Reported counts include subprocess tests, not distinct test names."
   },
   "final_wheel": {
-   "revision": "9cec28a0389e0bcabb1e12821097e2b14f825e1f",
+   "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
    "passed": 71,
    "failed": 0,
    "skipped": 2,
-   "scope": "Installed release wheel, full simulator Python tests; own Python environment and actual module paths verified."
+   "scope": "Installed final release wheel, complete simulator Python suite. Actual module paths verified."
   },
-  "single_review": "pending",
+  "single_review": {
+   "model": "Astra xhigh",
+   "context": "fresh",
+   "reviewed_revision": "60518942200ccc0d935202a5419219d88a2c5507",
+   "should_fix": 4,
+   "blocking": 0,
+   "before_revision": "7e81cbc0b",
+   "fixed_revision": "83ee63ab9",
+   "final_validated_revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "re_review": false,
+   "findings": [
+    {
+     "finding": "Exact frequencies inherited neighboring flags",
+     "before": "B linearflag exact-grid DATA NRMS0.3113996306 under1e-3; regression fails",
+     "after": "Original channel flags are copied at exact GHz matches; independent ascending/descending linear/spline/cubic-flag cases pass."
+    },
+    {
+     "finding": "Physical2/3-channel cubic/spline axes missed linear fallback",
+     "before": "Unflagged2-channel cubic raises despite CASA success",
+     "after": "Choose fallback from physical channel count before flag compression;18 kind/channel/mode cases pass. Physical4-channel compressed3-sample cubic refusal stays in force."
+    },
+    {
+     "finding": "Large AipsIO files lost metadata compatibility",
+     "before": "Previously readable sparse >2GiB indirect array fails shape admission",
+     "after": "Decode mixed u32 and marker+i64 slots from control metadata. Small-file seeking fast path retained. Native and installed C++ read historical-length and active64-bit-offset cases."
+    },
+    {
+     "finding": "Scalar spline filtered-vector growth exceeded scratch admission",
+     "before": "131073-channel Tf spline: peak8521485, admitted8390464, excess131021 versus unchanged65536 allowance",
+     "after": "Reserve known physical channel capacity. Same law peak6424349, admitted8390464, excess824; unchanged256MiB budget and64KiB allowance."
+    }
+   ]
+  },
   "standalone_casacore_digest": "Not run: pkg-config casacore development package unavailable. Actual installed CASA6.7.6.14 C++ opens/reads all152 native MS/table pairs and applies76 native tables; native execution also reads actual CASA calibration tables.",
   "final_targeted": {
-   "revision": "9cec28a0389e0bcabb1e12821097e2b14f825e1f",
-   "passed": 12,
-   "failed": 0,
-   "scope": "76 successes on W1/W3,16 independent CASA refusals, external-grid lifetime and two atomic NIY coverage guards; actual CASA input matrix repeated."
+   "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "scope": "Original76-case and new30-case matrices pass W1/W3 with native-written inputs, then repeat with actual CASA-written calibration tables.16 independent CASA refusals preserve DATA. C++ reads all212 outputs, consumes106 native tables with zero residual, and independently reads both sparse large-AipsIO variants."
   },
-  "strict_checks": "Fmt and all-target clippy -D warnings green for four affected crates at f648, final simulation/binding clippy and fmt green at9cec; architecture/docs validation recorded with final metadata commit.",
+  "strict_checks": "Final four-crate all-target clippy -D warnings, fmt, complete architecture and docs gates pass. Final metadata-only generator/check run is recorded by its commit.",
   "metal_max_relative": 3.0715228e-07
  },
  "demonstration": {
@@ -91,7 +125,8 @@
   "Preserve identity, positive broadcast, explicit-prefix and first-available(-999) mapping for windows present when setapply is called. New windows observed afterward remain explicitly unfinished under #1053; do not partially implement whole-step coverage inside frequency interpolation.",
   "Complete natural-spline back-substitution at every interior knot under the standing evident-intent correction. Raw CASA and independent exact-amplitude sampled-CASA controls remain separate; no tolerance changes.",
   "Admit calibration payload counts using ordinary storage shape headers, before loading values. Each physical checkout owns its caches; all source timestamps were refreshed before first debug/release builds from copied caches. No new format or third-party dependency.",
-  "Unavailable whole calibration windows stay explicit #1053 refusals, distinct from a missing antenna in an available window. This preserves DATA atomically until whole-step Jones/noise/scratch coverage is completed."
+  "Unavailable whole calibration windows stay explicit #1053 refusals, distinct from a missing antenna in an available window. This preserves DATA atomically until whole-step Jones/noise/scratch coverage is completed.",
+  "Physical2/3-channel cubic/spline axes follow CASA linear fallback before flag compression. Exact-channel flags are verbatim. Large-offset AipsIO shapes stay compatible without reading numerical payloads; common small-offset controls keep their seek-based path."
  ],
  "upstream_read": {
   "casa_revision": "4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef",
@@ -154,9 +189,85 @@
     "corrupt_excess": 824
    }
   ],
-  "fixture_repair": "Publish a capped4096-channel synthetic reference MS, then independently write the wide calibration spectral axis. The initial oversized reference-MS publication correctly refused before measurement; no measured budget or allowance changed."
+  "fixture_repair": "Publish a capped4096-channel synthetic reference MS, then independently write the wide calibration spectral axis. The initial oversized reference-MS publication correctly refused before measurement; no measured budget or allowance changed.",
+  "review_spline": {
+   "source": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "kind": "Tf",
+   "calibration_channels": 131073,
+   "times": 1,
+   "frequency_mode": "spline",
+   "data_channels": 4,
+   "budget_bytes": 268435456,
+   "call_allowance_bytes": 65536,
+   "corrupt_peak": 6424349,
+   "corrupt_admitted": 8390464,
+   "corrupt_excess": 824
+  }
  },
  "performance": {
+  "before": {
+   "revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
+   "module": "/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-apply-scalar/python-env/lib/python3.13/site-packages/casars/__init__.py",
+   "package": "0.27.0",
+   "numpy": "2.5.4",
+   "backend": "CPU",
+   "workers": 1,
+   "budget_requested": 2147483648,
+   "antennas": 43,
+   "channels": 64,
+   "integrations": 30,
+   "rows": 28380,
+   "wall_s": 0.544829042017227,
+   "user_s": 0.138666,
+   "system_s": 0.21872199999999997,
+   "process_peak_rss_bytes": 266993664,
+   "boundary": "First simulator constructor/open through final existing-MS calibration close; imports and diagnostic readback excluded.",
+   "fft": "No FFT: random gains and simple noise only."
+  },
+  "after": {
+   "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "module": "/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-apply-frequency/python-env/lib/python3.13/site-packages/casars/__init__.py",
+   "package": "0.27.0",
+   "numpy": "2.5.4",
+   "backend": "CPU",
+   "workers": 1,
+   "budget_requested": 2147483648,
+   "antennas": 43,
+   "channels": 64,
+   "integrations": 30,
+   "rows": 28380,
+   "wall_s": 0.504146084014792,
+   "user_s": 0.138034,
+   "system_s": 0.215252,
+   "process_peak_rss_bytes": 267272192,
+   "boundary": "First simulator constructor/open through final existing-MS calibration close; imports and diagnostic readback excluded.",
+   "fft": "No FFT: random gains and simple noise only."
+  },
+  "comparisons": {
+   "DATA": {
+    "nrms": 0.0
+   },
+   "TIME": "exact",
+   "FLAG": "exact",
+   "FLAG_ROW": "exact",
+   "WEIGHT": "exact",
+   "SIGMA": "exact"
+  },
+  "wall_ratio": 0.9253289474955179,
+  "observations": "One matched final-wheel before/after observation; no statistical speedup claim. Quiet host, no overlapping owned builds; no FFT executed.",
+  "wheel_sha256": {
+   "casa_rs_python-0.27.0-cp313-cp313-macosx_11_0_arm64.whl": "5c009554a9c28afa2c02bb702c1e59e2c4b5907e235cd67844eb2aac56f16d41"
+  }
+ },
+ "source_audit": {
+  "initial_complete_files": 3642,
+  "final_expected_files": 3652,
+  "hashes_match": true,
+  "extra_code": []
+ },
+ "review_boundary_fixture": "crates/casa-simulation/tests/data/sm_apply_frequency_boundaries_casa.json.gz",
+ "review_boundary_fixture_sha256": "73121e6234bb01a1de010d4c5375fe7613d0c1bae096dbf2dc444b6d0c3f2927",
+ "performance_initial_9cec": {
   "before": {
    "revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
    "module": "/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-apply-scalar/python-env/lib/python3.13/site-packages/casars/__init__.py",
@@ -210,11 +321,5 @@
   "wheel_sha256": {
    "casa_rs_python-0.27.0-cp313-cp313-macosx_11_0_arm64.whl": "dcfcebca3cfa4957252ff5cf414a9f628516459efb1d7567d447d0fb14a1d484"
   }
- },
- "source_audit": {
-  "initial_complete_files": 3642,
-  "final_expected_files": 3645,
-  "hashes_match": true,
-  "extra_code": []
  }
 }
