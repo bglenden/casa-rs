@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>num_complex::{Complex32, Complex64};
 <a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::geometry::CellLocation;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::geometry::{CellLocation, GridGeometry};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">crate</span>::sample::CfKey;
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="doccomment">/// Taps of one convolution-function cell in the layout the kernels read.
@@ -653,127 +653,134 @@
 <a href=#653 id=653 data-nosnippet>653</a>    /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
 <a href=#654 id=654 data-nosnippet>654</a>    </span><span class="kw">fn </span>pointing_ramp(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool;
 <a href=#655 id=655 data-nosnippet>655</a>
-<a href=#656 id=656 data-nosnippet>656</a>    <span class="doccomment">/// Whether CASA's pointing-gradient origin is one fine pixel after the
-<a href=#657 id=657 data-nosnippet>657</a>    /// array centre for this cell. Weight includes PSF and sensitivity
-<a href=#658 id=658 data-nosnippet>658</a>    /// taps; prediction uses imaging taps. Other sets centre the ramp.
-<a href=#659 id=659 data-nosnippet>659</a>    </span><span class="kw">fn </span>pointing_origin_shift(<span class="kw-2">&amp;</span><span class="self">self</span>, _key: CfKey, _weight: bool) -&gt; bool {
-<a href=#660 id=660 data-nosnippet>660</a>        <span class="bool-val">false
+<a href=#656 id=656 data-nosnippet>656</a>    <span class="doccomment">/// Whether this pointing supplies a convolution function on the image.
+<a href=#657 id=657 data-nosnippet>657</a>    /// Called for sets that apply a pointing ramp. A rejected pointing
+<a href=#658 id=658 data-nosnippet>658</a>    /// contributes neither a gridded sample nor a model prediction.
+<a href=#659 id=659 data-nosnippet>659</a>    </span><span class="kw">fn </span>admits_pointing(<span class="kw-2">&amp;</span><span class="self">self</span>, _geometry: <span class="kw-2">&amp;</span>GridGeometry, _offset_rad: [f64; <span class="number">2</span>]) -&gt; bool {
+<a href=#660 id=660 data-nosnippet>660</a>        <span class="bool-val">true
 <a href=#661 id=661 data-nosnippet>661</a>    </span>}
 <a href=#662 id=662 data-nosnippet>662</a>
-<a href=#663 id=663 data-nosnippet>663</a>    <span class="doccomment">/// The taps of every cell the set can lend, imaging and weight: their
-<a href=#664 id=664 data-nosnippet>664</a>    /// bytes, the bytes of the norms a backend tabulates for each, and
-<a href=#665 id=665 data-nosnippet>665</a>    /// their count ([`TapFootprint`]). A device backend copies each cell it
-<a href=#666 id=666 data-nosnippet>666</a>    /// meets once per kind and holds the copies for its life, so a pass
-<a href=#667 id=667 data-nosnippet>667</a>    /// admits this much for every backend it makes (the Metal crate's
-<a href=#668 id=668 data-nosnippet>668</a>    /// `kernel_bytes`, #793 review). Every kind a key lends counts a cell,
-<a href=#669 id=669 data-nosnippet>669</a>    /// even when two kinds lend one storage. A set that pages its cells
-<a href=#670 id=670 data-nosnippet>670</a>    /// answers for the most it keeps resident.
-<a href=#671 id=671 data-nosnippet>671</a>    </span><span class="kw">fn </span>tap_footprint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TapFootprint;
-<a href=#672 id=672 data-nosnippet>672</a>
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="doccomment">/// The taps `Mode::Psf` grids a sample with at its uv position: the
-<a href=#674 id=674 data-nosnippet>674</a>    /// imaging taps for `GridFT`, `WProjectFT` and `MosaicFT`; the AW
-<a href=#675 id=675 data-nosnippet>675</a>    /// catalog grids its PSF with the weight cells (`AWProjectFT::
-<a href=#676 id=676 data-nosnippet>676</a>    /// findConvFunction` maps `cfwts2_p` when `makingPSF`).
-<a href=#677 id=677 data-nosnippet>677</a>    </span><span class="kw">fn </span>psf_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#678 id=678 data-nosnippet>678</a>        <span class="self">self</span>.taps(key, hold)
-<a href=#679 id=679 data-nosnippet>679</a>    }
-<a href=#680 id=680 data-nosnippet>680</a>
-<a href=#681 id=681 data-nosnippet>681</a>    <span class="doccomment">/// The taps a prediction gathers with: the gridding taps for every set
-<a href=#682 id=682 data-nosnippet>682</a>    /// but the AW catalog, whose `GridToData` reads the native-frequency
-<a href=#683 id=683 data-nosnippet>683</a>    /// cell (`CFBuffer::nearestFreqNdx(spw, chan)` without `conjBeams`)
-<a href=#684 id=684 data-nosnippet>684</a>    /// where `DataToGrid` read the conjugate one.
-<a href=#685 id=685 data-nosnippet>685</a>    </span><span class="kw">fn </span>prediction_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#686 id=686 data-nosnippet>686</a>        <span class="self">self</span>.taps(key, hold)
-<a href=#687 id=687 data-nosnippet>687</a>    }
-<a href=#688 id=688 data-nosnippet>688</a>
-<a href=#689 id=689 data-nosnippet>689</a>    <span class="doccomment">/// The half support a placement keyed `key` must keep inside the grid:
-<a href=#690 id=690 data-nosnippet>690</a>    /// the largest of every tap layout the key can lend.
-<a href=#691 id=691 data-nosnippet>691</a>    </span><span class="kw">fn </span>placement_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;mut </span>CellHold) -&gt; [u16; <span class="number">2</span>] {
-<a href=#692 id=692 data-nosnippet>692</a>        <span class="self">self</span>.taps(key, hold).half_support()
-<a href=#693 id=693 data-nosnippet>693</a>    }
-<a href=#694 id=694 data-nosnippet>694</a>
-<a href=#695 id=695 data-nosnippet>695</a>    <span class="doccomment">/// How the gridding treats a sample whose support overruns the grid
-<a href=#696 id=696 data-nosnippet>696</a>    /// ([`GridEdge`]); every set but the mosaic and W projection drops it.
-<a href=#697 id=697 data-nosnippet>697</a>    </span><span class="kw">fn </span>grid_edge(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; GridEdge {
-<a href=#698 id=698 data-nosnippet>698</a>        GridEdge::Whole
-<a href=#699 id=699 data-nosnippet>699</a>    }
-<a href=#700 id=700 data-nosnippet>700</a>
-<a href=#701 id=701 data-nosnippet>701</a>    <span class="doccomment">/// Whether the weight image counts a sample whose support overruns the
-<a href=#702 id=702 data-nosnippet>702</a>    /// grid. `AWProjectWBFT::resampleCFToGrid` puts every row's weight cell
-<a href=#703 id=703 data-nosnippet>703</a>    /// at the uv origin, where `onGrid` holds whenever the cell fits the
-<a href=#704 id=704 data-nosnippet>704</a>    /// image, so a row the data and the PSF drop still weighs in the
-<a href=#705 id=705 data-nosnippet>705</a>    /// sensitivity. Such a placement is
-<a href=#706 id=706 data-nosnippet>706</a>    /// kept, and each other mode skips it by its own [`Reach`](crate::Reach).
-<a href=#707 id=707 data-nosnippet>707</a>    /// Every other set forms no such image, or keeps every sample it can.
-<a href=#708 id=708 data-nosnippet>708</a>    </span><span class="kw">fn </span>weighs_samples_off_the_grid(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="bool-val">false
-<a href=#710 id=710 data-nosnippet>710</a>    </span>}
-<a href=#711 id=711 data-nosnippet>711</a>
-<a href=#712 id=712 data-nosnippet>712</a>    <span class="doccomment">/// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s
-<a href=#713 id=713 data-nosnippet>713</a>    /// gridder drops a row whose plane index `nint(√(wScale·|w|))` lies
-<a href=#714 id=714 data-nosnippet>714</a>    /// beyond the last plane (`wprojgrid.f` `owp` tests the unclamped
-<a href=#715 id=715 data-nosnippet>715</a>    /// `loc(3)`); every other set accepts every `w` (the AW catalog clamps,
-<a href=#716 id=716 data-nosnippet>716</a>    /// `CFBuffer::nearestWNdx`).
-<a href=#717 id=717 data-nosnippet>717</a>    </span><span class="kw">fn </span>admits(<span class="kw-2">&amp;</span><span class="self">self</span>, w_lambda: f64) -&gt; bool {
-<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let _ </span>= w_lambda;
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="bool-val">true
-<a href=#720 id=720 data-nosnippet>720</a>    </span>}
-<a href=#721 id=721 data-nosnippet>721</a>
-<a href=#722 id=722 data-nosnippet>722</a>    <span class="doccomment">/// Whether the weight (sensitivity) image receives the image-side
-<a href=#723 id=723 data-nosnippet>723</a>    /// correction. `AWProjectFT::getWeightImage` divides its average PB by
-<a href=#724 id=724 data-nosnippet>724</a>    /// the sampling sinc as `getImage` does; `MosaicFT` publishes the
-<a href=#725 id=725 data-nosnippet>725</a>    /// transform of its gridded weight functions as `skyCoverage_p` with
-<a href=#726 id=726 data-nosnippet>726</a>    /// no correction at all, while its `getImage` divides the data and PSF
-<a href=#727 id=727 data-nosnippet>727</a>    /// by the sinc.
-<a href=#728 id=728 data-nosnippet>728</a>    </span><span class="kw">fn </span>corrects_weight_image(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#729 id=729 data-nosnippet>729</a>        <span class="bool-val">true
-<a href=#730 id=730 data-nosnippet>730</a>    </span>}
-<a href=#731 id=731 data-nosnippet>731</a>
-<a href=#732 id=732 data-nosnippet>732</a>    <span class="doccomment">/// Whether the weight (sensitivity) image is the magnitude of the
-<a href=#733 id=733 data-nosnippet>733</a>    /// polarization-combined complex transform rather than its real part.
-<a href=#734 id=734 data-nosnippet>734</a>    /// `AWProjectWBFT::makeWBSensitivityImage` averages the polarization
-<a href=#735 id=735 data-nosnippet>735</a>    /// planes and keeps `abs` of the average, so an odd Taylor moment,
-<a href=#736 id=736 data-nosnippet>736</a>    /// Σ W·s·K, which can be negative, publishes its magnitude.
-<a href=#737 id=737 data-nosnippet>737</a>    </span><span class="kw">fn </span>weight_image_magnitude(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#738 id=738 data-nosnippet>738</a>        <span class="bool-val">false
-<a href=#739 id=739 data-nosnippet>739</a>    </span>}
-<a href=#740 id=740 data-nosnippet>740</a>}
-<a href=#741 id=741 data-nosnippet>741</a>
-<a href=#742 id=742 data-nosnippet>742</a><span class="attr">#[cfg(test)]
-<a href=#743 id=743 data-nosnippet>743</a></span><span class="kw">mod </span>tests {
-<a href=#744 id=744 data-nosnippet>744</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#745 id=745 data-nosnippet>745</a>
-<a href=#746 id=746 data-nosnippet>746</a>    <span class="kw">fn </span>cell(value: f32) -&gt; Arc&lt;DenseCell&gt; {
-<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span>taps = <span class="macro">vec!</span>[Complex32::new(value, <span class="number">0.0</span>); <span class="number">9</span>].into_boxed_slice();
-<a href=#748 id=748 data-nosnippet>748</a>        Arc::new(DenseCell::new(taps, [<span class="number">1</span>, <span class="number">1</span>], <span class="number">2</span>, <span class="number">1</span>))
-<a href=#749 id=749 data-nosnippet>749</a>    }
-<a href=#750 id=750 data-nosnippet>750</a>
-<a href=#751 id=751 data-nosnippet>751</a>    <span class="doccomment">/// #773 review: a hold releases the cell it parks before it fetches
-<a href=#752 id=752 data-nosnippet>752</a>    /// another, for another key or another slot, so beside a fetch it keeps
-<a href=#753 id=753 data-nosnippet>753</a>    /// nothing alive; and a repeated key in its slot lends the parked cell
-<a href=#754 id=754 data-nosnippet>754</a>    /// without fetching.
-<a href=#755 id=755 data-nosnippet>755</a>    </span><span class="attr">#[test]
-<a href=#756 id=756 data-nosnippet>756</a>    </span><span class="kw">fn </span>a_hold_releases_its_cell_before_it_fetches_another() {
-<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span><span class="kw-2">mut </span>hold = CellHold::new();
-<a href=#758 id=758 data-nosnippet>758</a>        <span class="kw">let </span>key = |group| CfKey { group, cube: <span class="number">0 </span>};
-<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">let </span>first = cell(<span class="number">1.0</span>);
-<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span><span class="kw-2">mut </span>parked = Arc::downgrade(<span class="kw-2">&amp;</span>first);
-<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let _ </span>= hold.lend_keyed(key(<span class="number">0</span>), <span class="number">0</span>, <span class="kw">move </span>|| first);
-<a href=#762 id=762 data-nosnippet>762</a>        <span class="kw">let _ </span>= hold.lend_keyed(key(<span class="number">0</span>), <span class="number">0</span>, || <span class="macro">panic!</span>(<span class="string">"a parked key fetched again"</span>));
-<a href=#763 id=763 data-nosnippet>763</a>        <span class="macro">assert!</span>(parked.upgrade().is_some(), <span class="string">"the hold parks the cell"</span>);
-<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">for </span>(group, slot) <span class="kw">in </span>[(<span class="number">1</span>, <span class="number">0</span>), (<span class="number">1</span>, <span class="number">2</span>), (<span class="number">2</span>, <span class="number">2</span>)] {
-<a href=#765 id=765 data-nosnippet>765</a>            <span class="kw">let </span>before = parked.clone();
-<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">let </span>next = cell(f32::from(group));
-<a href=#767 id=767 data-nosnippet>767</a>            parked = Arc::downgrade(<span class="kw-2">&amp;</span>next);
-<a href=#768 id=768 data-nosnippet>768</a>            <span class="kw">let _ </span>= hold.lend_keyed(key(group), slot, <span class="kw">move </span>|| {
-<a href=#769 id=769 data-nosnippet>769</a>                <span class="macro">assert!</span>(
-<a href=#770 id=770 data-nosnippet>770</a>                    before.upgrade().is_none(),
-<a href=#771 id=771 data-nosnippet>771</a>                    <span class="string">"the parked cell is alive while slot {slot} fetches group {group}"
-<a href=#772 id=772 data-nosnippet>772</a>                </span>);
-<a href=#773 id=773 data-nosnippet>773</a>                next
-<a href=#774 id=774 data-nosnippet>774</a>            });
-<a href=#775 id=775 data-nosnippet>775</a>            <span class="macro">assert!</span>(parked.upgrade().is_some(), <span class="string">"the hold parks group {group}"</span>);
-<a href=#776 id=776 data-nosnippet>776</a>        }
-<a href=#777 id=777 data-nosnippet>777</a>    }
-<a href=#778 id=778 data-nosnippet>778</a>}
+<a href=#663 id=663 data-nosnippet>663</a>    <span class="doccomment">/// Whether CASA's pointing-gradient origin is one fine pixel after the
+<a href=#664 id=664 data-nosnippet>664</a>    /// array centre for this cell. Weight includes PSF and sensitivity
+<a href=#665 id=665 data-nosnippet>665</a>    /// taps; prediction uses imaging taps. Other sets centre the ramp.
+<a href=#666 id=666 data-nosnippet>666</a>    </span><span class="kw">fn </span>pointing_origin_shift(<span class="kw-2">&amp;</span><span class="self">self</span>, _key: CfKey, _weight: bool) -&gt; bool {
+<a href=#667 id=667 data-nosnippet>667</a>        <span class="bool-val">false
+<a href=#668 id=668 data-nosnippet>668</a>    </span>}
+<a href=#669 id=669 data-nosnippet>669</a>
+<a href=#670 id=670 data-nosnippet>670</a>    <span class="doccomment">/// The taps of every cell the set can lend, imaging and weight: their
+<a href=#671 id=671 data-nosnippet>671</a>    /// bytes, the bytes of the norms a backend tabulates for each, and
+<a href=#672 id=672 data-nosnippet>672</a>    /// their count ([`TapFootprint`]). A device backend copies each cell it
+<a href=#673 id=673 data-nosnippet>673</a>    /// meets once per kind and holds the copies for its life, so a pass
+<a href=#674 id=674 data-nosnippet>674</a>    /// admits this much for every backend it makes (the Metal crate's
+<a href=#675 id=675 data-nosnippet>675</a>    /// `kernel_bytes`, #793 review). Every kind a key lends counts a cell,
+<a href=#676 id=676 data-nosnippet>676</a>    /// even when two kinds lend one storage. A set that pages its cells
+<a href=#677 id=677 data-nosnippet>677</a>    /// answers for the most it keeps resident.
+<a href=#678 id=678 data-nosnippet>678</a>    </span><span class="kw">fn </span>tap_footprint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TapFootprint;
+<a href=#679 id=679 data-nosnippet>679</a>
+<a href=#680 id=680 data-nosnippet>680</a>    <span class="doccomment">/// The taps `Mode::Psf` grids a sample with at its uv position: the
+<a href=#681 id=681 data-nosnippet>681</a>    /// imaging taps for `GridFT`, `WProjectFT` and `MosaicFT`; the AW
+<a href=#682 id=682 data-nosnippet>682</a>    /// catalog grids its PSF with the weight cells (`AWProjectFT::
+<a href=#683 id=683 data-nosnippet>683</a>    /// findConvFunction` maps `cfwts2_p` when `makingPSF`).
+<a href=#684 id=684 data-nosnippet>684</a>    </span><span class="kw">fn </span>psf_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="self">self</span>.taps(key, hold)
+<a href=#686 id=686 data-nosnippet>686</a>    }
+<a href=#687 id=687 data-nosnippet>687</a>
+<a href=#688 id=688 data-nosnippet>688</a>    <span class="doccomment">/// The taps a prediction gathers with: the gridding taps for every set
+<a href=#689 id=689 data-nosnippet>689</a>    /// but the AW catalog, whose `GridToData` reads the native-frequency
+<a href=#690 id=690 data-nosnippet>690</a>    /// cell (`CFBuffer::nearestFreqNdx(spw, chan)` without `conjBeams`)
+<a href=#691 id=691 data-nosnippet>691</a>    /// where `DataToGrid` read the conjugate one.
+<a href=#692 id=692 data-nosnippet>692</a>    </span><span class="kw">fn </span>prediction_taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#693 id=693 data-nosnippet>693</a>        <span class="self">self</span>.taps(key, hold)
+<a href=#694 id=694 data-nosnippet>694</a>    }
+<a href=#695 id=695 data-nosnippet>695</a>
+<a href=#696 id=696 data-nosnippet>696</a>    <span class="doccomment">/// The half support a placement keyed `key` must keep inside the grid:
+<a href=#697 id=697 data-nosnippet>697</a>    /// the largest of every tap layout the key can lend.
+<a href=#698 id=698 data-nosnippet>698</a>    </span><span class="kw">fn </span>placement_half_support(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey, hold: <span class="kw-2">&amp;mut </span>CellHold) -&gt; [u16; <span class="number">2</span>] {
+<a href=#699 id=699 data-nosnippet>699</a>        <span class="self">self</span>.taps(key, hold).half_support()
+<a href=#700 id=700 data-nosnippet>700</a>    }
+<a href=#701 id=701 data-nosnippet>701</a>
+<a href=#702 id=702 data-nosnippet>702</a>    <span class="doccomment">/// How the gridding treats a sample whose support overruns the grid
+<a href=#703 id=703 data-nosnippet>703</a>    /// ([`GridEdge`]); every set but the mosaic and W projection drops it.
+<a href=#704 id=704 data-nosnippet>704</a>    </span><span class="kw">fn </span>grid_edge(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; GridEdge {
+<a href=#705 id=705 data-nosnippet>705</a>        GridEdge::Whole
+<a href=#706 id=706 data-nosnippet>706</a>    }
+<a href=#707 id=707 data-nosnippet>707</a>
+<a href=#708 id=708 data-nosnippet>708</a>    <span class="doccomment">/// Whether the weight image counts a sample whose support overruns the
+<a href=#709 id=709 data-nosnippet>709</a>    /// grid. `AWProjectWBFT::resampleCFToGrid` puts every row's weight cell
+<a href=#710 id=710 data-nosnippet>710</a>    /// at the uv origin, where `onGrid` holds whenever the cell fits the
+<a href=#711 id=711 data-nosnippet>711</a>    /// image, so a row the data and the PSF drop still weighs in the
+<a href=#712 id=712 data-nosnippet>712</a>    /// sensitivity. Such a placement is
+<a href=#713 id=713 data-nosnippet>713</a>    /// kept, and each other mode skips it by its own [`Reach`](crate::Reach).
+<a href=#714 id=714 data-nosnippet>714</a>    /// Every other set forms no such image, or keeps every sample it can.
+<a href=#715 id=715 data-nosnippet>715</a>    </span><span class="kw">fn </span>weighs_samples_off_the_grid(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="bool-val">false
+<a href=#717 id=717 data-nosnippet>717</a>    </span>}
+<a href=#718 id=718 data-nosnippet>718</a>
+<a href=#719 id=719 data-nosnippet>719</a>    <span class="doccomment">/// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s
+<a href=#720 id=720 data-nosnippet>720</a>    /// gridder drops a row whose plane index `nint(√(wScale·|w|))` lies
+<a href=#721 id=721 data-nosnippet>721</a>    /// beyond the last plane (`wprojgrid.f` `owp` tests the unclamped
+<a href=#722 id=722 data-nosnippet>722</a>    /// `loc(3)`); every other set accepts every `w` (the AW catalog clamps,
+<a href=#723 id=723 data-nosnippet>723</a>    /// `CFBuffer::nearestWNdx`).
+<a href=#724 id=724 data-nosnippet>724</a>    </span><span class="kw">fn </span>admits(<span class="kw-2">&amp;</span><span class="self">self</span>, w_lambda: f64) -&gt; bool {
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let _ </span>= w_lambda;
+<a href=#726 id=726 data-nosnippet>726</a>        <span class="bool-val">true
+<a href=#727 id=727 data-nosnippet>727</a>    </span>}
+<a href=#728 id=728 data-nosnippet>728</a>
+<a href=#729 id=729 data-nosnippet>729</a>    <span class="doccomment">/// Whether the weight (sensitivity) image receives the image-side
+<a href=#730 id=730 data-nosnippet>730</a>    /// correction. `AWProjectFT::getWeightImage` divides its average PB by
+<a href=#731 id=731 data-nosnippet>731</a>    /// the sampling sinc as `getImage` does; `MosaicFT` publishes the
+<a href=#732 id=732 data-nosnippet>732</a>    /// transform of its gridded weight functions as `skyCoverage_p` with
+<a href=#733 id=733 data-nosnippet>733</a>    /// no correction at all, while its `getImage` divides the data and PSF
+<a href=#734 id=734 data-nosnippet>734</a>    /// by the sinc.
+<a href=#735 id=735 data-nosnippet>735</a>    </span><span class="kw">fn </span>corrects_weight_image(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="bool-val">true
+<a href=#737 id=737 data-nosnippet>737</a>    </span>}
+<a href=#738 id=738 data-nosnippet>738</a>
+<a href=#739 id=739 data-nosnippet>739</a>    <span class="doccomment">/// Whether the weight (sensitivity) image is the magnitude of the
+<a href=#740 id=740 data-nosnippet>740</a>    /// polarization-combined complex transform rather than its real part.
+<a href=#741 id=741 data-nosnippet>741</a>    /// `AWProjectWBFT::makeWBSensitivityImage` averages the polarization
+<a href=#742 id=742 data-nosnippet>742</a>    /// planes and keeps `abs` of the average, so an odd Taylor moment,
+<a href=#743 id=743 data-nosnippet>743</a>    /// Σ W·s·K, which can be negative, publishes its magnitude.
+<a href=#744 id=744 data-nosnippet>744</a>    </span><span class="kw">fn </span>weight_image_magnitude(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="bool-val">false
+<a href=#746 id=746 data-nosnippet>746</a>    </span>}
+<a href=#747 id=747 data-nosnippet>747</a>}
+<a href=#748 id=748 data-nosnippet>748</a>
+<a href=#749 id=749 data-nosnippet>749</a><span class="attr">#[cfg(test)]
+<a href=#750 id=750 data-nosnippet>750</a></span><span class="kw">mod </span>tests {
+<a href=#751 id=751 data-nosnippet>751</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#752 id=752 data-nosnippet>752</a>
+<a href=#753 id=753 data-nosnippet>753</a>    <span class="kw">fn </span>cell(value: f32) -&gt; Arc&lt;DenseCell&gt; {
+<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>taps = <span class="macro">vec!</span>[Complex32::new(value, <span class="number">0.0</span>); <span class="number">9</span>].into_boxed_slice();
+<a href=#755 id=755 data-nosnippet>755</a>        Arc::new(DenseCell::new(taps, [<span class="number">1</span>, <span class="number">1</span>], <span class="number">2</span>, <span class="number">1</span>))
+<a href=#756 id=756 data-nosnippet>756</a>    }
+<a href=#757 id=757 data-nosnippet>757</a>
+<a href=#758 id=758 data-nosnippet>758</a>    <span class="doccomment">/// #773 review: a hold releases the cell it parks before it fetches
+<a href=#759 id=759 data-nosnippet>759</a>    /// another, for another key or another slot, so beside a fetch it keeps
+<a href=#760 id=760 data-nosnippet>760</a>    /// nothing alive; and a repeated key in its slot lends the parked cell
+<a href=#761 id=761 data-nosnippet>761</a>    /// without fetching.
+<a href=#762 id=762 data-nosnippet>762</a>    </span><span class="attr">#[test]
+<a href=#763 id=763 data-nosnippet>763</a>    </span><span class="kw">fn </span>a_hold_releases_its_cell_before_it_fetches_another() {
+<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span><span class="kw-2">mut </span>hold = CellHold::new();
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">let </span>key = |group| CfKey { group, cube: <span class="number">0 </span>};
+<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">let </span>first = cell(<span class="number">1.0</span>);
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="kw">let </span><span class="kw-2">mut </span>parked = Arc::downgrade(<span class="kw-2">&amp;</span>first);
+<a href=#768 id=768 data-nosnippet>768</a>        <span class="kw">let _ </span>= hold.lend_keyed(key(<span class="number">0</span>), <span class="number">0</span>, <span class="kw">move </span>|| first);
+<a href=#769 id=769 data-nosnippet>769</a>        <span class="kw">let _ </span>= hold.lend_keyed(key(<span class="number">0</span>), <span class="number">0</span>, || <span class="macro">panic!</span>(<span class="string">"a parked key fetched again"</span>));
+<a href=#770 id=770 data-nosnippet>770</a>        <span class="macro">assert!</span>(parked.upgrade().is_some(), <span class="string">"the hold parks the cell"</span>);
+<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">for </span>(group, slot) <span class="kw">in </span>[(<span class="number">1</span>, <span class="number">0</span>), (<span class="number">1</span>, <span class="number">2</span>), (<span class="number">2</span>, <span class="number">2</span>)] {
+<a href=#772 id=772 data-nosnippet>772</a>            <span class="kw">let </span>before = parked.clone();
+<a href=#773 id=773 data-nosnippet>773</a>            <span class="kw">let </span>next = cell(f32::from(group));
+<a href=#774 id=774 data-nosnippet>774</a>            parked = Arc::downgrade(<span class="kw-2">&amp;</span>next);
+<a href=#775 id=775 data-nosnippet>775</a>            <span class="kw">let _ </span>= hold.lend_keyed(key(group), slot, <span class="kw">move </span>|| {
+<a href=#776 id=776 data-nosnippet>776</a>                <span class="macro">assert!</span>(
+<a href=#777 id=777 data-nosnippet>777</a>                    before.upgrade().is_none(),
+<a href=#778 id=778 data-nosnippet>778</a>                    <span class="string">"the parked cell is alive while slot {slot} fetches group {group}"
+<a href=#779 id=779 data-nosnippet>779</a>                </span>);
+<a href=#780 id=780 data-nosnippet>780</a>                next
+<a href=#781 id=781 data-nosnippet>781</a>            });
+<a href=#782 id=782 data-nosnippet>782</a>            <span class="macro">assert!</span>(parked.upgrade().is_some(), <span class="string">"the hold parks group {group}"</span>);
+<a href=#783 id=783 data-nosnippet>783</a>        }
+<a href=#784 id=784 data-nosnippet>784</a>    }
+<a href=#785 id=785 data-nosnippet>785</a>}
 </code></pre></div></section></main></body></html>
