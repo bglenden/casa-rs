@@ -91,12 +91,13 @@ pub(super) fn prepare(path: &Path) {
                 MeasurementSetMutationColumnValues::Scalars(vec![ScalarValue::Bool(false); rows])
             } else {
                 let cell = if name == "WEIGHT" || name == "SIGMA" {
-                    let values = if name == "WEIGHT" {
+                    let mut values = if name == "WEIGHT" {
                         vec![2.0, 3.0, 5.0, 7.0]
                     } else {
                         vec![0.5, 0.75, 1.25, 2.0]
                     };
-                    ArrayValue::Float32(ArrayD::from_shape_vec(IxDyn(&[4]), values).unwrap())
+                    values.truncate(shape[0]);
+                    ArrayValue::Float32(ArrayD::from_shape_vec(IxDyn(&[shape[0]]), values).unwrap())
                 } else if name == "FLAG" {
                     ArrayValue::Bool(ArrayD::from_elem(IxDyn(&shape).f(), false))
                 } else {

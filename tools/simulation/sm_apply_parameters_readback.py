@@ -29,7 +29,8 @@ def compare(path, case):
     assert len(rows) == len(case["rows"])
     actual = complex_values([row["data"] for row in rows])
     expected = complex_values([row["data"] for row in case["rows"]])
-    assert actual.shape == expected.shape == (144, 16) and np.isfinite(actual).all()
+    correlations = len(case.get("stokes", "XX XY YX YY").split())
+    assert actual.shape == expected.shape == (144, 4 * correlations) and np.isfinite(actual).all()
     for row, reference in zip(rows, case["rows"]):
         for key in ("antennas", "field", "flag_row", "flags", "weight", "sigma", "model_data"):
             assert row[key] == reference[key], (case["name"], key)

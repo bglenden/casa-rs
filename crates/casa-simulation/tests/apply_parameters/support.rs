@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Shared independent G/D table input and complete MS comparisons.
+//! Shared independent G/D/T table input and complete MS comparisons.
 
 use super::input;
 use super::predict_support::{ANTENNAS, REFERENCE_MJD, read_main, resources, scan, session};
@@ -15,7 +15,7 @@ use std::path::Path;
 
 fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
     let antenna = antenna as f64;
-    let values = if kind == "G" {
+    let values = if kind == "G" || kind == "T" {
         [
             (
                 1.1 + 0.05 * antenna + 0.002 * elapsed,
@@ -75,19 +75,34 @@ fn table(path: &Path, output: &Path, case: &Value) {
                 field_id: field as i32,
                 spectral_window_id: 0,
                 antenna: antenna as i32,
-                values: SolutionValues::Receptors(receptor_values(
-                    kind,
-                    antenna,
-                    time_s - times[0],
-                )),
+                values: if kind == "T" {
+                    SolutionValues::Channels(vec![
+                        receptor_values(kind, antenna, time_s - times[0])[0],
+                    ])
+                } else {
+                    SolutionValues::Receptors(receptor_values(kind, antenna, time_s - times[0]))
+                },
             })
     });
-    let kind = if kind == "G" {
+    let writer_kind = if kind != "D" {
         SimulatedJones::Gain
     } else {
         SimulatedJones::Leakage
     };
-    write_simulated_jones_table(&ms, output, kind, rows).unwrap();
+    write_simulated_jones_table(&ms, output, writer_kind, rows).unwrap();
+    if kind == "T" {
+        use casa_tables::{Table, TableOptions};
+        use casa_types::Value;
+        let mut table = Table::open(TableOptions::new(output)).unwrap();
+        let mut info = table.info().clone();
+        info.sub_type = "T Jones".to_string();
+        table.set_info(info);
+        table.keywords_mut().upsert(
+            "VisCal",
+            Value::Scalar(ScalarValue::String("T Jones".to_string())),
+        );
+        table.save(TableOptions::new(output)).unwrap();
+    }
     if let Some(probe) = case["probe"]
         .as_str()
         .filter(|probe| probe.starts_with("flag"))
@@ -97,7 +112,9 @@ fn table(path: &Path, output: &Path, case: &Value) {
 }
 
 pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
-    let export = std::env::var_os(if case["probe"].is_string() {
+    let export = std::env::var_os(if case["kind"] == "T" {
+        "CASA_RS_APPLY_SCALAR_OUT"
+    } else if case["probe"].is_string() {
         "CASA_RS_APPLY_FLAGS_OUT"
     } else {
         "CASA_RS_APPLY_PARAMETERS_OUT"
@@ -109,7 +126,12 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
         tempfile::tempdir().unwrap()
     };
     let path = directory.path().join("applied.ms");
-    let mut sm = session(&path, "ALMA", "XX XY YX YY", resources(workers, 2 << 30));
+    let mut sm = session(
+        &path,
+        "ALMA",
+        case["stokes"].as_str().unwrap_or("XX XY YX YY"),
+        resources(workers, 2 << 30),
+    );
     sm.observe(&scan("target", 0.0, 20.0)).unwrap();
     sm.observe(&scan("offset", 20.0, 40.0)).unwrap();
     sm.close().unwrap();
@@ -127,7 +149,7 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     .unwrap();
     sm.set_apply(&ApplySpec {
         table: calibration.to_string_lossy().into_owned(),
-        kind: String::new(),
+        kind: case["options"]["type"].as_str().unwrap_or("").to_string(),
         interval_s: case["options"]["t"].as_f64().unwrap_or(0.0),
         interp: case["interp"].as_str().unwrap().to_string(),
         calwt: case["options"]["calwt"].as_bool().unwrap_or(false),
@@ -152,7 +174,13 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
 fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
     let (actual, correlations) = read_main(path);
     let expected = case["rows"].as_array().unwrap();
-    assert_eq!(correlations, 4);
+    assert_eq!(
+        correlations,
+        case["stokes"]
+            .as_str()
+            .map(|stokes| stokes.split_whitespace().count())
+            .unwrap_or(4)
+    );
     assert_eq!(actual.len(), expected.len());
     let ms = MeasurementSet::open(path).unwrap();
     let table = ms.main_table();
@@ -179,7 +207,7 @@ fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
             else {
                 panic!("float array type")
             };
-            assert_eq!(values.len(), 4);
+            assert_eq!(values.len(), correlations);
             for (value, reference) in values.iter().zip(expected[key].as_array().unwrap()) {
                 assert_eq!(*value, reference.as_f64().unwrap() as f32, "{column}");
             }
@@ -189,10 +217,10 @@ fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
             panic!("FLAG type")
         };
         for channel in 0..4 {
-            for correlation in 0..4 {
+            for correlation in 0..correlations {
                 assert_eq!(
                     flags[[correlation, channel]],
-                    expected["flags"][channel * 4 + correlation]
+                    expected["flags"][channel * correlations + correlation]
                         .as_bool()
                         .unwrap()
                 );
@@ -227,7 +255,11 @@ fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
                     assert_eq!(expected["corrected_data"][sample], expected["data"][sample]);
                     *value
                 };
-                assert_eq!(values[[sample % 4, sample / 4]], expected, "{column}");
+                assert_eq!(
+                    values[[sample % correlations, sample / correlations]],
+                    expected,
+                    "{column}"
+                );
             }
         }
     }
@@ -262,7 +294,14 @@ fn flag_solutions(path: &Path, probe: &str, times: [f64; 2]) {
         {
             continue;
         }
-        let flags = if probe == "flag_all_both" {
+        let ArrayValue::Bool(existing) = table.cell_accessor(row, "FLAG").unwrap().array().unwrap()
+        else {
+            panic!("flags")
+        };
+        let receptors = existing.len();
+        let flags = if receptors == 1 {
+            vec![true]
+        } else if probe == "flag_all_both" {
             vec![true, true]
         } else if probe.ends_with('y') {
             vec![false, true]
@@ -275,7 +314,7 @@ fn flag_solutions(path: &Path, probe: &str, times: [f64; 2]) {
             .set(
                 row,
                 Value::Array(ArrayValue::Bool(
-                    ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), flags).unwrap(),
+                    ArrayD::from_shape_vec(IxDyn(&[receptors, 1]).f(), flags).unwrap(),
                 )),
             )
             .unwrap();
