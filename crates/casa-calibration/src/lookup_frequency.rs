@@ -51,7 +51,9 @@ impl ComplexSolution {
     /// # Errors
     /// A nonconstant grid disagrees with its frequency axis, or its valid
     /// frequencies are not strictly monotonic. Cubic interpolation of an
-    /// interior frequency requires at least four valid samples, as in CASA.
+    /// interior frequency requires at least four valid samples on a physical
+    /// axis of four or more channels. CASA downgrades shorter physical
+    /// cubic/spline axes to linear before compressing flagged samples.
     pub fn resample_frequency(
         &self,
         input_hz: &[f64],
@@ -67,6 +69,14 @@ impl ComplexSolution {
                 "calibration frequency grid does not match CPARAM channel axis",
             ));
         }
+        // CTPatchedInterp::interpolate selects its effective method from
+        // the physical axis, before removing flagged input channels.
+        let interpolation = match mode.base() {
+            FrequencyInterpolation::Cubic | FrequencyInterpolation::Spline if self.channels < 4 => {
+                FrequencyInterpolation::Linear
+            }
+            interpolation => interpolation,
+        };
         let size = self
             .receptors
             .checked_mul(output_hz.len())
@@ -82,13 +92,15 @@ impl ComplexSolution {
                 flags.extend(std::iter::repeat_n(self.flags[receptor], output_hz.len()));
                 continue;
             }
-            let mut points = (0..self.channels)
-                .filter(|&channel| !self.flags[receptor * self.channels + channel])
-                .map(|channel| {
+            // Reserve the known upper bound: filtered collect otherwise
+            // doubles near growth boundaries, exceeding admitted scratch.
+            let mut points = Vec::with_capacity(self.channels);
+            for (channel, &frequency) in input_hz.iter().enumerate().take(self.channels) {
+                if !self.flags[receptor * self.channels + channel] {
                     let value = self.value(receptor, channel);
-                    (input_hz[channel] / 1.0e9, value.norm(), value.arg())
-                })
-                .collect::<Vec<_>>();
+                    points.push((frequency / 1.0e9, value.norm(), value.arg()));
+                }
+            }
             let descending = input_hz
                 .first()
                 .zip(input_hz.last())
@@ -116,7 +128,7 @@ impl ComplexSolution {
             if descending {
                 points.reverse();
             }
-            if mode.base() == FrequencyInterpolation::Cubic
+            if interpolation == FrequencyInterpolation::Cubic
                 && (2..4).contains(&points.len())
                 && output_hz.iter().any(|frequency| {
                     frequency / 1e9 > points[0].0 && frequency / 1e9 < points[points.len() - 1].0
@@ -126,7 +138,7 @@ impl ComplexSolution {
                     "cubic frequency interpolation requires four valid samples for an interior output",
                 ));
             }
-            let derivatives = if mode.base() == FrequencyInterpolation::Spline {
+            let derivatives = if interpolation == FrequencyInterpolation::Spline {
                 spline_derivatives(&points)
             } else {
                 Vec::new()
@@ -135,14 +147,14 @@ impl ComplexSolution {
                 let value = sample(
                     &points,
                     frequency / 1.0e9,
-                    mode.base(),
+                    interpolation,
                     descending,
                     &derivatives,
                 );
                 flags.push(
                     value.is_none()
                         || (mode.retains_flags()
-                            && registered_flag(self, receptor, input_hz, frequency, mode.base())),
+                            && registered_flag(self, receptor, input_hz, frequency, interpolation)),
                 );
                 values.push(value.unwrap_or_default());
             }
@@ -299,19 +311,26 @@ fn registered_flag(
     if n == 0 {
         return true;
     }
+    let frequency = frequency / 1e9;
     let descending = input[0] > input[n - 1];
     let upper = input.partition_point(|&value| {
         if descending {
-            value > frequency
+            value / 1e9 > frequency
         } else {
-            value < frequency
+            value / 1e9 < frequency
         }
     });
-    let mut left = upper.saturating_sub(1).min(n - 1);
     let flag = |index: usize| solution.flags[receptor * solution.channels + index];
+    // CASA assigns exact input-channel flags verbatim, regardless of the
+    // interpolation neighborhood used between channels.
+    if upper < n && input[upper] / 1e9 == frequency {
+        return flag(upper);
+    }
+    let mut left = upper.saturating_sub(1).min(n - 1);
     match mode {
         FrequencyInterpolation::Nearest => {
-            if left + 1 < n && (frequency - input[left]).abs() > (input[left + 1] - frequency).abs()
+            if left + 1 < n
+                && (frequency - input[left] / 1e9).abs() > (input[left + 1] / 1e9 - frequency).abs()
             {
                 left += 1;
             }

@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 mod array_shapes;
+use array_shapes::parse_indirect_offsets_layout;
 pub(crate) use array_shapes::read_stman_array_column_shapes;
 
 use std::collections::HashMap;
@@ -91,7 +92,7 @@ enum SparseColumnLayout {
         data_type: CasacoreDataType,
         extents: Vec<ExtentLayout>,
     },
-    IndirectArrayOffsetsU32 {
+    IndirectArrayOffsets {
         data_type: CasacoreDataType,
         extents: Vec<ExtentLayout>,
     },
@@ -636,7 +637,7 @@ pub(crate) fn save_stman_file_rows_in_place(
                     main_file.write_all(&current)?;
                 }
             }
-            SparseColumnLayout::IndirectArrayOffsetsU32 { data_type, extents } => {
+            SparseColumnLayout::IndirectArrayOffsets { data_type, extents } => {
                 let existing_len = array_file_len.unwrap_or(0);
                 if existing_len >= LARGE_OFFSET_MARKER as u64 {
                     return Ok(false);
@@ -733,7 +734,7 @@ pub(crate) fn read_stman_array_column_rows(
     let mut main_file = std::fs::File::open(path)?;
 
     match layout {
-        SparseColumnLayout::IndirectArrayOffsetsU32 { data_type, extents } => {
+        SparseColumnLayout::IndirectArrayOffsets { data_type, extents } => {
             let array_file_path = indirect_array_file_path(path);
             if std::fs::metadata(&array_file_path)
                 .map(|meta| meta.len())
@@ -1011,7 +1012,13 @@ fn parse_sparse_column_layouts(
                     if stored_nrrow != nrrow {
                         None
                     } else {
-                        parse_indirect_offsets_layout(&mut file, stored_nrrow, data_type)?
+                        parse_indirect_offsets_layout(
+                            &mut file,
+                            stored_nrrow,
+                            data_type,
+                            std::fs::metadata(indirect_array_file_path(path))
+                                .is_ok_and(|metadata| metadata.len() >= LARGE_OFFSET_MARKER as u64),
+                        )?
                     }
                 }
             }
@@ -1044,38 +1051,6 @@ fn parse_sparse_column_layouts(
 
     file.seek(SeekFrom::Start(top.object_end))?;
     Ok(layouts)
-}
-
-fn parse_indirect_offsets_layout(
-    file: &mut std::fs::File,
-    nrrow: usize,
-    data_type: CasacoreDataType,
-) -> Result<Option<SparseColumnLayout>, StorageError> {
-    let mut extents = Vec::new();
-    let mut row_start = 0usize;
-    while row_start < nrrow {
-        let raw_count = read_be_u32(file)? as usize;
-        let row_count = if raw_count == 0 {
-            nrrow - row_start
-        } else {
-            raw_count
-        };
-        let values_start = file.stream_position()?;
-        file.seek(SeekFrom::Current(
-            (row_count * std::mem::size_of::<u32>()) as i64,
-        ))?;
-        extents.push(ExtentLayout {
-            row_start,
-            row_count,
-            values_start,
-            row_width_bytes: std::mem::size_of::<u32>(),
-        });
-        row_start += row_count;
-    }
-    Ok(Some(SparseColumnLayout::IndirectArrayOffsetsU32 {
-        data_type,
-        extents,
-    }))
 }
 
 fn parse_scalar_layout(

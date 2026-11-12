@@ -13,7 +13,7 @@ fn wide_applied_tables_and_terms_hold_their_admission() {
     if !super::alone("apply_frequency::wide_applied_tables_and_terms_hold_their_admission") {
         return;
     }
-    run_case("Tf", 4096, 16, 4096, 48, false);
+    run_case(("Tf", 4096, 16), 4096, 48, false, "linear");
 }
 #[test]
 fn few_solution_rows_admit_very_wide_parameter_and_frequency_axes() {
@@ -22,7 +22,7 @@ fn few_solution_rows_admit_very_wide_parameter_and_frequency_axes() {
     ) {
         return;
     }
-    run_case("Tf", 65536, 1, 4, 4, true);
+    run_case(("Tf", 65536, 1), 4, 4, true, "linear");
 }
 #[test]
 fn two_receptor_tables_admit_time_and_frequency_interpolation_scratch() {
@@ -31,15 +31,23 @@ fn two_receptor_tables_admit_time_and_frequency_interpolation_scratch() {
     ) {
         return;
     }
-    run_case("B", 8192, 2, 4096, 48, true);
+    run_case(("B", 8192, 2), 4096, 48, true, "linear");
+}
+#[test]
+fn scalar_spline_scratch_is_admitted_above_a_vector_growth_boundary() {
+    if !super::alone(
+        "apply_frequency::scalar_spline_scratch_is_admitted_above_a_vector_growth_boundary",
+    ) {
+        return;
+    }
+    run_case(("Tf", 131073, 1), 4, 4, true, "nearest,spline");
 }
 fn run_case(
-    kind: &str,
-    channels: usize,
-    slots: usize,
+    (kind, channels, slots): (&str, usize, usize),
     data_channels: usize,
     integrations: usize,
     align_times: bool,
+    interp: &str,
 ) {
     const BUDGET: u64 = 256 << 20;
     let resources = resources(BUDGET);
@@ -195,7 +203,7 @@ fn run_case(
         table: table.to_string_lossy().into_owned(),
         kind: String::new(),
         interval_s: 0.0,
-        interp: "linear".to_string(),
+        interp: interp.to_string(),
         calwt: false,
         spwmap: vec![-1],
         opacity: 0.0,

@@ -21,9 +21,10 @@ def check_table(path, case):
         assert tool.nrows() == 16
         kind = case["kind"]
         receptors = 1 if kind == "Tf" else 2
+        channels = case["calibration"]["channels"]
         assert tool.getkeyword("VisCal") == tool.info()["subType"] == kind + " Jones"
         parameters, flags = tool.getcol("CPARAM"), tool.getcol("FLAG")
-        assert parameters.shape == flags.shape == (receptors, 4, 16)
+        assert parameters.shape == flags.shape == (receptors, channels, 16)
         first, last = (case["calibration"][key] for key in ("first_time_s", "last_time_s"))
         times, antennas, fields = (tool.getcol(key) for key in ("TIME", "ANTENNA1", "FIELD_ID"))
         assert set(times) == {first, last} and set(antennas) == set(range(8))
@@ -33,17 +34,17 @@ def check_table(path, case):
             assert fields[row] == int(time == last)
             base = np.asarray(receptor_values("D" if kind == "Df" else "G", int(antenna), float(time-first)), dtype=np.complex64)[:receptors].astype(np.complex128)
             expected = np.asarray([base + offset if kind == "Df" else base * factor
-                                   for factor, offset in zip(GAIN_FACTORS, LEAKAGE_OFFSETS)], dtype=np.complex64).T
+                                   for factor, offset in zip(GAIN_FACTORS[:channels], LEAKAGE_OFFSETS[:channels])], dtype=np.complex64).T
             if case["probe"] == "spline_analytic":
                 expected = np.array([[1, 2, 0.5, 1.25]], dtype=np.complex64)
             np.testing.assert_array_equal(parameters[:, :, row], expected)
-            expected_flags = np.zeros((receptors, 4), dtype=bool)
+            expected_flags = np.zeros((receptors, channels), dtype=bool)
             if antenna == 0:
                 if case["probe"].startswith("flag_channel"):
                     expected_flags[0, 1] = True
                 elif case["probe"] == "all_flagged":
                     expected_flags[:] = True
-                elif case["probe"] == "one_valid":
+                elif case["probe"].startswith("one_valid"):
                     expected_flags[:] = True
                     expected_flags[:, 2] = False
             np.testing.assert_array_equal(flags[:, :, row], expected_flags)
@@ -84,7 +85,7 @@ def main():
         fixture = json.load(handle)
     assert fixture["casa_version"] == casatasks.version_string()
     cases = {case["name"]: case for case in fixture["cases"]}
-    assert len(cases) == 76
+    assert len(cases) in (76, 30)
     expected = {(name, workers) for name in cases for workers in (1, 3)}
     seen, reports = set(), []
     args.out.mkdir(parents=True, exist_ok=True)
@@ -102,7 +103,7 @@ def main():
         reports.append(report)
     assert seen == expected, ("missing", sorted(expected-seen))
     (args.out / "report.json").write_text(json.dumps({"casa_version":casatasks.version_string(),"runs":reports},indent=1,allow_nan=False)+"\n")
-    print("C++ readback:", len(reports), "native MS/table pairs;76 native tables consumed", flush=True)
+    print("C++ readback:", len(reports), f"native MS/table pairs;{len(cases)} native tables consumed", flush=True)
 
 
 if __name__ == "__main__":

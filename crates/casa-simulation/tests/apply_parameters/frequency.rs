@@ -11,7 +11,7 @@ pub(super) fn is_frequency(kind: &str) -> bool {
     matches!(kind, "B" | "Tf" | "Df")
 }
 
-fn values(kind: &str, antenna: usize, elapsed: f64) -> Vec<Complex32> {
+fn values(kind: &str, antenna: usize, elapsed: f64, channels: usize) -> Vec<Complex32> {
     let base = super::receptor_values(if kind == "Df" { "D" } else { "G" }, antenna, elapsed);
     let factors = [
         Complex64::new(1.0, 0.0),
@@ -25,7 +25,7 @@ fn values(kind: &str, antenna: usize, elapsed: f64) -> Vec<Complex32> {
         Complex64::new(-0.16, 0.10),
         Complex64::new(0.24, -0.08),
     ];
-    (0..4)
+    (0..channels)
         .flat_map(|channel| {
             (0..if kind == "Tf" { 1 } else { 2 }).map(move |receptor| {
                 let base =
@@ -44,6 +44,7 @@ fn values(kind: &str, antenna: usize, elapsed: f64) -> Vec<Complex32> {
 pub(super) fn prepare(path: &Path, case: &Json) {
     let kind = case["kind"].as_str().unwrap();
     let receptors = if kind == "Tf" { 1 } else { 2 };
+    let channels = case["calibration"]["channels"].as_u64().unwrap() as usize;
     let first = case["calibration"]["first_time_s"].as_f64().unwrap();
     let mut table = Table::open(TableOptions::new(path)).unwrap();
     for row in 0..table.row_count() {
@@ -61,14 +62,14 @@ pub(super) fn prepare(path: &Path, case: &Json) {
             panic!("time")
         };
         let (antenna, elapsed) = (*antenna as usize, *time - first);
-        let shape = [receptors, 4];
+        let shape = [receptors, channels];
         let values = if case["probe"] == "spline_analytic" {
             vec![1.0, 2.0, 0.5, 1.25]
                 .into_iter()
                 .map(|amplitude| Complex32::new(amplitude, 0.0))
                 .collect()
         } else {
-            values(kind, antenna, elapsed)
+            values(kind, antenna, elapsed, channels)
         };
         let parameters =
             ArrayValue::Complex32(ArrayD::from_shape_vec(IxDyn(&shape).f(), values).unwrap());
@@ -77,14 +78,14 @@ pub(super) fn prepare(path: &Path, case: &Json) {
             .unwrap()
             .set(Value::Array(parameters))
             .unwrap();
-        let mut flags = vec![false; receptors * 4];
+        let mut flags = vec![false; receptors * channels];
         if antenna == 0 {
             let probe = case["probe"].as_str().unwrap();
             if probe.starts_with("flag_channel") {
                 flags[receptors] = true;
             } else if probe == "all_flagged" {
                 flags.fill(true);
-            } else if probe == "one_valid" {
+            } else if probe.starts_with("one_valid") {
                 flags.fill(true);
                 flags[2 * receptors..3 * receptors].fill(false);
             }
@@ -93,7 +94,7 @@ pub(super) fn prepare(path: &Path, case: &Json) {
             .cell_accessor_mut(row, "FLAG")
             .unwrap()
             .set(Value::Array(ArrayValue::Bool(
-                ArrayD::from_shape_vec(IxDyn(&[receptors, 4]).f(), flags).unwrap(),
+                ArrayD::from_shape_vec(IxDyn(&[receptors, channels]).f(), flags).unwrap(),
             )))
             .unwrap();
         for column in ["PARAMERR", "SNR"] {
@@ -101,7 +102,7 @@ pub(super) fn prepare(path: &Path, case: &Json) {
                 .cell_accessor_mut(row, column)
                 .unwrap()
                 .set(Value::Array(ArrayValue::Float32(ArrayD::from_elem(
-                    IxDyn(&[receptors, 4]).f(),
+                    IxDyn(&[receptors, channels]).f(),
                     0.0,
                 ))))
                 .unwrap();
@@ -128,6 +129,7 @@ pub(super) fn prepare(path: &Path, case: &Json) {
     let probe = case["probe"].as_str().unwrap();
     let mut frequencies = frequencies
         .iter()
+        .take(channels)
         .map(|frequency| {
             frequency
                 + if probe == "spline_analytic" {
@@ -141,7 +143,7 @@ pub(super) fn prepare(path: &Path, case: &Json) {
                 }
         })
         .collect::<Vec<_>>();
-    if probe == "descending_shifted" {
+    if probe.contains("descending") {
         frequencies.reverse();
     }
     let frequencies = ArrayD::from_shape_vec(IxDyn(&[frequencies.len()]), frequencies).unwrap();
@@ -159,5 +161,29 @@ pub(super) fn prepare(path: &Path, case: &Json) {
         .unwrap()
         .set(Value::Array(ArrayValue::Float64(frequencies)))
         .unwrap();
+    if channels != 4 {
+        window
+            .cell_accessor_mut(0, "NUM_CHAN")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(channels as i32)))
+            .unwrap();
+        for column in ["CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+            let ArrayValue::Float64(old) =
+                window.cell_accessor(0, column).unwrap().array().unwrap()
+            else {
+                panic!("axis")
+            };
+            let value = ArrayD::from_shape_vec(
+                IxDyn(&[channels]),
+                old.iter().take(channels).copied().collect(),
+            )
+            .unwrap();
+            window
+                .cell_accessor_mut(0, column)
+                .unwrap()
+                .set(Value::Array(ArrayValue::Float64(value)))
+                .unwrap();
+        }
+    }
     window.save(TableOptions::new(&path)).unwrap();
 }
