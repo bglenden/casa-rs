@@ -181,7 +181,7 @@ fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
                 .unwrap(),
         )
         .unwrap();
-        root.keep();
+        let _kept = root.keep();
     }
     output
 }

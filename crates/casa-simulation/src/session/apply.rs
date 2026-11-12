@@ -107,11 +107,14 @@ enum AppliedKind {
 impl AppliedKind {
     fn operator(self) -> JonesKind {
         match self {
-            Self::Gain | Self::Scalar | Self::Delay | Self::AntennaPosition | Self::Opacity => {
-                JonesKind::Gain
-            }
+            Self::Gain
+            | Self::Scalar
+            | Self::Delay
+            | Self::AntennaPosition
+            | Self::Opacity
+            | Self::SystemTemperature => JonesKind::Gain,
             Self::Leakage => JonesKind::Leakage,
-            Self::GainCurve | Self::SystemTemperature => JonesKind::SkyGain,
+            Self::GainCurve => JonesKind::SkyGain,
         }
     }
 

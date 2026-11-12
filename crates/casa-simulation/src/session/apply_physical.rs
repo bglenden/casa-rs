@@ -87,10 +87,11 @@ impl Geometry {
             }
             AppliedKind::SystemTemperature => Some(std::array::from_fn(|receptor| {
                 let value = solution.value(receptor, channel).re;
-                if value < 0. || solution.flags[receptor * solution.channels + channel] {
+                if value <= 0. || solution.flags[receptor * solution.channels + channel] {
                     one
                 } else {
-                    Complex32::new(value.sqrt(), 0.)
+                    // StandardTsys::syncJones reverses the inversion sense.
+                    Complex32::new(1. / value.sqrt(), 0.)
                 }
             })),
             _ => None,
