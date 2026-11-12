@@ -177,6 +177,10 @@ impl Simulator {
     ///   channels raises at `corrupt`, as CASA does.
     /// - No rows observed yet: refused, as `setgain` refuses.
     ///
+    /// The term covers the spectral windows present at `setapply`. Later
+    /// scans in those windows take their row-time solutions; a window
+    /// configured afterward is left unchanged by this term, as in CASA.
+    ///
     /// Flagged G/T parameters and missing G/T antennas use unit gains,
     /// as in CASA. A scalar T parameter applies equally to all correlations.
     /// For D tables an invalid receptor or missing antenna uses neutral leakage (both coefficients zero), correcting CASA's unit
@@ -286,7 +290,12 @@ impl Simulator {
             JonesSource::Simulated(term) => Ok(Arc::clone(term)),
             JonesSource::Applied(table) => {
                 let antennas = self.antennas.len();
-                let (per_window, _) = self.integration_counts();
+                let (mut per_window, _) = self.integration_counts();
+                // CASA's simulated calibration term covers the MS windows
+                // present at setapply; later windows are left unchanged.
+                for count in per_window.iter_mut().skip(table.spwmap.len()) {
+                    *count = 0;
+                }
                 let channels = self
                     .spectral_windows
                     .iter()
@@ -368,7 +377,9 @@ impl Simulator {
             Vec::new()
         };
         for (index, scan) in self.scans.iter().enumerate() {
-            let window = table.spwmap[scan.spectral_window_id];
+            let Some(&window) = table.spwmap.get(scan.spectral_window_id) else {
+                continue;
+            };
             let output_hz = if table.frequency.is_some() {
                 self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
             } else {

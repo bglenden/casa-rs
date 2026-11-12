@@ -416,13 +416,22 @@ fn read_times(path: &Path) -> Vec<f64> {
         .collect()
 }
 
-/// A single positive mapping keeps its broadcast meaning when another
-/// window is configured after setapply; its constant gain still applies.
+/// CASA snapshots window coverage at setapply. An added window remains
+/// unchanged, while the earlier window still takes the constant gain.
 #[test]
-fn a_new_window_after_setapply_keeps_the_broadcast_gain() {
+fn a_new_window_after_setapply_matches_casas_coverage_snapshot() {
     use casa_simulation::SpectralWindowSpec;
     use casa_types::measures::frequency::FrequencyRef;
+    use flate2::read::GzDecoder;
     use predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
+    use std::io::Read;
+    let mut text = String::new();
+    GzDecoder::new(&include_bytes!("data/sm_apply_later_window_casa.json.gz")[..])
+        .read_to_string(&mut text)
+        .unwrap();
+    let reference: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(reference["casa_version"], "6.7.6.14");
+    let factors = reference["data_gain_factors_by_window"].as_array().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let point = point(directory.path());
     let (reference, times) = observed_times(directory.path(), &point);
@@ -470,22 +479,43 @@ fn a_new_window_after_setapply_keeps_the_broadcast_gain() {
                 casa_types::ScalarValue::Int32(1)
             )
         }));
-        read_main(&path).0
+        let windows = (0..ms.row_count())
+            .map(|row| {
+                match ms
+                    .main_table()
+                    .cell_accessor(row, "DATA_DESC_ID")
+                    .unwrap()
+                    .scalar()
+                    .unwrap()
+                {
+                    casa_types::ScalarValue::Int32(window) => *window,
+                    _ => panic!("DATA_DESC_ID"),
+                }
+            })
+            .collect::<Vec<_>>();
+        (read_main(&path).0, windows)
     };
-    let plain = run("plain.ms", false);
-    let applied = run("applied.ms", true);
+    let (plain, windows) = run("plain.ms", false);
+    let (applied, applied_windows) = run("applied.ms", true);
+    assert_eq!(windows, applied_windows);
     assert_eq!(plain.len(), applied.len());
     let mut power = 0.0f64;
+    let mut by_window = [0.0f64; 2];
     let mut error = 0.0f64;
-    for (plain, applied) in plain.iter().zip(&applied) {
+    for ((plain, applied), window) in plain.iter().zip(&applied).zip(windows) {
         for (plain, applied) in plain.data.iter().zip(&applied.data) {
-            let expected = *plain * 4.0;
+            let expected = *plain * factors[window as usize].as_f64().unwrap() as f32;
             power += f64::from(expected.norm_sqr());
+            by_window[window as usize] += f64::from(expected.norm_sqr());
             error += f64::from((*applied - expected).norm_sqr());
         }
     }
     assert!(
+        by_window.iter().all(|&power| power > 0.0),
+        "both windows carry a signal"
+    );
+    assert!(
         power > 0.0 && (error / power).sqrt() < 1e-6,
-        "constant scalar gain2 gives DATA×4, including the later window"
+        "CASA applies gain2 to its original window and leaves the later window unchanged"
     );
 }
