@@ -585,6 +585,7 @@ fn aw_open(root: &std::path::Path, bound: usize) -> AwCatalog {
         image_reference_hz: 1.5e9,
         pa_tolerance_rad: 360.0_f32.to_radians(),
         feed_zero_angles_rad: None,
+        rotation: None,
     };
     let geometry = geometry(64, 1.0e-4, GridPadding::None);
     AwCatalog::open_casa(root, indexing, &geometry, &routing, bound).expect("open")

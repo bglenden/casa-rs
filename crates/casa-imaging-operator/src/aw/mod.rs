@@ -25,11 +25,14 @@ pub use cache::{CacheBound, CacheCharge};
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
+pub use rotation::AwPaRotation;
 
 #[cfg(test)]
 use cell_image::{cf_area, convolution_origin, dense_cell_padded};
 use cell_image::{load_group, read_header};
 use native_cache::{STAGING_PREFIX, write_manifest};
+
+mod rotation;
 
 use crate::error::OperatorError;
 
@@ -120,6 +123,8 @@ pub struct AwIndexing {
     /// Feed 0's first receptor angle for antenna 0, by spectral window.
     /// Empty for a native catalog with a single PA buffer.
     pub feed_zero_angles_rad: Option<Arc<[f32]>>,
+    /// Rotation of a single imported aperture buffer, if requested.
+    pub rotation: Option<AwPaRotation>,
 }
 
 /// Header of one cell image, read at open (`CFCache::getCFParams`).
@@ -145,6 +150,8 @@ struct CellHeader {
     pa_deg: f64,
     /// The spectral reference value as CASA holds it (`Float`).
     frequency_hz: f64,
+    /// Both kernel axes are one linear coordinate with an identity PC matrix.
+    rotatable: bool,
 }
 
 /// The imaging and weight images of one (PA, frequency, w, Mueller) cell.
@@ -268,8 +275,9 @@ enum Slot {
 /// ([`KernelNormalisation::KernelSum`]); the pointing ramp applies to
 /// every row ([`ConvolutionFunctionSet::pointing_ramp`]). An imported row
 /// uses the first sorted PA buffer within the strict compute tolerance.
-/// CASA's one-degree coalescence of densely spaced headers and runtime
-/// rotation remain open in #1070.
+/// The supported runtime rotation regrids the saved aperture at each
+/// rotation epoch. Densely spaced imported headers and further rotation
+/// combinations remain open in #1070.
 ///
 /// # Panics
 ///
@@ -289,6 +297,7 @@ pub struct AwCatalog {
     /// `cells[g·E..(g + 1)·E]` with `E` the number of elements.
     cells: Vec<CellFiles>,
     groups: Vec<Group>,
+    rotations: Vec<(f64, f64)>,
     oversampling: u16,
     max_half_support: [u16; 2],
     mueller: MuellerRouting,
@@ -425,6 +434,31 @@ impl AwCatalog {
             })
         });
         let groups = index_groups(&cells, elements, frequencies_hz.len() * w_values.len());
+        let rotations = if let Some(rotation) = &indexing.rotation {
+            if pa_deg.len() != 1
+                || cells
+                    .iter()
+                    .any(|cell| !cell.imaging.rotatable || !cell.weight.rotatable)
+            {
+                return Err(cache_error(
+                    &root,
+                    "runtime rotation needs one PA buffer with axis-aligned linear cells (#1070)",
+                ));
+            }
+            rotation.schedule(pa_deg[0])
+        } else {
+            Vec::new()
+        };
+        let variants = groups
+            .len()
+            .checked_mul(rotations.len() + 1)
+            .filter(|&count| count <= usize::from(u16::MAX) + 1)
+            .ok_or_else(|| {
+                cache_error(
+                    &root,
+                    "too many AW convolution groups for the selected rotation step",
+                )
+            })?;
         let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
             cache_error(
                 &root,
@@ -458,7 +492,7 @@ impl AwCatalog {
             w_increment,
             mueller_elements,
             lru: Mutex::new(Lru {
-                slots: (0..groups.len()).map(|_| Slot::Empty).collect(),
+                slots: (0..variants).map(|_| Slot::Empty).collect(),
                 clock: 0,
                 bytes: 0,
                 loads: 0,
@@ -466,6 +500,7 @@ impl AwCatalog {
             bound: CacheBound::new(bound_bytes),
             cells,
             groups,
+            rotations,
             oversampling,
             max_half_support,
             mueller,
@@ -592,10 +627,10 @@ impl AwCatalog {
         self.oversampling
     }
 
-    /// Number of (PA, frequency, w) groups.
+    /// Number of (PA, frequency, w) groups, including rotated variants.
     #[must_use]
     pub fn groups(&self) -> usize {
-        self.groups.len()
+        self.groups.len() * (self.rotations.len() + 1)
     }
 
     /// Bytes of cells resident in the cache now.
@@ -639,6 +674,12 @@ impl AwCatalog {
             + self.cells.capacity() * size_of::<CellFiles>()
             + paths.clone().sum::<usize>()
             + self.groups.capacity() * size_of::<Group>()
+            + self.rotations.capacity() * size_of::<(f64, f64)>()
+            + self
+                .indexing
+                .rotation
+                .as_ref()
+                .map_or(0, AwPaRotation::samples_bytes)
             + self
                 .indexing
                 .feed_zero_angles_rad
@@ -665,21 +706,41 @@ impl AwCatalog {
             // `load_group`'s header and plane lists.
             let lists = elements
                 * (size_of::<&CellHeader>() + size_of::<(Vec<Complex32>, [usize; 2], [u16; 2])>());
-            (2 * imaging.max(weight) * size_of::<Complex32>() + lists + CELL_IMAGE_RECORD_BYTES)
-                as u64
+            let rotation = if self.rotations.is_empty() {
+                0
+            } else {
+                // The rotated output and its two f64 interpolation planes.
+                3 * cells
+                    .iter()
+                    .flat_map(|cell| [&cell.imaging, &cell.weight])
+                    .map(plane)
+                    .max()
+                    .unwrap_or(0)
+            };
+            ((2 * imaging.max(weight) + rotation) * size_of::<Complex32>()
+                + lists
+                + CELL_IMAGE_RECORD_BYTES) as u64
         };
         CacheCharge {
             kept: index as u64 + self.mueller.bytes() + self.correction.resident_bytes(),
             opening,
-            every: self.groups.iter().map(group).sum::<u64>(),
+            every: self.groups.iter().map(group).sum::<u64>() * (self.rotations.len() as u64 + 1),
             largest: self.groups.iter().map(group).max().unwrap_or(0),
-            groups: self.groups.len() as u64,
+            groups: lru.slots.len() as u64,
             reading: self
                 .cells
                 .chunks_exact(elements)
                 .map(read)
                 .max()
                 .unwrap_or(0),
+        }
+    }
+
+    fn source_group(&self, group: usize) -> usize {
+        if group < self.groups.len() {
+            group
+        } else {
+            group % self.groups.len()
         }
     }
 
@@ -772,10 +833,16 @@ impl AwCatalog {
             catalog: self,
             group,
         };
+        let source = self.source_group(group);
+        let rotation = group / self.groups.len();
+        let angle = rotation
+            .checked_sub(1)
+            .map_or(0.0, |index| self.rotations[index].1);
         let mut loaded = load_group(
-            self.group_cells(group),
-            &self.groups[group],
+            self.group_cells(source),
+            &self.groups[source],
             self.oversampling,
+            angle,
         )
         .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
         let mut lru = self.lru.lock().expect("cache lock");
@@ -856,7 +923,11 @@ impl ConvolutionFunctionSet for AwCatalog {
             .expect("AW row PA coverage was checked");
         let w = self.w_cell(w_lambda);
         let native_frequency_hz = freq_hz * row.native_frequency_ratio;
-        let group = self.group_index(pa, self.frequency_cell(native_frequency_hz), w);
+        let rotation = self
+            .rotations
+            .partition_point(|(start, _)| *start <= row.time_s);
+        let group = self.group_index(pa, self.frequency_cell(native_frequency_hz), w)
+            + rotation * self.groups.len();
         let prediction_w = self.w_cell(self.prediction_w(row, freq_hz, w_lambda));
         let native = self.group_index(
             pa,
@@ -882,16 +953,16 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// The gridding group's imaging support, to which its dense imaging
     /// cell is padded, read from the index without loading the group.
     fn gridding_half_support(&self, key: CfKey) -> [u16; 2] {
-        self.groups[usize::from(key.group)].imaging_half_support
+        self.groups[self.source_group(usize::from(key.group))].imaging_half_support
     }
 
     fn weight_half_support(&self, key: CfKey) -> Option<[u16; 2]> {
-        Some(self.groups[usize::from(key.group)].weight_half_support)
+        Some(self.groups[self.source_group(usize::from(key.group))].weight_half_support)
     }
 
     /// The PSF grids with the weight cells ([`Self::psf_taps`]).
     fn psf_half_support(&self, key: CfKey) -> [u16; 2] {
-        self.groups[usize::from(key.group)].weight_half_support
+        self.groups[self.source_group(usize::from(key.group))].weight_half_support
     }
 
     /// The catalog's one `Sampling`, which every dense cell carries.
@@ -946,7 +1017,8 @@ impl ConvolutionFunctionSet for AwCatalog {
     }
 
     fn pointing_origin_shift(&self, key: CfKey, weight: bool) -> bool {
-        self.groups[usize::from(key.group)].odd_pointing_origin[usize::from(weight)]
+        self.groups[self.source_group(usize::from(key.group))].odd_pointing_origin
+            [usize::from(weight)]
     }
 
     /// The catalog pages its cells, so its taps are its cache's bound; the
@@ -954,7 +1026,7 @@ impl ConvolutionFunctionSet for AwCatalog {
     fn tap_footprint(&self) -> TapFootprint {
         let rows = u64::from(self.oversampling) + 1;
         let planes = self.mueller_elements.len() as u64;
-        let cells = 2 * self.cells.len();
+        let cells = 2 * self.cells.len() * (self.rotations.len() + 1);
         TapFootprint {
             tap_bytes: self.bound.bytes() as u64,
             norm_bytes: cells as u64
@@ -1145,334 +1217,4 @@ fn nearest(values: &[f64], target: f64) -> (usize, f64) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use num_complex::Complex64;
-
-    #[test]
-    fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
-        use Correlation as C;
-        use casa_imaging_model::PolarizationCoordinate as P;
-
-        let parallel = [C::RR, C::LL];
-        let pol = PolarizationRouting::compile(&parallel, &[P::CircularRr, P::CircularLl])
-            .expect("parallel hands");
-        let routes = routing(&[0, 15], &pol).expect("routes");
-        let diagonal = vec![vec![Some(0), None], vec![None, Some(1)]];
-        // `DataToGrid` reads the visibility of the selected cell's hand
-        // (`muellerElement % nDataPol`), `GridToData` the model grid of
-        // that hand; the outer loop names the output in both.
-        assert_eq!(routes.table(true, false), &diagonal);
-        assert_eq!(routes.table(false, true), &diagonal);
-        assert_eq!(
-            routes.table(false, false),
-            &[vec![None, Some(1)], vec![Some(0), None]]
-        );
-        assert_eq!(
-            routes.table(true, true),
-            &[vec![None, Some(0)], vec![Some(1), None]]
-        );
-
-        // PolOuterProduct::makeConjPol2CFMat: an inactive partner leaves
-        // the direct mapping in place, even if the cache has both cells.
-        for (requested, cells, expected) in [
-            (P::CircularRr, vec![0, 15], vec![Some(0), None]),
-            (P::CircularLl, vec![0, 15], vec![None, Some(1)]),
-            (P::CircularRr, vec![0], vec![Some(0), None]),
-        ] {
-            let pol = PolarizationRouting::compile(&parallel, &[requested]).expect("one hand");
-            let routes = routing(&cells, &pol).expect("one-hand routes");
-            for positive in [false, true] {
-                for forward in [false, true] {
-                    assert_eq!(
-                        routes.table(positive, forward),
-                        std::slice::from_ref(&expected)
-                    );
-                }
-            }
-        }
-
-        let correlations = [C::RR, C::RL, C::LR, C::LL];
-        let pol = PolarizationRouting::compile(
-            &correlations,
-            &[P::CircularRr, P::CircularRl, P::CircularLr, P::CircularLl],
-        )
-        .expect("four hands");
-        let routes = routing(&[0, 5, 10, 15], &pol).expect("four-hand routes");
-        for gpol in 0..4 {
-            for vpol in 0..4 {
-                assert_eq!(
-                    routes.table(true, false)[gpol][vpol],
-                    (gpol == vpol).then_some(vpol as u8)
-                );
-                assert_eq!(
-                    routes.table(false, false)[gpol][vpol],
-                    (gpol + vpol == 3).then_some(vpol as u8)
-                );
-                assert_eq!(
-                    routes.table(true, true)[gpol][vpol],
-                    (gpol + vpol == 3).then_some(gpol as u8)
-                );
-                assert_eq!(
-                    routes.table(false, true)[gpol][vpol],
-                    (gpol == vpol).then_some(gpol as u8)
-                );
-            }
-        }
-        let pol = PolarizationRouting::compile(&[C::RR, C::RL, C::LL], &[P::StokesI])
-            .expect("three correlations");
-        assert!(
-            routing(&[0, 15], &pol).is_none(),
-            "do not overwrite colliding routes"
-        );
-    }
-
-    #[test]
-    fn a_group_holds_each_kinds_largest_half_support() {
-        let header = |support: [u16; 2]| CellHeader {
-            path: PathBuf::new(),
-            shape: [16, 16],
-            sampling: 1,
-            support,
-            mueller: 0,
-            w_value: 0.0,
-            working_field_rad: None,
-            w_increment: 0.0,
-            pa_deg: 0.0,
-            frequency_hz: 1.0e9,
-        };
-        let group = |cells: &[([u16; 2], [u16; 2])]| {
-            Group::new(
-                &cells
-                    .iter()
-                    .map(|(imaging, weight)| CellFiles {
-                        imaging: header(*imaging),
-                        weight: header(*weight),
-                    })
-                    .collect::<Vec<_>>(),
-                [false; 2],
-            )
-        };
-        let wide_imaging = group(&[([6, 6], [4, 4]), ([5, 6], [4, 3])]);
-        assert_eq!(wide_imaging.imaging_half_support, [6, 6]);
-        assert_eq!(wide_imaging.weight_half_support, [4, 4]);
-    }
-
-    /// A catalog with only the group index allocated, for checking the
-    /// retained charge and the public kernel-set lookup independently.
-    fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
-        AwCatalog {
-            root: PathBuf::new(),
-            indexing: AwIndexing {
-                conjugate_beams: false,
-                image_reference_hz: 1.0e9,
-                pa_tolerance_rad: 360.0_f32.to_radians(),
-                feed_zero_angles_rad: None,
-            },
-            pa_deg: Vec::new(),
-            frequencies_hz: Vec::new(),
-            w_values: Vec::new(),
-            w_increment: 0.0,
-            mueller_elements: vec![0],
-            cells: Vec::new(),
-            groups,
-            oversampling: 2,
-            max_half_support: [0, 0],
-            mueller: MuellerRouting::scalar(&[Some(0)], 1),
-            correction: ImageCorrection::new(Vec::new(), Vec::new()),
-            lru: Mutex::new(Lru {
-                slots: Vec::new(),
-                clock: 0,
-                bytes: 0,
-                loads: 0,
-            }),
-            bound: CacheBound::new(0),
-            load_ended: Condvar::new(),
-        }
-    }
-
-    /// The catalog's retained charge covers its new origin selector and
-    /// every allocated group slot, including spare capacity (#1070).
-    #[test]
-    fn catalog_charge_counts_its_origin_selector() {
-        let groups = Vec::<Group>::with_capacity(41);
-        let per_group = 2 * size_of::<[u16; 2]>() + size_of::<[bool; 2]>();
-        let allocated = groups.capacity() * per_group;
-        let mut catalog = catalog_with_groups(groups);
-        catalog.indexing.feed_zero_angles_rad = Some(Arc::new([0.0_f32, 0.1]));
-        let feed_bytes = 2 * size_of::<f32>() + 2 * size_of::<usize>();
-        assert_eq!(
-            catalog.cache_charge().kept,
-            (allocated + feed_bytes) as u64
-                + (catalog.mueller_elements.capacity() * size_of::<u32>()) as u64
-                + catalog.mueller.bytes()
-                + catalog.correction.resident_bytes()
-        );
-    }
-
-    /// Each PA and tap kind uses its buffer's maximum width, independent
-    /// of the first cell or the previous buffer (#1070).
-    #[test]
-    fn phase_origin_uses_the_selected_pa_buffer_and_tap_kind() {
-        let cell = |imaging: usize, weight: usize| {
-            let header = |width| CellHeader {
-                path: PathBuf::new(),
-                shape: [width, width],
-                sampling: 2,
-                support: [1, 1],
-                mueller: 0,
-                w_value: 0.0,
-                working_field_rad: None,
-                w_increment: 0.0,
-                pa_deg: 0.0,
-                frequency_hz: 1.0e9,
-            };
-            CellFiles {
-                imaging: header(imaging),
-                weight: header(weight),
-            }
-        };
-        let cells = [
-            cell(11, 12),
-            cell(12, 13),
-            cell(13, 14),
-            cell(15, 16),
-            cell(11, 12),
-            cell(12, 13),
-            cell(14, 15),
-            cell(16, 17),
-        ];
-        let catalog = catalog_with_groups(index_groups(&cells, 2, 2));
-        for (group, imaging) in [(0, true), (1, true), (2, false), (3, false)] {
-            let key = CfKey { group, cube: 0 };
-            assert_eq!(catalog.pointing_origin_shift(key, false), imaging);
-            assert_eq!(catalog.pointing_origin_shift(key, true), !imaging);
-        }
-    }
-
-    /// The cache chooses the first overlapping PA and rejects a point at
-    /// the tolerance boundary. Lookup adds feed 0 for the row's window.
-    #[test]
-    fn imported_pa_uses_the_first_strictly_covered_buffer() {
-        let mut catalog = catalog_with_groups(Vec::new());
-        catalog.pa_deg = vec![-10.0, -4.0, 4.0];
-        catalog.indexing.pa_tolerance_rad = 5.0_f32.to_radians();
-        catalog.indexing.feed_zero_angles_rad = Some(Arc::new([0.0, 6.0_f32.to_radians()]));
-        let mut row = RowContext {
-            native_frequency_ratio: 1.0,
-            original_uvw_m: None,
-            time_s: 0.0,
-            antennas: [1, 2],
-            antenna_types: [0, 0],
-            parallactic_angle_rad: [6.0_f64.to_radians(); 2],
-            field: 0,
-            spectral_window: 0,
-        };
-        assert_eq!(catalog.row_pa_cell(&row), Some(0), "first overlapping PA");
-        row.spectral_window = 1;
-        assert_eq!(
-            catalog.row_pa_cell(&row),
-            Some(1),
-            "feed 0 in the selected window"
-        );
-        catalog.pa_deg = vec![0.0];
-        let edge = catalog.indexing.pa_tolerance_rad;
-        assert_eq!(catalog.pa_cell(edge.next_down()), Some(0));
-        assert_eq!(catalog.pa_cell(edge), None);
-        assert_eq!(catalog.pa_cell(edge.next_up()), None);
-        assert_eq!(catalog.pa_cell(-edge), None);
-        catalog.pa_deg = vec![0.0, 4.0];
-        assert_eq!(catalog.pa_cell(edge), Some(1));
-        catalog.pa_deg = vec![-179.0];
-        assert_eq!(catalog.pa_cell(179.0_f32.to_radians()), None);
-
-        // CASA rounds the header to Float degrees before it makes a radian
-        // quantity. Keeping the Double degrees would put this row in band.
-        catalog.pa_deg = vec![53.00008538104];
-        catalog.indexing.pa_tolerance_rad = 0.001;
-        assert_eq!(catalog.pa_cell(0.926026_f32), None);
-    }
-
-    #[test]
-    fn index_rules_follow_casa() {
-        // nearestWNdx: round(sqrt(wIncr·|w|)) clamped.
-        let catalog_w = |w_increment: f64, planes: usize, w: f64| {
-            let index = (w_increment * w.abs()).sqrt().round() as usize;
-            index.min(planes - 1)
-        };
-        assert_eq!(catalog_w(4.0, 5, 0.0), 0);
-        assert_eq!(catalog_w(4.0, 5, 0.06), 0); // sqrt(0.24) = 0.49
-        assert_eq!(catalog_w(4.0, 5, 0.07), 1); // sqrt(0.28) = 0.53
-        assert_eq!(catalog_w(4.0, 5, 100.0), 4);
-        // nearestValue: first at the smallest distance.
-        assert_eq!(nearest(&[1.0, 2.0, 3.0], 2.5), (1, 2.0));
-        assert_eq!(nearest(&[1.0, 2.0, 3.0], 2.6), (2, 3.0));
-        // conjFreq.
-        assert!((conjugate_frequency(1.0e9, 1.5e9) - (3.5e18_f64).sqrt()).abs() < 1.0);
-        assert_eq!(mueller_element(Correlation::LL), Some(15));
-        assert_eq!(mueller_element(Correlation::XY), Some(5));
-    }
-
-    #[test]
-    fn padded_cells_read_the_oversampled_plane_and_zero_outside() {
-        // 8×8 plane, origin (4, 4), sampling 2, half 1: tap k at offset
-        // off reads pixel 4 + 2k + off; a 4×4 second plane is padded.
-        let side = 8;
-        let values = (0..side * side)
-            .map(|index| Complex32::new((index % side) as f32, (index / side) as f32))
-            .collect::<Vec<_>>();
-        let small = (0..16)
-            .map(|index| Complex32::new(100.0 + (index % 4) as f32, (index / 4) as f32))
-            .collect::<Vec<_>>();
-        let cell = dense_cell_padded(
-            &[(values, [side, side], [1, 1]), (small, [4, 4], [1, 1])],
-            [1, 1],
-            2,
-        );
-        assert_eq!(cell.support(), [3, 3]);
-        assert_eq!(cell.mueller_planes(), 2);
-        let tile = 9;
-        // Row (ox, oy) = (0, 2): off = (−1, +1); plane 0 tap (2, 0): pixel
-        // (4 + 2 − 1, 4 − 2 + 1) = (5, 3).
-        let row = (2 * 3) * 2 * tile;
-        assert_eq!(cell.data()[row + 2], Complex32::new(5.0, 3.0));
-        // Plane 1 in the same row, tap (2, 0): pixel (2 + 2 − 1, 2 − 2 + 1)
-        // = (3, 1) of the small plane; tap (2, 2): y = 2 + 2 + 1 = 5 → outside.
-        assert_eq!(cell.data()[row + tile + 2], Complex32::new(103.0, 1.0));
-        assert_eq!(cell.data()[row + tile + 8], Complex32::default());
-    }
-
-    /// `AWVisResampler`'s `convOrigin`: an odd cell (an older CASA's
-    /// crop, centred at `shape/2`) is read one fine sample past its centre
-    /// on both axes, as CASA reads it.
-    #[test]
-    fn an_odd_cell_is_read_about_casas_origin() {
-        let side = 9;
-        let values = (0..side * side)
-            .map(|index| Complex32::new((index % side) as f32, (index / side) as f32))
-            .collect::<Vec<_>>();
-        let cell = dense_cell_padded(&[(values, [side, side], [1, 1])], [1, 1], 2);
-        let tile = 9;
-        // Row (ox, oy) = (1, 1): no fine offset; tap (1, 1) is the origin,
-        // pixel (9/2 + 1, 9/2 + 1) = (5, 5).
-        let row = (3 + 1) * tile;
-        assert_eq!(cell.data()[row + 4], Complex32::new(5.0, 5.0));
-        // One extent odd moves both axes.
-        let values = vec![Complex32::new(1.0, 0.0); 9 * 8];
-        let cell = dense_cell_padded(&[(values, [9, 8], [1, 1])], [1, 1], 2);
-        assert_eq!(cell.support(), [3, 3]);
-        assert_eq!(convolution_origin([9, 8]), [5, 5]);
-        assert_eq!(convolution_origin([8, 8]), [4, 4]);
-    }
-
-    #[test]
-    fn the_area_sums_the_integer_taps_over_the_half_open_support() {
-        let shape = [12, 12];
-        let plane = (0..144)
-            .map(|index| Complex32::new(1.0, if index == 6 * 12 + 6 { 1.0 } else { 0.0 }))
-            .collect::<Vec<_>>();
-        // support 2, sampling 2: ix, iy ∈ {−2, −1, 0, 1} → 16 taps.
-        let area = cf_area(&plane, shape, [2, 2], 2);
-        assert_eq!(area, Complex64::new(16.0, 1.0));
-    }
-}
+mod tests;

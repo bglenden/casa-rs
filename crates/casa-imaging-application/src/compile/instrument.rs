@@ -251,6 +251,7 @@ mod tests {
             wbawp: true,
             conjbeams: true,
             computepastep: 360.0,
+            rotatepastep: 360.0,
             usepointing,
             normtype: ProductNormalization::FlatNoise,
             cf_resident_mb: Some(256),

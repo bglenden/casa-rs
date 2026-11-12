@@ -482,7 +482,7 @@ pub(super) fn aw_projection(
         aw.usepointing,
         effective_aw_pointing_offset_sigdev_arcsec(aw.usepointing, &aw.pointingoffsetsigdev),
         aw.computepastep,
-        360.0,
+        aw.rotatepastep,
     )?)
 }
 

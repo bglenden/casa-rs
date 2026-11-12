@@ -482,7 +482,7 @@
       ]
     },
     "rotatepastep": {
-      "scope": "Read and ignored; non-default values catalog-refused for applicable AW families (issue 980).",
+      "scope": "Non-default awproject rotation supports a fresh dirty VLA or EVLA continuum image with the aperture, one imported axis-aligned PA buffer, one selected field and spectral window, and the default compute step. Each rotation starts from the saved cell to avoid cumulative interpolation. Other rotation combinations remain open (#1070).",
       "evidence": [
         "signature",
         "reader"

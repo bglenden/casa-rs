@@ -959,3 +959,42 @@ fn imported_aw_rejects_an_uncovered_pa_before_publication() {
     );
     assert!(!observation.scratch(&format!("{name}.image")).exists());
 }
+
+/// The task rotates both imaging and weight cells for an imported aperture.
+#[test]
+fn imported_aw_runtime_pa_rotation_changes_the_residual_and_psf() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0", &cache, &surface);
+    native["niter"] = json!(0);
+    native["wprojplanes"] = json!(1);
+    observation.image("generate-rotation-cache", native);
+    let mut imported = json!({
+        "spw": "0", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": 1, "weighting": "natural", "niter": 0,
+    });
+    let (_, unrotated) = observation.image("unrotated-pa-cache", imported.clone());
+    imported["rotatepastep"] = json!(0.1);
+    let (_, rotated) = observation.image("rotated-pa-cache", imported.clone());
+    for suffix in [".residual", ".psf"] {
+        let a = rotated.get(suffix).values();
+        let b = unrotated.get(suffix).values();
+        let difference = a
+            .iter()
+            .zip(b.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(difference > 1.0e-6, "{suffix}: {difference}");
+    }
+    imported["niter"] = json!(1);
+    let Err(error) = observation.try_image("rotation-clean", imported) else {
+        panic!("runtime rotation accepted a clean");
+    };
+    assert!(
+        error.contains("rotatepastep currently supports dirty imported AW"),
+        "{error}"
+    );
+    assert!(!observation.scratch("rotation-clean.image").exists());
+}

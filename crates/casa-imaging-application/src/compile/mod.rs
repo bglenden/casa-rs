@@ -471,6 +471,7 @@ fn survey_observation(
             && matches!(request.gridder, Gridder::Standard { .. })
             && (request.write_pb || request.pbcor)
             && instrument::mixed_alma_dish_classes(catalogue),
+        track_rotation_epochs: matches!(&request.gridder, Gridder::Awproject(aw) if aw.rotatepastep != 360.0),
         first_cross: matches!(
             &request.gridder,
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
@@ -1059,7 +1060,7 @@ fn deployment(
             .map(|domain| parent(&domain.output))
             .collect(),
         aw: match &request.gridder {
-            Gridder::Awproject(aw) => Some(aw_plan(request, aw, surveyed)?),
+            Gridder::Awproject(aw) => Some(aw_plan(request, aw, surveyed, context)?),
             _ => None,
         },
     })
@@ -1071,6 +1072,7 @@ fn aw_plan(
     request: &ImagingRequest,
     aw: &AwProjection,
     surveyed: &Surveyed<'_>,
+    context: &RunContext,
 ) -> Result<AwPlan, PrepareError> {
     let (root, native) = match &aw.cf_source {
         AwCfSource::CasaImport { cfcache } => (cfcache.clone(), None),
@@ -1099,6 +1101,13 @@ fn aw_plan(
     } else {
         None
     };
+    let rotation = aw_rotation(
+        request,
+        aw,
+        surveyed,
+        feed_zero_angles_rad.as_deref(),
+        context,
+    )?;
     Ok(AwPlan {
         root,
         native,
@@ -1107,6 +1116,7 @@ fn aw_plan(
             image_reference_hz: surveyed.spectral.reference_frequency_hz,
             pa_tolerance_rad: aw.pa_tolerance_rad(),
             feed_zero_angles_rad,
+            rotation,
         },
         resident_bytes: match aw.cf_resident_mb {
             Some(megabytes) => megabytes
@@ -1116,4 +1126,66 @@ fn aw_plan(
         },
         automatic: aw.cf_resident_mb.is_none(),
     })
+}
+
+fn aw_rotation(
+    request: &ImagingRequest,
+    aw: &AwProjection,
+    surveyed: &Surveyed<'_>,
+    feed: Option<&[f32]>,
+    context: &RunContext,
+) -> Result<Option<casa_imaging_operator::AwPaRotation>, PrepareError> {
+    if aw.rotatepastep == 360.0 {
+        return Ok(None);
+    }
+    let [window] = surveyed.survey.spectral_windows.as_slice() else {
+        return Err(PrepareError::AwRotationScope);
+    };
+    let Some(feed) = feed else {
+        return Err(PrepareError::AwRotationScope);
+    };
+    let evla = surveyed.survey.observation_ids.iter().all(|&id| {
+        surveyed
+            .catalogue
+            .observations
+            .get(id as usize)
+            .is_some_and(|observation| matches!(observation.telescope.trim(), "EVLA" | "VLA"))
+    });
+    if !evla
+        || !aw.aterm
+        || aw.computepastep != 360.0
+        || surveyed.survey.fields.len() != 1
+        || request.specmode != SpecMode::Mfs
+        || request.solves()
+        || request.predicts_final_model()
+        || request.tclean_restart
+        || request.has_start_model()
+        || request.savemodel != crate::SaveModel::None
+        || !request.calcpsf
+        || !request.calcres
+    {
+        return Err(PrepareError::AwRotationScope);
+    }
+    let epochs = surveyed.survey.window_epochs(window.spw_id);
+    // The vector and the Arc slice can coexist while converting it.
+    let _admission = casa_imaging_runtime::admit(
+        &context.host,
+        &context.policy,
+        &casa_imaging_runtime::Demand {
+            phase: "AW rotation epochs",
+            memory: (2 * epochs.len() * size_of::<(f64, f32)>() + 2 * size_of::<usize>()) as u64,
+        },
+    )?;
+    let mut samples = Vec::with_capacity(epochs.len());
+    for epoch in epochs.iter().filter(|epoch| epoch.has_unflagged_cross) {
+        let field = usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
+        let pa = surveyed
+            .engine
+            .parallactic_angle(epoch.time_mjd_seconds, field, 0)? as f32;
+        samples.push((epoch.time_mjd_seconds, pa + feed[window.spw_id]));
+    }
+    Ok(Some(casa_imaging_operator::AwPaRotation {
+        step_rad: f64::from(aw.rotatepastep as f32).to_radians(),
+        samples: samples.into(),
+    }))
 }

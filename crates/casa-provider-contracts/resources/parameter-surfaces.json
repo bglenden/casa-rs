@@ -8479,10 +8479,9 @@
             "python": {"name": "rotatepastep"},
             "presentation": {"label": "PA Rotate Step", "group": "Advanced Wide-Field", "advanced": true}
           },
-          "unimplemented": {"issue": 1070, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}},
+          "unimplemented": {"issue": 1070, "applies_when":
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awprojectft"}}
-          ]}}
+          }
         },
         {
           "name": "pointingoffsetsigdev",
