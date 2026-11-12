@@ -218,6 +218,7 @@ fn an_opened_measurement_set_uses_each_integrations_saved_field() {
         },
     )
     .unwrap();
+    sm.set_seed(19);
     let spec = NoiseSpec {
         simple_noise_jy: 0.25,
         on_the_fly: false,
