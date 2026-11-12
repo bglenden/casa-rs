@@ -593,6 +593,8 @@ pub struct AwProjection {
     pub conjbeams: bool,
     /// The maximum PA distance of an imported buffer, in degrees.
     pub computepastep: f64,
+    /// The PA change that triggers rotation of an imported buffer, degrees.
+    pub rotatepastep: f64,
     /// Sample each row's pointing from the `POINTING` table.
     pub usepointing: bool,
     /// Flat-noise or flat-sky products.
@@ -1049,6 +1051,12 @@ impl AwProjection {
         if !pa_step_rad.is_finite() || pa_step_rad <= 0.0 {
             return invalid("computepastep", "the PA step must be finite and positive");
         }
+        if !(self.rotatepastep as f32).is_finite() || self.rotatepastep as f32 <= 0.0 {
+            return invalid(
+                "rotatepastep",
+                "the rotation step must be finite and positive",
+            );
+        }
         // `AWConvFunc`'s constructor: a cell needs one of the two.
         if !self.aterm && !self.psterm {
             return invalid(
@@ -1075,6 +1083,12 @@ impl AwProjection {
                 return invalid(
                     "computepastep",
                     "native generation at a non-default PA step is unfinished (#1070)",
+                );
+            }
+            if self.rotatepastep != 360.0 {
+                return invalid(
+                    "rotatepastep",
+                    "runtime rotation is supported for imported caches (#1070)",
                 );
             }
             let size = *native_cf_working_size;

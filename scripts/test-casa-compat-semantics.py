@@ -38,11 +38,14 @@ class SemanticReferenceTests(unittest.TestCase):
         self.assertEqual(semantics.implementation(binding, {"status": "Partial"}), "Partial")
 
     def test_conditional_refusals_are_rendered_from_the_runtime_gate(self):
-        binding = next(b for b in self.surface["bindings"] if b["name"] == "rotatepastep")
-        gate = binding["unimplemented"]["applies_when"]
-        self.assertEqual(semantics.condition(gate), "(gridder='awproject' or gridder='awprojectft')")
-        gate["predicates"][1]["value"]["value"] = "awphpg"
-        self.assertEqual(semantics.condition(gate), "(gridder='awproject' or gridder='awphpg')")
+        rotation = next(b for b in self.surface["bindings"] if b["name"] == "rotatepastep")
+        self.assertEqual(semantics.condition(rotation["unimplemented"]["applies_when"]), "gridder='awprojectft'")
+
+        compute = next(b for b in self.surface["bindings"] if b["name"] == "computepastep")
+        gate = compute["unimplemented"]["applies_when"]
+        self.assertEqual(semantics.condition(gate), "(gridder='awphpg' or gridder='awprojectft' or gridder='awp2')")
+        gate["predicates"][1]["value"]["value"] = "awproject"
+        self.assertEqual(semantics.condition(gate), "(gridder='awphpg' or gridder='awproject' or gridder='awp2')")
 
     def test_signature_recording_does_not_become_a_passing_behavior_result(self):
         self.assertNotEqual(self.data["evidence"]["signature"]["state"], "passed")

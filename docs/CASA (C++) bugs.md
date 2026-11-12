@@ -517,6 +517,30 @@ fields. CASA's separate one-degree coalescence in
 `CFCache::fillCFListFromDisk` and `CFStore2::resize` remains unverified for
 densely spaced imported headers (#1070).
 
+## AW aperture rotation can regrid an already rotated cell
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 rotation history affects the residual. Casa-rs
+  samples the saved cell at each rotation epoch (#1070).
+- Affected code: `TransformMachines2/AWConvFunc.cc`
+  (`prepareConvFunction`), `AzElAperture.cc` (`rotate2`) and
+  `Utils.cc` (`rotateComplexArray`).
+
+The first change greater than `rotatepastep` regrids the current kernel
+with cubic interpolation and records the current feed PA. Later changes
+regrid those already interpolated pixels. On field 0 of
+`refim_mawproject.ms`, a zero-weight integration at -99.639° followed
+by the same nonzero integration at 177.839° changes CASA's 5-degree
+residual by 1.122e-4 NRMS versus selecting the final integration alone.
+Both paths rotate to the same final PA. The default 360-degree control
+has identical arrays in both selections.
+
+Casa-rs uses the same strict trigger and cubic interpolation, starting
+from the saved cell at each epoch. Its two selections at the same final
+PA have identical arrays and masks. The independent CASA one-integration
+control and the full field match all seven products and masks under the
+existing limits. The largest full-field NRMS is 6.737e-5.
+
 ## AW pointing can reuse the origin of an earlier convolution buffer
 
 - Date noted: 2026-11-12

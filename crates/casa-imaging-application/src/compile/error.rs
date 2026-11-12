@@ -466,6 +466,11 @@ pub enum PrepareError {
     /// cross-correlation sample, and the selection has none.
     #[error("native AW has no unflagged cross-correlation sample")]
     NoCrossCorrelationRow,
+    /// Runtime rotation's remaining imaging combinations.
+    #[error(
+        "rotatepastep currently supports dirty imported AW continuum for VLA or EVLA with the aperture, default computepastep, one selected field and spectral window, and both PSF and residual computed (#1070)"
+    )]
+    AwRotationScope,
     /// `cf_resident_mb` is larger than the address space.
     #[error("cf_resident_mb {megabytes} exceeds addressable memory")]
     CfResidentSize {

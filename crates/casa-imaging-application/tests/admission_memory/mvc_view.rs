@@ -246,6 +246,7 @@ fn cube_request_copy_accounts_for_aw_owned_buffers() {
             wbawp: false,
             conjbeams: false,
             computepastep: 360.0,
+            rotatepastep: 360.0,
             usepointing: false,
             normtype: ProductNormalization::UnitResponse,
             cf_resident_mb: None,

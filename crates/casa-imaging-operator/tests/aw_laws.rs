@@ -111,6 +111,7 @@ fn indexing(conjugate_beams: bool) -> AwIndexing {
         image_reference_hz: REFERENCE_HZ,
         pa_tolerance_rad: 360.0_f32.to_radians(),
         feed_zero_angles_rad: None,
+        rotation: None,
     }
 }
 

@@ -58,7 +58,7 @@ pub use accumulator::{
     GridStorage, Mode, ModeSet, PlaneRange, Tile,
 };
 pub use aw::{
-    AwCatalog, AwCatalogError, AwIndexing, CacheBound, CacheCharge, EvlaApertureGrid,
+    AwCatalog, AwCatalogError, AwIndexing, AwPaRotation, CacheBound, CacheCharge, EvlaApertureGrid,
     EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair, NativeAwPlane,
     NativeCacheLock, NativeCacheState, NativeManifest,
 };

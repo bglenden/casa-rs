@@ -48,6 +48,7 @@ use casa_coordinates::{
 };
 use casa_types::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder};
+use num_complex::Complex32;
 
 use crate::{ImageError, ImageInterface, ImagePixel};
 
@@ -613,6 +614,52 @@ impl<'s> PlaneIndex<'s> {
     }
 }
 
+/// Regrid a complex AW convolution plane around its integer centre pixel,
+/// using CASA's cubic interpolation separately on the real and imaginary
+/// parts (`SynthesisUtils::rotateComplexArray`). The matrix maps an output
+/// offset from that centre to the corresponding input offset. Pixels with
+/// no input sample are zero. The first axis is contiguous in both arrays.
+///
+/// # Panics
+///
+/// Panics when `input` does not have exactly `shape[0] * shape[1]` pixels.
+#[must_use]
+pub fn regrid_complex_plane(
+    input: &[Complex32],
+    shape: [usize; 2],
+    input_from_output: [[f64; 2]; 2],
+) -> Vec<Complex32> {
+    let [width, height] = shape;
+    assert_eq!(input.len(), width * height);
+    let real: Vec<_> = input.iter().map(|value| f64::from(value.re)).collect();
+    let imaginary: Vec<_> = input.iter().map(|value| f64::from(value.im)).collect();
+    let real = Plane {
+        data: &real,
+        mask: None,
+        shape,
+    };
+    let imaginary = Plane {
+        data: &imaginary,
+        mask: None,
+        shape,
+    };
+    let [cx, cy] = [(width / 2) as f64, (height / 2) as f64];
+    let [[xx, xy], [yx, yy]] = input_from_output;
+    let mut output = Vec::with_capacity(input.len());
+    for y in 0..height {
+        let dy = y as f64 - cy;
+        for x in 0..width {
+            let dx = x as f64 - cx;
+            let at = [cx + xx * dx + xy * dy, cy + yx * dx + yy * dy];
+            output.push(Complex32::new(
+                real.cubic(at).unwrap_or(0.0) as f32,
+                imaginary.cubic(at).unwrap_or(0.0) as f32,
+            ));
+        }
+    }
+    output
+}
+
 /// One direction plane of the input, first axis fastest, with its mask
 /// (true where good) when it has one.
 struct Plane<'a> {
@@ -785,6 +832,23 @@ fn bicubic_coefficients(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complex_regrid_rotates_both_parts_about_the_integer_centre() {
+        let shape = [8, 8];
+        let input: Vec<_> = (0..8)
+            .flat_map(|y| {
+                (0..8).map(move |x| Complex32::new((x * x + 2 * y * y) as f32, (x * y - x) as f32))
+            })
+            .collect();
+        let output = regrid_complex_plane(&input, shape, [[0.8, -0.6], [0.6, 0.8]]);
+        // (5,5) samples (4.2,5.4), where cubic interpolation recovers
+        // these quadratic and bilinear polynomials exactly to Float rounding.
+        let want = Complex32::new(75.96, 18.48);
+        assert!((output[5 + 5 * 8] - want).norm() < 1.0e-5);
+        assert_eq!(output[4 + 4 * 8], input[4 + 4 * 8]);
+        assert_eq!(output[7 + 7 * 8], Complex32::default());
+    }
 
     #[test]
     fn regrid_rejects_distinct_direction_conversion_frames() {
