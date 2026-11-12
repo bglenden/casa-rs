@@ -517,6 +517,13 @@ with a fresh CLEAN on the same observation. casa-rs recomputes weights
 when it recomputes the PSF. All 19 products and the iteration counts
 agree with both CASA controls under the existing tolerances.
 
+The matching `cbTrue_twofield` case reloads the higher weights by 49,980.72
+and fits the same reload and sinc correction to 7.4e-8 NRMS. Fresh CLEAN,
+same-prefix CLEAN after moving only the saved weights, and continuation with
+`calcpsf=False` each agree with casa-rs on all 19 products and their masks.
+Both implementations report ten iterations and two major cycles in each
+control.
+
 ## A Taylor term gives every Stokes plane the first correlation's sum of weights
 
 - Date noted: 2026-11-03
