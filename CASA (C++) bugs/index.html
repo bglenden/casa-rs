@@ -972,6 +972,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AW pointing can reuse the origin of an earlier convolution buffer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1471,6 +1482,29 @@ term's raw <code>getWeightImage</code> moment, so <code>.weight.tt1</code> and <
 the raw Σ W·s^N while <code>.weight.tt0</code> is normalized. CASA 6.7.6.14 on
 <code>refim_alma_mosaic</code> (mosaic, <code>nterms=2</code>) agrees: <code>weight.ttN / sumwt.ttN</code> is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.</p>
+<h2 id="aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer">AW pointing can reuse the origin of an earlier convolution buffer<a class="headerlink" href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: CASA 6.7.6.14 bug. casa-rs uses the current buffer's origin (#1070).</li>
+<li>Affected code: <code>TransformMachines2/VB2CFBMap.cc</code>, <code>PhaseGrad.cc</code>
+  (<code>needsNewPhaseGrad</code>, <code>ComputeFieldPointingGrad</code>) and the resampler's
+  <code>accumulateToGrid.inc</code> and <code>accumulateFromGrid.inc</code>.</li>
+</ul>
+<p>The gradient array uses the selected PA buffer's maximum CF width. Its
+origin is <code>width/2</code> for an even width and <code>width/2+1</code> for an odd width.
+The resampler reads the gradient about <code>width/2</code> in either case. A wider
+array can survive a switch to a smaller CF buffer on the same field.
+PSF formation visits the weight buffer first, and the residual can use its
+origin when the two buffers have opposite parity.</p>
+<p>On the offset field of <code>refim_oneshiftpoint.mosaic.ms</code>, making the imaging
+or weight buffer even produces a 0.0325 NRMS change in <code>.residual.tt0</code>
+between fresh PSF formation and <code>calcpsf=False,calcres=True</code> with that same
+PSF. The PSF, weights, inputs and cache are identical between each pair.
+The uniformly odd control produces identical CASA residuals. Casa-rs uses
+the maximum width of each selected imaging or weight buffer independently.
+Its fresh and saved-PSF runs agree with all 21 CASA products from the
+saved-PSF control, including masks and both PB-corrected Taylor images.
+Prediction uses the conjugate of the imaging phase.</p>
 <h2 id="aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again">AW MT-MFS restart multiplies saved higher Taylor weights again<a class="headerlink" href="#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>
