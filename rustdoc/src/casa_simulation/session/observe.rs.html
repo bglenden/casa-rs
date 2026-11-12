@@ -405,112 +405,113 @@
 <a href=#405 id=405 data-nosnippet>405</a>            });
 <a href=#406 id=406 data-nosnippet>406</a>        }
 <a href=#407 id=407 data-nosnippet>407</a>        <span class="macro">tracing::info!</span>(<span class="string">"Calculating a total of {integrations} integrations"</span>);
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="prelude-val">Ok</span>(())
-<a href=#409 id=409 data-nosnippet>409</a>    }
-<a href=#410 id=410 data-nosnippet>410</a>
-<a href=#411 id=411 data-nosnippet>411</a>    <span class="doccomment">/// The checks `NewMSSimulator::observe` makes before its fields, and
-<a href=#412 id=412 data-nosnippet>412</a>    /// the default feeds it sets: antennas, feeds as one per antenna, and
-<a href=#413 id=413 data-nosnippet>413</a>    /// the spectral window named `name`, whose index it returns.
-<a href=#414 id=414 data-nosnippet>414</a>    </span><span class="kw">fn </span>observable_window(<span class="kw-2">&amp;mut </span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;usize&gt; {
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">if </span><span class="self">self</span>.antennas.is_empty() {
-<a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
-<a href=#417 id=417 data-nosnippet>417</a>                <span class="string">"Antenna information not yet defined"</span>,
-<a href=#418 id=418 data-nosnippet>418</a>            ));
-<a href=#419 id=419 data-nosnippet>419</a>        }
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">if </span>!<span class="self">self</span>.feeds_set &amp;&amp; <span class="self">self</span>.feeds.is_empty() {
-<a href=#421 id=421 data-nosnippet>421</a>            <span class="macro">tracing::warn!</span>(<span class="string">"Feeds have not been set - using default perfect R L"</span>);
-<a href=#422 id=422 data-nosnippet>422</a>            <span class="self">self</span>.feeds = <span class="kw">super</span>::feeds::perfect_feeds(<span class="string">"perfect R L"</span>, <span class="self">self</span>.antennas.len());
-<a href=#423 id=423 data-nosnippet>423</a>        }
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">if </span>!<span class="self">self</span>.times.set {
-<a href=#425 id=425 data-nosnippet>425</a>            <span class="macro">tracing::warn!</span>(<span class="string">"Times have not been set - using defaults"</span>);
-<a href=#426 id=426 data-nosnippet>426</a>            <span class="macro">tracing::warn!</span>(<span class="string">"     Times will be interpreted as hour angles for first source"</span>);
-<a href=#427 id=427 data-nosnippet>427</a>        }
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">if </span><span class="self">self</span>.feeds.len() != <span class="self">self</span>.antennas.len() {
-<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
-<a href=#430 id=430 data-nosnippet>430</a>                <span class="string">"Feed table format is incompatible with existing code of NewMSSimulator::observe"</span>,
-<a href=#431 id=431 data-nosnippet>431</a>            ));
-<a href=#432 id=432 data-nosnippet>432</a>        }
-<a href=#433 id=433 data-nosnippet>433</a>        <span class="kw">if </span><span class="self">self</span>.spectral_windows.is_empty() {
-<a href=#434 id=434 data-nosnippet>434</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
-<a href=#435 id=435 data-nosnippet>435</a>                <span class="string">"Spectral window information not yet defined"</span>,
-<a href=#436 id=436 data-nosnippet>436</a>            ));
-<a href=#437 id=437 data-nosnippet>437</a>        }
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="self">self</span>.spectral_windows
-<a href=#439 id=439 data-nosnippet>439</a>            .iter()
-<a href=#440 id=440 data-nosnippet>440</a>            .position(|window| window.name == name)
-<a href=#441 id=441 data-nosnippet>441</a>            .ok_or_else(|| {
-<a href=#442 id=442 data-nosnippet>442</a>                SimulatorError::refused(<span class="macro">format!</span>(<span class="string">"Spectral window named {name} not yet defined"</span>))
-<a href=#443 id=443 data-nosnippet>443</a>            })
-<a href=#444 id=444 data-nosnippet>444</a>    }
-<a href=#445 id=445 data-nosnippet>445</a>
-<a href=#446 id=446 data-nosnippet>446</a>    <span class="doccomment">/// The OBSERVATION_ID of a planned observation spanning `time_range_s`:
-<a href=#447 id=447 data-nosnippet>447</a>    /// a new OBSERVATION row when `spec` asks for one or there is none,
-<a href=#448 id=448 data-nosnippet>448</a>    /// numbered one past the largest OBSERVATION_ID in MAIN so far, else 0.
-<a href=#449 id=449 data-nosnippet>449</a>    </span><span class="kw">fn </span>observation_for(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ObserveManySpec, time_range_s: [f64; <span class="number">2</span>]) -&gt; i32 {
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">if </span>!spec.add_observation &amp;&amp; !<span class="self">self</span>.observations.is_empty() {
-<a href=#451 id=451 data-nosnippet>451</a>            <span class="kw">return </span><span class="number">0</span>;
-<a href=#452 id=452 data-nosnippet>452</a>        }
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="self">self</span>.observations.push(Observation {
-<a href=#454 id=454 data-nosnippet>454</a>            telescope: <span class="self">self</span>.telescope.clone(),
-<a href=#455 id=455 data-nosnippet>455</a>            time_range_s,
-<a href=#456 id=456 data-nosnippet>456</a>            observer: spec.observer.clone(),
-<a href=#457 id=457 data-nosnippet>457</a>            project: spec.project.clone(),
-<a href=#458 id=458 data-nosnippet>458</a>        });
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="self">self</span>.scans
-<a href=#460 id=460 data-nosnippet>460</a>            .iter()
-<a href=#461 id=461 data-nosnippet>461</a>            .filter_map(|scan| scan.planned().map(|rows| rows.observation_id))
-<a href=#462 id=462 data-nosnippet>462</a>            .max()
-<a href=#463 id=463 data-nosnippet>463</a>            .map_or(<span class="number">0</span>, |largest| largest + <span class="number">1</span>)
-<a href=#464 id=464 data-nosnippet>464</a>    }
-<a href=#465 id=465 data-nosnippet>465</a>}
-<a href=#466 id=466 data-nosnippet>466</a>
-<a href=#467 id=467 data-nosnippet>467</a><span class="doccomment">/// CASA's integration count for one pointing: `max(1, Int(0.5 + span/Tint))`,
-<a href=#468 id=468 data-nosnippet>468</a>/// with C++'s truncation toward zero.
-<a href=#469 id=469 data-nosnippet>469</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>integration_count(start_s: f64, stop_s: f64, integration_s: f64) -&gt; usize {
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="kw">let </span>count = (<span class="number">0.5 </span>+ (stop_s - start_s) / integration_s).trunc();
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">if </span>count &gt;= <span class="number">1.0 </span>{ count <span class="kw">as </span>usize } <span class="kw">else </span>{ <span class="number">1 </span>}
-<a href=#472 id=472 data-nosnippet>472</a>}
-<a href=#473 id=473 data-nosnippet>473</a>
-<a href=#474 id=474 data-nosnippet>474</a><span class="doccomment">/// `NewMSSimulator`'s hour-angle offset: minus the hour angle of `direction`
-<a href=#475 id=475 data-nosnippet>475</a>/// at the reference epoch and the first antenna, as seconds, converting
-<a href=#476 id=476 data-nosnippet>476</a>/// hours of hour angle at 3600 seconds each (no sidereal factor).
-<a href=#477 id=477 data-nosnippet>477</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>hour_angle_offset_s(
-<a href=#478 id=478 data-nosnippet>478</a>    direction_rad: [f64; <span class="number">2</span>],
-<a href=#479 id=479 data-nosnippet>479</a>    reference: <span class="kw-2">&amp;</span>MEpoch,
-<a href=#480 id=480 data-nosnippet>480</a>    first_antenna_itrf_m: [f64; <span class="number">3</span>],
-<a href=#481 id=481 data-nosnippet>481</a>    measures: Arc&lt;<span class="kw">dyn </span>MeasuresProvider&gt;,
-<a href=#482 id=482 data-nosnippet>482</a>) -&gt; SimulatorResult&lt;f64&gt; {
-<a href=#483 id=483 data-nosnippet>483</a>    <span class="kw">let </span>[x, y, z] = first_antenna_itrf_m;
-<a href=#484 id=484 data-nosnippet>484</a>    <span class="kw">let </span>frame = MeasFrame::new()
-<a href=#485 id=485 data-nosnippet>485</a>        .with_epoch(reference.clone())
-<a href=#486 id=486 data-nosnippet>486</a>        .with_position(MPosition::new_itrf(x, y, z))
-<a href=#487 id=487 data-nosnippet>487</a>        .with_measures(measures);
-<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">let </span>hadec = MDirection::from_angles(direction_rad[<span class="number">0</span>], direction_rad[<span class="number">1</span>], DirectionRef::J2000)
-<a href=#489 id=489 data-nosnippet>489</a>        .convert_to(DirectionRef::HADEC, <span class="kw-2">&amp;</span>frame)
-<a href=#490 id=490 data-nosnippet>490</a>        .map_err(|error| {
-<a href=#491 id=491 data-nosnippet>491</a>            SimulatorError::refused(<span class="macro">format!</span>(<span class="string">"hour angle of the first source: {error}"</span>))
-<a href=#492 id=492 data-nosnippet>492</a>        })<span class="question-mark">?</span>;
-<a href=#493 id=493 data-nosnippet>493</a>    <span class="kw">let </span><span class="kw-2">mut </span>hour_angle = hadec.as_angles().<span class="number">0</span>;
-<a href=#494 id=494 data-nosnippet>494</a>    <span class="comment">// casacore's MVDirection longitude is in (−π, π].
-<a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">if </span>hour_angle &gt; std::f64::consts::PI {
-<a href=#496 id=496 data-nosnippet>496</a>        hour_angle -= std::f64::consts::TAU;
-<a href=#497 id=497 data-nosnippet>497</a>    } <span class="kw">else if </span>hour_angle &lt;= -std::f64::consts::PI {
-<a href=#498 id=498 data-nosnippet>498</a>        hour_angle += std::f64::consts::TAU;
-<a href=#499 id=499 data-nosnippet>499</a>    }
-<a href=#500 id=500 data-nosnippet>500</a>    <span class="prelude-val">Ok</span>(-hour_angle * (<span class="number">3600.0 </span>* <span class="number">180.0 </span>/ std::f64::consts::PI / <span class="number">15.0</span>))
-<a href=#501 id=501 data-nosnippet>501</a>}
-<a href=#502 id=502 data-nosnippet>502</a>
-<a href=#503 id=503 data-nosnippet>503</a><span class="attr">#[cfg(test)]
-<a href=#504 id=504 data-nosnippet>504</a></span><span class="kw">mod </span>tests {
-<a href=#505 id=505 data-nosnippet>505</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#506 id=506 data-nosnippet>506</a>
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="attr">#[test]
-<a href=#508 id=508 data-nosnippet>508</a>    </span><span class="kw">fn </span>integration_counts_round_like_casa() {
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">10.0</span>), <span class="number">1</span>);
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="macro">assert_eq!</span>(integration_count(-<span class="number">600.0</span>, -<span class="number">300.0</span>, <span class="number">10.0</span>), <span class="number">30</span>);
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">0.0</span>, <span class="number">14.0</span>, <span class="number">10.0</span>), <span class="number">1</span>);
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">0.0</span>, <span class="number">15.0</span>, <span class="number">10.0</span>), <span class="number">2</span>);
-<a href=#513 id=513 data-nosnippet>513</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">10.0</span>, <span class="number">0.0</span>, <span class="number">10.0</span>), <span class="number">1</span>);
-<a href=#514 id=514 data-nosnippet>514</a>    }
-<a href=#515 id=515 data-nosnippet>515</a>}
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="self">self</span>.data_plan.reset_selection();
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="prelude-val">Ok</span>(())
+<a href=#410 id=410 data-nosnippet>410</a>    }
+<a href=#411 id=411 data-nosnippet>411</a>
+<a href=#412 id=412 data-nosnippet>412</a>    <span class="doccomment">/// The checks `NewMSSimulator::observe` makes before its fields, and
+<a href=#413 id=413 data-nosnippet>413</a>    /// the default feeds it sets: antennas, feeds as one per antenna, and
+<a href=#414 id=414 data-nosnippet>414</a>    /// the spectral window named `name`, whose index it returns.
+<a href=#415 id=415 data-nosnippet>415</a>    </span><span class="kw">fn </span>observable_window(<span class="kw-2">&amp;mut </span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;usize&gt; {
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">if </span><span class="self">self</span>.antennas.is_empty() {
+<a href=#417 id=417 data-nosnippet>417</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
+<a href=#418 id=418 data-nosnippet>418</a>                <span class="string">"Antenna information not yet defined"</span>,
+<a href=#419 id=419 data-nosnippet>419</a>            ));
+<a href=#420 id=420 data-nosnippet>420</a>        }
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">if </span>!<span class="self">self</span>.feeds_set &amp;&amp; <span class="self">self</span>.feeds.is_empty() {
+<a href=#422 id=422 data-nosnippet>422</a>            <span class="macro">tracing::warn!</span>(<span class="string">"Feeds have not been set - using default perfect R L"</span>);
+<a href=#423 id=423 data-nosnippet>423</a>            <span class="self">self</span>.feeds = <span class="kw">super</span>::feeds::perfect_feeds(<span class="string">"perfect R L"</span>, <span class="self">self</span>.antennas.len());
+<a href=#424 id=424 data-nosnippet>424</a>        }
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">if </span>!<span class="self">self</span>.times.set {
+<a href=#426 id=426 data-nosnippet>426</a>            <span class="macro">tracing::warn!</span>(<span class="string">"Times have not been set - using defaults"</span>);
+<a href=#427 id=427 data-nosnippet>427</a>            <span class="macro">tracing::warn!</span>(<span class="string">"     Times will be interpreted as hour angles for first source"</span>);
+<a href=#428 id=428 data-nosnippet>428</a>        }
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">if </span><span class="self">self</span>.feeds.len() != <span class="self">self</span>.antennas.len() {
+<a href=#430 id=430 data-nosnippet>430</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
+<a href=#431 id=431 data-nosnippet>431</a>                <span class="string">"Feed table format is incompatible with existing code of NewMSSimulator::observe"</span>,
+<a href=#432 id=432 data-nosnippet>432</a>            ));
+<a href=#433 id=433 data-nosnippet>433</a>        }
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">if </span><span class="self">self</span>.spectral_windows.is_empty() {
+<a href=#435 id=435 data-nosnippet>435</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(
+<a href=#436 id=436 data-nosnippet>436</a>                <span class="string">"Spectral window information not yet defined"</span>,
+<a href=#437 id=437 data-nosnippet>437</a>            ));
+<a href=#438 id=438 data-nosnippet>438</a>        }
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="self">self</span>.spectral_windows
+<a href=#440 id=440 data-nosnippet>440</a>            .iter()
+<a href=#441 id=441 data-nosnippet>441</a>            .position(|window| window.name == name)
+<a href=#442 id=442 data-nosnippet>442</a>            .ok_or_else(|| {
+<a href=#443 id=443 data-nosnippet>443</a>                SimulatorError::refused(<span class="macro">format!</span>(<span class="string">"Spectral window named {name} not yet defined"</span>))
+<a href=#444 id=444 data-nosnippet>444</a>            })
+<a href=#445 id=445 data-nosnippet>445</a>    }
+<a href=#446 id=446 data-nosnippet>446</a>
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="doccomment">/// The OBSERVATION_ID of a planned observation spanning `time_range_s`:
+<a href=#448 id=448 data-nosnippet>448</a>    /// a new OBSERVATION row when `spec` asks for one or there is none,
+<a href=#449 id=449 data-nosnippet>449</a>    /// numbered one past the largest OBSERVATION_ID in MAIN so far, else 0.
+<a href=#450 id=450 data-nosnippet>450</a>    </span><span class="kw">fn </span>observation_for(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>ObserveManySpec, time_range_s: [f64; <span class="number">2</span>]) -&gt; i32 {
+<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">if </span>!spec.add_observation &amp;&amp; !<span class="self">self</span>.observations.is_empty() {
+<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">return </span><span class="number">0</span>;
+<a href=#453 id=453 data-nosnippet>453</a>        }
+<a href=#454 id=454 data-nosnippet>454</a>        <span class="self">self</span>.observations.push(Observation {
+<a href=#455 id=455 data-nosnippet>455</a>            telescope: <span class="self">self</span>.telescope.clone(),
+<a href=#456 id=456 data-nosnippet>456</a>            time_range_s,
+<a href=#457 id=457 data-nosnippet>457</a>            observer: spec.observer.clone(),
+<a href=#458 id=458 data-nosnippet>458</a>            project: spec.project.clone(),
+<a href=#459 id=459 data-nosnippet>459</a>        });
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="self">self</span>.scans
+<a href=#461 id=461 data-nosnippet>461</a>            .iter()
+<a href=#462 id=462 data-nosnippet>462</a>            .filter_map(|scan| scan.planned().map(|rows| rows.observation_id))
+<a href=#463 id=463 data-nosnippet>463</a>            .max()
+<a href=#464 id=464 data-nosnippet>464</a>            .map_or(<span class="number">0</span>, |largest| largest + <span class="number">1</span>)
+<a href=#465 id=465 data-nosnippet>465</a>    }
+<a href=#466 id=466 data-nosnippet>466</a>}
+<a href=#467 id=467 data-nosnippet>467</a>
+<a href=#468 id=468 data-nosnippet>468</a><span class="doccomment">/// CASA's integration count for one pointing: `max(1, Int(0.5 + span/Tint))`,
+<a href=#469 id=469 data-nosnippet>469</a>/// with C++'s truncation toward zero.
+<a href=#470 id=470 data-nosnippet>470</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>integration_count(start_s: f64, stop_s: f64, integration_s: f64) -&gt; usize {
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">let </span>count = (<span class="number">0.5 </span>+ (stop_s - start_s) / integration_s).trunc();
+<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">if </span>count &gt;= <span class="number">1.0 </span>{ count <span class="kw">as </span>usize } <span class="kw">else </span>{ <span class="number">1 </span>}
+<a href=#473 id=473 data-nosnippet>473</a>}
+<a href=#474 id=474 data-nosnippet>474</a>
+<a href=#475 id=475 data-nosnippet>475</a><span class="doccomment">/// `NewMSSimulator`'s hour-angle offset: minus the hour angle of `direction`
+<a href=#476 id=476 data-nosnippet>476</a>/// at the reference epoch and the first antenna, as seconds, converting
+<a href=#477 id=477 data-nosnippet>477</a>/// hours of hour angle at 3600 seconds each (no sidereal factor).
+<a href=#478 id=478 data-nosnippet>478</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>hour_angle_offset_s(
+<a href=#479 id=479 data-nosnippet>479</a>    direction_rad: [f64; <span class="number">2</span>],
+<a href=#480 id=480 data-nosnippet>480</a>    reference: <span class="kw-2">&amp;</span>MEpoch,
+<a href=#481 id=481 data-nosnippet>481</a>    first_antenna_itrf_m: [f64; <span class="number">3</span>],
+<a href=#482 id=482 data-nosnippet>482</a>    measures: Arc&lt;<span class="kw">dyn </span>MeasuresProvider&gt;,
+<a href=#483 id=483 data-nosnippet>483</a>) -&gt; SimulatorResult&lt;f64&gt; {
+<a href=#484 id=484 data-nosnippet>484</a>    <span class="kw">let </span>[x, y, z] = first_antenna_itrf_m;
+<a href=#485 id=485 data-nosnippet>485</a>    <span class="kw">let </span>frame = MeasFrame::new()
+<a href=#486 id=486 data-nosnippet>486</a>        .with_epoch(reference.clone())
+<a href=#487 id=487 data-nosnippet>487</a>        .with_position(MPosition::new_itrf(x, y, z))
+<a href=#488 id=488 data-nosnippet>488</a>        .with_measures(measures);
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="kw">let </span>hadec = MDirection::from_angles(direction_rad[<span class="number">0</span>], direction_rad[<span class="number">1</span>], DirectionRef::J2000)
+<a href=#490 id=490 data-nosnippet>490</a>        .convert_to(DirectionRef::HADEC, <span class="kw-2">&amp;</span>frame)
+<a href=#491 id=491 data-nosnippet>491</a>        .map_err(|error| {
+<a href=#492 id=492 data-nosnippet>492</a>            SimulatorError::refused(<span class="macro">format!</span>(<span class="string">"hour angle of the first source: {error}"</span>))
+<a href=#493 id=493 data-nosnippet>493</a>        })<span class="question-mark">?</span>;
+<a href=#494 id=494 data-nosnippet>494</a>    <span class="kw">let </span><span class="kw-2">mut </span>hour_angle = hadec.as_angles().<span class="number">0</span>;
+<a href=#495 id=495 data-nosnippet>495</a>    <span class="comment">// casacore's MVDirection longitude is in (−π, π].
+<a href=#496 id=496 data-nosnippet>496</a>    </span><span class="kw">if </span>hour_angle &gt; std::f64::consts::PI {
+<a href=#497 id=497 data-nosnippet>497</a>        hour_angle -= std::f64::consts::TAU;
+<a href=#498 id=498 data-nosnippet>498</a>    } <span class="kw">else if </span>hour_angle &lt;= -std::f64::consts::PI {
+<a href=#499 id=499 data-nosnippet>499</a>        hour_angle += std::f64::consts::TAU;
+<a href=#500 id=500 data-nosnippet>500</a>    }
+<a href=#501 id=501 data-nosnippet>501</a>    <span class="prelude-val">Ok</span>(-hour_angle * (<span class="number">3600.0 </span>* <span class="number">180.0 </span>/ std::f64::consts::PI / <span class="number">15.0</span>))
+<a href=#502 id=502 data-nosnippet>502</a>}
+<a href=#503 id=503 data-nosnippet>503</a>
+<a href=#504 id=504 data-nosnippet>504</a><span class="attr">#[cfg(test)]
+<a href=#505 id=505 data-nosnippet>505</a></span><span class="kw">mod </span>tests {
+<a href=#506 id=506 data-nosnippet>506</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#507 id=507 data-nosnippet>507</a>
+<a href=#508 id=508 data-nosnippet>508</a>    <span class="attr">#[test]
+<a href=#509 id=509 data-nosnippet>509</a>    </span><span class="kw">fn </span>integration_counts_round_like_casa() {
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">10.0</span>), <span class="number">1</span>);
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="macro">assert_eq!</span>(integration_count(-<span class="number">600.0</span>, -<span class="number">300.0</span>, <span class="number">10.0</span>), <span class="number">30</span>);
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">0.0</span>, <span class="number">14.0</span>, <span class="number">10.0</span>), <span class="number">1</span>);
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">0.0</span>, <span class="number">15.0</span>, <span class="number">10.0</span>), <span class="number">2</span>);
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="macro">assert_eq!</span>(integration_count(<span class="number">10.0</span>, <span class="number">0.0</span>, <span class="number">10.0</span>), <span class="number">1</span>);
+<a href=#515 id=515 data-nosnippet>515</a>    }
+<a href=#516 id=516 data-nosnippet>516</a>}
 </code></pre></div></section></main></body></html>

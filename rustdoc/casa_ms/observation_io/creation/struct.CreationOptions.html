@@ -4,7 +4,7 @@
     pub batch_bytes: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     pub memory_bytes: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     pub padding: <a class="enum" href="enum.PaddingRows.html" title="enum casa_ms::observation_io::creation::PaddingRows">PaddingRows</a>,
-    pub tolerance: MergeTolerance,
+    pub tolerance: <a class="struct" href="../../../casa_observation/merge/struct.MergeTolerance.html" title="struct casa_observation::merge::MergeTolerance">MergeTolerance</a>,
     pub history: <a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="struct.HistoryRow.html" title="struct casa_ms::observation_io::creation::HistoryRow">HistoryRow</a>&gt;,
     pub creation_date: <a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>How a plan reads its inputs and writes the MeasurementSet.</p>
@@ -20,7 +20,7 @@ it is allocated (<a href="struct.MemoryCharges.html" title="struct casa_ms::obse
 host’s usual share.</p>
 </div><span id="structfield.padding" class="structfield section-header"><a href="#structfield.padding" class="anchor field">§</a><code>padding: <a class="enum" href="enum.PaddingRows.html" title="enum casa_ms::observation_io::creation::PaddingRows">PaddingRows</a></code></span><div class="docblock"><p>What a padded grid cell becomes; partitions combined from several
 inputs need it omitted.</p>
-</div><span id="structfield.tolerance" class="structfield section-header"><a href="#structfield.tolerance" class="anchor field">§</a><code>tolerance: MergeTolerance</code></span><div class="docblock"><p>How close the inputs’ entities must be to be one, as CASA’s <code>concat</code>
+</div><span id="structfield.tolerance" class="structfield section-header"><a href="#structfield.tolerance" class="anchor field">§</a><code>tolerance: <a class="struct" href="../../../casa_observation/merge/struct.MergeTolerance.html" title="struct casa_observation::merge::MergeTolerance">MergeTolerance</a></code></span><div class="docblock"><p>How close the inputs’ entities must be to be one, as CASA’s <code>concat</code>
 matches them.</p>
 </div><span id="structfield.history" class="structfield section-header"><a href="#structfield.history" class="anchor field">§</a><code>history: <a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="struct.HistoryRow.html" title="struct casa_ms::observation_io::creation::HistoryRow">HistoryRow</a>&gt;</code></span><div class="docblock"><p>The <code>HISTORY</code> rows to write: what the task creating the
 MeasurementSet records of itself (CASA’s <code>concat</code> records its
