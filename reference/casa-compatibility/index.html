@@ -10404,7 +10404,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>1</code></td>
 <td><code>1</code>; <code>facets</code> → <code>facets</code></td>
 <td>Partial</td>
-<td>Standard gridder passes count; mosaic rejects count != 1 as CASA does; W/AW count != 1 refused pending support (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>integer</code>; Constraints: <code>[{"kind": "positive"}]</code></td>
+<td>Standard and the supported W-projection MFS subset accept multiple facets. CASA refuses multiple facets with mosaic or AW projection. AW uses wprojplanes for the W term. Remaining W-facet modes are tracked in #1063. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>integer</code>; Constraints: <code>[{"kind": "positive"}]</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
