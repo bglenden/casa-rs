@@ -30,6 +30,7 @@ mod execute;
 mod fluxscale;
 mod gencal;
 mod lookup;
+mod lookup_frequency;
 mod managed_output;
 mod model;
 mod plan;
@@ -65,9 +66,10 @@ pub use fluxscale::{
 };
 pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
 pub use lookup::{
-    CalibrationTableLookup, ComplexSolution, FieldSelection, LOOKUP_KEPT_ROW_BYTES,
-    LOOKUP_LOADING_ROW_BYTES,
+    CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection,
+    LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES,
 };
+pub use lookup_frequency::FrequencyInterpolation;
 pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,

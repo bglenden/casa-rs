@@ -38,6 +38,8 @@
 //! no Metal device` and pass: run them outside command sandboxes on Apple
 //! silicon (`TESTING.md`).
 
+#[path = "backends/apply_frequency.rs"]
+mod apply_frequency;
 mod pass_summary;
 mod predict_support;
 

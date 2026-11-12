@@ -4370,3 +4370,36 @@ CASA table control. C++ consumption of native invalid-solution tables is
 compared with the unmodified defective CASA outputs separately. The
 reference fixture retains both results so this exception cannot silently
 become a relaxed numerical tolerance.
+
+
+## Natural-spline interpolation skips the first interior back-substitution
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing evident-intent rule (#1053)
+- Affected code: `InterpolateArray1D<Double,Float>::interpolatePtr`, natural
+  spline back-substitution, called by `CTPatchedInterp::resampleInFreq`.
+- Reference: installed CASA 6.7.6.14. Historical casacore source
+  `083f0509fd76a03d6ec738c60e9dcfaf3e6c56a5` has the same mechanism:
+  its backward loop stops at `i > 1`, leaving knot 1 partially eliminated.
+
+A scalar Tf table with four equally spaced, real amplitudes `[1,2,1/2,5/4]`
+should have zero endpoint second derivatives and interior second derivatives
+`[-49/10,23/5]` in unit-spacing coordinates. The defining equations are
+`4*m1+m2=-15` and `m1+4*m2=27/2`. At the first three half knots, the
+natural spline is exactly `[289/160,203/160,47/80]`.
+
+CASA leaves the first interior derivative at `-15/4`, rather than `-49/10`,
+and evaluates the first half knot as `1.734375`, rather than `1.80625`.
+The first derivative is then discontinuous at the first interior knot,
+contradicting the stated natural-spline interpolation. With input DATA
+`3+4j` and identical antenna gains, CASA writes approximately
+`9.02417+12.03223j` instead of `9.78762+13.05016j`. The complete four-channel
+visibility result differs by normalized RMS 0.0780.
+
+casa-rs completes back-substitution at every interior knot. The fixture
+`sm_apply_frequency_casa.json.gz` keeps the raw CASA output and an independent
+CASA control: a nearest-interpolated table explicitly containing the exact
+half-knot amplitudes. That control is also checked against the closed-form
+receptor equation; the native spline is compared against it. C++ consumption
+of the original native spline table is checked separately against the raw
+CASA result. This exception changes no numerical tolerance.

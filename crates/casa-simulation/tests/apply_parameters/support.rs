@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared independent G/D/T table input and complete MS comparisons.
 
+#[path = "frequency.rs"]
+mod frequency;
+
 use super::input;
 use super::predict_support::{ANTENNAS, REFERENCE_MJD, read_main, resources, scan, session};
 use casa_calibration::{
@@ -84,12 +87,18 @@ fn table(path: &Path, output: &Path, case: &Value) {
                 },
             })
     });
-    let writer_kind = if kind != "D" {
+    let writer_kind = if frequency::is_frequency(kind) {
+        SimulatedJones::Troposphere
+    } else if kind != "D" {
         SimulatedJones::Gain
     } else {
         SimulatedJones::Leakage
     };
     write_simulated_jones_table(&ms, output, writer_kind, rows).unwrap();
+    if frequency::is_frequency(kind) {
+        frequency::prepare(output, case);
+        return;
+    }
     if kind == "T" {
         use casa_tables::{Table, TableOptions};
         use casa_types::Value;
@@ -112,7 +121,9 @@ fn table(path: &Path, output: &Path, case: &Value) {
 }
 
 pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
-    let export = std::env::var_os(if case["kind"] == "T" {
+    let export = std::env::var_os(if frequency::is_frequency(case["kind"].as_str().unwrap()) {
+        "CASA_RS_APPLY_FREQUENCY_OUT"
+    } else if case["kind"] == "T" {
         "CASA_RS_APPLY_SCALAR_OUT"
     } else if case["probe"].is_string() {
         "CASA_RS_APPLY_FLAGS_OUT"
@@ -125,38 +136,21 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     } else {
         tempfile::tempdir().unwrap()
     };
-    let path = directory.path().join("applied.ms");
-    let mut sm = session(
-        &path,
-        "ALMA",
-        case["stokes"].as_str().unwrap_or("XX XY YX YY"),
-        resources(workers, 2 << 30),
-    );
-    sm.observe(&scan("target", 0.0, 20.0)).unwrap();
-    sm.observe(&scan("offset", 20.0, 40.0)).unwrap();
-    sm.close().unwrap();
-    input::prepare(&path);
-    let calibration = directory.path().join("terms.cal");
-    table(&path, &calibration, case);
-    let mut sm = Simulator::open_from_ms(
-        &path,
-        SimulatorOptions {
-            measures: casa_test_support::deterministic_measures_provider(),
-            resources: resources(workers, 2 << 30),
-            now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
-        },
-    )
-    .unwrap();
-    sm.set_apply(&ApplySpec {
-        table: calibration.to_string_lossy().into_owned(),
-        kind: case["options"]["type"].as_str().unwrap_or("").to_string(),
-        interval_s: case["options"]["t"].as_f64().unwrap_or(0.0),
-        interp: case["interp"].as_str().unwrap().to_string(),
-        calwt: case["options"]["calwt"].as_bool().unwrap_or(false),
-        spwmap: vec![-1],
-        opacity: case["options"]["opacity"].as_f64().unwrap_or(0.0),
-    })
-    .unwrap();
+    let (path, mut sm, mut spec) = prepared(directory.path(), case, workers);
+    if let Some(root) = std::env::var_os("CASA_RS_APPLY_CASA_TABLES")
+        .filter(|_| frequency::is_frequency(case["kind"].as_str().unwrap()))
+    {
+        assert!(
+            export.is_none(),
+            "C++ input-table comparison is separate from native-output export"
+        );
+        spec.table = std::path::PathBuf::from(root)
+            .join(case["name"].as_str().unwrap())
+            .join("terms.cal")
+            .to_string_lossy()
+            .into_owned();
+    }
+    sm.set_apply(&spec).unwrap();
     sm.corrupt().unwrap();
     sm.close().unwrap();
     let rows = compare(&path, case);
@@ -171,7 +165,7 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     rows
 }
 
-fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
+pub(super) fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
     let (actual, correlations) = read_main(path);
     let expected = case["rows"].as_array().unwrap();
     assert_eq!(
@@ -320,4 +314,67 @@ fn flag_solutions(path: &Path, probe: &str, times: [f64; 2]) {
             .unwrap();
     }
     table.save(TableOptions::new(path)).unwrap();
+}
+
+/// Shared independent input for successful applications and refusal atomicity.
+pub(super) fn prepared(
+    directory: &Path,
+    case: &Value,
+    workers: usize,
+) -> (std::path::PathBuf, Simulator, ApplySpec) {
+    let path = directory.join("applied.ms");
+    let mut sm = session(
+        &path,
+        "ALMA",
+        case["stokes"].as_str().unwrap_or("XX XY YX YY"),
+        resources(workers, 2 << 30),
+    );
+    let second_window = case["data_window"] == 1;
+    if second_window {
+        use super::predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
+        use casa_types::measures::frequency::FrequencyRef;
+        sm.set_spectral_window(&casa_simulation::SpectralWindowSpec {
+            name: "second".to_string(),
+            start_frequency_hz: FREQUENCY_HZ,
+            channel_width_hz: CHANNEL_HZ,
+            resolution_hz: CHANNEL_HZ,
+            frame: FrequencyRef::TOPO,
+            channel_count: 4,
+            stokes: "XX XY YX YY".to_string(),
+        })
+        .unwrap();
+    }
+    for (source, start, stop) in [("target", 0.0, 20.0), ("offset", 20.0, 40.0)] {
+        let mut spec = scan(source, start, stop);
+        if second_window {
+            spec.spectral_window = "second".to_string();
+        }
+        sm.observe(&spec).unwrap();
+    }
+    sm.close().unwrap();
+    input::prepare(&path);
+    let calibration = directory.join("terms.cal");
+    table(&path, &calibration, case);
+    let sm = Simulator::open_from_ms(
+        &path,
+        SimulatorOptions {
+            measures: casa_test_support::deterministic_measures_provider(),
+            resources: resources(workers, 2 << 30),
+            now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
+        },
+    )
+    .unwrap();
+    let spec = ApplySpec {
+        table: calibration.to_string_lossy().into_owned(),
+        kind: case["options"]["type"].as_str().unwrap_or("").to_string(),
+        interval_s: case["options"]["t"].as_f64().unwrap_or(0.0),
+        interp: case["interp"].as_str().unwrap().to_string(),
+        calwt: case["options"]["calwt"].as_bool().unwrap_or(false),
+        spwmap: case["options"]["spwmap"]
+            .as_array()
+            .map(|values| values.iter().map(|value| value.as_i64().unwrap()).collect())
+            .unwrap_or_else(|| vec![-1]),
+        opacity: case["options"]["opacity"].as_f64().unwrap_or(0.0),
+    };
+    (path, sm, spec)
 }

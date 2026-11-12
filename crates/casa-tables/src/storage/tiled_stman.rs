@@ -505,6 +505,8 @@ pub(crate) struct TiledReadMetadata {
     headers: HashMap<u32, TiledReadHeader>,
 }
 
+mod metadata_shapes;
+
 impl TiledReadMetadata {
     pub(crate) fn open(
         table_path: &Path,
@@ -543,43 +545,6 @@ impl TiledReadMetadata {
             bytes = bytes.checked_add(read_header.retained_heap_bytes()?)?;
         }
         Some(bytes)
-    }
-
-    pub(crate) fn shape_cell_is_defined(
-        &self,
-        dm_seq_nr: u32,
-        target_col_idx: usize,
-        row_index: usize,
-    ) -> Result<bool, StorageError> {
-        let read_header = self.header(dm_seq_nr)?;
-        if target_col_idx >= read_header.header.col_data_types.len() {
-            return Err(StorageError::FormatMismatch(format!(
-                "tiled column index {target_col_idx} out of range for data manager {dm_seq_nr}"
-            )));
-        }
-        let TiledVariant::Shape {
-            nr_used_row_map,
-            row_map,
-            cube_map,
-            pos_map,
-            ..
-        } = &read_header.variant
-        else {
-            return Err(StorageError::FormatMismatch(format!(
-                "metadata-only array-cell definedness requires TiledShapeStMan Shape variant for data manager {dm_seq_nr}"
-            )));
-        };
-        Ok(shape_row_location(
-            &read_header.header,
-            &ShapeRowMapping {
-                nr_used_row_map: *nr_used_row_map,
-                row_map,
-                cube_map,
-                pos_map,
-            },
-            row_index,
-        )?
-        .is_some())
     }
 
     #[cfg(test)]

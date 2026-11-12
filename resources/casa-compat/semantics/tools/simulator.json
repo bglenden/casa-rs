@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
+ "audit_revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -260,7 +260,7 @@
   },
   "setapply": {
    "status": "Partial",
-   "scope": "Applies two-parameter G/D and scalar one-parameter T tables with linear or nearest time interpolation. G/D/T corruption preserves WEIGHT and SIGMA for either calwt setting; t and opacity leave these tables' per-row interpolation unchanged, as in CASA. Flagged G/T parameters and missing G/T antennas use unit gain. Invalid D antennas use neutral zero leakage, correcting CASA's unit-leakage defect. Malformed parameter counts raise. Refused: other table types, per-channel solutions and other interpolations.",
+   "scope": "Applies two-parameter G/D/B/Df and scalar T/Tf tables with nearest/linear time interpolation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows are explicitly refused under #1053; CASA whole-step coverage remains open. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t/opacity do not affect these terms. Invalid mappings, malformed parameter counts and cubic interior grids with fewer than four valid samples raise. Corrects the documented natural-spline first-knot defect. Other calibration types and higher time/observation-dependent interpolation remain explicit #1053 refusals.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -268,7 +268,8 @@
     "refusals",
     "apply-parameters-20261112",
     "apply-flags-20261112",
-    "apply-scalar-20261112"
+    "apply-scalar-20261112",
+    "apply-frequency-20261112"
    ],
    "issue": 1053
   },
@@ -1039,6 +1040,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "natural-spline-first-knot",
+   "record": "Natural-spline interpolation skips the first interior back-substitution",
+   "inputs": "Frequency-dependent complex table, natural-spline interpolation of amplitudes/phases; four-point Tf closed-form discriminator.",
+   "casa": "Leaves the first interior second derivative partly eliminated, producing a derivative discontinuity; the discriminator differs by NRMS0.0780.",
+   "ours": "Completes back-substitution at every interior knot. The exact half-knot amplitudes are independently checked and supplied through a separately sampled CASA table.",
+   "rationale": "Natural cubic splines require continuous first derivatives at every interior knot; skipping one contradicts the stated mathematical method.",
+   "impact": "Corrected frequency-interpolated values; raw CASA outputs and its consumption of native tables remain separately verified. Numerical tolerances are unchanged.",
+   "evidence": [
+    "bugs-record",
+    "apply-frequency-20261112"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
   }
  ],
  "evidence": {
@@ -1477,6 +1493,31 @@
    "revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
    "command": "CASAPY tools/simulation/sm_apply_scalar_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_SCALAR_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_scalar --test apply_flags --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_scalar_readback.py --root EXPORT --fixture FIXTURE --out OUT; cargo clippy -p casa-simulation -p casars-python --all-targets -- -D warnings; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
    "receipt": "resources/casa-compat/evidence/sm-apply-scalar-20261112.json"
+  },
+  "apply-frequency-20261112": {
+   "kind": "Independent frequency-dependent CASA calculations, closed-form spline discriminator and bidirectional native-table consumption",
+   "state": "passed",
+   "result": "106 successful cases pass CPU W1/W3 (212 runs), including exact-channel flags, physical2/3-channel fallback and the corrected natural spline against an independently sampled CASA control (zero residual). Other cases agree under the unchanged1e-3 NRMS gate; maximum8.26e-4 is the documented raw CASA spline defect. All16 expected mapping/cubic refusals raise with DATA unchanged. CASA C++ reads212 native MS/table pairs and applies106 native tables with zero consumer residual. Both matrices also pass using actual CASA input tables. Full affected suites,36 memory laws, strict Clippy, final wheel71/2 and large-offset C++ checks pass; the ONE local review is resolved without re-review.",
+   "scope": "B/Tf/Df; nearest/linear/cubic/spline frequency interpolation, phase wraps, descending axes, exact half-channel ties, flags/gaps/all-invalid/one-valid samples, default fallback and spectral-window mapping. Exact stored TIME and preserved flags/weights/sigma/MODEL. Header-only metadata sizes wide calibration values before loading. The independent180-row later-window control records the next coverage outcome; native new-window application remains an explicit #1053 refusal, with a panic regression check. Exact-frequency flag registration, short physical-axis fallback, active64-bit AipsIO offsets and the131073-channel spline allocation boundary are checked explicitly.",
+   "links": [
+    "tools/simulation/sm_apply_frequency_oracle.py",
+    "tools/simulation/sm_apply_frequency_readback.py",
+    "crates/casa-simulation/tests/apply_frequency.rs",
+    "crates/casa-simulation/tests/session_memory/apply_frequency.rs",
+    "crates/casa-simulation/tests/data/sm_apply_frequency_casa.json.gz",
+    "crates/casa-tables/tests/array_shape_metadata.rs",
+    "tools/simulation/array_shapes_oracle.py",
+    "tools/simulation/sm_apply_later_window_oracle.py",
+    "crates/casa-simulation/tests/data/sm_apply_later_window_casa.json.gz",
+    "tools/simulation/sm_apply_frequency_boundaries_oracle.py",
+    "crates/casa-simulation/tests/apply_frequency_boundaries.rs",
+    "crates/casa-simulation/tests/data/sm_apply_frequency_boundaries_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "command": "CASAPY tools/simulation/sm_apply_frequency_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_FREQUENCY_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_frequency -- --nocapture; CASA_RS_APPLY_CASA_TABLES=OUT cargo test -p casa-simulation --test apply_frequency frequency_tables_match_casa_with_phase_wraps_and_gaps -- --exact --nocapture; CASAPY tools/simulation/sm_apply_frequency_readback.py --root EXPORT --fixture FIXTURE --out READBACK; cargo clippy -p casa-tables -p casa-calibration -p casa-simulation -p casars-python --all-targets -- -D warnings",
+   "receipt": "resources/casa-compat/evidence/sm-apply-frequency-20261112.json"
   }
  }
 }
