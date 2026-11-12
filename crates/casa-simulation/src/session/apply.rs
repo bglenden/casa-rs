@@ -29,7 +29,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_calibration::{CalibrationTableLookup, FrequencyInterpolation, TimeInterpolation};
+use casa_calibration::{
+    CalibrationTableLookup, FrequencyInterpolation, TimeInterpolation, TimeInterpolationOptions,
+};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use num_complex::Complex32;
 
@@ -116,6 +118,7 @@ pub(crate) struct AppliedTable {
     kind: AppliedKind,
     frequency: Option<FrequencyInterpolation>,
     spwmap: Vec<usize>,
+    phase_delay: bool,
 }
 
 impl AppliedTable {
@@ -207,7 +210,8 @@ impl Simulator {
     /// For D tables an invalid receptor or missing antenna uses neutral leakage (both coefficients zero), correcting CASA's unit
     /// leakage substitution. Input data flags, weights and sigma persist.
     pub fn set_apply(&mut self, spec: &ApplySpec) -> SimulatorResult<()> {
-        let interp = apply_interpolation(&spec.interp)?;
+        let mut interp = apply_interpolation(&spec.interp)?;
+        interp.observation_count = self.observations.len();
         // VisCal::corrupt turns weight calibration off. G/D/T table lookup
         // uses each row's time regardless of t, and only TOPAC reads opacity.
         if spec.table.is_empty() {
@@ -247,6 +251,7 @@ impl Simulator {
             kind,
             frequency,
             spwmap,
+            phase_delay: interp.phase_delay,
         }));
         Ok(())
     }
@@ -257,7 +262,7 @@ impl Simulator {
     fn load_table(
         &self,
         path: &std::path::Path,
-        interp: TimeInterpolation,
+        interp: TimeInterpolationOptions,
     ) -> SimulatorResult<HeldLookup> {
         let metadata_bytes =
             CalibrationTableLookup::metadata_bytes_on_disk(path).map_err(raised)?;
@@ -273,11 +278,12 @@ impl Simulator {
             },
         )
         .map_err(SimulatorError::admission)?;
-        let layout = CalibrationTableLookup::layout_on_disk(path).map_err(raised)?;
+        let layout = CalibrationTableLookup::layout_for_simulation(path, interp).map_err(raised)?;
         drop(metadata);
         let kept = layout
             .kept_bytes()
-            .saturating_add(layout.time_kept_bytes(interp));
+            .saturating_add(layout.time_kept_bytes(interp.mode))
+            .saturating_add(layout.context_kept_bytes(interp));
         let mut reservation = admit(
             resources.host(),
             resources.policy(),
@@ -285,12 +291,13 @@ impl Simulator {
                 phase: LOOKUP_PHASE,
                 memory: layout
                     .loading_bytes()
-                    .saturating_add(layout.time_loading_bytes(interp))
+                    .saturating_add(layout.time_loading_bytes(interp.mode))
+                    .saturating_add(layout.context_loading_bytes(interp))
                     .saturating_add(kept),
             },
         )
         .map_err(SimulatorError::admission)?;
-        let lookup = CalibrationTableLookup::open_across_fields(path, interp).map_err(raised)?;
+        let lookup = CalibrationTableLookup::open_for_simulation(path, interp).map_err(raised)?;
         let frequencies = if layout.frequency_values > 0 {
             CalibrationTableLookup::frequency_grids_on_disk(path).map_err(raised)?
         } else {
@@ -431,6 +438,10 @@ impl Simulator {
             } else {
                 1
             };
+            let phase_frequency = (table.phase_delay && table.frequency.is_none()).then(|| {
+                let data = &self.spectral_windows[scan.spectral_window_id];
+                data.start_frequency_hz + (data.channel_count / 2) as f64 * data.channel_width_hz
+            });
             for time_s in self.integration_times_s(index) {
                 if table.frequency.is_some() {
                     offsets.push(values.len());
@@ -438,7 +449,14 @@ impl Simulator {
                 chunks.push(scan.spectral_window_id, time_s, scan.field_id);
                 for antenna in 0..self.antennas.len() {
                     let Some(solution) = lookup
-                        .solution(scan.field_id as i32, window as i32, antenna as i32, time_s)
+                        .simulation_solution(
+                            scan.observation_id,
+                            scan.scan_number,
+                            window as i32,
+                            antenna as i32,
+                            time_s,
+                            phase_frequency,
+                        )
                         .map_err(raised)?
                     else {
                         values.extend(std::iter::repeat_n([neutral; 2], channels));
@@ -501,25 +519,34 @@ impl Simulator {
 
 /// The simulator's time interpolation, refusing deprecated and unknown modes
 /// as CASA does; unsupported modifiers remain explicit refusals (#1053).
-fn apply_interpolation(interp: &str) -> SimulatorResult<TimeInterpolation> {
+fn apply_interpolation(interp: &str) -> SimulatorResult<TimeInterpolationOptions> {
     if interp.contains("aips") {
         return Err(raised(
             "The (peculiar) 'aipslin' interpolation type was deprecated in CASA v3.4; use \
              'linear'.",
         ));
     }
-    match interp.split(',').next().unwrap_or("").trim() {
-        "" | "linear" => Ok(TimeInterpolation::Linear),
-        "nearest" => Ok(TimeInterpolation::Nearest),
-        "cubic" => Ok(TimeInterpolation::Cubic),
-        "spline" => Ok(TimeInterpolation::Spline),
-        other if other.contains("PD") || other.contains("perobs") || other.contains("perscan") => {
-            Err(not_yet(format!("with interp='{other}'")))
-        }
-        other => Err(raised(format!(
-            "Unrecognized time interpolation type '{other}'"
-        ))),
-    }
+    let requested = interp.split(',').next().unwrap_or("").trim();
+    let mode = if requested.contains("nearest") {
+        TimeInterpolation::Nearest
+    } else if requested.is_empty() || requested.contains("linear") {
+        TimeInterpolation::Linear
+    } else if requested.contains("cubic") {
+        TimeInterpolation::Cubic
+    } else if requested.contains("spline") {
+        TimeInterpolation::Spline
+    } else {
+        return Err(raised(format!(
+            "Unrecognized time interpolation type '{requested}'"
+        )));
+    };
+    Ok(TimeInterpolationOptions {
+        mode,
+        phase_delay: requested.contains("PD"),
+        per_observation: requested.contains("perobs"),
+        per_scan: requested.contains("perscan"),
+        observation_count: 1,
+    })
 }
 
 /// CASA defaults frequency interpolation to linear for frequency-dependent parameters.

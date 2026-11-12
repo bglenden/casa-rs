@@ -4,10 +4,15 @@ use super::{
     ApplyExecutionError, ApplyInterpolationMode, CalibrationGrid, CalibrationSolution,
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection, GainGrid,
 };
-use crate::interpolation::{Curve, sample, spline_derivatives, unwrap_phase};
+use crate::interpolation::{Curve, sample_polar, spline_derivatives, unwrap_phase};
 use casa_types::Complex32;
 use std::collections::HashMap;
 use std::path::Path;
+
+#[path = "lookup_context.rs"]
+mod context;
+pub use context::TimeInterpolationOptions;
+use context::{TimeQuery, TimeScope};
 
 /// Amplitude/phase interpolation in time for simulator calibration tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,33 +73,17 @@ impl CalibrationTableLookup {
         path: impl AsRef<Path>,
         mode: TimeInterpolation,
     ) -> Result<Self, ApplyExecutionError> {
-        let basic = if mode == TimeInterpolation::Nearest {
-            ApplyInterpolationMode::Nearest
-        } else {
-            ApplyInterpolationMode::Linear
-        };
-        let mut lookup = Self::open_with(path, basic, FieldSelection::AnyField)?;
-        if matches!(mode, TimeInterpolation::Cubic | TimeInterpolation::Spline) {
-            let mut plan = TimePlan {
-                mode,
-                splines: HashMap::new(),
-            };
-            if mode == TimeInterpolation::Spline {
-                for (&key, series) in lookup.across_fields.as_ref().expect("all fields") {
-                    if !series.is_empty() {
-                        plan.splines.insert(key, Spline::new(&lookup.path, series)?);
-                    }
-                }
-            }
-            lookup.advanced_time = Some(plan);
-        }
-        Ok(lookup)
+        Self::open_for_simulation(path, TimeInterpolationOptions::new(mode))
     }
 }
 
 pub(super) struct TimePlan {
     mode: TimeInterpolation,
-    splines: HashMap<(i32, i32), Spline>,
+    scope: TimeScope,
+    series: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
+    splines: HashMap<(i32, i32, i32), Spline>,
+    cycles: HashMap<(i32, i32, i32), Vec<f32>>,
+    reference_hz: Vec<f64>,
 }
 
 fn invalid(path: &Path, reason: &str) -> ApplyExecutionError {
@@ -135,31 +124,55 @@ fn relative(time: f64, reference: f64) -> f64 {
 }
 
 impl TimePlan {
-    pub(super) fn solution(
+    fn solution(
         &self,
-        lookup: &CalibrationTableLookup,
-        spw: i32,
-        antenna: i32,
-        time: f64,
+        path: &Path,
+        query: TimeQuery,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
-        let series = lookup.across_fields.as_ref().expect("all fields");
-        let Some((key, candidates)) = series
-            .get_key_value(&(spw, antenna))
-            .or_else(|| series.get_key_value(&(spw, -1)))
+        let TimeQuery {
+            observation,
+            scan,
+            window: spw,
+            antenna,
+            time,
+            frequency_hz,
+        } = query;
+        let segment = match self.scope {
+            TimeScope::All => -1,
+            TimeScope::Observation => observation,
+            TimeScope::Scan => scan,
+        };
+        let Some((key, candidates)) = self
+            .series
+            .get_key_value(&(segment, spw, antenna))
+            .or_else(|| self.series.get_key_value(&(segment, spw, -1)))
             .filter(|(_, s)| !s.is_empty())
         else {
             return Ok(None);
         };
-        let path = &lookup.path;
         let reference = (candidates[0].time_seconds - 1.).floor();
         let time = relative(time, reference);
         let at = |index: usize| relative(candidates[index].time_seconds, reference);
         let upper = candidates.partition_point(|s| relative(s.time_seconds, reference) < time);
-        if upper == 0 || upper == candidates.len() || at(upper) == time {
-            return Ok(Some(ComplexSolution::of(grid(
-                path,
-                &candidates[upper.min(candidates.len() - 1)],
-            )?)));
+        let exact = upper == 0 || upper == candidates.len() || at(upper) == time;
+        if exact || self.mode == TimeInterpolation::Nearest {
+            let index = if exact {
+                upper.min(candidates.len() - 1)
+            } else if at(upper) - time < time - at(upper - 1) {
+                upper
+            } else {
+                upper - 1
+            };
+            let mut output = ComplexSolution::of(grid(path, &candidates[index])?);
+            if let Some(frequency) = frequency_hz.filter(|_| self.cycles.contains_key(key)) {
+                let scale = self.phase_scale(path, spw, frequency)?;
+                for (parameter, value) in output.values.iter_mut().enumerate() {
+                    let phase = value.arg()
+                        + self.cycles[key][index * output.receptors * output.channels + parameter];
+                    *value = Complex32::from_polar(value.norm(), phase * scale);
+                }
+            }
+            return Ok(Some(output));
         }
         let lower = upper - 1;
         let first = if self.mode == TimeInterpolation::Cubic {
@@ -196,7 +209,11 @@ impl TimePlan {
         }
         let high = grid(path, &candidates[upper])?;
         let (receptors, channels) = (base.receptor_count, base.channel_count);
-        let spline = (self.mode == TimeInterpolation::Spline).then(|| &self.splines[key]);
+        let spline = self.splines.get(key);
+        let phase_scale = frequency_hz
+            .filter(|_| self.cycles.contains_key(key))
+            .map(|frequency| self.phase_scale(path, spw, frequency))
+            .transpose()?;
         let mut values = Vec::with_capacity(receptors * channels);
         let mut flags = Vec::with_capacity(receptors * channels);
         for index in 0..receptors * channels {
@@ -213,12 +230,14 @@ impl TimePlan {
                 }
             }
             let result = if self.mode == TimeInterpolation::Cubic {
-                sample(&points, time, Curve::Cubic, false, &[])
+                sample_polar(&points, time, Curve::Cubic, false, &[])
+            } else if self.mode == TimeInterpolation::Linear {
+                sample_polar(&points[..2], time, Curve::Linear, false, &[])
             } else {
                 let spline = spline.expect("spline coefficients");
                 let left = lower * receptors * channels + index;
                 let right = left + receptors * channels;
-                sample(
+                sample_polar(
                     &points[..2],
                     time,
                     Curve::Spline,
@@ -226,7 +245,11 @@ impl TimePlan {
                     &[spline.second[left], spline.second[right]],
                 )
             };
-            values.push(result.expect("nonempty time stencil"));
+            let (amplitude, mut phase) = result.expect("nonempty time stencil");
+            if let Some(scale) = phase_scale {
+                phase = (phase + self.cycles[key][lower * receptors * channels + index]) * scale;
+            }
+            values.push(Complex32::from_polar(amplitude, phase));
             flags.push(value(base, index).1 || value(high, index).1);
         }
         Ok(Some(ComplexSolution {

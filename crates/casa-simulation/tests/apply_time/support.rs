@@ -158,6 +158,7 @@ pub(super) fn prepared(
     input::prepare(&path);
     let calibration = directory.join("terms.cal");
     table(&path, &calibration, case);
+    context(&path, &calibration, case);
     let sm = Simulator::open_from_ms(
         &path,
         SimulatorOptions {
@@ -177,6 +178,92 @@ pub(super) fn prepared(
         opacity: 0.,
     };
     (path, sm, spec)
+}
+
+fn context(path: &Path, calibration: &Path, case: &Json) {
+    let mode = case["mode"].as_str().unwrap();
+    let segment = case["segment"].as_str().unwrap_or("");
+    let split = segment == "split" && mode.contains("perobs");
+    if split {
+        for root in [path, calibration] {
+            let observation = root.join("OBSERVATION");
+            let mut table = Table::open(TableOptions::new(&observation)).unwrap();
+            if table.row_count() == 1 {
+                let row = table.row(0).unwrap().clone();
+                table.add_row(row).unwrap();
+            }
+            table.save(TableOptions::new(&observation)).unwrap();
+        }
+        let mut table = Table::open(TableOptions::new(path)).unwrap();
+        for row in 0..table.row_count() {
+            let value = table
+                .cell_accessor(row, "FIELD_ID")
+                .unwrap()
+                .scalar()
+                .unwrap()
+                .clone();
+            table
+                .cell_accessor_mut(row, "OBSERVATION_ID")
+                .unwrap()
+                .set(Value::Scalar(value))
+                .unwrap();
+        }
+        table.save(TableOptions::new(path)).unwrap();
+    }
+    if case["segment"].is_string() {
+        let first = case["calibration"]["times_s"][0].as_f64().unwrap();
+        let mut table = Table::open(TableOptions::new(calibration)).unwrap();
+        for row in 0..table.row_count() {
+            let ScalarValue::Float64(time) =
+                table.cell_accessor(row, "TIME").unwrap().scalar().unwrap()
+            else {
+                panic!("time")
+            };
+            let later = *time > first + 15.;
+            if mode.contains("perscan") && segment != "unset" {
+                let scan = if later {
+                    if segment == "missing" { 3 } else { 2 }
+                } else {
+                    1
+                };
+                table
+                    .cell_accessor_mut(row, "SCAN_NUMBER")
+                    .unwrap()
+                    .set(Value::Scalar(ScalarValue::Int32(scan)))
+                    .unwrap();
+            }
+            if mode.contains("perobs") && matches!(segment, "split" | "mismatch") {
+                let mut observation = i32::from(later);
+                if mode.contains("perscan") {
+                    observation = 1 - observation;
+                }
+                table
+                    .cell_accessor_mut(row, "OBSERVATION_ID")
+                    .unwrap()
+                    .set(Value::Scalar(ScalarValue::Int32(observation)))
+                    .unwrap();
+            }
+        }
+        table.save(TableOptions::new(calibration)).unwrap();
+    }
+    if mode.contains("PD") && matches!(case["kind"].as_str().unwrap(), "G" | "D" | "T") {
+        let spectral = calibration.join("SPECTRAL_WINDOW");
+        let mut table = Table::open(TableOptions::new(&spectral)).unwrap();
+        table
+            .cell_accessor_mut(0, "CHAN_FREQ")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Float64(ArrayD::from_elem(
+                IxDyn(&[1]),
+                100e9,
+            ))))
+            .unwrap();
+        table
+            .cell_accessor_mut(0, "REF_FREQUENCY")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Float64(100e9)))
+            .unwrap();
+        table.save(TableOptions::new(&spectral)).unwrap();
+    }
 }
 
 pub(super) fn run(case: &Json, workers: usize) -> Vec<Vec<Complex32>> {

@@ -25,6 +25,41 @@ fn fixture() -> Value {
 }
 
 #[test]
+fn phase_delay_and_scan_observation_modes_match_independent_casa_controls() {
+    let mut text = String::new();
+    GzDecoder::new(&include_bytes!("data/sm_apply_time_modes_casa.json.gz")[..])
+        .read_to_string(&mut text)
+        .unwrap();
+    let fixture: Value = serde_json::from_str(&text).unwrap();
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 22);
+    for case in cases {
+        if case["refusal"] == true {
+            let root = tempfile::tempdir().unwrap();
+            let (path, mut sm, spec) = time_support::prepared(root.path(), case, 1);
+            sm.set_apply(&spec).unwrap();
+            let error = sm
+                .corrupt()
+                .expect_err("two scan-local times cannot form a cubic");
+            assert_eq!(error.outcome(), casa_simulation::CasaOutcome::Raises);
+            sm.close().unwrap();
+            assert!(predict_support::read_main(&path).0.iter().all(|row| {
+                row.data
+                    .iter()
+                    .all(|&value| value == num_complex::Complex32::new(3., 4.))
+            }));
+        } else {
+            assert_eq!(
+                time_support::run(case, 1),
+                time_support::run(case, 3),
+                "{}",
+                case["name"]
+            );
+        }
+    }
+}
+
+#[test]
 fn higher_time_interpolation_matches_independent_references() {
     let fixture = fixture();
     assert_eq!(fixture["casa_version"], "6.7.6.14");

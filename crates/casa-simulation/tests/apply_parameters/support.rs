@@ -204,6 +204,16 @@ pub(super) fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
             panic!("TIME type")
         };
         assert_eq!(*time, expected["time_s"].as_f64().unwrap());
+        for (column, key) in [("OBSERVATION_ID", "observation"), ("SCAN_NUMBER", "scan")] {
+            if let Some(reference) = expected[key].as_i64() {
+                let ScalarValue::Int32(value) =
+                    table.cell_accessor(row, column).unwrap().scalar().unwrap()
+                else {
+                    panic!("context type")
+                };
+                assert_eq!(i64::from(*value), reference, "{column}");
+            }
+        }
         for (column, key) in [("WEIGHT", "weight"), ("SIGMA", "sigma")] {
             let ArrayValue::Float32(values) =
                 table.cell_accessor(row, column).unwrap().array().unwrap()

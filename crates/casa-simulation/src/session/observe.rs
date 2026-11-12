@@ -171,6 +171,8 @@ pub(crate) struct Observation {
 #[derive(Debug, Clone)]
 pub(crate) struct Scan {
     pub(crate) scan_number: i32,
+    /// Observation context needed by supplied per-observation calibration.
+    pub(crate) observation_id: i32,
     pub(crate) field_id: usize,
     pub(crate) spectral_window_id: usize,
     /// The J2000 phase centre, radians: the field's PHASE_DIR, on which
@@ -387,6 +389,7 @@ impl super::Simulator {
             integrations += integration_count;
             self.scans.push(Scan {
                 scan_number,
+                observation_id,
                 field_id,
                 spectral_window_id,
                 phase_center_rad: self.fields[field_id].direction_rad,

@@ -36,8 +36,8 @@ use crate::summary::summarize_table;
 
 #[path = "lookup_time.rs"]
 mod time;
-pub use time::TimeInterpolation;
 use time::TimePlan;
+pub use time::{TimeInterpolation, TimeInterpolationOptions};
 
 /// Which fields' solutions a row takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,8 +369,8 @@ impl CalibrationTableLookup {
         antenna: i32,
         time_s: f64,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
-        if let Some(plan) = &self.advanced_time {
-            return plan.solution(self, spw, antenna, time_s);
+        if self.advanced_time.is_some() {
+            return self.simulation_solution(0, 0, spw, antenna, time_s, None);
         }
         let grid = match &self.across_fields {
             Some(series) => self.across_fields_grid(series, spw, antenna, time_s)?,

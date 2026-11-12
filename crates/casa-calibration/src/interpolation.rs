@@ -27,13 +27,24 @@ pub(crate) fn sample(
     descending: bool,
     derivatives: &[[f64; 2]],
 ) -> Option<Complex32> {
+    sample_polar(points, coordinate, mode, descending, derivatives)
+        .map(|(amplitude, phase)| Complex32::from_polar(amplitude, phase))
+}
+
+pub(crate) fn sample_polar(
+    points: &[(f64, f32, f32)],
+    coordinate: f64,
+    mode: Curve,
+    descending: bool,
+    derivatives: &[[f64; 2]],
+) -> Option<(f32, f32)> {
     let first = points.first()?;
     if points.len() == 1 || coordinate <= first.0 {
-        return Some(Complex32::from_polar(first.1, first.2));
+        return Some((first.1, first.2));
     }
     let last = points.last().expect("nonempty");
     if coordinate >= last.0 {
-        return Some(Complex32::from_polar(last.1, last.2));
+        return Some((last.1, last.2));
     }
     let upper = points.partition_point(|point| point.0 < coordinate);
     let (low, high) = (points[upper - 1], points[upper]);
@@ -86,7 +97,7 @@ pub(crate) fn sample(
         let interpolate = |a: f32, b: f32| (f64::from(a) + f64::from(b - a) * fraction) as f32;
         (interpolate(low.1, high.1), interpolate(low.2, high.2))
     };
-    Some(Complex32::from_polar(amplitude, phase))
+    Some((amplitude, phase))
 }
 
 /// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
