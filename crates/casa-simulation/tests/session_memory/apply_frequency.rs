@@ -13,37 +13,133 @@ fn wide_applied_tables_and_terms_hold_their_admission() {
     if !super::alone("apply_frequency::wide_applied_tables_and_terms_hold_their_admission") {
         return;
     }
+    run_case("Tf", 4096, 16, 4096, 48, false);
+}
+#[test]
+fn few_solution_rows_admit_very_wide_parameter_and_frequency_axes() {
+    if !super::alone(
+        "apply_frequency::few_solution_rows_admit_very_wide_parameter_and_frequency_axes",
+    ) {
+        return;
+    }
+    run_case("Tf", 65536, 1, 4, 4, true);
+}
+#[test]
+fn two_receptor_tables_admit_time_and_frequency_interpolation_scratch() {
+    if !super::alone(
+        "apply_frequency::two_receptor_tables_admit_time_and_frequency_interpolation_scratch",
+    ) {
+        return;
+    }
+    run_case("B", 8192, 2, 4096, 48, true);
+}
+fn run_case(
+    kind: &str,
+    channels: usize,
+    slots: usize,
+    data_channels: usize,
+    integrations: usize,
+    align_times: bool,
+) {
     const BUDGET: u64 = 256 << 20;
-    const CHANNELS: usize = 4096;
     let resources = resources(BUDGET);
     charge_process_caches(resources.host(), resources.policy()).unwrap();
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().unwrap();
     let reference_path = root.path().join("reference.ms");
-    let mut reference = configured(&reference_path, &measures, BUDGET, CHANNELS);
+    let mut reference = configured(&reference_path, &measures, BUDGET, channels);
     reference.observe(&scan(10)).unwrap();
     reference.close().unwrap();
     let table = root.path().join("wide.cal");
-    let rows = (0..16).flat_map(|index| {
+    let reference_ms = casa_ms::MeasurementSet::open(&reference_path).unwrap();
+    let first = match reference_ms
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+    {
+        casa_types::ScalarValue::Float64(time) => *time,
+        _ => panic!("TIME"),
+    };
+    let rows = (0..slots).flat_map(|index| {
         (0..ANTENNAS as i32).map(move |antenna| SimulatedSolution {
-            time_s: 5.0e9 + 10.0 * index as f64,
+            time_s: if align_times {
+                first
+                    + 10.0 * (integrations - 1) as f64 * index as f64
+                        / slots.saturating_sub(1).max(1) as f64
+            } else {
+                5.0e9 + 10.0 * index as f64
+            },
             field_id: 0,
             spectral_window_id: 0,
             antenna,
             values: SolutionValues::Channels(
-                (0..CHANNELS)
-                    .map(|channel| Complex32::new(1.0, 0.0001 * channel as f32))
+                (0..channels)
+                    .map(|channel| {
+                        Complex32::new(
+                            1.0 + if align_times {
+                                0.01 * index as f32
+                            } else {
+                                0.0
+                            },
+                            0.0001 * channel as f32,
+                        )
+                    })
                     .collect(),
             ),
         })
     });
-    write_simulated_jones_table(
-        &casa_ms::MeasurementSet::open(&reference_path).unwrap(),
-        &table,
-        SimulatedJones::Troposphere,
-        rows,
-    )
-    .unwrap();
+    write_simulated_jones_table(&reference_ms, &table, SimulatedJones::Troposphere, rows).unwrap();
+    if kind == "B" {
+        use casa_tables::{Table, TableOptions};
+        use casa_types::{ArrayValue, ScalarValue, Value};
+        use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+        let mut calibration = Table::open(TableOptions::new(&table)).unwrap();
+        for row in 0..calibration.row_count() {
+            let ArrayValue::Complex32(values) = calibration
+                .cell_accessor(row, "CPARAM")
+                .unwrap()
+                .array()
+                .unwrap()
+            else {
+                panic!("CPARAM")
+            };
+            let values = ArrayD::from_shape_fn(IxDyn(&[2, channels]).f(), |index| {
+                values[[0, index[1]]]
+                    * if index[0] == 0 {
+                        Complex32::new(1.0, 0.0)
+                    } else {
+                        Complex32::new(0.8, 0.3)
+                    }
+            });
+            calibration
+                .cell_accessor_mut(row, "CPARAM")
+                .unwrap()
+                .set(Value::Array(ArrayValue::Complex32(values)))
+                .unwrap();
+            for column in ["FLAG", "PARAMERR", "SNR"] {
+                let value = if column == "FLAG" {
+                    ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[2, channels]).f(), false))
+                } else {
+                    ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[2, channels]).f(), 0.0))
+                };
+                calibration
+                    .cell_accessor_mut(row, column)
+                    .unwrap()
+                    .set(Value::Array(value))
+                    .unwrap();
+            }
+        }
+        calibration.keywords_mut().upsert(
+            "VisCal",
+            Value::Scalar(ScalarValue::String("B Jones".into())),
+        );
+        let mut info = calibration.info().clone();
+        info.sub_type = "B Jones".into();
+        calibration.set_info(info);
+        calibration.save(TableOptions::new(&table)).unwrap();
+    }
     let apply = ApplySpec {
         table: table.to_string_lossy().into_owned(),
         kind: String::new(),
@@ -54,8 +150,8 @@ fn wide_applied_tables_and_terms_hold_their_admission() {
         opacity: 0.0,
     };
     let session = |name: &str| {
-        let mut sm = configured(&root.path().join(name), &measures, BUDGET, CHANNELS);
-        sm.observe(&scan(48)).unwrap();
+        let mut sm = configured(&root.path().join(name), &measures, BUDGET, data_channels);
+        sm.observe(&scan(integrations)).unwrap();
         sm
     };
     let mut warm = session("warm.ms");

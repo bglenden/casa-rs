@@ -26,30 +26,32 @@ fn frequency_tables_match_casa_with_phase_wraps_and_gaps() {
                 .find(|case| case["name"] == format!("{kind}_nearest_{mode}_shifted"))
                 .unwrap()
         };
-        let (mut error, mut power) = (0.0, 0.0);
-        for (a, b) in case("nearest")["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .zip(case("linear")["rows"].as_array().unwrap())
-        {
-            for (a, b) in a["data"]
+        for candidate in ["nearest", "cubic"] {
+            let (mut error, mut power) = (0.0, 0.0);
+            for (a, b) in case(candidate)["rows"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .zip(b["data"].as_array().unwrap())
+                .zip(case("linear")["rows"].as_array().unwrap())
             {
-                for i in 0..2 {
-                    let (a, b) = (a[i].as_f64().unwrap(), b[i].as_f64().unwrap());
-                    error += (a - b).powi(2);
-                    power += b.powi(2);
+                for (a, b) in a["data"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .zip(b["data"].as_array().unwrap())
+                {
+                    for i in 0..2 {
+                        let (a, b) = (a[i].as_f64().unwrap(), b[i].as_f64().unwrap());
+                        error += (a - b).powi(2);
+                        power += b.powi(2);
+                    }
                 }
             }
+            assert!(
+                (error / power).sqrt() > 2e-3,
+                "{kind} {candidate}/linear frequency discriminator"
+            );
         }
-        assert!(
-            (error / power).sqrt() > 2e-3,
-            "{kind} frequency discriminator"
-        );
     }
     for case in cases {
         assert_eq!(
