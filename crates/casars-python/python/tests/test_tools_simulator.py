@@ -188,7 +188,8 @@ def test_the_bundle_describes_the_class_signatures() -> None:
     )
 
 
-def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = "VLA") -> None:
+def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = "VLA",
+              stokes: str = "RR LL") -> None:
     assert sm.setconfig(
         telescopename=telescope, x=X, y=Y, z=Z, dishdiameter=[25.0], mount=["ALT-AZ"],
         antname=["A1", "A2", "A3", "A4"], padname=["P1", "P2", "P3", "P4"],
@@ -196,7 +197,7 @@ def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = 
     )
     assert sm.setspwindow(
         spwname="L", freq="1.4GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=4,
-        stokes="RR LL",
+        stokes=stokes,
     )
     assert sm.settimes(integrationtime="10s", usehourangle=False, referencetime=REFERENCE)
     assert sm.setfield(sourcename="F", sourcedirection=DIRECTION)
@@ -854,9 +855,7 @@ def test_flagged_application_is_neutral(tmp_path: Path, kind: str, interp: str) 
 
     path, calibration = tmp_path / "x.ms", tmp_path / "terms.cal"
     sm = opened(tmp_path)
-    configure(sm)
-    assert sm.setspwindow(spwname="L", freq="1.4GHz", deltafreq="1MHz",
-                          freqresolution="1MHz", nchannels=4, stokes="RR RL LR LL")
+    configure(sm, stokes="RR RL LR LL")
     assert sm.observe("F", "L", starttime="0s", stoptime="20s")
     assert sm.setseed(5)
     assert sm.setnoise(simplenoise="0.1Jy")
