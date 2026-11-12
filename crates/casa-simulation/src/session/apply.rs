@@ -48,17 +48,20 @@ pub struct ApplySpec {
     pub table: String,
     /// `type`: its calibration type (`G` or `D`); empty takes the table's.
     pub kind: String,
-    /// `t`: the interpolation interval, seconds; casa-rs takes 0 only.
+    /// `t`: CASA records this interval, but G/D table application still
+    /// evaluates the requested interpolation at each data time.
     pub interval_s: f64,
     /// `interp`: the time interpolation (`linear` or `nearest`), optionally
     /// followed by `,` and a frequency interpolation; empty is `linear`.
     pub interp: String,
-    /// `calwt`: whether to calibrate the weights; casa-rs does not yet.
+    /// `calwt`: accepted as in CASA; corruption explicitly disables weight
+    /// calibration, so both settings preserve WEIGHT and SIGMA.
     pub calwt: bool,
     /// `spwmap`: each data window's table window; −1, or a window past
     /// its end, is the data window itself.
     pub spwmap: Vec<i64>,
-    /// `opacity` (for `type='TOPAC'`); casa-rs takes 0 only.
+    /// `opacity`: used by CASA's TOPAC term; ignored for the supported G/D
+    /// tables, as their application ignores it in CASA.
     pub opacity: f64,
 }
 
@@ -128,23 +131,15 @@ impl Simulator {
     /// - The table cannot be read, its type is not the `type` asked for,
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
     ///   raises.
-    /// - A table of other than `G` or `D` solutions; `calwt`, a nonzero `t`
-    ///   or `opacity`, or an interpolation other than `linear` or
-    ///   `nearest`: not yet implemented. (A table without a solution, or
-    ///   with a flagged one, for an antenna and integration is refused at
+    /// - A table of other than `G` or `D` solutions, or an interpolation
+    ///   other than `linear` or `nearest`: not yet implemented. (A table
+    ///   without a solution, or with a flagged one, for an antenna and integration is refused at
     ///   `corrupt`.)
     /// - No rows observed yet: refused, as `setgain` refuses.
     pub fn set_apply(&mut self, spec: &ApplySpec) -> SimulatorResult<()> {
         let interp = apply_interpolation(&spec.interp)?;
-        if spec.calwt {
-            return Err(not_yet("with calwt=True"));
-        }
-        if spec.interval_s != 0.0 {
-            return Err(not_yet(format!("with t={}", spec.interval_s)));
-        }
-        if spec.opacity != 0.0 {
-            return Err(not_yet(format!("with opacity={}", spec.opacity)));
-        }
+        // VisCal::corrupt turns weight calibration off. G/D table lookup
+        // uses each row's time regardless of t, and only TOPAC reads opacity.
         if spec.table.is_empty() {
             return Err(raised("No calibration table given."));
         }

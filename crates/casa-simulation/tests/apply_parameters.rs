@@ -27,6 +27,44 @@ fn fixture() -> Value {
     let fixture: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     assert_eq!(fixture["cases"].as_array().unwrap().len(), 28);
+    // An implementation that ignores interp must fail the scientific gate.
+    for kind in ["G", "D"] {
+        let cases = fixture["cases"].as_array().unwrap();
+        let control = |mode: &str| {
+            cases
+                .iter()
+                .find(|case| case["name"] == format!("{kind}_{mode}_control"))
+                .unwrap()
+        };
+        let (nearest, linear) = (control("nearest"), control("linear"));
+        let (mut error, mut power) = (0.0_f64, 0.0_f64);
+        for (a, b) in nearest["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(linear["rows"].as_array().unwrap())
+        {
+            for (a, b) in a["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .zip(b["data"].as_array().unwrap())
+            {
+                let value = |sample: &Value| {
+                    num_complex::Complex64::new(
+                        sample[0].as_f64().unwrap(),
+                        sample[1].as_f64().unwrap(),
+                    )
+                };
+                error += (value(a) - value(b)).norm_sqr();
+                power += value(b).norm_sqr();
+            }
+        }
+        assert!(
+            (error / power).sqrt() > 2e-3,
+            "{kind}: discriminating interpolation inputs"
+        );
+    }
     fixture
 }
 
@@ -45,8 +83,8 @@ fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
         ]
     } else {
         [
-            (0.005 * (antenna + 1.0), 0.0002 * elapsed),
-            (-0.004 * (antenna + 1.0), 0.0001 * elapsed),
+            (0.005 * (antenna + 1.0), 0.001 * elapsed),
+            (-0.004 * (antenna + 1.0), 0.0005 * elapsed),
         ]
     };
     values.map(|(real, imaginary)| Complex32::new(real as f32, imaginary as f32))

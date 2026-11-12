@@ -782,11 +782,10 @@ def test_setgain_and_setleakage_follow_casa(
     sm.open(str(tmp_path / "applied.ms"))
     configure(sm)
     assert sm.observe("F", "L", starttime="0s", stoptime="60s")
-    assert sm.setapply(table=str(tmp_path / "g.cal"), type="G", interp="nearest") is True
+    assert sm.setapply(table=str(tmp_path / "g.cal"), type="G", interp="nearest",
+                       calwt=True, t=25.0, opacity=0.25) is True
     with pytest.raises(RuntimeError, match="aipslin"):
         sm.setapply(table=str(tmp_path / "g.cal"), interp="aipslin")
-    with pytest.raises(NotImplementedError, match="calwt"):
-        sm.setapply(table=str(tmp_path / "g.cal"), calwt=True)
     assert sm.corrupt() is True
     sm.close()
     sm = simulator()

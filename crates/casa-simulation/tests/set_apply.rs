@@ -270,14 +270,6 @@ fn setapply_refuses_what_casa_or_casa_rs_cannot_apply() {
             "not D",
         ),
         (
-            ApplySpec {
-                calwt: true,
-                ..apply(&gains, "linear")
-            },
-            CasaOutcome::NotYetImplemented,
-            "calwt",
-        ),
-        (
             apply(&gains, "cubic"),
             CasaOutcome::NotYetImplemented,
             "cubic",

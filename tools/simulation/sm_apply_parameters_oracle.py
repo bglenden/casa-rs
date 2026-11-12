@@ -49,11 +49,11 @@ def receptor_values(kind, antenna, elapsed):
     if kind == "G":
         return (1.1 + 0.05 * antenna + 0.002 * elapsed + 1j * (0.2 + 0.003 * elapsed),
                 0.8 + 0.03 * antenna + 0.001 * elapsed - 1j * (0.1 + 0.002 * elapsed))
-    return (0.005 * (antenna + 1) + 1j * 0.0002 * elapsed,
-            -0.004 * (antenna + 1) + 1j * 0.0001 * elapsed)
+    return (0.005 * (antenna + 1) + 1j * 0.001 * elapsed,
+            -0.004 * (antenna + 1) + 1j * 0.0005 * elapsed)
 
 
-def calibration(sm, path, kind):
+def calibration(sm, path, kind, bounds):
     from casatools import table
 
     if kind == "G":
@@ -64,11 +64,24 @@ def calibration(sm, path, kind):
     tb = table()
     tb.open(str(path), nomodify=False)
     try:
+        first, last = bounds
         times = tb.getcol("TIME")
-        first, last = float(np.min(times)), float(np.max(times))
-        # Only endpoint solutions: data at the two inner integrations must
-        # interpolate, exposing any interval-dependent lookup behavior.
-        tb.removerows(np.flatnonzero((times != first) & (times != last)).tolist())
+        if kind == "D":
+            # CASA's leakage simulator emits a single constant solution.
+            # Add an explicit second endpoint so D interpolation is tested.
+            templates = [{name: tb.getcell(name, row) for name in tb.colnames()
+                          if tb.iscelldefined(name, row)} for row in range(tb.nrows())]
+            count = len(templates)
+            tb.addrows(count)
+            for row, record in enumerate(templates):
+                for name, value in record.items():
+                    tb.putcell(name, count + row, value)
+                tb.putcell("TIME", count + row, last)
+                tb.putcell("FIELD_ID", count + row, 1)
+        else:
+            # Only endpoints: inner integrations must interpolate.
+            tb.removerows(np.flatnonzero((times != first) & (times != last)).tolist())
+        tb.putcol("INTERVAL", np.zeros(tb.nrows()))
         times, antennas = tb.getcol("TIME"), tb.getcol("ANTENNA1")
         values = tb.getcol("CPARAM")
         for row, (time, antenna) in enumerate(zip(times, antennas)):
@@ -98,7 +111,12 @@ def worker(spec, out, fixture):
     initialize(path)
     sm = simulator()
     assert sm.openfromms(str(path))
-    info = calibration(sm, out / "terms.cal", spec["kind"])
+    tb = table()
+    tb.open(str(path))
+    times = tb.getcol("TIME")
+    bounds = float(np.min(times)), float(np.max(times))
+    tb.close()
+    info = calibration(sm, out / "terms.cal", spec["kind"], bounds)
     parameters = {"calwt": False, "t": 0.0, "opacity": 0.0, **spec["options"]}
     assert sm.setapply(table=str(out / "terms.cal"), interp=spec["interp"], **parameters)
     assert sm.corrupt()
@@ -122,11 +140,13 @@ def main():
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--fixture", type=pathlib.Path, required=True)
     parser.add_argument("--only", nargs="+", choices=[case["name"] for case in CASES])
+    parser.add_argument("--kind", choices=["G", "D"])
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     assert casatasks.version_string() == "6.7.6.14"
     args.out.mkdir(parents=True, exist_ok=True)
-    selected = [case for case in CASES if not args.only or case["name"] in args.only]
+    selected = [case for case in CASES if (not args.only or case["name"] in args.only)
+                and (not args.kind or case["kind"] == args.kind)]
     if args.worker:
         assert len(selected) == 1
         worker(selected[0], args.out, args.fixture)
