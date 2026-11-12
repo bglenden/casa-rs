@@ -81,12 +81,12 @@ impl Run<'_> {
     /// an empty one: no pass. It is charged as the initial pass would be,
     /// whose normal state it forms, and reads a window of channels at a
     /// time beside it.
-    pub(super) fn read_existing(&mut self) -> Result<Major, ImagingError> {
+    pub(super) fn read_existing(&mut self, seed_model: bool) -> Result<Major, ImagingError> {
         let existing = self
             .existing
             .clone()
             .expect("a run that reads its PSF has the earlier run's products");
-        let seeding = self.seeding_bytes();
+        let seeding = if seed_model { self.seeding_bytes() } else { 0 };
         let Admitted {
             value: plan,
             reservation: mut charge,
@@ -97,13 +97,13 @@ impl Run<'_> {
             false,
         )?;
         let generation = match &self.start_model {
-            Some(start) => {
+            Some(start) if seed_model => {
                 let _seeding = charge.split(seeding);
                 let samples = start.main_samples().map_err(ImagingError::StartModel)?;
                 self.start_model_flux = seeding::plane_fluxes(self.problem, start, &samples);
                 self.lifecycle.initial_from_start_model(&samples)?
             }
-            None => self.lifecycle.initial_empty()?,
+            _ => self.lifecycle.initial_empty()?,
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let mut cycle =

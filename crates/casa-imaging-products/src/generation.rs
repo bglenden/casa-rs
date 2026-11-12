@@ -451,7 +451,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 &plane,
                 self.planned.primary_beam_model,
                 self.inputs,
-                self.member.axes().domain(),
+                (self.member.axes().domain(), polarization),
             )
         };
         if self.member.validity != ProductValidityRule::All {

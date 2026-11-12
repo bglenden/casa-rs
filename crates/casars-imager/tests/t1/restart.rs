@@ -11,6 +11,7 @@ use serde_json::json;
 use super::{
     casa_return::{json_run, json_run_with},
     fixture::{Component, Observation},
+    mosaic::mosaic_run,
 };
 
 /// Diagnostic bytes of the small T1 output tree, never a production readback.
@@ -38,6 +39,87 @@ fn assert_unchanged(
             "previous output changed: {}",
             path.display()
         );
+    }
+}
+
+/// An ordinary mosaic continues on the saved sensitivity, keeping the
+/// model in the right units for the next major cycle. The on-disk PSF,
+/// PB, weights and sums stay in place while the residual and model advance.
+#[test]
+fn a_mosaic_reuses_the_saved_psf_sensitivity_and_pb_during_continuation() {
+    let (observation, mut controls) = mosaic_run(false);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    let (_, seed) = observation.image("mosaic-saved", controls.clone());
+    observation.image("mosaic-refresh-psf", controls.clone());
+    let saved = [".psf", ".sumwt", ".pb", ".weight"];
+    let paths = saved.map(|suffix| observation.scratch(&format!("mosaic-saved{suffix}")));
+    let before = paths.each_ref().map(|path| snapshot(path));
+    controls["niter"] = json!(20);
+    let (_, refreshed) = observation.image("mosaic-refresh-psf", controls.clone());
+    controls["calcpsf"] = json!(false);
+
+    let missing = observation.scratch("withheld-mosaic-sensitivity");
+    fs::rename(&paths[3], &missing).unwrap();
+    let Err(reason) = observation.try_image("mosaic-saved", controls.clone()) else {
+        panic!("a mosaic must have its saved sensitivity");
+    };
+    assert!(reason.contains("saved weight and PB"), "{reason}");
+    fs::rename(missing, &paths[3]).unwrap();
+
+    let (_, continued) = observation.image("mosaic-saved", controls.clone());
+    for ((suffix, path), before) in saved.into_iter().zip(&paths).zip(before) {
+        assert!(!continued.suffixes().contains(suffix), "rewrote {suffix}");
+        assert_unchanged(&before, &snapshot(path));
+    }
+    assert_ne!(seed.get(".model").pixels, continued.get(".model").pixels);
+    for suffix in [".image", ".image.pbcor", ".model", ".residual"] {
+        let expected = &refreshed.get(suffix).pixels;
+        let reused = &continued.get(suffix).pixels;
+        let power: f64 = expected.iter().map(|value| f64::from(*value).powi(2)).sum();
+        let error: f64 = expected
+            .iter()
+            .zip(reused)
+            .map(|(a, b)| f64::from(*a - *b).powi(2))
+            .sum();
+        assert!(
+            power > 0.0 && (error / power).sqrt() < 2e-6,
+            "{suffix}: {error}/{power}"
+        );
+    }
+    let mut pb = PagedImage::<f32>::open(&paths[2]).unwrap();
+    let pb_mask = pb.get_mask().unwrap().unwrap();
+    let beam = pb.get().unwrap().mapv(|value| 0.75 * value);
+    pb.put_slice(&beam, &[0; 4]).unwrap();
+    pb.save().unwrap();
+    drop(pb);
+    controls["pblimit"] = json!(0.8);
+    controls["niter"] = json!(0);
+    observation.image("mosaic-saved", controls);
+    let open = |suffix| PagedImage::<f32>::open(observation.scratch(suffix)).unwrap();
+    let restored = open("mosaic-saved.image");
+    let corrected = open("mosaic-saved.image.pbcor");
+    let residual = open("mosaic-saved.residual");
+    for image in [&restored, &corrected, &residual] {
+        assert_eq!(
+            image.get_mask().unwrap().unwrap(),
+            pb_mask,
+            "saved mosaic PB mask"
+        );
+    }
+    let restored = restored.get().unwrap();
+    let corrected = corrected.get().unwrap();
+    assert!(corrected.iter().any(|value| value.abs() > 0.01));
+    for (((restored, corrected), beam), valid) in
+        restored.iter().zip(&corrected).zip(&beam).zip(&pb_mask)
+    {
+        if *valid && *beam > 0.0 {
+            let expected = *restored / *beam;
+            assert!(
+                (*corrected - expected).abs() < 1e-6,
+                "{corrected} vs {expected}"
+            );
+        }
     }
 }
 
