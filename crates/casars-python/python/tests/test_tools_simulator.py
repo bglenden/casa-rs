@@ -188,7 +188,8 @@ def test_the_bundle_describes_the_class_signatures() -> None:
     )
 
 
-def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = "VLA") -> None:
+def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = "VLA",
+              stokes: str = "RR LL") -> None:
     assert sm.setconfig(
         telescopename=telescope, x=X, y=Y, z=Z, dishdiameter=[25.0], mount=["ALT-AZ"],
         antname=["A1", "A2", "A3", "A4"], padname=["P1", "P2", "P3", "P4"],
@@ -196,7 +197,7 @@ def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = 
     )
     assert sm.setspwindow(
         spwname="L", freq="1.4GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=4,
-        stokes="RR LL",
+        stokes=stokes,
     )
     assert sm.settimes(integrationtime="10s", usehourangle=False, referencetime=REFERENCE)
     assert sm.setfield(sourcename="F", sourcedirection=DIRECTION)
@@ -459,7 +460,7 @@ def test_observemany_pads_one_name_as_casa_does_and_raises_for_mismatched_lists(
 
 
 @needs_measures
-def test_setdata_takes_a_selection_of_every_row(tmp_path: Path) -> None:
+def test_setdata_takes_subsets_and_header_queries(tmp_path: Path) -> None:
     sm = opened(tmp_path)
     configure(sm)
     assert sm.setfield(sourcename="G", sourcedirection="J2000 23h40m00 30d00m00")
@@ -469,13 +470,50 @@ def test_setdata_takes_a_selection_of_every_row(tmp_path: Path) -> None:
     assert sm.setdata(fieldid=list(range(2)))
     assert sm.setdata(fieldid=[])
     assert sm.setdata(spwid=0, fieldid=(0, 1), msselect="")
-    with pytest.raises(NotImplementedError, match="1 of the 2 scans"):
-        sm.setdata(fieldid=[1])
-    with pytest.raises(NotImplementedError, match="msselect"):
-        sm.setdata(fieldid=[0, 1], msselect="ANTENNA1==0")
+    assert sm.setdata(fieldid=[1])
+    assert sm.setdata(fieldid=[0, 1], msselect="ANTENNA1==0")
+    assert sm.setdata(fieldid=[1], msselect="1") is False
+    assert sm.setdata(fieldid=[1], msselect="TRUE+TRUE>0") is False
+    assert sm.setdata(fieldid=[1], msselect="TRUE OR (TRUE+TRUE>0)") is False
+    with pytest.raises(NotImplementedError, match="#1053"):
+        sm.setdata(fieldid=[0, 1], msselect="UVW[1]>0")
     with pytest.raises(TypeError):
         sm.setdata(fieldid="0")
     sm.close()
+
+
+@needs_measures
+def test_selected_components_retain_call_order_and_observe_resets_selection(tmp_path: Path) -> None:
+    from casars.tools import componentlist
+
+    path = tmp_path / "point.cl"
+    cl = componentlist()
+    assert cl.addcomponent(flux=1.0, fluxunit="Jy", dir=DIRECTION, shape="point", freq="1.4GHz")
+    assert cl.rename(str(path))
+    assert cl.close(log=False)
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setfield(sourcename="G", sourcedirection=DIRECTION)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    assert sm.observe("G", "L", starttime="10s", stoptime="20s")
+    assert sm.setdata(fieldid=[1], msselect="ANTENNA1!=ANTENNA2")
+    assert sm.predict(complist=str(path))
+    assert sm.setdata(fieldid=[0], msselect="ANTENNA1==0")
+    assert sm.predict(complist=str(path), incremental=True)
+    assert sm.observe("G", "L", starttime="20s", stoptime="30s")
+    assert sm.predict(complist=str(path), incremental=True)
+    assert sm.close()
+    table = Table.open(tmp_path / "x.ms")
+    fields = np.asarray(table.get_column("FIELD_ID"))
+    first = np.asarray(table.get_column("ANTENNA1"))
+    second = np.asarray(table.get_column("ANTENNA2"))
+    scans = np.asarray(table.get_column("SCAN_NUMBER"))
+    earlier = scans < np.max(scans)
+    selected = earlier & (((fields == 1) & (first != second)) | ((fields == 0) & (first == 0)))
+    assert selected.any() and (~selected).any()
+    data = np.asarray(table.get_column("DATA"))
+    np.testing.assert_allclose(data[selected], 2.0, rtol=0, atol=1e-6)
+    np.testing.assert_allclose(data[~selected], 1.0, rtol=0, atol=1e-6)
 
 
 @needs_measures
@@ -782,11 +820,10 @@ def test_setgain_and_setleakage_follow_casa(
     sm.open(str(tmp_path / "applied.ms"))
     configure(sm)
     assert sm.observe("F", "L", starttime="0s", stoptime="60s")
-    assert sm.setapply(table=str(tmp_path / "g.cal"), type="G", interp="nearest") is True
+    assert sm.setapply(table=str(tmp_path / "g.cal"), type="G", interp="nearest",
+                       calwt=True, t=25.0, opacity=0.25) is True
     with pytest.raises(RuntimeError, match="aipslin"):
         sm.setapply(table=str(tmp_path / "g.cal"), interp="aipslin")
-    with pytest.raises(NotImplementedError, match="calwt"):
-        sm.setapply(table=str(tmp_path / "g.cal"), calwt=True)
     assert sm.corrupt() is True
     sm.close()
     sm = simulator()
@@ -808,6 +845,121 @@ def test_setgain_and_setleakage_follow_casa(
     assert sm.setleakage(amplitude=[0.05], offset=[0.01]) is True
     with pytest.raises(RuntimeError, match="JonesGenLin"):
         sm.corrupt()
+
+
+@needs_measures
+@pytest.mark.parametrize("kind", ["G", "D", "T", "T_valid"])
+@pytest.mark.parametrize("interp", ["nearest", "linear"])
+def test_table_application_uses_valid_and_neutral_parameters(tmp_path: Path, kind: str, interp: str) -> None:
+    from casars.tools import table as table_tool
+
+    path, calibration = tmp_path / "x.ms", tmp_path / "terms.cal"
+    sm = opened(tmp_path)
+    configure(sm, stokes="RR RL LR LL")
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.setseed(5)
+    assert sm.setnoise(simplenoise="0.1Jy")
+    assert sm.corrupt()
+    sm.close()
+    before = Table.open(path)
+    columns = ("DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")
+    expected = {name: np.asarray(before.get_column(name)).copy() for name in columns}
+    assert np.any(expected["DATA"] != 0)
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    if kind == "D":
+        assert sm.setleakage(table=str(calibration), amplitude=[0.05])
+    else:
+        assert sm.setgain(table=str(calibration), amplitude=[0.05])
+    sm.close()
+    tb = table_tool()
+    assert tb.open(str(calibration), nomodify=False)
+    if kind.startswith("T"):
+        for column in ("CPARAM", "FLAG", "PARAMERR", "SNR"):
+            values = np.asarray(tb.getcol(column))[:1, :, :]
+            if column == "CPARAM":
+                values = np.full_like(values, 2 + 0j)
+            assert tb.putcol(column, values)
+        assert tb.putkeyword("VisCal", "T Jones")
+        assert tb.putinfo({"subType": "T Jones"})
+    flags = np.asarray(tb.getcol("FLAG"))
+    assert tb.putcol("FLAG", np.full_like(flags, kind != "T_valid", dtype=bool))
+    tb.close()
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setapply(table=str(calibration), type="T" if kind.startswith("T") else kind,
+                       interp=interp)
+    assert sm.corrupt()
+    sm.close()
+    after = Table.open(path)
+    if kind == "T_valid":
+        # The independent scalar equation: (2+0j) * conj(2+0j) = 4.
+        expected["DATA"] *= 4
+    for name in columns:
+        np.testing.assert_array_equal(after.get_column(name), expected[name], err_msg=name)
+
+
+@needs_measures
+@pytest.mark.parametrize("kind", ["B", "Tf", "Df"])
+@pytest.mark.parametrize("flagged", [False, True])
+def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Path, kind: str, flagged: bool) -> None:
+    from casars.tools import table as table_tool
+
+    path, calibration = tmp_path / "x.ms", tmp_path / "frequency.cal"
+    sm = opened(tmp_path)
+    configure(sm, stokes="RR RL LR LL")
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.setseed(5)
+    assert sm.setnoise(simplenoise="0.1Jy")
+    assert sm.corrupt()
+    sm.close()
+    before = Table.open(path)
+    expected = {name: np.asarray(before.get_column(name)).copy() for name in ("DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")}
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setgain(table=str(calibration), amplitude=[0.0])
+    sm.close()
+    receptors = 1 if kind == "Tf" else 2
+    coefficients = np.array([[1.0, 1.2, 1.4, 1.6], [0.8, 0.9, 1.0, 1.1]], dtype=np.complex64)[:receptors]
+    if kind == "Df":
+        coefficients *= 0.05 + 0.03j
+    tb = table_tool()
+    assert tb.open(str(calibration), nomodify=False)
+    rows = np.asarray(tb.getcol("TIME")).size
+    for column in ("CPARAM", "FLAG", "PARAMERR", "SNR"):
+        values = np.repeat(coefficients[:, :, None], rows, axis=2) if column == "CPARAM" else np.full((receptors, 4, rows), flagged if column == "FLAG" else 0, dtype=bool if column == "FLAG" else np.float32)
+        assert tb.putcol(column, values)
+    assert tb.putkeyword("VisCal", kind + " Jones")
+    assert tb.putinfo({"subType": kind + " Jones"})
+    tb.close()
+    window = Table.open(path / "SPECTRAL_WINDOW")
+    assert tb.open(str(calibration / "SPECTRAL_WINDOW"), nomodify=False)
+    for column in ("NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+        assert tb.putcol(column, np.moveaxis(np.asarray(window.get_column(column)), 0, -1))
+    tb.close()
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setapply(table=str(calibration), type=kind, interp="linear,linear")
+    assert sm.corrupt()
+    sm.close()
+    if not flagged:
+        # get_column exposes row, correlation, channel for this DATA column.
+        data = expected["DATA"]
+        if kind == "Df":
+            xx, yy = data[:, 0, :].copy(), data[:, 3, :].copy()
+            data[:, 1, :] += coefficients[0] * yy + coefficients[1].conj() * xx
+            data[:, 2, :] += coefficients[1] * xx + coefficients[0].conj() * yy
+        else:
+            pairs = ((0, 0), (0, 1), (1, 0), (1, 1))
+            for correlation, (left, right) in enumerate(pairs):
+                data[:, correlation, :] *= coefficients[0 if receptors == 1 else left] * coefficients[0 if receptors == 1 else right].conj()
+    after = Table.open(path)
+    for name, reference in expected.items():
+        actual = after.get_column(name)
+        if name == "DATA":
+            np.testing.assert_allclose(actual, reference, rtol=2e-6, atol=1e-7)
+        else:
+            np.testing.assert_array_equal(actual, reference, err_msg=name)
 
 
 @needs_measures

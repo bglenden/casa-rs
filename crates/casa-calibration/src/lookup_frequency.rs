@@ -1,0 +1,387 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! CASA's frequency resampling interpolates amplitude and unwrapped phase.
+use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
+use num_complex::Complex32;
+
+/// Frequency interpolation for a complex calibration grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrequencyInterpolation {
+    /// Nearest valid frequency sample, with nearest endpoint extrapolation.
+    Nearest,
+    /// Linear amplitude and unwrapped phase, skipping flagged inputs.
+    Linear,
+    /// A local polynomial through four valid samples.
+    Cubic,
+    /// A natural cubic spline through valid samples.
+    Spline,
+    /// Nearest interpolation retaining registered input flags.
+    NearestFlag,
+    /// Linear interpolation retaining registered input flags.
+    LinearFlag,
+    /// Cubic interpolation retaining registered input flags.
+    CubicFlag,
+    /// Spline interpolation retaining registered input flags.
+    SplineFlag,
+}
+
+impl FrequencyInterpolation {
+    fn base(self) -> Self {
+        match self {
+            Self::NearestFlag => Self::Nearest,
+            Self::LinearFlag => Self::Linear,
+            Self::CubicFlag => Self::Cubic,
+            Self::SplineFlag => Self::Spline,
+            mode => mode,
+        }
+    }
+    fn retains_flags(self) -> bool {
+        self != self.base()
+    }
+}
+
+impl ComplexSolution {
+    /// Resample each receptor to the requested data frequencies.
+    ///
+    /// CASA's `CTPatchedInterp::resampleInFreq` first removes flagged
+    /// input channels, unwraps phase and interpolates amplitude/phase
+    /// separately. Without a valid input the output remains flagged.
+    /// One valid input and frequencies beyond either edge use its nearest
+    /// endpoint. A single-channel solution is frequency independent.
+    ///
+    /// # Errors
+    /// A nonconstant grid disagrees with its frequency axis, or its valid
+    /// frequencies are not strictly monotonic. Cubic interpolation of an
+    /// interior frequency requires at least four valid samples on a physical
+    /// axis of four or more channels. CASA downgrades shorter physical
+    /// cubic/spline axes to linear before compressing flagged samples.
+    pub fn resample_frequency(
+        &self,
+        input_hz: &[f64],
+        output_hz: &[f64],
+        mode: FrequencyInterpolation,
+    ) -> Result<Self, ApplyExecutionError> {
+        let error = |reason: &str| ApplyExecutionError::UnsupportedCalibrationTable {
+            path: String::new(),
+            reason: reason.to_string(),
+        };
+        if self.channels != 1 && input_hz.len() != self.channels {
+            return Err(error(
+                "calibration frequency grid does not match CPARAM channel axis",
+            ));
+        }
+        // CTPatchedInterp::interpolate selects its effective method from
+        // the physical axis, before removing flagged input channels.
+        let interpolation = match mode.base() {
+            FrequencyInterpolation::Cubic | FrequencyInterpolation::Spline if self.channels < 4 => {
+                FrequencyInterpolation::Linear
+            }
+            interpolation => interpolation,
+        };
+        let size = self
+            .receptors
+            .checked_mul(output_hz.len())
+            .ok_or_else(|| error("resampled parameter count overflows usize"))?;
+        let mut values = Vec::with_capacity(size);
+        let mut flags = Vec::with_capacity(size);
+        for receptor in 0..self.receptors {
+            if self.channels == 1 {
+                values.extend(std::iter::repeat_n(
+                    self.value(receptor, 0),
+                    output_hz.len(),
+                ));
+                flags.extend(std::iter::repeat_n(self.flags[receptor], output_hz.len()));
+                continue;
+            }
+            // Reserve the known upper bound: filtered collect otherwise
+            // doubles near growth boundaries, exceeding admitted scratch.
+            let mut points = Vec::with_capacity(self.channels);
+            for (channel, &frequency) in input_hz.iter().enumerate().take(self.channels) {
+                if !self.flags[receptor * self.channels + channel] {
+                    let value = self.value(receptor, channel);
+                    points.push((frequency / 1.0e9, value.norm(), value.arg()));
+                }
+            }
+            let descending = input_hz
+                .first()
+                .zip(input_hz.last())
+                .is_some_and(|(first, last)| first > last);
+            if !points.windows(2).all(|pair| {
+                if descending {
+                    pair[0].0 > pair[1].0
+                } else {
+                    pair[0].0 < pair[1].0
+                }
+            }) {
+                return Err(error(
+                    "valid calibration frequencies must be strictly monotonic",
+                ));
+            }
+            for index in 1..points.len() {
+                let previous = points[index - 1].2;
+                while f64::from(points[index].2 - previous) > std::f64::consts::PI {
+                    points[index].2 = (f64::from(points[index].2) - std::f64::consts::TAU) as f32;
+                }
+                while f64::from(points[index].2 - previous) < -std::f64::consts::PI {
+                    points[index].2 = (f64::from(points[index].2) + std::f64::consts::TAU) as f32;
+                }
+            }
+            if descending {
+                points.reverse();
+            }
+            if interpolation == FrequencyInterpolation::Cubic
+                && (2..4).contains(&points.len())
+                && output_hz.iter().any(|frequency| {
+                    frequency / 1e9 > points[0].0 && frequency / 1e9 < points[points.len() - 1].0
+                })
+            {
+                return Err(error(
+                    "cubic frequency interpolation requires four valid samples for an interior output",
+                ));
+            }
+            let derivatives = if interpolation == FrequencyInterpolation::Spline {
+                spline_derivatives(&points)
+            } else {
+                Vec::new()
+            };
+            for &frequency in output_hz {
+                let value = sample(
+                    &points,
+                    frequency / 1.0e9,
+                    interpolation,
+                    descending,
+                    &derivatives,
+                );
+                flags.push(
+                    value.is_none()
+                        || (mode.retains_flags()
+                            && registered_flag(self, receptor, input_hz, frequency, interpolation)),
+                );
+                values.push(value.unwrap_or_default());
+            }
+        }
+        Ok(Self {
+            receptors: self.receptors,
+            channels: output_hz.len(),
+            values,
+            flags,
+        })
+    }
+}
+
+fn sample(
+    points: &[(f64, f32, f32)],
+    frequency: f64,
+    mode: FrequencyInterpolation,
+    descending: bool,
+    derivatives: &[[f64; 2]],
+) -> Option<Complex32> {
+    let first = points.first()?;
+    if points.len() == 1 || frequency <= first.0 {
+        return Some(Complex32::from_polar(first.1, first.2));
+    }
+    let last = points.last().expect("nonempty");
+    if frequency >= last.0 {
+        return Some(Complex32::from_polar(last.1, last.2));
+    }
+    let upper = points.partition_point(|point| point.0 < frequency);
+    let (low, high) = (points[upper - 1], points[upper]);
+    let (amplitude, phase) = if mode == FrequencyInterpolation::Nearest {
+        let nearest = if high.0 - frequency < frequency - low.0
+            || (descending && high.0 - frequency == frequency - low.0)
+        {
+            high
+        } else {
+            low
+        };
+        (nearest.1, nearest.2)
+    } else if mode == FrequencyInterpolation::Cubic {
+        let first = upper.saturating_sub(2).min(points.len().saturating_sub(4));
+        let stencil = &points[first..(first + 4).min(points.len())];
+        let polynomial = |axis: usize| {
+            let mut c = [0.0f32; 4];
+            let mut d = [0.0f32; 4];
+            for (index, point) in stencil.iter().enumerate() {
+                c[index] = if axis == 0 { point.1 } else { point.2 };
+                d[index] = c[index];
+            }
+            let mut value = c[0];
+            for order in 1..stencil.len() {
+                for index in 0..stencil.len() - order {
+                    let w = f64::from(c[index + 1] - d[index])
+                        / (stencil[index].0 - stencil[index + order].0);
+                    c[index] = ((stencil[index].0 - frequency) * w) as f32;
+                    d[index] = ((stencil[index + order].0 - frequency) * w) as f32;
+                }
+                value += c[0];
+            }
+            value
+        };
+        (polynomial(0), polynomial(1))
+    } else if mode == FrequencyInterpolation::Spline {
+        let width = high.0 - low.0;
+        let a = (high.0 - frequency) / width;
+        let b = 1.0 - a;
+        let evaluate = |left: f32, right: f32, axis: usize| {
+            (a * f64::from(left)
+                + b * f64::from(right)
+                + width * width / 6.0
+                    * ((a * a * a - a) * derivatives[upper - 1][axis]
+                        + (b * b * b - b) * derivatives[upper][axis])) as f32
+        };
+        (evaluate(low.1, high.1, 0), evaluate(low.2, high.2, 1))
+    } else {
+        let fraction = (frequency - low.0) / (high.0 - low.0);
+        let interpolate = |a: f32, b: f32| (f64::from(a) + f64::from(b - a) * fraction) as f32;
+        (interpolate(low.1, high.1), interpolate(low.2, high.2))
+    };
+    Some(Complex32::from_polar(amplitude, phase))
+}
+
+impl CalibrationTableLookup {
+    /// Read the calibration table's spectral-window frequency axes.
+    ///
+    /// Callers admit the frequency values counted by `layout_on_disk`
+    /// before calling this method, and retain that charge with the result.
+    ///
+    /// # Errors
+    /// The SPECTRAL_WINDOW table or a CHAN_FREQ cell cannot be read.
+    pub fn frequency_grids_on_disk(
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<Vec<f64>>, ApplyExecutionError> {
+        let path = path.as_ref();
+        let error = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason,
+        };
+        let spectral = crate::lookup::spectral_window_path(path)?
+            .ok_or_else(|| error("missing SPECTRAL_WINDOW table reference".to_string()))?;
+        let table = casa_tables::Table::open(casa_tables::TableOptions::new(spectral))
+            .map_err(|e| error(e.to_string()))?;
+        let spw = casa_ms::MsSpectralWindow::new(&table);
+        (0..table.row_count())
+            .map(|row| spw.chan_freq(row).map_err(|e| error(e.to_string())))
+            .collect()
+    }
+}
+
+/// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
+fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
+    let mut second = vec![[0.0; 2]; points.len()];
+    if points.len() < 3 {
+        return second;
+    }
+    let mut upper = vec![0.0; points.len()];
+    for index in 1..points.len() - 1 {
+        let left = points[index].0 - points[index - 1].0;
+        let right = points[index + 1].0 - points[index].0;
+        let diagonal = 2.0 * (left + right) - left * upper[index - 1];
+        upper[index] = right / diagonal;
+        let previous = second[index - 1];
+        for (axis, value) in second[index].iter_mut().enumerate() {
+            let y = |index: usize| {
+                f64::from(if axis == 0 {
+                    points[index].1
+                } else {
+                    points[index].2
+                })
+            };
+            let slope = (y(index + 1) - y(index)) / right - (y(index) - y(index - 1)) / left;
+            *value = (6.0 * slope - left * previous[axis]) / diagonal;
+        }
+    }
+    for index in (1..points.len() - 1).rev() {
+        let next = second[index + 1];
+        for (value, next) in second[index].iter_mut().zip(next) {
+            *value -= upper[index] * next;
+        }
+    }
+    second
+}
+
+/// Registration follows CTPatchedInterp::resampleFlagsInFreq on the full
+/// input axis, independently of the compressed valid interpolation samples.
+fn registered_flag(
+    solution: &ComplexSolution,
+    receptor: usize,
+    input: &[f64],
+    frequency: f64,
+    mode: FrequencyInterpolation,
+) -> bool {
+    let n = input.len();
+    if n == 0 {
+        return true;
+    }
+    let frequency = frequency / 1e9;
+    let descending = input[0] > input[n - 1];
+    let upper = input.partition_point(|&value| {
+        if descending {
+            value / 1e9 > frequency
+        } else {
+            value / 1e9 < frequency
+        }
+    });
+    let flag = |index: usize| solution.flags[receptor * solution.channels + index];
+    // CASA assigns exact input-channel flags verbatim, regardless of the
+    // interpolation neighborhood used between channels.
+    if upper < n && input[upper] / 1e9 == frequency {
+        return flag(upper);
+    }
+    let mut left = upper.saturating_sub(1).min(n - 1);
+    match mode {
+        FrequencyInterpolation::Nearest => {
+            if left + 1 < n
+                && (frequency - input[left] / 1e9).abs() > (input[left + 1] / 1e9 - frequency).abs()
+            {
+                left += 1;
+            }
+            flag(left)
+        }
+        FrequencyInterpolation::Linear => {
+            left = left.min(n.saturating_sub(2));
+            (left..(left + 2).min(n)).any(flag)
+        }
+        _ => {
+            let center = left.max(1).min(n.saturating_sub(3).max(1));
+            (center - 1..(center + 3).min(n)).any(flag)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn natural_spline_matches_the_closed_form_at_every_half_knot() {
+        // For unit-spaced amplitudes [1,2,1/2,5/4], the interior
+        // curvature equations are 4*m1+m2=-15, m1+4*m2=27/2.
+        // m1=-49/10 and m2=23/5 give these exact half-knot values.
+        let solution = ComplexSolution {
+            receptors: 1,
+            channels: 4,
+            values: vec![1.0, 2.0, 0.5, 1.25]
+                .into_iter()
+                .map(|a| Complex32::new(a, 0.0))
+                .collect(),
+            flags: vec![false; 4],
+        };
+        let output = solution
+            .resample_frequency(
+                &[1e9, 1.001e9, 1.002e9, 1.003e9],
+                &[1.0005e9, 1.0015e9, 1.0025e9],
+                FrequencyInterpolation::Spline,
+            )
+            .unwrap();
+        for (actual, expected) in
+            output
+                .values
+                .iter()
+                .zip([289.0 / 160.0, 203.0 / 160.0, 47.0 / 80.0])
+        {
+            assert!(
+                (actual.re - expected).abs() < 1e-6,
+                "{actual} versus {expected}"
+            );
+            assert_eq!(actual.im, 0.0);
+        }
+    }
+}

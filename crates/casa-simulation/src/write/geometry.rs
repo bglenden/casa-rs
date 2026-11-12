@@ -122,7 +122,10 @@ impl<'a> ArrayGeometry<'a> {
         debug_assert_eq!(rows.len(), planned.baseline_count());
         let count = planned.antenna_count;
         let antennas = &self.antennas[..count];
-        let epoch = MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1);
+        // NewMSSimulator constructs MEpoch from Quantity(TIME, "s"). Its
+        // precomputed seconds-to-days factor can differ from division by
+        // one MJD ulp, enough to move a long baseline by a micrometre.
+        let epoch = MEpoch::from_mjd_seconds(time_s, EpochRef::UT1);
         // At the pointing direction, as `NewMSSimulator` computes a moved
         // pointing's UVW, though its DATA is phased on the field (#884).
         let frame = UvwFrame::new(
@@ -232,7 +235,7 @@ impl<'a> ArrayGeometry<'a> {
         time_s: f64,
         count: usize,
     ) -> SimulatorResult<Vec<f32>> {
-        let epoch = MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1);
+        let epoch = MEpoch::from_mjd_seconds(time_s, EpochRef::UT1);
         Ok(self
             .elevations(direction_rad, &epoch, count)?
             .into_iter()

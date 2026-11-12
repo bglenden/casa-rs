@@ -1,0 +1,37 @@
+{
+  "casa_version": "6.7.6.14",
+  "work_issue": 1053,
+  "recipe": "tools/simulation/sidereal_oracle.py",
+  "position_itrf_m": [
+    2225142.18,
+    -5440307.37,
+    -2481029.85
+  ],
+  "cases": [
+    {
+      "name": "schedule_hour_number",
+      "epoch_ut1_mjd": 57754.63596898114,
+      "last_rad": 4.584230444672976
+    },
+    {
+      "name": "schedule_hour_quantity",
+      "epoch_ut1_mjd": 57560.29429110562,
+      "last_rad": 5.377381487077525
+    },
+    {
+      "name": "schedule_refdate_modern",
+      "epoch_ut1_mjd": 60689.66281925089,
+      "last_rad": 4.9781428967305885
+    },
+    {
+      "name": "schedule_square",
+      "epoch_ut1_mjd": 57202.19136892141,
+      "last_rad": 4.853543654009142
+    },
+    {
+      "name": "model_direction",
+      "epoch_ut1_mjd": 56657.72256186483,
+      "last_rad": 5.107967086006316
+    }
+  ]
+}

@@ -39,7 +39,7 @@ const INTEGRATIONS: usize = 2_000;
 const CALL_ALLOWANCE_BYTES: u64 = 64 * 1024;
 
 /// What one measured call held.
-struct Call {
+pub(super) struct Call {
     /// The heap's peak beyond what was live before.
     peak: u64,
     /// The most the reservations held at once.
@@ -52,7 +52,7 @@ struct Call {
     kept: u64,
 }
 
-fn measured(call: impl FnOnce()) -> Call {
+pub(super) fn measured(call: impl FnOnce()) -> Call {
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
@@ -99,7 +99,7 @@ fn apply(table: &Path) -> ApplySpec {
     }
 }
 
-fn check(name: &str, call: &Call) {
+pub(super) fn check(name: &str, call: &Call) {
     println!(
         "{name}: heap peak {}, admitted {}, at most {} beyond; left {}, kept {}",
         call.peak, call.admitted, call.beyond, call.left, call.kept

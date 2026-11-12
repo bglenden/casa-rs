@@ -689,6 +689,7 @@ dependencies = [
  "casa-values",
  "criterion",
  "ndarray",
+ "serde_json",
  "sofars",
  "time",
  "tracing",

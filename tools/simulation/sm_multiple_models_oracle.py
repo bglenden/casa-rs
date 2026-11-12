@@ -72,7 +72,7 @@ def model(path, name):
     cs.done()
 
 
-def make_session(path):
+def make_session(path, stokes="XX YY"):
     from casatools import measures, simulator
 
     sm, me = simulator(), measures()
@@ -83,7 +83,7 @@ def make_session(path):
                         offset=[0.0], mount=["alt-az"], antname=["DA"], padname=["A"], coordsystem="global",
                         referencelocation=me.observatory("ALMA"))
     assert sm.setspwindow(spwname="band6", freq="230GHz", deltafreq="15.625MHz",
-                          freqresolution="15.625MHz", refcode="TOPO", nchannels=4, stokes="XX YY")
+                          freqresolution="15.625MHz", refcode="TOPO", nchannels=4, stokes=stokes)
     assert sm.setfeed(mode="perfect X Y")
     for name, direction in (("target", CENTRE), ("offset", OFFSET)):
         assert sm.setfield(sourcename=name, sourcedirection=me.direction(

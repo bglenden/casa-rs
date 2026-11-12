@@ -45,7 +45,6 @@
     "crates/casa-tables/src/table/mod.rs",
     "crates/casa-tables/src/table/tests.rs",
     "crates/casa-tables/src/table_impl.rs",
-    "crates/casa-tables/src/taql/eval.rs",
     "crates/casa-tables/src/taql/exec.rs",
     "crates/casa-tables/src/taql/functions.rs",
     "crates/casa-tables/src/taql/meas_udf.rs",

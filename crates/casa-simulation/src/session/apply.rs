@@ -29,13 +29,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_calibration::{ApplyInterpolationMode, CalibrationTableLookup, FieldSelection};
+use casa_calibration::{
+    ApplyInterpolationMode, CalibrationTableLookup, FieldSelection, FrequencyInterpolation,
+};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use num_complex::Complex32;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied};
+use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency};
 
 /// The phase loading a `setapply` table is admitted as: the table as it is
 /// read, and what the loaded lookup keeps.
@@ -46,19 +48,24 @@ const LOOKUP_PHASE: &str = "loading a setapply calibration table";
 pub struct ApplySpec {
     /// `table`: the calibration table to corrupt by.
     pub table: String,
-    /// `type`: its calibration type (`G` or `D`); empty takes the table's.
+    /// `type`: its calibration type (`G`, `D`, scalar `T`, `B`, `Tf`, `Df`); empty takes the table's.
     pub kind: String,
-    /// `t`: the interpolation interval, seconds; casa-rs takes 0 only.
+    /// `t`: CASA records this interval, but G/D/T table application still
+    /// evaluates the requested interpolation at each data time.
     pub interval_s: f64,
     /// `interp`: the time interpolation (`linear` or `nearest`), optionally
     /// followed by `,` and a frequency interpolation; empty is `linear`.
     pub interp: String,
-    /// `calwt`: whether to calibrate the weights; casa-rs does not yet.
+    /// `calwt`: accepted as in CASA; corruption explicitly disables weight
+    /// calibration, so both settings preserve WEIGHT and SIGMA.
     pub calwt: bool,
-    /// `spwmap`: each data window's table window; −1, or a window past
-    /// its end, is the data window itself.
+    /// `spwmap`: empty or [-1] preserves data-window ids. One nonnegative
+    /// id broadcasts to every data window; a longer list maps a prefix.
+    /// [-999] broadcasts the first window with solutions. Other negative
+    /// or out-of-range ids raise.
     pub spwmap: Vec<i64>,
-    /// `opacity` (for `type='TOPAC'`); casa-rs takes 0 only.
+    /// `opacity`: used by CASA's TOPAC term; ignored for the supported G/D/T
+    /// tables, as their application ignores it in CASA.
     pub opacity: f64,
 }
 
@@ -71,13 +78,56 @@ pub(crate) enum JonesSource {
     Applied(AppliedTable),
 }
 
+impl JonesSource {
+    /// Metadata-only coverage, before any applied solutions are formed.
+    pub(super) fn covers(&self, window: usize) -> bool {
+        match self {
+            Self::Simulated(term) => term.covers(window),
+            Self::Applied(table) => table.calibration_window(window).is_some(),
+        }
+    }
+}
+
+/// A loaded table's mathematical operator. A scalar T parameter expands
+/// to the same gain on both receptors; it shares the gain kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppliedKind {
+    Gain,
+    Leakage,
+    Scalar,
+}
+
+impl AppliedKind {
+    fn operator(self) -> JonesKind {
+        match self {
+            Self::Gain | Self::Scalar => JonesKind::Gain,
+            Self::Leakage => JonesKind::Leakage,
+        }
+    }
+
+    fn receptors(self) -> usize {
+        if self == Self::Scalar { 1 } else { 2 }
+    }
+}
+
 /// A table `setapply` set: the table as it was loaded, and how to apply it.
 #[derive(Clone)]
 pub(crate) struct AppliedTable {
     path: PathBuf,
     lookup: Arc<HeldLookup>,
-    kind: JonesKind,
-    spwmap: Vec<i64>,
+    kind: AppliedKind,
+    frequency: Option<FrequencyInterpolation>,
+    spwmap: Vec<usize>,
+}
+
+impl AppliedTable {
+    fn calibration_window(&self, window: usize) -> Option<usize> {
+        let mapped = *self.spwmap.get(window)?;
+        self.lookup
+            .lookup
+            .has_spectral_window(mapped as i32)
+            .then_some(mapped)
+    }
 }
 
 impl std::fmt::Debug for AppliedTable {
@@ -91,9 +141,19 @@ impl std::fmt::Debug for AppliedTable {
     }
 }
 
+/// Evaluated solutions; channel offsets are present only for spectral tables.
+struct AppliedSolutions {
+    chunks: Chunks,
+    values: Vec<[Complex32; 2]>,
+    offsets: Vec<usize>,
+}
+
 /// A loaded table with the memory admitted for what it keeps.
 struct HeldLookup {
     lookup: CalibrationTableLookup,
+    frequencies: Vec<Vec<f64>>,
+    max_cell_values: usize,
+    windows: usize,
     _reservation: Reservation,
 }
 
@@ -127,24 +187,28 @@ impl Simulator {
     ///
     /// - The table cannot be read, its type is not the `type` asked for,
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
-    ///   raises.
-    /// - A table of other than `G` or `D` solutions; `calwt`, a nonzero `t`
-    ///   or `opacity`, or an interpolation other than `linear` or
-    ///   `nearest`: not yet implemented. (A table without a solution, or
-    ///   with a flagged one, for an antenna and integration is refused at
-    ///   `corrupt`.)
+    ///   raises. A table whose parameter count disagrees with its type
+    ///   raises at `corrupt`, as CASA does.
+    /// - Other than `G`, `D`, scalar `T`, `B`, `Tf` and `Df`, or time
+    ///   interpolation other than `linear`/`nearest`: not yet implemented.
+    /// - Frequency interpolation supports nearest, linear, cubic and spline,
+    ///   their flag-retaining forms, and CASA's default linear fallback.
+    ///   Cubic interior interpolation with fewer than four valid input
+    ///   channels raises at `corrupt`, as CASA does.
     /// - No rows observed yet: refused, as `setgain` refuses.
+    ///
+    /// The term snapshots its spectral-window map. A window added later,
+    /// or mapped to a calibration window with no solutions, skips the whole
+    /// corruption step, including noise and corrected-data updates, as in CASA.
+    ///
+    /// Flagged G/T parameters and missing G/T antennas use unit gains,
+    /// as in CASA. A scalar T parameter applies equally to all correlations.
+    /// For D tables an invalid receptor or missing antenna uses neutral leakage (both coefficients zero), correcting CASA's unit
+    /// leakage substitution. Input data flags, weights and sigma persist.
     pub fn set_apply(&mut self, spec: &ApplySpec) -> SimulatorResult<()> {
         let interp = apply_interpolation(&spec.interp)?;
-        if spec.calwt {
-            return Err(not_yet("with calwt=True"));
-        }
-        if spec.interval_s != 0.0 {
-            return Err(not_yet(format!("with t={}", spec.interval_s)));
-        }
-        if spec.opacity != 0.0 {
-            return Err(not_yet(format!("with opacity={}", spec.opacity)));
-        }
+        // VisCal::corrupt turns weight calibration off. G/D/T table lookup
+        // uses each row's time regardless of t, and only TOPAC reads opacity.
         if spec.table.is_empty() {
             return Err(raised("No calibration table given."));
         }
@@ -161,11 +225,15 @@ impl Simulator {
                 )));
             }
         };
+        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF")
+            .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
-            "G" => JonesKind::Gain,
-            "D" => JonesKind::Leakage,
+            "G" | "B" => AppliedKind::Gain,
+            "D" | "DF" => AppliedKind::Leakage,
+            "T" | "TF" => AppliedKind::Scalar,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
+        let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;
         self.require_rows()?;
         tracing::info!(
             "Arranging to CORRUPT with: {} ({})",
@@ -176,7 +244,8 @@ impl Simulator {
             path,
             lookup: Arc::new(lookup),
             kind,
-            spwmap: spec.spwmap.clone(),
+            frequency,
+            spwmap,
         }));
         Ok(())
     }
@@ -189,23 +258,45 @@ impl Simulator {
         path: &std::path::Path,
         interp: ApplyInterpolationMode,
     ) -> SimulatorResult<HeldLookup> {
-        let rows = CalibrationTableLookup::rows_on_disk(path).map_err(raised)?;
-        let kept = CalibrationTableLookup::kept_bytes(rows);
+        let metadata_bytes =
+            CalibrationTableLookup::metadata_bytes_on_disk(path).map_err(raised)?;
         let resources = &self.options.resources;
+        // Admit headers before inspecting shapes; no numerical array is
+        // materialized by layout_on_disk. Only scalar counts survive it.
+        let metadata = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: LOOKUP_PHASE,
+                memory: metadata_bytes,
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let layout = CalibrationTableLookup::layout_on_disk(path).map_err(raised)?;
+        drop(metadata);
+        let kept = layout.kept_bytes();
         let mut reservation = admit(
             resources.host(),
             resources.policy(),
             &Demand {
                 phase: LOOKUP_PHASE,
-                memory: CalibrationTableLookup::loading_bytes(rows) + kept,
+                memory: layout.loading_bytes().saturating_add(kept),
             },
         )
         .map_err(SimulatorError::admission)?;
         let lookup = CalibrationTableLookup::open_with(path, interp, FieldSelection::AnyField)
             .map_err(raised)?;
+        let frequencies = if layout.frequency_values > 0 {
+            CalibrationTableLookup::frequency_grids_on_disk(path).map_err(raised)?
+        } else {
+            Vec::new()
+        };
         reservation.retain(kept);
         Ok(HeldLookup {
             lookup,
+            frequencies,
+            max_cell_values: layout.max_cell_values,
+            windows: layout.frequency_windows,
             _reservation: reservation,
         })
     }
@@ -214,21 +305,65 @@ impl Simulator {
     /// set, a table's evaluated over the scans observed so far. An
     /// evaluated term is admitted as a simulated one is, before it is
     /// formed, and keeps its share while a step applies it.
-    pub(super) fn jones_term(&self, source: &JonesSource) -> SimulatorResult<Arc<HeldTerm>> {
+    pub(super) fn jones_term(
+        &self,
+        source: &JonesSource,
+        covered: &impl Fn(usize) -> bool,
+    ) -> SimulatorResult<Arc<HeldTerm>> {
         match source {
             JonesSource::Simulated(term) => Ok(Arc::clone(term)),
             JonesSource::Applied(table) => {
                 let antennas = self.antennas.len();
-                let (per_window, _) = self.integration_counts();
-                let bytes = TermBytes::per_chunk(&per_window, antennas);
+                let (mut per_window, _) = self.integration_counts();
+                // Definitions without observed rows still own a window slot.
+                per_window.resize(self.spectral_windows.len(), 0);
+                for (window, count) in per_window.iter_mut().enumerate() {
+                    if !covered(window) {
+                        *count = 0;
+                    }
+                }
+                let channels = self
+                    .spectral_windows
+                    .iter()
+                    .enumerate()
+                    .map(|(index, window)| {
+                        if per_window[index] == 0 {
+                            0
+                        } else {
+                            window.channel_count
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let bytes = if table.frequency.is_some() {
+                    TermBytes::frequency(
+                        &per_window,
+                        &channels,
+                        antennas,
+                        table.lookup.max_cell_values,
+                    )
+                } else {
+                    TermBytes::per_chunk(&per_window, antennas)
+                };
                 let mut reservation = self.admit_term(bytes)?;
-                let (chunks, values) =
-                    self.applied_solutions(&table.lookup.lookup, &table.spwmap, &per_window)?;
+                let evaluated = self.applied_solutions(table, &per_window)?;
                 reservation.retain(bytes.kept);
-                Ok(Arc::new(HeldTerm::new(
-                    applied(table.kind, antennas, chunks, values),
-                    reservation,
-                )))
+                let term = if table.frequency.is_some() {
+                    applied_frequency(
+                        table.kind.operator(),
+                        antennas,
+                        evaluated.chunks,
+                        evaluated.values,
+                        evaluated.offsets,
+                    )
+                } else {
+                    applied(
+                        table.kind.operator(),
+                        antennas,
+                        evaluated.chunks,
+                        evaluated.values,
+                    )
+                };
+                Ok(Arc::new(HeldTerm::new(term, reservation)))
             }
         }
     }
@@ -238,49 +373,124 @@ impl Simulator {
     /// window (mapped by `spwmap`).
     fn applied_solutions(
         &self,
-        lookup: &CalibrationTableLookup,
-        spwmap: &[i64],
+        table: &AppliedTable,
         per_window: &[usize],
-    ) -> SimulatorResult<(Chunks, Vec<[Complex32; 2]>)> {
-        let table_window = |window: usize| {
-            spwmap
-                .get(window)
-                .and_then(|&mapped| usize::try_from(mapped).ok())
-                .unwrap_or(window)
-        };
+    ) -> SimulatorResult<AppliedSolutions> {
+        let kind = table.kind;
+        let lookup = &table.lookup.lookup;
+        // JonesDiag::setMatByOk substitutes unit gains per receptor.
+        // JonesGenLin instead substitutes one for BOTH leakage values;
+        // correct that data-corrupting defect with the neutral zero pair.
+        let neutral = Complex32::new(
+            if kind.operator() == JonesKind::Gain {
+                1.0
+            } else {
+                0.0
+            },
+            0.0,
+        );
         let mut chunks = Chunks::with_capacity(per_window);
-        let mut values = Vec::with_capacity(per_window.iter().sum::<usize>() * self.antennas.len());
+        let value_count = per_window
+            .iter()
+            .enumerate()
+            .map(|(window, count)| {
+                count
+                    * self.antennas.len()
+                    * if table.frequency.is_some() {
+                        self.spectral_windows[window].channel_count
+                    } else {
+                        1
+                    }
+            })
+            .sum();
+        let mut values = Vec::with_capacity(value_count);
+        let mut offsets = if table.frequency.is_some() {
+            Vec::with_capacity(per_window.iter().sum::<usize>() + 1)
+        } else {
+            Vec::new()
+        };
         for (index, scan) in self.scans.iter().enumerate() {
-            let window = table_window(scan.spectral_window_id);
+            if per_window[scan.spectral_window_id] == 0 {
+                continue;
+            }
+            let Some(window) = table.calibration_window(scan.spectral_window_id) else {
+                continue;
+            };
+            let output_hz = if table.frequency.is_some() {
+                self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
+            } else {
+                Vec::new()
+            };
+            let channels = if table.frequency.is_some() {
+                output_hz.len()
+            } else {
+                1
+            };
             for time_s in self.integration_times_s(index) {
+                if table.frequency.is_some() {
+                    offsets.push(values.len());
+                }
                 chunks.push(scan.spectral_window_id, time_s, scan.field_id);
                 for antenna in 0..self.antennas.len() {
-                    let solution = lookup
+                    let Some(solution) = lookup
                         .solution(scan.field_id as i32, window as i32, antenna as i32, time_s)
                         .map_err(raised)?
-                        .ok_or_else(|| {
-                            not_yet(format!(
-                                "of a table without a solution for antenna {antenna} in spectral \
-                                 window {window} (CASA leaves the window uncorrupted)"
-                            ))
-                        })?;
-                    if solution.channels != 1 {
+                    else {
+                        values.extend(std::iter::repeat_n([neutral; 2], channels));
+                        continue;
+                    };
+                    if solution.channels != 1 && table.frequency.is_none() {
                         return Err(not_yet("of a table of solutions per channel"));
                     }
-                    if solution.flags.iter().any(|&flag| flag) {
-                        return Err(not_yet("of a table with flagged solutions"));
-                    }
-                    if solution.receptors != 2 {
-                        return Err(not_yet(format!(
-                            "of {}-receptor solutions",
-                            solution.receptors
+                    if solution.receptors != kind.receptors() {
+                        return Err(raised(format!(
+                            "Calibration table has {} parameters per channel; {:?} requires {}",
+                            solution.receptors,
+                            kind,
+                            kind.receptors()
                         )));
                     }
-                    values.push([solution.value(0, 0), solution.value(1, 0)]);
+                    let solution = if let Some(mode) = table.frequency {
+                        let input_hz = table
+                            .lookup
+                            .frequencies
+                            .get(window)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]);
+                        solution
+                            .resample_frequency(input_hz, &output_hz, mode)
+                            .map_err(raised)?
+                    } else {
+                        solution
+                    };
+                    for channel in 0..channels {
+                        let invalid_leakage = kind == AppliedKind::Leakage
+                            && (0..solution.receptors)
+                                .any(|receptor| solution.flags[receptor * channels + channel]);
+                        values.push(std::array::from_fn(|receptor| {
+                            let receptor = if kind == AppliedKind::Scalar {
+                                0
+                            } else {
+                                receptor
+                            };
+                            if invalid_leakage || solution.flags[receptor * channels + channel] {
+                                neutral
+                            } else {
+                                solution.value(receptor, channel)
+                            }
+                        }));
+                    }
                 }
             }
         }
-        Ok((chunks.sorted(), values))
+        if table.frequency.is_some() {
+            offsets.push(values.len());
+        }
+        Ok(AppliedSolutions {
+            chunks: chunks.sorted(),
+            values,
+            offsets,
+        })
     }
 }
 
@@ -298,4 +508,76 @@ fn apply_interpolation(interp: &str) -> SimulatorResult<ApplyInterpolationMode> 
         "nearest" => Ok(ApplyInterpolationMode::Nearest),
         other => Err(not_yet(format!("with interp='{other}'"))),
     }
+}
+
+/// CASA defaults frequency interpolation to linear for frequency-dependent parameters.
+fn frequency_interpolation(interp: &str) -> FrequencyInterpolation {
+    let mode = interp.split(',').nth(1).unwrap_or("linear");
+    let retain_flags = mode.contains("flag");
+    if mode.contains("nearest") {
+        if retain_flags {
+            FrequencyInterpolation::NearestFlag
+        } else {
+            FrequencyInterpolation::Nearest
+        }
+    } else if mode.contains("cubic") {
+        if retain_flags {
+            FrequencyInterpolation::CubicFlag
+        } else {
+            FrequencyInterpolation::Cubic
+        }
+    } else if mode.contains("spline") {
+        if retain_flags {
+            FrequencyInterpolation::SplineFlag
+        } else {
+            FrequencyInterpolation::Spline
+        }
+    } else if retain_flags {
+        FrequencyInterpolation::LinearFlag
+    } else {
+        FrequencyInterpolation::Linear
+    }
+}
+
+/// CTPatchedInterp::setSpwMap: identity, single-window broadcast, explicit
+/// prefix, or the first available solution window (-999).
+fn mapped_windows(
+    spec: &[i64],
+    lookup: &HeldLookup,
+    windows: usize,
+) -> SimulatorResult<Vec<usize>> {
+    if spec.is_empty() || spec == [-1] {
+        return Ok((0..windows).collect());
+    }
+    if spec.len() > windows {
+        return Err(raised(format!(
+            "Specified spwmap has more elements ({}) than the number of spectral windows in the MS ({windows}).",
+            spec.len()
+        )));
+    }
+    if spec[0] == -999 {
+        let first = lookup.lookup.first_spectral_window().ok_or_else(|| {
+            raised("No calibration spectral window is available for automatic fanout")
+        })?;
+        return Ok(vec![first as usize; windows]);
+    }
+    if spec.iter().any(|&window| window < 0) {
+        return Err(raised("Please specify positive indices in spwmap."));
+    }
+    if spec
+        .iter()
+        .any(|&window| window as u64 >= lookup.windows as u64)
+    {
+        return Err(raised(format!(
+            "Please specify spw indices <= maximum available ({})",
+            lookup.windows.saturating_sub(1)
+        )));
+    }
+    Ok((0..windows)
+        .map(|window| {
+            spec.get(if spec.len() == 1 { 0 } else { window })
+                .map(|&window| window as usize)
+                .unwrap_or(window)
+        })
+        .collect())
 }

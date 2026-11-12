@@ -228,6 +228,36 @@ CASES = [
             CORE, maptype="square", hourangle="-30min", refdate="2015/06/29", totaltime="60s"
         ),
     },
+    # The programme's micrometre geometry goal on the extended arrays.
+    # Keep these strict even when the general comparator keeps its legacy
+    # millimetre default; a caller can request a still tighter threshold.
+    {
+        "name": "uvw_long_vla_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_vla_2025",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="90min",
+            refdate="2025/01/15", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_alma_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="alma.out28.cfg", incell="0.001arcsec",
+            mapsize=["0.08arcsec", "0.08arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
     # Model overrides must reach both the prepared image and the observed
     # geometry, not just the task's accepted parameter list (#1053).
     {
@@ -610,6 +640,37 @@ def compare_frequency_frames(tb, casa: str, casars: str, details=None) -> list[s
     return differences
 
 
+def compare_geometry(tb, casa: str, casars: str, limit_m: float) -> tuple[dict, list[str]]:
+    """A strict absolute UVW bound at exactly equal stored TIME, over all rows."""
+    details = {"uvw_absolute_limit_m": limit_m}
+    if not np.isfinite(limit_m) or limit_m < 0:
+        return details, ["invalid absolute UVW limit"]
+    columns = []
+    for path in (casa, casars):
+        tb.open(path)
+        try:
+            columns.append({name: np.asarray(tb.getcol(name)) for name in ("TIME", "UVW")})
+        finally:
+            tb.close()
+    a, b = columns
+    times_equal = (np.all(np.isfinite(a["TIME"])) and np.all(np.isfinite(b["TIME"]))
+                   and np.array_equal(a["TIME"], b["TIME"]))
+    details["times_equal"] = bool(times_equal)
+    if not times_equal:
+        return details, ["MAIN.TIME: strict UVW comparison requires exactly equal finite stored TIME"]
+    details["rows"] = int(a["TIME"].size)
+    if a["UVW"].shape != b["UVW"].shape:
+        return details, ["MAIN.UVW: shape differs"]
+    difference = np.abs(a["UVW"] - b["UVW"])
+    if not np.all(np.isfinite(difference)):
+        return details, ["MAIN.UVW: non-finite difference"]
+    maximum = float(np.max(difference, initial=0.0))
+    details["max_uvw_difference_m"] = maximum
+    if maximum > limit_m:
+        return details, [f"MAIN.UVW: absolute difference {maximum:.17g} m exceeds {limit_m:.17g} m"]
+    return details, []
+
+
 def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     report = {"name": case["name"], "differences": []}
     differ = report["differences"].append
@@ -630,9 +691,16 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     if a and b:
         report["differences"].extend(compare_components(t, a, b))
     a, b = stem_of(casa, ".ms"), stem_of(casars, ".ms")
+    uvw_limit = min(args.uvw_tolerance_m, case.get("uvw_tolerance_m", args.uvw_tolerance_m))
     if a and b:
         report["spectral_windows"] = {}
         report["differences"].extend(compare_frequency_frames(t["tb"], a, b, report["spectral_windows"]))
+    if "uvw_tolerance_m" in case:
+        if a and b:
+            report["geometry"], failures = compare_geometry(t["tb"], a, b, uvw_limit)
+            report["differences"].extend(failures)
+        else:
+            differ("MAIN: strict UVW comparison requires both MeasurementSets")
     compare = os.path.join(out, "compare", case["name"])
     shutil.rmtree(compare, ignore_errors=True)
     links = os.path.join(compare, "casars")
@@ -640,7 +708,8 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     with open(os.path.join(compare, "manifest.json"), "w", encoding="utf-8") as handle:
         json.dump({"scenarios": scenarios(t, case, casa, casars, links)}, handle, indent=1)
     command = [sys.executable, os.path.join(HERE, "compare_sm_ms.py"), "--casa", compare, "--casars", links,
-               "--json", os.path.join(compare, "report.json")]
+               "--json", os.path.join(compare, "report.json"),
+               "--uvw-tolerance-m", str(uvw_limit)]
     if args.atmosphere_model:
         command += ["--atmosphere-model", args.atmosphere_model]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
@@ -678,6 +747,8 @@ def main() -> int:
     parser.add_argument("--casars-bin", required=True, help="casa-rs's simobserve task binary")
     parser.add_argument("--casatestdata", required=True, help="a casatestdata clone")
     parser.add_argument("--atmosphere-model", help="casa-atmosphere's at_tool_quantities example, for tsys-atm")
+    parser.add_argument("--uvw-tolerance-m", type=float, default=1e-3,
+                        help="UVW absolute tolerance passed to compare_sm_ms.py; use 1e-6 for the programme goal")
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-casa", action="store_true", help="reuse OUT/casa")
     args = parser.parse_args()
@@ -702,7 +773,10 @@ def main() -> int:
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))
-        casa_error = open(error_file, encoding="utf-8").read() if os.path.exists(error_file) else None
+        casa_error = None
+        if os.path.exists(error_file):
+            with open(error_file, encoding="utf-8") as handle:
+                casa_error = handle.read()
         casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
         if casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
@@ -710,8 +784,13 @@ def main() -> int:
                 report["differences"].append("expected a successful simulation, not a refusal")
             if casa_error != outcome.get("error"):
                 report["differences"].append(f"CASA raised {casa_error!r}, casa-rs {outcome.get('error')!r}")
-            elif products(casa) != products(casars):
-                report["differences"].append(f"files: CASA {products(casa)} against casa-rs {products(casars)}")
+            else:
+                # An early refusal may precede creation of the project.
+                # Successful runs still require their directories below.
+                casa_files = products(casa) if os.path.isdir(casa) else []
+                casars_files = products(casars) if os.path.isdir(casars) else []
+                if casa_files != casars_files:
+                    report["differences"].append(f"files: CASA {casa_files} against casa-rs {casars_files}")
         else:
             report = compare_case(t, case, casa, casars, out, args)
             if case.get("expect_refusal", False):

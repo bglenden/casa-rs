@@ -202,6 +202,9 @@ pub enum Token {
     /// Division operator `/`.
     #[token("/")]
     Slash,
+    /// Floor division operator `//`.
+    #[token("//")]
+    DoubleSlash,
     /// Modulo operator `%`.
     #[token("%")]
     Percent,
@@ -319,6 +322,7 @@ impl Token {
                 | Token::Minus
                 | Token::Star
                 | Token::Slash
+                | Token::DoubleSlash
                 | Token::Percent
                 | Token::DoubleStar
                 | Token::Eq
@@ -417,6 +421,7 @@ impl std::fmt::Display for Token {
             Token::Minus => "-",
             Token::Star => "*",
             Token::Slash => "/",
+            Token::DoubleSlash => "//",
             Token::Percent => "%",
             Token::DoubleStar => "**",
             Token::Eq => "=",
@@ -521,6 +526,7 @@ mod tests {
             (Token::Minus, "-"),
             (Token::Star, "*"),
             (Token::Slash, "/"),
+            (Token::DoubleSlash, "//"),
             (Token::Percent, "%"),
             (Token::DoubleStar, "**"),
             (Token::Eq, "="),

@@ -89,6 +89,7 @@ Simulator behaviours casa-rs does not follow:
 [random gains about zero](#setgainmoderandom-draws-gains-about-zero),
 [the last antenna's unit gain or leakage](#an-autocorrelation-row-resets-its-antennas-simulated-term),
 [leakage for two windows only](#setleakage-simulates-only-the-first-two-spectral-windows),
+[invalid leakage becoming one](#invalid-leakage-solutions-become-unit-leakage),
 [a simulated term's table written when it is set](#a-simulated-terms-table-is-written-when-the-term-is-set).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
@@ -4335,3 +4336,70 @@ For a single ALMA MeasurementSet with both dish classes in its ANTENNA
 table, standard continuum imaging chooses the analytic primary beam
 from the selected cross-correlations. It refuses a selection that
 requires both classes.
+
+## Invalid leakage solutions become unit leakage
+
+- Date noted: 2026-11-12
+- Status: CASA defect corrected under the standing data-corruption rule (#1053)
+- Affected code: `JonesGenLin::setMatByOk` in
+  `code/synthesis/MeasurementComponents/Jones.cc`, called by
+  `VisJones::syncJones` while `Simulator::corrupt` applies a D table.
+- Reference: CASA 6.7.6.14; historical public C++ revision
+  `4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef` reproduces the mechanism.
+
+With either receptor flagged, `JonesGenLin::setMatByOk` replaces both
+leakage coefficients with complex one. A missing antenna solution has the
+same effect. For diagonal gains, one is the neutral coefficient; for linear
+leakage, zero is neutral. `JonesGenLin::applyRight/applyLeft` therefore add
+the parallel hands into the cross hands. With all correlations initially
+`3+4j`, an autocorrelation with one flagged D receptor becomes `9+12j` in
+both cross hands. The simulator does not persist the temporary calibration
+flags, so those large artificial signals remain unflagged.
+
+casa-rs uses zero for both D coefficients when either interpolated receptor
+is invalid, and for an antenna with no solution. Other antennas retain
+their requested time interpolation. G tables retain CASA's per-receptor unit
+substitution. Both paths preserve the input data flags, weights and sigma.
+This corrects fabricated leakage without changing valid D or G solutions.
+
+`tools/simulation/sm_apply_flags_oracle.py` preserves unmodified CASA outputs
+and independent CASA controls with explicit zero leakage for the affected
+antenna. The native comparison uses those neutral controls only at times
+whose interpolated solution is invalid; valid times use the original valid
+CASA table control. C++ consumption of native invalid-solution tables is
+compared with the unmodified defective CASA outputs separately. The
+reference fixture retains both results so this exception cannot silently
+become a relaxed numerical tolerance.
+
+
+## Natural-spline interpolation skips the first interior back-substitution
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing evident-intent rule (#1053)
+- Affected code: `InterpolateArray1D<Double,Float>::interpolatePtr`, natural
+  spline back-substitution, called by `CTPatchedInterp::resampleInFreq`.
+- Reference: installed CASA 6.7.6.14. Historical casacore source
+  `083f0509fd76a03d6ec738c60e9dcfaf3e6c56a5` has the same mechanism:
+  its backward loop stops at `i > 1`, leaving knot 1 partially eliminated.
+
+A scalar Tf table with four equally spaced, real amplitudes `[1,2,1/2,5/4]`
+should have zero endpoint second derivatives and interior second derivatives
+`[-49/10,23/5]` in unit-spacing coordinates. The defining equations are
+`4*m1+m2=-15` and `m1+4*m2=27/2`. At the first three half knots, the
+natural spline is exactly `[289/160,203/160,47/80]`.
+
+CASA leaves the first interior derivative at `-15/4`, rather than `-49/10`,
+and evaluates the first half knot as `1.734375`, rather than `1.80625`.
+The first derivative is then discontinuous at the first interior knot,
+contradicting the stated natural-spline interpolation. With input DATA
+`3+4j` and identical antenna gains, CASA writes approximately
+`9.02417+12.03223j` instead of `9.78762+13.05016j`. The complete four-channel
+visibility result differs by normalized RMS 0.0780.
+
+casa-rs completes back-substitution at every interior knot. The fixture
+`sm_apply_frequency_casa.json.gz` keeps the raw CASA output and an independent
+CASA control: a nearest-interpolated table explicitly containing the exact
+half-knot amplitudes. That control is also checked against the closed-form
+receptor equation; the native spline is compared against it. C++ consumption
+of the original native spline table is checked separately against the raw
+CASA result. This exception changes no numerical tolerance.
