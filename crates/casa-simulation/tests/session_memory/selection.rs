@@ -3,7 +3,7 @@
 //! including existing scratch columns and increments after Jones (#1053).
 
 #[path = "../selection/input.rs"]
-mod input;
+pub(super) mod input;
 
 use std::path::Path;
 use std::sync::Arc;
