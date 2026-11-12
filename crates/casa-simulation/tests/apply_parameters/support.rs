@@ -16,7 +16,7 @@ use casa_types::{ArrayValue, Complex32, ScalarValue};
 use serde_json::Value;
 use std::path::Path;
 
-fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
+pub(super) fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
     let antenna = antenna as f64;
     let values = if kind == "G" || kind == "T" {
         [
