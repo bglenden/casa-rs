@@ -78,6 +78,16 @@ pub(crate) enum JonesSource {
     Applied(AppliedTable),
 }
 
+impl JonesSource {
+    /// Metadata-only coverage, before any applied solutions are formed.
+    pub(super) fn covers(&self, window: usize) -> bool {
+        match self {
+            Self::Simulated(term) => term.covers(window),
+            Self::Applied(table) => table.calibration_window(window).is_some(),
+        }
+    }
+}
+
 /// A loaded table's mathematical operator. A scalar T parameter expands
 /// to the same gain on both receptors; it shares the gain kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +118,16 @@ pub(crate) struct AppliedTable {
     kind: AppliedKind,
     frequency: Option<FrequencyInterpolation>,
     spwmap: Vec<usize>,
+}
+
+impl AppliedTable {
+    fn calibration_window(&self, window: usize) -> Option<usize> {
+        let mapped = *self.spwmap.get(window)?;
+        self.lookup
+            .lookup
+            .has_spectral_window(mapped as i32)
+            .then_some(mapped)
+    }
 }
 
 impl std::fmt::Debug for AppliedTable {
@@ -177,9 +197,9 @@ impl Simulator {
     ///   channels raises at `corrupt`, as CASA does.
     /// - No rows observed yet: refused, as `setgain` refuses.
     ///
-    /// A spectral window observed after `setapply` remains an explicit
-    /// #1053 refusal. CASA skips the whole corruption step in that window,
-    /// including noise; that stateful coverage combination is unfinished.
+    /// The term snapshots its spectral-window map. A window added later,
+    /// or mapped to a calibration window with no solutions, skips the whole
+    /// corruption step, including noise and corrected-data updates, as in CASA.
     ///
     /// Flagged G/T parameters and missing G/T antennas use unit gains,
     /// as in CASA. A scalar T parameter applies equally to all correlations.
@@ -285,16 +305,34 @@ impl Simulator {
     /// set, a table's evaluated over the scans observed so far. An
     /// evaluated term is admitted as a simulated one is, before it is
     /// formed, and keeps its share while a step applies it.
-    pub(super) fn jones_term(&self, source: &JonesSource) -> SimulatorResult<Arc<HeldTerm>> {
+    pub(super) fn jones_term(
+        &self,
+        source: &JonesSource,
+        covered: &impl Fn(usize) -> bool,
+    ) -> SimulatorResult<Arc<HeldTerm>> {
         match source {
             JonesSource::Simulated(term) => Ok(Arc::clone(term)),
             JonesSource::Applied(table) => {
                 let antennas = self.antennas.len();
-                let (per_window, _) = self.integration_counts();
+                let (mut per_window, _) = self.integration_counts();
+                // Definitions without observed rows still own a window slot.
+                per_window.resize(self.spectral_windows.len(), 0);
+                for (window, count) in per_window.iter_mut().enumerate() {
+                    if !covered(window) {
+                        *count = 0;
+                    }
+                }
                 let channels = self
                     .spectral_windows
                     .iter()
-                    .map(|window| window.channel_count)
+                    .enumerate()
+                    .map(|(index, window)| {
+                        if per_window[index] == 0 {
+                            0
+                        } else {
+                            window.channel_count
+                        }
+                    })
                     .collect::<Vec<_>>();
                 let bytes = if table.frequency.is_some() {
                     TermBytes::frequency(
@@ -372,16 +410,12 @@ impl Simulator {
             Vec::new()
         };
         for (index, scan) in self.scans.iter().enumerate() {
-            let window = table
-                .spwmap
-                .get(scan.spectral_window_id)
-                .copied()
-                .ok_or_else(|| not_yet("with a spectral window observed after setapply"))?;
-            if !lookup.has_spectral_window(window as i32) {
-                return Err(not_yet(
-                    "for an unavailable calibration spectral window (whole-step coverage)",
-                ));
+            if per_window[scan.spectral_window_id] == 0 {
+                continue;
             }
+            let Some(window) = table.calibration_window(scan.spectral_window_id) else {
+                continue;
+            };
             let output_hz = if table.frequency.is_some() {
                 self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
             } else {

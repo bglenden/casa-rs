@@ -92,6 +92,8 @@
 mod apply;
 #[path = "session_memory/apply_frequency.rs"]
 mod apply_frequency;
+#[path = "session_memory/coverage.rs"]
+mod coverage;
 #[path = "session_memory/field_grids.rs"]
 mod field_grids;
 #[path = "session_memory/gain_setters.rs"]
@@ -107,6 +109,8 @@ mod pass_summary;
 mod patch;
 #[path = "session_memory/selection.rs"]
 mod selection;
+#[path = "selection/input.rs"]
+mod selection_input;
 #[path = "session_memory/troposphere.rs"]
 mod troposphere;
 #[path = "session_memory/tsys.rs"]

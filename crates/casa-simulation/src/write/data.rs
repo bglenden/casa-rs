@@ -58,6 +58,7 @@ pub(super) struct DataStage<'s> {
     last_host_noise: bool,
     receptors: Vec<Vec<[usize; 2]>>,
     query: Option<QueryWorkspace>,
+    track_rows: bool,
     touched: Vec<bool>,
     predicted: Vec<bool>,
 }
@@ -99,6 +100,7 @@ impl<'s> DataStage<'s> {
             last_host_noise: false,
             receptors: super::window_receptors(session),
             query: session.data_plan().has_query().then(QueryWorkspace::new),
+            track_rows: session.data_plan().has_partial_rows(session.scans()),
             touched: Vec::new(),
             predicted: Vec::new(),
         }))
@@ -167,7 +169,7 @@ impl<'s> DataStage<'s> {
             } else {
                 batch_rows.min(self.session.scans().len())
             };
-            count * size_of::<Run>() + 2 * batch_rows * size_of::<bool>()
+            count * size_of::<Run>()
         } else {
             0
         };
@@ -193,6 +195,11 @@ impl<'s> DataStage<'s> {
         };
         stages
             + query
+            + if self.track_rows {
+                2 * batch_rows as u64 * size_of::<bool>() as u64
+            } else {
+                0
+            }
             + (scratch
                 + runs
                 + jobs
@@ -217,6 +224,8 @@ impl<'s> DataStage<'s> {
                 batch_rows.min(self.session.scans().len())
             };
             self.selected_runs = Vec::with_capacity(count);
+        }
+        if self.track_rows {
             self.touched = Vec::with_capacity(batch_rows);
             self.predicted = Vec::with_capacity(batch_rows);
         }
@@ -261,7 +270,7 @@ impl<'s> DataStage<'s> {
         defer_last_noise: bool,
     ) -> SimulatorResult<()> {
         let last = self.phases.len() - 1;
-        if self.session.data_plan().has_selection() {
+        if self.track_rows {
             self.touched.clear();
             self.touched.resize(batch.rows.len(), false);
             self.predicted.clear();
@@ -283,7 +292,10 @@ impl<'s> DataStage<'s> {
             };
             if !self.touched.is_empty() {
                 for &(scan, start, count) in runs {
-                    if !phase.phase.steps_for_scan(scan).is_empty() {
+                    if phase
+                        .phase
+                        .touches_window(scan, self.session.scans()[scan].spectral_window_id)
+                    {
                         self.touched[start..start + count].fill(true);
                     }
                     if phase.phase.predicts_scan(scan) {

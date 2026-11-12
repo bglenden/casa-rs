@@ -527,8 +527,8 @@ fn noised_here(plan: &DataPlan, scan: usize, noised: &dyn Fn(usize) -> bool) -> 
 /// # Errors
 ///
 /// A worker's failure.
-pub(super) fn batch_scales(
-    (plan, context, team): (&DataPlan, NoiseContext<'_>, &WorkerTeam),
+pub(super) fn batch_scales<'a>(
+    (plan, context, team): (&'a DataPlan, NoiseContext<'_>, &WorkerTeam),
     (rows, runs): (&[RowGeometry], &[(usize, usize, usize)]),
     noised: &dyn Fn(usize) -> bool,
     bound: &NoiseScales,
@@ -540,20 +540,28 @@ pub(super) fn batch_scales(
             continue;
         }
         let window = context.window(scan);
-        for application in plan.noise_for_scan(scan) {
-            let rows = rows[start..start + count]
-                .iter()
-                .map(|row| row.noise(context.antennas));
-            application.add_scales(&window, rows, &mut scales);
-        }
         let window_id = context.scans[scan].spectral_window_id;
-        for (_, jones) in plan.corruptions_for_scan(scan) {
-            for term in jones {
-                let rows = rows[start..start + count]
-                    .iter()
-                    .map(|row| (row.time_s, row.antenna1, row.antenna2));
-                scales.add_phase_rows((term, window_id), rows);
+        let add_noise_scales =
+            |applications: &'a [NoiseApplication], scales: &mut BatchScalesBuilder<'a>| {
+                for application in applications {
+                    let rows = rows[start..start + count]
+                        .iter()
+                        .map(|row| row.noise(context.antennas));
+                    application.add_scales(&window, rows, scales);
+                }
+            };
+        if plan.has_jones_for_scan(scan) {
+            for (noise, jones) in plan.corruptions_for_window(scan, window_id) {
+                add_noise_scales(noise, &mut scales);
+                for term in jones {
+                    let rows = rows[start..start + count]
+                        .iter()
+                        .map(|row| (row.time_s, row.antenna1, row.antenna2));
+                    scales.add_phase_rows((term, window_id), rows);
+                }
             }
+        } else {
+            add_noise_scales(plan.noise_for_scan(scan), &mut scales);
         }
     }
     if scales.is_empty() {
@@ -607,7 +615,10 @@ impl NoiseJob<'_> {
             self.add_noise(noise, correlations, samples);
             return;
         };
-        for (noise, jones) in corruption.plan.corruptions_for_scan(corruption.scan) {
+        for (noise, jones) in corruption
+            .plan
+            .corruptions_for_window(corruption.scan, corruption.window)
+        {
             for term in jones {
                 for (cell, row) in self.cells.chunks_exact_mut(samples).zip(self.rows) {
                     term.apply(
