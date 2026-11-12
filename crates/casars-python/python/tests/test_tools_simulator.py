@@ -848,9 +848,9 @@ def test_setgain_and_setleakage_follow_casa(
 
 
 @needs_measures
-@pytest.mark.parametrize("kind", ["G", "D"])
+@pytest.mark.parametrize("kind", ["G", "D", "T", "T_valid"])
 @pytest.mark.parametrize("interp", ["nearest", "linear"])
-def test_flagged_application_is_neutral(tmp_path: Path, kind: str, interp: str) -> None:
+def test_table_application_uses_valid_and_neutral_parameters(tmp_path: Path, kind: str, interp: str) -> None:
     from casars.tools import table as table_tool
 
     path, calibration = tmp_path / "x.ms", tmp_path / "terms.cal"
@@ -867,22 +867,34 @@ def test_flagged_application_is_neutral(tmp_path: Path, kind: str, interp: str) 
     assert np.any(expected["DATA"] != 0)
     sm = simulator()
     assert sm.openfromms(str(path))
-    if kind == "G":
-        assert sm.setgain(table=str(calibration), amplitude=[0.05])
-    else:
+    if kind == "D":
         assert sm.setleakage(table=str(calibration), amplitude=[0.05])
+    else:
+        assert sm.setgain(table=str(calibration), amplitude=[0.05])
     sm.close()
     tb = table_tool()
     assert tb.open(str(calibration), nomodify=False)
+    if kind.startswith("T"):
+        for column in ("CPARAM", "FLAG", "PARAMERR", "SNR"):
+            values = np.asarray(tb.getcol(column))[:1, :, :]
+            if column == "CPARAM":
+                values = np.full_like(values, 2 + 0j)
+            assert tb.putcol(column, values)
+        assert tb.putkeyword("VisCal", "T Jones")
+        assert tb.putinfo({"subType": "T Jones"})
     flags = np.asarray(tb.getcol("FLAG"))
-    assert tb.putcol("FLAG", np.ones_like(flags, dtype=bool))
+    assert tb.putcol("FLAG", np.full_like(flags, kind != "T_valid", dtype=bool))
     tb.close()
     sm = simulator()
     assert sm.openfromms(str(path))
-    assert sm.setapply(table=str(calibration), interp=interp)
+    assert sm.setapply(table=str(calibration), type="T" if kind.startswith("T") else kind,
+                       interp=interp)
     assert sm.corrupt()
     sm.close()
     after = Table.open(path)
+    if kind == "T_valid":
+        # The independent scalar equation: (2+0j) * conj(2+0j) = 4.
+        expected["DATA"] *= 4
     for name in columns:
         np.testing.assert_array_equal(after.get_column(name), expected[name], err_msg=name)
 

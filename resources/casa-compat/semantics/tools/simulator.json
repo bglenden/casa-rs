@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
+ "audit_revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -260,14 +260,15 @@
   },
   "setapply": {
    "status": "Partial",
-   "scope": "Applies G and D tables with linear or nearest interpolation. G/D corruption preserves WEIGHT and SIGMA for either calwt setting; t and opacity leave these tables' per-row interpolation unchanged, as in CASA. Flagged G receptors and missing G antennas use unit gains. Invalid D antennas use neutral zero leakage, correcting CASA's unit-leakage defect. Refused: other table types, per-channel solutions, solutions without two receptors, and other interpolations.",
+   "scope": "Applies two-parameter G/D and scalar one-parameter T tables with linear or nearest time interpolation. G/D/T corruption preserves WEIGHT and SIGMA for either calwt setting; t and opacity leave these tables' per-row interpolation unchanged, as in CASA. Flagged G/T parameters and missing G/T antennas use unit gain. Invalid D antennas use neutral zero leakage, correcting CASA's unit-leakage defect. Malformed parameter counts raise. Refused: other table types, per-channel solutions and other interpolations.",
    "evidence": [
     "signature",
     "binding-tests",
     "corruptions-20261103",
     "refusals",
     "apply-parameters-20261112",
-    "apply-flags-20261112"
+    "apply-flags-20261112",
+    "apply-scalar-20261112"
    ],
    "issue": 1053
   },
@@ -1459,6 +1460,23 @@
    "revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
    "command": "CASAPY tools/simulation/sm_apply_flags_oracle.py --out OUT --fixture FIXTURE --controls crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz; CASA_RS_APPLY_FLAGS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_flags --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_flags_readback.py --root EXPORT --fixture FIXTURE --out OUT; cargo clippy -p casa-simulation -p casars-python --all-targets -- -D warnings; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
    "receipt": "resources/casa-compat/evidence/sm-apply-flags-20261112.json"
+  },
+  "apply-scalar-20261112": {
+   "kind": "Independent scalar-T CASA controls, malformed-G refusals and native table consumption",
+   "state": "passed",
+   "result": "38 scalar successes pass CPU W1/W3 (76 runs), maximum DATA NRMS6.54e-8 under1e-3; two malformed-G cases raise correctly. C++ reads76 native MS/table pairs and applies38 native tables with zero residual. Full simulation/binding369 passed/two parent-executed helper ignores; installed wheel65 passed/two documented skips; actual Metal, strict Clippy, fmt, architecture and docs pass.",
+   "scope": "One/two/four correlations, nearest/linear, first/all endpoint flags, missing antenna, calwt/t/opacity and explicit type=T. Exact stored TIME and unchanged flags/weights/sigma/MODEL. Scalar values use the existing admitted gain operator; other table constraints remain explicit.",
+   "links": [
+    "tools/simulation/sm_apply_scalar_oracle.py",
+    "tools/simulation/sm_apply_scalar_readback.py",
+    "crates/casa-simulation/tests/apply_scalar.rs",
+    "crates/casa-simulation/tests/data/sm_apply_scalar_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
+   "revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
+   "command": "CASAPY tools/simulation/sm_apply_scalar_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_SCALAR_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_scalar --test apply_flags --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_scalar_readback.py --root EXPORT --fixture FIXTURE --out OUT; cargo clippy -p casa-simulation -p casars-python --all-targets -- -D warnings; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
+   "receipt": "resources/casa-compat/evidence/sm-apply-scalar-20261112.json"
   }
  }
 }
