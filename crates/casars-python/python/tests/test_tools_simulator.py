@@ -847,6 +847,48 @@ def test_setgain_and_setleakage_follow_casa(
 
 
 @needs_measures
+@pytest.mark.parametrize("kind", ["G", "D"])
+@pytest.mark.parametrize("interp", ["nearest", "linear"])
+def test_flagged_application_is_neutral(tmp_path: Path, kind: str, interp: str) -> None:
+    from casars.tools import table as table_tool
+
+    path, calibration = tmp_path / "x.ms", tmp_path / "terms.cal"
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setspwindow(spwname="L", freq="1.4GHz", deltafreq="1MHz",
+                          freqresolution="1MHz", nchannels=4, stokes="RR RL LR LL")
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.setseed(5)
+    assert sm.setnoise(simplenoise="0.1Jy")
+    assert sm.corrupt()
+    sm.close()
+    before = Table.open(path)
+    columns = ("DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")
+    expected = {name: np.asarray(before.get_column(name)).copy() for name in columns}
+    assert np.any(expected["DATA"] != 0)
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    if kind == "G":
+        assert sm.setgain(table=str(calibration), amplitude=[0.05])
+    else:
+        assert sm.setleakage(table=str(calibration), amplitude=[0.05])
+    sm.close()
+    tb = table_tool()
+    assert tb.open(str(calibration), nomodify=False)
+    flags = np.asarray(tb.getcol("FLAG"))
+    assert tb.putcol("FLAG", np.ones_like(flags, dtype=bool))
+    tb.close()
+    sm = simulator()
+    assert sm.openfromms(str(path))
+    assert sm.setapply(table=str(calibration), interp=interp)
+    assert sm.corrupt()
+    sm.close()
+    after = Table.open(path)
+    for name in columns:
+        np.testing.assert_array_equal(after.get_column(name), expected[name], err_msg=name)
+
+
+@needs_measures
 def test_settrop_follows_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     sm = opened(tmp_path)
     configure(sm)
