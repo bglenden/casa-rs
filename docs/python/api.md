@@ -2,8 +2,7 @@
 
 ## Common parameter API
 
-ADR-0006 defines this common surface for task profiles, including
-current-only surface evolution:
+ADR-0006 defines the common API for current task profiles:
 
 ```python
 casars.parameters.defaults(surface, *, workspace=None)

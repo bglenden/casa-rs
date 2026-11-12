@@ -14,7 +14,6 @@
 //! configurations, and the measures data. A run's reply carries its
 //! [`SimobserveRunTaskResult`]; simobserve returns None, as CASA's does.
 
-mod schema;
 mod task_contract;
 
 use std::path::{Path, PathBuf};
@@ -29,7 +28,6 @@ use casa_task_runtime::{
 };
 use serde_json::{Map, Value};
 
-pub use schema::command_schema;
 pub use task_contract::*;
 
 fn simobserve_surface() -> Result<SurfaceContractBundle, String> {

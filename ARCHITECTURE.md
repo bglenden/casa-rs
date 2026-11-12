@@ -27,7 +27,7 @@ coordinates, measures, and related workflows.
 | simulation (`casa-simulation`) | CASA's `sm` tool, `simutil` and the `simobserve` task | an application of the ADR-0016 layering |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Astronomy data models and algorithms over table and image persistence | foundation crates, `casa-tables`, documented peer domain crates |
 | boundary contracts (`casa-provider-contracts`) | Task-provider envelope, parameter and application catalogs, task surfaces, the task-executable resolver | domain libraries and foundation crates; never a second source of truth |
-| parameter and task runtime (`casa-task-runtime`) | Parameter resolution, sparse TOML profiles, migrations, Last/Last Successful, the shared task front end and its `--json-run` invocation | boundary contracts, `casa-types`, `casa-logging`; no provider science |
+| parameter and task runtime (`casa-task-runtime`) | Parameter resolution, current sparse TOML profiles, Last/Last Successful, the shared task front end and its `--json-run` invocation | boundary contracts, `casa-types`, `casa-logging`; no provider science |
 | apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation`, `casars-python`) | Task executables that are not binaries of a domain crate, each on the shared task front end, and the Python package with its PyO3 extension `casars._core` | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers | any workspace crate, for tests only |
 
@@ -86,17 +86,17 @@ decision 10). Adding a crate to that set is the owner's decision.
   `cargo run`.
 - Parameter concepts live in the checked `ParameterCatalog`; each provider
   bundle embeds the concepts it references. A task's `SurfaceDefinition`
-  supplies defaults, activation, narrowing, migrations and presentation, but
+  supplies defaults, activation, narrowing and presentation, but
   cannot redefine a concept's meaning, normalization, units, role or
-  persistence, and neither can a frontend. An empty migration set declares a
-  surface current-only (ADR-0006).
+  persistence, and neither can a frontend. Saved profiles use the current task
+  version (ADR-0006).
 - `casa-task-runtime` owns profile mechanics, managed state, the task
   lifecycle from parsing through Last/Last Successful to completion,
   provider discovery, diagnostics, exit classification and the common help
   block. Providers keep typed science adapters; apps add no lifecycle maps,
   writers, CLI hosts or launch fallbacks.
 - `casars-python` binds Rust to Python through PyO3 alone, in
-  `casars._core` (ADR-0017, ADR-0018). It projects the parameter runtime,
+  `casars._core` (ADR-0017). It projects the parameter runtime,
   task completion, the application catalog, the resolver and `casa-ms` plot
   documents, and is never a second implementation of persistence, task
   semantics or provider contracts. A task call starts the task's executable
@@ -364,12 +364,11 @@ the dependency checker. They are numbered so that code can cite them.
 
 | ADR | Title | Status |
 |---|---|---|
-| 0006 | Unified parameter catalog and sparse profiles | accepted |
+| 0006 | One parameter model and current sparse profiles | accepted |
 | 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
 | 0009 | Mathematical imaging architecture | accepted |
 | 0011 | Continuum-line coupling | retired |
 | 0014 | Identity is ownership, without content attestation | accepted |
 | 0016 | Imaging foundation | accepted |
-| 0017 | Python and headless task providers are the product surface | accepted |
-| 0018 | Rust computes; Python is the interface | accepted |
-| 0019 | CASA tools are Rust-declared pyo3 objects in `casars.tools` | accepted |
+| 0017 | Rust computation and CASA-shaped Python interfaces | accepted |
+| 0020 | Build for one investigator | accepted |

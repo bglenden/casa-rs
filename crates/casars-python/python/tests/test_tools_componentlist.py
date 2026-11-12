@@ -1,4 +1,4 @@
-"""`casars.tools.componentlist`: CASA's `cl` tool (ADR-0019, #841 Phase 2).
+"""`casars.tools.componentlist`: CASA's `cl` tool (ADR-0017, #841 Phase 2).
 
 Signatures are compared with CASA 6.7.6's installed binding
 (`data/casa_componentlist_signatures.json`, and a live CASA when importable)
@@ -437,7 +437,7 @@ time.sleep(float(sys.argv[2]))
 
 
 def test_a_dropped_tool_waits_for_the_write_lock_without_the_gil(tmp_path: Path) -> None:
-    # ADR-0019: the deletion writes the list with the GIL released, so other
+    # ADR-0017: the deletion writes the list with the GIL released, so other
     # threads run while it waits for a lock another process holds.
     path = tmp_path / "list.cl"
     cl = componentlist()
