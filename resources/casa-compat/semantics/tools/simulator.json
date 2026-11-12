@@ -176,7 +176,7 @@
   },
   "setdata": {
    "status": "Partial",
-   "scope": "Selects intersecting fields/windows from the original MS and row-header TaQL on ANTENNA1, ANTENNA2, TIME, FIELD_ID, DATA_DESC_ID and SCAN_NUMBER (numeric predicates and abs/near/nearabs). Empty field/window results fall back to all rows; empty TaQL retains the base; invalid predicates return False after installing the base. Each DATA operation keeps its selection; observe resets the current selection. Other columns, functions and additional query clauses remain refused with #1053.",
+   "scope": "Selects intersecting fields/windows from the original MS and row-header TaQL on ANTENNA1, ANTENNA2, TIME, FIELD_ID, DATA_DESC_ID and SCAN_NUMBER (typed arithmetic/comparison predicates and abs/near/nearabs). Empty field/window results fall back to all rows; empty TaQL retains the base; invalid predicates return False after installing the base. Each DATA operation keeps its selection; observe resets the current selection. Complex ordering, other columns/functions and additional query clauses remain refused with #1053.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -1391,18 +1391,21 @@
   "selection-ordered-data-20261112": {
    "kind": "Independent CASA selected-row calculations, noise moments and C++ native readback",
    "state": "passed",
-   "result": "40 cases:37 deterministic and3 selected-noise laws pass CPU W1/W3;37 applicable image cases execute on actual Metal. All120 native outputs pass C++ readback, with exact stored TIME and untouched scratch cells. Maximum DATA NRMS3.13e-6 (limit1e-3), Metal/CPU maximum-relative3.54e-7 (limit1e-4). Full simulation306 passed/two parent-executed helper ignores; fragmented-selection heap laws and strict Clippy pass.",
+   "result": "51 cases:48 deterministic and3 selected-noise laws pass CPU W1/W3;48 applicable image cases execute on actual Metal. All153 native outputs pass C++ readback, with exact stored TIME and untouched cells. Maximum DATA NRMS3.13e-6 (limit1e-3), Metal/CPU maximum-relative3.54e-7 (limit1e-4). Post-review full touched tables/simulation/binding gates1419 passed/three parent-executed helper ignores; strict Clippy and57 installed-wheel simulator tests pass. Both review findings are reproduced and fixed; no re-review.",
    "scope": "Field/window intersections, six row-header predicates, immutable selection across replacements/increments, multiple models/components, selected noise, nonidentity gains before increment, existing-MS preservation and observe resets. New oracle matrix uses GridFT; regression gates retain other existing calculation modes. Additional predicate columns/functions and MS-layout constraints stay open.",
    "links": [
     "tools/simulation/sm_selection_oracle.py",
     "tools/simulation/sm_selection_readback.py",
     "crates/casa-simulation/tests/selection.rs",
     "crates/casa-simulation/tests/session_memory/selection.rs",
-    "crates/casa-simulation/tests/data/sm_selection_casa.json.gz"
+    "crates/casa-simulation/tests/data/sm_selection_casa.json.gz",
+    "tools/simulation/query_arithmetic_oracle.py",
+    "crates/casa-tables/tests/taql_simulation_arithmetic.rs",
+    "crates/casa-tables/tests/data/casa_simulation_query_arithmetic.json"
    ],
    "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
-   "source_revision": "0004e0e49bbe3ee42053fa5c552c281b5b796e7c",
-   "revision": "0004e0e49bbe3ee42053fa5c552c281b5b796e7c",
+   "source_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+   "revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
    "command": "CASAPY tools/simulation/sm_selection_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SELECTION_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test selection -- --nocapture; CASAPY tools/simulation/sm_selection_readback.py --root EXPORT --fixture FIXTURE --out REPORT; RUST_TEST_THREADS=1 cargo test -p casa-simulation",
    "receipt": "resources/casa-compat/evidence/sm-selection-20261112.json"
   }

@@ -6,7 +6,8 @@
 //!
 //! # Type promotion hierarchy
 //!
-//! Matches C++ TaQL: `Bool → Int → Float → Complex`.
+//! Arithmetic promotes `Int → Float → Complex`, matching C++ TaQL. Bool
+//! requires an explicit conversion before arithmetic.
 //! All integer types widen to `i64`, all floats to `f64`.
 //!
 //! # C++ reference
@@ -26,7 +27,8 @@ use super::error::TaqlError;
 /// A dynamically typed value produced by expression evaluation.
 ///
 /// This is the runtime representation of values in the TaQL evaluator.
-/// Type promotion follows the C++ TaQL hierarchy: Bool → Int → Float → Complex.
+/// Arithmetic promotes Int → Float → Complex; explicit conversion helpers
+/// also accept Bool, which arithmetic operators reject.
 ///
 /// Additional variants:
 /// - `DateTime` stores Modified Julian Date (MJD) as f64, matching C++ casacore.
