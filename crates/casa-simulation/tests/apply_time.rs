@@ -3,6 +3,8 @@
 #[path = "apply_parameters/input.rs"]
 mod input;
 mod predict_support;
+#[path = "apply_time/regressions.rs"]
+mod regressions;
 #[path = "apply_parameters/support.rs"]
 #[allow(
     dead_code,

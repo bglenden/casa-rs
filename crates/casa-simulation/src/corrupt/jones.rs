@@ -134,6 +134,9 @@ pub(crate) struct Solution {
     /// The block of `JonesTerm::values` it takes.
     block: u32,
     pub(crate) field: u32,
+    /// Applied values were evaluated for this session scan. Simulated terms
+    /// use `u32::MAX` and retain CASA's window/time-only lookup.
+    scan: u32,
 }
 
 /// One simulated antenna-based term: per spectral window, its solutions in
@@ -143,7 +146,7 @@ pub(crate) struct Solution {
 pub(crate) struct JonesTerm {
     pub(crate) kind: JonesKind,
     antennas: usize,
-    /// `[window]`: the solutions in time order.
+    /// `[window]`: solutions ordered by scan context, then time.
     solutions: Vec<Vec<Solution>>,
     values: JonesValues,
 }
@@ -253,7 +256,17 @@ impl JonesTerm {
     /// The block of the solution nearest `time_s` in `window`, the earlier
     /// of two as near (`CalCorruptor::setCurrTime`).
     pub(crate) fn block_at(&self, window: usize, time_s: f64) -> usize {
-        let times = &self.solutions[window];
+        self.block_for_scan(window, time_s, 0)
+    }
+
+    fn block_for_scan(&self, window: usize, time_s: f64, scan: usize) -> usize {
+        let mut times = self.solutions[window].as_slice();
+        if times[0].scan != u32::MAX {
+            let scan = scan as u32;
+            let start = times.partition_point(|solution| solution.scan < scan);
+            let end = times.partition_point(|solution| solution.scan <= scan);
+            times = &times[start..end];
+        }
         let after = times.partition_point(|solution| solution.time_s < time_s);
         let nearest = match (after.checked_sub(1), times.get(after)) {
             (Some(before), Some(later)) => {
@@ -290,12 +303,12 @@ impl JonesTerm {
     /// the batch's `table` ([`BatchScales::phasors`]).
     pub(crate) fn apply(
         &self,
-        (window, time_s): (usize, f64),
+        (window, time_s, scan): (usize, f64, usize),
         (antenna1, antenna2): (usize, usize),
         (receptors, table): (&[[usize; 2]], &BatchScales),
         cell: &mut [Complex32],
     ) {
-        let block = self.block_at(window, time_s);
+        let block = self.block_for_scan(window, time_s, scan);
         let correlations = receptors.len();
         let values = match &self.values {
             JonesValues::Receptors(values) => values,
@@ -481,7 +494,7 @@ const MINIMUM_SCREEN_SLOTS: usize = 4;
 /// order, each its own block, and how many chunks there are.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Chunks {
-    /// `[window]`: the chunks, in time order once sorted.
+    /// `[window]`: chunks ordered by scan context, then time once sorted.
     pub(crate) by_window: Vec<Vec<Solution>>,
     pub(crate) count: u32,
 }
@@ -509,18 +522,29 @@ impl Chunks {
             time_s,
             block: chunk,
             field: field as u32,
+            scan: u32::MAX,
         });
         self.count += 1;
         chunk
     }
 
-    /// Each window's chunks in time order, as `corrupt` looks them up;
+    /// Keep the scan whose observation/scan context produced these values.
+    pub(crate) fn push_for_scan(&mut self, window: usize, time_s: f64, field: usize, scan: usize) {
+        self.push(window, time_s, field);
+        self.by_window[window].last_mut().expect("new chunk").scan = scan as u32;
+    }
+
+    /// Each window's chunks in scan/time order, as `corrupt` looks them up;
     /// equal times keep the order they were added in. Sorting in place
     /// holds nothing beside the chunks.
     pub(crate) fn sorted(mut self) -> Self {
         for solutions in &mut self.by_window {
-            solutions
-                .sort_unstable_by(|a, b| a.time_s.total_cmp(&b.time_s).then(a.block.cmp(&b.block)));
+            solutions.sort_unstable_by(|a, b| {
+                a.scan
+                    .cmp(&b.scan)
+                    .then(a.time_s.total_cmp(&b.time_s))
+                    .then(a.block.cmp(&b.block))
+            });
         }
         self
     }

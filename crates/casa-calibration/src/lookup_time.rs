@@ -255,7 +255,12 @@ impl TimePlan {
             };
             let (amplitude, mut phase) = result.expect("nonempty time stencil");
             if let Some(scale) = phase_scale {
-                phase = (phase + self.cycles[key][lower * receptors * channels + index]) * scale;
+                // A spline already retains the globally unwrapped phase. Local
+                // linear/cubic stencils need CASA's lower-bracket cycle offset.
+                if spline.is_none() {
+                    phase += self.cycles[key][lower * receptors * channels + index];
+                }
+                phase *= scale;
             }
             values.push(Complex32::from_polar(amplitude, phase));
             flags.push(value(base, index).1 || value(high, index).1);

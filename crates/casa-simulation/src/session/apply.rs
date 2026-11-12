@@ -560,7 +560,7 @@ impl Simulator {
                         values.len()
                     });
                 }
-                chunks.push(scan.spectral_window_id, time_s, scan.field_id);
+                chunks.push_for_scan(scan.spectral_window_id, time_s, scan.field_id, index);
                 let geometry = physical::Geometry::new(self, kind, scan.field_id, time_s)?;
                 for antenna in 0..self.antennas.len() {
                     let Some(solution) = lookup

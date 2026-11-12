@@ -121,7 +121,7 @@ fn a_gain_multiplies_each_correlation_by_its_receptors_gains() {
     ];
     let mut cell: Vec<Complex32> = model.iter().chain(&model).copied().collect();
     term.apply(
-        (0, 0.0),
+        (0, 0.0, 0),
         (0, 1),
         (&LINEAR, &BatchScales::default()),
         &mut cell,
@@ -157,7 +157,7 @@ fn leakage_moves_only_the_cross_hands_to_first_order() {
     );
     let mut cell = vec![xx, xy, yx, yy];
     term.apply(
-        (0, 0.0),
+        (0, 0.0, 0),
         (0, 1),
         (&LINEAR, &BatchScales::default()),
         &mut cell,

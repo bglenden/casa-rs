@@ -3321,6 +3321,13 @@ impl GainGrid {
             });
         };
 
+        if values.shape() != flags.shape() || values.is_empty() {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: path.display().to_string(),
+                reason: "parameter and FLAG arrays must have matching, nonempty shapes".into(),
+            });
+        }
+
         match values.shape() {
             [receptor_count] => Ok(Self {
                 receptor_count: *receptor_count,
