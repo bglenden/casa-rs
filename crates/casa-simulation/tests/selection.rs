@@ -201,7 +201,7 @@ fn apply_steps(sm: &mut Simulator, case: &Value, images: &[PathBuf; 2], path: &P
 }
 
 fn fresh_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec<Complex32>> {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = case_directory();
     let images = models(directory.path());
     let path = directory.path().join("selection.ms");
     let mut sm = observed(&path, workers, backend);
@@ -264,7 +264,7 @@ fn fresh_selection_and_observe_reset_match_casa() {
 }
 
 fn opened_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec<Complex32>> {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = case_directory();
     let images = models(directory.path());
     let path = directory.path().join("existing.ms");
     observed(&path, workers, backend).close().unwrap();
@@ -468,4 +468,13 @@ fn export(directory: tempfile::TempDir, case: &Value, workers: usize, backend: B
         serde_json::json!({ "name": name, "workers": workers, "backend": format!("{backend:?}") });
     std::fs::write(directory.path().join("case.json"), record.to_string()).unwrap();
     std::fs::rename(directory.path(), destination).unwrap();
+}
+
+fn case_directory() -> tempfile::TempDir {
+    if let Some(root) = std::env::var_os("CASA_RS_SELECTION_OUT") {
+        std::fs::create_dir_all(&root).unwrap();
+        tempfile::tempdir_in(root).unwrap()
+    } else {
+        tempfile::tempdir().unwrap()
+    }
 }
