@@ -8,7 +8,7 @@
   its task's own executable.
 - `casars.tools` provides CASA's tools as classes under CASA's names, with
   CASA's methods, parameter order and defaults, so a CASA script changes only
-  its imports (ADR-0019): `simulator` (CASA's `sm`), `measures` (`me`),
+  its imports (ADR-0017): `simulator` (CASA's `sm`), `measures` (`me`),
   `quanta` (`qa`), `componentlist` (`cl`), `image` (`ia`), `coordsys`
   (`cs`), `table` (`tb`), `msmetadata` (`msmd`) and `ms`. Each has every
   method of CASA 6.7.6.14's binding; a method casa-rs does not implement yet
@@ -30,7 +30,7 @@
   CASA's signatures and raise `NotImplementedError` naming the issue that
   records them. `from casars import simutil` is its public import.
 - `casars.parameters` is the accepted common API for typed task profiles
-  described by ADR-0006, including its current-only option.
+  described by ADR-0006.
 
 The generic `casars.tasks.run()` entry point accepts every catalog task. Every
 task is also exposed exactly once as `casars.tasks.<task>` through a generated
@@ -78,7 +78,7 @@ command-line run saved.
 `parameters.defaults(surface, ...)` and `parameters.last(surface, ...)` create
 the other common source types. The resulting `TaskParameters` supports mapping
 updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
-normalizer, validator, migration engine, and sparse renderer.
+normalizer, validator, and sparse renderer.
 
 `casars.tasks` is generated from the catalog's task definitions and supplies
 one CASA-named wrapper and typing stub per task. A task that mimics CASA's

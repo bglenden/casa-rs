@@ -6,8 +6,7 @@
 //! [`ResourcePolicy`] on the detected [`HostResources`], and runs its
 //! geometry and noise on the runtime's worker team.
 //!
-//! The controls are the Python tool's constructor arguments (ADR-0019 item
-//! 3), [`ExecutionControls`]:
+//! The controls are the Python tool's constructor arguments (ADR-0017), [`ExecutionControls`]:
 //! - with neither a memory budget nor a worker count, the session takes the
 //!   balanced policy: three quarters of the host's free memory and of its
 //!   threads, at most its performance cores, except that a `close` that
@@ -83,7 +82,7 @@ impl FromStr for BackendRequest {
 }
 
 /// Controls CASA's `sm` lacks: the Python tool's keyword-only constructor
-/// arguments (ADR-0019 item 3).
+/// arguments (ADR-0017).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionControls {
     /// Bytes the session may hold at once while `close` writes, capped at

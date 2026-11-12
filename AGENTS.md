@@ -14,7 +14,14 @@ history live in issues; `just docs-check` rejects issue references here.
 ## Core Contracts And Priorities
 
 - **Interoperability:** data written here must be readable by casacore C++,
-  and vice versa. This is non-negotiable.
+  and vice versa. Preserve MSv4 conformance and exchange where supported.
+  This is non-negotiable.
+- **Build for one investigator** ([ADR-0020](docs/adr/0020-single-investigator-development.md)).
+  We are in development with no downstream users. Keep casa-rs-owned APIs,
+  settings, and developer artifacts current. Reject stale saved parameters
+  clearly. Do not build migrations, historical ledgers, compatibility
+  shims, or process for hypothetical future users. Use regression tests
+  and one existing issue or PR for evidence.
 - **Agreement with CASA:** outputs should agree with CASA, not bit for bit,
   but typically to about 0.001 normalized RMS. CASA has bugs; a justified
   divergence is fine when it is explained and recorded (see
@@ -37,7 +44,7 @@ history live in issues; `just docs-check` rejects issue references here.
 - `TESTING.md`: which gates to run, CI, test data
 - `docs/agent-reference.md`: workstation, CASA/C++ oracle, data and storage
   locations, release recipes
-- `docs/adr/`: accepted decisions; binding, and changed or added only after
+- `docs/adr/`: short records of durable decisions; broad new designs need
   external review (see Review)
 - `.agents/skills/`: casa-rs domain skills (e.g. imaging performance); generic
   workflows come from the user-level skills
@@ -69,7 +76,7 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   (`scripts/check-no-casa-runtime.py` enforces this).
 - Computation lives in Rust. The Python package presents CASA's names and
   signatures, converts data and starts the work. Logic that CASA writes in
-  Python, such as task scripts and `simutil`, is ported to Rust (ADR-0018).
+  Python, such as task scripts and `simutil`, is ported to Rust (ADR-0017).
 - Idiomatic Rust, not a C++ API mirror. Search for existing behaviour before
   adding code.
 - Crate names: `casa-*` for libraries, `casars-*` for apps and runtimes.
@@ -213,17 +220,17 @@ Ask the owner only before these, asynchronously where the host allows:
 1. deleting or overwriting anything outside the repository and your own
    scratch (NAS or GLENDENNING data, releases, branches you did not
    create);
-2. a change casacore C++ could not read, or one that stops casa-rs reading
-   data it wrote before;
-3. building a design for a broad new capability, or changing or adding an
-   ADR, before its external review (see Review);
+2. a change to scientific data persistence that breaks CASA/casacore or
+   MSv4 interoperability, or stops casa-rs reading scientific data it wrote before;
+3. building a design for a broad new capability before its external review
+   (see Review);
 4. taking the laptop's internal disk below about 40 GB free, when deleting
    your own artifacts and running `cleanup-disk` (where the host has it)
    cannot prevent it; this floor does not apply in a cloud environment;
 5. handling credentials, secrets or non-public data.
 
 Everything else is decided and recorded, including scope within the stated
-goal, APIs between workspace crates, task-provider contract versions,
+goal, APIs between workspace crates, current profile versions,
 algorithms and CASA deviations.
 
 ### CASA deviations
@@ -258,10 +265,10 @@ By how far a change reaches:
    itself (the latest Fable at `xhigh` in Claude Code, the latest Astra at
    `xhigh` in Codex), and reads the findings itself; the owner never runs,
    relays or announces it.
-3. **Broad new capabilities and ADRs: external review of the design, before
-   it is built.** Broad means a new task or tool family, crate family, app
-   or storage format, or architecture several areas depend on; ADR changes
-   and additions count too. The reviewer is a human or the other vendor's
+3. **Broad new designs: external review before implementation.** Broad means
+   a new task or tool family, crate family, app or storage format, or architecture
+   several areas depend on. Recording an owner decision or consolidating ADRs
+   does not trigger a new review. The reviewer is a human or the other vendor's
    model (the latest Astra at `xhigh` for Claude-led work, the latest Fable
    at `xhigh` for Codex-led work). Post the design and a self-contained
    brief on its issue and ask the owner to arrange the review.

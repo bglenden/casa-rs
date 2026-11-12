@@ -33,8 +33,6 @@ pub enum DiagnosticCode {
     InvalidType,
     InvalidValue,
     UnsafeValue,
-    DefaultChanged,
-    Migrated,
     AutomaticSaveFailed,
 }
 
@@ -63,17 +61,6 @@ impl Diagnostic {
     pub(crate) fn error(code: DiagnosticCode, message: impl Into<String>) -> Self {
         Self {
             level: DiagnosticLevel::Error,
-            code,
-            message: message.into(),
-            parameter: None,
-            location: None,
-            suggestions: Vec::new(),
-        }
-    }
-
-    pub(crate) fn warning(code: DiagnosticCode, message: impl Into<String>) -> Self {
-        Self {
-            level: DiagnosticLevel::Warning,
             code,
             message: message.into(),
             parameter: None,

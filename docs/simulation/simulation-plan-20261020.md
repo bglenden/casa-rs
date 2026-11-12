@@ -17,7 +17,7 @@ and run them dramatically faster:
 
 Requirements:
 
-- **ADR-0017, ADR-0018 and ADR-0019 apply.** All computation is in Rust,
+- **ADR-0017 applies.** All computation is in Rust,
   including the parts CASA writes in Python (`task_simobserve.py`,
   `task_simanalyze.py`, `task_simalma.py`, `simutil.py`); Python only
   presents CASA's interface.
@@ -52,7 +52,7 @@ with CASA; their design and dependencies stand (§6). Phase 7 follows.
 
 1. **Namespace.** CASA tool classes are in `casars.tools` under casatools'
    names, tasks in `casars.tasks`; there are no `casatools` or `casatasks`
-   alias packages (ADR-0019).
+   alias packages (ADR-0017).
 2. **The `simobserve` surface is CASA's.** The old family generator is the
    developer binary `synthetic-ms`, outside the catalog.
 3. **`casa-simulation` is an application-layer crate** in ADR-0016's
@@ -138,7 +138,7 @@ Phases 1 to 5 are on #841. What remains:
 ### Phase 6: `simanalyze` and `simalma`
 
 **Scope** (planned 2026-10-27; the split is on #841).
-- **Both tasks,** ported to Rust (ADR-0018) from CASA 6.7.6's installed
+- **Both tasks,** ported to Rust (ADR-0017) from CASA 6.7.6's installed
   `task_simanalyze.py` and `task_simalma.py`, with the `simutil` and
   `sdbeamutil` parts they use: `imtclean`, `convimage`, `statim`,
   `cellsize`, `ismstp`, `primaryBeamArcsec` and `TheoreticalBeam`.

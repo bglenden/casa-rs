@@ -70,7 +70,7 @@ pub use lookup::{
     LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES,
 };
 pub use lookup_frequency::FrequencyInterpolation;
-pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
+pub use managed_output::CalibrationTaskResult;
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
