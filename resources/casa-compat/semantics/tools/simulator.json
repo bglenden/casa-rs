@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "98a907c6c5d4f766e556de9b69b328952ef4330d",
+ "audit_revision": "cd842e0e3804730301a65e552392af83f67027b6",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -21,7 +21,8 @@
     "signature",
     "binding-tests",
     "openfromms-20261103",
-    "refusals"
+    "refusals",
+    "flagged-samples-20261112"
    ],
    "issue": 1053
   },
@@ -190,7 +191,8 @@
     "predict-components-20261103",
     "predict-sd-20261103",
     "openfromms-20261103",
-    "refusals"
+    "refusals",
+    "flagged-samples-20261112"
    ],
    "issue": 1053
   },
@@ -227,7 +229,8 @@
     "noise-20261103",
     "corruptions-20261103",
     "troposphere-20261103",
-    "refusals"
+    "refusals",
+    "flagged-samples-20261112"
    ],
    "issue": 1053
   },
@@ -995,6 +998,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "flagged-component-duplication",
+   "record": "Mixed image/component prediction doubles components at flagged samples",
+   "inputs": "Existing MS with independent sample and row flags, predicted from an image and a 0.25 Jy component, replacing and incremental.",
+   "casa": "Retains the component in skipped flagged samples, then adds it again; joint flagged DATA contains two component contributions.",
+   "ours": "Adds the masked image prediction and each component once, using independent CASA image-only and component-only sums as the reference.",
+   "rationale": "The sky-model sum must not double components when an image is present; the upstream accumulator retains and adds the previous model at skipped samples.",
+   "impact": "Corrected flagged mixed-model DATA; the raw defective joint CASA DATA remains recorded and its excess is tested.",
+   "evidence": [
+    "bugs-record",
+    "flagged-samples-20261112"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
   }
  ],
  "evidence": {
@@ -1309,6 +1327,22 @@
    "command": "CASAPY tools/simulation/sm_multiple_models_oracle.py --out OUT --fixture FIXTURE; cargo test -p casa-simulation --test predict_multiple_models -- --nocapture (bg-mac-mini, CPU one and three workers, Metal three workers)",
    "receipt": "resources/casa-compat/evidence/sm-multiple-models-20261111.json",
    "source_revision": "459122e01bb25fbb57c5002a1b09726e4e791389"
+  },
+  "flagged-samples-20261112": {
+   "kind": "Independent CASA golden DATA, noise laws and C++ native readback",
+   "state": "passed",
+   "result": "17 cases pass CPU W1/W3 with identical worker results and ten actual Metal runs. All 44 native outputs pass CASA C++ readback, including flagged samples and preserved columns. Maximum numerical DATA NRMS 2.72e-6 (limit 1e-3); Metal/CPU maximum relative error 3.36e-7 (limit 1e-4). Full simulation suite: 301 passed, two parent-executed helper ignores.",
+   "scope": "Existing-MS sample flags independent of row flags for GridFT, WProjectFT, mosaic, SDGrid, multiple models, components, replacement, incremental and noise. Corrected mixed-model sums and standing SDGrid cross-correlation correction are checked separately from raw CASA. Remaining simulator restrictions and whole-task acceptance stay open.",
+   "links": [
+    "tools/simulation/sm_flagged_samples_oracle.py",
+    "crates/casa-simulation/tests/flagged_samples.rs",
+    "crates/casa-simulation/tests/data/sm_flagged_samples_casa.json.gz"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "cd842e0e3804730301a65e552392af83f67027b6",
+   "source_revision": "cd842e0e3804730301a65e552392af83f67027b6",
+   "command": "CASAPY tools/simulation/sm_flagged_samples_oracle.py --out OUT --fixture FIXTURE; CASA_RS_FLAGGED_SAMPLES_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test flagged_samples --test open_from_ms --test backends --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/sm_flagged_samples_oracle.py --verify-native EXPORT --fixture FIXTURE --out OUT",
+   "receipt": "resources/casa-compat/evidence/sm-flagged-samples-20261112.json"
   }
  }
 }
