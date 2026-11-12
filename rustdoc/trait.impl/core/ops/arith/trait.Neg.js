@@ -1,9 +1,9 @@
 (function() {
-    const implementors = Object.fromEntries([["casa_types",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.99.1/core/ops/arith/trait.Neg.html\" title=\"trait core::ops::arith::Neg\">Neg</a> for &amp;<a class=\"struct\" href=\"casa_types/quanta/quantity/struct.Quantity.html\" title=\"struct casa_types::quanta::quantity::Quantity\">Quantity</a>",0]]]]);
+    const implementors = Object.fromEntries([["casa_types",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.100.0/core/ops/arith/trait.Neg.html\" title=\"trait core::ops::arith::Neg\">Neg</a> for &amp;<a class=\"struct\" href=\"casa_types/quanta/quantity/struct.Quantity.html\" title=\"struct casa_types::quanta::quantity::Quantity\">Quantity</a>",0]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":59,"fragment_lengths":[319]}
+//{"start":59,"fragment_lengths":[320]}

@@ -972,6 +972,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AW MT-MFS restart multiplies saved higher Taylor weights again
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-taylor-term-gives-every-stokes-plane-the-first-correlations-sum-of-weights" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1016,6 +1027,7 @@
 CASA behaviours casa-rs follows for parity:
 <a href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection hand pairing</a>,
 <a href="#aw-projection-predicts-with-the-unrotated-w">AW-projection prediction w</a>,
+<a href="#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again">AW MT-MFS restart weights</a>,
 <a href="#matrixcleaner-counts-the-iteration-that-stops-it">MatrixCleaner's stop iteration</a>,
 <a href="#peak-searches-let-rounding-choose-between-equal-pixels">exact peak comparisons</a>,
 <a href="#the-multi-term-weight-normalization-override-is-never-called">multi-term weight normalization</a>,
@@ -1459,6 +1471,30 @@ term's raw <code>getWeightImage</code> moment, so <code>.weight.tt1</code> and <
 the raw Σ W·s^N while <code>.weight.tt0</code> is normalized. CASA 6.7.6.14 on
 <code>refim_alma_mosaic</code> (mosaic, <code>nterms=2</code>) agrees: <code>weight.ttN / sumwt.ttN</code> is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.</p>
+<h2 id="aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again">AW MT-MFS restart multiplies saved higher Taylor weights again<a class="headerlink" href="#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: CASA 6.7.6.14 bug. casa-rs recomputes the weights with the PSF (#1070).</li>
+<li>Affected code: <code>TransformMachines2/CFCache.cc</code> (<code>loadWtImage</code>),
+  <code>AWProjectFT.cc</code> (<code>getWeightImage</code>) and
+  <code>AWProjectWBFT.cc</code> (<code>initializeToSky</code>).</li>
+</ul>
+<p>With <code>gridder='awproject'</code>, <code>deconvolver='mtmfs'</code> and the default
+<code>calcpsf=True</code>, CASA can read each saved <code>.weight.ttN</code> when a run continues
+at the same image prefix. <code>CFCache::loadWtImage</code> multiplies each saved plane
+by <code>.sumwt.tt0</code>. The higher Taylor weight images were already written as
+raw moments (see the preceding normalization bug).
+<code>AWProjectFT::getWeightImage</code> also reapplies its sinc grid correction to
+the saved, already corrected planes.</p>
+<p>In <code>test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield</code> on
+<code>refim_oneshiftpoint.mosaic.ms</code>, a dirty run followed by ten CLEAN
+iterations multiplies the central values of <code>.weight.tt1</code> and
+<code>.weight.tt2</code> by 49,971.44, the principal sum of weights. The final
+restored images and residuals also depend on the saved weights. Moving
+only the three saved weight images aside before CLEAN makes CASA agree
+with a fresh CLEAN on the same observation. casa-rs recomputes weights
+when it recomputes the PSF. All 19 products and the iteration counts
+agree with both CASA controls under the existing tolerances.</p>
 <h2 id="a-taylor-term-gives-every-stokes-plane-the-first-correlations-sum-of-weights">A Taylor term gives every Stokes plane the first correlation's sum of weights<a class="headerlink" href="#a-taylor-term-gives-every-stokes-plane-the-first-correlations-sum-of-weights" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-03</li>
