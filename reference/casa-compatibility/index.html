@@ -1093,6 +1093,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#uvw-sidereal-20261112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uvw-sidereal-20261112
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3994,6 +4005,17 @@
     <span class="md-ellipsis">
       
         flagged-samples-20261112
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#uvw-sidereal-20261112_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uvw-sidereal-20261112
       
     </span>
   </a>
@@ -5339,6 +5361,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#uvw-sidereal-20261112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uvw-sidereal-20261112
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8246,6 +8279,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#uvw-sidereal-20261112_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uvw-sidereal-20261112
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9394,7 +9438,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'2014/01/01'</code>; <code>refdate</code> → <code>refdate</code></td>
 <td>Implemented</td>
 <td>The observation date. <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a></td>
 </tr>
 <tr>
 <td><code>hourangle</code></td>
@@ -9402,7 +9446,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'transit'</code>; <code>hourangle</code> → <code>hourangle</code></td>
 <td>Implemented</td>
 <td>'transit' or an hour angle. <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a></td>
 </tr>
 <tr>
 <td><code>totaltime</code></td>
@@ -9823,6 +9867,19 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>ca11bbddc581ab9f7efb22c6a09bfe03b309bf55</code>; CASA: <code>casatasks 6.7.6.14, casatools 6.7.6-14</code>.</li>
 <li>Command: <code>RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/check_quick_psf_casa.py --native DIR --reference FIXTURE --out OUT</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/simobserve-quick-psf-20261111.json</code>.</li>
+</ul>
+<p><a id="simobserve-evidence-uvw-sidereal-20261112"></a></p>
+<h5 id="uvw-sidereal-20261112">uvw-sidereal-20261112<a class="headerlink" href="#uvw-sidereal-20261112" title="Permanent link">&para;</a></h5>
+<p><strong>Independent CASA sidereal angles and paired full MeasurementSets — passed.</strong> All 17 scenario outcomes agree (16 successful, one expected refusal) at the stricter 1e-6 m UVW limit. Maximum UVW 9.228972431e-08 m; DATA NRMS 1.046009822e-06 under 1e-3. Five LAST residuals are &lt;=1.70e-11 rad. Three-crate regression: 1514 passed, nine documented ignores; one shared-helper review has no findings. Existing simobserve scheduling/model/frame/pointing scenarios and the shared simulation UVW sidereal calculation. Full metadata, pointings and numerical visibility checks retained. No all-mode or whole-task performance claim.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/crates/casa-types/src/measures/baseline.rs">crates/casa-types/src/measures/baseline.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/crates/casa-types/tests/simulation_sidereal.rs">crates/casa-types/tests/simulation_sidereal.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/crates/casa-types/tests/data/casa_simulation_sidereal.json">crates/casa-types/tests/data/casa_simulation_sidereal.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/tools/simulation/sidereal_oracle.py">tools/simulation/sidereal_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/tools/simulation/simobserve_parity.py">tools/simulation/simobserve_parity.py</a></li>
+<li>Revision: <code>68f863c1d280a9145b5fa507291e60cde4030e71</code>; CASA: <code>casatasks 6.7.6.14, casatools 6.7.6-14</code>.</li>
+<li>Command: <code>CASAPY tools/simulation/sidereal_oracle.py --out crates/casa-types/tests/data/casa_simulation_sidereal.json; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simulation-uvw-sidereal-20261112.json</code>.</li>
 </ul>
 <h3 id="split">split<a class="headerlink" href="#split" title="Permanent link">&para;</a></h3>
 <ul>
@@ -13568,14 +13625,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>sourcename='', spwname='', starttime=[], stoptime=[], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET.ON_SOURCE', observer='CASA simulator', project='CASA simulation'</code></td>
 <td>Partial (#1053)</td>
 <td>Adds a scan's rows as CASA does, with shadowing and elevation limits (decisions). Refused after openfromms.</td>
-<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-observe-20261103">observe-20261103</a>, <a href="#simulator-evidence-scripts">scripts</a>, <a href="#simulator-evidence-refusals">refusals</a></td>
+<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-observe-20261103">observe-20261103</a>, <a href="#simulator-evidence-scripts">scripts</a>, <a href="#simulator-evidence-refusals">refusals</a>, <a href="#simulator-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a></td>
 </tr>
 <tr>
 <td><code>observemany</code></td>
 <td><code>sourcenames=[], spwname='', starttimes=['0s'], stoptimes=['3600s'], directions=[''], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET#ON_SOURCE', observer='CASA simulator', project='CASA simulation'</code></td>
 <td>Partial (#1053)</td>
 <td>Adds several pointings' rows. Refused after openfromms. CASA's padding and row-order defects are decisions.</td>
-<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-observe-20261103">observe-20261103</a>, <a href="#simulator-evidence-refusals">refusals</a></td>
+<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-observe-20261103">observe-20261103</a>, <a href="#simulator-evidence-refusals">refusals</a>, <a href="#simulator-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a></td>
 </tr>
 <tr>
 <td><code>oldsetnoise</code></td>
@@ -14529,6 +14586,19 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>cd842e0e3804730301a65e552392af83f67027b6</code>; CASA: <code>casatools 6.7.6-14, casatasks 6.7.6.14</code>.</li>
 <li>Command: <code>CASAPY tools/simulation/sm_flagged_samples_oracle.py --out OUT --fixture FIXTURE; CASA_RS_FLAGGED_SAMPLES_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test flagged_samples --test open_from_ms --test backends --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/sm_flagged_samples_oracle.py --verify-native EXPORT --fixture FIXTURE --out OUT</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/sm-flagged-samples-20261112.json</code>.</li>
+</ul>
+<p><a id="simulator-evidence-uvw-sidereal-20261112"></a></p>
+<h5 id="uvw-sidereal-20261112_1">uvw-sidereal-20261112<a class="headerlink" href="#uvw-sidereal-20261112_1" title="Permanent link">&para;</a></h5>
+<p><strong>Independent CASA sidereal angles and paired full MeasurementSets — passed.</strong> All 17 scenario outcomes agree (16 successful, one expected refusal) at the stricter 1e-6 m UVW limit. Maximum UVW 9.228972431e-08 m; DATA NRMS 1.046009822e-06 under 1e-3. Five LAST residuals are &lt;=1.70e-11 rad. Three-crate regression: 1514 passed, nine documented ignores; one shared-helper review has no findings. Existing simobserve scheduling/model/frame/pointing scenarios and the shared simulation UVW sidereal calculation. Full metadata, pointings and numerical visibility checks retained. No all-mode or whole-task performance claim.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/crates/casa-types/src/measures/baseline.rs">crates/casa-types/src/measures/baseline.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/crates/casa-types/tests/simulation_sidereal.rs">crates/casa-types/tests/simulation_sidereal.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/crates/casa-types/tests/data/casa_simulation_sidereal.json">crates/casa-types/tests/data/casa_simulation_sidereal.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/tools/simulation/sidereal_oracle.py">tools/simulation/sidereal_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/68f863c1d280a9145b5fa507291e60cde4030e71/tools/simulation/simobserve_parity.py">tools/simulation/simobserve_parity.py</a></li>
+<li>Revision: <code>68f863c1d280a9145b5fa507291e60cde4030e71</code>; CASA: <code>casatasks 6.7.6.14, casatools 6.7.6-14</code>.</li>
+<li>Command: <code>CASAPY tools/simulation/sidereal_oracle.py --out crates/casa-types/tests/data/casa_simulation_sidereal.json; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simulation-uvw-sidereal-20261112.json</code>.</li>
 </ul>
 <h3 id="simutil">simutil<a class="headerlink" href="#simutil" title="Permanent link">&para;</a></h3>
 <h4 id="simutil-method-implementation">simutil method implementation<a class="headerlink" href="#simutil-method-implementation" title="Permanent link">&para;</a></h4>

@@ -256,211 +256,201 @@
 <a href=#256 id=256 data-nosnippet>256</a>/// A frame without an epoch or a position, or an epoch it cannot convert to
 <a href=#257 id=257 data-nosnippet>257</a>/// UT1.
 <a href=#258 id=258 data-nosnippet>258</a></span><span class="kw">pub fn </span>local_apparent_sidereal_time(frame: <span class="kw-2">&amp;</span>MeasFrame) -&gt; <span class="prelude-ty">Result</span>&lt;f64, MeasureError&gt; {
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>(ut1_a, ut1_b) = epoch_jd_pair(frame, EpochRef::UT1)<span class="question-mark">?</span>;
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>ut1_mjd = epoch_mjd(frame, EpochRef::UT1)<span class="question-mark">?</span>;
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>centuries = (ut1_mjd - <span class="number">51_544.5</span>) / <span class="number">36_525.0</span>;
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span>gmst0_seconds =
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="number">24_110.548_41 </span>+ <span class="number">8_640_184.812_866 </span>* centuries + <span class="number">0.093_104 </span>* centuries * centuries
-<a href=#264 id=264 data-nosnippet>264</a>            - <span class="number">6.2e-6 </span>* centuries * centuries * centuries;
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">let </span>gmst0_turns = (ut1_mjd + gmst0_seconds / <span class="number">86_400.0 </span>+ <span class="number">6_713.0</span>).fract();
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">let </span>equation_of_equinoxes =
-<a href=#267 id=267 data-nosnippet>267</a>        sofars::vm::anpm(sofars::erst::gst94(ut1_a, ut1_b) - sofars::erst::gmst82(ut1_a, ut1_b));
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="comment">// Matches casacore's legacy `Nutation::STANDARD` equation of equinoxes
-<a href=#269 id=269 data-nosnippet>269</a>    // used by `MCEpoch::UT1_GAST`; SOFA `gst94` differs by about 0.1 ms.
-<a href=#270 id=270 data-nosnippet>270</a>    </span><span class="kw">const </span>CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD: f64 = <span class="number">7.719e-9</span>;
-<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>gast = gmst0_turns * std::f64::consts::TAU
-<a href=#272 id=272 data-nosnippet>272</a>        + equation_of_equinoxes
-<a href=#273 id=273 data-nosnippet>273</a>        + CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD;
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">let </span>position = frame
-<a href=#275 id=275 data-nosnippet>275</a>        .position()
-<a href=#276 id=276 data-nosnippet>276</a>        .ok_or(MeasureError::MissingFrameData { what: <span class="string">"position" </span>})<span class="question-mark">?</span>;
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="prelude-val">Ok</span>(gast + position.longitude_rad())
-<a href=#278 id=278 data-nosnippet>278</a>}
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="kw">fn </span>epoch_jd_pair(frame: <span class="kw-2">&amp;</span>MeasFrame, refer: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;(f64, f64), MeasureError&gt; {
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span>epoch = frame
-<a href=#282 id=282 data-nosnippet>282</a>        .epoch()
-<a href=#283 id=283 data-nosnippet>283</a>        .ok_or(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>})<span class="question-mark">?</span>;
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="prelude-val">Ok</span>(epoch.convert_to(refer, frame)<span class="question-mark">?</span>.value().as_jd_pair())
-<a href=#285 id=285 data-nosnippet>285</a>}
-<a href=#286 id=286 data-nosnippet>286</a>
-<a href=#287 id=287 data-nosnippet>287</a><span class="kw">fn </span>epoch_mjd(frame: <span class="kw-2">&amp;</span>MeasFrame, refer: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;f64, MeasureError&gt; {
-<a href=#288 id=288 data-nosnippet>288</a>    <span class="kw">let </span>epoch = frame
-<a href=#289 id=289 data-nosnippet>289</a>        .epoch()
-<a href=#290 id=290 data-nosnippet>290</a>        .ok_or(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>})<span class="question-mark">?</span>;
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="prelude-val">Ok</span>(epoch.convert_to(refer, frame)<span class="question-mark">?</span>.value().as_mjd())
-<a href=#292 id=292 data-nosnippet>292</a>}
-<a href=#293 id=293 data-nosnippet>293</a>
-<a href=#294 id=294 data-nosnippet>294</a><span class="kw">fn </span>polar_motion_rad(frame: <span class="kw-2">&amp;</span>MeasFrame, epoch_mjd: f64) -&gt; <span class="prelude-ty">Result</span>&lt;(f64, f64), MeasureError&gt; {
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">const </span>ARCSEC_TO_RAD: f64 = std::f64::consts::PI / (<span class="number">180.0 </span>* <span class="number">3600.0</span>);
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">match </span>frame.polar_motion_for_mjd(epoch_mjd)<span class="question-mark">? </span>{
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="prelude-val">Some</span>((xp_arcsec, yp_arcsec)) =&gt; <span class="prelude-val">Ok</span>((xp_arcsec * ARCSEC_TO_RAD, yp_arcsec * ARCSEC_TO_RAD)),
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>((<span class="number">0.0</span>, <span class="number">0.0</span>)),
-<a href=#299 id=299 data-nosnippet>299</a>    }
-<a href=#300 id=300 data-nosnippet>300</a>}
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a><span class="kw">fn </span>polar_motion_euler(xp: f64, yp: f64, last: f64) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span><span class="kw-2">mut </span>matrix = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>matrix.iter_mut().enumerate() {
-<a href=#305 id=305 data-nosnippet>305</a>        row[idx] = <span class="number">1.0</span>;
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>epoch = frame
+<a href=#260 id=260 data-nosnippet>260</a>        .epoch()
+<a href=#261 id=261 data-nosnippet>261</a>        .ok_or(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>})<span class="question-mark">?</span>;
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span>ut1 = epoch.convert_to(EpochRef::UT1, frame)<span class="question-mark">?</span>;
+<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">let </span>gast = <span class="kw">super</span>::casacore_sidereal::gast_rad(ut1.value());
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">let </span>position = frame
+<a href=#265 id=265 data-nosnippet>265</a>        .position()
+<a href=#266 id=266 data-nosnippet>266</a>        .ok_or(MeasureError::MissingFrameData { what: <span class="string">"position" </span>})<span class="question-mark">?</span>;
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="prelude-val">Ok</span>(gast + position.longitude_rad())
+<a href=#268 id=268 data-nosnippet>268</a>}
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a><span class="kw">fn </span>epoch_jd_pair(frame: <span class="kw-2">&amp;</span>MeasFrame, refer: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;(f64, f64), MeasureError&gt; {
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>epoch = frame
+<a href=#272 id=272 data-nosnippet>272</a>        .epoch()
+<a href=#273 id=273 data-nosnippet>273</a>        .ok_or(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>})<span class="question-mark">?</span>;
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="prelude-val">Ok</span>(epoch.convert_to(refer, frame)<span class="question-mark">?</span>.value().as_jd_pair())
+<a href=#275 id=275 data-nosnippet>275</a>}
+<a href=#276 id=276 data-nosnippet>276</a>
+<a href=#277 id=277 data-nosnippet>277</a><span class="kw">fn </span>epoch_mjd(frame: <span class="kw-2">&amp;</span>MeasFrame, refer: EpochRef) -&gt; <span class="prelude-ty">Result</span>&lt;f64, MeasureError&gt; {
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>epoch = frame
+<a href=#279 id=279 data-nosnippet>279</a>        .epoch()
+<a href=#280 id=280 data-nosnippet>280</a>        .ok_or(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>})<span class="question-mark">?</span>;
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="prelude-val">Ok</span>(epoch.convert_to(refer, frame)<span class="question-mark">?</span>.value().as_mjd())
+<a href=#282 id=282 data-nosnippet>282</a>}
+<a href=#283 id=283 data-nosnippet>283</a>
+<a href=#284 id=284 data-nosnippet>284</a><span class="kw">fn </span>polar_motion_rad(frame: <span class="kw-2">&amp;</span>MeasFrame, epoch_mjd: f64) -&gt; <span class="prelude-ty">Result</span>&lt;(f64, f64), MeasureError&gt; {
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">const </span>ARCSEC_TO_RAD: f64 = std::f64::consts::PI / (<span class="number">180.0 </span>* <span class="number">3600.0</span>);
+<a href=#286 id=286 data-nosnippet>286</a>    <span class="kw">match </span>frame.polar_motion_for_mjd(epoch_mjd)<span class="question-mark">? </span>{
+<a href=#287 id=287 data-nosnippet>287</a>        <span class="prelude-val">Some</span>((xp_arcsec, yp_arcsec)) =&gt; <span class="prelude-val">Ok</span>((xp_arcsec * ARCSEC_TO_RAD, yp_arcsec * ARCSEC_TO_RAD)),
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>((<span class="number">0.0</span>, <span class="number">0.0</span>)),
+<a href=#289 id=289 data-nosnippet>289</a>    }
+<a href=#290 id=290 data-nosnippet>290</a>}
+<a href=#291 id=291 data-nosnippet>291</a>
+<a href=#292 id=292 data-nosnippet>292</a><span class="kw">fn </span>polar_motion_euler(xp: f64, yp: f64, last: f64) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span><span class="kw-2">mut </span>matrix = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>matrix.iter_mut().enumerate() {
+<a href=#295 id=295 data-nosnippet>295</a>        row[idx] = <span class="number">1.0</span>;
+<a href=#296 id=296 data-nosnippet>296</a>    }
+<a href=#297 id=297 data-nosnippet>297</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>matrix, xp, <span class="number">2</span>);
+<a href=#298 id=298 data-nosnippet>298</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>matrix, yp, <span class="number">1</span>);
+<a href=#299 id=299 data-nosnippet>299</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>matrix, last, <span class="number">3</span>);
+<a href=#300 id=300 data-nosnippet>300</a>    matrix
+<a href=#301 id=301 data-nosnippet>301</a>}
+<a href=#302 id=302 data-nosnippet>302</a>
+<a href=#303 id=303 data-nosnippet>303</a><span class="kw">fn </span>casacore_apply_single_euler(matrix: <span class="kw-2">&amp;mut </span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], angle: f64, axis: usize) {
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">if </span>angle == <span class="number">0.0 </span>|| axis == <span class="number">0 </span>{
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">return</span>;
 <a href=#306 id=306 data-nosnippet>306</a>    }
-<a href=#307 id=307 data-nosnippet>307</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>matrix, xp, <span class="number">2</span>);
-<a href=#308 id=308 data-nosnippet>308</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>matrix, yp, <span class="number">1</span>);
-<a href=#309 id=309 data-nosnippet>309</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>matrix, last, <span class="number">3</span>);
-<a href=#310 id=310 data-nosnippet>310</a>    matrix
-<a href=#311 id=311 data-nosnippet>311</a>}
-<a href=#312 id=312 data-nosnippet>312</a>
-<a href=#313 id=313 data-nosnippet>313</a><span class="kw">fn </span>casacore_apply_single_euler(matrix: <span class="kw-2">&amp;mut </span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], angle: f64, axis: usize) {
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">if </span>angle == <span class="number">0.0 </span>|| axis == <span class="number">0 </span>{
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">return</span>;
-<a href=#316 id=316 data-nosnippet>316</a>    }
-<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">let </span><span class="kw-2">mut </span>single = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#318 id=318 data-nosnippet>318</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>single.iter_mut().enumerate() {
-<a href=#319 id=319 data-nosnippet>319</a>        row[idx] = <span class="number">1.0</span>;
-<a href=#320 id=320 data-nosnippet>320</a>    }
-<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">let </span>i = axis % <span class="number">3</span>;
-<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">let </span>j = (i + <span class="number">1</span>) % <span class="number">3</span>;
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">let </span>(sin_angle, cos_angle) = angle.sin_cos();
-<a href=#324 id=324 data-nosnippet>324</a>    single[i][i] = cos_angle;
-<a href=#325 id=325 data-nosnippet>325</a>    single[j][j] = cos_angle;
-<a href=#326 id=326 data-nosnippet>326</a>    single[i][j] = -sin_angle;
-<a href=#327 id=327 data-nosnippet>327</a>    single[j][i] = sin_angle;
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">let </span><span class="kw-2">mut </span>single = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>single.iter_mut().enumerate() {
+<a href=#309 id=309 data-nosnippet>309</a>        row[idx] = <span class="number">1.0</span>;
+<a href=#310 id=310 data-nosnippet>310</a>    }
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">let </span>i = axis % <span class="number">3</span>;
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">let </span>j = (i + <span class="number">1</span>) % <span class="number">3</span>;
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">let </span>(sin_angle, cos_angle) = angle.sin_cos();
+<a href=#314 id=314 data-nosnippet>314</a>    single[i][i] = cos_angle;
+<a href=#315 id=315 data-nosnippet>315</a>    single[j][j] = cos_angle;
+<a href=#316 id=316 data-nosnippet>316</a>    single[i][j] = -sin_angle;
+<a href=#317 id=317 data-nosnippet>317</a>    single[j][i] = sin_angle;
+<a href=#318 id=318 data-nosnippet>318</a>
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">let </span>original = <span class="kw-2">*</span>matrix;
+<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#322 id=322 data-nosnippet>322</a>            matrix[row][col] = original[row][<span class="number">0</span>] * single[<span class="number">0</span>][col]
+<a href=#323 id=323 data-nosnippet>323</a>                + original[row][<span class="number">1</span>] * single[<span class="number">1</span>][col]
+<a href=#324 id=324 data-nosnippet>324</a>                + original[row][<span class="number">2</span>] * single[<span class="number">2</span>][col];
+<a href=#325 id=325 data-nosnippet>325</a>        }
+<a href=#326 id=326 data-nosnippet>326</a>    }
+<a href=#327 id=327 data-nosnippet>327</a>}
 <a href=#328 id=328 data-nosnippet>328</a>
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">let </span>original = <span class="kw-2">*</span>matrix;
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#332 id=332 data-nosnippet>332</a>            matrix[row][col] = original[row][<span class="number">0</span>] * single[<span class="number">0</span>][col]
-<a href=#333 id=333 data-nosnippet>333</a>                + original[row][<span class="number">1</span>] * single[<span class="number">1</span>][col]
-<a href=#334 id=334 data-nosnippet>334</a>                + original[row][<span class="number">2</span>] * single[<span class="number">2</span>][col];
-<a href=#335 id=335 data-nosnippet>335</a>        }
-<a href=#336 id=336 data-nosnippet>336</a>    }
-<a href=#337 id=337 data-nosnippet>337</a>}
-<a href=#338 id=338 data-nosnippet>338</a>
-<a href=#339 id=339 data-nosnippet>339</a><span class="kw">fn </span>diurnal_aberration_factor(radius_m: f64) -&gt; f64 {
-<a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">const </span>C: f64 = <span class="number">299_792_458.0</span>;
-<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">const </span>SIDEREAL_RATIO: f64 = <span class="number">1.002_737_909_35</span>;
-<a href=#342 id=342 data-nosnippet>342</a>    (<span class="number">2.0 </span>* std::f64::consts::PI * radius_m) / <span class="number">86_400.0 </span>* SIDEREAL_RATIO / C
-<a href=#343 id=343 data-nosnippet>343</a>}
-<a href=#344 id=344 data-nosnippet>344</a>
-<a href=#345 id=345 data-nosnippet>345</a><span class="kw">fn </span>rotate_shift_matrix(shift: [f64; <span class="number">3</span>], reference_direction: [f64; <span class="number">3</span>]) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
-<a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">let </span>reference = normalize(reference_direction);
-<a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">let </span>reference_long = reference[<span class="number">1</span>].atan2(reference[<span class="number">0</span>]);
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">let </span>reference_lat = reference[<span class="number">2</span>].asin();
-<a href=#349 id=349 data-nosnippet>349</a>
-<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">let </span><span class="kw-2">mut </span>rot = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>rot.iter_mut().enumerate() {
-<a href=#352 id=352 data-nosnippet>352</a>        row[idx] = <span class="number">1.0</span>;
-<a href=#353 id=353 data-nosnippet>353</a>    }
-<a href=#354 id=354 data-nosnippet>354</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>rot, -std::f64::consts::FRAC_PI_2 + reference_lat, <span class="number">2</span>);
-<a href=#355 id=355 data-nosnippet>355</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>rot, -reference_long, <span class="number">3</span>);
-<a href=#356 id=356 data-nosnippet>356</a>
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">let </span>shifted_once = rotate(<span class="kw-2">&amp;</span>rot, <span class="kw-2">&amp;</span>shift);
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">let </span>shifted_long = shifted_once[<span class="number">1</span>].atan2(shifted_once[<span class="number">0</span>]);
-<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">let </span><span class="kw-2">mut </span>long_rot = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#360 id=360 data-nosnippet>360</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>long_rot.iter_mut().enumerate() {
-<a href=#361 id=361 data-nosnippet>361</a>        row[idx] = <span class="number">1.0</span>;
-<a href=#362 id=362 data-nosnippet>362</a>    }
-<a href=#363 id=363 data-nosnippet>363</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>long_rot, -shifted_long, <span class="number">3</span>);
-<a href=#364 id=364 data-nosnippet>364</a>    rot = multiply_matrices(<span class="kw-2">&amp;</span>long_rot, <span class="kw-2">&amp;</span>rot);
+<a href=#329 id=329 data-nosnippet>329</a><span class="kw">fn </span>diurnal_aberration_factor(radius_m: f64) -&gt; f64 {
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">const </span>C: f64 = <span class="number">299_792_458.0</span>;
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">const </span>SIDEREAL_RATIO: f64 = <span class="number">1.002_737_909_35</span>;
+<a href=#332 id=332 data-nosnippet>332</a>    (<span class="number">2.0 </span>* std::f64::consts::PI * radius_m) / <span class="number">86_400.0 </span>* SIDEREAL_RATIO / C
+<a href=#333 id=333 data-nosnippet>333</a>}
+<a href=#334 id=334 data-nosnippet>334</a>
+<a href=#335 id=335 data-nosnippet>335</a><span class="kw">fn </span>rotate_shift_matrix(shift: [f64; <span class="number">3</span>], reference_direction: [f64; <span class="number">3</span>]) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">let </span>reference = normalize(reference_direction);
+<a href=#337 id=337 data-nosnippet>337</a>    <span class="kw">let </span>reference_long = reference[<span class="number">1</span>].atan2(reference[<span class="number">0</span>]);
+<a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">let </span>reference_lat = reference[<span class="number">2</span>].asin();
+<a href=#339 id=339 data-nosnippet>339</a>
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">let </span><span class="kw-2">mut </span>rot = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>rot.iter_mut().enumerate() {
+<a href=#342 id=342 data-nosnippet>342</a>        row[idx] = <span class="number">1.0</span>;
+<a href=#343 id=343 data-nosnippet>343</a>    }
+<a href=#344 id=344 data-nosnippet>344</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>rot, -std::f64::consts::FRAC_PI_2 + reference_lat, <span class="number">2</span>);
+<a href=#345 id=345 data-nosnippet>345</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>rot, -reference_long, <span class="number">3</span>);
+<a href=#346 id=346 data-nosnippet>346</a>
+<a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">let </span>shifted_once = rotate(<span class="kw-2">&amp;</span>rot, <span class="kw-2">&amp;</span>shift);
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">let </span>shifted_long = shifted_once[<span class="number">1</span>].atan2(shifted_once[<span class="number">0</span>]);
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="kw">let </span><span class="kw-2">mut </span>long_rot = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>long_rot.iter_mut().enumerate() {
+<a href=#351 id=351 data-nosnippet>351</a>        row[idx] = <span class="number">1.0</span>;
+<a href=#352 id=352 data-nosnippet>352</a>    }
+<a href=#353 id=353 data-nosnippet>353</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>long_rot, -shifted_long, <span class="number">3</span>);
+<a href=#354 id=354 data-nosnippet>354</a>    rot = multiply_matrices(<span class="kw-2">&amp;</span>long_rot, <span class="kw-2">&amp;</span>rot);
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">let </span>shifted_twice = rotate(<span class="kw-2">&amp;</span>rot, <span class="kw-2">&amp;</span>shift);
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">let </span><span class="kw-2">mut </span>correction_rot = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>correction_rot.iter_mut().enumerate() {
+<a href=#359 id=359 data-nosnippet>359</a>        row[idx] = <span class="number">1.0</span>;
+<a href=#360 id=360 data-nosnippet>360</a>    }
+<a href=#361 id=361 data-nosnippet>361</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>correction_rot, shifted_twice[<span class="number">0</span>], <span class="number">2</span>);
+<a href=#362 id=362 data-nosnippet>362</a>    <span class="kw">let </span>corrected = multiply_matrices(<span class="kw-2">&amp;</span>correction_rot, <span class="kw-2">&amp;</span>rot);
+<a href=#363 id=363 data-nosnippet>363</a>    multiply_transpose_left(<span class="kw-2">&amp;</span>rot, <span class="kw-2">&amp;</span>corrected)
+<a href=#364 id=364 data-nosnippet>364</a>}
 <a href=#365 id=365 data-nosnippet>365</a>
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">let </span>shifted_twice = rotate(<span class="kw-2">&amp;</span>rot, <span class="kw-2">&amp;</span>shift);
-<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">let </span><span class="kw-2">mut </span>correction_rot = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">for </span>(idx, row) <span class="kw">in </span>correction_rot.iter_mut().enumerate() {
-<a href=#369 id=369 data-nosnippet>369</a>        row[idx] = <span class="number">1.0</span>;
-<a href=#370 id=370 data-nosnippet>370</a>    }
-<a href=#371 id=371 data-nosnippet>371</a>    casacore_apply_single_euler(<span class="kw-2">&amp;mut </span>correction_rot, shifted_twice[<span class="number">0</span>], <span class="number">2</span>);
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">let </span>corrected = multiply_matrices(<span class="kw-2">&amp;</span>correction_rot, <span class="kw-2">&amp;</span>rot);
-<a href=#373 id=373 data-nosnippet>373</a>    multiply_transpose_left(<span class="kw-2">&amp;</span>rot, <span class="kw-2">&amp;</span>corrected)
-<a href=#374 id=374 data-nosnippet>374</a>}
-<a href=#375 id=375 data-nosnippet>375</a>
-<a href=#376 id=376 data-nosnippet>376</a><span class="kw">fn </span>precession_nutation_inverse_matrix(
-<a href=#377 id=377 data-nosnippet>377</a>    nutation: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>],
-<a href=#378 id=378 data-nosnippet>378</a>    precession: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>],
-<a href=#379 id=379 data-nosnippet>379</a>) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
-<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#382 id=382 data-nosnippet>382</a>        <span class="kw">let </span><span class="kw-2">mut </span>basis = [<span class="number">0.0</span>; <span class="number">3</span>];
-<a href=#383 id=383 data-nosnippet>383</a>        basis[col] = <span class="number">1.0</span>;
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span>transformed = rotate_t(precession, <span class="kw-2">&amp;</span>rotate_t(nutation, <span class="kw-2">&amp;</span>basis));
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#386 id=386 data-nosnippet>386</a>            result[row][col] = transformed[row];
-<a href=#387 id=387 data-nosnippet>387</a>        }
-<a href=#388 id=388 data-nosnippet>388</a>    }
-<a href=#389 id=389 data-nosnippet>389</a>    result
-<a href=#390 id=390 data-nosnippet>390</a>}
-<a href=#391 id=391 data-nosnippet>391</a>
-<a href=#392 id=392 data-nosnippet>392</a><span class="kw">fn </span>rotate(matrix: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], vector: <span class="kw-2">&amp;</span>[f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
-<a href=#393 id=393 data-nosnippet>393</a>    [
-<a href=#394 id=394 data-nosnippet>394</a>        matrix[<span class="number">0</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">0</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">0</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
-<a href=#395 id=395 data-nosnippet>395</a>        matrix[<span class="number">1</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">1</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
-<a href=#396 id=396 data-nosnippet>396</a>        matrix[<span class="number">2</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">2</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
-<a href=#397 id=397 data-nosnippet>397</a>    ]
-<a href=#398 id=398 data-nosnippet>398</a>}
-<a href=#399 id=399 data-nosnippet>399</a>
-<a href=#400 id=400 data-nosnippet>400</a><span class="kw">fn </span>rotate_t(matrix: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], vector: <span class="kw-2">&amp;</span>[f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
-<a href=#401 id=401 data-nosnippet>401</a>    [
-<a href=#402 id=402 data-nosnippet>402</a>        matrix[<span class="number">0</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">0</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">0</span>] * vector[<span class="number">2</span>],
-<a href=#403 id=403 data-nosnippet>403</a>        matrix[<span class="number">0</span>][<span class="number">1</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">1</span>] * vector[<span class="number">2</span>],
-<a href=#404 id=404 data-nosnippet>404</a>        matrix[<span class="number">0</span>][<span class="number">2</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">2</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
-<a href=#405 id=405 data-nosnippet>405</a>    ]
-<a href=#406 id=406 data-nosnippet>406</a>}
-<a href=#407 id=407 data-nosnippet>407</a>
-<a href=#408 id=408 data-nosnippet>408</a><span class="kw">fn </span>multiply_matrices(left: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], right: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>]) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#412 id=412 data-nosnippet>412</a>            result[row][col] = left[row][<span class="number">0</span>] * right[<span class="number">0</span>][col]
-<a href=#413 id=413 data-nosnippet>413</a>                + left[row][<span class="number">1</span>] * right[<span class="number">1</span>][col]
-<a href=#414 id=414 data-nosnippet>414</a>                + left[row][<span class="number">2</span>] * right[<span class="number">2</span>][col];
-<a href=#415 id=415 data-nosnippet>415</a>        }
-<a href=#416 id=416 data-nosnippet>416</a>    }
-<a href=#417 id=417 data-nosnippet>417</a>    result
-<a href=#418 id=418 data-nosnippet>418</a>}
-<a href=#419 id=419 data-nosnippet>419</a>
-<a href=#420 id=420 data-nosnippet>420</a><span class="kw">fn </span>multiply_transpose_left(left: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], right: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>]) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-<a href=#424 id=424 data-nosnippet>424</a>            result[row][col] = left[<span class="number">0</span>][row] * right[<span class="number">0</span>][col]
-<a href=#425 id=425 data-nosnippet>425</a>                + left[<span class="number">1</span>][row] * right[<span class="number">1</span>][col]
-<a href=#426 id=426 data-nosnippet>426</a>                + left[<span class="number">2</span>][row] * right[<span class="number">2</span>][col];
-<a href=#427 id=427 data-nosnippet>427</a>        }
-<a href=#428 id=428 data-nosnippet>428</a>    }
-<a href=#429 id=429 data-nosnippet>429</a>    result
+<a href=#366 id=366 data-nosnippet>366</a><span class="kw">fn </span>precession_nutation_inverse_matrix(
+<a href=#367 id=367 data-nosnippet>367</a>    nutation: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>],
+<a href=#368 id=368 data-nosnippet>368</a>    precession: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>],
+<a href=#369 id=369 data-nosnippet>369</a>) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span><span class="kw-2">mut </span>basis = [<span class="number">0.0</span>; <span class="number">3</span>];
+<a href=#373 id=373 data-nosnippet>373</a>        basis[col] = <span class="number">1.0</span>;
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">let </span>transformed = rotate_t(precession, <span class="kw-2">&amp;</span>rotate_t(nutation, <span class="kw-2">&amp;</span>basis));
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#376 id=376 data-nosnippet>376</a>            result[row][col] = transformed[row];
+<a href=#377 id=377 data-nosnippet>377</a>        }
+<a href=#378 id=378 data-nosnippet>378</a>    }
+<a href=#379 id=379 data-nosnippet>379</a>    result
+<a href=#380 id=380 data-nosnippet>380</a>}
+<a href=#381 id=381 data-nosnippet>381</a>
+<a href=#382 id=382 data-nosnippet>382</a><span class="kw">fn </span>rotate(matrix: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], vector: <span class="kw-2">&amp;</span>[f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
+<a href=#383 id=383 data-nosnippet>383</a>    [
+<a href=#384 id=384 data-nosnippet>384</a>        matrix[<span class="number">0</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">0</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">0</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
+<a href=#385 id=385 data-nosnippet>385</a>        matrix[<span class="number">1</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">1</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
+<a href=#386 id=386 data-nosnippet>386</a>        matrix[<span class="number">2</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">2</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
+<a href=#387 id=387 data-nosnippet>387</a>    ]
+<a href=#388 id=388 data-nosnippet>388</a>}
+<a href=#389 id=389 data-nosnippet>389</a>
+<a href=#390 id=390 data-nosnippet>390</a><span class="kw">fn </span>rotate_t(matrix: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], vector: <span class="kw-2">&amp;</span>[f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
+<a href=#391 id=391 data-nosnippet>391</a>    [
+<a href=#392 id=392 data-nosnippet>392</a>        matrix[<span class="number">0</span>][<span class="number">0</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">0</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">0</span>] * vector[<span class="number">2</span>],
+<a href=#393 id=393 data-nosnippet>393</a>        matrix[<span class="number">0</span>][<span class="number">1</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">1</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">1</span>] * vector[<span class="number">2</span>],
+<a href=#394 id=394 data-nosnippet>394</a>        matrix[<span class="number">0</span>][<span class="number">2</span>] * vector[<span class="number">0</span>] + matrix[<span class="number">1</span>][<span class="number">2</span>] * vector[<span class="number">1</span>] + matrix[<span class="number">2</span>][<span class="number">2</span>] * vector[<span class="number">2</span>],
+<a href=#395 id=395 data-nosnippet>395</a>    ]
+<a href=#396 id=396 data-nosnippet>396</a>}
+<a href=#397 id=397 data-nosnippet>397</a>
+<a href=#398 id=398 data-nosnippet>398</a><span class="kw">fn </span>multiply_matrices(left: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], right: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>]) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
+<a href=#399 id=399 data-nosnippet>399</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#402 id=402 data-nosnippet>402</a>            result[row][col] = left[row][<span class="number">0</span>] * right[<span class="number">0</span>][col]
+<a href=#403 id=403 data-nosnippet>403</a>                + left[row][<span class="number">1</span>] * right[<span class="number">1</span>][col]
+<a href=#404 id=404 data-nosnippet>404</a>                + left[row][<span class="number">2</span>] * right[<span class="number">2</span>][col];
+<a href=#405 id=405 data-nosnippet>405</a>        }
+<a href=#406 id=406 data-nosnippet>406</a>    }
+<a href=#407 id=407 data-nosnippet>407</a>    result
+<a href=#408 id=408 data-nosnippet>408</a>}
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a><span class="kw">fn </span>multiply_transpose_left(left: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>], right: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]; <span class="number">3</span>]) -&gt; [[f64; <span class="number">3</span>]; <span class="number">3</span>] {
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = [[<span class="number">0.0</span>; <span class="number">3</span>]; <span class="number">3</span>];
+<a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">for </span>col <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+<a href=#414 id=414 data-nosnippet>414</a>            result[row][col] = left[<span class="number">0</span>][row] * right[<span class="number">0</span>][col]
+<a href=#415 id=415 data-nosnippet>415</a>                + left[<span class="number">1</span>][row] * right[<span class="number">1</span>][col]
+<a href=#416 id=416 data-nosnippet>416</a>                + left[<span class="number">2</span>][row] * right[<span class="number">2</span>][col];
+<a href=#417 id=417 data-nosnippet>417</a>        }
+<a href=#418 id=418 data-nosnippet>418</a>    }
+<a href=#419 id=419 data-nosnippet>419</a>    result
+<a href=#420 id=420 data-nosnippet>420</a>}
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a><span class="kw">fn </span>spherical_to_cartesian(lon: f64, lat: f64) -&gt; [f64; <span class="number">3</span>] {
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">let </span>(sin_lon, cos_lon) = lon.sin_cos();
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="kw">let </span>(sin_lat, cos_lat) = lat.sin_cos();
+<a href=#425 id=425 data-nosnippet>425</a>    [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat]
+<a href=#426 id=426 data-nosnippet>426</a>}
+<a href=#427 id=427 data-nosnippet>427</a>
+<a href=#428 id=428 data-nosnippet>428</a><span class="kw">fn </span>vector_norm(vector: [f64; <span class="number">3</span>]) -&gt; f64 {
+<a href=#429 id=429 data-nosnippet>429</a>    dot(vector, vector).sqrt()
 <a href=#430 id=430 data-nosnippet>430</a>}
 <a href=#431 id=431 data-nosnippet>431</a>
-<a href=#432 id=432 data-nosnippet>432</a><span class="kw">fn </span>spherical_to_cartesian(lon: f64, lat: f64) -&gt; [f64; <span class="number">3</span>] {
-<a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">let </span>(sin_lon, cos_lon) = lon.sin_cos();
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">let </span>(sin_lat, cos_lat) = lat.sin_cos();
-<a href=#435 id=435 data-nosnippet>435</a>    [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat]
-<a href=#436 id=436 data-nosnippet>436</a>}
-<a href=#437 id=437 data-nosnippet>437</a>
-<a href=#438 id=438 data-nosnippet>438</a><span class="kw">fn </span>vector_norm(vector: [f64; <span class="number">3</span>]) -&gt; f64 {
-<a href=#439 id=439 data-nosnippet>439</a>    dot(vector, vector).sqrt()
-<a href=#440 id=440 data-nosnippet>440</a>}
-<a href=#441 id=441 data-nosnippet>441</a>
-<a href=#442 id=442 data-nosnippet>442</a><span class="kw">fn </span>normalize(vector: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
-<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">let </span>norm = vector_norm(vector);
-<a href=#444 id=444 data-nosnippet>444</a>    <span class="kw">if </span>norm == <span class="number">0.0 </span>{
-<a href=#445 id=445 data-nosnippet>445</a>        vector
-<a href=#446 id=446 data-nosnippet>446</a>    } <span class="kw">else </span>{
-<a href=#447 id=447 data-nosnippet>447</a>        scale_vector(vector, <span class="number">1.0 </span>/ norm)
-<a href=#448 id=448 data-nosnippet>448</a>    }
-<a href=#449 id=449 data-nosnippet>449</a>}
-<a href=#450 id=450 data-nosnippet>450</a>
-<a href=#451 id=451 data-nosnippet>451</a><span class="kw">fn </span>dot(left: [f64; <span class="number">3</span>], right: [f64; <span class="number">3</span>]) -&gt; f64 {
-<a href=#452 id=452 data-nosnippet>452</a>    left[<span class="number">0</span>] * right[<span class="number">0</span>] + left[<span class="number">1</span>] * right[<span class="number">1</span>] + left[<span class="number">2</span>] * right[<span class="number">2</span>]
-<a href=#453 id=453 data-nosnippet>453</a>}
-<a href=#454 id=454 data-nosnippet>454</a>
-<a href=#455 id=455 data-nosnippet>455</a><span class="kw">fn </span>add_vectors(left: [f64; <span class="number">3</span>], right: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
-<a href=#456 id=456 data-nosnippet>456</a>    [left[<span class="number">0</span>] + right[<span class="number">0</span>], left[<span class="number">1</span>] + right[<span class="number">1</span>], left[<span class="number">2</span>] + right[<span class="number">2</span>]]
-<a href=#457 id=457 data-nosnippet>457</a>}
-<a href=#458 id=458 data-nosnippet>458</a>
-<a href=#459 id=459 data-nosnippet>459</a><span class="kw">fn </span>subtract_vectors(left: [f64; <span class="number">3</span>], right: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
-<a href=#460 id=460 data-nosnippet>460</a>    [left[<span class="number">0</span>] - right[<span class="number">0</span>], left[<span class="number">1</span>] - right[<span class="number">1</span>], left[<span class="number">2</span>] - right[<span class="number">2</span>]]
-<a href=#461 id=461 data-nosnippet>461</a>}
-<a href=#462 id=462 data-nosnippet>462</a>
-<a href=#463 id=463 data-nosnippet>463</a><span class="kw">fn </span>scale_vector(vector: [f64; <span class="number">3</span>], scale: f64) -&gt; [f64; <span class="number">3</span>] {
-<a href=#464 id=464 data-nosnippet>464</a>    [vector[<span class="number">0</span>] * scale, vector[<span class="number">1</span>] * scale, vector[<span class="number">2</span>] * scale]
-<a href=#465 id=465 data-nosnippet>465</a>}
+<a href=#432 id=432 data-nosnippet>432</a><span class="kw">fn </span>normalize(vector: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
+<a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">let </span>norm = vector_norm(vector);
+<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">if </span>norm == <span class="number">0.0 </span>{
+<a href=#435 id=435 data-nosnippet>435</a>        vector
+<a href=#436 id=436 data-nosnippet>436</a>    } <span class="kw">else </span>{
+<a href=#437 id=437 data-nosnippet>437</a>        scale_vector(vector, <span class="number">1.0 </span>/ norm)
+<a href=#438 id=438 data-nosnippet>438</a>    }
+<a href=#439 id=439 data-nosnippet>439</a>}
+<a href=#440 id=440 data-nosnippet>440</a>
+<a href=#441 id=441 data-nosnippet>441</a><span class="kw">fn </span>dot(left: [f64; <span class="number">3</span>], right: [f64; <span class="number">3</span>]) -&gt; f64 {
+<a href=#442 id=442 data-nosnippet>442</a>    left[<span class="number">0</span>] * right[<span class="number">0</span>] + left[<span class="number">1</span>] * right[<span class="number">1</span>] + left[<span class="number">2</span>] * right[<span class="number">2</span>]
+<a href=#443 id=443 data-nosnippet>443</a>}
+<a href=#444 id=444 data-nosnippet>444</a>
+<a href=#445 id=445 data-nosnippet>445</a><span class="kw">fn </span>add_vectors(left: [f64; <span class="number">3</span>], right: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
+<a href=#446 id=446 data-nosnippet>446</a>    [left[<span class="number">0</span>] + right[<span class="number">0</span>], left[<span class="number">1</span>] + right[<span class="number">1</span>], left[<span class="number">2</span>] + right[<span class="number">2</span>]]
+<a href=#447 id=447 data-nosnippet>447</a>}
+<a href=#448 id=448 data-nosnippet>448</a>
+<a href=#449 id=449 data-nosnippet>449</a><span class="kw">fn </span>subtract_vectors(left: [f64; <span class="number">3</span>], right: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
+<a href=#450 id=450 data-nosnippet>450</a>    [left[<span class="number">0</span>] - right[<span class="number">0</span>], left[<span class="number">1</span>] - right[<span class="number">1</span>], left[<span class="number">2</span>] - right[<span class="number">2</span>]]
+<a href=#451 id=451 data-nosnippet>451</a>}
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a><span class="kw">fn </span>scale_vector(vector: [f64; <span class="number">3</span>], scale: f64) -&gt; [f64; <span class="number">3</span>] {
+<a href=#454 id=454 data-nosnippet>454</a>    [vector[<span class="number">0</span>] * scale, vector[<span class="number">1</span>] * scale, vector[<span class="number">2</span>] * scale]
+<a href=#455 id=455 data-nosnippet>455</a>}
 </code></pre></div></section></main></body></html>
