@@ -415,3 +415,77 @@ fn read_times(path: &Path) -> Vec<f64> {
         })
         .collect()
 }
+
+/// A single positive mapping keeps its broadcast meaning when another
+/// window is configured after setapply; its constant gain still applies.
+#[test]
+fn a_new_window_after_setapply_keeps_the_broadcast_gain() {
+    use casa_simulation::SpectralWindowSpec;
+    use casa_types::measures::frequency::FrequencyRef;
+    use predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
+    let directory = tempfile::tempdir().unwrap();
+    let point = point(directory.path());
+    let (reference, times) = observed_times(directory.path(), &point);
+    let gains = directory.path().join("gains.cal");
+    write_gains(&reference, &gains, &[(times[0], 0, 2.0)]);
+    let run = |name: &str, calibrated: bool| {
+        let path = directory.path().join(name);
+        let mut sm = observed(&path, "XX YY", &point, 10.0);
+        if calibrated {
+            let mut spec = apply(&gains, "linear");
+            spec.spwmap = vec![0];
+            sm.set_apply(&spec).unwrap();
+        }
+        sm.set_spectral_window(&SpectralWindowSpec {
+            name: "later".into(),
+            start_frequency_hz: FREQUENCY_HZ,
+            channel_width_hz: CHANNEL_HZ,
+            resolution_hz: CHANNEL_HZ,
+            frame: FrequencyRef::TOPO,
+            channel_count: 4,
+            stokes: "XX YY".into(),
+        })
+        .unwrap();
+        let mut later = scan("target", 180.0, 190.0);
+        later.spectral_window = "later".into();
+        sm.observe(&later).unwrap();
+        sm.predict(&PredictSpec {
+            images: vec![],
+            component_lists: vec![point.clone()],
+            incremental: false,
+        })
+        .unwrap();
+        if calibrated {
+            sm.corrupt().unwrap();
+        }
+        sm.close().unwrap();
+        let ms = casa_ms::MeasurementSet::open(&path).unwrap();
+        assert!((0..ms.row_count()).any(|row| {
+            matches!(
+                ms.main_table()
+                    .cell_accessor(row, "DATA_DESC_ID")
+                    .unwrap()
+                    .scalar()
+                    .unwrap(),
+                casa_types::ScalarValue::Int32(1)
+            )
+        }));
+        read_main(&path).0
+    };
+    let plain = run("plain.ms", false);
+    let applied = run("applied.ms", true);
+    assert_eq!(plain.len(), applied.len());
+    let mut power = 0.0f64;
+    let mut error = 0.0f64;
+    for (plain, applied) in plain.iter().zip(&applied) {
+        for (plain, applied) in plain.data.iter().zip(&applied.data) {
+            let expected = *plain * 4.0;
+            power += f64::from(expected.norm_sqr());
+            error += f64::from((*applied - expected).norm_sqr());
+        }
+    }
+    assert!(
+        power > 0.0 && (error / power).sqrt() < 1e-6,
+        "constant scalar gain2 gives DATA×4, including the later window"
+    );
+}

@@ -935,7 +935,7 @@ def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Pa
     window = Table.open(path / "SPECTRAL_WINDOW")
     assert tb.open(str(calibration / "SPECTRAL_WINDOW"), nomodify=False)
     for column in ("NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
-        assert tb.putcol(column, np.asarray(window.get_column(column)))
+        assert tb.putcol(column, np.moveaxis(np.asarray(window.get_column(column)), 0, -1))
     tb.close()
     sm = simulator()
     assert sm.openfromms(str(path))

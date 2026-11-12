@@ -47,7 +47,8 @@ fn run_case(
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().unwrap();
     let reference_path = root.path().join("reference.ms");
-    let mut reference = configured(&reference_path, &measures, BUDGET, channels);
+    let reference_channels = channels.min(4096);
+    let mut reference = configured(&reference_path, &measures, BUDGET, reference_channels);
     reference.observe(&scan(10)).unwrap();
     reference.close().unwrap();
     let table = root.path().join("wide.cal");
@@ -139,6 +140,56 @@ fn run_case(
         info.sub_type = "B Jones".into();
         calibration.set_info(info);
         calibration.save(TableOptions::new(&table)).unwrap();
+    }
+    if channels != reference_channels {
+        // The calibration axis, rather than a huge unrelated reference MS,
+        // is what this loading law must exercise.
+        use casa_tables::{Table, TableOptions};
+        use casa_types::{ArrayValue, ScalarValue, Value};
+        use ndarray::{ArrayD, IxDyn};
+        let path = table.join("SPECTRAL_WINDOW");
+        let mut spectral = Table::open(TableOptions::new(&path)).unwrap();
+        for column in ["CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+            let ArrayValue::Float64(old) =
+                spectral.cell_accessor(0, column).unwrap().array().unwrap()
+            else {
+                panic!("frequency axis")
+            };
+            let first = old[[0]];
+            let step = if column == "CHAN_FREQ" {
+                old[[1]] - first
+            } else {
+                0.0
+            };
+            let values = ArrayD::from_shape_vec(
+                IxDyn(&[channels]),
+                (0..channels)
+                    .map(|channel| first + step * channel as f64)
+                    .collect(),
+            )
+            .unwrap();
+            spectral
+                .cell_accessor_mut(0, column)
+                .unwrap()
+                .set(Value::Array(ArrayValue::Float64(values)))
+                .unwrap();
+        }
+        spectral
+            .cell_accessor_mut(0, "NUM_CHAN")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(channels as i32)))
+            .unwrap();
+        let width = reference_ms
+            .spectral_window()
+            .unwrap()
+            .chan_width(0)
+            .unwrap()[0];
+        spectral
+            .cell_accessor_mut(0, "TOTAL_BANDWIDTH")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Float64(width * channels as f64)))
+            .unwrap();
+        spectral.save(TableOptions::new(&path)).unwrap();
     }
     let apply = ApplySpec {
         table: table.to_string_lossy().into_owned(),
