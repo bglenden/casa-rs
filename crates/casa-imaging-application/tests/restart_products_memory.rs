@@ -175,43 +175,61 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_inverts_normalizatio
     }
 }
 
-/// Product generation holds the saved mosaic PB's actual values and mask
-/// within its admission, with each plane in x-major order.
+/// The saved mosaic PB and mask are read one channel and Stokes plane at
+/// a time, with an x-major plane and a bound independent of cube depth.
 #[test]
 fn a_saved_mosaic_primary_beam_and_mask_fit_their_charge() {
     let root = tempfile::tempdir().unwrap();
     let prefix = root.path().join("earlier");
-    let shape = [SIDE, SIDE, 1, 1];
+    let shape = [SIDE, SIDE, 2, 7];
     let pb_path = prefix.with_extension("pb");
-    write(&pb_path, &shape, |index| {
-        (index[0] + 2 * index[1]) as f32 / 1000.0
+    let mut image = PagedImage::<f32>::create_with_tile_shape(
+        shape.to_vec(),
+        vec![32, 32, 1, 1],
+        coordinates(),
+        &pb_path,
+    )
+    .unwrap();
+    let values = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
+        (index[0] + 2 * index[1] + 101 * index[2] + 251 * index[3]) as f32 / 1000.0
     });
-    write(&prefix.with_extension("psf"), &shape, |_| 1.0);
-    write(&prefix.with_extension("weight"), &shape, |_| 1.0);
-    write(&prefix.with_extension("sumwt"), &[1, 1, 1, 1], |_| 1.0);
-    let mut image = PagedImage::<f32>::open(&pb_path).unwrap();
-    let mask = ArrayD::from_shape_fn(IxDyn(&shape), |index| index[0] < 2 * index[1]);
-    image.make_mask("mask0", true, false).unwrap();
-    image.put_mask("mask0", &mask).unwrap();
+    image.put_slice(&values, &[0; 4]).unwrap();
+    let mask = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
+        index[0] + 35 * index[2] < 2 * index[1] + 17 * index[3]
+    });
+    image.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    image.set_default_mask("mask0").unwrap();
     image.save().unwrap();
     drop(image);
-    let input = Input::open(&prefix, None, ([SIDE, SIDE], 1, 1), (false, true)).unwrap();
-    let (reading, retained) = input.mosaic_beam_bytes();
+    write(&prefix.with_extension("psf"), &shape, |_| 1.0);
+    write(&prefix.with_extension("weight"), &shape, |_| 1.0);
+    write(&prefix.with_extension("sumwt"), &[1, 1, 2, 7], |_| 1.0);
+    let input = Input::open(&prefix, None, ([SIDE, SIDE], 2, 7), (false, true)).unwrap();
+    let reader = input.mosaic_beam().unwrap();
+    let reading = reader.reading_bytes();
+    assert!(reading < shape.iter().product::<usize>() as u64);
     PEAK.store(0, Ordering::Relaxed);
     let baseline = LIVE.load(Ordering::Relaxed);
     BASELINE.store(baseline, Ordering::Relaxed);
     MEASURING.store(true, Ordering::Relaxed);
-    let (beam, valid) = input.read_mosaic_beam().unwrap();
+    let beam = reader.read_values(5, 1).unwrap();
+    let values_peak = PEAK.load(Ordering::Relaxed);
+    drop(beam);
+    PEAK.store(0, Ordering::Relaxed);
+    let valid = reader.read_mask(5, 1).unwrap();
     MEASURING.store(false, Ordering::Relaxed);
-    let peak = PEAK.load(Ordering::Relaxed);
+    let peak = values_peak.max(PEAK.load(Ordering::Relaxed));
     let held = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
-    eprintln!("saved mosaic beam and mask: read {peak}/{reading} B, held {held}/{retained} B");
+    let retained = (SIDE * SIDE) as u64;
+    eprintln!("saved mosaic plane and mask: read {peak}/{reading} B, held {held}/{retained} B");
     assert!(
         peak <= reading && held <= retained,
         "reading {peak}/{reading}, retained {held}/{retained}"
     );
-    assert_eq!(beam[77 * SIDE + 21], 0.119);
-    assert!(!valid[77 * SIDE + 21] && valid[21 * SIDE + 77]);
+    let beam = reader.read_values(5, 1).unwrap();
+    assert_eq!(beam.len(), SIDE * SIDE);
+    assert_eq!(beam[77 * SIDE + 21], 1.475);
+    assert!(valid[77 * SIDE + 21] && !valid[90 * SIDE + 7]);
 }
 
 /// A saved per-channel beam grid is loaded once and held through the minor

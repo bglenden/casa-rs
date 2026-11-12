@@ -368,7 +368,11 @@ impl PlannedContinuumGeneration {
                 "coupled member production scratch",
             )?
         } else {
-            generic_scratch_bytes(self, shapes)?
+            checked_add(
+                generic_scratch_bytes(self, shapes)?,
+                self.saved_mosaic_beam_read_bytes,
+                "saved mosaic primary beam",
+            )?
         };
         bytes = checked_add(
             bytes,

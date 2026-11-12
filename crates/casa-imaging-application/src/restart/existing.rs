@@ -16,7 +16,7 @@
 //! one `f32` product and quotient.
 //!
 //! Direction-independent gridders (standard and W-projection, one facet)
-//! use the sum of weights alone. A single-term MFS mosaic also reads its
+//! use the sum of weights alone. A single-term continuum or cube mosaic reads its
 //! saved sensitivity and primary beam when it reuses the PSF and forms a
 //! new residual.
 
@@ -26,17 +26,13 @@ use std::sync::Arc;
 
 use casa_images::{ImageBeamSet, ImageError, PagedImage};
 use casa_imaging_deconvolution::{PassImages, RestoringBeam};
+use casa_imaging_products::SavedMosaicBeam;
 
 use super::{Family, product_path};
 use crate::PrepareError;
 
 /// The tile cache each image is read with.
 const CACHE_BYTES: usize = 64 * 1024;
-
-pub(crate) struct SavedMosaicBeam {
-    pub(crate) values: Vec<f32>,
-    pub(crate) mask: Vec<bool>,
-}
 
 /// What a run reads of an earlier run's products at its prefix.
 #[derive(Clone, Debug)]
@@ -52,8 +48,9 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
-    /// The mosaic sensitivity from the saved `.weight` image.
-    weight: bool,
+    /// Saved PB reader. The mosaic's normal-state sensitivity also comes
+    /// from the saved `.weight` when this reader is present.
+    mosaic_beam: Option<SavedMosaicBeam>,
     /// A complete PSF beam set read from the earlier image, channel-major.
     psf_beams: Option<Arc<[RestoringBeam]>>,
     /// The same beam grid in pixels for minor-cycle preparation.
@@ -80,6 +77,7 @@ impl ExistingProducts {
             Family::Taylor { .. } => 1,
         };
         let mut tile_bytes = 0;
+        let mut mosaic_beam = None;
         let mut bases = Vec::new();
         if psf {
             bases.extend(["psf", "sumwt"]);
@@ -94,6 +92,15 @@ impl ExistingProducts {
             for name in family.names(base) {
                 let path = product_path(prefix, &name);
                 let image = open(&path)?;
+                if base == "pb" {
+                    mosaic_beam = Some(SavedMosaicBeam::new(&path, &image).map_err(|error| {
+                        PrepareError::Restart {
+                            path: path.clone(),
+                            reason: error.to_string(),
+                        }
+                    })?);
+                    continue;
+                }
                 tile_bytes = image
                     .tile_shape()
                     .iter()
@@ -119,7 +126,7 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
-            weight,
+            mosaic_beam,
             psf_beams: None,
             psf_pixel_beams: None,
             mask_beams: None,
@@ -248,51 +255,9 @@ impl ExistingProducts {
         self.residual
     }
 
-    /// Whether this restart reads the saved mosaic response products.
-    pub(crate) const fn reads_mosaic_beam(&self) -> bool {
-        self.weight
-    }
-
-    /// Peak and retained bytes for the saved MFS primary beam. Its pixels
-    /// and mask each have one plane per polarization. The image and its
-    /// mask reader can each hold a tile cache and tile buffers while the
-    /// x-major copies are filled.
-    pub(crate) fn mosaic_beam_bytes(&self) -> (u64, u64) {
-        let pixels = self.shape[0] * self.shape[1] * self.polarizations;
-        let retained = (pixels * (size_of::<f32>() + size_of::<bool>())) as u64;
-        (2 * self.reading_bytes(1) + retained, retained)
-    }
-
-    /// The saved CASA PB and its default pixel mask, polarization-major
-    /// with an x-major image for each polarization. They are independent
-    /// of the cutoff the continuation uses to normalize its new residual.
-    pub(crate) fn read_mosaic_beam(&self) -> Result<SavedMosaicBeam, ImageError> {
-        let path = product_path(&self.prefix, "pb");
-        let image = PagedImage::<f32>::open_with_cache(&path, CACHE_BYTES)?;
-        let pixels = image.get()?;
-        let mask = image.get_mask()?;
-        let cells = self.shape[0] * self.shape[1];
-        let mut values = vec![0.0; cells * self.polarizations];
-        let mut valid = vec![true; values.len()];
-        for polarization in 0..self.polarizations {
-            let start = polarization * cells;
-            self.write_plane(
-                &mut values[start..start + cells],
-                &pixels,
-                (0, polarization),
-                1.0,
-            );
-            if let Some(mask) = &mask {
-                for (index, value) in valid[start..start + cells].iter_mut().enumerate() {
-                    let ny = self.shape[1];
-                    *value = mask[&[index / ny, index % ny, polarization, 0][..]];
-                }
-            }
-        }
-        Ok(SavedMosaicBeam {
-            values,
-            mask: valid,
-        })
+    /// Saved PB and mask, independent of the new residual cutoff.
+    pub(crate) fn mosaic_beam(&self) -> Option<&SavedMosaicBeam> {
+        self.mosaic_beam.as_ref()
     }
 
     /// The `(terms, moments)` of each channel: one of each, or a Taylor
@@ -325,7 +290,7 @@ impl ExistingProducts {
         let (terms, moments) = self.terms();
         let planes = channels * self.polarizations;
         let cells = self.shape[0] * self.shape[1];
-        let image_planes = terms + moments + usize::from(self.weight);
+        let image_planes = terms + moments + usize::from(self.mosaic_beam.is_some());
         (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
     }
 
@@ -368,7 +333,7 @@ impl ExistingProducts {
         // CASA saves `.weight` after dividing by the PSF sum of weights
         // (`SIImageStore::divideWeightBySumwt`). Restore the unnormalised
         // sensitivity the normal state expects.
-        let weight = if self.weight {
+        let weight = if self.mosaic_beam.is_some() {
             let read = self.read("weight", channels.clone())?;
             let mut weight = vec![0.0; channels.len() * pols * cells];
             for channel in 0..channels.len() {
