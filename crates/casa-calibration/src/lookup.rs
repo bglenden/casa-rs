@@ -28,11 +28,18 @@ use casa_types::Complex32;
 
 use crate::execute::{
     ApplyExecutionError, CalibrationGrid, CalibrationSolution, DelayGrid, GainGrid,
-    LoadedCalibrationTable, load_calibration_table,
+    LoadedCalibrationTable, load_calibration_table, load_simulator_table,
 };
 use crate::model::CalibrationParameterFamily;
 use crate::plan::{ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode};
 use crate::summary::summarize_table;
+
+#[path = "lookup_real.rs"]
+mod real;
+#[path = "lookup_time.rs"]
+mod time;
+use time::TimePlan;
+pub use time::{TimeInterpolation, TimeInterpolationOptions};
 
 /// Which fields' solutions a row takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +121,7 @@ pub struct CalibrationTableLookup {
     /// For [`FieldSelection::AnyField`]: each (spectral window, antenna)'s
     /// solutions across the fields, in time order.
     across_fields: Option<HashMap<(i32, i32), Vec<CalibrationSolution>>>,
+    advanced_time: Option<TimePlan>,
 }
 
 /// One antenna's solution: CPARAM's values and FLAG, per receptor and
@@ -224,13 +232,19 @@ impl CalibrationTableLookup {
     pub fn layout_on_disk(
         path: impl AsRef<Path>,
     ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
-        let path = path.as_ref();
+        Self::parameter_layout(path.as_ref(), "CPARAM")
+    }
+
+    fn parameter_layout(
+        path: &Path,
+        column: &str,
+    ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
         let error = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason,
         };
         let (rows, values, max_cell_values, channels) =
-            shape_counts(path, "CPARAM").map_err(error)?;
+            shape_counts(path, column).map_err(error)?;
         let spectral = spectral_window_path(path)?;
         let (frequency_windows, frequency_values) = if let Some(spectral) = spectral {
             if channels > 1 {
@@ -275,13 +289,21 @@ impl CalibrationTableLookup {
         interp: ApplyInterpolationMode,
         fields: FieldSelection,
     ) -> Result<Self, ApplyExecutionError> {
-        let path = path.as_ref();
+        Self::open_parameters(path.as_ref(), interp, fields, false)
+    }
+
+    fn open_parameters(
+        path: &Path,
+        interp: ApplyInterpolationMode,
+        fields: FieldSelection,
+        real: bool,
+    ) -> Result<Self, ApplyExecutionError> {
         let unsupported = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason,
         };
         let summary = summarize_table(path).map_err(|error| unsupported(error.to_string()))?;
-        if summary.parameter_family != CalibrationParameterFamily::Complex
+        if (summary.parameter_family != CalibrationParameterFamily::Complex && !real)
             || summary.table_subtype == "BPOLY"
         {
             return Err(unsupported(format!(
@@ -304,7 +326,11 @@ impl CalibrationTableLookup {
             interp,
             calwt: false,
         };
-        let table = load_calibration_table(&plan, None)?;
+        let table = if real {
+            load_simulator_table(&plan)?
+        } else {
+            load_calibration_table(&plan, None)?
+        };
         let across_fields = (fields == FieldSelection::AnyField).then(|| across_fields(&table));
         Ok(Self {
             path: path.to_path_buf(),
@@ -312,6 +338,7 @@ impl CalibrationTableLookup {
             subtype,
             interp,
             across_fields,
+            advanced_time: None,
         })
     }
 
@@ -362,6 +389,9 @@ impl CalibrationTableLookup {
         antenna: i32,
         time_s: f64,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
+        if self.advanced_time.is_some() {
+            return self.simulation_solution(0, 0, spw, antenna, time_s, None);
+        }
         let grid = match &self.across_fields {
             Some(series) => self.across_fields_grid(series, spw, antenna, time_s)?,
             None => self

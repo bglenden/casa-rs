@@ -17,6 +17,15 @@ use serde_json::Value;
 use std::path::Path;
 
 fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
+    receptor_values_f64(kind, antenna, elapsed)
+        .map(|value| Complex32::new(value.re as f32, value.im as f32))
+}
+
+pub(super) fn receptor_values_f64(
+    kind: &str,
+    antenna: usize,
+    elapsed: f64,
+) -> [num_complex::Complex64; 2] {
     let antenna = antenna as f64;
     let values = if kind == "G" || kind == "T" {
         [
@@ -35,7 +44,7 @@ fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
             (-0.004 * (antenna + 1.0), 0.0005 * elapsed),
         ]
     };
-    values.map(|(real, imaginary)| Complex32::new(real as f32, imaginary as f32))
+    values.map(|(real, imaginary)| num_complex::Complex64::new(real, imaginary))
 }
 
 fn table(path: &Path, output: &Path, case: &Value) {
@@ -120,6 +129,33 @@ fn table(path: &Path, output: &Path, case: &Value) {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "shared input module; only mixed-term suites need a separate leakage table"
+)]
+pub(super) fn leakage_fixture(path: &Path, output: &Path) {
+    let ms = MeasurementSet::open(path).unwrap();
+    let time = |row| match ms
+        .main_table()
+        .cell_accessor(row, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+    {
+        ScalarValue::Float64(value) => *value,
+        _ => panic!("TIME"),
+    };
+    table(
+        path,
+        output,
+        &serde_json::json!({
+            "kind": "D", "calibration": {
+                "first_time_s": time(0), "last_time_s": time(ms.row_count()-1), "rows": 2*ANTENNAS,
+            },
+        }),
+    );
+}
+
 pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
     let export = std::env::var_os(if frequency::is_frequency(case["kind"].as_str().unwrap()) {
         "CASA_RS_APPLY_FREQUENCY_OUT"
@@ -195,6 +231,16 @@ pub(super) fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
             panic!("TIME type")
         };
         assert_eq!(*time, expected["time_s"].as_f64().unwrap());
+        for (column, key) in [("OBSERVATION_ID", "observation"), ("SCAN_NUMBER", "scan")] {
+            if let Some(reference) = expected[key].as_i64() {
+                let ScalarValue::Int32(value) =
+                    table.cell_accessor(row, column).unwrap().scalar().unwrap()
+                else {
+                    panic!("context type")
+                };
+                assert_eq!(i64::from(*value), reference, "{column}");
+            }
+        }
         for (column, key) in [("WEIGHT", "weight"), ("SIGMA", "sigma")] {
             let ArrayValue::Float32(values) =
                 table.cell_accessor(row, column).unwrap().array().unwrap()

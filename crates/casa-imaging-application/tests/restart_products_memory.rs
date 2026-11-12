@@ -175,6 +175,83 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_inverts_normalizatio
     }
 }
 
+/// A saved Taylor family holds every weight moment. The principal moment
+/// is stored normalized, while the higher ones already have raw scale.
+#[test]
+fn saved_taylor_weights_keep_their_scale_and_fit_the_reader_charge() {
+    const CHILD: &str = "CASA_RS_SAVED_TAYLOR_WEIGHT_MEMORY_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "saved_taylor_weights_keep_their_scale_and_fit_the_reader_charge",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let prefix = root.path().join("earlier");
+    let shape = [SIDE, SIDE, 1, 1];
+    let saved_weights = [0.5, 2.0, 3.0];
+    for (term, weight) in saved_weights.into_iter().enumerate() {
+        write(
+            &prefix.with_extension(format!("psf.tt{term}")),
+            &shape,
+            |_| 1.0,
+        );
+        write(
+            &prefix.with_extension(format!("sumwt.tt{term}")),
+            &[1, 1, 1, 1],
+            |_| 16.0,
+        );
+        write(
+            &prefix.with_extension(format!("weight.tt{term}")),
+            &shape,
+            |_| weight,
+        );
+    }
+    write(&prefix.with_extension("pb.tt0"), &shape, |_| 0.5);
+
+    let input = Input::open(&prefix, Some(2), ([SIDE, SIDE], 1, 1), (false, true)).unwrap();
+    let (reading, holding) = (input.reading_bytes(1), input.images_bytes(1));
+    PEAK.store(0, Ordering::Relaxed);
+    let baseline = LIVE.load(Ordering::Relaxed);
+    BASELINE.store(baseline, Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    let images = input.read(0..1).unwrap();
+    MEASURING.store(false, Ordering::Relaxed);
+    let peak = PEAK.load(Ordering::Relaxed);
+    let held = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
+    assert!(
+        peak <= reading + holding,
+        "Taylor read held {peak}, admitted {}",
+        reading + holding
+    );
+    assert!(
+        held <= holding,
+        "Taylor images held {held}, charged {holding}"
+    );
+
+    let weights = images.weight.unwrap();
+    assert_eq!(weights.len(), 3 * SIDE * SIDE);
+    for (plane, expected) in weights
+        .as_chunks::<{ SIDE * SIDE }>()
+        .0
+        .iter()
+        .zip([8.0, 2.0, 3.0])
+    {
+        assert!(
+            plane.iter().all(|value| *value == expected),
+            "expected raw moment {expected}"
+        );
+    }
+}
+
 /// The saved mosaic PB and mask are read one channel and Stokes plane at
 /// a time, with an x-major plane and a bound independent of cube depth.
 #[test]

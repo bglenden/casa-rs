@@ -6,6 +6,7 @@ Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-nite
 CASA behaviours casa-rs follows for parity:
 [AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
 [AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
+[AW MT-MFS restart weights](#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again),
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
@@ -489,6 +490,32 @@ term's raw `getWeightImage` moment, so `.weight.tt1` and `.weight.tt2` stay
 the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
+
+## AW MT-MFS restart multiplies saved higher Taylor weights again
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. casa-rs recomputes the weights with the PSF (#1070).
+- Affected code: `TransformMachines2/CFCache.cc` (`loadWtImage`),
+  `AWProjectFT.cc` (`getWeightImage`) and
+  `AWProjectWBFT.cc` (`initializeToSky`).
+
+With `gridder='awproject'`, `deconvolver='mtmfs'` and the default
+`calcpsf=True`, CASA can read each saved `.weight.ttN` when a run continues
+at the same image prefix. `CFCache::loadWtImage` multiplies each saved plane
+by `.sumwt.tt0`. The higher Taylor weight images were already written as
+raw moments (see the preceding normalization bug).
+`AWProjectFT::getWeightImage` also reapplies its sinc grid correction to
+the saved, already corrected planes.
+
+In `test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield` on
+`refim_oneshiftpoint.mosaic.ms`, a dirty run followed by ten CLEAN
+iterations multiplies the central values of `.weight.tt1` and
+`.weight.tt2` by 49,971.44, the principal sum of weights. The final
+restored images and residuals also depend on the saved weights. Moving
+only the three saved weight images aside before CLEAN makes CASA agree
+with a fresh CLEAN on the same observation. casa-rs recomputes weights
+when it recomputes the PSF. All 19 products and the iteration counts
+agree with both CASA controls under the existing tolerances.
 
 ## A Taylor term gives every Stokes plane the first correlation's sum of weights
 
@@ -4403,3 +4430,81 @@ half-knot amplitudes. That control is also checked against the closed-form
 receptor equation; the native spline is compared against it. C++ consumption
 of the original native spline table is checked separately against the raw
 CASA result. This exception changes no numerical tolerance.
+
+
+## Simulator time-spline setup uses an uninitialized interpolator
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing crash/evident-intent rule (#1053)
+- Affected code: CASA 6.7.6.14 `CTTimeInterp1` constructor and
+  `interpolate`, with casacore `Interpolate1D<Float,Array<Float>>`.
+
+For G/D/T/B/Tf/Df calibration tables, `sm.setapply(interp='spline')`
+selects the spline method before supplying the interpolator's data.
+`Interpolate1D::setMethod` accesses the uninitialized sample count and
+knot arrays. All eight independent four-time curve/analytic probes terminate
+with signal 11 during `setapply`; `corrupt` is never called. The later time
+registration supplies data for linear and cubic methods, but has no spline
+branch. The same interpolator also skips the first interior back-substitution
+identified in the natural-spline defect above.
+
+casa-rs initializes a natural amplitude/continuous-phase spline from the
+loaded time series, completes every interior back-substitution and retains
+its coefficients. Exact times and queries outside the range retain the
+registered knot or endpoint; one knot is constant and two knots form a line.
+Flags combine only the adjacent time samples, without removing flagged
+knots, as CASA's other time interpolators do.
+
+`sm_apply_time_casa.json.gz` retains each raw CASA termination and separate
+nearest-CASA controls. A dense NumPy linear-system solution, independent of
+the native tridiagonal solver, samples the corrected amplitude/phase curves
+at the requested times and supplies them to CASA's nearest interpolation.
+The four real amplitudes `[1,2,1/2,5/4]` additionally give exact half-knot
+amplitudes `[289/160,203/160,47/80]`. C++ consumption of the original native
+knot tables uses the separate original-table nearest controls, because the
+CASA spline setup itself crashes. No numerical tolerance is relaxed.
+
+
+## Simulator short cubic time axes can alter DATA before failing
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing data-loss rule (#1053, #1054)
+- Affected code: CASA 6.7.6.14 `CTTimeInterp1::interpolate` and simulator
+  corruption writes.
+
+With two calibration times coincident with the first and last data times,
+G and scalar-T cubic application first writes the exact-time solution.
+The following interior query then asks for a four-time stencil and raises
+`RuntimeError`; the already changed DATA remains. The reference fixture
+retains both partial-write outcomes. With two or three knots and an initial
+interior query, CASA raises before changing DATA. Single-time, exact and
+outside-range queries do not need a cubic stencil.
+
+casa-rs preserves those mathematical success/refusal rules, but evaluates
+the applied term before staging any DATA writes. A short-axis interior
+failure therefore leaves the entire input DATA intact. The regression test
+checks both exact-first partial-write cases as well as the initially interior
+failures. This preserves the simulator's existing fail-closed write contract.
+
+
+## Simulator per-scan calibration does not synchronize its scan number
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing crash rule (#1291)
+- Affected code: CASA 6.7.6.14 `VisCal::syncMeta(const VisBuffer&)`,
+  called by simulator corruption, and `CTPatchedInterp` per-scan lookup.
+
+The old VisBuffer synchronization copies the observation ID but never the
+scan number, leaving `currScan` at its initialized value of -1. The newer
+VisBuffer2 synchronization copies both. A calibration table with valid scan
+numbers activates per-scan lookup; the simulator supplies -1 as the segment
+index. All five independent active-per-scan probes terminate with signal11.
+Tables whose SCAN_NUMBER is -1 disable the modifier and still work.
+
+casa-rs uses each simulated or opened scan's actual SCAN_NUMBER and retains
+OBSERVATION_ID as well. Independent CASA controls explicitly partition the
+input table and select the corresponding one-field-per-scan DATA, using the
+ordinary nearest/linear/cubic method within each partition. These controls
+cover nearest/linear behavior, missing segments, scan-over-observation
+precedence and a short cubic-axis refusal. The ordinary per-observation
+cases run directly in CASA. No tolerance is relaxed.

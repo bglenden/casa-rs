@@ -270,9 +270,9 @@ fn setapply_refuses_what_casa_or_casa_rs_cannot_apply() {
             "not D",
         ),
         (
-            apply(&gains, "cubic"),
-            CasaOutcome::NotYetImplemented,
-            "cubic",
+            apply(&gains, "unknown-time-mode"),
+            CasaOutcome::Raises,
+            "Unrecognized",
         ),
     ] {
         let (outcome, message) = outcome(&mut sm, spec);

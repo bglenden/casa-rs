@@ -362,6 +362,7 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
     let mut times_s: Vec<[f64; 2]> = Vec::new();
     let mut integrations: Vec<Vec<f64>> = Vec::new();
     let (mut numbers, mut field_ids, mut descriptions) = (Vec::new(), Vec::new(), Vec::new());
+    let mut observation_ids = Vec::new();
     let mut row_times = Vec::new();
     let mut indices = Vec::with_capacity(SCAN_READ_ROWS.min(rows));
     for first in (0..rows).step_by(SCAN_READ_ROWS) {
@@ -371,9 +372,14 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
             column.clear();
         }
         row_times.clear();
+        observation_ids.clear();
         main.required_scalar_columns_for_rows_into(
             &indices,
             &mut [
+                RequiredScalarColumnDestination::new(
+                    "OBSERVATION_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut observation_ids),
+                ),
                 RequiredScalarColumnDestination::new(
                     "SCAN_NUMBER",
                     RequiredScalarColumnValuesMut::Int32(&mut numbers),
@@ -404,8 +410,12 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
             let field_id = index(field, fields.len(), row, "FIELD_ID")?;
             let window = index(description, windows, row, "DATA_DESC_ID")?;
             if let Some(scan) = scans.last_mut()
-                && (scan.scan_number, scan.field_id, scan.spectral_window_id)
-                    == (number, field_id, window)
+                && (
+                    scan.scan_number,
+                    scan.observation_id,
+                    scan.field_id,
+                    scan.spectral_window_id,
+                ) == (number, observation_ids[offset], field_id, window)
                 && let ScanRows::OnDisk(scan_rows) = &mut scan.rows
                 && let Some(span) = times_s.last_mut()
                 && let Some(times) = integrations.last_mut()
@@ -419,6 +429,7 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
             }
             scans.push(Scan {
                 scan_number: number,
+                observation_id: observation_ids[offset],
                 field_id,
                 spectral_window_id: window,
                 phase_center_rad: fields[field_id].direction_rad,

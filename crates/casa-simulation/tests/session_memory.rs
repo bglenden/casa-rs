@@ -444,6 +444,17 @@ fn configured_with_dishes(
     channels: usize,
     dishes: &[f64],
 ) -> Simulator {
+    configured_with_products(ms, measures, budget, channels, dishes, "XX YY")
+}
+
+fn configured_with_products(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
+    stokes: &str,
+) -> Simulator {
     let mut sm = Simulator::open(
         ms,
         SimulatorOptions {
@@ -479,7 +490,7 @@ fn configured_with_dishes(
         resolution_hz: CHANNEL_HZ,
         frame: FrequencyRef::TOPO,
         channel_count: channels,
-        stokes: "XX YY".to_string(),
+        stokes: stokes.to_string(),
     })
     .expect("setspwindow");
     sm.set_field(

@@ -344,6 +344,11 @@ impl Simulator {
                         "JonesGenLin matrix apply (J::aR) incompatible with VisVector.",
                     ));
                 }
+                if term.kind == JonesKind::General && !full {
+                    return Err(SimulatorError::raised(
+                        "Jones matrix apply (J::aR) incompatible with VisVector.",
+                    ));
+                }
             }
         }
         Ok(())

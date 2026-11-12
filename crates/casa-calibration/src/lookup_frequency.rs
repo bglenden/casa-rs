@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's frequency resampling interpolates amplitude and unwrapped phase.
+use crate::interpolation::{Curve, sample, spline_derivatives, unwrap_phase};
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
-use num_complex::Complex32;
 
 /// Frequency interpolation for a complex calibration grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,15 @@ pub enum FrequencyInterpolation {
 }
 
 impl FrequencyInterpolation {
+    fn curve(self) -> Curve {
+        match self.base() {
+            Self::Nearest => Curve::Nearest,
+            Self::Linear => Curve::Linear,
+            Self::Cubic => Curve::Cubic,
+            Self::Spline => Curve::Spline,
+            _ => unreachable!("flag modifiers removed"),
+        }
+    }
     fn base(self) -> Self {
         match self {
             Self::NearestFlag => Self::Nearest,
@@ -59,6 +68,30 @@ impl ComplexSolution {
         input_hz: &[f64],
         output_hz: &[f64],
         mode: FrequencyInterpolation,
+    ) -> Result<Self, ApplyExecutionError> {
+        self.resample_parameters(input_hz, output_hz, mode, false)
+    }
+
+    /// Resample signed FPARAM values directly, before evaluating physical
+    /// Jones factors. Flags and short-axis rules match complex resampling.
+    ///
+    /// # Errors
+    /// As [`Self::resample_frequency`].
+    pub fn resample_real_frequency(
+        &self,
+        input_hz: &[f64],
+        output_hz: &[f64],
+        mode: FrequencyInterpolation,
+    ) -> Result<Self, ApplyExecutionError> {
+        self.resample_parameters(input_hz, output_hz, mode, true)
+    }
+
+    fn resample_parameters(
+        &self,
+        input_hz: &[f64],
+        output_hz: &[f64],
+        mode: FrequencyInterpolation,
+        real: bool,
     ) -> Result<Self, ApplyExecutionError> {
         let error = |reason: &str| ApplyExecutionError::UnsupportedCalibrationTable {
             path: String::new(),
@@ -98,7 +131,11 @@ impl ComplexSolution {
             for (channel, &frequency) in input_hz.iter().enumerate().take(self.channels) {
                 if !self.flags[receptor * self.channels + channel] {
                     let value = self.value(receptor, channel);
-                    points.push((frequency / 1.0e9, value.norm(), value.arg()));
+                    points.push((
+                        frequency / 1.0e9,
+                        if real { value.re } else { value.norm() },
+                        if real { 0. } else { value.arg() },
+                    ));
                 }
             }
             let descending = input_hz
@@ -117,13 +154,7 @@ impl ComplexSolution {
                 ));
             }
             for index in 1..points.len() {
-                let previous = points[index - 1].2;
-                while f64::from(points[index].2 - previous) > std::f64::consts::PI {
-                    points[index].2 = (f64::from(points[index].2) - std::f64::consts::TAU) as f32;
-                }
-                while f64::from(points[index].2 - previous) < -std::f64::consts::PI {
-                    points[index].2 = (f64::from(points[index].2) + std::f64::consts::TAU) as f32;
-                }
+                points[index].2 = unwrap_phase(points[index - 1].2, points[index].2);
             }
             if descending {
                 points.reverse();
@@ -147,7 +178,7 @@ impl ComplexSolution {
                 let value = sample(
                     &points,
                     frequency / 1.0e9,
-                    interpolation,
+                    interpolation.curve(),
                     descending,
                     &derivatives,
                 );
@@ -166,75 +197,6 @@ impl ComplexSolution {
             flags,
         })
     }
-}
-
-fn sample(
-    points: &[(f64, f32, f32)],
-    frequency: f64,
-    mode: FrequencyInterpolation,
-    descending: bool,
-    derivatives: &[[f64; 2]],
-) -> Option<Complex32> {
-    let first = points.first()?;
-    if points.len() == 1 || frequency <= first.0 {
-        return Some(Complex32::from_polar(first.1, first.2));
-    }
-    let last = points.last().expect("nonempty");
-    if frequency >= last.0 {
-        return Some(Complex32::from_polar(last.1, last.2));
-    }
-    let upper = points.partition_point(|point| point.0 < frequency);
-    let (low, high) = (points[upper - 1], points[upper]);
-    let (amplitude, phase) = if mode == FrequencyInterpolation::Nearest {
-        let nearest = if high.0 - frequency < frequency - low.0
-            || (descending && high.0 - frequency == frequency - low.0)
-        {
-            high
-        } else {
-            low
-        };
-        (nearest.1, nearest.2)
-    } else if mode == FrequencyInterpolation::Cubic {
-        let first = upper.saturating_sub(2).min(points.len().saturating_sub(4));
-        let stencil = &points[first..(first + 4).min(points.len())];
-        let polynomial = |axis: usize| {
-            let mut c = [0.0f32; 4];
-            let mut d = [0.0f32; 4];
-            for (index, point) in stencil.iter().enumerate() {
-                c[index] = if axis == 0 { point.1 } else { point.2 };
-                d[index] = c[index];
-            }
-            let mut value = c[0];
-            for order in 1..stencil.len() {
-                for index in 0..stencil.len() - order {
-                    let w = f64::from(c[index + 1] - d[index])
-                        / (stencil[index].0 - stencil[index + order].0);
-                    c[index] = ((stencil[index].0 - frequency) * w) as f32;
-                    d[index] = ((stencil[index + order].0 - frequency) * w) as f32;
-                }
-                value += c[0];
-            }
-            value
-        };
-        (polynomial(0), polynomial(1))
-    } else if mode == FrequencyInterpolation::Spline {
-        let width = high.0 - low.0;
-        let a = (high.0 - frequency) / width;
-        let b = 1.0 - a;
-        let evaluate = |left: f32, right: f32, axis: usize| {
-            (a * f64::from(left)
-                + b * f64::from(right)
-                + width * width / 6.0
-                    * ((a * a * a - a) * derivatives[upper - 1][axis]
-                        + (b * b * b - b) * derivatives[upper][axis])) as f32
-        };
-        (evaluate(low.1, high.1, 0), evaluate(low.2, high.2, 1))
-    } else {
-        let fraction = (frequency - low.0) / (high.0 - low.0);
-        let interpolate = |a: f32, b: f32| (f64::from(a) + f64::from(b - a) * fraction) as f32;
-        (interpolate(low.1, high.1), interpolate(low.2, high.2))
-    };
-    Some(Complex32::from_polar(amplitude, phase))
 }
 
 impl CalibrationTableLookup {
@@ -262,40 +224,6 @@ impl CalibrationTableLookup {
             .map(|row| spw.chan_freq(row).map_err(|e| error(e.to_string())))
             .collect()
     }
-}
-
-/// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
-fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
-    let mut second = vec![[0.0; 2]; points.len()];
-    if points.len() < 3 {
-        return second;
-    }
-    let mut upper = vec![0.0; points.len()];
-    for index in 1..points.len() - 1 {
-        let left = points[index].0 - points[index - 1].0;
-        let right = points[index + 1].0 - points[index].0;
-        let diagonal = 2.0 * (left + right) - left * upper[index - 1];
-        upper[index] = right / diagonal;
-        let previous = second[index - 1];
-        for (axis, value) in second[index].iter_mut().enumerate() {
-            let y = |index: usize| {
-                f64::from(if axis == 0 {
-                    points[index].1
-                } else {
-                    points[index].2
-                })
-            };
-            let slope = (y(index + 1) - y(index)) / right - (y(index) - y(index - 1)) / left;
-            *value = (6.0 * slope - left * previous[axis]) / diagonal;
-        }
-    }
-    for index in (1..points.len() - 1).rev() {
-        let next = second[index + 1];
-        for (value, next) in second[index].iter_mut().zip(next) {
-            *value -= upper[index] * next;
-        }
-    }
-    second
 }
 
 /// Registration follows CTPatchedInterp::resampleFlagsInFreq on the full
@@ -350,6 +278,7 @@ fn registered_flag(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_types::Complex32;
     #[test]
     fn natural_spline_matches_the_closed_form_at_every_half_knot() {
         // For unit-spaced amplitudes [1,2,1/2,5/4], the interior

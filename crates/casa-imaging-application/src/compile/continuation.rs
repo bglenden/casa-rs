@@ -187,7 +187,7 @@ fn read(
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
-            restart::reuses_mosaic_psf(request),
+            restart::reuses_direction_dependent_psf(request),
         )?;
         if psf_beam {
             let mut charge = admit(
