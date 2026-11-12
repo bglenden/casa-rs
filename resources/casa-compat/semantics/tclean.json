@@ -356,7 +356,7 @@
     },
     "facets": {
       "status": "Partial",
-      "scope": "Standard gridder passes count; mosaic rejects count != 1 as CASA does; W/AW count != 1 refused pending support (issue 980).",
+      "scope": "Standard and the supported W-projection MFS subset accept multiple facets. CASA refuses multiple facets with mosaic or AW projection. AW uses wprojplanes for the W term. Remaining W-facet modes are tracked in #1063.",
       "evidence": [
         "signature",
         "reader"

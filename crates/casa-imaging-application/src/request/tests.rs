@@ -292,6 +292,20 @@ fn aw_pa_tolerance_rounds_the_requested_degrees_before_radians() {
     assert_eq!(aw.pa_tolerance_rad(), 5.0_f32.to_radians());
 }
 
+#[test]
+fn aw_projection_refuses_multiple_facets_at_any_w_plane_count() {
+    for planes in [1, 16] {
+        let mut values = json!({
+            "gridder": "awproject", "cfcache": "cf", "wprojplanes": planes, "facets": 2,
+        });
+        let refusal = read(values.clone()).expect_err("CASA refuses AW facets");
+        assert_eq!(refusal.parameter, "facets");
+        assert!(refusal.message.contains("facets=1") && refusal.message.contains("wprojplanes>1"));
+        values["facets"] = json!(1);
+        request(values).validate().expect("one AW facet");
+    }
+}
+
 /// A blank optional parameter is unset, as CASA's empty text is.
 #[test]
 fn blank_optional_values_are_unset() {

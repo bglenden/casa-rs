@@ -750,10 +750,9 @@ impl<'a> Tclean<'a> {
                 ));
             }
             "awproject" if facets != 1 => {
-                return Err(TcleanRefusal::not_yet(
+                return Err(TcleanRefusal::new(
                     "facets",
-                    format!("{facets} with gridder='{}'", modes.gridder),
-                    1070,
+                    "AW projection requires facets=1. CASA uses wprojplanes>1 to include the W term.",
                 ));
             }
             _ => {}
