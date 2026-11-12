@@ -515,6 +515,12 @@ fn mapped_windows(
     if spec.is_empty() || spec == [-1] {
         return Ok((0..windows).collect());
     }
+    if spec.len() > windows {
+        return Err(raised(format!(
+            "Specified spwmap has more elements ({}) than the number of spectral windows in the MS ({windows}).",
+            spec.len()
+        )));
+    }
     if spec[0] == -999 {
         let first = lookup.lookup.first_spectral_window().ok_or_else(|| {
             raised("No calibration spectral window is available for automatic fanout")

@@ -71,7 +71,7 @@ fn invalid_mapping_interpolation_and_short_cubic_raise_atomically_as_casa_does()
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();
     let refusals = fixture["refusals"].as_array().unwrap();
-    assert_eq!(refusals.len(), 13);
+    assert_eq!(refusals.len(), 16);
     for case in refusals {
         refused(case);
     }

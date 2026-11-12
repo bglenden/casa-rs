@@ -64,7 +64,7 @@ REFUSALS = [{"name": f"{kind}_spw_{name}_refusal", "kind": kind, "interp": "line
              "options": {"spwmap": mapping}, "probe": "spw_mapping", "data_window": 1,
              "stage": "setapply", "refusal": True}
             for kind in ("B", "Tf", "Df")
-            for name, mapping in (("negative", [-2]), ("outside", [2]), ("mixed_negative", [0, -1]))]
+            for name, mapping in (("negative", [-2]), ("outside", [2]), ("mixed_negative", [0, -1]), ("too_long", [0, 0, 0]))]
 REFUSALS += [{"name": f"{kind}_{mode}_three_valid_refusal", "kind": kind,
               "interp": "nearest," + mode, "options": {}, "probe": "flag_channel_shifted",
               "stage": "corrupt", "refusal": True}
