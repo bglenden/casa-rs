@@ -1,0 +1,1304 @@
+{
+ "schema": "sm-selection-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-12",
+ "native_revision": "438bb0ed50a7102d665ecb076d0e58cba2d2a725",
+ "readback_revision": "046ee6b9fc6eb619f1f0ddbe3f3a31d40a5cb114",
+ "main_revision": "1814e475351863063d43c6707f74c75302b7d573",
+ "oracle": "casatools6.7.6-14, casatasks6.7.6.14",
+ "host": "bg-mac-mini, macOS arm64, Apple M2",
+ "fixture": "crates/casa-simulation/tests/data/sm_selection_casa.json.gz",
+ "fixture_sha256": "175c7dd52ef8c8267d3f5be68f4a51181d4773a83c50b6c96042bbfcbbf3cae1",
+ "upstream_read": {
+  "repository": "https://github.com/radio-astro/casa",
+  "revision": "4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef",
+  "path": "code/synthesis/MeasurementEquations/Simulator.cc",
+  "sections": [
+   "setdata 2706-2861",
+   "predict 2113 onward"
+  ],
+  "scope": "Historical public C++ source, checked against independent controls on installed CASA6.7.6.14; not claimed as that release source pin."
+ },
+ "summary": {
+  "cases": 40,
+  "deterministic_cases": 37,
+  "noise_cases": 3,
+  "fresh_cases": 3,
+  "cpu_workers": [
+   1,
+   3
+  ],
+  "cpu_worker_comparison": "identical DATA in the recorded workloads",
+  "actual_metal_image_cases": 37,
+  "other_metal_requests": 3,
+  "other_metal_scope": "One component-only and two noise-only requests compute on CPU.",
+  "cpp_readback_runs": 120,
+  "reference_rows": 11664,
+  "data_nrms_max": 3.1293862554042243e-06,
+  "data_nrms_limit": 0.001,
+  "metal_cpu_maximum_relative_error": 3.53589e-07,
+  "metal_cpu_limit": 0.0001,
+  "stored_time_residual_s": 0.0
+ },
+ "source_audit": {
+  "tracked_files": 3596,
+  "all_hashes_match": true,
+  "extra_sources": [],
+  "method": "Full tracked-file SHA256 and extra .rs/.py/.toml audit for each checkpoint; dedicated physical source and targets. All sources refreshed after the private release-cache copy, before building."
+ },
+ "demonstrations": [
+  {
+   "revision": "a907d4aa634d23d06b08f4ecef41ee4669da8080",
+   "test": "fresh_selection_and_observe_reset_match_casa",
+   "before": "Refuses selecting two of four scans as not implemented.",
+   "after": "Independent fresh subset and observe-reset controls pass."
+  },
+  {
+   "revision": "5414e02d6f77c8818addd91c7cb980472e4054f8",
+   "test": "selected_existing_rows_preserve_data_and_scratch_columns",
+   "before": "Unselected MODEL_DATA row0 is overwritten with1 instead of7-2j.",
+   "fix": "7ee007f26235b48a745e6cd3b93cdae6d0394b8e"
+  },
+  {
+   "revision": "e6e0f4f4d44f8a13117a1112822198741a69289e",
+   "test": "selection::fragmented_selections_hold_their_admission_without_retaining_rows",
+   "before": "Existing-MS batch scratch requires219073483 bytes while71663640 are free; shrinking prediction blocks alone does not suffice.",
+   "fix": "b45f0616a07d6953cfc95f438139f6420c4e0fc2",
+   "after": "Writer batch also shrinks; both fresh and existing tenfold-row laws pass."
+  }
+ ],
+ "semantics": [
+  "Field/window selections are intersections on the original MS; an empty result falls back to all rows. Empty TaQL retains the field/window base. Invalid TaQL returns False after committing that base.",
+  "Each predict/corrupt retains its immutable selection; observe resets only the current selection for future operations.",
+  "Selected replacement preserves other DATA, MODEL_DATA and CORRECTED_DATA. Prediction sets selected MODEL_DATA to1; CORRECTED_DATA follows DATA on touched rows.",
+  "Ordered phases reuse the existing image/component/SD/noise/Jones stages; adjacent additive operations fuse, and the ordinary all-row replacement removes prior phases.",
+  "An increment after nonidentity gains adds the new model after those gains: constant receptor gain2 distinguishes4A+B from4(A+B).",
+  "Query evaluation and selected-run/mask/model scratch are bounded by admitted read/write batches. No dataset-sized retained selection bitmap.",
+  "Exact C++ readback checks row metadata, TIME, flags, weights, sigma and preserved cells. Deterministic changed DATA uses NRMS1e-3; independent random draws use support and five-standard-error mean/variance tests."
+ ],
+ "validation": {
+  "full_simulation": {
+   "passed": 306,
+   "failed": 0,
+   "ignored": 2,
+   "note": "Two subprocess helpers are executed by their parent tests. Runtime source b45f0616a; unit-harness adaptation1b91b3b57; export helper438bb0ed5 does not alter calculation."
+  },
+  "clippy": "all casa-simulation targets pass -D warnings at438bb0ed5",
+  "counted_memory": "tests/session_memory/selection.rs passes fresh and opened MS at60 and600 integrations, three measured runs each after warmups; ordinary memory/backend laws also pass in full suite.",
+  "python_binding": {
+   "revision": "0004e0e49bbe3ee42053fa5c552c281b5b796e7c",
+   "rust_tests": {
+    "passed": 58,
+    "failed": 0,
+    "ignored": 0
+   },
+   "installed_wheel_simulator_tests": {
+    "passed": 57,
+    "failed": 0,
+    "skipped": 2
+   },
+   "clippy": "casars-python all targets pass -D warnings",
+   "scope": "Public field/window/header selectors, invalid predicates and analytic selected-component call ordering including observe reset.",
+   "wheel_sha256": "a17a724918213a8477104cfc0a6fc3475a0aed56736df0c8844aae0e9b0ce3ae",
+   "followup_backend_check": {
+    "command": "pytest -q -rs test_tools_simulator.py -k \"live_casa or auto_predicts\"",
+    "passed": 1,
+    "skipped": 1,
+    "note": "Python actual Metal/CPU calculation passes; live casatools signature import is skipped in the separate native Python environment. No skipped test is counted as behavioral evidence."
+   }
+  },
+  "format_architecture_docs": "passed"
+ },
+ "limits": [
+  "This outcome proves GridFT selection combinations. Existing WProjectFT, mosaic, SDGrid, flagged-sample, Tsys and tropospheric controls are regression gates, not new all-selection-mode CASA evidence.",
+  "Supported predicate columns: ANTENNA1, ANTENNA2, TIME, FIELD_ID, DATA_DESC_ID, SCAN_NUMBER; scalar functions abs/near/nearabs. Other MAIN columns, functions and query forms remain explicit #1053 refusals.",
+  "Existing MS layout restrictions remain; no claim of complete simulation equivalence.",
+  "No plotting work."
+ ],
+ "cpp_readback": [
+  {
+   "name": "absolute_cross_correlations",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "absolute_cross_correlations",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "absolute_cross_correlations",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.6636390422325806e-06,
+   "rows": 288
+  },
+  {
+   "name": "all_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 5.357508578591999e-07,
+   "rows": 288
+  },
+  {
+   "name": "all_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 5.357508578591999e-07,
+   "rows": 288
+  },
+  {
+   "name": "all_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 5.363617216415557e-07,
+   "rows": 288
+  },
+  {
+   "name": "all_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "all_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "all_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.106630730833258e-06,
+   "rows": 288
+  },
+  {
+   "name": "cross_correlations",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "cross_correlations",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.6501245181656674e-06,
+   "rows": 288
+  },
+  {
+   "name": "cross_correlations",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.6636390422325806e-06,
+   "rows": 288
+  },
+  {
+   "name": "disjoint_replacements",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "disjoint_replacements",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "disjoint_replacements",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.6209446964493516e-06,
+   "rows": 288
+  },
+  {
+   "name": "empty_query_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "empty_query_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "empty_query_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "field_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 7.513197107639146e-07,
+   "rows": 288
+  },
+  {
+   "name": "field_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 7.513197107639146e-07,
+   "rows": 288
+  },
+  {
+   "name": "field_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 7.51373464511367e-07,
+   "rows": 288
+  },
+  {
+   "name": "field_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "field_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "field_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "fresh_subset",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "fresh_subset",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "fresh_subset",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.1066084306774398e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.1066084306774398e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.1156120627769643e-06,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_subset_replacement",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 4.945197160376069e-07,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_subset_replacement",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 4.945197160376069e-07,
+   "rows": 288
+  },
+  {
+   "name": "gains_then_subset_replacement",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 5.026443565882715e-07,
+   "rows": 288
+  },
+  {
+   "name": "increment_subset",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.5201843159551148e-06,
+   "rows": 288
+  },
+  {
+   "name": "increment_subset",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.5201843159551148e-06,
+   "rows": 288
+  },
+  {
+   "name": "increment_subset",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.525232553270802e-06,
+   "rows": 288
+  },
+  {
+   "name": "intersection_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.973191018829162e-06,
+   "rows": 288
+  },
+  {
+   "name": "intersection_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.973191018829162e-06,
+   "rows": 288
+  },
+  {
+   "name": "intersection_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.987059193036805e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_field_fallback",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_field_fallback",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.0959955062358897e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_field_fallback",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.106630730833258e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_query_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_query_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_query_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_window_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_window_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "invalid_window_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "lowercase_column_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "lowercase_column_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "lowercase_column_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "near_integration",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "near_integration",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "near_integration",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.5907079691508417e-07,
+   "rows": 288
+  },
+  {
+   "name": "nearabs_integration",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "nearabs_integration",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.7270418584219268e-07,
+   "rows": 288
+  },
+  {
+   "name": "nearabs_integration",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.5907079691508417e-07,
+   "rows": 288
+  },
+  {
+   "name": "numeric_predicate_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "numeric_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "numeric_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "observe_resets_row_query",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.4722231410394033e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_row_query",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.4722231410394033e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_row_query",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.477313175613096e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_selection",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.7207312109792798e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_selection",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.7207312109792798e-06,
+   "rows": 360
+  },
+  {
+   "name": "observe_resets_selection",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.725805191608869e-06,
+   "rows": 360
+  },
+  {
+   "name": "query_gains_then_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.5952644326983114e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_gains_then_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.5952644326983114e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_gains_then_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.6063979817007587e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_increment_preserves_other_rows",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.325556860835573e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_increment_preserves_other_rows",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.325556860835573e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_increment_preserves_other_rows",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.3301986194826223e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 1792,
+     "mean": 0.0033192364498972893,
+     "variance": 0.00955205870606519
+    },
+    "cross_imaginary": {
+     "samples": 1792,
+     "mean": 0.0003613232235823359,
+     "variance": 0.010411195890372569
+    }
+   }
+  },
+  {
+   "name": "query_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 1792,
+     "mean": 0.0033192364498972893,
+     "variance": 0.00955205870606519
+    },
+    "cross_imaginary": {
+     "samples": 1792,
+     "mean": 0.0003613232235823359,
+     "variance": 0.010411195890372569
+    }
+   }
+  },
+  {
+   "name": "query_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": {
+    "cross_real": {
+     "samples": 1792,
+     "mean": 0.0033192364498972893,
+     "variance": 0.00955205870606519
+    },
+    "cross_imaginary": {
+     "samples": 1792,
+     "mean": 0.0003613232235823359,
+     "variance": 0.010411195890372569
+    }
+   }
+  },
+  {
+   "name": "query_replacement_overlaps_fields",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.9004214524112183e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_replacement_overlaps_fields",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.9004214524112183e-06,
+   "rows": 288
+  },
+  {
+   "name": "query_replacement_overlaps_fields",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.9028754526457702e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_after_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_after_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_after_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.6209446964493516e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_preserves_other_rows",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_preserves_other_rows",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.6188682127649323e-06,
+   "rows": 288
+  },
+  {
+   "name": "replacement_preserves_other_rows",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 1.6209446964493516e-06,
+   "rows": 288
+  },
+  {
+   "name": "reset_selection",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.2318887833430922e-06,
+   "rows": 288
+  },
+  {
+   "name": "reset_selection",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.2318887833430922e-06,
+   "rows": 288
+  },
+  {
+   "name": "reset_selection",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.2323000704726218e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 3.129386247341782e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 3.129386247341782e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 3.129386247341782e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components_then_image",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.920680970198103e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components_then_image",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.920680970198103e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_components_then_image",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.9341861009983166e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_gains_then_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.903922779671334e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_gains_then_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.903922779671334e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_gains_then_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.915612648155479e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_image_then_components",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 5.311671258156716e-07,
+   "rows": 288
+  },
+  {
+   "name": "selected_image_then_components",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 5.311671258156716e-07,
+   "rows": 288
+  },
+  {
+   "name": "selected_image_then_components",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 5.386571131864566e-07,
+   "rows": 288
+  },
+  {
+   "name": "selected_multiple_images",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 3.0194964218599884e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_multiple_images",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 3.0194964218599884e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_multiple_images",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 3.0249586667423194e-06,
+   "rows": 288
+  },
+  {
+   "name": "selected_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972004924501,
+     "variance": 0.009449381476086744
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481211423874,
+     "variance": 0.011388744569517772
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488817796111107,
+     "variance": 0.00897589211904023
+    }
+   }
+  },
+  {
+   "name": "selected_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972004924501,
+     "variance": 0.009449381476086744
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481211423874,
+     "variance": 0.011388744569517772
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488817796111107,
+     "variance": 0.00897589211904023
+    }
+   }
+  },
+  {
+   "name": "selected_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972004924501,
+     "variance": 0.009449381476086744
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481211423874,
+     "variance": 0.011388744569517772
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488817796111107,
+     "variance": 0.00897589211904023
+    }
+   }
+  },
+  {
+   "name": "selected_prediction_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437971863563039,
+     "variance": 0.009449382499237161
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.0033574808788086686,
+     "variance": 0.011388744070584577
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488828040659428,
+     "variance": 0.008975892670708112
+    }
+   }
+  },
+  {
+   "name": "selected_prediction_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437971863563039,
+     "variance": 0.009449382499237161
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.0033574808788086686,
+     "variance": 0.011388744070584577
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488828040659428,
+     "variance": 0.008975892670708112
+    }
+   }
+  },
+  {
+   "name": "selected_prediction_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": {
+    "cross_real": {
+     "samples": 448,
+     "mean": 0.013437972262701285,
+     "variance": 0.00944938257146897
+    },
+    "cross_imaginary": {
+     "samples": 448,
+     "mean": 0.003357481410992997,
+     "variance": 0.0113887440095691
+    },
+    "auto_real": {
+     "samples": 128,
+     "mean": 0.012488828040659428,
+     "variance": 0.008975892670708112
+    }
+   }
+  },
+  {
+   "name": "selection_restarts_from_original",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.5443177265459204e-06,
+   "rows": 288
+  },
+  {
+   "name": "selection_restarts_from_original",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.5443177265459204e-06,
+   "rows": 288
+  },
+  {
+   "name": "selection_restarts_from_original",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.55612851805994e-06,
+   "rows": 288
+  },
+  {
+   "name": "true_predicate_keeps_field",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "true_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.9591950750899706e-06,
+   "rows": 288
+  },
+  {
+   "name": "true_predicate_keeps_field",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.97287829381883e-06,
+   "rows": 288
+  },
+  {
+   "name": "window_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.106036911115637e-06,
+   "rows": 288
+  },
+  {
+   "name": "window_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.106036911115637e-06,
+   "rows": 288
+  },
+  {
+   "name": "window_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.118039777741222e-06,
+   "rows": 288
+  },
+  {
+   "name": "within_scan_times",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.23983139263929e-06,
+   "rows": 288
+  },
+  {
+   "name": "within_scan_times",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.23983139263929e-06,
+   "rows": 288
+  },
+  {
+   "name": "within_scan_times",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.2512072354565e-06,
+   "rows": 288
+  }
+ ],
+ "performance": {
+  "rayon_environment_threads": 1,
+  "simulation_execution_controls": "Unmodified task defaults: balanced workers and auto backend; RAYON_NUM_THREADS does not force simulator worker count.",
+  "warmup_pairs": 1,
+  "measured_interleaved_pairs": 3,
+  "binaries": {
+   "control": {
+    "path": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-long-baselines/release-validation/release/simobserve",
+    "sha256": "1b413855a91474d3c97e8f20ce951a9171b712e0a955c3d113d5dccc976fe9be"
+   },
+   "candidate": {
+    "path": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-selection/release-validation/release/simobserve",
+    "sha256": "14e46e8768580b019338449a49696b5beea87e02a2da5c052832b5b12a2c74f0"
+   }
+  },
+  "summary": {
+   "uvw_long_vla_2017": {
+    "control": {
+     "task_seconds": 3.329317666,
+     "wall_seconds": 3.33,
+     "user_seconds": 3.14,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 298483712
+    },
+    "candidate": {
+     "task_seconds": 3.346579,
+     "wall_seconds": 3.35,
+     "user_seconds": 3.16,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 299892736
+    }
+   },
+   "uvw_long_vla_2025": {
+    "control": {
+     "task_seconds": 3.338993042,
+     "wall_seconds": 3.34,
+     "user_seconds": 3.15,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 298827776
+    },
+    "candidate": {
+     "task_seconds": 3.348330792,
+     "wall_seconds": 3.35,
+     "user_seconds": 3.16,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 300269568
+    }
+   },
+   "uvw_long_alma_2017": {
+    "control": {
+     "task_seconds": 3.340724916,
+     "wall_seconds": 3.34,
+     "user_seconds": 3.15,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 302891008
+    },
+    "candidate": {
+     "task_seconds": 3.330418417,
+     "wall_seconds": 3.33,
+     "user_seconds": 3.14,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 305266688
+    }
+   }
+  },
+  "schema": "sm-selection-performance/1",
+  "work_issue": 1053,
+  "control_source_revision": "4328701bc7a654fdd6b4596c534f5e0dcae6ad7a",
+  "candidate_source_revision": "438bb0ed50a7102d665ecb076d0e58cba2d2a725",
+  "scope": "Matched existing all-row simobserve task defaults; no claim for selected-row speedup or serial worker count. Native runtime matches the final code throughb45f0616a; later Python documentation/test and readback edits do not affect these binaries.",
+  "receipt": "resources/casa-compat/evidence/sm-selection-performance-20261112.json",
+  "fftw": {
+   "version": "3.3.11",
+   "matching_resolved_linker_records": {
+    "control": [
+     [
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-lib=static=fftw3f_threads",
+      "cargo:rustc-link-lib=static=fftw3_threads",
+      "cargo:rustc-link-lib=static=fftw3f",
+      "cargo:rustc-link-lib=static=fftw3"
+     ]
+    ],
+    "candidate": [
+     [
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-lib=static=fftw3f_threads",
+      "cargo:rustc-link-lib=static=fftw3_threads",
+      "cargo:rustc-link-lib=static=fftw3f",
+      "cargo:rustc-link-lib=static=fftw3"
+     ]
+    ]
+   },
+   "archives_sha256": {
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3.a": "247587e68efd458914df09148d24caf4802589eff9c6a946c17a9fac914ab3aa",
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3_threads.a": "a8be24ae0c79d98b32f216a163096607ca7d578fb852ca3d831a5db61bb4af22",
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3f.a": "17914bcd9c8ff937ecc48f0fe6cc800b7bcd5e4869d0ef7bab423b0175ec30e6",
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3f_threads.a": "9b316ec16945847fed9bf05d5c3f5b3c8cb3ec63a49bbe92240c33e2167ef0db"
+   }
+  }
+ },
+ "commands": {
+  "oracle": "CASAPY tools/simulation/sm_selection_oracle.py --out OUT --fixture FIXTURE",
+  "calculation_matrix": "CASA_RS_SELECTION_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test selection -- --nocapture",
+  "cpp_readback": "CASAPY tools/simulation/sm_selection_readback.py --root EXPORT --fixture FIXTURE --out REPORT",
+  "full_crate": "RUST_TEST_THREADS=1 cargo test -p casa-simulation",
+  "lint": "cargo clippy -p casa-simulation --all-targets -- -D warnings",
+  "python_binding": "CASA_RS_MEASURESPATH=SNAPSHOT python -m pytest -q -p no:cacheprovider crates/casars-python/python/tests/test_tools_simulator.py"
+ },
+ "whole_task_regression": [
+  {
+   "name": "uvw_long_vla_2017",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1399999999.9999998
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1400000000.0
+      ]
+     }
+    ]
+   },
+   "geometry": {
+    "uvw_absolute_limit_m": 1e-06,
+    "times_equal": true,
+    "rows": 1053,
+    "max_uvw_difference_m": 5.835590854985639e-07
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-12 04:31:36\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "uvw_long_vla_2017: OK, 9 known (UVW within 5.84e-07 m); DATA NRMS 2.19e-07 over 2106 samples (cross 2.19e-07)"
+   ],
+   "seconds": {
+    "casa": null,
+    "casa-rs": 4.213313333
+   }
+  },
+  {
+   "name": "uvw_long_vla_2025",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1399999999.9999998
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1400000000.0
+      ]
+     }
+    ]
+   },
+   "geometry": {
+    "uvw_absolute_limit_m": 1e-06,
+    "times_equal": true,
+    "rows": 1053,
+    "max_uvw_difference_m": 7.265662134159356e-07
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-12 04:31:46\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "uvw_long_vla_2025: OK, 9 known (UVW within 7.27e-07 m); DATA NRMS 1.86e-07 over 2106 samples (cross 1.86e-07)"
+   ],
+   "seconds": {
+    "casa": null,
+    "casa-rs": 4.138070625
+   }
+  },
+  {
+   "name": "uvw_long_alma_2017",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "geometry": {
+    "uvw_absolute_limit_m": 1e-06,
+    "times_equal": true,
+    "rows": 3675,
+    "max_uvw_difference_m": 1.9777235138462856e-07
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-12 04:31:55\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "uvw_long_alma_2017: OK, 9 known (UVW within 1.98e-07 m); DATA NRMS 1.64e-07 over 7350 samples (cross 1.64e-07)"
+   ],
+   "seconds": {
+    "casa": null,
+    "casa-rs": 4.127719291
+   }
+  }
+ ]
+}
