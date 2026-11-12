@@ -10484,7 +10484,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>False</code></td>
 <td><code>False</code>; <code>usepointing</code> → <code>usepointing</code></td>
 <td>Implemented</td>
-<td>Copied only for mosaic/AW; read and ignored for standard/W. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>bool</code></td>
+<td>Read by mosaic and AW gridders; ignored for standard/W. AW uses each antenna's POINTING direction when available and the visibility field's phase direction when no sample exists. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>bool</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>

@@ -22,9 +22,9 @@
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="kw">pub</span>(<span class="kw">super</span>) time: usize,
 <a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">pub</span>(<span class="kw">super</span>) time_mjd_s: f64,
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">pub</span>(<span class="kw">super</span>) field: FieldId,
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// The phase-tracking direction: the pointing law's fallback.
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// The phase-tracking direction requested for imaging.
 <a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) phase: SkyDirection,
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// The field's observation direction.
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// The field's observation direction, also used when AW has no pointing sample.
 <a href=#28 id=28 data-nosnippet>28</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) observation: SkyDirection,
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub</span>(<span class="kw">super</span>) rows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[bool],
 <a href=#30 id=30 data-nosnippet>30</a>}
@@ -138,7 +138,7 @@
 <a href=#138 id=138 data-nosnippet>138</a>                        antenna,
 <a href=#139 id=139 data-nosnippet>139</a>                        [time_s, centroid.seconds_since(sample, mjd_origin)],
 <a href=#140 id=140 data-nosnippet>140</a>                        context.scale(),
-<a href=#141 id=141 data-nosnippet>141</a>                        context.phase,
+<a href=#141 id=141 data-nosnippet>141</a>                        context.observation,
 <a href=#142 id=142 data-nosnippet>142</a>                    )<span class="question-mark">?</span>;
 <a href=#143 id=143 data-nosnippet>143</a>                    directions
 <a href=#144 id=144 data-nosnippet>144</a>                        .centroid
@@ -272,7 +272,7 @@
 <a href=#272 id=272 data-nosnippet>272</a>            antenna,
 <a href=#273 id=273 data-nosnippet>273</a>            [context.partition_time_s(), context.time_mjd_s],
 <a href=#274 id=274 data-nosnippet>274</a>            context.scale(),
-<a href=#275 id=275 data-nosnippet>275</a>            context.phase,
+<a href=#275 id=275 data-nosnippet>275</a>            context.observation,
 <a href=#276 id=276 data-nosnippet>276</a>        )<span class="question-mark">?</span>;
 <a href=#277 id=277 data-nosnippet>277</a>        directions.visibility.insert(antenna, direction);
 <a href=#278 id=278 data-nosnippet>278</a>        <span class="prelude-val">Ok</span>(direction)
