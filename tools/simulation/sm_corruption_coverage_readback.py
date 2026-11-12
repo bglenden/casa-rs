@@ -42,7 +42,7 @@ def compare(path,reference,noise):
     if noise:
         ratio=native_noise/casa_noise;assert 0.85<=ratio<=1.15,ratio
         result["noise_variance_ratio"]=ratio
-    return result
+    return result,np.asarray([row["data"] for row in rows])
 
 
 def consume(directory,variant,out):
@@ -71,19 +71,27 @@ def main():
     references={}
     for name,filename in FIXTURES.items():
         with gzip.open(args.fixtures/filename,"rt") as handle:references[name]=json.load(handle)
-    expected={(variant,workers) for variant in FIXTURES for workers in (1,3)};seen=set();reports=[]
+    expected={(variant,workers) for variant in FIXTURES for workers in (1,3)};seen=set();reports=[];worker_data={}
     args.out.mkdir(parents=True)
     for manifest in sorted(args.root.glob("*/case.json")):
         case=json.loads(manifest.read_text());variant=case["variant"];key=(variant,case["workers"])
         assert key in expected and key not in seen;seen.add(key)
         reference=references[variant];assert reference["casa_version"]=="6.7.6.14"
-        report={**case,"native_ms":compare(manifest.parent/"applied.ms",reference,variant=="noise")}
+        native,values=compare(manifest.parent/"applied.ms",reference,variant=="noise")
+        worker_data[key]=values
+        report={**case,"native_ms":native}
         if case["workers"]==1:
             output=consume(manifest.parent,variant,args.out/variant)
-            report["casa_consumes_native_tables"]=compare(output,reference,variant=="noise")
+            report["casa_consumes_native_tables"]=compare(output,reference,variant=="noise")[0]
         reports.append(report)
     assert seen==expected,("missing",expected-seen)
-    (args.out/"report.json").write_text(json.dumps({"casa_version":"6.7.6.14","runs":reports},indent=1)+"\n")
+    workers={}
+    for variant in FIXTURES:
+        a,b=(worker_data[(variant,w)] for w in (1,3))
+        difference=float(np.max(np.linalg.norm(a-b,axis=-1))/np.max(np.linalg.norm(a,axis=-1)))
+        assert difference<=1e-4,(variant,difference)
+        workers[variant]={"max_relative":difference,"limit":1e-4}
+    (args.out/"report.json").write_text(json.dumps({"casa_version":"6.7.6.14","runs":reports,"worker_comparison":workers},indent=1)+"\n")
     print("C++ reads8 native MSs and consumes5 native calibration tables across4 scenarios",flush=True)
 
 
