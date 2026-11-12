@@ -1078,6 +1078,8 @@ pub enum ProductKind {
     SpectralIndex,
     /// Spectral-index uncertainty.
     SpectralIndexError,
+    /// Spectral curvature from the first three restored Taylor terms.
+    SpectralCurvature,
     /// Primary-beam-corrected spectral index.
     PbCorrectedSpectralIndex,
     /// Restoring and fitted beam metadata.
@@ -1087,7 +1089,7 @@ pub enum ProductKind {
 impl ProductKind {
     /// Complete stable catalog of logical products understood by the current
     /// request compiler.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Psf,
         Self::Residual,
         Self::Model,
@@ -1101,6 +1103,7 @@ impl ProductKind {
         Self::TaylorTerms,
         Self::SpectralIndex,
         Self::SpectralIndexError,
+        Self::SpectralCurvature,
         Self::PbCorrectedSpectralIndex,
         Self::Beam,
     ];
@@ -1122,6 +1125,7 @@ impl ProductKind {
             Self::TaylorTerms => "taylor_terms",
             Self::SpectralIndex => "spectral_index",
             Self::SpectralIndexError => "spectral_index_error",
+            Self::SpectralCurvature => "spectral_curvature",
             Self::PbCorrectedSpectralIndex => "pb_corrected_spectral_index",
             Self::Beam => "beam",
         }
@@ -2344,6 +2348,13 @@ fn validate_products(
     {
         return Err(CompileProblemError::InvalidProductCombination {
             reason: "spectral-index uncertainty requires a spectral-index product",
+        });
+    }
+    if products.contains(ProductKind::SpectralCurvature)
+        && !(taylor_terms >= 3 && products.contains(ProductKind::SpectralIndex))
+    {
+        return Err(CompileProblemError::InvalidProductCombination {
+            reason: "spectral curvature requires at least three Taylor terms and a spectral-index product",
         });
     }
     if products.contains(ProductKind::PbCorrectedSpectralIndex)
