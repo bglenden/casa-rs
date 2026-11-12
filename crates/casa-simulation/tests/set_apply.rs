@@ -416,10 +416,9 @@ fn read_times(path: &Path) -> Vec<f64> {
         .collect()
 }
 
-/// The open new-window coverage scope must return its explicit refusal,
-/// rather than indexing beyond the mapping captured by setapply.
+/// CASA skips the new window beyond the mapping snapshot captured by setapply.
 #[test]
-fn a_new_window_after_setapply_refuses_with_an_issue_instead_of_panicking() {
+fn a_new_window_after_setapply_skips_the_corruption_step() {
     use casa_simulation::SpectralWindowSpec;
     use casa_types::measures::frequency::FrequencyRef;
     use predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
@@ -450,10 +449,6 @@ fn a_new_window_after_setapply_refuses_with_an_issue_instead_of_panicking() {
     let mut later = scan("target", 180.0, 190.0);
     later.spectral_window = "later".into();
     sm.observe(&later).unwrap();
-    let error = sm
-        .corrupt()
-        .expect_err("new-window corruption is explicitly unfinished");
-    assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(error.message().contains("#1053"));
+    sm.corrupt().unwrap();
     sm.close().unwrap();
 }

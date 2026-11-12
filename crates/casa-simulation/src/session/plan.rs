@@ -128,6 +128,17 @@ impl DataPlan {
         self.phases.iter().any(|phase| !phase.selection.is_all())
     }
 
+    /// Partial operations need per-row scratch-column preservation even
+    /// when the caller selected all rows.
+    pub(crate) fn has_partial_rows(&self, scans: &[super::observe::Scan]) -> bool {
+        self.has_selection()
+            || scans.iter().enumerate().any(|(index, scan)| {
+                self.phases
+                    .iter()
+                    .any(|phase| phase.has_uncovered_corruption(index, scan.spectral_window_id))
+            })
+    }
+
     pub(crate) fn has_query(&self) -> bool {
         self.phases.iter().any(|phase| phase.selection.has_query())
     }

@@ -73,8 +73,12 @@ impl TermBytes {
             kept: solutions_bytes(per_window)
                 + values as u64 * VALUE_BYTES
                 + ((chunks + 1) * size_of::<usize>()) as u64,
-            forming: (max_cell_values as u64) * 64
-                + channels.iter().copied().max().unwrap_or(0) as u64 * 32,
+            forming: if chunks == 0 {
+                0
+            } else {
+                (max_cell_values as u64) * 64
+                    + channels.iter().copied().max().unwrap_or(0) as u64 * 32
+            },
         }
     }
 }
