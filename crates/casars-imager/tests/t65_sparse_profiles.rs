@@ -41,20 +41,18 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
 {
     let bundle = builtin_surface_bundle("tclean")?;
     // The imager's contract-28 profiles migrate; none older is read.
-    assert_eq!(bundle.surface.migrations().len(), 13);
-    assert_eq!(bundle.surface.migrations()[0].from_contract, 28);
-    assert_eq!(bundle.surface.migrations()[1].from_contract, 29);
-    assert_eq!(bundle.surface.migrations()[2].from_contract, 30);
-    assert_eq!(bundle.surface.migrations()[3].from_contract, 31);
-    assert_eq!(bundle.surface.migrations()[4].from_contract, 32);
-    assert_eq!(bundle.surface.migrations()[5].from_contract, 33);
-    assert_eq!(bundle.surface.migrations()[6].from_contract, 34);
-    assert_eq!(bundle.surface.migrations()[7].from_contract, 35);
-    assert_eq!(bundle.surface.migrations()[8].from_contract, 36);
-    assert_eq!(bundle.surface.migrations()[9].from_contract, 37);
-    assert_eq!(bundle.surface.migrations()[10].from_contract, 38);
-    assert_eq!(bundle.surface.migrations()[11].from_contract, 39);
-    assert_eq!(bundle.surface.migrations()[12].from_contract, 40);
+    let chain = bundle
+        .surface
+        .migrations()
+        .iter()
+        .map(|migration| (migration.from_contract, migration.to_contract))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        chain,
+        (28..42)
+            .map(|version| (version, version + 1))
+            .collect::<Vec<_>>()
+    );
     assert!(
         bundle
             .surface
@@ -89,6 +87,26 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
         );
         let resolved = resolve_profile(&parsed, &bundle)?;
         assert!(resolved.diagnostics.is_empty(), "{name}");
+
+        // Admitting an additional PSF option is an identity migration for
+        // profiles that were written by version 41.
+        let legacy = source.replacen("contract = 42", "contract = 41", 1);
+        let migrated = resolve_profile(&parse_profile(&legacy)?, &bundle)?;
+        assert_eq!(migrated.values, resolved.values, "{name}");
+        assert_eq!(
+            migrated.explicit_overrides, resolved.explicit_overrides,
+            "{name}"
+        );
+        assert_eq!(
+            migrated
+                .diagnostics
+                .iter()
+                .map(|item| item.code)
+                .collect::<Vec<_>>(),
+            [DiagnosticCode::Migrated],
+            "{name}"
+        );
+
         assert_eq!(
             resolved.explicit_overrides.keys().collect::<BTreeSet<_>>(),
             parsed.parameters.keys().collect::<BTreeSet<_>>(),
