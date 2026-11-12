@@ -322,7 +322,7 @@
   },
   "setnoise": {
    "status": "Partial",
-   "scope": "simplenoise, tsys-manual and tsys-atm noise with the ATM model; optional T/Tf noise-scale tables. OTF=False simplenoise reuses a full additive field and optionally saves its A Noise table for the original observations. Tsys OTF=False and later-window/scan behavior remain unfinished (#1292).",
+   "scope": "simplenoise, tsys-manual and tsys-atm noise with the ATM model; optional T/Tf noise-scale tables. OTF=False reuses a full additive field on the original observations, including unit A draws scaled by T/Tf in Tsys modes, and optionally saves A plus T/Tf tables. Later-window/scan behavior remains unfinished (#1292).",
    "evidence": [
     "signature",
     "binding-tests",

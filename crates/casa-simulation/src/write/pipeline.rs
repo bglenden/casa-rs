@@ -642,7 +642,19 @@ impl NoiseJob<'_> {
         let mut scratch = NoiseScratch::new(self.scales);
         for application in noise {
             if let Some(fixed) = application.fixed() {
+                let scale = application.fixed_scale(&self.window);
                 for (cell, row) in self.cells.chunks_exact_mut(samples).zip(self.rows) {
+                    if let Some(scale) = &scale {
+                        let sigma = scale.fixed_sigma(&row.noise(self.antennas), &mut scratch);
+                        fixed.add_scaled_to_cell(
+                            (self.window.spectral_window_id, row.time_s),
+                            (row.antenna1, row.antenna2),
+                            self.receptors,
+                            cell,
+                            |channel| sigma.at(channel),
+                        );
+                        continue;
+                    }
                     fixed.add_to_cell(
                         self.window.spectral_window_id,
                         row.time_s,

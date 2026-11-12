@@ -16,17 +16,35 @@ fn additive_fields_hold_their_admission_and_reset_releases_unsaved_fields() {
     charge_process_caches(policy.host(), policy.policy()).unwrap();
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().unwrap();
-    for named in [false, true] {
+    for (mode, named) in [
+        ("simplenoise", false),
+        ("simplenoise", true),
+        ("tsys-manual", false),
+        ("tsys-manual", true),
+        ("tsys-atm", false),
+        ("tsys-atm", true),
+    ] {
         let mut sm = configured(
-            &root.path().join(format!("{named}.ms")),
+            &root.path().join(format!("{mode}-{named}.ms")),
             &measures,
             BUDGET,
             32,
         );
         sm.observe(&scan(1000)).unwrap();
+        if mode != "simplenoise" {
+            sm.set_noise(&NoiseSpec {
+                mode: mode.into(),
+                water_vapour_mm: 1.,
+                ..NoiseSpec::default()
+            })
+            .unwrap();
+            sm.reset();
+        }
         let before = reserved_memory();
         let call = measured(|| {
             sm.set_noise(&NoiseSpec {
+                mode: mode.into(),
+                water_vapour_mm: 1.,
                 simple_noise_jy: 0.25,
                 on_the_fly: false,
                 table: if named {
@@ -44,6 +62,8 @@ fn additive_fields_hold_their_admission_and_reset_releases_unsaved_fields() {
             let retained = reserved_memory();
             assert!(retained > before + 1_000_000);
             sm.set_noise(&NoiseSpec {
+                mode: mode.into(),
+                water_vapour_mm: 1.,
                 simple_noise_jy: 0.5,
                 on_the_fly: false,
                 table: root.path().join("noise.cal").to_string_lossy().into_owned(),

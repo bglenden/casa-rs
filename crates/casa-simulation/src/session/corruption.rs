@@ -70,8 +70,8 @@ pub struct NoiseSpec {
     /// `waterheight`); the ground's temperature is `tsys`'s `tground`.
     pub atmosphere: AtmosphereSpec,
     /// `OTF`: draw fresh additive noise at each corrupt. False reuses a
-    /// precomputed A Noise field for simplenoise; Tsys false remains unfinished
-    /// (#1292). A named field is saved as `<root>.A.cal`. This is separate
+    /// precomputed A Noise field. Tsys modes scale its unit draws by their
+    /// noise model. A named field is saved as `<root>.A.cal`. This is separate
     /// from the optional Tsys noise-scale table.
     pub on_the_fly: bool,
 }
@@ -150,9 +150,9 @@ impl Simulator {
     ///
     /// - A mode CASA does not know: CASA logs "unsupported mode … in
     ///   setnoise()" and returns `False`.
-    /// - `OTF=False` for a Tsys mode: not yet implemented (#1292).
-    ///   Simplenoise reuses a saved additive field; Tsys modes write an
-    ///   optional noise-scale table at close from this call's snapshot.
+    /// - Offline noise on observations added later remains unfinished
+    ///   (#1292); corruption refuses it before DATA changes. Named output
+    ///   tables are written at close from this call's snapshots.
     /// - No rows observed yet: CASA cannot size the term on an empty
     ///   MeasurementSet and returns `False`, adding no term.
     /// - A Tsys mode with a water vapour above 100 mm, or a zenith Tsys at
@@ -174,15 +174,6 @@ impl Simulator {
                 )));
             }
         };
-        if !spec.on_the_fly {
-            if mode == NoiseMode::Simple {
-                return self.set_offline_noise(spec);
-            }
-            return Err(SimulatorError::not_yet_implemented(
-                "setnoise(OTF=False), which writes a calibration table, is not yet implemented \
-                 for Tsys modes in casa-rs (#1292)",
-            ));
-        }
         if mode == NoiseMode::Simple {
             tracing::info!(
                 "Using simple noise model with noise level of {} Jy",
@@ -220,11 +211,15 @@ impl Simulator {
                 tracing::info!("Creating TF NOISE Calibration structure for data corruption.");
             }
         }
-        self.noise_terms.push(NoiseTerm {
-            seed: self.seed,
-            level,
-            applications: 0,
-        });
+        if spec.on_the_fly {
+            self.noise_terms.push(NoiseTerm {
+                seed: self.seed,
+                level,
+                applications: 0,
+            });
+        } else {
+            self.set_offline_noise(spec, level)?;
+        }
         if let Some(table) = table {
             self.noise_tables.retain(|old| old.path != table.path);
             self.noise_tables.push(table);
@@ -364,7 +359,7 @@ impl Simulator {
     /// atmosphere for the windows defined then.
     fn check_noise_coverage(&self, terms: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
         for term in &self.noise_terms {
-            if let NoiseLevel::Fixed(field) = &term.level {
+            if let NoiseLevel::Fixed(field) | NoiseLevel::ScaledFixed { field, .. } = &term.level {
                 if self.scans.iter().enumerate().any(|(index, scan)| {
                     terms
                         .iter()

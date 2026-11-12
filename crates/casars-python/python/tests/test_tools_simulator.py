@@ -717,8 +717,8 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
         assert sm.setnoise(mode="bogus") is False
     assert caplog.messages[0].startswith("Caught exception: Error in Simulator::create_corrupt")
     assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
-    with pytest.raises(NotImplementedError, match="OTF=False"):
-        sm.setnoise(mode="tsys-manual", OTF=False)
+    assert sm.setnoise(mode="tsys-manual", OTF=False)
+    assert sm.reset()
     caplog.clear()
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.setnoise(mode="tsys-manual", pwv="200mm") is False
@@ -781,6 +781,31 @@ def test_setnoise_writes_its_tsys_table_after_reset(tmp_path: Path, mode: str, v
     assert gains.size == 3 * 4 * (1 if mode == "tsys-manual" else 4)
     assert np.all(np.isfinite(gains)) and np.all(gains.real > 0)
     assert np.all(gains.imag == 0)
+
+
+@needs_measures
+@pytest.mark.parametrize("mode", ["tsys-manual", "tsys-atm"])
+def test_offline_tsys_reuses_unit_a_noise(tmp_path: Path, mode: str) -> None:
+    sm = simulator()
+    assert sm.open(str(tmp_path / "data.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setseed(19)
+    assert sm.setnoise(mode=mode, OTF=False, simplenoise="99Jy", pwv="1mm", tau=0.05,
+                       table=str(tmp_path / "noise.cal"))
+    assert sm.corrupt() and sm.corrupt()
+    assert sm.reset() and sm.close()
+    a = np.asarray(Table.open(tmp_path / "noise.A.cal").get_column("CPARAM"))
+    t = np.asarray(Table.open(tmp_path / "noise.T.cal").get_column("CPARAM"))[:, 0, :]
+    main = Table.open(tmp_path / "data.ms")
+    data = np.asarray(main.get_column("DATA"))
+    p = np.asarray(main.get_column("ANTENNA1"))
+    q = np.asarray(main.get_column("ANTENNA2"))
+    integration = np.arange(30) // 10
+    denominator = t[integration * 4 + p] * t[integration * 4 + q].conj()
+    expected = -2 * a[:, [0, 3], :] / denominator[:, None, :]
+    assert np.linalg.norm(data - expected) / np.linalg.norm(expected) < 1e-3
+    assert abs(np.mean(a.real**2) - 1) < 0.4
 
 
 def tsys_atm_data(path: Path, **site: Any) -> np.ndarray:
