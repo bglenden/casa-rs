@@ -132,10 +132,13 @@ impl Simulator {
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
     ///   raises.
     /// - A table of other than `G` or `D` solutions, or an interpolation
-    ///   other than `linear` or `nearest`: not yet implemented. (A table
-    ///   without a solution, or with a flagged one, for an antenna and integration is refused at
-    ///   `corrupt`.)
+    ///   other than `linear` or `nearest`: not yet implemented.
     /// - No rows observed yet: refused, as `setgain` refuses.
+    ///
+    /// Flagged G receptors and missing G antennas use unit gains, as in
+    /// CASA. For D tables an invalid receptor or missing antenna uses
+    /// neutral leakage (both coefficients zero), correcting CASA's unit
+    /// leakage substitution. Input data flags, weights and sigma persist.
     pub fn set_apply(&mut self, spec: &ApplySpec) -> SimulatorResult<()> {
         let interp = apply_interpolation(&spec.interp)?;
         // VisCal::corrupt turns weight calibration off. G/D table lookup
@@ -217,8 +220,12 @@ impl Simulator {
                 let (per_window, _) = self.integration_counts();
                 let bytes = TermBytes::per_chunk(&per_window, antennas);
                 let mut reservation = self.admit_term(bytes)?;
-                let (chunks, values) =
-                    self.applied_solutions(&table.lookup.lookup, &table.spwmap, &per_window)?;
+                let (chunks, values) = self.applied_solutions(
+                    &table.lookup.lookup,
+                    &table.spwmap,
+                    &per_window,
+                    table.kind,
+                )?;
                 reservation.retain(bytes.kept);
                 Ok(Arc::new(HeldTerm::new(
                     applied(table.kind, antennas, chunks, values),
@@ -236,6 +243,7 @@ impl Simulator {
         lookup: &CalibrationTableLookup,
         spwmap: &[i64],
         per_window: &[usize],
+        kind: JonesKind,
     ) -> SimulatorResult<(Chunks, Vec<[Complex32; 2]>)> {
         let table_window = |window: usize| {
             spwmap
@@ -243,6 +251,10 @@ impl Simulator {
                 .and_then(|&mapped| usize::try_from(mapped).ok())
                 .unwrap_or(window)
         };
+        // JonesDiag::setMatByOk substitutes unit gains per receptor.
+        // JonesGenLin instead substitutes one for BOTH leakage values;
+        // correct that data-corrupting defect with the neutral zero pair.
+        let neutral = Complex32::new(if kind == JonesKind::Gain { 1.0 } else { 0.0 }, 0.0);
         let mut chunks = Chunks::with_capacity(per_window);
         let mut values = Vec::with_capacity(per_window.iter().sum::<usize>() * self.antennas.len());
         for (index, scan) in self.scans.iter().enumerate() {
@@ -250,20 +262,15 @@ impl Simulator {
             for time_s in self.integration_times_s(index) {
                 chunks.push(scan.spectral_window_id, time_s, scan.field_id);
                 for antenna in 0..self.antennas.len() {
-                    let solution = lookup
+                    let Some(solution) = lookup
                         .solution(scan.field_id as i32, window as i32, antenna as i32, time_s)
                         .map_err(raised)?
-                        .ok_or_else(|| {
-                            not_yet(format!(
-                                "of a table without a solution for antenna {antenna} in spectral \
-                                 window {window} (CASA leaves the window uncorrupted)"
-                            ))
-                        })?;
+                    else {
+                        values.push([neutral; 2]);
+                        continue;
+                    };
                     if solution.channels != 1 {
                         return Err(not_yet("of a table of solutions per channel"));
-                    }
-                    if solution.flags.iter().any(|&flag| flag) {
-                        return Err(not_yet("of a table with flagged solutions"));
                     }
                     if solution.receptors != 2 {
                         return Err(not_yet(format!(
@@ -271,7 +278,15 @@ impl Simulator {
                             solution.receptors
                         )));
                     }
-                    values.push([solution.value(0, 0), solution.value(1, 0)]);
+                    let invalid_leakage =
+                        kind == JonesKind::Leakage && solution.flags.iter().any(|&flag| flag);
+                    values.push(std::array::from_fn(|receptor| {
+                        if invalid_leakage || solution.flags[receptor] {
+                            neutral
+                        } else {
+                            solution.value(receptor, 0)
+                        }
+                    }));
                 }
             }
         }

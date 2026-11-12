@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "cd842e0e3804730301a65e552392af83f67027b6",
+ "audit_revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -260,13 +260,14 @@
   },
   "setapply": {
    "status": "Partial",
-   "scope": "Applies G and D tables with linear or nearest interpolation. G/D corruption preserves WEIGHT and SIGMA for either calwt setting; t and opacity leave these tables' per-row interpolation unchanged, as in CASA. Refused: other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations.",
+   "scope": "Applies G and D tables with linear or nearest interpolation. G/D corruption preserves WEIGHT and SIGMA for either calwt setting; t and opacity leave these tables' per-row interpolation unchanged, as in CASA. Flagged G receptors and missing G antennas use unit gains. Invalid D antennas use neutral zero leakage, correcting CASA's unit-leakage defect. Refused: other table types, per-channel solutions, solutions without two receptors, and other interpolations.",
    "evidence": [
     "signature",
     "binding-tests",
     "corruptions-20261103",
     "refusals",
-    "apply-parameters-20261112"
+    "apply-parameters-20261112",
+    "apply-flags-20261112"
    ],
    "issue": 1053
   },
@@ -1022,6 +1023,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "invalid-leakage-solutions",
+   "record": "Invalid leakage solutions become unit leakage",
+   "inputs": "D calibration table with either receptor flagged or an antenna missing; nearest/linear time interpolation.",
+   "casa": "Substitutes both leakage coefficients with one, adding parallel hands to cross hands;3+4j becomes9+12j on an autocorrelation. Data flags remain unchanged.",
+   "ours": "Uses the neutral zero leakage pair for that invalid antenna, preserving valid antenna/time solutions. G retains CASA per-receptor unit substitution.",
+   "rationale": "One is neutral for diagonal gain but fabricates leakage in the linear D operator.",
+   "impact": "Invalid calibration cannot manufacture large unflagged cross-hand signals. Raw defective CASA results remain recorded and C++ table consumption reproduces them independently.",
+   "evidence": [
+    "bugs-record",
+    "apply-flags-20261112"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
   }
  ],
  "evidence": {
@@ -1426,6 +1442,23 @@
    "revision": "594f02d6cfae7e630bb0a5891a4684465eec9c97",
    "command": "CASAPY tools/simulation/sm_apply_parameters_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_parameters_readback.py --root EXPORT --fixture FIXTURE --out OUT; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
    "receipt": "resources/casa-compat/evidence/sm-apply-parameters-20261112.json"
+  },
+  "apply-flags-20261112": {
+   "kind": "Independent invalid-solution CASA controls and C++ native-table consumption",
+   "state": "passed",
+   "result": "24 cases pass CPU W1/W3 (48 runs), maximum DATA NRMS7.53e-8 under1e-3. C++ reads48 native MS/table pairs and actually applies24 tables with zero residual against unmodified CASA outputs. Full simulation/binding367 passed/two parent-executed helper ignores; installed wheel61 passed/two documented skips; strict Clippy, fmt, architecture and docs pass.",
+   "scope": "G/D nearest/linear; endpoint and receptor flags, missing antenna; exact stored TIME and unchanged flags/weights/sigma/MODEL. D uses separately retained neutral-CASA controls under the documented invalid-unit-leakage correction. Shared numerical/memory path is unchanged.",
+   "links": [
+    "tools/simulation/sm_apply_flags_oracle.py",
+    "tools/simulation/sm_apply_flags_readback.py",
+    "crates/casa-simulation/tests/apply_flags.rs",
+    "crates/casa-simulation/tests/data/sm_apply_flags_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
+   "revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
+   "command": "CASAPY tools/simulation/sm_apply_flags_oracle.py --out OUT --fixture FIXTURE --controls crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz; CASA_RS_APPLY_FLAGS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_flags --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_flags_readback.py --root EXPORT --fixture FIXTURE --out OUT; cargo clippy -p casa-simulation -p casars-python --all-targets -- -D warnings; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
+   "receipt": "resources/casa-compat/evidence/sm-apply-flags-20261112.json"
   }
  }
 }
