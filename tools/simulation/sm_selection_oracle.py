@@ -17,6 +17,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import time
 
 import numpy as np
 
@@ -83,6 +84,17 @@ CASES = [
     {"name": "selected_gains_then_increment", "steps": [predict(), select(field=[1]), *GAINS, predict(["b"], incremental=True)]},
     {"name": "query_gains_then_increment", "steps": [predict(), select(query="ANTENNA1 != ANTENNA2"), *GAINS, predict(["b"], incremental=True)]},
     {"name": "gains_then_subset_replacement", "steps": [predict(), *GAINS, select(field=[1]), predict(["b"])]},
+    {"name": "fractional_integer_division", "steps": [select(query="ANTENNA1/2>0"), predict()]},
+    {"name": "negative_floor_division", "steps": [select(query="-ANTENNA1//2 == -1"), predict()]},
+    {"name": "negative_integer_modulo", "steps": [select(query="-ANTENNA1%3 == 2"), predict()]},
+    {"name": "negative_divisor_modulo", "steps": [select(query="ANTENNA1%-3 == -1"), predict()]},
+    {"name": "negative_float_modulo", "steps": [select(query="(-ANTENNA1*1.0)%3.0 == 2.0"), predict()]},
+    {"name": "boolean_arithmetic_keeps_field", "steps": [select(field=[1], query="TRUE+TRUE>0", returned=False), predict()]},
+    {"name": "mixed_boolean_arithmetic_keeps_field", "steps": [select(field=[1], query="TRUE+1>0", returned=False), predict()]},
+    {"name": "short_circuit_type_error_keeps_field", "steps": [select(field=[1], query="TRUE OR (TRUE+TRUE>0)", returned=False), predict()]},
+    {"name": "division_zero_is_ieee", "steps": [select(query="ANTENNA1/0>0"), predict()]},
+    {"name": "division_zero_nan_ordering", "steps": [select(query="ANTENNA1/ANTENNA1 >= 0"), predict()]},
+    {"name": "integer_power_is_real", "steps": [select(query="(ANTENNA1+2)**24 > 1e18"), predict()]},
 ]
 
 
@@ -142,6 +154,7 @@ def worker(spec, out, fixture):
     else:
         mid_time = None
     calls = []
+    calculation_started = time.perf_counter()
     for step in spec["steps"]:
         args = dict(step)
         operation = args.pop("op")
@@ -171,6 +184,8 @@ def worker(spec, out, fixture):
         returned = getattr(sm, operation)(**args)
         calls.append({**step, "returned": returned})
         assert returned == expected, (step, returned)
+    sm.close()
+    calculation_seconds = time.perf_counter() - calculation_started
     rows = read_rows(path)
     tb = table()
     tb.open(str(path))
@@ -180,8 +195,8 @@ def worker(spec, out, fixture):
                           time_s=float(tb.getcell("TIME", row)), scan=int(tb.getcell("SCAN_NUMBER", row)))
     finally:
         tb.close()
-    sm.close()
-    save(fixture, [{**spec, "calls": calls, "rows": rows, "cleanup": "returned"}])
+    save(fixture, [{**spec, "calls": calls, "rows": rows, "cleanup": "returned",
+                    "calculation_seconds": calculation_seconds}])
     print(spec["name"], "rows", len(rows), flush=True)
 
 

@@ -34,7 +34,7 @@ fn fixture() -> Value {
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
-    assert_eq!(fixture["cases"].as_array().unwrap().len(), 40);
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 51);
     fixture
 }
 
@@ -205,8 +205,14 @@ fn fresh_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec<
     let images = models(directory.path());
     let path = directory.path().join("selection.ms");
     let mut sm = observed(&path, workers, backend);
+    let calculation_started = std::time::Instant::now();
     apply_steps(&mut sm, case, &images, &path);
     close(sm, case, backend);
+    println!(
+        "CALCULATION_TIME {} W{workers} {backend:?} {}",
+        case["name"].as_str().unwrap(),
+        calculation_started.elapsed().as_secs_f64()
+    );
     let (actual, correlations) = read_main(&path);
     assert_eq!(correlations, 2);
     let expected = case["rows"].as_array().unwrap();
@@ -278,8 +284,14 @@ fn opened_case(case: &Value, workers: usize, backend: BackendRequest) -> Vec<Vec
         },
     )
     .unwrap();
+    let calculation_started = std::time::Instant::now();
     apply_steps(&mut sm, case, &images, &path);
     close(sm, case, backend);
+    println!(
+        "CALCULATION_TIME {} W{workers} {backend:?} {}",
+        case["name"].as_str().unwrap(),
+        calculation_started.elapsed().as_secs_f64()
+    );
     let (rows, correlations) = read_main(&path);
     assert_eq!(correlations, 2);
     assert_eq!(rows.len(), case["rows"].as_array().unwrap().len());

@@ -110,7 +110,7 @@ def main():
         fixture = json.load(handle)
     assert fixture["casa_version"] == casatasks.version_string()
     cases = {case["name"]: case for case in fixture["cases"]}
-    assert len(cases) == 40
+    assert len(cases) == 51
     expected = {(name, backend, workers) for name in cases
                 for backend, workers in (("Cpu", 1), ("Cpu", 3), ("Metal", 3))}
     seen, reports = set(), []

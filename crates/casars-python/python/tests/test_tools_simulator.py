@@ -472,6 +472,8 @@ def test_setdata_takes_subsets_and_header_queries(tmp_path: Path) -> None:
     assert sm.setdata(fieldid=[1])
     assert sm.setdata(fieldid=[0, 1], msselect="ANTENNA1==0")
     assert sm.setdata(fieldid=[1], msselect="1") is False
+    assert sm.setdata(fieldid=[1], msselect="TRUE+TRUE>0") is False
+    assert sm.setdata(fieldid=[1], msselect="TRUE OR (TRUE+TRUE>0)") is False
     with pytest.raises(NotImplementedError, match="#1053"):
         sm.setdata(fieldid=[0, 1], msselect="UVW[1]>0")
     with pytest.raises(TypeError):
