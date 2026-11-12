@@ -459,7 +459,7 @@ def test_observemany_pads_one_name_as_casa_does_and_raises_for_mismatched_lists(
 
 
 @needs_measures
-def test_setdata_takes_a_selection_of_every_row(tmp_path: Path) -> None:
+def test_setdata_takes_subsets_and_header_queries(tmp_path: Path) -> None:
     sm = opened(tmp_path)
     configure(sm)
     assert sm.setfield(sourcename="G", sourcedirection="J2000 23h40m00 30d00m00")
@@ -469,13 +469,48 @@ def test_setdata_takes_a_selection_of_every_row(tmp_path: Path) -> None:
     assert sm.setdata(fieldid=list(range(2)))
     assert sm.setdata(fieldid=[])
     assert sm.setdata(spwid=0, fieldid=(0, 1), msselect="")
-    with pytest.raises(NotImplementedError, match="1 of the 2 scans"):
-        sm.setdata(fieldid=[1])
-    with pytest.raises(NotImplementedError, match="msselect"):
-        sm.setdata(fieldid=[0, 1], msselect="ANTENNA1==0")
+    assert sm.setdata(fieldid=[1])
+    assert sm.setdata(fieldid=[0, 1], msselect="ANTENNA1==0")
+    assert sm.setdata(fieldid=[1], msselect="1") is False
+    with pytest.raises(NotImplementedError, match="#1053"):
+        sm.setdata(fieldid=[0, 1], msselect="UVW[1]>0")
     with pytest.raises(TypeError):
         sm.setdata(fieldid="0")
     sm.close()
+
+
+@needs_measures
+def test_selected_components_retain_call_order_and_observe_resets_selection(tmp_path: Path) -> None:
+    from casars.tools import componentlist
+
+    path = tmp_path / "point.cl"
+    cl = componentlist()
+    assert cl.addcomponent(flux=1.0, fluxunit="Jy", dir=DIRECTION, shape="point", freq="1.4GHz")
+    assert cl.rename(str(path))
+    assert cl.close(log=False)
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setfield(sourcename="G", sourcedirection=DIRECTION)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    assert sm.observe("G", "L", starttime="10s", stoptime="20s")
+    assert sm.setdata(fieldid=[1], msselect="ANTENNA1!=ANTENNA2")
+    assert sm.predict(complist=str(path))
+    assert sm.setdata(fieldid=[0], msselect="ANTENNA1==0")
+    assert sm.predict(complist=str(path), incremental=True)
+    assert sm.observe("G", "L", starttime="20s", stoptime="30s")
+    assert sm.predict(complist=str(path), incremental=True)
+    assert sm.close()
+    table = Table.open(tmp_path / "x.ms")
+    fields = np.asarray(table.get_column("FIELD_ID"))
+    first = np.asarray(table.get_column("ANTENNA1"))
+    second = np.asarray(table.get_column("ANTENNA2"))
+    scans = np.asarray(table.get_column("SCAN_NUMBER"))
+    earlier = scans < np.max(scans)
+    selected = earlier & (((fields == 1) & (first != second)) | ((fields == 0) & (first == 0)))
+    assert selected.any() and (~selected).any()
+    data = np.asarray(table.get_column("DATA"))
+    np.testing.assert_allclose(data[selected], 2.0, rtol=0, atol=1e-6)
+    np.testing.assert_allclose(data[~selected], 1.0, rtol=0, atol=1e-6)
 
 
 @needs_measures
