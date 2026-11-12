@@ -12,16 +12,20 @@ NumPy is needed.
 from __future__ import annotations
 
 import os
+import contextlib
+import io
+import json
 import pathlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from simobserve_parity import CASES, compare_frequency_frames, compare_images, copy_inputs, repredict
+from simobserve_parity import CASES, casars_params, compare_frequency_frames, compare_images, copy_inputs, main, repredict
 
 
 class ComponentLists:
@@ -198,6 +202,63 @@ class InputSelectionTest(unittest.TestCase):
             copy_inputs(data, out, selected)
             self.assertEqual((pathlib.Path(out) / "inputs/core5ps.skymodel/data").read_text(), "model")
             self.assertFalse((pathlib.Path(out) / "inputs/core5ps.clist").exists())
+
+
+class ExpectedOutcomeTest(unittest.TestCase):
+    """Matching errors do not prove that a supported simulation works."""
+
+    def run_case(self, expect_refusal, refused):
+        case = {"name": "probe", "params": {}, "expect_refusal": expect_refusal}
+        with tempfile.TemporaryDirectory() as out:
+            args = ["simobserve_parity.py", "--out", out, "--casars-bin", "unused", "--casatestdata", "unused"]
+            with (
+                patch("simobserve_parity.CASES", [case]),
+                patch.object(sys, "argv", args),
+                patch("simobserve_parity.copy_inputs"),
+                patch("simobserve_parity.tools", return_value={}),
+                patch("simobserve_parity.run_casa", side_effect=RuntimeError("refused") if refused else None),
+                patch("simobserve_parity.run_casars", return_value=("unused", {"error": "refused"} if refused else {})),
+                patch("simobserve_parity.products", return_value=[]),
+                patch("simobserve_parity.compare_case", return_value={"name": "probe", "differences": []}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                pathlib.Path(out, "casa").mkdir()
+                status = main()
+            return status, json.loads(pathlib.Path(out, "report.json").read_text())[0]
+
+    def test_matching_refusals_fail_a_success_case(self):
+        status, report = self.run_case(expect_refusal=False, refused=True)
+        self.assertEqual(status, 1)
+        self.assertIn("expected a successful simulation, not a refusal", report["differences"])
+
+    def test_matching_successes_fail_a_refusal_case(self):
+        status, report = self.run_case(expect_refusal=True, refused=False)
+        self.assertEqual(status, 1)
+        self.assertIn("expected a refusal, but both simulations succeeded", report["differences"])
+
+    def test_the_expected_success_or_refusal_passes(self):
+        for refused in (False, True):
+            status, report = self.run_case(expect_refusal=refused, refused=refused)
+            self.assertEqual(status, 0)
+            self.assertEqual(report["differences"], [])
+
+
+class ScheduleAlignmentTest(unittest.TestCase):
+    def test_time_alignment_preserves_the_numeric_hours_input_form(self):
+        params = {"hourangle": "-1.5", "refdate": "2017/01/02/09:30:00"}
+        with (patch("simobserve_parity.hour_angle_s", return_value=-5400.0),
+              patch("simobserve_parity.tai_minus_utc_s", return_value=37.0)):
+            aligned = casars_params({}, params)
+        self.assertAlmostEqual(float(aligned["hourangle"]) * 3600.0, -5363.0, places=9)
+        self.assertEqual(params["hourangle"], "-1.5")
+        self.assertEqual(aligned["refdate"], params["refdate"])
+
+    def test_quantity_and_transit_inputs_keep_the_seconds_alignment(self):
+        for hourangle, seconds in (("90min", 5400.0), ("transit", 0.0)):
+            with (patch("simobserve_parity.hour_angle_s", return_value=seconds),
+                  patch("simobserve_parity.tai_minus_utc_s", return_value=36.0)):
+                aligned = casars_params({}, {"hourangle": hourangle})
+            self.assertEqual(aligned["hourangle"], f"{seconds + 36.0}s")
 
 
 if __name__ == "__main__":

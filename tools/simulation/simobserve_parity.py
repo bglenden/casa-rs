@@ -70,6 +70,9 @@ INPUTS = {
     "flatone.model": "unittest/simobserve/flatone.model",
     "flatone.single.ptg.txt": "unittest/simobserve/flatone.single.ptg.txt",
 }
+LOCAL_INPUTS = {
+    "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
+}
 
 PPDISK_VLA = {
     "skymodel": "inputs/input50pc_672GHz.fits",
@@ -180,14 +183,78 @@ CASES = [
             CORE, setpointings=False, ptgfile="inputs/flatone.single.ptg.txt", integration="2s", totaltime="60s"
         ),
     },
+    # Three supplied pointings with different dwell times, repeated for
+    # two full map passes. This exercises FIELD/POINTING and scheduling.
+    {
+        "name": "pointing_file_multiple",
+        "params": dict(
+            CORE, setpointings=False, ptgfile="inputs/multiple.pointings.ptg.txt",
+            totaltime="120s",
+        ),
+    },
+    {
+        "name": "pointing_explicit_spacing",
+        "params": dict(
+            CORE, maptype="hexagonal", mapsize=["16arcsec", "12arcsec"],
+            pointingspacing="4arcsec", totaltime="120s",
+        ),
+    },
     # Non-default frequency reference codes, checked in the output MS as
     # well as through the visibility comparison.
     {"name": "frame_topo", "params": dict(CORE, outframe="TOPO")},
     {"name": "frame_bary", "params": dict(CORE, outframe="BARY")},
+    {"name": "frame_lsrd", "params": dict(CORE, outframe="LSRD", totaltime="60s")},
+    {"name": "frame_geo", "params": dict(CORE, outframe="GEO", totaltime="60s")},
+    {"name": "frame_galacto", "params": dict(CORE, outframe="GALACTO", totaltime="60s")},
+    {"name": "frame_lgroup", "params": dict(CORE, outframe="LGROUP", totaltime="60s")},
+    {"name": "frame_cmb", "params": dict(CORE, outframe="CMB", totaltime="60s")},
+    # Non-transit scheduling across dates with different TAI-UTC offsets.
+    # A time suffix in refdate is discarded in favor of hourangle.
+    {
+        "name": "schedule_hour_number",
+        "params": dict(CORE, hourangle="-1.5", refdate="2017/01/02/09:30:00", totaltime="60s"),
+    },
+    {
+        "name": "schedule_hour_quantity",
+        "params": dict(CORE, hourangle="90min", refdate="2016/06/21/12:34:56", totaltime="60s"),
+    },
+    {
+        "name": "schedule_refdate_modern",
+        "params": dict(CORE, hourangle="transit", refdate="2025/01/15", totaltime="60s"),
+    },
+    {
+        "name": "schedule_square",
+        "params": dict(
+            CORE, maptype="square", hourangle="-30min", refdate="2015/06/29", totaltime="60s"
+        ),
+    },
+    # Model overrides must reach both the prepared image and the observed
+    # geometry, not just the task's accepted parameter list (#1053).
+    {
+        "name": "model_direction",
+        "params": dict(CORE, indirection="J2000 19h30m00 -30d00m00", totaltime="60s"),
+    },
+    {"name": "model_cell", "params": dict(CORE, incell="0.03arcsec", totaltime="60s")},
+    {
+        "name": "model_direction_cell",
+        "params": dict(
+            CORE, indirection="J2000 19h30m00 -30d00m00", incell="0.03arcsec", totaltime="60s"
+        ),
+    },
+    # A component-only model with an even channel count exercises the
+    # half-pixel spectral reference, channel spacing and prediction.
+    {
+        "name": "components_cube",
+        "params": dict(
+            CORE, skymodel="", complist="inputs/core5ps.clist", compwidth="8GHz", comp_nchan=4,
+            totaltime="60s",
+        ),
+    },
     # A model whose 4″ cells the configuration cannot sample: both refuse
     # with CASA's message, and remove the flat model.
     {
         "name": "coarse_cell",
+        "expect_refusal": True,
         "params": dict(CORE, skymodel="inputs/flatone.model"),
     },
 ]
@@ -238,8 +305,18 @@ def casars_params(t, params: dict) -> dict:
     documentation)."""
     shifted = dict(params)
     refdate = params.get("refdate", "2014/01/01")
-    offset = hour_angle_s(t, params.get("hourangle", "transit")) + tai_minus_utc_s(t, refdate)
+    hourangle = params.get("hourangle", "transit")
+    shift = tai_minus_utc_s(t, refdate)
+    offset = hour_angle_s(t, hourangle) + shift
     shifted["hourangle"] = f"{offset!r}s"
+    # Preserve bare numeric hours so those scenarios test the native
+    # task's numeric-hour parser rather than only its seconds parser.
+    try:
+        hours = float(hourangle)
+    except ValueError:
+        pass
+    else:
+        shifted["hourangle"] = repr(hours + shift / 3600.0)
     return shifted
 
 
@@ -577,18 +654,18 @@ def copy_inputs(casatestdata: str, out: str, cases=None) -> None:
     """Copy the inputs used by the selected cases, or all known inputs."""
     inputs = os.path.join(out, "inputs")
     os.makedirs(inputs, exist_ok=True)
-    needed = set(INPUTS)
+    needed = set(INPUTS) | set(LOCAL_INPUTS)
     if cases is not None:
         needed = {value.removeprefix("inputs/") for case in cases
                   for value in case["params"].values()
                   if isinstance(value, str) and value.startswith("inputs/")}
-    for name, path in INPUTS.items():
+    for name, path in {**INPUTS, **LOCAL_INPUTS}.items():
         if name not in needed:
             continue
         target = os.path.join(inputs, name)
         if os.path.exists(target):
             continue
-        source = os.path.join(casatestdata, path)
+        source = path if name in LOCAL_INPUTS else os.path.join(casatestdata, path)
         if os.path.isdir(source):
             shutil.copytree(source, target)
         else:
@@ -629,12 +706,16 @@ def main() -> int:
         casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
         if casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
+            if not case.get("expect_refusal", False):
+                report["differences"].append("expected a successful simulation, not a refusal")
             if casa_error != outcome.get("error"):
                 report["differences"].append(f"CASA raised {casa_error!r}, casa-rs {outcome.get('error')!r}")
             elif products(casa) != products(casars):
                 report["differences"].append(f"files: CASA {products(casa)} against casa-rs {products(casars)}")
         else:
             report = compare_case(t, case, casa, casars, out, args)
+            if case.get("expect_refusal", False):
+                report["differences"].append("expected a refusal, but both simulations succeeded")
         # The task's own times: CASA's simobserve call, casa-rs's run report.
         report["seconds"] = {"casa": casa_s, "casa-rs": outcome.get("elapsed_s")}
         reports.append(report)
