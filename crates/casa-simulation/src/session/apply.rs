@@ -46,9 +46,9 @@ const LOOKUP_PHASE: &str = "loading a setapply calibration table";
 pub struct ApplySpec {
     /// `table`: the calibration table to corrupt by.
     pub table: String,
-    /// `type`: its calibration type (`G` or `D`); empty takes the table's.
+    /// `type`: its calibration type (`G`, `D` or scalar `T`); empty takes the table's.
     pub kind: String,
-    /// `t`: CASA records this interval, but G/D table application still
+    /// `t`: CASA records this interval, but G/D/T table application still
     /// evaluates the requested interpolation at each data time.
     pub interval_s: f64,
     /// `interp`: the time interpolation (`linear` or `nearest`), optionally
@@ -60,7 +60,7 @@ pub struct ApplySpec {
     /// `spwmap`: each data window's table window; −1, or a window past
     /// its end, is the data window itself.
     pub spwmap: Vec<i64>,
-    /// `opacity`: used by CASA's TOPAC term; ignored for the supported G/D
+    /// `opacity`: used by CASA's TOPAC term; ignored for the supported G/D/T
     /// tables, as their application ignores it in CASA.
     pub opacity: f64,
 }
@@ -74,12 +74,34 @@ pub(crate) enum JonesSource {
     Applied(AppliedTable),
 }
 
+/// A loaded table's mathematical operator. A scalar T parameter expands
+/// to the same gain on both receptors; it shares the gain kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppliedKind {
+    Gain,
+    Leakage,
+    Scalar,
+}
+
+impl AppliedKind {
+    fn operator(self) -> JonesKind {
+        match self {
+            Self::Gain | Self::Scalar => JonesKind::Gain,
+            Self::Leakage => JonesKind::Leakage,
+        }
+    }
+
+    fn receptors(self) -> usize {
+        if self == Self::Scalar { 1 } else { 2 }
+    }
+}
+
 /// A table `setapply` set: the table as it was loaded, and how to apply it.
 #[derive(Clone)]
 pub(crate) struct AppliedTable {
     path: PathBuf,
     lookup: Arc<HeldLookup>,
-    kind: JonesKind,
+    kind: AppliedKind,
     spwmap: Vec<i64>,
 }
 
@@ -130,18 +152,19 @@ impl Simulator {
     ///
     /// - The table cannot be read, its type is not the `type` asked for,
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
-    ///   raises.
-    /// - A table of other than `G` or `D` solutions, or an interpolation
+    ///   raises. A table whose parameter count disagrees with its type
+    ///   raises at `corrupt`, as CASA does.
+    /// - Other than `G`, `D` or scalar `T` solutions, or interpolation
     ///   other than `linear` or `nearest`: not yet implemented.
     /// - No rows observed yet: refused, as `setgain` refuses.
     ///
-    /// Flagged G receptors and missing G antennas use unit gains, as in
-    /// CASA. For D tables an invalid receptor or missing antenna uses
-    /// neutral leakage (both coefficients zero), correcting CASA's unit
+    /// Flagged G/T parameters and missing G/T antennas use unit gains,
+    /// as in CASA. A scalar T parameter applies equally to all correlations.
+    /// For D tables an invalid receptor or missing antenna uses neutral leakage (both coefficients zero), correcting CASA's unit
     /// leakage substitution. Input data flags, weights and sigma persist.
     pub fn set_apply(&mut self, spec: &ApplySpec) -> SimulatorResult<()> {
         let interp = apply_interpolation(&spec.interp)?;
-        // VisCal::corrupt turns weight calibration off. G/D table lookup
+        // VisCal::corrupt turns weight calibration off. G/D/T table lookup
         // uses each row's time regardless of t, and only TOPAC reads opacity.
         if spec.table.is_empty() {
             return Err(raised("No calibration table given."));
@@ -160,8 +183,9 @@ impl Simulator {
             }
         };
         let kind = match kind.as_str() {
-            "G" => JonesKind::Gain,
-            "D" => JonesKind::Leakage,
+            "G" => AppliedKind::Gain,
+            "D" => AppliedKind::Leakage,
+            "T" => AppliedKind::Scalar,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
         self.require_rows()?;
@@ -228,7 +252,7 @@ impl Simulator {
                 )?;
                 reservation.retain(bytes.kept);
                 Ok(Arc::new(HeldTerm::new(
-                    applied(table.kind, antennas, chunks, values),
+                    applied(table.kind.operator(), antennas, chunks, values),
                     reservation,
                 )))
             }
@@ -243,7 +267,7 @@ impl Simulator {
         lookup: &CalibrationTableLookup,
         spwmap: &[i64],
         per_window: &[usize],
-        kind: JonesKind,
+        kind: AppliedKind,
     ) -> SimulatorResult<(Chunks, Vec<[Complex32; 2]>)> {
         let table_window = |window: usize| {
             spwmap
@@ -254,7 +278,14 @@ impl Simulator {
         // JonesDiag::setMatByOk substitutes unit gains per receptor.
         // JonesGenLin instead substitutes one for BOTH leakage values;
         // correct that data-corrupting defect with the neutral zero pair.
-        let neutral = Complex32::new(if kind == JonesKind::Gain { 1.0 } else { 0.0 }, 0.0);
+        let neutral = Complex32::new(
+            if kind.operator() == JonesKind::Gain {
+                1.0
+            } else {
+                0.0
+            },
+            0.0,
+        );
         let mut chunks = Chunks::with_capacity(per_window);
         let mut values = Vec::with_capacity(per_window.iter().sum::<usize>() * self.antennas.len());
         for (index, scan) in self.scans.iter().enumerate() {
@@ -272,15 +303,22 @@ impl Simulator {
                     if solution.channels != 1 {
                         return Err(not_yet("of a table of solutions per channel"));
                     }
-                    if solution.receptors != 2 {
-                        return Err(not_yet(format!(
-                            "of {}-receptor solutions",
-                            solution.receptors
+                    if solution.receptors != kind.receptors() {
+                        return Err(raised(format!(
+                            "Calibration table has {} parameters per channel; {:?} requires {}",
+                            solution.receptors,
+                            kind,
+                            kind.receptors()
                         )));
                     }
                     let invalid_leakage =
-                        kind == JonesKind::Leakage && solution.flags.iter().any(|&flag| flag);
+                        kind == AppliedKind::Leakage && solution.flags.iter().any(|&flag| flag);
                     values.push(std::array::from_fn(|receptor| {
+                        let receptor = if kind == AppliedKind::Scalar {
+                            0
+                        } else {
+                            receptor
+                        };
                         if invalid_leakage || solution.flags[receptor] {
                             neutral
                         } else {
