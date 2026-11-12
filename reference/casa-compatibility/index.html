@@ -4055,6 +4055,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#apply-parameters-20261112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        apply-parameters-20261112
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8350,6 +8361,17 @@
     <span class="md-ellipsis">
       
         selection-ordered-data-20261112
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apply-parameters-20261112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        apply-parameters-20261112
       
     </span>
   </a>
@@ -13752,8 +13774,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>setapply</code></td>
 <td><code>table='', type='', t=0.0, field=[], interp='linear', calwt=False, spwmap=[-1], opacity=0.0</code></td>
 <td>Partial (#1053)</td>
-<td>Applies G and D tables with linear or nearest interpolation. Refused: calwt, a nonzero t, a nonzero opacity, other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations.</td>
-<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-corruptions-20261103">corruptions-20261103</a>, <a href="#simulator-evidence-refusals">refusals</a></td>
+<td>Applies G and D tables with linear or nearest interpolation. G/D corruption preserves WEIGHT and SIGMA for either calwt setting; t and opacity leave these tables' per-row interpolation unchanged, as in CASA. Refused: other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations.</td>
+<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-corruptions-20261103">corruptions-20261103</a>, <a href="#simulator-evidence-refusals">refusals</a>, <a href="#simulator-evidence-apply-parameters-20261112">apply-parameters-20261112</a></td>
 </tr>
 <tr>
 <td><code>setauto</code></td>
@@ -14707,6 +14729,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>47ad82ce645e213fed9ee5ab726473df03e4626c</code>; CASA: <code>casatools6.7.6-14, casatasks6.7.6.14</code>.</li>
 <li>Command: <code>CASAPY tools/simulation/sm_selection_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SELECTION_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test selection -- --nocapture; CASAPY tools/simulation/sm_selection_readback.py --root EXPORT --fixture FIXTURE --out REPORT; RUST_TEST_THREADS=1 cargo test -p casa-simulation</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/sm-selection-20261112.json</code>.</li>
+</ul>
+<p><a id="simulator-evidence-apply-parameters-20261112"></a></p>
+<h5 id="apply-parameters-20261112">apply-parameters-20261112<a class="headerlink" href="#apply-parameters-20261112" title="Permanent link">&para;</a></h5>
+<p><strong>Independent CASA argument controls and native G/D table consumption through C++ — passed.</strong> 28 controls pass one/three CPU workers, maximum DATA NRMS7.64e-8 under1e-3; WEIGHT/SIGMA and stored TIME are exact. C++ reads all56 native MS/table outputs and actually applies28 native tables with zero DATA residual against the independent reference. Integrated simulation/binding gates366 passed/two parent-executed helper ignores;57 installed-wheel simulator tests and strict Clippy pass. G/D, nearest/linear, nonidentity antenna/time-dependent receptor terms at two endpoints, calwt=True, positive/negative t, nonzero opacity and combined arguments. Native/C++ interoperability covers inputs and outputs. Other calibration constraints remain explicit. No new numerical or allocation path.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/594f02d6cfae7e630bb0a5891a4684465eec9c97/tools/simulation/sm_apply_parameters_oracle.py">tools/simulation/sm_apply_parameters_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/594f02d6cfae7e630bb0a5891a4684465eec9c97/tools/simulation/sm_apply_parameters_readback.py">tools/simulation/sm_apply_parameters_readback.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/594f02d6cfae7e630bb0a5891a4684465eec9c97/crates/casa-simulation/tests/apply_parameters.rs">crates/casa-simulation/tests/apply_parameters.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/594f02d6cfae7e630bb0a5891a4684465eec9c97/crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz">crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz</a></li>
+<li>Revision: <code>594f02d6cfae7e630bb0a5891a4684465eec9c97</code>; CASA: <code>casatools6.7.6-14, casatasks6.7.6.14</code>.</li>
+<li>Command: <code>CASAPY tools/simulation/sm_apply_parameters_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_parameters_readback.py --root EXPORT --fixture FIXTURE --out OUT; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/sm-apply-parameters-20261112.json</code>.</li>
 </ul>
 <h3 id="simutil">simutil<a class="headerlink" href="#simutil" title="Permanent link">&para;</a></h3>
 <h4 id="simutil-method-implementation">simutil method implementation<a class="headerlink" href="#simutil-method-implementation" title="Permanent link">&para;</a></h4>
