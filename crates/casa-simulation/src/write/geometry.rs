@@ -60,6 +60,8 @@ impl RowGeometry {
     /// `antennas`.
     pub(crate) fn noise(&self, antennas: &[Antenna]) -> RowNoise {
         RowNoise {
+            time_s: self.time_s,
+            antennas: [self.antenna1, self.antenna2],
             diameters_m: [
                 antennas[self.antenna1].diameter_m,
                 antennas[self.antenna2].diameter_m,

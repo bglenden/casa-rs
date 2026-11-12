@@ -103,7 +103,7 @@ fn table(path: &Path, output: &Path, case: &Value) {
     } else {
         SimulatedJones::Leakage
     };
-    write_simulated_jones_table(&ms, output, writer_kind, rows).unwrap();
+    write_simulated_jones_table(&ms, output, writer_kind, rows, None).unwrap();
     if frequency::is_frequency(kind) {
         frequency::prepare(output, case);
         return;

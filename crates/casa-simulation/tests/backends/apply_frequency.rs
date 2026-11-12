@@ -67,7 +67,7 @@ fn check_time_mode(mode: &str, full: bool) {
             ),
         })
     });
-    write_simulated_jones_table(&ms, &table, SimulatedJones::Troposphere, rows).unwrap();
+    write_simulated_jones_table(&ms, &table, SimulatedJones::Troposphere, rows, None).unwrap();
     if full {
         full_leakage(&table);
     }

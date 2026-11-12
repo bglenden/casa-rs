@@ -95,7 +95,7 @@ fn gains(reference: &Path, path: &Path, gain: f32) {
             })
         })
     });
-    write_simulated_jones_table(&ms, path, SimulatedJones::Gain, rows).unwrap();
+    write_simulated_jones_table(&ms, path, SimulatedJones::Gain, rows, None).unwrap();
 }
 
 fn apply(path: &Path, broadcast: bool) -> ApplySpec {

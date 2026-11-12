@@ -1431,3 +1431,40 @@ def test_setconfig_lets_other_threads_run_while_the_session_works(tmp_path: Path
         counter.join()
         sys.setswitchinterval(interval)
     assert any(during), f"no other thread ran during setconfig: {during}"
+
+
+@needs_measures
+@pytest.mark.parametrize("mode", ["simplenoise", "tsys-manual", "tsys-atm"])
+@pytest.mark.parametrize("otf", [False, True])
+def test_noise_later_observations_keep_original_window_coverage(tmp_path: Path, mode: str, otf: bool) -> None:
+    sm = simulator()
+    path = tmp_path / "later.ms"
+    assert sm.open(str(path))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setseed(19)
+    assert sm.setnoise(mode=mode, OTF=otf, simplenoise="1Jy", pwv="1mm", table=str(tmp_path / "noise.cal"))
+    assert sm.observe("F", "L", starttime="3600s", stoptime="3620s")
+    assert sm.setspwindow(spwname="later", freq="1.4GHz", deltafreq="1MHz",
+                          freqresolution="1MHz", nchannels=4, stokes="RR LL")
+    assert sm.observe("F", "later", starttime="3620s", stoptime="3640s")
+    assert sm.corrupt() and sm.close()
+    main = Table.open(path)
+    data = np.asarray(main.get_column("DATA"))
+    assert data.shape[0] == 70
+    assert np.any(data[:30]) and np.any(data[30:50])
+    assert np.all(data[50:] == 0)
+    if not otf:
+        saved = Table.open(tmp_path / "noise.A.cal")
+        a = np.asarray(saved.get_column("CPARAM"))
+        integration = np.minimum(np.arange(50) // 10, 2)
+        baseline = np.arange(50) % 10
+        expected = -a[integration * 10 + baseline][:, [0, 3], :]
+        if mode != "simplenoise":
+            t = np.asarray(Table.open(tmp_path / "noise.T.cal").get_column("CPARAM"))[:, 0, :]
+            p = np.asarray(main.get_column("ANTENNA1"))[:50]
+            q = np.asarray(main.get_column("ANTENNA2"))[:50]
+            expected /= (t[integration * 4 + p] * t[integration * 4 + q].conj())[:, None, :]
+        assert np.linalg.norm(data[:50] - expected) / np.linalg.norm(expected) < 1e-3
+        assert Table.open(tmp_path / "noise.A.cal" / "SPECTRAL_WINDOW").row_count == 1
+    assert Table.open(path / "SPECTRAL_WINDOW").row_count == 2

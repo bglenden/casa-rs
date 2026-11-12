@@ -950,23 +950,6 @@ fn tsys_atm_refusals_add_no_term() {
             .iter()
             .all(|row| row.data.iter().all(|sample| sample.norm_sqr() == 0.0))
     );
-    // A window defined after the term: the term has no atmosphere for it.
-    let mut late = observed(&directory.path().join("late.ms"), 1, BackendRequest::Cpu);
-    late.set_noise(&atm_spec()).expect("setnoise");
-    late.set_spectral_window(&SpectralWindowSpec {
-        name: "c".to_string(),
-        start_frequency_hz: 345e9,
-        channel_width_hz: 1e6,
-        resolution_hz: 1e6,
-        frame: FrequencyRef::TOPO,
-        channel_count: 4,
-        stokes: "XX YY".to_string(),
-    })
-    .expect("setspwindow");
-    late.observe(&scan("c", -1800.0, -1700.0)).expect("observe");
-    let (refused, message) = outcome(late.corrupt());
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("spectral window c"), "{message}");
 }
 
 /// Whether this host has a Metal device, saying so when it has none.

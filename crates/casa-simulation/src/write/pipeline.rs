@@ -469,7 +469,9 @@ pub(super) fn noise_jobs<'a>(
     // `MINIMUM_NOISE_JOB_ROWS` rows (the patch's admission).
     let mut jobs = Vec::with_capacity(
         runs.iter()
-            .filter(|&&(scan, _, _)| noised_here(plan, scan, noised))
+            .filter(|&&(scan, _, _)| {
+                noised_here(plan, scan, context.scans[scan].spectral_window_id, noised)
+            })
             .map(|&(_, _, count)| count.div_ceil(job_rows))
             .sum(),
     );
@@ -481,20 +483,22 @@ pub(super) fn noise_jobs<'a>(
         position = start + count;
         let (segment, after) = std::mem::take(&mut rest).split_at_mut(count * samples);
         rest = after;
-        if !noised_here(plan, scan, noised) {
+        if !noised_here(plan, scan, context.scans[scan].spectral_window_id, noised) {
             continue;
         }
         let noise = plan.noise_for_scan(scan);
         let window = context.window(scan);
-        let corruption = plan.has_jones_for_scan(scan).then(|| {
-            let window = context.scans[scan].spectral_window_id;
-            Corruption {
-                plan,
-                scan,
-                window,
-                receptors: &receptors[window],
-            }
-        });
+        let corruption = plan
+            .needs_corruption_steps(scan, context.scans[scan].spectral_window_id)
+            .then(|| {
+                let window = context.scans[scan].spectral_window_id;
+                Corruption {
+                    plan,
+                    scan,
+                    window,
+                    receptors: &receptors[window],
+                }
+            });
         for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
             let start = start + index * job_rows;
             jobs.push(NoiseJob {
@@ -515,8 +519,14 @@ pub(super) fn noise_jobs<'a>(
 
 /// Whether a batch's noise jobs take scan `scan`: it has gains or leakage,
 /// or noise in `plan` that `noised` does not already have.
-fn noised_here(plan: &DataPlan, scan: usize, noised: &dyn Fn(usize) -> bool) -> bool {
-    plan.has_jones_for_scan(scan) || (!plan.noise_for_scan(scan).is_empty() && !noised(scan))
+fn noised_here(
+    plan: &DataPlan,
+    scan: usize,
+    window: usize,
+    noised: &dyn Fn(usize) -> bool,
+) -> bool {
+    plan.needs_corruption_steps(scan, window)
+        || (!plan.noise_for_scan(scan).is_empty() && !noised(scan))
 }
 
 /// The antenna scales the `tsys-atm` noise of a batch's jobs reads
@@ -537,7 +547,7 @@ pub(super) fn batch_scales<'a>(
     let batch_rows = runs.iter().map(|&(_, _, count)| count).sum();
     let mut scales = BatchScalesBuilder::with_capacity(bound.entries(batch_rows));
     for &(scan, start, count) in runs {
-        if !noised_here(plan, scan, noised) {
+        if !noised_here(plan, scan, context.scans[scan].spectral_window_id, noised) {
             continue;
         }
         let window = context.window(scan);
@@ -551,7 +561,7 @@ pub(super) fn batch_scales<'a>(
                     application.add_scales(&window, rows, scales);
                 }
             };
-        if plan.has_jones_for_scan(scan) {
+        if plan.needs_corruption_steps(scan, context.scans[scan].spectral_window_id) {
             for (noise, jones) in plan.corruptions_for_window(scan, window_id) {
                 add_noise_scales(noise, &mut scales);
                 for term in jones {

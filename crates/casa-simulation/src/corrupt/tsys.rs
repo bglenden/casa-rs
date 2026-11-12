@@ -177,6 +177,8 @@ pub(crate) struct WindowNoise {
 /// its integration time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RowNoise {
+    pub(crate) time_s: f64,
+    pub(crate) antennas: [usize; 2],
     /// DISH_DIAMETER of ANTENNA1 and ANTENNA2, metres.
     pub(crate) diameters_m: [f64; 2],
     /// Their airmasses ([`airmass`]).
@@ -348,6 +350,8 @@ mod tests {
 
     fn row(diameters_m: [f64; 2], airmass: [f32; 2], exposure_s: f64) -> RowNoise {
         RowNoise {
+            time_s: 0.,
+            antennas: [0, 1],
             diameters_m,
             airmass,
             exposure_s,

@@ -126,6 +126,7 @@ fn uncovered_frequency_windows_reserve_no_sample_grids() {
             antenna: antenna as i32,
             values: SolutionValues::Channels(vec![Complex32::new(2.0, 0.0); 4]),
         }),
+        None,
     )
     .unwrap();
     let mut sm = configured(&root.path().join("huge-uncovered.ms"), &measures, BUDGET, 4);

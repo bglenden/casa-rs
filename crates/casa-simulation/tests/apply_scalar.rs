@@ -133,6 +133,7 @@ fn malformed_scalar_g_tables_raise_as_casa_does() {
             &table,
             SimulatedJones::Gain,
             rows,
+            None,
         )
         .unwrap();
         let mut sm = Simulator::open_from_ms(

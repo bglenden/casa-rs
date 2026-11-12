@@ -84,7 +84,8 @@ fn write_table(ms: &Path, output: &Path) {
             values: SolutionValues::Receptors([Complex32::new(1.0, 0.01 * index as f32); 2]),
         })
     });
-    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).expect("write the table");
+    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows, None)
+        .expect("write the table");
 }
 
 fn apply(table: &Path) -> ApplySpec {
