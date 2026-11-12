@@ -3259,7 +3259,6 @@ pub(crate) struct OpacityGrid {
 
 impl CalibrationGrid {
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn sample(
         &self,
         receptor: usize,
