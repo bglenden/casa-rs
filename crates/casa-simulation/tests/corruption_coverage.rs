@@ -20,11 +20,13 @@ use predict_support::{
 use serde_json::Value;
 use std::{io::Read, path::Path};
 
-fn fixture(noise: bool) -> Value {
-    let bytes: &[u8] = if noise {
-        include_bytes!("data/sm_apply_later_window_noise_casa.json.gz")
-    } else {
-        include_bytes!("data/sm_apply_existing_window_casa.json.gz")
+fn fixture(variant: &str) -> Value {
+    let bytes: &[u8] = match variant {
+        "noise" => include_bytes!("data/sm_apply_later_window_noise_casa.json.gz"),
+        "selected" => include_bytes!("data/sm_apply_selected_window_casa.json.gz"),
+        "repeat" => include_bytes!("data/sm_apply_repeated_window_casa.json.gz"),
+        "plain" => include_bytes!("data/sm_apply_existing_window_casa.json.gz"),
+        _ => panic!("variant"),
     };
     let mut text = String::new();
     GzDecoder::new(bytes).read_to_string(&mut text).unwrap();
@@ -57,16 +59,31 @@ fn later(sm: &mut Simulator) {
     sm.observe(&spec).unwrap();
 }
 
-fn gains(reference: &Path, path: &Path) {
+fn gains(reference: &Path, path: &Path, gain: f32) {
     let ms = MeasurementSet::open(reference).unwrap();
-    let times = [5223916805.0, 5223916835.0];
+    let time = |row| {
+        let ScalarValue::Float64(time) = ms
+            .main_table()
+            .cell_accessor(row, "TIME")
+            .unwrap()
+            .scalar()
+            .unwrap()
+        else {
+            panic!("TIME")
+        };
+        *time
+    };
+    let times = [time(0), time(ms.row_count() - 1)];
+    let windows = ms.spectral_window().unwrap().row_count();
     let rows = times.into_iter().enumerate().flat_map(|(field, time_s)| {
-        (0..ANTENNAS).map(move |antenna| SimulatedSolution {
-            time_s,
-            field_id: field as i32,
-            spectral_window_id: 0,
-            antenna: antenna as i32,
-            values: SolutionValues::Receptors([Complex32::new(2.0, 0.0); 2]),
+        (0..windows).flat_map(move |window| {
+            (0..ANTENNAS).map(move |antenna| SimulatedSolution {
+                time_s,
+                field_id: field as i32,
+                spectral_window_id: window as i32,
+                antenna: antenna as i32,
+                values: SolutionValues::Receptors([Complex32::new(gain, 0.0); 2]),
+            })
         })
     });
     write_simulated_jones_table(&ms, path, SimulatedJones::Gain, rows).unwrap();
@@ -94,13 +111,14 @@ fn options(workers: usize) -> SimulatorOptions {
 
 #[test]
 fn existing_ms_whole_step_preserves_uncovered_data_noise_and_scratch() {
-    for noise in [false, true] {
+    for variant in ["plain", "noise", "selected", "repeat"] {
+        let noise = variant == "noise";
         for workers in [1, 3] {
             let root = tempfile::tempdir().unwrap();
             let reference = root.path().join("reference.ms");
             original(&reference, workers).close().unwrap();
             let table = root.path().join("g.cal");
-            gains(&reference, &table);
+            gains(&reference, &table, 2.0);
             let path = root.path().join("applied.ms");
             let mut sm = original(&path, workers);
             later(&mut sm);
@@ -112,9 +130,19 @@ fn existing_ms_whole_step_preserves_uncovered_data_noise_and_scratch() {
                 sm.set_seed(5);
                 sm.set_noise(&NoiseSpec::simple(0.1)).unwrap();
             }
+            if variant == "selected" {
+                sm.set_data(&[], &[0], "").unwrap();
+            }
             sm.corrupt().unwrap();
+            if variant == "repeat" {
+                sm.reset();
+                let second = root.path().join("second.cal");
+                gains(&path, &second, 3.0);
+                sm.set_apply(&apply(&second, false)).unwrap();
+                sm.corrupt().unwrap();
+            }
             sm.close().unwrap();
-            compare(&path, &fixture(noise), noise);
+            compare(&path, &fixture(variant), noise);
         }
     }
 }
@@ -166,6 +194,15 @@ fn compare(path: &Path, reference: &Value, noise: bool) {
         else {
             panic!("flags")
         };
+        let ScalarValue::Int32(window) = table
+            .cell_accessor(row, "DATA_DESC_ID")
+            .unwrap()
+            .scalar()
+            .unwrap()
+        else {
+            panic!("window")
+        };
+        assert_eq!(i64::from(*window), expected["window"].as_i64().unwrap());
         let covered = expected["window"] == 0;
         for (sample, &value) in actual.data.iter().enumerate() {
             let complex = |key: &str| {
@@ -223,7 +260,7 @@ fn new_window_after_setapply_skips_the_whole_step_with_nonzero_predictions() {
     let reference = root.path().join("reference.ms");
     original(&reference, 1).close().unwrap();
     let table = root.path().join("g.cal");
-    gains(&reference, &table);
+    gains(&reference, &table, 2.0);
     let point = root.path().join("point.cl");
     write_point_list(&point, CENTRE_RAD, 1.0);
     let output = |name: &str, corrupt: bool| {
