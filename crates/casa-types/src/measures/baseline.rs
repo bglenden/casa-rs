@@ -256,21 +256,11 @@ fn inverse_solar_deflection_shift(
 /// A frame without an epoch or a position, or an epoch it cannot convert to
 /// UT1.
 pub fn local_apparent_sidereal_time(frame: &MeasFrame) -> Result<f64, MeasureError> {
-    let (ut1_a, ut1_b) = epoch_jd_pair(frame, EpochRef::UT1)?;
-    let ut1_mjd = epoch_mjd(frame, EpochRef::UT1)?;
-    let centuries = (ut1_mjd - 51_544.5) / 36_525.0;
-    let gmst0_seconds =
-        24_110.548_41 + 8_640_184.812_866 * centuries + 0.093_104 * centuries * centuries
-            - 6.2e-6 * centuries * centuries * centuries;
-    let gmst0_turns = (ut1_mjd + gmst0_seconds / 86_400.0 + 6_713.0).fract();
-    let equation_of_equinoxes =
-        sofars::vm::anpm(sofars::erst::gst94(ut1_a, ut1_b) - sofars::erst::gmst82(ut1_a, ut1_b));
-    // Matches casacore's legacy `Nutation::STANDARD` equation of equinoxes
-    // used by `MCEpoch::UT1_GAST`; SOFA `gst94` differs by about 0.1 ms.
-    const CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD: f64 = 7.719e-9;
-    let gast = gmst0_turns * std::f64::consts::TAU
-        + equation_of_equinoxes
-        + CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD;
+    let epoch = frame
+        .epoch()
+        .ok_or(MeasureError::MissingFrameData { what: "epoch" })?;
+    let ut1 = epoch.convert_to(EpochRef::UT1, frame)?;
+    let gast = super::casacore_sidereal::gast_rad(ut1.value());
     let position = frame
         .position()
         .ok_or(MeasureError::MissingFrameData { what: "position" })?;
