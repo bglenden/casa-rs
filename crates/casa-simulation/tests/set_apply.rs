@@ -270,9 +270,9 @@ fn setapply_refuses_what_casa_or_casa_rs_cannot_apply() {
             "not D",
         ),
         (
-            apply(&gains, "cubic"),
+            apply(&gains, "linearPD"),
             CasaOutcome::NotYetImplemented,
-            "cubic",
+            "linearPD",
         ),
     ] {
         let (outcome, message) = outcome(&mut sm, spec);

@@ -42,6 +42,31 @@ fn scalar_spline_scratch_is_admitted_above_a_vector_growth_boundary() {
     }
     run_case(("Tf", 131073, 1), 4, 4, true, "nearest,spline");
 }
+
+#[test]
+fn scalar_time_spline_coefficients_hold_their_admission() {
+    if !super::alone("apply_frequency::scalar_time_spline_coefficients_hold_their_admission") {
+        return;
+    }
+    run_case(("Tf", 4096, 16), 4, 4, true, "spline,linear");
+}
+
+#[test]
+fn two_receptor_time_spline_coefficients_hold_their_admission() {
+    if !super::alone("apply_frequency::two_receptor_time_spline_coefficients_hold_their_admission")
+    {
+        return;
+    }
+    run_case(("B", 8192, 16), 4, 4, true, "spline,linear");
+}
+
+#[test]
+fn long_time_spline_axes_hold_coefficient_formation_scratch() {
+    if !super::alone("apply_frequency::long_time_spline_axes_hold_coefficient_formation_scratch") {
+        return;
+    }
+    run_case(("Tf", 4, 8193), 4, 4, true, "spline,linear");
+}
 fn run_case(
     (kind, channels, slots): (&str, usize, usize),
     data_channels: usize,

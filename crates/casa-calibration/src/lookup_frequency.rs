@@ -168,7 +168,7 @@ impl ComplexSolution {
     }
 }
 
-fn sample(
+pub(crate) fn sample(
     points: &[(f64, f32, f32)],
     frequency: f64,
     mode: FrequencyInterpolation,
@@ -265,7 +265,7 @@ impl CalibrationTableLookup {
 }
 
 /// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
-fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
+pub(crate) fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
     let mut second = vec![[0.0; 2]; points.len()];
     if points.len() < 3 {
         return second;

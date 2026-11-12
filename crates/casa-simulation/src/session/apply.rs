@@ -18,7 +18,7 @@
 //!
 //! CASA's `setapply` ignores its `field`, and its interpolation does not
 //! partition the table by field: a row takes the solutions of every field
-//! as one series in time ([`FieldSelection::AnyField`]; measured on CASA
+//! as one series in time (measured on CASA
 //! 6.7.6, #893 review).
 //!
 //! Loading a table is admitted against the session's resource policy
@@ -29,9 +29,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_calibration::{
-    ApplyInterpolationMode, CalibrationTableLookup, FieldSelection, FrequencyInterpolation,
-};
+use casa_calibration::{CalibrationTableLookup, FrequencyInterpolation, TimeInterpolation};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use num_complex::Complex32;
 
@@ -53,7 +51,7 @@ pub struct ApplySpec {
     /// `t`: CASA records this interval, but G/D/T table application still
     /// evaluates the requested interpolation at each data time.
     pub interval_s: f64,
-    /// `interp`: the time interpolation (`linear` or `nearest`), optionally
+    /// `interp`: time interpolation (`nearest`, `linear`, `cubic`, `spline`), optionally
     /// followed by `,` and a frequency interpolation; empty is `linear`.
     pub interp: String,
     /// `calwt`: accepted as in CASA; corruption explicitly disables weight
@@ -189,8 +187,11 @@ impl Simulator {
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
     ///   raises. A table whose parameter count disagrees with its type
     ///   raises at `corrupt`, as CASA does.
-    /// - Other than `G`, `D`, scalar `T`, `B`, `Tf` and `Df`, or time
-    ///   interpolation other than `linear`/`nearest`: not yet implemented.
+    /// - Other than `G`, `D`, scalar `T`, `B`, `Tf` and `Df`, or phase-delay
+    ///   and per-observation/scan interpolation modifiers: not yet implemented.
+    /// - Time interpolation supports nearest, linear, cubic and natural spline.
+    ///   Cubic interior queries require four times; exact and endpoint queries
+    ///   accept shorter axes. Spline corrects CASA's setup crash (#1053).
     /// - Frequency interpolation supports nearest, linear, cubic and spline,
     ///   their flag-retaining forms, and CASA's default linear fallback.
     ///   Cubic interior interpolation with fewer than four valid input
@@ -256,7 +257,7 @@ impl Simulator {
     fn load_table(
         &self,
         path: &std::path::Path,
-        interp: ApplyInterpolationMode,
+        interp: TimeInterpolation,
     ) -> SimulatorResult<HeldLookup> {
         let metadata_bytes =
             CalibrationTableLookup::metadata_bytes_on_disk(path).map_err(raised)?;
@@ -274,18 +275,22 @@ impl Simulator {
         .map_err(SimulatorError::admission)?;
         let layout = CalibrationTableLookup::layout_on_disk(path).map_err(raised)?;
         drop(metadata);
-        let kept = layout.kept_bytes();
+        let kept = layout
+            .kept_bytes()
+            .saturating_add(layout.time_kept_bytes(interp));
         let mut reservation = admit(
             resources.host(),
             resources.policy(),
             &Demand {
                 phase: LOOKUP_PHASE,
-                memory: layout.loading_bytes().saturating_add(kept),
+                memory: layout
+                    .loading_bytes()
+                    .saturating_add(layout.time_loading_bytes(interp))
+                    .saturating_add(kept),
             },
         )
         .map_err(SimulatorError::admission)?;
-        let lookup = CalibrationTableLookup::open_with(path, interp, FieldSelection::AnyField)
-            .map_err(raised)?;
+        let lookup = CalibrationTableLookup::open_across_fields(path, interp).map_err(raised)?;
         let frequencies = if layout.frequency_values > 0 {
             CalibrationTableLookup::frequency_grids_on_disk(path).map_err(raised)?
         } else {
@@ -494,9 +499,9 @@ impl Simulator {
     }
 }
 
-/// `interp`'s time interpolation (`linear[,…]` or `nearest[,…]`; empty is
-/// `linear`), refusing CASA's deprecated `aipslin` as CASA does.
-fn apply_interpolation(interp: &str) -> SimulatorResult<ApplyInterpolationMode> {
+/// The simulator's time interpolation, refusing deprecated and unknown modes
+/// as CASA does; unsupported modifiers remain explicit refusals (#1053).
+fn apply_interpolation(interp: &str) -> SimulatorResult<TimeInterpolation> {
     if interp.contains("aips") {
         return Err(raised(
             "The (peculiar) 'aipslin' interpolation type was deprecated in CASA v3.4; use \
@@ -504,9 +509,16 @@ fn apply_interpolation(interp: &str) -> SimulatorResult<ApplyInterpolationMode> 
         ));
     }
     match interp.split(',').next().unwrap_or("").trim() {
-        "" | "linear" => Ok(ApplyInterpolationMode::Linear),
-        "nearest" => Ok(ApplyInterpolationMode::Nearest),
-        other => Err(not_yet(format!("with interp='{other}'"))),
+        "" | "linear" => Ok(TimeInterpolation::Linear),
+        "nearest" => Ok(TimeInterpolation::Nearest),
+        "cubic" => Ok(TimeInterpolation::Cubic),
+        "spline" => Ok(TimeInterpolation::Spline),
+        other if other.contains("PD") || other.contains("perobs") || other.contains("perscan") => {
+            Err(not_yet(format!("with interp='{other}'")))
+        }
+        other => Err(raised(format!(
+            "Unrecognized time interpolation type '{other}'"
+        ))),
     }
 }
 

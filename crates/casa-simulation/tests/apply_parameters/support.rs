@@ -16,7 +16,16 @@ use casa_types::{ArrayValue, Complex32, ScalarValue};
 use serde_json::Value;
 use std::path::Path;
 
-pub(super) fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
+fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Complex32; 2] {
+    receptor_values_f64(kind, antenna, elapsed)
+        .map(|value| Complex32::new(value.re as f32, value.im as f32))
+}
+
+pub(super) fn receptor_values_f64(
+    kind: &str,
+    antenna: usize,
+    elapsed: f64,
+) -> [num_complex::Complex64; 2] {
     let antenna = antenna as f64;
     let values = if kind == "G" || kind == "T" {
         [
@@ -35,7 +44,7 @@ pub(super) fn receptor_values(kind: &str, antenna: usize, elapsed: f64) -> [Comp
             (-0.004 * (antenna + 1.0), 0.0005 * elapsed),
         ]
     };
-    values.map(|(real, imaginary)| Complex32::new(real as f32, imaginary as f32))
+    values.map(|(real, imaginary)| num_complex::Complex64::new(real, imaginary))
 }
 
 fn table(path: &Path, output: &Path, case: &Value) {

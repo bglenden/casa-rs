@@ -34,6 +34,11 @@ use crate::model::CalibrationParameterFamily;
 use crate::plan::{ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode};
 use crate::summary::summarize_table;
 
+#[path = "lookup_time.rs"]
+mod time;
+pub use time::TimeInterpolation;
+use time::TimePlan;
+
 /// Which fields' solutions a row takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldSelection {
@@ -114,6 +119,7 @@ pub struct CalibrationTableLookup {
     /// For [`FieldSelection::AnyField`]: each (spectral window, antenna)'s
     /// solutions across the fields, in time order.
     across_fields: Option<HashMap<(i32, i32), Vec<CalibrationSolution>>>,
+    advanced_time: Option<TimePlan>,
 }
 
 /// One antenna's solution: CPARAM's values and FLAG, per receptor and
@@ -312,6 +318,7 @@ impl CalibrationTableLookup {
             subtype,
             interp,
             across_fields,
+            advanced_time: None,
         })
     }
 
@@ -362,6 +369,9 @@ impl CalibrationTableLookup {
         antenna: i32,
         time_s: f64,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
+        if let Some(plan) = &self.advanced_time {
+            return plan.solution(self, spw, antenna, time_s);
+        }
         let grid = match &self.across_fields {
             Some(series) => self.across_fields_grid(series, spw, antenna, time_s)?,
             None => self

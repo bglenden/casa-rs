@@ -22,7 +22,7 @@ fn parameters(
     analytic: bool,
 ) -> Vec<Complex32> {
     let leakage = matches!(kind, "D" | "Df");
-    let base = support::receptor_values(if leakage { "D" } else { "G" }, antenna, 0.0);
+    let base = support::receptor_values_f64(if leakage { "D" } else { "G" }, antenna, 0.0);
     let factors = [
         Complex64::new(1., 0.),
         Complex64::new(1.1, 0.7),
@@ -38,8 +38,7 @@ fn parameters(
     (0..channels)
         .flat_map(|channel| {
             (0..if matches!(kind, "T" | "Tf") { 1 } else { 2 }).map(move |receptor| {
-                let base =
-                    Complex64::new(f64::from(base[receptor].re), f64::from(base[receptor].im));
+                let base = base[receptor];
                 let value = if analytic {
                     Complex64::new([1., 2., 0.5, 1.25][index], 0.)
                 } else if leakage {
