@@ -260,6 +260,12 @@ impl ExistingProducts {
         self.mosaic_beam.as_ref()
     }
 
+    /// Whether the two-term correction already left its auxiliary PB image.
+    pub(crate) fn has_higher_primary_beam(&self) -> bool {
+        matches!(self.family, Family::Taylor { terms: 2 })
+            && product_path(&self.prefix, "pb.tt1").exists()
+    }
+
     /// The `(terms, moments)` of each channel: one of each, or a Taylor
     /// family's coefficients and PSF moments.
     const fn terms(&self) -> (usize, usize) {

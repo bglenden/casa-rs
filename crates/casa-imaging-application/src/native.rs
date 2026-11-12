@@ -277,14 +277,12 @@ pub(crate) fn prepare(
         mut publication,
         aw_catalog,
     } = native;
-    if let Some(beam) = input
-        .existing
-        .as_ref()
-        .and_then(|input| input.mosaic_beam())
+    if let Some(existing) = &input.existing
+        && let Some(beam) = existing.mosaic_beam()
     {
         publication.controls = publication
             .controls
-            .preserving_mosaic_products(beam.reading_bytes());
+            .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
     }
     publication.controls.validate_for_problem(problem)?;
     let products = products_floor(problem, &publication)?;

@@ -91,14 +91,18 @@ impl Family {
                 BASES.contains(&image) && (!pbcor || image == "image")
                     || matches!(suffix, "image.pbcor")
             }
-            Self::Taylor { .. } => {
-                matches!(
-                    suffix,
-                    "alpha" | "alpha.error" | "alpha.pbcor" | "beta" | "beta.error"
-                ) || BASES
-                    .iter()
-                    .any(|base| self.names(base).iter().any(|name| name == image))
-                    && (!pbcor || image.starts_with("image."))
+            Self::Taylor { terms } => {
+                let is_primary_beam = image.starts_with("pb.tt")
+                    && (0..terms).any(|term| image == format!("pb.tt{term}"));
+                (!pbcor && is_primary_beam)
+                    || matches!(
+                        suffix,
+                        "alpha" | "alpha.error" | "alpha.pbcor" | "beta" | "beta.error"
+                    )
+                    || BASES
+                        .iter()
+                        .any(|base| self.names(base).iter().any(|name| name == image))
+                        && (!pbcor || image.starts_with("image."))
             }
         }
     }
@@ -165,8 +169,8 @@ pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
                 crate::SpecMode::Mfs | crate::SpecMode::Cube
             )
         }
-        (Gridder::Awproject(_), Family::Taylor { .. }) => {
-            request.specmode == crate::SpecMode::Mfs && !request.pbcor
+        (Gridder::Awproject(_), Family::Taylor { terms }) => {
+            request.specmode == crate::SpecMode::Mfs && (!request.pbcor || terms == 2)
         }
         _ => false,
     }
@@ -459,6 +463,7 @@ mod tests {
             "sumwt.tt2",
             "weight.tt2",
             "pb.tt0",
+            "pb.tt1",
             "alpha",
             "alpha.error",
             "alpha.pbcor",
@@ -471,7 +476,7 @@ mod tests {
             "psf",
             "model.tt2",
             "psf.tt3",
-            "pb.tt1",
+            "pb.tt2",
             "psf.tt0.pbcor",
         ] {
             assert!(!taylor.admits(suffix), "{suffix}");

@@ -418,7 +418,7 @@ pub(crate) fn primary_beam_plane(
     )
 }
 
-fn correct_primary_beam(
+pub(crate) fn correct_primary_beam(
     values: &[f32],
     primary_beam: &[f32],
     cutoff: f32,

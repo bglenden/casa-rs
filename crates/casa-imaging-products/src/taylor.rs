@@ -592,18 +592,37 @@ impl<'a> SolvedFamily<'a> {
             None => vec![vec![0.0; cells]; terms],
         };
 
-        let pb0 = principal_primary_beam(
-            inputs,
-            domain_role,
-            primary_beam_model,
-            directional,
-            &family.weight[0],
-        )?;
-        let (mut primary_beam_validity, pb_corrected) =
-            primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
-        if let Some(beam) = inputs.saved_mosaic_beam() {
-            primary_beam_validity = beam.read_mask(0, polarization)?;
-        }
+        let saved_beam = inputs.saved_mosaic_beam();
+        let (pb0, primary_beam_validity, pb_corrected) = if let Some(beam) =
+            saved_beam.filter(|_| {
+                publishes(inputs, |role| {
+                    matches!(role, ProductRole::PbCorrectedImage(_))
+                })
+            }) {
+            // SIImageStore::pbcor divides by positive saved PB values and
+            // copies the saved pixel mask independently of pblimit.
+            let pb = beam.read_values(0, polarization)?;
+            let mask = beam.read_mask(0, polarization)?;
+            let corrected = restored
+                .iter()
+                .map(|image| crate::plane::correct_primary_beam(image, &pb, 0.0))
+                .collect::<Result<_, _>>()?;
+            (pb, mask, corrected)
+        } else {
+            let pb = principal_primary_beam(
+                inputs,
+                domain_role,
+                primary_beam_model,
+                directional,
+                &family.weight[0],
+            )?;
+            let (mut mask, corrected) =
+                primary_beam_corrected(inputs.problem().products().validity(), &pb, &restored)?;
+            if let Some(beam) = saved_beam {
+                mask = beam.read_mask(0, polarization)?;
+            }
+            (pb, mask, corrected)
+        };
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0;
 

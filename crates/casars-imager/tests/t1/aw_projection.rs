@@ -426,12 +426,7 @@ fn aw_mtmfs_restart_recomputes_taylor_weights() {
     assert_same_products(&products, &fresh_products);
 }
 
-/// The saved AW Taylor PSF and weights stay on disk while the new
-/// residual is formed and cleaned (#1070).
-#[test]
-fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
-    use super::restart::{assert_unchanged, snapshot};
-
+fn two_term_aw_restart() -> (Observation, Value) {
     let source = Component {
         spectral_index: -0.7,
         ..CENTRE
@@ -448,8 +443,18 @@ fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
     controls["threshold"] = json!("0Jy");
     controls["pbcor"] = json!(false);
     controls["niter"] = json!(0);
+    (observation, controls)
+}
+
+/// The saved AW Taylor PSF and weights stay on disk while the new
+/// residual is formed and cleaned (#1070).
+#[test]
+fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
+    use super::restart::{assert_unchanged, snapshot};
+
+    let (observation, mut controls) = two_term_aw_restart();
     let (_, dirty) = observation.image("continued", controls.clone());
-    let [x, y] = observation.geometry().pixel(source);
+    let [x, y] = observation.geometry().pixel(CENTRE);
     {
         let mut beam =
             casa_images::PagedImage::<f32>::open(observation.scratch("continued.pb.tt0")).unwrap();
@@ -536,6 +541,60 @@ fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
     }
     for (path, before) in saved_paths.iter().zip(&saved) {
         assert_unchanged(before, &snapshot(path));
+    }
+}
+
+/// A resumed correction divides both Taylor images by the saved principal
+/// PB. CASA opens the auxiliary PB image without replacing it if it exists.
+#[test]
+fn aw_mtmfs_restart_corrects_both_terms_with_the_saved_pb() {
+    use super::restart::{assert_unchanged, snapshot};
+
+    let (observation, controls) = two_term_aw_restart();
+    let [x, y] = observation.geometry().pixel(CENTRE);
+    let saved_pb = 0.05;
+    for (name, initial_pbcor) in [("correct-after", false), ("correct-both", true)] {
+        let mut dirty_controls = controls.clone();
+        dirty_controls["pbcor"] = json!(initial_pbcor);
+        let (_, dirty) = observation.image(name, dirty_controls);
+        let pb_mask = dirty.get(".pb.tt0").mask().unwrap();
+        assert!(pb_mask[[x, y, 0, 0]]);
+        let mut beam =
+            casa_images::PagedImage::<f32>::open(observation.scratch(&format!("{name}.pb.tt0")))
+                .unwrap();
+        let pixel = ndarray::Array4::from_elem((1, 1, 1, 1), saved_pb).into_dyn();
+        beam.put_slice(&pixel, &[x, y, 0, 0]).unwrap();
+        beam.save().unwrap();
+
+        let auxiliary = observation.scratch(&format!("{name}.pb.tt1"));
+        assert_eq!(auxiliary.exists(), initial_pbcor);
+        let before = initial_pbcor.then(|| snapshot(&auxiliary));
+        let mut restart = controls.clone();
+        restart["pbcor"] = json!(true);
+        restart["calcpsf"] = json!(false);
+        restart["niter"] = json!(10);
+        let (run, products) = observation.image(name, restart);
+
+        assert_eq!(run.minor_iterations, 10);
+        for term in [0, 1] {
+            let image_name = format!(".image.tt{term}");
+            let image = products.get(&image_name).pixels[[x, y]];
+            assert!(
+                image.abs() > 0.01,
+                "{image_name}: test a nonzero coefficient"
+            );
+            let corrected = products.get(&format!("{image_name}.pbcor"));
+            assert_eq!(corrected.pixels[[x, y]], image / saved_pb, "{image_name}");
+            assert_eq!(corrected.mask().as_ref(), Some(&pb_mask), "{image_name}");
+        }
+        if let Some(before) = before {
+            assert!(!products.suffixes().contains(".pb.tt1"));
+            assert_unchanged(&before, &snapshot(&auxiliary));
+        } else {
+            let beam = products.get(".pb.tt1");
+            assert!(beam.values().iter().all(|value| *value == 0.0));
+            assert!(beam.mask().is_none());
+        }
     }
 }
 
