@@ -591,6 +591,8 @@ pub struct AwProjection {
     /// `√(2f₀² − f²)` about the image frequency `f₀`, and weigh it with the
     /// beam there (tclean `conjbeams`).
     pub conjbeams: bool,
+    /// The maximum PA distance of an imported buffer, in degrees.
+    pub computepastep: f64,
     /// Sample each row's pointing from the `POINTING` table.
     pub usepointing: bool,
     /// Flat-noise or flat-sky products.
@@ -1037,6 +1039,10 @@ impl AwProjection {
                  implemented by casa-rs yet (#980)",
             );
         };
+        let pa_step_rad = self.computepastep.to_radians() as f32;
+        if !pa_step_rad.is_finite() || pa_step_rad <= 0.0 {
+            return invalid("computepastep", "the PA step must be finite and positive");
+        }
         // `AWConvFunc`'s constructor: a cell needs one of the two.
         if !self.aterm && !self.psterm {
             return invalid(
@@ -1059,6 +1065,12 @@ impl AwProjection {
             ..
         } = &self.cf_source
         {
+            if self.computepastep != 360.0 {
+                return invalid(
+                    "computepastep",
+                    "native generation at a non-default PA step is unfinished (#1070)",
+                );
+            }
             let size = *native_cf_working_size;
             if size < 8
                 || !size.is_multiple_of(2)

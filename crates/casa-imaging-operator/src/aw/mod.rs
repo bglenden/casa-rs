@@ -31,6 +31,8 @@ use cell_image::{cf_area, convolution_origin, dense_cell_padded};
 use cell_image::{load_group, read_header};
 use native_cache::{STAGING_PREFIX, write_manifest};
 
+use crate::error::OperatorError;
+
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapFootprint, TapLayout,
@@ -106,13 +108,18 @@ fn cache_error(path: impl AsRef<Path>, detail: impl Into<String>) -> AwCatalogEr
 }
 
 /// How a catalog maps rows to cells.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AwIndexing {
     /// `conjbeams`: the cell frequency is `√(2f₀² − f²)` with `f₀` the
     /// image reference frequency (`CFBuffer::initMaps`), else `f`.
     pub conjugate_beams: bool,
     /// The image reference frequency `f₀` in Hz.
     pub image_reference_hz: f64,
+    /// The strict PA tolerance in radians (`computepastep`).
+    pub pa_tolerance_rad: f32,
+    /// Feed 0's first receptor angle for antenna 0, by spectral window.
+    /// Empty for a native catalog with a single PA buffer.
+    pub feed_zero_angles_rad: Option<Arc<[f32]>>,
 }
 
 /// Header of one cell image, read at open (`CFCache::getCFParams`).
@@ -358,6 +365,12 @@ impl AwCatalog {
             values
         };
         let pa_deg = unique(cells.iter().map(|cell| cell.imaging.pa_deg).collect());
+        if indexing.feed_zero_angles_rad.is_none() && pa_deg.len() != 1 {
+            return Err(cache_error(
+                &root,
+                "multiple PA buffers require feed-0 angles",
+            ));
+        }
         let frequencies_hz = unique(cells.iter().map(|cell| cell.imaging.frequency_hz).collect());
         let w_values = unique(cells.iter().map(|cell| cell.imaging.w_value).collect());
         let mut mueller_elements = cells
@@ -626,6 +639,13 @@ impl AwCatalog {
             + self.cells.capacity() * size_of::<CellFiles>()
             + paths.clone().sum::<usize>()
             + self.groups.capacity() * size_of::<Group>()
+            + self
+                .indexing
+                .feed_zero_angles_rad
+                .as_ref()
+                .map_or(0, |angles| {
+                    angles.len() * size_of::<f32>() + 2 * size_of::<usize>()
+                })
             + (self.pa_deg.capacity() + self.frequencies_hz.capacity() + self.w_values.capacity())
                 * size_of::<f64>()
             + self.mueller_elements.capacity() * size_of::<u32>()
@@ -669,23 +689,28 @@ impl AwCatalog {
         &self.cells[group * elements..(group + 1) * elements]
     }
 
-    /// The parallactic-angle cell of `pa_deg`: the nearest listed angle on
-    /// the circle (`CFCache::fillCFListFromDisk` selects cells within `dPA`
-    /// and `SynthesisUtils::stdNearestValue` picks among them).
+    /// The first PA in the catalog's sorted order strictly within the
+    /// tolerance of `pa_rad`, as `CFStore2::nearestPA` tests its Float
+    /// radians. A row outside every interval has no imported buffer.
     #[must_use]
-    pub fn pa_cell(&self, pa_deg: f64) -> usize {
-        self.pa_deg
-            .iter()
-            .enumerate()
-            .fold((0, f64::INFINITY), |best, (index, listed)| {
-                let distance = circular_degrees(pa_deg - listed).abs();
-                if distance < best.1 {
-                    (index, distance)
-                } else {
-                    best
-                }
+    pub fn pa_cell(&self, pa_rad: f32) -> Option<usize> {
+        let step = self.indexing.pa_tolerance_rad;
+        let first = self
+            .pa_deg
+            .partition_point(|angle| pa_rad - angle.to_radians() as f32 >= step);
+        let angle = self.pa_deg.get(first)?.to_radians() as f32;
+        ((pa_rad - angle).abs() < step).then_some(first)
+    }
+
+    fn row_pa_cell(&self, row: &RowContext) -> Option<usize> {
+        self.indexing
+            .feed_zero_angles_rad
+            .as_ref()
+            .map_or(Some(0), |angles| {
+                self.pa_cell(
+                    (-row.parallactic_angle_rad[0]) as f32 + angles[row.spectral_window as usize],
+                )
             })
-            .0
     }
 
     /// The frequency cell of a row at `freq_hz`: the nearest listed
@@ -818,17 +843,15 @@ impl Drop for Loading<'_> {
 }
 
 impl ConvolutionFunctionSet for AwCatalog {
-    /// Group: the (PA, frequency, w) cell; cube 0. The parallactic angle is
-    /// CASA's visibility polarization operator angle negated back to the
-    /// physical angle in degrees, as the cells record it.
     /// `group` is the gridding cell (the conjugate-frequency cell under
     /// `conjbeams`, `DataToGrid` with `conjBeams`); `cube` the cell a
     /// prediction reads: the native frequency's (`GridToData`,
     /// `nearestFreqNdx(spw, chan)`) at the w-plane of the unrotated w
     /// ([`Self::prediction_w`]).
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
-        let pa_deg = (-row.parallactic_angle_rad[0]).to_degrees();
-        let pa = self.pa_cell(pa_deg);
+        let pa = self
+            .row_pa_cell(row)
+            .expect("AW row PA coverage was checked");
         let w = self.w_cell(w_lambda);
         let native_frequency_hz = freq_hz * row.native_frequency_ratio;
         let group = self.group_index(pa, self.frequency_cell(native_frequency_hz), w);
@@ -842,6 +865,12 @@ impl ConvolutionFunctionSet for AwCatalog {
             group: u16::try_from(group).expect("AW group fits u16"),
             cube: u16::try_from(native).expect("AW group fits u16"),
         }
+    }
+
+    fn validate_row_context(&self, row: &RowContext) -> Result<(), OperatorError> {
+        self.row_pa_cell(row).map(|_| ()).ok_or(OperatorError::ConvolutionFunction {
+            reason: "no imported AW buffer within computepastep of a selected row's parallactic angle",
+        })
     }
 
     fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
@@ -1113,10 +1142,6 @@ fn nearest(values: &[f64], target: f64) -> (usize, f64) {
     (best.0, values[best.0])
 }
 
-fn circular_degrees(value: f64) -> f64 {
-    (value + 180.0).rem_euclid(360.0) - 180.0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1239,6 +1264,8 @@ mod tests {
             indexing: AwIndexing {
                 conjugate_beams: false,
                 image_reference_hz: 1.0e9,
+                pa_tolerance_rad: 360.0_f32.to_radians(),
+                feed_zero_angles_rad: None,
             },
             pa_deg: Vec::new(),
             frequencies_hz: Vec::new(),
@@ -1269,10 +1296,12 @@ mod tests {
         let groups = Vec::<Group>::with_capacity(41);
         let per_group = 2 * size_of::<[u16; 2]>() + size_of::<[bool; 2]>();
         let allocated = groups.capacity() * per_group;
-        let catalog = catalog_with_groups(groups);
+        let mut catalog = catalog_with_groups(groups);
+        catalog.indexing.feed_zero_angles_rad = Some(Arc::new([0.0_f32, 0.1]));
+        let feed_bytes = 2 * size_of::<f32>() + 2 * size_of::<usize>();
         assert_eq!(
             catalog.cache_charge().kept,
-            allocated as u64
+            (allocated + feed_bytes) as u64
                 + (catalog.mueller_elements.capacity() * size_of::<u32>()) as u64
                 + catalog.mueller.bytes()
                 + catalog.correction.resident_bytes()
@@ -1319,6 +1348,43 @@ mod tests {
         }
     }
 
+    /// The cache chooses the first overlapping PA and rejects a point at
+    /// the tolerance boundary. Lookup adds feed 0 for the row's window.
+    #[test]
+    fn imported_pa_uses_the_first_strictly_covered_buffer() {
+        let mut catalog = catalog_with_groups(Vec::new());
+        catalog.pa_deg = vec![-10.0, -4.0, 4.0];
+        catalog.indexing.pa_tolerance_rad = 5.0_f32.to_radians();
+        catalog.indexing.feed_zero_angles_rad = Some(Arc::new([0.0, 6.0_f32.to_radians()]));
+        let mut row = RowContext {
+            native_frequency_ratio: 1.0,
+            original_uvw_m: None,
+            time_s: 0.0,
+            antennas: [1, 2],
+            antenna_types: [0, 0],
+            parallactic_angle_rad: [6.0_f64.to_radians(); 2],
+            field: 0,
+            spectral_window: 0,
+        };
+        assert_eq!(catalog.row_pa_cell(&row), Some(0), "first overlapping PA");
+        row.spectral_window = 1;
+        assert_eq!(
+            catalog.row_pa_cell(&row),
+            Some(1),
+            "feed 0 in the selected window"
+        );
+        catalog.pa_deg = vec![0.0];
+        let edge = catalog.indexing.pa_tolerance_rad;
+        assert_eq!(catalog.pa_cell(edge.next_down()), Some(0));
+        assert_eq!(catalog.pa_cell(edge), None);
+        assert_eq!(catalog.pa_cell(edge.next_up()), None);
+        assert_eq!(catalog.pa_cell(-edge), None);
+        catalog.pa_deg = vec![0.0, 4.0];
+        assert_eq!(catalog.pa_cell(edge), Some(1));
+        catalog.pa_deg = vec![-179.0];
+        assert_eq!(catalog.pa_cell(179.0_f32.to_radians()), None);
+    }
+
     #[test]
     fn index_rules_follow_casa() {
         // nearestWNdx: round(sqrt(wIncr·|w|)) clamped.
@@ -1335,7 +1401,6 @@ mod tests {
         assert_eq!(nearest(&[1.0, 2.0, 3.0], 2.6), (2, 3.0));
         // conjFreq.
         assert!((conjugate_frequency(1.0e9, 1.5e9) - (3.5e18_f64).sqrt()).abs() < 1.0);
-        assert_eq!(circular_degrees(350.0 - 10.0), -20.0);
         assert_eq!(mueller_element(Correlation::LL), Some(15));
         assert_eq!(mueller_element(Correlation::XY), Some(5));
     }

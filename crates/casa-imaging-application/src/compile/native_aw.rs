@@ -239,7 +239,7 @@ fn mueller_elements(stokes: &[PolarizationCoordinate]) -> Result<Vec<usize>, Pre
 /// numbers no feeds: each partition's `antenna_xds` states the receptors of
 /// its antennas, so there the angle is antenna 0's as the window's
 /// partitions, selected or not, state it, which must agree.
-fn receptor_zero_angle(
+pub(super) fn receptor_zero_angle(
     catalogue: &Catalogue,
     msv2: Option<&Msv2Observation>,
     spw: u32,

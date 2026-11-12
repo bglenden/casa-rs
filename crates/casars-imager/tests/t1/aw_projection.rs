@@ -930,3 +930,32 @@ fn aw_without_pointing_samples_points_at_its_fields() {
     let nrms = (squared_error / scale).sqrt();
     assert!(scale > 0.0 && nrms < 1.0e-5, "AW weight NRMS {nrms}");
 }
+
+/// A selected row outside the imported cache's PA range fails through
+/// tclean before it publishes an image. A compatible step reads the same
+/// cells, as `CFStore2::nearestPA` limits the lookup (#1070).
+#[test]
+fn imported_aw_rejects_an_uncovered_pa_before_publication() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0", &cache, &surface);
+    native["niter"] = json!(0);
+    observation.image("generate-pa-cache", native);
+    let mut imported = json!({
+        "spw": "0", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": W_PLANES, "weighting": "natural", "niter": 0,
+    });
+    observation.image("read-pa-cache", imported.clone());
+    imported["computepastep"] = json!(0.0001);
+    let name = "outside-pa-cache";
+    let Err(error) = observation.try_image(name, imported) else {
+        panic!("imaging accepted an uncovered PA");
+    };
+    assert!(
+        error.contains("no imported AW buffer within computepastep"),
+        "{error}"
+    );
+    assert!(!observation.scratch(&format!("{name}.image")).exists());
+}

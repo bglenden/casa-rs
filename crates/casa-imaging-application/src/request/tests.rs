@@ -265,6 +265,13 @@ fn aw_projection_reads_its_planes_and_terms() {
         "native_cf_cache_bytes, native_cf_maximum_cells"
     );
     request(native(16, 16)).validate().expect("16 planes");
+    let mut native = native(16, 16);
+    native["computepastep"] = json!(5.0);
+    assert_eq!(refusal(native), "computepastep");
+    assert_eq!(
+        refusal(aw(json!({ "computepastep": 0.0 }))),
+        "computepastep"
+    );
 }
 
 /// A blank optional parameter is unset, as CASA's empty text is.

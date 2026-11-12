@@ -491,6 +491,30 @@ the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
 
+## AW gridding can continue after a PA cache miss
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. Casa-rs reports an uncovered imported buffer (#1070).
+- Affected code: `TransformMachines2/CFStore2.cc` (`nearestPA`),
+  `VB2CFBMap.cc` (`makeVBRow2CFBMap`) and `AWProjectFT.cc`
+  (`findConvFunction`, `resampleDataToGrid`).
+
+`CFStore2::nearestPA` takes the first angle strictly within
+`computepastep`, in the imported catalog's sorted angle order. On a cache
+miss `makeVBRow2CFBMap` can leave the previous row-to-buffer mapping in
+place. `findConvFunction` can generate a missing buffer when its angle
+change detector fires. The gridding path also calls the map builder and
+continues when that lookup reports a miss.
+
+On `refim_mawproject.ms` with a 5-degree step and default rotation, CASA
+creates 31 PA buffers. The warm replay still logs five integrations with
+no in-band PA in field 1 and publishes an image. Its residual differs from
+the cold run by 2.95e-3 NRMS. Casa-rs reports a missing imported buffer
+before publication, preserving its read-only import policy (#1043).
+Field 0 is covered by the same cache, and all seven products match CASA
+with exact masks. The default 360-degree control also matches across both
+fields.
+
 ## AW pointing can reuse the origin of an earlier convolution buffer
 
 - Date noted: 2026-11-12

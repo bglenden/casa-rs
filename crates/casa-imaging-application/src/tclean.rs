@@ -715,7 +715,12 @@ impl<'a> Tclean<'a> {
 
     fn gridding(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.copy(&["pblimit"])?;
-        self.ignore(&["computepastep", "rotatepastep"])?;
+        self.ignore(&["rotatepastep"])?;
+        if modes.gridder == "awproject" {
+            self.copy(&["computepastep"])?;
+        } else {
+            self.ignore(&["computepastep"])?;
+        }
         let usepointing = self.flag("usepointing")?;
         if matches!(modes.gridder, "mosaic" | "awproject") {
             self.set("usepointing", usepointing);

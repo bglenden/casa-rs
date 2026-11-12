@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use num_complex::{Complex32, Complex64};
 
+use crate::error::OperatorError;
 use crate::geometry::{CellLocation, GridGeometry};
 use crate::sample::CfKey;
 
@@ -459,8 +460,9 @@ pub struct RowContext {
     /// antenna classes (CASA `HetArrayConvFunc` dish classes, AW baseline
     /// types); 0 for a homogeneous array.
     pub antenna_types: [u8; 2],
-    /// CASA's visibility polarization operator angle of each antenna in
-    /// radians: the negative of the physical parallactic angle.
+    /// Negated physical angles for kernel selection. AW rows carry antenna
+    /// 0's angle in both entries before the catalog adds its feed-0 angle.
+    /// Other rows carry the selected antennas' angles.
     pub parallactic_angle_rad: [f64; 2],
     /// Field (pointing) identifier.
     pub field: u32,
@@ -570,6 +572,16 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// rounding rules for w-planes, frequency and parallactic-angle cells
     /// live here.
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
+
+    /// Check that a selected row can be keyed before any of its samples
+    /// enter the grid or prediction. Imported AW caches require PA coverage.
+    ///
+    /// # Errors
+    ///
+    /// The cache does not have a suitable buffer for this row.
+    fn validate_row_context(&self, _row: &RowContext) -> Result<(), OperatorError> {
+        Ok(())
+    }
 
     /// The one cell every sample keys, when the set's cell depends on
     /// nothing (`GridFT`'s spheroidal). Such a set must also admit every w
