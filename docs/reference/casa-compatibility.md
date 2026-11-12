@@ -2796,20 +2796,20 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Implemented: 18, Partial: 11, Not implemented: 0, Disabled in CASA: 3, Deprecated in CASA: 1, Unassessed: 0.
+Audit baseline: `cd842e0e3804730301a65e552392af83f67027b6`. Status counts: Implemented: 18, Partial: 11, Not implemented: 0, Disabled in CASA: 3, Deprecated in CASA: 1, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
 | `close` |  | Implemented | Writes and closes the MeasurementSet, within the session's memory budget. CASA aborts here after a mosaic predict; casa-rs does not (decision). | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [predict-multiple-models-20261111](#simulator-evidence-predict-multiple-models-20261111) |
-| `corrupt` |  | Partial (#1053) | Applies the noise, gain, leakage, tropospheric and applied-table terms. Refused: a spectral window observed after setgain, setleakage or settrop terms were set, or defined after a tsys-atm setnoise. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [noise-20261103](#simulator-evidence-noise-20261103), [corruptions-20261103](#simulator-evidence-corruptions-20261103), [troposphere-20261103](#simulator-evidence-troposphere-20261103), [refusals](#simulator-evidence-refusals) |
+| `corrupt` |  | Partial (#1053) | Applies the noise, gain, leakage, tropospheric and applied-table terms. Refused: a spectral window observed after setgain, setleakage or settrop terms were set, or defined after a tsys-atm setnoise. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [noise-20261103](#simulator-evidence-noise-20261103), [corruptions-20261103](#simulator-evidence-corruptions-20261103), [troposphere-20261103](#simulator-evidence-troposphere-20261103), [refusals](#simulator-evidence-refusals), [flagged-samples-20261112](#simulator-evidence-flagged-samples-20261112) |
 | `done` |  | Implemented | As close, and frees the tool. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [predict-multiple-models-20261111](#simulator-evidence-predict-multiple-models-20261111) |
 | `name` |  | Implemented | The MeasurementSet's name. No CASA comparison executed. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
 | `observe` | `sourcename='', spwname='', starttime=[], stoptime=[], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET.ON_SOURCE', observer='CASA simulator', project='CASA simulation'` | Partial (#1053) | Adds a scan's rows as CASA does, with shadowing and elevation limits (decisions). Refused after openfromms. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts), [refusals](#simulator-evidence-refusals) |
 | `observemany` | `sourcenames=[], spwname='', starttimes=['0s'], stoptimes=['3600s'], directions=[''], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET#ON_SOURCE', observer='CASA simulator', project='CASA simulation'` | Partial (#1053) | Adds several pointings' rows. Refused after openfromms. CASA's padding and row-order defects are decisions. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [refusals](#simulator-evidence-refusals) |
 | `oldsetnoise` | `mode='calculate', table='', simplenoise=[], antefficiency=0.8, correfficiency=0.85, spillefficiency=0.85, tau=0.1, trx=50.0, tatmos=230.0, tcmb=2.7` | Deprecated in CASA | Raises, naming setnoise, as CASA does. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
 | `open` | `ms=''` | Implemented | Creates a MeasurementSet for observe. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts) |
-| `openfromms` | `ms=''` | Partial (#1053) | Opens an existing MeasurementSet for predict and corrupt. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, POINTING away from PHASE_DIR, and rows flagged without FLAG_ROW. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [openfromms-20261103](#simulator-evidence-openfromms-20261103), [refusals](#simulator-evidence-refusals) |
-| `predict` | `imagename=[], complist='', incremental=False` | Partial (#1053) | Predicts one or more Stokes I, J2000 image models and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Prepares all models before committing replacement or incremental DATA; each image has its own geometry (mosaic cache correction). Refused: model layouts casa-rs cannot read, refocusing to a field's distance, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, scans whose windows have different correlations, and an incremental predict after a corrupt with setgain or setleakage terms. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [predict-image-20261103](#simulator-evidence-predict-image-20261103), [predict-multiple-models-20261111](#simulator-evidence-predict-multiple-models-20261111), [predict-components-20261103](#simulator-evidence-predict-components-20261103), [predict-sd-20261103](#simulator-evidence-predict-sd-20261103), [openfromms-20261103](#simulator-evidence-openfromms-20261103), [refusals](#simulator-evidence-refusals) |
+| `openfromms` | `ms=''` | Partial (#1053) | Opens an existing MeasurementSet for predict and corrupt, respecting image sample flags while components and corruption also operate on flagged samples. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, and POINTING away from PHASE_DIR. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [openfromms-20261103](#simulator-evidence-openfromms-20261103), [refusals](#simulator-evidence-refusals), [flagged-samples-20261112](#simulator-evidence-flagged-samples-20261112) |
+| `predict` | `imagename=[], complist='', incremental=False` | Partial (#1053) | Predicts one or more Stokes I, J2000 image models and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Prepares all models before committing replacement or incremental DATA; each image has its own geometry (mosaic cache correction). Refused: model layouts casa-rs cannot read, refocusing to a field's distance, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, scans whose windows have different correlations, and an incremental predict after a corrupt with setgain or setleakage terms. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [predict-image-20261103](#simulator-evidence-predict-image-20261103), [predict-multiple-models-20261111](#simulator-evidence-predict-multiple-models-20261111), [predict-components-20261103](#simulator-evidence-predict-components-20261103), [predict-sd-20261103](#simulator-evidence-predict-sd-20261103), [openfromms-20261103](#simulator-evidence-openfromms-20261103), [refusals](#simulator-evidence-refusals), [flagged-samples-20261112](#simulator-evidence-flagged-samples-20261112) |
 | `reset` |  | Implemented | Clears the corruption terms. No CASA comparison executed. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
 | `setapply` | `table='', type='', t=0.0, field=[], interp='linear', calwt=False, spwmap=[-1], opacity=0.0` | Partial (#1053) | Applies G and D tables with linear or nearest interpolation. Refused: calwt, a nonzero t, a nonzero opacity, other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [corruptions-20261103](#simulator-evidence-corruptions-20261103), [refusals](#simulator-evidence-refusals) |
 | `setauto` | `autocorrwt=0.0` | Implemented | Autocorrelation rows. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [predict-image-20261103](#simulator-evidence-predict-image-20261103) |
@@ -2840,7 +2840,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### airy-blockage-ratio: Previously agreed
 
-- Record: [The Airy beam's blockage term uses the inverse length ratio](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-airy-beams-blockage-term-uses-the-inverse-length-ratio)
+- Record: [The Airy beam's blockage term uses the inverse length ratio](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-airy-beams-blockage-term-uses-the-inverse-length-ratio)
 - Inputs: Any Airy primary beam with a central blockage, e.g. ALMA's default 10.7 m dish with 0.75 m blockage via setvp.
 - CASA: PBMath1DAiry::fillPBArray evaluates the blockage term at x*D/b instead of x*b/D, so main-lobe power is about 1% above the physical pattern (0.507 against 0.500 at the half-power radius).
 - casa-rs: Tabulates the same expression (AnnularApertureVoltageTable), matching CASA's predictions to 1.6e-7.
@@ -2851,7 +2851,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### tai-stored-as-utc: Previously agreed
 
-- Record: [The simulator stores TAI as UTC](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulator-stores-tai-as-utc)
+- Record: [The simulator stores TAI as UTC](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulator-stores-tai-as-utc)
 - Inputs: sm.observe with a reference epoch; the stored TIME column.
 - CASA: observe adds TAI seconds to the offsets and writes the result into TIME labelled UTC, so data start TAI-UTC (37 s since 2017) after the requested epoch; geometry reads the number as UT1.
 - casa-rs: Stores the requested UTC and also reads the stored TIME as UT1 for geometry, so uvw agree with CASA at equal TIME.
@@ -2862,7 +2862,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### shadowing-antenna-in-front: Previously agreed
 
-- Record: [The simulator charges shadowing to the antenna in front](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulator-charges-shadowing-to-the-antenna-in-front)
+- Record: [The simulator charges shadowing to the antenna in front](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulator-charges-shadowing-to-the-antenna-in-front)
 - Inputs: sm.observe over antennas close enough to shadow each other.
 - CASA: NewMSSimulator::blockage leaves the blockage on the antenna in front (the one doing the blocking), whereas CASA's own flagger FlagAgentShadow flags the antenna behind.
 - casa-rs: Flags the antenna behind (ShadowedAntenna::Behind); the CASA convention remains available as CasaSimulatorFront.
@@ -2873,7 +2873,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### setspwindow-relabels-frame: Previously agreed
 
-- Record: [`setspwindow` relabels every spectral window's frame](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#setspwindow-relabels-every-spectral-windows-frame)
+- Record: [`setspwindow` relabels every spectral window's frame](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#setspwindow-relabels-every-spectral-windows-frame)
 - Inputs: setspwindow called twice with different frames, e.g. a TOPO window then an LSRK one.
 - CASA: Each call ends with measFreqRef().fillColumn(freqType), writing the new frame into MEAS_FREQ_REF for every row, so both windows end up labelled LSRK.
 - casa-rs: Writes each window's own frame.
@@ -2884,7 +2884,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### setconfig-unconvertible-coordsystem: Previously agreed
 
-- Record: [`setconfig` accepts coordinate systems it cannot convert](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#setconfig-accepts-coordinate-systems-it-cannot-convert)
+- Record: [`setconfig` accepts coordinate systems it cannot convert](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#setconfig-accepts-coordinate-systems-it-cannot-convert)
 - Inputs: setconfig(coordsystem='longlat') or an unknown coordinate system name.
 - CASA: longlat2global logs SEVERE 'not yet implemented' (or initAnt 'Unknown coordinate system type'), the antennas are added at the Earth's centre, and setconfig returns True.
 - casa-rs: Raises RuntimeError for longlat; an unknown name logs CASA's message and returns False; neither adds antennas.
@@ -2895,7 +2895,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### calls-before-setconfig-abort: Previously agreed
 
-- Record: [Simulator calls before `setconfig` abort the process](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#simulator-calls-before-setconfig-abort-the-process)
+- Record: [Simulator calls before `setconfig` abort the process](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#simulator-calls-before-setconfig-abort-the-process)
 - Inputs: setfeed or observe called before any setconfig.
 - CASA: The table slice over zero antennas throws std::runtime_error (an empty Slicer), which the tool binding does not catch, and the Python process aborts.
 - casa-rs: Raises RuntimeError from setfeed, and observe returns False with 'Antenna information not yet defined'.
@@ -2906,7 +2906,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### zero-integration-time-unbounded-rows: Previously agreed
 
-- Record: [A zero integration time adds rows without bound](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-zero-integration-time-adds-rows-without-bound)
+- Record: [A zero integration time adds rows without bound](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-zero-integration-time-adds-rows-without-bound)
 - Inputs: settimes() with no arguments (0 s) or integrationtime of zero, then observe over a nonzero span.
 - CASA: settimes only asserts the time is not negative; observe divides the span by zero and adds billions of rows before the disk fills.
 - casa-rs: Observe returns False for a non-positive integration time ('observe: the integration time must be positive').
@@ -2917,7 +2917,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### predict-rewrites-model: Previously agreed
 
-- Record: [`sm.predict` rewrites the model image](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-rewrites-the-model-image)
+- Record: [`sm.predict` rewrites the model image](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-rewrites-the-model-image)
 - Inputs: sm.predict with model images.
 - CASA: createSkyEquation opens each model as PagedImage<Float>, forces LSRK spectral conversion and Hz units and stores it back, so predicting rewrites the model's table.dat.
 - casa-rs: Converts the spectral axis to Hz in memory and never writes the model.
@@ -2928,7 +2928,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### predict-unreadable-models: Previously agreed
 
-- Record: [`sm.predict` accepts models the simulator cannot read](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-accepts-models-the-simulator-cannot-read)
+- Record: [`sm.predict` accepts models the simulator cannot read](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-accepts-models-the-simulator-cannot-read)
 - Inputs: sm.predict with a FITS model or a complex-valued CASA image.
 - CASA: The binding checks with ImageFactory::fromFile, but the simulator reads PagedImage<Float>; predict logs 'Failed to create SkyEquation', returns False, and the script continues with DATA unpredicted (read from source, not probed).
 - casa-rs: Checks each model by opening it as the simulator reads it, so predict raises RuntimeError 'Unable to open image ...'.
@@ -2939,7 +2939,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### negative-component-under-beam: Previously agreed
 
-- Record: [A negative component turns positive under the primary beam](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-negative-component-turns-positive-under-the-primary-beam)
+- Record: [A negative component turns positive under the primary beam](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-negative-component-turns-positive-under-the-primary-beam)
 - Inputs: sm.setvp(dovp=True) with a negative-flux component, e.g. -0.4 Jy point 20 arcsec off centre.
 - CASA: The fullspectral beam path multiplies by a spectrum sample over abs(flux), restoring the sign twice, so a negative flux comes out positive (+0.4 Jy times the beam).
 - casa-rs: Keeps the sign.
@@ -2950,7 +2950,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### beam-component-spectrum-lsrk-label: Previously agreed
 
-- Record: [The primary beam's component spectrum labels topocentric samples LSRK](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk)
+- Record: [The primary beam's component spectrum labels topocentric samples LSRK](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk)
 - Inputs: Component prediction with the primary beam on (setvp) over channels with a topocentric-LSRK difference.
 - CASA: The full-spectral beam path stores products at the channels' LSRK frequencies, labels the table LSRK, and SkyCompRep::visibility reads it at topocentric frequencies, shifting each channel by up to about 1e-4 of the frequency.
 - casa-rs: Evaluates the beam and spectrum at each channel's own frequency.
@@ -2961,7 +2961,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### setmosaicfield-grid-offset: Previously agreed
 
-- Record: [`setmosaicfield` sits its grid off the field centre](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#setmosaicfield-sits-its-grid-off-the-field-centre)
+- Record: [`setmosaicfield` sits its grid off the field centre](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#setmosaicfield-sits-its-grid-off-the-field-centre)
 - Inputs: setmosaicfield with a 3x3 or 2x2 grid at 1 arcmin spacing.
 - CASA: The odd-count test (nx/2)!=floor(nx/2) on integers is always false, so every grid takes the even-count offsets; a 3x3 grid has RA offsets -1.5,-0.5,+0.5 spacings and Dec -2.5,-1.5,-0.5 (CASA 6.7.6).
 - casa-rs: Centres every grid at (i-(n-1)/2) spacings, divides RA by cos(dec), and keeps CASA's field names {sourcename}_{k}.
@@ -2972,7 +2972,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### observemany-pads-one-name: Previously agreed
 
-- Record: [`observemany` pads one name with empty ones](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#observemany-pads-one-name-with-empty-ones)
+- Record: [`observemany` pads one name with empty ones](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#observemany-pads-one-name-with-empty-ones)
 - Inputs: observemany with one source name (or one direction) and several pointings.
 - CASA: casatools pads the list with Vector<String>::resize, giving empty names; pointing 1's field is '', observe raises 'Field 1: not yet defined' and observemany returns False (CASA 6.7.6).
 - casa-rs: Pads the same way and returns the same False, moving only the first pointing, but adds no rows before refusing.
@@ -2983,7 +2983,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### observemany-rows-before-field-lookup: Previously agreed
 
-- Record: [`observemany` adds rows before it looks up later fields](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#observemany-adds-rows-before-it-looks-up-later-fields)
+- Record: [`observemany` adds rows before it looks up later fields](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#observemany-adds-rows-before-it-looks-up-later-fields)
 - Inputs: observemany where a later pointing's field is not defined.
 - CASA: observe adds every pointing's MAIN rows before looking up later fields, so an undefined field raises with the rows added and FIELD_ID, TIME and UVW unwritten, and returns False.
 - casa-rs: Looks up every field before planning, so the call returns False with the same message and leaves no rows.
@@ -2994,7 +2994,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### predict-wprojectft-no-planes-crash: Previously agreed
 
-- Record: [`sm.predict` through `WProjectFT` without planes crashes the simulator](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-through-wprojectft-without-planes-crashes-the-simulator)
+- Record: [`sm.predict` through `WProjectFT` without planes crashes the simulator](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-through-wprojectft-without-planes-crashes-the-simulator)
 - Inputs: setoptions(ftmachine='wproject', wprojplanes=0 or -1) then sm.predict.
 - CASA: The simulator builds WProjectFT with no w statistics so the automatic branch gets a negative largest w and zero or negative planes; predict kills the Python process with a segmentation fault (exit 139, CASA 6.7.6).
 - casa-rs: Records the planes at setoptions as CASA does, and predict raises RuntimeError ('W projection needs at least two planes'); it follows CASA's other quirks of the machine.
@@ -3005,7 +3005,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### sdgrid-total-power-nonpositive-uvw: Previously agreed
 
-- Record: [`SDGrid` predicts total power into cross-correlations with no positive uvw](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw)
+- Record: [`SDGrid` predicts total power into cross-correlations with no positive uvw](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw)
 - Inputs: sm.predict after setoptions(ftmachine='sd') with cross-correlation rows whose u, v and w are all zero or negative.
 - CASA: SDGrid::get leaves out rows with max(uvw)>0, meant to keep cross-correlations at zero. The eight-antenna CASA 6.7.6.14 oracle reproduces nonzero total power in 56 of 112 cross-correlation rows, alongside 32 autocorrelations; raw DATA is retained in the committed fixture.
 - casa-rs: Predicts total power into autocorrelations only.
@@ -3016,7 +3016,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### evla-beam-no-11052-fit: Previously agreed
 
-- Record: [The EVLA's beam table has no 11052 MHz fit](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-evlas-beam-table-has-no-11052-mhz-fit)
+- Record: [The EVLA's beam table has no 11052 MHz fit](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-evlas-beam-table-has-no-11052-mhz-fit)
 - Inputs: Simulated EVLA beam near 10.05 or 11.05 GHz (X band).
 - CASA: PBMath1DEVLA::init inserts 10948, then 10052, then 11180 MHz; the second 10052 (meant 11052) overwrites the first, so the map has no 11052 entry and coefficients differ by about 1% in the linear term (few 1e-3 at half power).
 - casa-rs: casa-rs's table (EvlaPowerPattern, shared with imaging) is CASA's map as built.
@@ -3027,7 +3027,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### close-aborts-after-mosaic-predict: Previously agreed
 
-- Record: [`sm.close()` aborts the process after a mosaic predict](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#smclose-aborts-the-process-after-a-mosaic-predict)
+- Record: [`sm.close()` aborts the process after a mosaic predict](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#smclose-aborts-the-process-after-a-mosaic-predict)
 - Inputs: setoptions(ftmachine='mosaic'), a successful predict, then sm.close() (simobserve's own sequence).
 - CASA: CASA 6.7.6 sm.close() kills the Python process with 'Pure virtual function called!' and SIGABRT (exit 134); DATA is already complete on disk. The 14-case multi-image oracle reproduces the cleanup abort after sm.done(); a duplicate-model run also produced SIGBUS after preserving complete DATA.
 - casa-rs: Close returns normally; the CASA oracle runs these scenarios in a child process and records close as aborted.
@@ -3038,7 +3038,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### simulator-mosaic-machine-not-tclean: Previously agreed
 
-- Record: [The simulator's mosaic machine is not tclean's](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulators-mosaic-machine-is-not-tcleans)
+- Record: [The simulator's mosaic machine is not tclean's](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulators-mosaic-machine-is-not-tcleans)
 - Inputs: sm.predict with setoptions(ftmachine='mosaic') compared with tclean(gridder='mosaic').
 - CASA: The simulator degrids through the earlier HetArrayConvFunc/SimplePBConvFunc/MosaicFT, which differ from tclean's in support radius, screen size, frequency cells, support search and channel frequencies (4.5-5.6e-3 NRMS on the #875 probe).
 - casa-rs: casa-rs's mosaic set takes either machine's rules (MosaicRules): imaging follows tclean's, the simulator its own.
@@ -3049,7 +3049,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### predict-moved-pointing-phased-on-field: Previously agreed
 
-- Record: [`sm.predict` phases a moved `observemany` pointing on its field](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-phases-a-moved-observemany-pointing-on-its-field)
+- Record: [`sm.predict` phases a moved `observemany` pointing on its field](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-phases-a-moved-observemany-pointing-on-its-field)
 - Inputs: sm.predict over an observemany pointing moved off its field.
 - CASA: NewMSSimulator writes UVW at the moved direction but leaves FIELD unchanged, so predict (VisBuffer phase centre from FIELD) phases the pointing on its field; a source at the moved direction gets phases spread over +-180 deg (rms 101 deg).
 - casa-rs: Follows: UVW, elevation limit and POINTING at the moved direction, DATA phased on the field.
@@ -3060,7 +3060,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### beam-moved-pointing-first-row: Previously agreed
 
-- Record: [The beam on a moved pointing stays where the field's first row points](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)
+- Record: [The beam on a moved pointing stays where the field's first row points](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)
 - Inputs: setvp beam over a model, component list, total power or mosaic machine on a pointing observemany moved off its field.
 - CASA: VPSkyJones updates only when BeamSkyJones::changed fires and the pointing-direction comparisons are commented out, so every row of a field is beamed where the field's first-visited row points (0.652 of peak kept in both pointings in the probe).
 - casa-rs: Refuses a primary beam over a model image, component list or total power, and the mosaic machine, on a moved pointing; it does not reproduce the cache.
@@ -3071,7 +3071,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### predict-corrupt-scratch-columns: Previously agreed
 
-- Record: [`predict` and `corrupt` add scratch columns to a MeasurementSet without them](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them)
+- Record: [`predict` and `corrupt` add scratch columns to a MeasurementSet without them](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them)
 - Inputs: sm.predict or sm.corrupt on a MeasurementSet without CORRECTED_DATA.
 - CASA: The VisSet constructor adds MODEL_DATA (1) and CORRECTED_DATA (DATA); predict sets CORRECTED_DATA to the new DATA and MODEL_DATA to 1, and corrupt sets CORRECTED_DATA to the corrupted DATA.
 - casa-rs: Writes DATA only, creates neither column after openfromms, and keeps existing ones in step with DATA.
@@ -3082,7 +3082,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### gain-screens-read-past-transform: Previously agreed
 
-- Record: [CASA's gain screens read past their transform](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#casas-gain-screens-read-past-their-transform)
+- Record: [CASA's gain screens read past their transform](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#casas-gain-screens-read-past-their-transform)
 - Inputs: setgain(mode='fbm') (and settrop(mode='individual')), corrupt.
 - CASA: fBM::initialize copies n values from a transform of length n-2 or n-3, reading the last two or three past the end, and the RMS normalisation includes them; amplitude scale varied 0.969, 0.966, 1.005 between runs and some antennas had unit gain throughout.
 - casa-rs: Transforms every slot, so screens have the documented scale; it refuses individual mode on fewer than six slots.
@@ -3093,7 +3093,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### gain-screens-share-seed: Previously agreed
 
-- Record: [Gain screens of neighbouring antennas share a seed](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#gain-screens-of-neighbouring-antennas-share-a-seed)
+- Record: [Gain screens of neighbouring antennas share a seed](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#gain-screens-of-neighbouring-antennas-share-a-seed)
 - Inputs: setgain(mode='fbm') on neighbouring antennas.
 - CASA: GJonesCorruptor::initialize seeds antenna a's receptor r screen with seed+a+r, so antenna a's second receptor and antenna a+1's first draw identical screens (measured identical amplitudes).
 - casa-rs: Keys each antenna's and receptor's screens apart.
@@ -3104,7 +3104,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### setgain-random-about-zero: Previously agreed
 
-- Record: [`setgain(mode='random')` draws gains about zero](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#setgainmoderandom-draws-gains-about-zero)
+- Record: [`setgain(mode='random')` draws gains about zero](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#setgainmoderandom-draws-gains-about-zero)
 - Inputs: setgain(mode='random', amplitude=[0.05]) on a 1 Jy point.
 - CASA: simPar returns camp.re*n1 + i*camp.im*n2 without adding one: mean gain modulus 0.065 and DATA mean modulus 0.0046 Jy, nearly erasing the data (CASA 6.7.6).
 - casa-rs: Draws 1 + camp.re*n1 + i*camp.im*n2.
@@ -3115,7 +3115,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### autocorrelation-resets-term: Previously agreed
 
-- Record: [An autocorrelation row resets its antenna's simulated term](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#an-autocorrelation-row-resets-its-antennas-simulated-term)
+- Record: [An autocorrelation row resets its antenna's simulated term](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#an-autocorrelation-row-resets-its-antennas-simulated-term)
 - Inputs: setgain or setleakage with autocorrelations written (CASA's default).
 - CASA: setSimulate sets ANTENNA1's value at every row and 1 at an autocorrelation, so the last antenna (ANTENNA1 only of its autocorrelation) has unit gain and leakage 1 throughout (antenna 42 of 43 in corrupt-gain).
 - casa-rs: Simulates every antenna's term, including settrop's Tf term.
@@ -3126,7 +3126,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### setleakage-first-two-spws: Previously agreed
 
-- Record: [`setleakage` simulates only the first two spectral windows](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#setleakage-simulates-only-the-first-two-spectral-windows)
+- Record: [`setleakage` simulates only the first two spectral windows](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#setleakage-simulates-only-the-first-two-spectral-windows)
 - Inputs: setleakage(table=...) with three, four or eight spectral windows, then corrupt.
 - CASA: The table has solutions for windows 0 and 1 only; corrupt logs 'no (simulated) calibration' for later windows and leaves their rows uncorrupted (CASA 6.7.6; cause not traced).
 - casa-rs: Simulates a leakage for every window.
@@ -3137,7 +3137,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### setleakage-one-per-window: Previously agreed
 
-- Record: [`setleakage` draws one leakage per window for the whole run](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#setleakage-draws-one-leakage-per-window-for-the-whole-run)
+- Record: [`setleakage` draws one leakage per window for the whole run](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#setleakage-draws-one-leakage-per-window-for-the-whole-run)
 - Inputs: setleakage followed by corrupt over several scans, or setgain with interval=.
 - CASA: setleakage simulates with an infinite solution interval (one solution per window and antenna spanning all scans) and corrupt applies it as the linearised JonesGenLin, which raises on two-correlation data; setgain's interval is not used.
 - casa-rs: Follows both, and does not read setgain's interval.
@@ -3148,7 +3148,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### term-table-written-when-set: Previously agreed
 
-- Record: [A simulated term's table is written when the term is set](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-simulated-terms-table-is-written-when-the-term-is-set)
+- Record: [A simulated term's table is written when the term is set](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-simulated-terms-table-is-written-when-the-term-is-set)
 - Inputs: setgain(table=...) or setleakage(table=...).
 - CASA: CASA writes the calibration table as soon as it simulates the term, replacing a table of that name, with subtables copied from the MeasurementSet as it then is.
 - casa-rs: Writes the table at close from the written MeasurementSet; rows are the same but subtables include what was observed after the call, and it refuses to replace anything but a table.
@@ -3159,7 +3159,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### tsys-manual-stale-or-borrowed: Previously agreed
 
-- Record: [`tsys-manual` noise takes stale or borrowed system temperatures](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures)
+- Record: [`tsys-manual` noise takes stale or borrowed system temperatures](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures)
 - Inputs: setnoise(mode='tsys-manual') then corrupt, especially at low elevation, with rows observed after setnoise, changed integration time or shadowed antennas.
 - CASA: The airmass cache is up to 100 s stale (variance sawtooth 1.01 to 1.56), later scans take the nearest earlier integration's solution, every row takes the first row's EXPOSURE, and an antenna without an unflagged row applies as 1.
 - casa-rs: Computes each row's sigma from its own integration: airmass at the row's TIME, own EXPOSURE, window and dishes, regardless of flags; non-finite T keeps CASA's scale of 1.
@@ -3170,7 +3170,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### tsys-manual-scales-every-noise-term: Previously agreed
 
-- Record: [A `tsys-manual` term scales every noise term](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-tsys-manual-term-scales-every-noise-term)
+- Record: [A `tsys-manual` term scales every noise term](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-tsys-manual-term-scales-every-noise-term)
 - Inputs: Two tsys-manual terms, or simplenoise plus tsys-manual, then corrupt.
 - CASA: collapseForSim adds every ANoise term then applies every NoiseScale T term to DATA, so each term's scale multiplies all noise: variance 4 sigma^4 for two terms, and a 0.5 Jy simplenoise comes out scaled by the system temperature.
 - casa-rs: Adds each term's noise with its own sigma, so simplenoise stays in Jy and terms of one seed still add coherently.
@@ -3181,7 +3181,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### refused-tsys-manual-leaves-noise: Previously agreed
 
-- Record: [A refused `tsys-manual` `setnoise` leaves a unit noise term](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term)
+- Record: [A refused `tsys-manual` `setnoise` leaves a unit noise term](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term)
 - Inputs: setnoise(mode='tsys-manual', pwv='200mm') or a zenith Tsys that is not positive or above 1e6 K, then corrupt.
 - CASA: setnoise creates the unit ANoise term before checking parameters; the refused call returns False but the ANoise stays and the next corrupt adds 1 Jy of noise (tsys-atm takes the same path, read from source).
 - casa-rs: Refuses such a setnoise without adding a term.
@@ -3192,7 +3192,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### tsys-atm-half-band-below: Previously agreed
 
-- Record: [`tsys-atm` noise takes its atmosphere half a band below each channel](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel)
+- Record: [`tsys-atm` noise takes its atmosphere half a band below each channel](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel)
 - Inputs: setnoise(mode='tsys-atm') on windows spanning an atmospheric line (183 GHz) or a one-channel window after the first.
 - CASA: initAtm builds the ATM grid so channel c reads the atmosphere half a band below it (variance off by mean factor 6.1, up to 103 across 183 GHz), and a one-channel later window reads the channel map past its end, so its T was bad and applied as 1.
 - casa-rs: Evaluates ATM at each channel's CHAN_FREQ for every window, one-channel windows included; it also refuses a term whose zenith Tsys is not a number.
@@ -3203,7 +3203,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### settrop-dispersive-wet-delay: Previously agreed
 
-- Record: [`settrop` turns the phase by the dispersive wet delay alone](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-turns-the-phase-by-the-dispersive-wet-delay-alone)
+- Record: [`settrop` turns the phase by the dispersive wet delay alone](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-turns-the-phase-by-the-dispersive-wet-delay-alone)
 - Inputs: sm.settrop with default pwv and deltapwv.
 - CASA: cphase takes the zenith wet phase delay from getDispersiveH2OPhaseDelay (the dispersive part alone), which is 940, 119, 36, 23 and 8.5 times smaller than the whole wet delay at 43, 100, 183, 230 and 345 GHz.
 - casa-rs: Takes the whole wet delay (dispersive plus non-dispersive), so deltapwv means the fluctuation of the water column it names.
@@ -3214,7 +3214,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### settrop-half-band-below: Previously agreed
 
-- Record: [`settrop` takes its atmosphere half a band below each channel](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-takes-its-atmosphere-half-a-band-below-each-channel)
+- Record: [`settrop` takes its atmosphere half a band below each channel](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-takes-its-atmosphere-half-a-band-below-each-channel)
 - Inputs: sm.settrop on windows spanning an atmospheric line, or a one-channel window after the first.
 - CASA: cphase reads channel c of the same ATM grid as tsys-atm, so each channel's phase uses the atmosphere half a band below it, and a later one-channel window reads the map past its end.
 - casa-rs: Evaluates ATM at each channel's CHAN_FREQ.
@@ -3225,7 +3225,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### settrop-screen-anisotropic: Previously agreed
 
-- Record: [`settrop`'s screen has an anisotropic spectrum](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrops-screen-has-an-anisotropic-spectrum)
+- Record: [`settrop`'s screen has an anisotropic spectrum](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrops-screen-has-an-anisotropic-spectrum)
 - Inputs: settrop(mode='screen') on a screen long along the wind (e.g. 1359 by 271 pixels).
 - CASA: fBM::initialize uses index rather than wavenumber (stretching the spectrum along the wind), does not wrap the full axis, uses exponent -(beta+1/2)/2 (comment: 'still something not quite right'), and sets values past the half axis's end, copying the last two pixels from past the output.
 - casa-rs: Draws |k|^-(beta+1)/2 on wrapped wavenumbers in cycles per pixel with proper conjugate pairs and transforms every pixel, giving equal structure along and across the wind.
@@ -3236,7 +3236,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### settrop-simint-stamp: Previously agreed
 
-- Record: [`settrop` with `simint` stamps a solution halfway to its interval's start](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-with-simint-stamps-a-solution-halfway-to-its-intervals-start)
+- Record: [`settrop` with `simint` stamps a solution halfway to its interval's start](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-with-simint-stamps-a-solution-halfway-to-its-intervals-start)
 - Inputs: settrop with simint longer than an integration (e.g. simint=6 on 2 s integrations).
 - CASA: setSimulate stamps each solution (t0+t)/2, so times are 0,1,2,6,7,8 s for integrations at 0,2,4,6,8,10 s, and corrupt gives later integrations a slot from earlier in the interval.
 - casa-rs: Stamps each solution with its integration's time, as CASA does when simint is unset.
@@ -3247,7 +3247,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-hcn-106ghz-line: Previously agreed
 
-- Record: [ATM's HCN catalogue misplaces a line at 106 GHz](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hcn-catalogue-misplaces-a-line-at-106-ghz)
+- Record: [ATM's HCN catalogue misplaces a line at 106 GHz](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hcn-catalogue-misplaces-a-line-at-106-ghz)
 - Inputs: Any ATM calculation near 106.3 GHz.
 - CASA: mkSpecificRefractivity_hcn lists the J=12-11 line as 106.298069519 GHz (decimal point moved from 1062.98), so ATM sums an HCN line there and none at 1063 GHz; zenith opacity 0.029368 against 0.028919 corrected, 1.5% high.
 - casa-rs: Moves the decimal point back (1062.98069519 GHz), one of four corrections in atm-corrections.patch.
@@ -3258,7 +3258,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-air-density-sea-level: Previously agreed
 
-- Record: [ATM's reference air densities drop a digit at sea level](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-reference-air-densities-drop-a-digit-at-sea-level)
+- Record: [ATM's reference air densities drop a digit at sea level](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-reference-air-densities-drop-a-digit-at-sea-level)
 - Inputs: ATM with mid-latitude, subarctic or US Standard atmospheres at sea level to 1 km.
 - CASA: st76's sea-level reference air densities lost their leading digit (.496E+19 etc., about 2.5e19 meant), so minor gases (O3, N2O, CO, NO2, SO2, HCl, HCN) are up to about four times too scarce in the lowest layers.
 - casa-rs: Restores the digit (2.496e19, 2.711e19, 2.549e19, 2.855e19, 2.548e19 cm^-3).
@@ -3269,7 +3269,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-h2-17o-abundance: Previously agreed
 
-- Record: [ATM weights H2(17)O by the (18)O abundance](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-weights-h217o-by-the-18o-abundance)
+- Record: [ATM weights H2(17)O by the (18)O abundance](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-weights-h217o-by-the-18o-abundance)
 - Inputs: Any ATM wet opacity calculation.
 - CASA: ratiohh17o uses the (18)O abundance (0.0020439) where the (17)O abundance (0.000375) belongs, so H2(17)O lines are 5.45 times too strong.
 - casa-rs: Uses abun_17o, as ATM does for oxygen and ozone.
@@ -3280,7 +3280,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-hdo-weight: Previously agreed
 
-- Record: [ATM's HDO weight divides by three](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hdo-weight-divides-by-three)
+- Record: [ATM's HDO weight divides by three](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hdo-weight-divides-by-three)
 - Inputs: Any ATM wet opacity calculation.
 - CASA: ratiohdo reads 2-0*abun_d for 2.0*abun_d, so the denominator is 3.0024 instead of 1.0030 and HDO lines are about three times too weak.
 - casa-rs: Uses 2.0*abun_d.
@@ -3291,7 +3291,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-hcn-profile-100km: Previously agreed
 
-- Record: [ATM's HCN profile stops at 100 km](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hcn-profile-stops-at-100-km)
+- Record: [ATM's HCN profile stops at 100 km](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hcn-profile-stops-at-100-km)
 - Inputs: ATM profiles topped above about 90 km.
 - CASA: hcn[50] is initialised with 45 values, so the last five levels (100 to 120 km) are zero and interpolated HCN falls to zero over them.
 - casa-rs: Follows it: there are no values to restore, and air above 90 km is about 2e-6 of the column.
@@ -3302,7 +3302,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-profile-copy-bottom-pressures: Previously agreed
 
-- Record: [Copying an AtmProfile copies its top pressures as bottom pressures](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures)
+- Record: [Copying an AtmProfile copies its top pressures as bottom pressures](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures)
 - Inputs: Copying an AtmProfile (via RefractiveIndexProfile or SkyStatus) then getLayerBottomPressure or setAltitude.
 - CASA: The copy constructor fills v_layerPressure0_ from a.v_layerPressure1_, so bottom pressures return the top pressures; no opacity, path or brightness calculation reads them.
 - casa-rs: Keeps one profile and never copies it through such a path.
@@ -3313,7 +3313,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-ozone-isotopologue-padding: Previously agreed
 
-- Record: [ATM leaves the ozone isotopologue layers unpadded](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-leaves-the-ozone-isotopologue-layers-unpadded)
+- Record: [ATM leaves the ozone isotopologue layers unpadded](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-leaves-the-ozone-isotopologue-layers-unpadded)
 - Inputs: An ATM user profile with a layer that has zero ozone.
 - CASA: mkRefractiveIndexProfile pushes a zero onto the total-ozone vector only, so the eight ozone state and isotopologue vectors become shorter than the layer count and later layers' values shift down one place.
 - casa-rs: The document records no casa-rs action; ATM's standard profiles have ozone in every layer so it does not arise.
@@ -3324,7 +3324,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-omits-16o17o: Previously agreed
 
-- Record: [ATM omits (16)O(17)O](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-omits-16o17o)
+- Record: [ATM omits (16)O(17)O](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-omits-16o17o)
 - Inputs: ATM opacity near (16)O(17)O lines.
 - CASA: mkSpecificRefractivity_16o17o returns zero before its line loop; the comment says the isotope was removed in 2024 while its catalogue is reviewed because it gave lines that do not exist.
 - casa-rs: The port returns zero too and keeps the catalogue in its tables for the record.
@@ -3335,7 +3335,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### atm-averaged-nondispersive-wet-phase: Previously agreed
 
-- Record: [RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column)
+- Record: [RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column)
 - Inputs: RefractiveIndexProfile::getAverageNonDispersiveH2OPhaseDelay on a window (e.g. 22 GHz, 1.3 mm water).
 - CASA: The call getNonDispersiveH2OPhaseDelay(v_transfertId_[spwid]+i) converts the index to a Length in metres, returning channel 0's phase for a water column of 0, 1, 2 ... m, giving 306,132 degrees; CASA's at tool (SkyStatus) is unaffected.
 - casa-rs: casa-atmosphere takes the mean of the channels' phases.
@@ -3346,7 +3346,7 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 
 ##### mosaic-multiple-models-cache-geometry: Previously agreed
 
-- Record: [Mosaic multi-image prediction depends on image order](https://github.com/bglenden/casa-rs/blob/98a907c6c5d4f766e556de9b69b328952ef4330d/docs/CASA%20%28C%2B%2B%29%20bugs.md#mosaic-multi-image-prediction-depends-on-image-order)
+- Record: [Mosaic multi-image prediction depends on image order](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#mosaic-multi-image-prediction-depends-on-image-order)
 - Inputs: sm.predict with two differently sized Stokes I images through the mosaic machine, in both orders, compared with independent single-image predictions.
 - CASA: CASA 6.7.6.14 joint predictions differ from the independent sum by 0.00353/0.0326 NRMS, and swapping the images changes DATA by 0.0307. The public convolution-cache key omits image geometry; repeated identical images accumulate correctly.
 - casa-rs: Prepares every image with its own geometry and sums the predictions, matching the independent CASA single-image sum to 2.11e-6 NRMS.
@@ -3354,6 +3354,17 @@ Audit baseline: `98a907c6c5d4f766e556de9b69b328952ef4330d`. Status counts: Imple
 - User impact: Multi-image mosaic prediction is linear across models; raw defective CASA joint outputs remain recorded and tested separately.
 - Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
 - Evidence: [bugs-record](#simulator-evidence-bugs-record), [predict-multiple-models-20261111](#simulator-evidence-predict-multiple-models-20261111).
+
+##### flagged-component-duplication: Previously agreed
+
+- Record: [Mixed image/component prediction doubles components at flagged samples](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/docs/CASA%20%28C%2B%2B%29%20bugs.md#mixed-imagecomponent-prediction-doubles-components-at-flagged-samples)
+- Inputs: Existing MS with independent sample and row flags, predicted from an image and a 0.25 Jy component, replacing and incremental.
+- CASA: Retains the component in skipped flagged samples, then adds it again; joint flagged DATA contains two component contributions.
+- casa-rs: Adds the masked image prediction and each component once, using independent CASA image-only and component-only sums as the reference.
+- Rationale: The sky-model sum must not double components when an image is present; the upstream accumulator retains and adds the previous model at skipped samples.
+- User impact: Corrected flagged mixed-model DATA; the raw defective joint CASA DATA remains recorded and its excess is tested.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record), [flagged-samples-20261112](#simulator-evidence-flagged-samples-20261112).
 
 #### simulator evidence
 
@@ -3599,6 +3610,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `459122e01bb25fbb57c5002a1b09726e4e791389`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
 - Command: `CASAPY tools/simulation/sm_multiple_models_oracle.py --out OUT --fixture FIXTURE; cargo test -p casa-simulation --test predict_multiple_models -- --nocapture (bg-mac-mini, CPU one and three workers, Metal three workers)`.
 - Receipt: `resources/casa-compat/evidence/sm-multiple-models-20261111.json`.
+
+<a id="simulator-evidence-flagged-samples-20261112"></a>
+##### flagged-samples-20261112
+
+**Independent CASA golden DATA, noise laws and C++ native readback — passed.** 17 cases pass CPU W1/W3 with identical worker results and ten actual Metal runs. All 44 native outputs pass CASA C++ readback, including flagged samples and preserved columns. Maximum numerical DATA NRMS 2.72e-6 (limit 1e-3); Metal/CPU maximum relative error 3.36e-7 (limit 1e-4). Full simulation suite: 301 passed, two parent-executed helper ignores. Existing-MS sample flags independent of row flags for GridFT, WProjectFT, mosaic, SDGrid, multiple models, components, replacement, incremental and noise. Corrected mixed-model sums and standing SDGrid cross-correlation correction are checked separately from raw CASA. Remaining simulator restrictions and whole-task acceptance stay open.
+
+- [tools/simulation/sm_flagged_samples_oracle.py](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/tools/simulation/sm_flagged_samples_oracle.py)
+- [crates/casa-simulation/tests/flagged_samples.rs](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/crates/casa-simulation/tests/flagged_samples.rs)
+- [crates/casa-simulation/tests/data/sm_flagged_samples_casa.json.gz](https://github.com/bglenden/casa-rs/blob/cd842e0e3804730301a65e552392af83f67027b6/crates/casa-simulation/tests/data/sm_flagged_samples_casa.json.gz)
+- Revision: `cd842e0e3804730301a65e552392af83f67027b6`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASAPY tools/simulation/sm_flagged_samples_oracle.py --out OUT --fixture FIXTURE; CASA_RS_FLAGGED_SAMPLES_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test flagged_samples --test open_from_ms --test backends --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/sm_flagged_samples_oracle.py --verify-native EXPORT --fixture FIXTURE --out OUT`.
+- Receipt: `resources/casa-compat/evidence/sm-flagged-samples-20261112.json`.
 
 ### simutil
 
