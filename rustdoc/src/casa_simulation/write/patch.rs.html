@@ -167,694 +167,697 @@
 <a href=#167 id=167 data-nosnippet>167</a>        reads_data: !plan.replaced(),
 <a href=#168 id=168 data-nosnippet>168</a>        reads_flags: plan.predicts_images() || plan.predicts_single_dish(),
 <a href=#169 id=169 data-nosnippet>169</a>        reads_scratch: [
-<a href=#170 id=170 data-nosnippet>170</a>            plan.has_selection() &amp;&amp; !plan.replaced() &amp;&amp; opened.model_data &amp;&amp; plan.predicts(),
-<a href=#171 id=171 data-nosnippet>171</a>            plan.has_selection() &amp;&amp; !plan.replaced() &amp;&amp; opened.corrected_data,
-<a href=#172 id=172 data-nosnippet>172</a>        ],
-<a href=#173 id=173 data-nosnippet>173</a>        columns: columns.len(),
-<a href=#174 id=174 data-nosnippet>174</a>        antennas: session.antennas().len(),
-<a href=#175 id=175 data-nosnippet>175</a>        airmass: noise_varies_by_row(plan),
-<a href=#176 id=176 data-nosnippet>176</a>        times: noise_varies_by_row(plan) || plan.corrupts_by_jones() || plan.has_query(),
-<a href=#177 id=177 data-nosnippet>177</a>        noise_scales: NoiseScales::of(plan, channels, <span class="prelude-val">None</span>),
-<a href=#178 id=178 data-nosnippet>178</a>    };
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="kw">let </span>admission = admit_patch(resources, <span class="kw-2">&amp;</span>shape, <span class="kw-2">&amp;</span>columns, prediction.as_ref())<span class="question-mark">?</span>;
-<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">let </span><span class="kw-2">mut </span>ms = MeasurementSet::open(session.path())
-<a href=#181 id=181 data-nosnippet>181</a>        .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"reopen the MeasurementSet: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">if </span>ms.row_count() != shape.rows {
-<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#184 id=184 data-nosnippet>184</a>            <span class="string">"the MeasurementSet has {} MAIN rows, where openfromms read {}"</span>,
-<a href=#185 id=185 data-nosnippet>185</a>            ms.row_count(),
-<a href=#186 id=186 data-nosnippet>186</a>            shape.rows
-<a href=#187 id=187 data-nosnippet>187</a>        )));
-<a href=#188 id=188 data-nosnippet>188</a>    }
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(stage) = <span class="kw-2">&amp;mut </span>prediction {
-<a href=#190 id=190 data-nosnippet>190</a>        stage.start(
-<a href=#191 id=191 data-nosnippet>191</a>            admission.block_rows,
-<a href=#192 id=192 data-nosnippet>192</a>            admission.cores.streaming_workers,
-<a href=#193 id=193 data-nosnippet>193</a>            admission.grid_bytes,
-<a href=#194 id=194 data-nosnippet>194</a>            admission.plan.batch_rows().max(<span class="number">1</span>),
-<a href=#195 id=195 data-nosnippet>195</a>        );
-<a href=#196 id=196 data-nosnippet>196</a>    }
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">let </span>team = WorkerTeam::new(admission.cores.streaming_workers)
-<a href=#198 id=198 data-nosnippet>198</a>        .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"the worker team: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>batch_rows = admission.plan.batch_rows().max(<span class="number">1</span>);
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>array = shape
-<a href=#201 id=201 data-nosnippet>201</a>        .airmass
-<a href=#202 id=202 data-nosnippet>202</a>        .then(|| {
-<a href=#203 id=203 data-nosnippet>203</a>            ArrayGeometry::new(
-<a href=#204 id=204 data-nosnippet>204</a>                session.telescope(),
-<a href=#205 id=205 data-nosnippet>205</a>                session.antennas(),
-<a href=#206 id=206 data-nosnippet>206</a>                session.options().measures.clone(),
-<a href=#207 id=207 data-nosnippet>207</a>            )
-<a href=#208 id=208 data-nosnippet>208</a>        })
-<a href=#209 id=209 data-nosnippet>209</a>        .transpose()<span class="question-mark">?</span>;
-<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">let </span><span class="kw-2">mut </span>patch = Patch {
-<a href=#211 id=211 data-nosnippet>211</a>        session,
-<a href=#212 id=212 data-nosnippet>212</a>        shape,
-<a href=#213 id=213 data-nosnippet>213</a>        columns: <span class="kw-2">&amp;</span>columns,
-<a href=#214 id=214 data-nosnippet>214</a>        team: <span class="kw-2">&amp;</span>team,
-<a href=#215 id=215 data-nosnippet>215</a>        prediction,
-<a href=#216 id=216 data-nosnippet>216</a>        array,
-<a href=#217 id=217 data-nosnippet>217</a>        reader: BatchReader::default(),
-<a href=#218 id=218 data-nosnippet>218</a>        data: Vec::new(),
-<a href=#219 id=219 data-nosnippet>219</a>        <span class="comment">// As many runs as a batch can have, as admitted.
-<a href=#220 id=220 data-nosnippet>220</a>        </span>runs: Vec::with_capacity(most_runs(shape.scans, batch_rows)),
-<a href=#221 id=221 data-nosnippet>221</a>        cursor: <span class="number">0</span>,
-<a href=#222 id=222 data-nosnippet>222</a>        batches: <span class="number">0</span>,
-<a href=#223 id=223 data-nosnippet>223</a>    };
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer =
-<a href=#225 id=225 data-nosnippet>225</a>        MeasurementSetWriteSession::start_selected_row_mutation(<span class="kw-2">&amp;mut </span>ms, admission.plan)
-<a href=#226 id=226 data-nosnippet>226</a>            .map_err(write_error(<span class="string">"start the MAIN patch"</span>))<span class="question-mark">?</span>;
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">loop </span>{
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">let </span>rows = writer
-<a href=#229 id=229 data-nosnippet>229</a>            .next_mutation_rows()
-<a href=#230 id=230 data-nosnippet>230</a>            .map_err(write_error(<span class="string">"the MAIN patch's rows"</span>))<span class="question-mark">?
-<a href=#231 id=231 data-nosnippet>231</a>            </span>.to_vec();
-<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">if </span>rows.is_empty() {
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="kw">break</span>;
-<a href=#234 id=234 data-nosnippet>234</a>        }
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>batch = patch.batch(<span class="kw-2">&amp;</span>ms, rows)<span class="question-mark">?</span>;
-<a href=#236 id=236 data-nosnippet>236</a>        writer
-<a href=#237 id=237 data-nosnippet>237</a>            .write_mutation_batch(<span class="kw-2">&amp;mut </span>ms, batch)
-<a href=#238 id=238 data-nosnippet>238</a>            .map_err(write_error(<span class="string">"write a MAIN patch batch"</span>))<span class="question-mark">?</span>;
-<a href=#239 id=239 data-nosnippet>239</a>    }
-<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>written = writer
-<a href=#241 id=241 data-nosnippet>241</a>        .finish_mutation()
-<a href=#242 id=242 data-nosnippet>242</a>        .map_err(write_error(<span class="string">"finish the MAIN patch"</span>))<span class="question-mark">?</span>;
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">let </span>(grid_preparations, grid_prepare) = patch
-<a href=#244 id=244 data-nosnippet>244</a>        .prediction
-<a href=#245 id=245 data-nosnippet>245</a>        .as_ref()
-<a href=#246 id=246 data-nosnippet>246</a>        .map_or((<span class="number">0</span>, Duration::ZERO), DataStage::grid_preparations);
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="macro">tracing::info!</span>(
-<a href=#248 id=248 data-nosnippet>248</a>        rows = shape.rows,
-<a href=#249 id=249 data-nosnippet>249</a>        columns = <span class="question-mark">?</span>columns,
-<a href=#250 id=250 data-nosnippet>250</a>        reads_data = shape.reads_data,
-<a href=#251 id=251 data-nosnippet>251</a>        batches = patch.batches,
-<a href=#252 id=252 data-nosnippet>252</a>        backend = <span class="question-mark">?</span>patch.prediction.as_ref().map(DataStage::backend),
-<a href=#253 id=253 data-nosnippet>253</a>        workers = admission.cores.streaming_workers,
-<a href=#254 id=254 data-nosnippet>254</a>        block_rows = admission.block_rows,
-<a href=#255 id=255 data-nosnippet>255</a>        grid_bytes = admission.grid_bytes,
-<a href=#256 id=256 data-nosnippet>256</a>        grid_preparations,
-<a href=#257 id=257 data-nosnippet>257</a>        grid_prepare_s = grid_prepare.as_secs_f64(),
-<a href=#258 id=258 data-nosnippet>258</a>        reserved_bytes = admission.reservation.memory(),
-<a href=#259 id=259 data-nosnippet>259</a>        peak_reserved_bytes = window.close(),
-<a href=#260 id=260 data-nosnippet>260</a>        bytes_written = written.bytes_written,
-<a href=#261 id=261 data-nosnippet>261</a>        writer_write_s = written.write_seconds,
-<a href=#262 id=262 data-nosnippet>262</a>        total_s = started.elapsed().as_secs_f64(),
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="string">"simulation patch"
-<a href=#264 id=264 data-nosnippet>264</a>    </span>);
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="prelude-val">Ok</span>(())
-<a href=#266 id=266 data-nosnippet>266</a>}
-<a href=#267 id=267 data-nosnippet>267</a>
-<a href=#268 id=268 data-nosnippet>268</a><span class="doccomment">/// The most runs of one scan a batch of `batch_rows` rows of `scans` scans
-<a href=#269 id=269 data-nosnippet>269</a>/// has: one a row at most, as when each row is a scan of its own.
-<a href=#270 id=270 data-nosnippet>270</a></span><span class="kw">fn </span>most_runs(scans: usize, batch_rows: usize) -&gt; usize {
-<a href=#271 id=271 data-nosnippet>271</a>    scans.min(batch_rows).max(<span class="number">1</span>)
-<a href=#272 id=272 data-nosnippet>272</a>}
-<a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a><span class="doccomment">/// A batch's run of one scan: (scan, first row in the batch, rows).
-<a href=#275 id=275 data-nosnippet>275</a></span><span class="kw">type </span>Run = (usize, usize, usize);
+<a href=#170 id=170 data-nosnippet>170</a>            plan.has_partial_rows(session.scans())
+<a href=#171 id=171 data-nosnippet>171</a>                &amp;&amp; !plan.replaced()
+<a href=#172 id=172 data-nosnippet>172</a>                &amp;&amp; opened.model_data
+<a href=#173 id=173 data-nosnippet>173</a>                &amp;&amp; plan.predicts(),
+<a href=#174 id=174 data-nosnippet>174</a>            plan.has_partial_rows(session.scans()) &amp;&amp; !plan.replaced() &amp;&amp; opened.corrected_data,
+<a href=#175 id=175 data-nosnippet>175</a>        ],
+<a href=#176 id=176 data-nosnippet>176</a>        columns: columns.len(),
+<a href=#177 id=177 data-nosnippet>177</a>        antennas: session.antennas().len(),
+<a href=#178 id=178 data-nosnippet>178</a>        airmass: noise_varies_by_row(plan),
+<a href=#179 id=179 data-nosnippet>179</a>        times: noise_varies_by_row(plan) || plan.corrupts_by_jones() || plan.has_query(),
+<a href=#180 id=180 data-nosnippet>180</a>        noise_scales: NoiseScales::of(plan, channels, <span class="prelude-val">None</span>),
+<a href=#181 id=181 data-nosnippet>181</a>    };
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">let </span>admission = admit_patch(resources, <span class="kw-2">&amp;</span>shape, <span class="kw-2">&amp;</span>columns, prediction.as_ref())<span class="question-mark">?</span>;
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">let </span><span class="kw-2">mut </span>ms = MeasurementSet::open(session.path())
+<a href=#184 id=184 data-nosnippet>184</a>        .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"reopen the MeasurementSet: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="kw">if </span>ms.row_count() != shape.rows {
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#187 id=187 data-nosnippet>187</a>            <span class="string">"the MeasurementSet has {} MAIN rows, where openfromms read {}"</span>,
+<a href=#188 id=188 data-nosnippet>188</a>            ms.row_count(),
+<a href=#189 id=189 data-nosnippet>189</a>            shape.rows
+<a href=#190 id=190 data-nosnippet>190</a>        )));
+<a href=#191 id=191 data-nosnippet>191</a>    }
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(stage) = <span class="kw-2">&amp;mut </span>prediction {
+<a href=#193 id=193 data-nosnippet>193</a>        stage.start(
+<a href=#194 id=194 data-nosnippet>194</a>            admission.block_rows,
+<a href=#195 id=195 data-nosnippet>195</a>            admission.cores.streaming_workers,
+<a href=#196 id=196 data-nosnippet>196</a>            admission.grid_bytes,
+<a href=#197 id=197 data-nosnippet>197</a>            admission.plan.batch_rows().max(<span class="number">1</span>),
+<a href=#198 id=198 data-nosnippet>198</a>        );
+<a href=#199 id=199 data-nosnippet>199</a>    }
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>team = WorkerTeam::new(admission.cores.streaming_workers)
+<a href=#201 id=201 data-nosnippet>201</a>        .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"the worker team: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">let </span>batch_rows = admission.plan.batch_rows().max(<span class="number">1</span>);
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">let </span>array = shape
+<a href=#204 id=204 data-nosnippet>204</a>        .airmass
+<a href=#205 id=205 data-nosnippet>205</a>        .then(|| {
+<a href=#206 id=206 data-nosnippet>206</a>            ArrayGeometry::new(
+<a href=#207 id=207 data-nosnippet>207</a>                session.telescope(),
+<a href=#208 id=208 data-nosnippet>208</a>                session.antennas(),
+<a href=#209 id=209 data-nosnippet>209</a>                session.options().measures.clone(),
+<a href=#210 id=210 data-nosnippet>210</a>            )
+<a href=#211 id=211 data-nosnippet>211</a>        })
+<a href=#212 id=212 data-nosnippet>212</a>        .transpose()<span class="question-mark">?</span>;
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">let </span><span class="kw-2">mut </span>patch = Patch {
+<a href=#214 id=214 data-nosnippet>214</a>        session,
+<a href=#215 id=215 data-nosnippet>215</a>        shape,
+<a href=#216 id=216 data-nosnippet>216</a>        columns: <span class="kw-2">&amp;</span>columns,
+<a href=#217 id=217 data-nosnippet>217</a>        team: <span class="kw-2">&amp;</span>team,
+<a href=#218 id=218 data-nosnippet>218</a>        prediction,
+<a href=#219 id=219 data-nosnippet>219</a>        array,
+<a href=#220 id=220 data-nosnippet>220</a>        reader: BatchReader::default(),
+<a href=#221 id=221 data-nosnippet>221</a>        data: Vec::new(),
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="comment">// As many runs as a batch can have, as admitted.
+<a href=#223 id=223 data-nosnippet>223</a>        </span>runs: Vec::with_capacity(most_runs(shape.scans, batch_rows)),
+<a href=#224 id=224 data-nosnippet>224</a>        cursor: <span class="number">0</span>,
+<a href=#225 id=225 data-nosnippet>225</a>        batches: <span class="number">0</span>,
+<a href=#226 id=226 data-nosnippet>226</a>    };
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer =
+<a href=#228 id=228 data-nosnippet>228</a>        MeasurementSetWriteSession::start_selected_row_mutation(<span class="kw-2">&amp;mut </span>ms, admission.plan)
+<a href=#229 id=229 data-nosnippet>229</a>            .map_err(write_error(<span class="string">"start the MAIN patch"</span>))<span class="question-mark">?</span>;
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">loop </span>{
+<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">let </span>rows = writer
+<a href=#232 id=232 data-nosnippet>232</a>            .next_mutation_rows()
+<a href=#233 id=233 data-nosnippet>233</a>            .map_err(write_error(<span class="string">"the MAIN patch's rows"</span>))<span class="question-mark">?
+<a href=#234 id=234 data-nosnippet>234</a>            </span>.to_vec();
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">if </span>rows.is_empty() {
+<a href=#236 id=236 data-nosnippet>236</a>            <span class="kw">break</span>;
+<a href=#237 id=237 data-nosnippet>237</a>        }
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>batch = patch.batch(<span class="kw-2">&amp;</span>ms, rows)<span class="question-mark">?</span>;
+<a href=#239 id=239 data-nosnippet>239</a>        writer
+<a href=#240 id=240 data-nosnippet>240</a>            .write_mutation_batch(<span class="kw-2">&amp;mut </span>ms, batch)
+<a href=#241 id=241 data-nosnippet>241</a>            .map_err(write_error(<span class="string">"write a MAIN patch batch"</span>))<span class="question-mark">?</span>;
+<a href=#242 id=242 data-nosnippet>242</a>    }
+<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">let </span>written = writer
+<a href=#244 id=244 data-nosnippet>244</a>        .finish_mutation()
+<a href=#245 id=245 data-nosnippet>245</a>        .map_err(write_error(<span class="string">"finish the MAIN patch"</span>))<span class="question-mark">?</span>;
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">let </span>(grid_preparations, grid_prepare) = patch
+<a href=#247 id=247 data-nosnippet>247</a>        .prediction
+<a href=#248 id=248 data-nosnippet>248</a>        .as_ref()
+<a href=#249 id=249 data-nosnippet>249</a>        .map_or((<span class="number">0</span>, Duration::ZERO), DataStage::grid_preparations);
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="macro">tracing::info!</span>(
+<a href=#251 id=251 data-nosnippet>251</a>        rows = shape.rows,
+<a href=#252 id=252 data-nosnippet>252</a>        columns = <span class="question-mark">?</span>columns,
+<a href=#253 id=253 data-nosnippet>253</a>        reads_data = shape.reads_data,
+<a href=#254 id=254 data-nosnippet>254</a>        batches = patch.batches,
+<a href=#255 id=255 data-nosnippet>255</a>        backend = <span class="question-mark">?</span>patch.prediction.as_ref().map(DataStage::backend),
+<a href=#256 id=256 data-nosnippet>256</a>        workers = admission.cores.streaming_workers,
+<a href=#257 id=257 data-nosnippet>257</a>        block_rows = admission.block_rows,
+<a href=#258 id=258 data-nosnippet>258</a>        grid_bytes = admission.grid_bytes,
+<a href=#259 id=259 data-nosnippet>259</a>        grid_preparations,
+<a href=#260 id=260 data-nosnippet>260</a>        grid_prepare_s = grid_prepare.as_secs_f64(),
+<a href=#261 id=261 data-nosnippet>261</a>        reserved_bytes = admission.reservation.memory(),
+<a href=#262 id=262 data-nosnippet>262</a>        peak_reserved_bytes = window.close(),
+<a href=#263 id=263 data-nosnippet>263</a>        bytes_written = written.bytes_written,
+<a href=#264 id=264 data-nosnippet>264</a>        writer_write_s = written.write_seconds,
+<a href=#265 id=265 data-nosnippet>265</a>        total_s = started.elapsed().as_secs_f64(),
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="string">"simulation patch"
+<a href=#267 id=267 data-nosnippet>267</a>    </span>);
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="prelude-val">Ok</span>(())
+<a href=#269 id=269 data-nosnippet>269</a>}
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a><span class="doccomment">/// The most runs of one scan a batch of `batch_rows` rows of `scans` scans
+<a href=#272 id=272 data-nosnippet>272</a>/// has: one a row at most, as when each row is a scan of its own.
+<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">fn </span>most_runs(scans: usize, batch_rows: usize) -&gt; usize {
+<a href=#274 id=274 data-nosnippet>274</a>    scans.min(batch_rows).max(<span class="number">1</span>)
+<a href=#275 id=275 data-nosnippet>275</a>}
 <a href=#276 id=276 data-nosnippet>276</a>
-<a href=#277 id=277 data-nosnippet>277</a><span class="doccomment">/// The patch's state across batches.
-<a href=#278 id=278 data-nosnippet>278</a></span><span class="kw">struct </span>Patch&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#279 id=279 data-nosnippet>279</a>    session: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>Simulator,
-<a href=#280 id=280 data-nosnippet>280</a>    shape: PatchShape,
-<a href=#281 id=281 data-nosnippet>281</a>    columns: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str],
-<a href=#282 id=282 data-nosnippet>282</a>    team: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>WorkerTeam,
-<a href=#283 id=283 data-nosnippet>283</a>    prediction: <span class="prelude-ty">Option</span>&lt;DataStage&lt;<span class="lifetime">'s</span>&gt;&gt;,
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="doccomment">/// The array's geometry, which gives each row's airmasses when the
-<a href=#285 id=285 data-nosnippet>285</a>    /// noise needs them.
-<a href=#286 id=286 data-nosnippet>286</a>    </span>array: <span class="prelude-ty">Option</span>&lt;ArrayGeometry&lt;<span class="lifetime">'s</span>&gt;&gt;,
-<a href=#287 id=287 data-nosnippet>287</a>    reader: BatchReader,
-<a href=#288 id=288 data-nosnippet>288</a>    <span class="doccomment">/// The batch's new DATA, `[row][channel][correlation]`.
-<a href=#289 id=289 data-nosnippet>289</a>    </span>data: Vec&lt;Complex32&gt;,
-<a href=#290 id=290 data-nosnippet>290</a>    <span class="doccomment">/// The batch's runs.
-<a href=#291 id=291 data-nosnippet>291</a>    </span>runs: Vec&lt;Run&gt;,
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="doccomment">/// The first scan the next batch can reach.
-<a href=#293 id=293 data-nosnippet>293</a>    </span>cursor: usize,
-<a href=#294 id=294 data-nosnippet>294</a>    batches: usize,
-<a href=#295 id=295 data-nosnippet>295</a>}
-<a href=#296 id=296 data-nosnippet>296</a>
-<a href=#297 id=297 data-nosnippet>297</a><span class="kw">impl </span>Patch&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="doccomment">/// The new DATA, and the scratch columns, of MAIN rows `rows`, which
-<a href=#299 id=299 data-nosnippet>299</a>    /// follow one another.
-<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">fn </span>batch(
-<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#302 id=302 data-nosnippet>302</a>        ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#303 id=303 data-nosnippet>303</a>        rows: Vec&lt;usize&gt;,
-<a href=#304 id=304 data-nosnippet>304</a>    ) -&gt; SimulatorResult&lt;MeasurementSetMutationBatch&gt; {
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>first = rows[<span class="number">0</span>];
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="macro">debug_assert!</span>(
-<a href=#307 id=307 data-nosnippet>307</a>            rows.windows(<span class="number">2</span>).all(|pair| pair[<span class="number">1</span>] == pair[<span class="number">0</span>] + <span class="number">1</span>),
-<a href=#308 id=308 data-nosnippet>308</a>            <span class="string">"the patch's rows follow one another"
-<a href=#309 id=309 data-nosnippet>309</a>        </span>);
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>count = rows.len();
-<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>samples = <span class="self">self</span>.shape.samples();
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="self">self</span>.reader
-<a href=#313 id=313 data-nosnippet>313</a>            .read(ms, <span class="kw-2">&amp;</span>rows, (<span class="self">self</span>.session.antennas().len(), <span class="self">self</span>.shape))<span class="question-mark">?</span>;
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="self">self</span>.data.clear();
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="self">self</span>.data.resize(count * samples, Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="self">self</span>.find_runs(first, count);
-<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(array) = <span class="kw-2">&amp;</span><span class="self">self</span>.array {
-<a href=#318 id=318 data-nosnippet>318</a>            <span class="self">self</span>.reader.fill_airmass(
-<a href=#319 id=319 data-nosnippet>319</a>                array,
-<a href=#320 id=320 data-nosnippet>320</a>                (<span class="self">self</span>.session.scans(), <span class="kw-2">&amp;</span><span class="self">self</span>.runs),
-<a href=#321 id=321 data-nosnippet>321</a>                <span class="self">self</span>.shape.antennas,
-<a href=#322 id=322 data-nosnippet>322</a>            )<span class="question-mark">?</span>;
-<a href=#323 id=323 data-nosnippet>323</a>        }
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>runs = <span class="kw-2">&amp;</span><span class="self">self</span>.runs;
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>team = <span class="self">self</span>.team;
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>geometry = <span class="kw-2">&amp;</span><span class="self">self</span>.reader.geometry;
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(stage) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.prediction {
-<a href=#328 id=328 data-nosnippet>328</a>            stage.apply(
-<a href=#329 id=329 data-nosnippet>329</a>                team,
-<a href=#330 id=330 data-nosnippet>330</a>                DataBatch {
-<a href=#331 id=331 data-nosnippet>331</a>                    rows: geometry,
-<a href=#332 id=332 data-nosnippet>332</a>                    runs,
-<a href=#333 id=333 data-nosnippet>333</a>                    first_row: first <span class="kw">as </span>u64,
-<a href=#334 id=334 data-nosnippet>334</a>                    flags: <span class="self">self
-<a href=#335 id=335 data-nosnippet>335</a>                        </span>.shape
-<a href=#336 id=336 data-nosnippet>336</a>                        .reads_flags
-<a href=#337 id=337 data-nosnippet>337</a>                        .then_some(<span class="self">self</span>.reader.flags.as_slice()),
-<a href=#338 id=338 data-nosnippet>338</a>                    stored: <span class="self">self</span>.shape.reads_data.then_some(<span class="self">self</span>.reader.data.as_slice()),
-<a href=#339 id=339 data-nosnippet>339</a>                },
-<a href=#340 id=340 data-nosnippet>340</a>                <span class="kw-2">&amp;mut </span><span class="self">self</span>.data,
-<a href=#341 id=341 data-nosnippet>341</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.shape.noise_scales,
-<a href=#342 id=342 data-nosnippet>342</a>                <span class="bool-val">false</span>,
-<a href=#343 id=343 data-nosnippet>343</a>            )<span class="question-mark">?</span>;
-<a href=#344 id=344 data-nosnippet>344</a>        }
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="self">self</span>.batches += <span class="number">1</span>;
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.mutation(rows))
-<a href=#347 id=347 data-nosnippet>347</a>    }
-<a href=#348 id=348 data-nosnippet>348</a>
-<a href=#349 id=349 data-nosnippet>349</a>    <span class="doccomment">/// The batch's runs of one scan from MAIN row `first`, `count` rows,
-<a href=#350 id=350 data-nosnippet>350</a>    /// into `self.runs`. The scans' rows follow one another in MAIN order.
-<a href=#351 id=351 data-nosnippet>351</a>    </span><span class="kw">fn </span>find_runs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, first: usize, count: usize) {
-<a href=#352 id=352 data-nosnippet>352</a>        <span class="kw">let </span>end = first + count;
-<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span>scans = <span class="self">self</span>.session.scans();
-<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">let </span>rows = |scan: <span class="kw-2">&amp;</span>Scan| scan.on_disk().expect(<span class="string">"checked before the patch started"</span>);
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">while </span>scans
-<a href=#356 id=356 data-nosnippet>356</a>            .get(<span class="self">self</span>.cursor)
-<a href=#357 id=357 data-nosnippet>357</a>            .is_some_and(|scan| rows(scan).end &lt;= first)
-<a href=#358 id=358 data-nosnippet>358</a>        {
-<a href=#359 id=359 data-nosnippet>359</a>            <span class="self">self</span>.cursor += <span class="number">1</span>;
-<a href=#360 id=360 data-nosnippet>360</a>        }
-<a href=#361 id=361 data-nosnippet>361</a>        <span class="self">self</span>.runs.clear();
-<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span>scans.iter().enumerate().skip(<span class="self">self</span>.cursor) {
-<a href=#363 id=363 data-nosnippet>363</a>            <span class="kw">let </span>range = rows(scan);
-<a href=#364 id=364 data-nosnippet>364</a>            <span class="kw">if </span>range.start &gt;= end {
-<a href=#365 id=365 data-nosnippet>365</a>                <span class="kw">break</span>;
-<a href=#366 id=366 data-nosnippet>366</a>            }
-<a href=#367 id=367 data-nosnippet>367</a>            <span class="kw">let </span>(start, stop) = (range.start.max(first), range.end.min(end));
-<a href=#368 id=368 data-nosnippet>368</a>            <span class="self">self</span>.runs.push((index, start - first, stop - start));
-<a href=#369 id=369 data-nosnippet>369</a>        }
-<a href=#370 id=370 data-nosnippet>370</a>    }
-<a href=#371 id=371 data-nosnippet>371</a>
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// The mutation writing the batch's DATA and scratch columns.
-<a href=#373 id=373 data-nosnippet>373</a>    </span><span class="kw">fn </span>mutation(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: Vec&lt;usize&gt;) -&gt; MeasurementSetMutationBatch {
-<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">let </span>samples = <span class="self">self</span>.shape.samples();
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">let </span>shape = IxDyn(<span class="kw-2">&amp;</span>[<span class="self">self</span>.shape.correlations, <span class="self">self</span>.shape.channels]).f();
-<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">let </span>cell = |values: Vec&lt;Complex32&gt;| {
-<a href=#377 id=377 data-nosnippet>377</a>            ArrayValue::Complex32(
-<a href=#378 id=378 data-nosnippet>378</a>                ArrayD::from_shape_vec(shape.clone(), values).expect(<span class="string">"a cell's samples"</span>),
-<a href=#379 id=379 data-nosnippet>379</a>            )
-<a href=#380 id=380 data-nosnippet>380</a>        };
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">let </span>data: Vec&lt;ArrayValue&gt; = <span class="self">self
-<a href=#382 id=382 data-nosnippet>382</a>            </span>.data
-<a href=#383 id=383 data-nosnippet>383</a>            .chunks_exact(samples)
-<a href=#384 id=384 data-nosnippet>384</a>            .map(|values| cell(values.to_vec()))
-<a href=#385 id=385 data-nosnippet>385</a>            .collect();
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span>one = cell(<span class="macro">vec!</span>[Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>); samples]);
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="comment">// DATA is first; the scratch columns follow it.
-<a href=#388 id=388 data-nosnippet>388</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>columns: Vec&lt;MeasurementSetMutationColumnBatch&gt; = <span class="self">self</span>.columns[<span class="number">1</span>..]
-<a href=#389 id=389 data-nosnippet>389</a>            .iter()
-<a href=#390 id=390 data-nosnippet>390</a>            .map(|<span class="kw-2">&amp;</span>name| MeasurementSetMutationColumnBatch {
-<a href=#391 id=391 data-nosnippet>391</a>                name: name.to_string(),
-<a href=#392 id=392 data-nosnippet>392</a>                values: MeasurementSetMutationColumnValues::Arrays(<span class="kw">match </span>name {
-<a href=#393 id=393 data-nosnippet>393</a>                    <span class="string">"MODEL_DATA" </span><span class="kw">if </span>!<span class="self">self</span>.shape.reads_scratch[<span class="number">0</span>] =&gt; <span class="macro">vec!</span>[one.clone(); rows.len()],
-<a href=#394 id=394 data-nosnippet>394</a>                    <span class="string">"CORRECTED_DATA" </span><span class="kw">if </span>!<span class="self">self</span>.shape.reads_scratch[<span class="number">1</span>] =&gt; data.clone(),
-<a href=#395 id=395 data-nosnippet>395</a>                    <span class="kw">_ </span>=&gt; <span class="self">self</span>.scratch_values(name, <span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>one),
-<a href=#396 id=396 data-nosnippet>396</a>                }),
-<a href=#397 id=397 data-nosnippet>397</a>            })
-<a href=#398 id=398 data-nosnippet>398</a>            .collect();
-<a href=#399 id=399 data-nosnippet>399</a>        columns.insert(
-<a href=#400 id=400 data-nosnippet>400</a>            <span class="number">0</span>,
-<a href=#401 id=401 data-nosnippet>401</a>            MeasurementSetMutationColumnBatch {
-<a href=#402 id=402 data-nosnippet>402</a>                name: <span class="string">"DATA"</span>.to_string(),
-<a href=#403 id=403 data-nosnippet>403</a>                values: MeasurementSetMutationColumnValues::Arrays(data),
-<a href=#404 id=404 data-nosnippet>404</a>            },
-<a href=#405 id=405 data-nosnippet>405</a>        );
-<a href=#406 id=406 data-nosnippet>406</a>        MeasurementSetMutationBatch {
-<a href=#407 id=407 data-nosnippet>407</a>            row_indices: rows,
-<a href=#408 id=408 data-nosnippet>408</a>            columns,
-<a href=#409 id=409 data-nosnippet>409</a>        }
-<a href=#410 id=410 data-nosnippet>410</a>    }
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">fn </span>scratch_values(
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#414 id=414 data-nosnippet>414</a>        column: <span class="kw-2">&amp;</span>str,
-<a href=#415 id=415 data-nosnippet>415</a>        data: <span class="kw-2">&amp;</span>[ArrayValue],
-<a href=#416 id=416 data-nosnippet>416</a>        one: <span class="kw-2">&amp;</span>ArrayValue,
-<a href=#417 id=417 data-nosnippet>417</a>    ) -&gt; Vec&lt;ArrayValue&gt; {
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>model = column == <span class="string">"MODEL_DATA"</span>;
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="kw">let </span>stored = <span class="kw">if </span>model {
-<a href=#420 id=420 data-nosnippet>420</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.reader.model_data
-<a href=#421 id=421 data-nosnippet>421</a>        } <span class="kw">else </span>{
-<a href=#422 id=422 data-nosnippet>422</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.reader.corrected_data
-<a href=#423 id=423 data-nosnippet>423</a>        };
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span>samples = <span class="self">self</span>.shape.samples();
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(data.len());
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">let </span>stage = <span class="self">self</span>.prediction.as_ref().expect(<span class="string">"nonempty DATA steps"</span>);
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">for </span>(row, value) <span class="kw">in </span>data.iter().enumerate() {
-<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">let </span>changed = <span class="kw">if </span>model {
-<a href=#429 id=429 data-nosnippet>429</a>                stage.row_predicted(row)
-<a href=#430 id=430 data-nosnippet>430</a>            } <span class="kw">else </span>{
-<a href=#431 id=431 data-nosnippet>431</a>                stage.row_touched(row)
-<a href=#432 id=432 data-nosnippet>432</a>            };
-<a href=#433 id=433 data-nosnippet>433</a>            values.push(<span class="kw">if </span>changed {
-<a href=#434 id=434 data-nosnippet>434</a>                <span class="kw">if </span>model { one.clone() } <span class="kw">else </span>{ value.clone() }
-<a href=#435 id=435 data-nosnippet>435</a>            } <span class="kw">else </span>{
-<a href=#436 id=436 data-nosnippet>436</a>                ArrayValue::Complex32(
-<a href=#437 id=437 data-nosnippet>437</a>                    ArrayD::from_shape_vec(
-<a href=#438 id=438 data-nosnippet>438</a>                        IxDyn(<span class="kw-2">&amp;</span>[<span class="self">self</span>.shape.correlations, <span class="self">self</span>.shape.channels]).f(),
-<a href=#439 id=439 data-nosnippet>439</a>                        stored[row * samples..(row + <span class="number">1</span>) * samples].to_vec(),
-<a href=#440 id=440 data-nosnippet>440</a>                    )
-<a href=#441 id=441 data-nosnippet>441</a>                    .expect(<span class="string">"stored scratch cell"</span>),
-<a href=#442 id=442 data-nosnippet>442</a>                )
-<a href=#443 id=443 data-nosnippet>443</a>            });
-<a href=#444 id=444 data-nosnippet>444</a>        }
-<a href=#445 id=445 data-nosnippet>445</a>        values
-<a href=#446 id=446 data-nosnippet>446</a>    }
-<a href=#447 id=447 data-nosnippet>447</a>}
-<a href=#448 id=448 data-nosnippet>448</a>
-<a href=#449 id=449 data-nosnippet>449</a><span class="doccomment">/// The columns of a batch's rows read from disk, in buffers kept across
-<a href=#450 id=450 data-nosnippet>450</a>/// batches.
-<a href=#451 id=451 data-nosnippet>451</a></span><span class="attr">#[derive(Debug, Default)]
-<a href=#452 id=452 data-nosnippet>452</a></span><span class="kw">struct </span>BatchReader {
-<a href=#453 id=453 data-nosnippet>453</a>    antenna1: Vec&lt;i32&gt;,
-<a href=#454 id=454 data-nosnippet>454</a>    antenna2: Vec&lt;i32&gt;,
-<a href=#455 id=455 data-nosnippet>455</a>    flag_row: Vec&lt;bool&gt;,
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="doccomment">/// FLAG, `[row][channel][correlation]`, for image predictions only.
-<a href=#457 id=457 data-nosnippet>457</a>    </span>flags: Vec&lt;bool&gt;,
-<a href=#458 id=458 data-nosnippet>458</a>    uvw: Vec&lt;f64&gt;,
-<a href=#459 id=459 data-nosnippet>459</a>    <span class="doccomment">/// TIME and EXPOSURE, when the noise needs them.
-<a href=#460 id=460 data-nosnippet>460</a>    </span>time: Vec&lt;f64&gt;,
-<a href=#461 id=461 data-nosnippet>461</a>    exposure: Vec&lt;f64&gt;,
-<a href=#462 id=462 data-nosnippet>462</a>    <span class="doccomment">/// DATA, `[row][channel][correlation]`, when the fold starts from it.
-<a href=#463 id=463 data-nosnippet>463</a>    </span>data: Vec&lt;Complex32&gt;,
-<a href=#464 id=464 data-nosnippet>464</a>    model_data: Vec&lt;Complex32&gt;,
-<a href=#465 id=465 data-nosnippet>465</a>    corrected_data: Vec&lt;Complex32&gt;,
-<a href=#466 id=466 data-nosnippet>466</a>    geometry: Vec&lt;RowGeometry&gt;,
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="doccomment">/// The antennas' airmasses at the last integration `fill_airmass`
-<a href=#468 id=468 data-nosnippet>468</a>    /// computed, and its scan and TIME.
-<a href=#469 id=469 data-nosnippet>469</a>    </span>airmasses: Vec&lt;f32&gt;,
-<a href=#470 id=470 data-nosnippet>470</a>    airmass_at: <span class="prelude-ty">Option</span>&lt;(usize, u64)&gt;,
-<a href=#471 id=471 data-nosnippet>471</a>}
-<a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a><span class="kw">impl </span>BatchReader {
-<a href=#474 id=474 data-nosnippet>474</a>    <span class="doccomment">/// Read MAIN rows `rows` of `ms`, whose antennas are below `antennas`.
-<a href=#475 id=475 data-nosnippet>475</a>    </span><span class="kw">fn </span>read(
-<a href=#476 id=476 data-nosnippet>476</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#477 id=477 data-nosnippet>477</a>        ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#478 id=478 data-nosnippet>478</a>        rows: <span class="kw-2">&amp;</span>[usize],
-<a href=#479 id=479 data-nosnippet>479</a>        (antennas, shape): (usize, PatchShape),
-<a href=#480 id=480 data-nosnippet>480</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span>main = ms.main_table();
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span>error = |what: <span class="kw-2">&amp;</span>str| {
-<a href=#483 id=483 data-nosnippet>483</a>            <span class="kw">let </span>what = what.to_string();
-<a href=#484 id=484 data-nosnippet>484</a>            <span class="kw">move </span>|error: casa_tables::TableError| {
-<a href=#485 id=485 data-nosnippet>485</a>                SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"read MAIN {what}: {error}"</span>))
-<a href=#486 id=486 data-nosnippet>486</a>            }
-<a href=#487 id=487 data-nosnippet>487</a>        };
-<a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">for </span>column <span class="kw">in </span>[<span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna1, <span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna2] {
-<a href=#489 id=489 data-nosnippet>489</a>            column.clear();
-<a href=#490 id=490 data-nosnippet>490</a>        }
-<a href=#491 id=491 data-nosnippet>491</a>        <span class="self">self</span>.flag_row.clear();
-<a href=#492 id=492 data-nosnippet>492</a>        main.required_scalar_columns_for_rows_into(
-<a href=#493 id=493 data-nosnippet>493</a>            rows,
-<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw-2">&amp;mut </span>[
-<a href=#495 id=495 data-nosnippet>495</a>                RequiredScalarColumnDestination::new(
-<a href=#496 id=496 data-nosnippet>496</a>                    <span class="string">"ANTENNA1"</span>,
-<a href=#497 id=497 data-nosnippet>497</a>                    RequiredScalarColumnValuesMut::Int32(<span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna1),
-<a href=#498 id=498 data-nosnippet>498</a>                ),
-<a href=#499 id=499 data-nosnippet>499</a>                RequiredScalarColumnDestination::new(
-<a href=#500 id=500 data-nosnippet>500</a>                    <span class="string">"ANTENNA2"</span>,
-<a href=#501 id=501 data-nosnippet>501</a>                    RequiredScalarColumnValuesMut::Int32(<span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna2),
-<a href=#502 id=502 data-nosnippet>502</a>                ),
-<a href=#503 id=503 data-nosnippet>503</a>                RequiredScalarColumnDestination::new(
-<a href=#504 id=504 data-nosnippet>504</a>                    <span class="string">"FLAG_ROW"</span>,
-<a href=#505 id=505 data-nosnippet>505</a>                    RequiredScalarColumnValuesMut::Bool(<span class="kw-2">&amp;mut </span><span class="self">self</span>.flag_row),
-<a href=#506 id=506 data-nosnippet>506</a>                ),
-<a href=#507 id=507 data-nosnippet>507</a>            ],
-<a href=#508 id=508 data-nosnippet>508</a>        )
-<a href=#509 id=509 data-nosnippet>509</a>        .map_err(error(<span class="string">"ANTENNA1, ANTENNA2 and FLAG_ROW"</span>))<span class="question-mark">?</span>;
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="self">self</span>.time.clear();
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="self">self</span>.exposure.clear();
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">if </span>shape.airmass {
-<a href=#513 id=513 data-nosnippet>513</a>            main.required_scalar_columns_for_rows_into(
-<a href=#514 id=514 data-nosnippet>514</a>                rows,
-<a href=#515 id=515 data-nosnippet>515</a>                <span class="kw-2">&amp;mut </span>[
-<a href=#516 id=516 data-nosnippet>516</a>                    RequiredScalarColumnDestination::new(
-<a href=#517 id=517 data-nosnippet>517</a>                        <span class="string">"TIME"</span>,
-<a href=#518 id=518 data-nosnippet>518</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.time),
-<a href=#519 id=519 data-nosnippet>519</a>                    ),
-<a href=#520 id=520 data-nosnippet>520</a>                    RequiredScalarColumnDestination::new(
-<a href=#521 id=521 data-nosnippet>521</a>                        <span class="string">"EXPOSURE"</span>,
-<a href=#522 id=522 data-nosnippet>522</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.exposure),
-<a href=#523 id=523 data-nosnippet>523</a>                    ),
-<a href=#524 id=524 data-nosnippet>524</a>                ],
-<a href=#525 id=525 data-nosnippet>525</a>            )
-<a href=#526 id=526 data-nosnippet>526</a>            .map_err(error(<span class="string">"TIME and EXPOSURE"</span>))<span class="question-mark">?</span>;
-<a href=#527 id=527 data-nosnippet>527</a>        } <span class="kw">else if </span>shape.times {
-<a href=#528 id=528 data-nosnippet>528</a>            main.required_scalar_columns_for_rows_into(
-<a href=#529 id=529 data-nosnippet>529</a>                rows,
-<a href=#530 id=530 data-nosnippet>530</a>                <span class="kw-2">&amp;mut </span>[RequiredScalarColumnDestination::new(
-<a href=#531 id=531 data-nosnippet>531</a>                    <span class="string">"TIME"</span>,
-<a href=#532 id=532 data-nosnippet>532</a>                    RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.time),
-<a href=#533 id=533 data-nosnippet>533</a>                )],
-<a href=#534 id=534 data-nosnippet>534</a>            )
-<a href=#535 id=535 data-nosnippet>535</a>            .map_err(error(<span class="string">"TIME"</span>))<span class="question-mark">?</span>;
-<a href=#536 id=536 data-nosnippet>536</a>        }
-<a href=#537 id=537 data-nosnippet>537</a>        <span class="self">self</span>.uvw.clear();
-<a href=#538 id=538 data-nosnippet>538</a>        main.column_accessor(<span class="string">"UVW"</span>)
-<a href=#539 id=539 data-nosnippet>539</a>            .and_then(|column| {
-<a href=#540 id=540 data-nosnippet>540</a>                column.fill_array_cells_1d_typed_uncached(
-<a href=#541 id=541 data-nosnippet>541</a>                    rows,
-<a href=#542 id=542 data-nosnippet>542</a>                    SelectedArray1DCellsMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.uvw),
-<a href=#543 id=543 data-nosnippet>543</a>                )
-<a href=#544 id=544 data-nosnippet>544</a>            })
-<a href=#545 id=545 data-nosnippet>545</a>            .map_err(error(<span class="string">"UVW"</span>))<span class="question-mark">?</span>;
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">if </span><span class="self">self</span>.uvw.len() != <span class="number">3 </span>* rows.len() {
-<a href=#547 id=547 data-nosnippet>547</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
-<a href=#548 id=548 data-nosnippet>548</a>                <span class="string">"read MAIN UVW: a cell does not hold 3 values"</span>,
-<a href=#549 id=549 data-nosnippet>549</a>            ));
-<a href=#550 id=550 data-nosnippet>550</a>        }
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="self">self</span>.flags.clear();
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">if </span>shape.reads_flags {
-<a href=#553 id=553 data-nosnippet>553</a>            main.column_accessor(<span class="string">"FLAG"</span>)
-<a href=#554 id=554 data-nosnippet>554</a>                .and_then(|column| {
-<a href=#555 id=555 data-nosnippet>555</a>                    column.fill_array_cells_2d_channel_range_typed_uncached(
-<a href=#556 id=556 data-nosnippet>556</a>                        rows,
-<a href=#557 id=557 data-nosnippet>557</a>                        <span class="number">0</span>,
-<a href=#558 id=558 data-nosnippet>558</a>                        shape.channels,
-<a href=#559 id=559 data-nosnippet>559</a>                        SelectedArray2DCellsMut::RowChannelBool(<span class="kw-2">&amp;mut </span><span class="self">self</span>.flags),
-<a href=#560 id=560 data-nosnippet>560</a>                    )
-<a href=#561 id=561 data-nosnippet>561</a>                })
-<a href=#562 id=562 data-nosnippet>562</a>                .map_err(error(<span class="string">"FLAG"</span>))<span class="question-mark">?</span>;
-<a href=#563 id=563 data-nosnippet>563</a>            <span class="kw">if </span><span class="self">self</span>.flags.len() != rows.len() * shape.samples() {
-<a href=#564 id=564 data-nosnippet>564</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
-<a href=#565 id=565 data-nosnippet>565</a>                    <span class="string">"read MAIN FLAG: a cell is not of the shape its window gives"</span>,
-<a href=#566 id=566 data-nosnippet>566</a>                ));
-<a href=#567 id=567 data-nosnippet>567</a>            }
-<a href=#568 id=568 data-nosnippet>568</a>        }
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">if </span>shape.reads_data {
-<a href=#570 id=570 data-nosnippet>570</a>            <span class="self">self</span>.data.clear();
-<a href=#571 id=571 data-nosnippet>571</a>            main.column_accessor(<span class="string">"DATA"</span>)
-<a href=#572 id=572 data-nosnippet>572</a>                .and_then(|column| {
-<a href=#573 id=573 data-nosnippet>573</a>                    column.fill_array_cells_2d_channel_range_typed_uncached(
-<a href=#574 id=574 data-nosnippet>574</a>                        rows,
-<a href=#575 id=575 data-nosnippet>575</a>                        <span class="number">0</span>,
-<a href=#576 id=576 data-nosnippet>576</a>                        shape.channels,
-<a href=#577 id=577 data-nosnippet>577</a>                        SelectedArray2DCellsMut::RowChannelComplex32(<span class="kw-2">&amp;mut </span><span class="self">self</span>.data),
-<a href=#578 id=578 data-nosnippet>578</a>                    )
-<a href=#579 id=579 data-nosnippet>579</a>                })
-<a href=#580 id=580 data-nosnippet>580</a>                .map_err(error(<span class="string">"DATA"</span>))<span class="question-mark">?</span>;
-<a href=#581 id=581 data-nosnippet>581</a>            <span class="kw">if </span><span class="self">self</span>.data.len() != rows.len() * shape.samples() {
-<a href=#582 id=582 data-nosnippet>582</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
-<a href=#583 id=583 data-nosnippet>583</a>                    <span class="string">"read MAIN DATA: a cell is not of the shape its window gives"</span>,
-<a href=#584 id=584 data-nosnippet>584</a>                ));
-<a href=#585 id=585 data-nosnippet>585</a>            }
-<a href=#586 id=586 data-nosnippet>586</a>        }
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">for </span>(slot, name, destination) <span class="kw">in </span>[
-<a href=#588 id=588 data-nosnippet>588</a>            (<span class="number">0</span>, <span class="string">"MODEL_DATA"</span>, <span class="kw-2">&amp;mut </span><span class="self">self</span>.model_data),
-<a href=#589 id=589 data-nosnippet>589</a>            (<span class="number">1</span>, <span class="string">"CORRECTED_DATA"</span>, <span class="kw-2">&amp;mut </span><span class="self">self</span>.corrected_data),
-<a href=#590 id=590 data-nosnippet>590</a>        ] {
-<a href=#591 id=591 data-nosnippet>591</a>            <span class="kw">if </span>!shape.reads_scratch[slot] {
-<a href=#592 id=592 data-nosnippet>592</a>                <span class="kw">continue</span>;
-<a href=#593 id=593 data-nosnippet>593</a>            }
-<a href=#594 id=594 data-nosnippet>594</a>            destination.clear();
-<a href=#595 id=595 data-nosnippet>595</a>            main.column_accessor(name)
-<a href=#596 id=596 data-nosnippet>596</a>                .and_then(|column| {
-<a href=#597 id=597 data-nosnippet>597</a>                    column.fill_array_cells_2d_channel_range_typed_uncached(
-<a href=#598 id=598 data-nosnippet>598</a>                        rows,
-<a href=#599 id=599 data-nosnippet>599</a>                        <span class="number">0</span>,
-<a href=#600 id=600 data-nosnippet>600</a>                        shape.channels,
-<a href=#601 id=601 data-nosnippet>601</a>                        SelectedArray2DCellsMut::RowChannelComplex32(destination),
-<a href=#602 id=602 data-nosnippet>602</a>                    )
-<a href=#603 id=603 data-nosnippet>603</a>                })
-<a href=#604 id=604 data-nosnippet>604</a>                .map_err(error(name))<span class="question-mark">?</span>;
-<a href=#605 id=605 data-nosnippet>605</a>            <span class="kw">if </span>destination.len() != rows.len() * shape.samples() {
-<a href=#606 id=606 data-nosnippet>606</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#607 id=607 data-nosnippet>607</a>                    <span class="string">"read MAIN {name}: scratch cell shape differs"
-<a href=#608 id=608 data-nosnippet>608</a>                </span>)));
-<a href=#609 id=609 data-nosnippet>609</a>            }
-<a href=#610 id=610 data-nosnippet>610</a>        }
-<a href=#611 id=611 data-nosnippet>611</a>        <span class="self">self</span>.geometry.clear();
-<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">for </span>(index, <span class="kw-2">&amp;</span>row) <span class="kw">in </span>rows.iter().enumerate() {
-<a href=#613 id=613 data-nosnippet>613</a>            <span class="kw">let </span>antenna = |value: i32| {
-<a href=#614 id=614 data-nosnippet>614</a>                usize::try_from(value)
-<a href=#615 id=615 data-nosnippet>615</a>                    .ok()
-<a href=#616 id=616 data-nosnippet>616</a>                    .filter(|<span class="kw-2">&amp;</span>antenna| antenna &lt; antennas)
-<a href=#617 id=617 data-nosnippet>617</a>                    .ok_or_else(|| {
-<a href=#618 id=618 data-nosnippet>618</a>                        SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#619 id=619 data-nosnippet>619</a>                            <span class="string">"MAIN row {row} names antenna {value}, which ANTENNA does not have"
-<a href=#620 id=620 data-nosnippet>620</a>                        </span>))
-<a href=#621 id=621 data-nosnippet>621</a>                    })
-<a href=#622 id=622 data-nosnippet>622</a>            };
-<a href=#623 id=623 data-nosnippet>623</a>            <span class="kw">let </span>uvw = <span class="kw-2">&amp;</span><span class="self">self</span>.uvw[<span class="number">3 </span>* index..<span class="number">3 </span>* index + <span class="number">3</span>];
-<a href=#624 id=624 data-nosnippet>624</a>            <span class="self">self</span>.geometry.push(RowGeometry {
-<a href=#625 id=625 data-nosnippet>625</a>                antenna1: antenna(<span class="self">self</span>.antenna1[index])<span class="question-mark">?</span>,
-<a href=#626 id=626 data-nosnippet>626</a>                antenna2: antenna(<span class="self">self</span>.antenna2[index])<span class="question-mark">?</span>,
-<a href=#627 id=627 data-nosnippet>627</a>                uvw_m: [uvw[<span class="number">0</span>], uvw[<span class="number">1</span>], uvw[<span class="number">2</span>]],
-<a href=#628 id=628 data-nosnippet>628</a>                flagged: <span class="self">self</span>.flag_row[index],
-<a href=#629 id=629 data-nosnippet>629</a>                time_s: <span class="self">self</span>.time.get(index).copied().unwrap_or(<span class="number">0.0</span>),
-<a href=#630 id=630 data-nosnippet>630</a>                airmass: [f32::NAN; <span class="number">2</span>],
-<a href=#631 id=631 data-nosnippet>631</a>                exposure_s: <span class="self">self</span>.exposure.get(index).copied().unwrap_or(<span class="number">0.0</span>),
-<a href=#632 id=632 data-nosnippet>632</a>                ..RowGeometry::default()
-<a href=#633 id=633 data-nosnippet>633</a>            });
-<a href=#634 id=634 data-nosnippet>634</a>        }
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="prelude-val">Ok</span>(())
-<a href=#636 id=636 data-nosnippet>636</a>    }
-<a href=#637 id=637 data-nosnippet>637</a>
-<a href=#638 id=638 data-nosnippet>638</a>    <span class="doccomment">/// Give each row of the batch's `runs` the airmasses of its antennas,
-<a href=#639 id=639 data-nosnippet>639</a>    /// of the first `antennas`, at its scan's phase centre at its TIME,
-<a href=#640 id=640 data-nosnippet>640</a>    /// from `array`: computed once for each integration (scan and TIME)
-<a href=#641 id=641 data-nosnippet>641</a>    /// the rows follow one another in.
-<a href=#642 id=642 data-nosnippet>642</a>    </span><span class="kw">fn </span>fill_airmass(
-<a href=#643 id=643 data-nosnippet>643</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#644 id=644 data-nosnippet>644</a>        array: <span class="kw-2">&amp;</span>ArrayGeometry&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#645 id=645 data-nosnippet>645</a>        (scans, runs): (<span class="kw-2">&amp;</span>[Scan], <span class="kw-2">&amp;</span>[Run]),
-<a href=#646 id=646 data-nosnippet>646</a>        antennas: usize,
-<a href=#647 id=647 data-nosnippet>647</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
-<a href=#649 id=649 data-nosnippet>649</a>            <span class="kw">for </span>index <span class="kw">in </span>start..start + count {
-<a href=#650 id=650 data-nosnippet>650</a>                <span class="kw">let </span>time_s = <span class="self">self</span>.time[index];
-<a href=#651 id=651 data-nosnippet>651</a>                <span class="kw">if </span><span class="self">self</span>.airmass_at != <span class="prelude-val">Some</span>((scan, time_s.to_bits())) {
-<a href=#652 id=652 data-nosnippet>652</a>                    <span class="self">self</span>.airmasses =
-<a href=#653 id=653 data-nosnippet>653</a>                        array.airmasses(scans[scan].phase_center_rad, time_s, antennas)<span class="question-mark">?</span>;
-<a href=#654 id=654 data-nosnippet>654</a>                    <span class="self">self</span>.airmass_at = <span class="prelude-val">Some</span>((scan, time_s.to_bits()));
-<a href=#655 id=655 data-nosnippet>655</a>                }
-<a href=#656 id=656 data-nosnippet>656</a>                <span class="kw">let </span>row = <span class="kw-2">&amp;mut </span><span class="self">self</span>.geometry[index];
-<a href=#657 id=657 data-nosnippet>657</a>                row.airmass = [<span class="self">self</span>.airmasses[row.antenna1], <span class="self">self</span>.airmasses[row.antenna2]];
-<a href=#658 id=658 data-nosnippet>658</a>            }
-<a href=#659 id=659 data-nosnippet>659</a>        }
-<a href=#660 id=660 data-nosnippet>660</a>        <span class="prelude-val">Ok</span>(())
-<a href=#661 id=661 data-nosnippet>661</a>    }
-<a href=#662 id=662 data-nosnippet>662</a>}
-<a href=#663 id=663 data-nosnippet>663</a>
-<a href=#664 id=664 data-nosnippet>664</a><span class="doccomment">/// Admit the patch for `shape`, writing `columns`, within `resources`, the
-<a href=#665 id=665 data-nosnippet>665</a>/// pipeline predicting with `prediction` when a step predicts.
-<a href=#666 id=666 data-nosnippet>666</a></span><span class="kw">fn </span>admit_patch(
-<a href=#667 id=667 data-nosnippet>667</a>    resources: <span class="kw-2">&amp;</span>SessionResources,
-<a href=#668 id=668 data-nosnippet>668</a>    shape: <span class="kw-2">&amp;</span>PatchShape,
-<a href=#669 id=669 data-nosnippet>669</a>    columns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
-<a href=#670 id=670 data-nosnippet>670</a>    prediction: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>DataStage&lt;<span class="lifetime">'_</span>&gt;&gt;,
-<a href=#671 id=671 data-nosnippet>671</a>) -&gt; SimulatorResult&lt;PatchAdmission&gt; {
-<a href=#672 id=672 data-nosnippet>672</a>    <span class="kw">let </span>(host, policy) = (resources.host(), resources.policy());
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="comment">// The patch reads the MeasurementSet through the process's table cache.
-<a href=#674 id=674 data-nosnippet>674</a>    </span>charge_process_caches(host, policy).map_err(SimulatorError::admission)<span class="question-mark">?</span>;
-<a href=#675 id=675 data-nosnippet>675</a>    <span class="kw">let </span>free = free_memory(host, policy);
-<a href=#676 id=676 data-nosnippet>676</a>    <span class="comment">// The plan holds the selected rows, and copies them once to check them.
-<a href=#677 id=677 data-nosnippet>677</a>    // Its batches aim at casa-ms's batch size, whatever the budget allows,
-<a href=#678 id=678 data-nosnippet>678</a>    // as a new MeasurementSet's tile bands do.
-<a href=#679 id=679 data-nosnippet>679</a>    </span><span class="kw">let </span>index_bytes = <span class="number">2 </span>* (shape.rows * size_of::&lt;usize&gt;()) <span class="kw">as </span>u64;
-<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer_bytes = usize::try_from((free / <span class="number">2</span>).saturating_sub(index_bytes))
-<a href=#681 id=681 data-nosnippet>681</a>        .unwrap_or(usize::MAX)
-<a href=#682 id=682 data-nosnippet>682</a>        .min(TARGET_BATCH_BYTES);
-<a href=#683 id=683 data-nosnippet>683</a>    <span class="kw">loop </span>{
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>plan = patch_plan(shape, columns, writer_bytes).map_err(|<span class="kw">_</span>| {
-<a href=#685 id=685 data-nosnippet>685</a>            SimulatorError::admission(casa_imaging_runtime::Admission {
-<a href=#686 id=686 data-nosnippet>686</a>                phase: WRITER_PHASE,
-<a href=#687 id=687 data-nosnippet>687</a>                required: index_bytes
-<a href=#688 id=688 data-nosnippet>688</a>                    + <span class="number">2 </span>* (shape.columns * shape.samples() * size_of::&lt;Complex32&gt;()) <span class="kw">as </span>u64,
-<a href=#689 id=689 data-nosnippet>689</a>                available: free,
-<a href=#690 id=690 data-nosnippet>690</a>            })
-<a href=#691 id=691 data-nosnippet>691</a>        })<span class="question-mark">?</span>;
-<a href=#692 id=692 data-nosnippet>692</a>        <span class="kw">let </span><span class="kw-2">mut </span>reservation = admit(
-<a href=#693 id=693 data-nosnippet>693</a>            host,
-<a href=#694 id=694 data-nosnippet>694</a>            policy,
-<a href=#695 id=695 data-nosnippet>695</a>            <span class="kw-2">&amp;</span>Demand {
-<a href=#696 id=696 data-nosnippet>696</a>                phase: WRITER_PHASE,
-<a href=#697 id=697 data-nosnippet>697</a>                memory: plan.maximum_resident_bytes() <span class="kw">as </span>u64 + index_bytes,
-<a href=#698 id=698 data-nosnippet>698</a>            },
-<a href=#699 id=699 data-nosnippet>699</a>        )
-<a href=#700 id=700 data-nosnippet>700</a>        .map_err(SimulatorError::admission)<span class="question-mark">?</span>;
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>policy_cores = resources
-<a href=#702 id=702 data-nosnippet>702</a>            .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>free = free_memory(host, policy);
-<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>batch_rows = plan.batch_rows().max(<span class="number">1</span>);
-<a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span>demand = |cores: CoreAllocation, block_rows: usize| {
-<a href=#706 id=706 data-nosnippet>706</a>            pipeline_bytes(shape, columns.len(), batch_rows)
-<a href=#707 id=707 data-nosnippet>707</a>                + shape
-<a href=#708 id=708 data-nosnippet>708</a>                    .noise_scales
-<a href=#709 id=709 data-nosnippet>709</a>                    .bytes(batch_rows, cores.streaming_workers)
-<a href=#710 id=710 data-nosnippet>710</a>                + prediction.map_or(<span class="number">0</span>, |stage| {
-<a href=#711 id=711 data-nosnippet>711</a>                    stage.bytes(block_rows, cores.streaming_workers, batch_rows)
-<a href=#712 id=712 data-nosnippet>712</a>                })
-<a href=#713 id=713 data-nosnippet>713</a>        };
-<a href=#714 id=714 data-nosnippet>714</a>        <span class="comment">// As `close` admits a new MeasurementSet's pipeline: a batch predicted
-<a href=#715 id=715 data-nosnippet>715</a>        // as one block when that fits with the policy's workers, else small
-<a href=#716 id=716 data-nosnippet>716</a>        // blocks with the workers shrinking first.
-<a href=#717 id=717 data-nosnippet>717</a>        </span><span class="kw">let </span>(cores, block_rows) = <span class="kw">if </span>demand(policy_cores, batch_rows) &lt;= free {
-<a href=#718 id=718 data-nosnippet>718</a>            (policy_cores, batch_rows)
-<a href=#719 id=719 data-nosnippet>719</a>        } <span class="kw">else </span>{
-<a href=#720 id=720 data-nosnippet>720</a>            <span class="kw">let </span>small = prediction.map_or(batch_rows, |stage| stage.small_block_rows(batch_rows));
-<a href=#721 id=721 data-nosnippet>721</a>            <span class="kw">let </span>cores = (<span class="number">1</span>..=policy_cores.streaming_workers)
-<a href=#722 id=722 data-nosnippet>722</a>                .rev()
-<a href=#723 id=723 data-nosnippet>723</a>                .map(|workers| policy_cores.at_most(workers))
-<a href=#724 id=724 data-nosnippet>724</a>                .find(|cores| demand(<span class="kw-2">*</span>cores, small) &lt;= free)
-<a href=#725 id=725 data-nosnippet>725</a>                .unwrap_or_else(|| policy_cores.at_most(<span class="number">1</span>));
-<a href=#726 id=726 data-nosnippet>726</a>            (cores, small)
-<a href=#727 id=727 data-nosnippet>727</a>        };
-<a href=#728 id=728 data-nosnippet>728</a>        <span class="comment">// Prediction blocks can shrink independently, but selected-run masks,
-<a href=#729 id=729 data-nosnippet>729</a>        // original scratch columns and mutation cells live for the entire batch.
-<a href=#730 id=730 data-nosnippet>730</a>        // If those do not fit, reduce the writer's batch as well. The ordinary
-<a href=#731 id=731 data-nosnippet>731</a>        // all-row path keeps its first plan when it already fits.
-<a href=#732 id=732 data-nosnippet>732</a>        </span><span class="kw">if </span>demand(cores, block_rows) &gt; free &amp;&amp; writer_bytes &gt; <span class="number">1 </span>{
-<a href=#733 id=733 data-nosnippet>733</a>            writer_bytes /= <span class="number">2</span>;
-<a href=#734 id=734 data-nosnippet>734</a>            <span class="kw">continue</span>;
-<a href=#735 id=735 data-nosnippet>735</a>        }
-<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>pipeline = admit(
-<a href=#737 id=737 data-nosnippet>737</a>            host,
-<a href=#738 id=738 data-nosnippet>738</a>            policy,
-<a href=#739 id=739 data-nosnippet>739</a>            <span class="kw-2">&amp;</span>Demand {
-<a href=#740 id=740 data-nosnippet>740</a>                phase: PIPELINE_PHASE,
-<a href=#741 id=741 data-nosnippet>741</a>                memory: demand(cores, block_rows),
-<a href=#742 id=742 data-nosnippet>742</a>            },
-<a href=#743 id=743 data-nosnippet>743</a>        )
-<a href=#744 id=744 data-nosnippet>744</a>        .map_err(SimulatorError::admission)<span class="question-mark">?</span>;
-<a href=#745 id=745 data-nosnippet>745</a>        reservation.join(pipeline);
-<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span>grid_bytes = admit_field_grids(resources, prediction, <span class="kw-2">&amp;mut </span>reservation)<span class="question-mark">?</span>;
-<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PatchAdmission {
-<a href=#748 id=748 data-nosnippet>748</a>            plan,
-<a href=#749 id=749 data-nosnippet>749</a>            cores,
-<a href=#750 id=750 data-nosnippet>750</a>            block_rows,
-<a href=#751 id=751 data-nosnippet>751</a>            grid_bytes,
-<a href=#752 id=752 data-nosnippet>752</a>            reservation,
-<a href=#753 id=753 data-nosnippet>753</a>        });
-<a href=#754 id=754 data-nosnippet>754</a>    }
-<a href=#755 id=755 data-nosnippet>755</a>}
-<a href=#756 id=756 data-nosnippet>756</a>
-<a href=#757 id=757 data-nosnippet>757</a><span class="doccomment">/// The mutation of every row of `shape` writing `columns`, with
-<a href=#758 id=758 data-nosnippet>758</a>/// `available_bytes` for its batch.
-<a href=#759 id=759 data-nosnippet>759</a></span><span class="kw">fn </span>patch_plan(
-<a href=#760 id=760 data-nosnippet>760</a>    shape: <span class="kw-2">&amp;</span>PatchShape,
-<a href=#761 id=761 data-nosnippet>761</a>    columns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
-<a href=#762 id=762 data-nosnippet>762</a>    available_bytes: usize,
-<a href=#763 id=763 data-nosnippet>763</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MeasurementSetWritePlan, casa_ms::MeasurementSetWriteError&gt; {
-<a href=#764 id=764 data-nosnippet>764</a>    <span class="comment">// A row's cell of each column: its samples and the array holding them.
-<a href=#765 id=765 data-nosnippet>765</a>    </span><span class="kw">let </span>bytes_per_row = shape.samples() * size_of::&lt;Complex32&gt;() + size_of::&lt;ArrayValue&gt;();
-<a href=#766 id=766 data-nosnippet>766</a>    MeasurementSetWritePlan::selected_row_mutation(
-<a href=#767 id=767 data-nosnippet>767</a>        (<span class="number">0</span>..shape.rows).collect(),
-<a href=#768 id=768 data-nosnippet>768</a>        columns
-<a href=#769 id=769 data-nosnippet>769</a>            .iter()
-<a href=#770 id=770 data-nosnippet>770</a>            .map(|name| MeasurementSetWriteColumnPlan {
-<a href=#771 id=771 data-nosnippet>771</a>                name: (<span class="kw-2">*</span>name).to_string(),
-<a href=#772 id=772 data-nosnippet>772</a>                bytes_per_row,
-<a href=#773 id=773 data-nosnippet>773</a>                mode: MeasurementSetColumnWriteMode::Replace,
-<a href=#774 id=774 data-nosnippet>774</a>                storage_manager: MeasurementSetColumnStorage::Persisted,
-<a href=#775 id=775 data-nosnippet>775</a>                tile_shape: <span class="prelude-val">None</span>,
-<a href=#776 id=776 data-nosnippet>776</a>                create_source_column: <span class="prelude-val">None</span>,
-<a href=#777 id=777 data-nosnippet>777</a>            })
-<a href=#778 id=778 data-nosnippet>778</a>            .collect(),
-<a href=#779 id=779 data-nosnippet>779</a>        MeasurementSetWriteResources {
-<a href=#780 id=780 data-nosnippet>780</a>            available_bytes,
-<a href=#781 id=781 data-nosnippet>781</a>            maximum_live_batches: <span class="number">1</span>,
-<a href=#782 id=782 data-nosnippet>782</a>            tiled_column_buffer_bytes: <span class="number">0</span>,
-<a href=#783 id=783 data-nosnippet>783</a>        },
-<a href=#784 id=784 data-nosnippet>784</a>    )
-<a href=#785 id=785 data-nosnippet>785</a>}
-<a href=#786 id=786 data-nosnippet>786</a>
-<a href=#787 id=787 data-nosnippet>787</a><span class="doccomment">/// The tiled managers' I/O while the patch reads one column of a batch, or
-<a href=#788 id=788 data-nosnippet>788</a>/// writes the batch: tiles read, decoded and rewritten, which the tile
-<a href=#789 id=789 data-nosnippet>789</a>/// layout bounds and the rows do not (`casa_tables::SelectedReadFootprint`
-<a href=#790 id=790 data-nosnippet>790</a>/// leaves them out). It is charged as `close`'s writer charges a tiled
-<a href=#791 id=791 data-nosnippet>791</a>/// column's buffer; the reads and the write come one after another.
-<a href=#792 id=792 data-nosnippet>792</a></span><span class="kw">const </span>TILED_IO_BYTES: u64 = STREAMING_TILED_COLUMN_BUFFER_BYTES <span class="kw">as </span>u64;
-<a href=#793 id=793 data-nosnippet>793</a>
-<a href=#794 id=794 data-nosnippet>794</a><span class="doccomment">/// Copies of a written batch's cells casa-ms's mutation holds beside the
-<a href=#795 id=795 data-nosnippet>795</a>/// batch itself (measured by `tests/session_memory/patch.rs`):
-<a href=#796 id=796 data-nosnippet>796</a>/// `write_mutation_batch` clones each cell into the table's pending cells,
-<a href=#797 id=797 data-nosnippet>797</a>/// the in-place save clones the changed rows' cells again to collect them,
-<a href=#798 id=798 data-nosnippet>798</a>/// and the tiled manager stages them into its tiles.
-<a href=#799 id=799 data-nosnippet>799</a></span><span class="kw">const </span>MUTATION_CELL_COPIES: u64 = <span class="number">3</span>;
-<a href=#800 id=800 data-nosnippet>800</a>
-<a href=#801 id=801 data-nosnippet>801</a><span class="doccomment">/// Copies of a column a typed row-major read stages beside its output: the
-<a href=#802 id=802 data-nosnippet>802</a>/// cells it reorders into the output's layout (measured as above).
-<a href=#803 id=803 data-nosnippet>803</a></span><span class="kw">const </span>READ_CELL_COPIES: u64 = <span class="number">1</span>;
-<a href=#804 id=804 data-nosnippet>804</a>
-<a href=#805 id=805 data-nosnippet>805</a><span class="doccomment">/// Per antenna, when the noise needs airmasses: the array geometry's
-<a href=#806 id=806 data-nosnippet>806</a>/// position, and one integration's elevation and airmass, with room for the
-<a href=#807 id=807 data-nosnippet>807</a>/// measures frame of the conversion (as `close`'s geometry charges its
-<a href=#808 id=808 data-nosnippet>808</a>/// antennas' scratch).
-<a href=#809 id=809 data-nosnippet>809</a></span><span class="kw">const </span>AIRMASS_ANTENNA_BYTES: u64 = size_of::&lt;MPosition&gt;() <span class="kw">as </span>u64 + <span class="number">64</span>;
-<a href=#810 id=810 data-nosnippet>810</a>
-<a href=#811 id=811 data-nosnippet>811</a><span class="doccomment">/// Bytes the patch holds beside its writer for batches of `batch_rows`
-<a href=#812 id=812 data-nosnippet>812</a>/// rows writing `columns` columns: the columns read (ANTENNA1, ANTENNA2,
-<a href=#813 id=813 data-nosnippet>813</a>/// FLAG_ROW, UVW, TIME when the corruption needs it, EXPOSURE when the
-<a href=#814 id=814 data-nosnippet>814</a>/// noise needs airmasses, DATA when the fold starts from it, and FLAG for
-<a href=#815 id=815 data-nosnippet>815</a>/// image predictions) and
-<a href=#816 id=816 data-nosnippet>816</a>/// their staging, the rows' geometry, the new DATA, the mutation's copies
-<a href=#817 id=817 data-nosnippet>817</a>/// of the cells written, the tiled managers' I/O, the batch's runs and
-<a href=#818 id=818 data-nosnippet>818</a>/// jobs, and the airmasses' antennas.
-<a href=#819 id=819 data-nosnippet>819</a></span><span class="kw">fn </span>pipeline_bytes(shape: <span class="kw-2">&amp;</span>PatchShape, columns: usize, batch_rows: usize) -&gt; u64 {
-<a href=#820 id=820 data-nosnippet>820</a>    <span class="kw">let </span>samples = shape.samples() <span class="kw">as </span>u64;
-<a href=#821 id=821 data-nosnippet>821</a>    <span class="kw">let </span>cell = samples * size_of::&lt;Complex32&gt;() <span class="kw">as </span>u64;
-<a href=#822 id=822 data-nosnippet>822</a>    <span class="kw">let </span>staged = <span class="number">1 </span>+ READ_CELL_COPIES;
-<a href=#823 id=823 data-nosnippet>823</a>    <span class="kw">let </span>scratch = shape.reads_scratch.iter().filter(|&amp;&amp;read| read).count() <span class="kw">as </span>u64 * cell;
-<a href=#824 id=824 data-nosnippet>824</a>    <span class="kw">let </span>read = staged
-<a href=#825 id=825 data-nosnippet>825</a>        * (<span class="kw">if </span>shape.reads_data { cell } <span class="kw">else </span>{ <span class="number">0 </span>}
-<a href=#826 id=826 data-nosnippet>826</a>            + <span class="kw">if </span>shape.reads_flags { samples } <span class="kw">else </span>{ <span class="number">0 </span>}
-<a href=#827 id=827 data-nosnippet>827</a>            + scratch);
-<a href=#828 id=828 data-nosnippet>828</a>    <span class="kw">let </span>times = staged * <span class="number">8 </span>* (u64::from(shape.times) + u64::from(shape.airmass));
-<a href=#829 id=829 data-nosnippet>829</a>    <span class="kw">let </span>written = columns <span class="kw">as </span>u64 * MUTATION_CELL_COPIES * (cell + size_of::&lt;ArrayValue&gt;() <span class="kw">as </span>u64);
-<a href=#830 id=830 data-nosnippet>830</a>    <span class="kw">let </span>row = <span class="number">4
-<a href=#831 id=831 data-nosnippet>831</a>        </span>+ <span class="number">4
-<a href=#832 id=832 data-nosnippet>832</a>        </span>+ <span class="number">1
-<a href=#833 id=833 data-nosnippet>833</a>        </span>+ staged * <span class="number">3 </span>* <span class="number">8
-<a href=#834 id=834 data-nosnippet>834</a>        </span>+ times
-<a href=#835 id=835 data-nosnippet>835</a>        + read
-<a href=#836 id=836 data-nosnippet>836</a>        + size_of::&lt;RowGeometry&gt;() <span class="kw">as </span>u64
-<a href=#837 id=837 data-nosnippet>837</a>        + cell
-<a href=#838 id=838 data-nosnippet>838</a>        + written;
-<a href=#839 id=839 data-nosnippet>839</a>    <span class="kw">let </span>antennas = <span class="kw">if </span>shape.airmass {
-<a href=#840 id=840 data-nosnippet>840</a>        shape.antennas <span class="kw">as </span>u64 * AIRMASS_ANTENNA_BYTES
-<a href=#841 id=841 data-nosnippet>841</a>    } <span class="kw">else </span>{
-<a href=#842 id=842 data-nosnippet>842</a>        <span class="number">0
-<a href=#843 id=843 data-nosnippet>843</a>    </span>};
-<a href=#844 id=844 data-nosnippet>844</a>    batch_rows <span class="kw">as </span>u64 * row + TILED_IO_BYTES + run_bytes(shape.scans, batch_rows) + antennas
-<a href=#845 id=845 data-nosnippet>845</a>}
-<a href=#846 id=846 data-nosnippet>846</a>
-<a href=#847 id=847 data-nosnippet>847</a><span class="doccomment">/// Bytes of a batch's runs, and of the noise and component-list jobs they
-<a href=#848 id=848 data-nosnippet>848</a>/// split into, for batches of `batch_rows` rows of `scans` scans: a run of
-<a href=#849 id=849 data-nosnippet>849</a>/// each scan the batch reaches, which may be one a row (#886 review), and
-<a href=#850 id=850 data-nosnippet>850</a>/// of each kind a job a run and one more every [`MINIMUM_NOISE_JOB_ROWS`]
-<a href=#851 id=851 data-nosnippet>851</a>/// and [`components::JOB_ROWS`] rows.
-<a href=#852 id=852 data-nosnippet>852</a></span><span class="kw">fn </span>run_bytes(scans: usize, batch_rows: usize) -&gt; u64 {
-<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">let </span>runs = most_runs(scans, batch_rows);
-<a href=#854 id=854 data-nosnippet>854</a>    <span class="kw">let </span>noise_jobs = runs + batch_rows / MINIMUM_NOISE_JOB_ROWS;
-<a href=#855 id=855 data-nosnippet>855</a>    <span class="kw">let </span>component_jobs = runs + batch_rows / components::JOB_ROWS;
-<a href=#856 id=856 data-nosnippet>856</a>    (runs * size_of::&lt;Run&gt;()
-<a href=#857 id=857 data-nosnippet>857</a>        + noise_jobs * size_of::&lt;NoiseJob&lt;<span class="lifetime">'static</span>&gt;&gt;()
-<a href=#858 id=858 data-nosnippet>858</a>        + component_jobs * components::JOB_BYTES) <span class="kw">as </span>u64
-<a href=#859 id=859 data-nosnippet>859</a>}
+<a href=#277 id=277 data-nosnippet>277</a><span class="doccomment">/// A batch's run of one scan: (scan, first row in the batch, rows).
+<a href=#278 id=278 data-nosnippet>278</a></span><span class="kw">type </span>Run = (usize, usize, usize);
+<a href=#279 id=279 data-nosnippet>279</a>
+<a href=#280 id=280 data-nosnippet>280</a><span class="doccomment">/// The patch's state across batches.
+<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">struct </span>Patch&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#282 id=282 data-nosnippet>282</a>    session: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>Simulator,
+<a href=#283 id=283 data-nosnippet>283</a>    shape: PatchShape,
+<a href=#284 id=284 data-nosnippet>284</a>    columns: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str],
+<a href=#285 id=285 data-nosnippet>285</a>    team: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>WorkerTeam,
+<a href=#286 id=286 data-nosnippet>286</a>    prediction: <span class="prelude-ty">Option</span>&lt;DataStage&lt;<span class="lifetime">'s</span>&gt;&gt;,
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// The array's geometry, which gives each row's airmasses when the
+<a href=#288 id=288 data-nosnippet>288</a>    /// noise needs them.
+<a href=#289 id=289 data-nosnippet>289</a>    </span>array: <span class="prelude-ty">Option</span>&lt;ArrayGeometry&lt;<span class="lifetime">'s</span>&gt;&gt;,
+<a href=#290 id=290 data-nosnippet>290</a>    reader: BatchReader,
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="doccomment">/// The batch's new DATA, `[row][channel][correlation]`.
+<a href=#292 id=292 data-nosnippet>292</a>    </span>data: Vec&lt;Complex32&gt;,
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="doccomment">/// The batch's runs.
+<a href=#294 id=294 data-nosnippet>294</a>    </span>runs: Vec&lt;Run&gt;,
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="doccomment">/// The first scan the next batch can reach.
+<a href=#296 id=296 data-nosnippet>296</a>    </span>cursor: usize,
+<a href=#297 id=297 data-nosnippet>297</a>    batches: usize,
+<a href=#298 id=298 data-nosnippet>298</a>}
+<a href=#299 id=299 data-nosnippet>299</a>
+<a href=#300 id=300 data-nosnippet>300</a><span class="kw">impl </span>Patch&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="doccomment">/// The new DATA, and the scratch columns, of MAIN rows `rows`, which
+<a href=#302 id=302 data-nosnippet>302</a>    /// follow one another.
+<a href=#303 id=303 data-nosnippet>303</a>    </span><span class="kw">fn </span>batch(
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#305 id=305 data-nosnippet>305</a>        ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#306 id=306 data-nosnippet>306</a>        rows: Vec&lt;usize&gt;,
+<a href=#307 id=307 data-nosnippet>307</a>    ) -&gt; SimulatorResult&lt;MeasurementSetMutationBatch&gt; {
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span>first = rows[<span class="number">0</span>];
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">debug_assert!</span>(
+<a href=#310 id=310 data-nosnippet>310</a>            rows.windows(<span class="number">2</span>).all(|pair| pair[<span class="number">1</span>] == pair[<span class="number">0</span>] + <span class="number">1</span>),
+<a href=#311 id=311 data-nosnippet>311</a>            <span class="string">"the patch's rows follow one another"
+<a href=#312 id=312 data-nosnippet>312</a>        </span>);
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">let </span>count = rows.len();
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span>samples = <span class="self">self</span>.shape.samples();
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="self">self</span>.reader
+<a href=#316 id=316 data-nosnippet>316</a>            .read(ms, <span class="kw-2">&amp;</span>rows, (<span class="self">self</span>.session.antennas().len(), <span class="self">self</span>.shape))<span class="question-mark">?</span>;
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="self">self</span>.data.clear();
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="self">self</span>.data.resize(count * samples, Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="self">self</span>.find_runs(first, count);
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(array) = <span class="kw-2">&amp;</span><span class="self">self</span>.array {
+<a href=#321 id=321 data-nosnippet>321</a>            <span class="self">self</span>.reader.fill_airmass(
+<a href=#322 id=322 data-nosnippet>322</a>                array,
+<a href=#323 id=323 data-nosnippet>323</a>                (<span class="self">self</span>.session.scans(), <span class="kw-2">&amp;</span><span class="self">self</span>.runs),
+<a href=#324 id=324 data-nosnippet>324</a>                <span class="self">self</span>.shape.antennas,
+<a href=#325 id=325 data-nosnippet>325</a>            )<span class="question-mark">?</span>;
+<a href=#326 id=326 data-nosnippet>326</a>        }
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">let </span>runs = <span class="kw-2">&amp;</span><span class="self">self</span>.runs;
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">let </span>team = <span class="self">self</span>.team;
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>geometry = <span class="kw-2">&amp;</span><span class="self">self</span>.reader.geometry;
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(stage) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.prediction {
+<a href=#331 id=331 data-nosnippet>331</a>            stage.apply(
+<a href=#332 id=332 data-nosnippet>332</a>                team,
+<a href=#333 id=333 data-nosnippet>333</a>                DataBatch {
+<a href=#334 id=334 data-nosnippet>334</a>                    rows: geometry,
+<a href=#335 id=335 data-nosnippet>335</a>                    runs,
+<a href=#336 id=336 data-nosnippet>336</a>                    first_row: first <span class="kw">as </span>u64,
+<a href=#337 id=337 data-nosnippet>337</a>                    flags: <span class="self">self
+<a href=#338 id=338 data-nosnippet>338</a>                        </span>.shape
+<a href=#339 id=339 data-nosnippet>339</a>                        .reads_flags
+<a href=#340 id=340 data-nosnippet>340</a>                        .then_some(<span class="self">self</span>.reader.flags.as_slice()),
+<a href=#341 id=341 data-nosnippet>341</a>                    stored: <span class="self">self</span>.shape.reads_data.then_some(<span class="self">self</span>.reader.data.as_slice()),
+<a href=#342 id=342 data-nosnippet>342</a>                },
+<a href=#343 id=343 data-nosnippet>343</a>                <span class="kw-2">&amp;mut </span><span class="self">self</span>.data,
+<a href=#344 id=344 data-nosnippet>344</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.shape.noise_scales,
+<a href=#345 id=345 data-nosnippet>345</a>                <span class="bool-val">false</span>,
+<a href=#346 id=346 data-nosnippet>346</a>            )<span class="question-mark">?</span>;
+<a href=#347 id=347 data-nosnippet>347</a>        }
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="self">self</span>.batches += <span class="number">1</span>;
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.mutation(rows))
+<a href=#350 id=350 data-nosnippet>350</a>    }
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a>    <span class="doccomment">/// The batch's runs of one scan from MAIN row `first`, `count` rows,
+<a href=#353 id=353 data-nosnippet>353</a>    /// into `self.runs`. The scans' rows follow one another in MAIN order.
+<a href=#354 id=354 data-nosnippet>354</a>    </span><span class="kw">fn </span>find_runs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, first: usize, count: usize) {
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">let </span>end = first + count;
+<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span>scans = <span class="self">self</span>.session.scans();
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">let </span>rows = |scan: <span class="kw-2">&amp;</span>Scan| scan.on_disk().expect(<span class="string">"checked before the patch started"</span>);
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw">while </span>scans
+<a href=#359 id=359 data-nosnippet>359</a>            .get(<span class="self">self</span>.cursor)
+<a href=#360 id=360 data-nosnippet>360</a>            .is_some_and(|scan| rows(scan).end &lt;= first)
+<a href=#361 id=361 data-nosnippet>361</a>        {
+<a href=#362 id=362 data-nosnippet>362</a>            <span class="self">self</span>.cursor += <span class="number">1</span>;
+<a href=#363 id=363 data-nosnippet>363</a>        }
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="self">self</span>.runs.clear();
+<a href=#365 id=365 data-nosnippet>365</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span>scans.iter().enumerate().skip(<span class="self">self</span>.cursor) {
+<a href=#366 id=366 data-nosnippet>366</a>            <span class="kw">let </span>range = rows(scan);
+<a href=#367 id=367 data-nosnippet>367</a>            <span class="kw">if </span>range.start &gt;= end {
+<a href=#368 id=368 data-nosnippet>368</a>                <span class="kw">break</span>;
+<a href=#369 id=369 data-nosnippet>369</a>            }
+<a href=#370 id=370 data-nosnippet>370</a>            <span class="kw">let </span>(start, stop) = (range.start.max(first), range.end.min(end));
+<a href=#371 id=371 data-nosnippet>371</a>            <span class="self">self</span>.runs.push((index, start - first, stop - start));
+<a href=#372 id=372 data-nosnippet>372</a>        }
+<a href=#373 id=373 data-nosnippet>373</a>    }
+<a href=#374 id=374 data-nosnippet>374</a>
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="doccomment">/// The mutation writing the batch's DATA and scratch columns.
+<a href=#376 id=376 data-nosnippet>376</a>    </span><span class="kw">fn </span>mutation(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: Vec&lt;usize&gt;) -&gt; MeasurementSetMutationBatch {
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span>samples = <span class="self">self</span>.shape.samples();
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>shape = IxDyn(<span class="kw-2">&amp;</span>[<span class="self">self</span>.shape.correlations, <span class="self">self</span>.shape.channels]).f();
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>cell = |values: Vec&lt;Complex32&gt;| {
+<a href=#380 id=380 data-nosnippet>380</a>            ArrayValue::Complex32(
+<a href=#381 id=381 data-nosnippet>381</a>                ArrayD::from_shape_vec(shape.clone(), values).expect(<span class="string">"a cell's samples"</span>),
+<a href=#382 id=382 data-nosnippet>382</a>            )
+<a href=#383 id=383 data-nosnippet>383</a>        };
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span>data: Vec&lt;ArrayValue&gt; = <span class="self">self
+<a href=#385 id=385 data-nosnippet>385</a>            </span>.data
+<a href=#386 id=386 data-nosnippet>386</a>            .chunks_exact(samples)
+<a href=#387 id=387 data-nosnippet>387</a>            .map(|values| cell(values.to_vec()))
+<a href=#388 id=388 data-nosnippet>388</a>            .collect();
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>one = cell(<span class="macro">vec!</span>[Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>); samples]);
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="comment">// DATA is first; the scratch columns follow it.
+<a href=#391 id=391 data-nosnippet>391</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>columns: Vec&lt;MeasurementSetMutationColumnBatch&gt; = <span class="self">self</span>.columns[<span class="number">1</span>..]
+<a href=#392 id=392 data-nosnippet>392</a>            .iter()
+<a href=#393 id=393 data-nosnippet>393</a>            .map(|<span class="kw-2">&amp;</span>name| MeasurementSetMutationColumnBatch {
+<a href=#394 id=394 data-nosnippet>394</a>                name: name.to_string(),
+<a href=#395 id=395 data-nosnippet>395</a>                values: MeasurementSetMutationColumnValues::Arrays(<span class="kw">match </span>name {
+<a href=#396 id=396 data-nosnippet>396</a>                    <span class="string">"MODEL_DATA" </span><span class="kw">if </span>!<span class="self">self</span>.shape.reads_scratch[<span class="number">0</span>] =&gt; <span class="macro">vec!</span>[one.clone(); rows.len()],
+<a href=#397 id=397 data-nosnippet>397</a>                    <span class="string">"CORRECTED_DATA" </span><span class="kw">if </span>!<span class="self">self</span>.shape.reads_scratch[<span class="number">1</span>] =&gt; data.clone(),
+<a href=#398 id=398 data-nosnippet>398</a>                    <span class="kw">_ </span>=&gt; <span class="self">self</span>.scratch_values(name, <span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span>one),
+<a href=#399 id=399 data-nosnippet>399</a>                }),
+<a href=#400 id=400 data-nosnippet>400</a>            })
+<a href=#401 id=401 data-nosnippet>401</a>            .collect();
+<a href=#402 id=402 data-nosnippet>402</a>        columns.insert(
+<a href=#403 id=403 data-nosnippet>403</a>            <span class="number">0</span>,
+<a href=#404 id=404 data-nosnippet>404</a>            MeasurementSetMutationColumnBatch {
+<a href=#405 id=405 data-nosnippet>405</a>                name: <span class="string">"DATA"</span>.to_string(),
+<a href=#406 id=406 data-nosnippet>406</a>                values: MeasurementSetMutationColumnValues::Arrays(data),
+<a href=#407 id=407 data-nosnippet>407</a>            },
+<a href=#408 id=408 data-nosnippet>408</a>        );
+<a href=#409 id=409 data-nosnippet>409</a>        MeasurementSetMutationBatch {
+<a href=#410 id=410 data-nosnippet>410</a>            row_indices: rows,
+<a href=#411 id=411 data-nosnippet>411</a>            columns,
+<a href=#412 id=412 data-nosnippet>412</a>        }
+<a href=#413 id=413 data-nosnippet>413</a>    }
+<a href=#414 id=414 data-nosnippet>414</a>
+<a href=#415 id=415 data-nosnippet>415</a>    <span class="kw">fn </span>scratch_values(
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#417 id=417 data-nosnippet>417</a>        column: <span class="kw-2">&amp;</span>str,
+<a href=#418 id=418 data-nosnippet>418</a>        data: <span class="kw-2">&amp;</span>[ArrayValue],
+<a href=#419 id=419 data-nosnippet>419</a>        one: <span class="kw-2">&amp;</span>ArrayValue,
+<a href=#420 id=420 data-nosnippet>420</a>    ) -&gt; Vec&lt;ArrayValue&gt; {
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>model = column == <span class="string">"MODEL_DATA"</span>;
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">let </span>stored = <span class="kw">if </span>model {
+<a href=#423 id=423 data-nosnippet>423</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.reader.model_data
+<a href=#424 id=424 data-nosnippet>424</a>        } <span class="kw">else </span>{
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.reader.corrected_data
+<a href=#426 id=426 data-nosnippet>426</a>        };
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>samples = <span class="self">self</span>.shape.samples();
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(data.len());
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span>stage = <span class="self">self</span>.prediction.as_ref().expect(<span class="string">"nonempty DATA steps"</span>);
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="kw">for </span>(row, value) <span class="kw">in </span>data.iter().enumerate() {
+<a href=#431 id=431 data-nosnippet>431</a>            <span class="kw">let </span>changed = <span class="kw">if </span>model {
+<a href=#432 id=432 data-nosnippet>432</a>                stage.row_predicted(row)
+<a href=#433 id=433 data-nosnippet>433</a>            } <span class="kw">else </span>{
+<a href=#434 id=434 data-nosnippet>434</a>                stage.row_touched(row)
+<a href=#435 id=435 data-nosnippet>435</a>            };
+<a href=#436 id=436 data-nosnippet>436</a>            values.push(<span class="kw">if </span>changed {
+<a href=#437 id=437 data-nosnippet>437</a>                <span class="kw">if </span>model { one.clone() } <span class="kw">else </span>{ value.clone() }
+<a href=#438 id=438 data-nosnippet>438</a>            } <span class="kw">else </span>{
+<a href=#439 id=439 data-nosnippet>439</a>                ArrayValue::Complex32(
+<a href=#440 id=440 data-nosnippet>440</a>                    ArrayD::from_shape_vec(
+<a href=#441 id=441 data-nosnippet>441</a>                        IxDyn(<span class="kw-2">&amp;</span>[<span class="self">self</span>.shape.correlations, <span class="self">self</span>.shape.channels]).f(),
+<a href=#442 id=442 data-nosnippet>442</a>                        stored[row * samples..(row + <span class="number">1</span>) * samples].to_vec(),
+<a href=#443 id=443 data-nosnippet>443</a>                    )
+<a href=#444 id=444 data-nosnippet>444</a>                    .expect(<span class="string">"stored scratch cell"</span>),
+<a href=#445 id=445 data-nosnippet>445</a>                )
+<a href=#446 id=446 data-nosnippet>446</a>            });
+<a href=#447 id=447 data-nosnippet>447</a>        }
+<a href=#448 id=448 data-nosnippet>448</a>        values
+<a href=#449 id=449 data-nosnippet>449</a>    }
+<a href=#450 id=450 data-nosnippet>450</a>}
+<a href=#451 id=451 data-nosnippet>451</a>
+<a href=#452 id=452 data-nosnippet>452</a><span class="doccomment">/// The columns of a batch's rows read from disk, in buffers kept across
+<a href=#453 id=453 data-nosnippet>453</a>/// batches.
+<a href=#454 id=454 data-nosnippet>454</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#455 id=455 data-nosnippet>455</a></span><span class="kw">struct </span>BatchReader {
+<a href=#456 id=456 data-nosnippet>456</a>    antenna1: Vec&lt;i32&gt;,
+<a href=#457 id=457 data-nosnippet>457</a>    antenna2: Vec&lt;i32&gt;,
+<a href=#458 id=458 data-nosnippet>458</a>    flag_row: Vec&lt;bool&gt;,
+<a href=#459 id=459 data-nosnippet>459</a>    <span class="doccomment">/// FLAG, `[row][channel][correlation]`, for image predictions only.
+<a href=#460 id=460 data-nosnippet>460</a>    </span>flags: Vec&lt;bool&gt;,
+<a href=#461 id=461 data-nosnippet>461</a>    uvw: Vec&lt;f64&gt;,
+<a href=#462 id=462 data-nosnippet>462</a>    <span class="doccomment">/// TIME and EXPOSURE, when the noise needs them.
+<a href=#463 id=463 data-nosnippet>463</a>    </span>time: Vec&lt;f64&gt;,
+<a href=#464 id=464 data-nosnippet>464</a>    exposure: Vec&lt;f64&gt;,
+<a href=#465 id=465 data-nosnippet>465</a>    <span class="doccomment">/// DATA, `[row][channel][correlation]`, when the fold starts from it.
+<a href=#466 id=466 data-nosnippet>466</a>    </span>data: Vec&lt;Complex32&gt;,
+<a href=#467 id=467 data-nosnippet>467</a>    model_data: Vec&lt;Complex32&gt;,
+<a href=#468 id=468 data-nosnippet>468</a>    corrected_data: Vec&lt;Complex32&gt;,
+<a href=#469 id=469 data-nosnippet>469</a>    geometry: Vec&lt;RowGeometry&gt;,
+<a href=#470 id=470 data-nosnippet>470</a>    <span class="doccomment">/// The antennas' airmasses at the last integration `fill_airmass`
+<a href=#471 id=471 data-nosnippet>471</a>    /// computed, and its scan and TIME.
+<a href=#472 id=472 data-nosnippet>472</a>    </span>airmasses: Vec&lt;f32&gt;,
+<a href=#473 id=473 data-nosnippet>473</a>    airmass_at: <span class="prelude-ty">Option</span>&lt;(usize, u64)&gt;,
+<a href=#474 id=474 data-nosnippet>474</a>}
+<a href=#475 id=475 data-nosnippet>475</a>
+<a href=#476 id=476 data-nosnippet>476</a><span class="kw">impl </span>BatchReader {
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="doccomment">/// Read MAIN rows `rows` of `ms`, whose antennas are below `antennas`.
+<a href=#478 id=478 data-nosnippet>478</a>    </span><span class="kw">fn </span>read(
+<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#480 id=480 data-nosnippet>480</a>        ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#481 id=481 data-nosnippet>481</a>        rows: <span class="kw-2">&amp;</span>[usize],
+<a href=#482 id=482 data-nosnippet>482</a>        (antennas, shape): (usize, PatchShape),
+<a href=#483 id=483 data-nosnippet>483</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span>main = ms.main_table();
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">let </span>error = |what: <span class="kw-2">&amp;</span>str| {
+<a href=#486 id=486 data-nosnippet>486</a>            <span class="kw">let </span>what = what.to_string();
+<a href=#487 id=487 data-nosnippet>487</a>            <span class="kw">move </span>|error: casa_tables::TableError| {
+<a href=#488 id=488 data-nosnippet>488</a>                SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"read MAIN {what}: {error}"</span>))
+<a href=#489 id=489 data-nosnippet>489</a>            }
+<a href=#490 id=490 data-nosnippet>490</a>        };
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">for </span>column <span class="kw">in </span>[<span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna1, <span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna2] {
+<a href=#492 id=492 data-nosnippet>492</a>            column.clear();
+<a href=#493 id=493 data-nosnippet>493</a>        }
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="self">self</span>.flag_row.clear();
+<a href=#495 id=495 data-nosnippet>495</a>        main.required_scalar_columns_for_rows_into(
+<a href=#496 id=496 data-nosnippet>496</a>            rows,
+<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw-2">&amp;mut </span>[
+<a href=#498 id=498 data-nosnippet>498</a>                RequiredScalarColumnDestination::new(
+<a href=#499 id=499 data-nosnippet>499</a>                    <span class="string">"ANTENNA1"</span>,
+<a href=#500 id=500 data-nosnippet>500</a>                    RequiredScalarColumnValuesMut::Int32(<span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna1),
+<a href=#501 id=501 data-nosnippet>501</a>                ),
+<a href=#502 id=502 data-nosnippet>502</a>                RequiredScalarColumnDestination::new(
+<a href=#503 id=503 data-nosnippet>503</a>                    <span class="string">"ANTENNA2"</span>,
+<a href=#504 id=504 data-nosnippet>504</a>                    RequiredScalarColumnValuesMut::Int32(<span class="kw-2">&amp;mut </span><span class="self">self</span>.antenna2),
+<a href=#505 id=505 data-nosnippet>505</a>                ),
+<a href=#506 id=506 data-nosnippet>506</a>                RequiredScalarColumnDestination::new(
+<a href=#507 id=507 data-nosnippet>507</a>                    <span class="string">"FLAG_ROW"</span>,
+<a href=#508 id=508 data-nosnippet>508</a>                    RequiredScalarColumnValuesMut::Bool(<span class="kw-2">&amp;mut </span><span class="self">self</span>.flag_row),
+<a href=#509 id=509 data-nosnippet>509</a>                ),
+<a href=#510 id=510 data-nosnippet>510</a>            ],
+<a href=#511 id=511 data-nosnippet>511</a>        )
+<a href=#512 id=512 data-nosnippet>512</a>        .map_err(error(<span class="string">"ANTENNA1, ANTENNA2 and FLAG_ROW"</span>))<span class="question-mark">?</span>;
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="self">self</span>.time.clear();
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="self">self</span>.exposure.clear();
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="kw">if </span>shape.airmass {
+<a href=#516 id=516 data-nosnippet>516</a>            main.required_scalar_columns_for_rows_into(
+<a href=#517 id=517 data-nosnippet>517</a>                rows,
+<a href=#518 id=518 data-nosnippet>518</a>                <span class="kw-2">&amp;mut </span>[
+<a href=#519 id=519 data-nosnippet>519</a>                    RequiredScalarColumnDestination::new(
+<a href=#520 id=520 data-nosnippet>520</a>                        <span class="string">"TIME"</span>,
+<a href=#521 id=521 data-nosnippet>521</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.time),
+<a href=#522 id=522 data-nosnippet>522</a>                    ),
+<a href=#523 id=523 data-nosnippet>523</a>                    RequiredScalarColumnDestination::new(
+<a href=#524 id=524 data-nosnippet>524</a>                        <span class="string">"EXPOSURE"</span>,
+<a href=#525 id=525 data-nosnippet>525</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.exposure),
+<a href=#526 id=526 data-nosnippet>526</a>                    ),
+<a href=#527 id=527 data-nosnippet>527</a>                ],
+<a href=#528 id=528 data-nosnippet>528</a>            )
+<a href=#529 id=529 data-nosnippet>529</a>            .map_err(error(<span class="string">"TIME and EXPOSURE"</span>))<span class="question-mark">?</span>;
+<a href=#530 id=530 data-nosnippet>530</a>        } <span class="kw">else if </span>shape.times {
+<a href=#531 id=531 data-nosnippet>531</a>            main.required_scalar_columns_for_rows_into(
+<a href=#532 id=532 data-nosnippet>532</a>                rows,
+<a href=#533 id=533 data-nosnippet>533</a>                <span class="kw-2">&amp;mut </span>[RequiredScalarColumnDestination::new(
+<a href=#534 id=534 data-nosnippet>534</a>                    <span class="string">"TIME"</span>,
+<a href=#535 id=535 data-nosnippet>535</a>                    RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.time),
+<a href=#536 id=536 data-nosnippet>536</a>                )],
+<a href=#537 id=537 data-nosnippet>537</a>            )
+<a href=#538 id=538 data-nosnippet>538</a>            .map_err(error(<span class="string">"TIME"</span>))<span class="question-mark">?</span>;
+<a href=#539 id=539 data-nosnippet>539</a>        }
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="self">self</span>.uvw.clear();
+<a href=#541 id=541 data-nosnippet>541</a>        main.column_accessor(<span class="string">"UVW"</span>)
+<a href=#542 id=542 data-nosnippet>542</a>            .and_then(|column| {
+<a href=#543 id=543 data-nosnippet>543</a>                column.fill_array_cells_1d_typed_uncached(
+<a href=#544 id=544 data-nosnippet>544</a>                    rows,
+<a href=#545 id=545 data-nosnippet>545</a>                    SelectedArray1DCellsMut::Float64(<span class="kw-2">&amp;mut </span><span class="self">self</span>.uvw),
+<a href=#546 id=546 data-nosnippet>546</a>                )
+<a href=#547 id=547 data-nosnippet>547</a>            })
+<a href=#548 id=548 data-nosnippet>548</a>            .map_err(error(<span class="string">"UVW"</span>))<span class="question-mark">?</span>;
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">if </span><span class="self">self</span>.uvw.len() != <span class="number">3 </span>* rows.len() {
+<a href=#550 id=550 data-nosnippet>550</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
+<a href=#551 id=551 data-nosnippet>551</a>                <span class="string">"read MAIN UVW: a cell does not hold 3 values"</span>,
+<a href=#552 id=552 data-nosnippet>552</a>            ));
+<a href=#553 id=553 data-nosnippet>553</a>        }
+<a href=#554 id=554 data-nosnippet>554</a>        <span class="self">self</span>.flags.clear();
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">if </span>shape.reads_flags {
+<a href=#556 id=556 data-nosnippet>556</a>            main.column_accessor(<span class="string">"FLAG"</span>)
+<a href=#557 id=557 data-nosnippet>557</a>                .and_then(|column| {
+<a href=#558 id=558 data-nosnippet>558</a>                    column.fill_array_cells_2d_channel_range_typed_uncached(
+<a href=#559 id=559 data-nosnippet>559</a>                        rows,
+<a href=#560 id=560 data-nosnippet>560</a>                        <span class="number">0</span>,
+<a href=#561 id=561 data-nosnippet>561</a>                        shape.channels,
+<a href=#562 id=562 data-nosnippet>562</a>                        SelectedArray2DCellsMut::RowChannelBool(<span class="kw-2">&amp;mut </span><span class="self">self</span>.flags),
+<a href=#563 id=563 data-nosnippet>563</a>                    )
+<a href=#564 id=564 data-nosnippet>564</a>                })
+<a href=#565 id=565 data-nosnippet>565</a>                .map_err(error(<span class="string">"FLAG"</span>))<span class="question-mark">?</span>;
+<a href=#566 id=566 data-nosnippet>566</a>            <span class="kw">if </span><span class="self">self</span>.flags.len() != rows.len() * shape.samples() {
+<a href=#567 id=567 data-nosnippet>567</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
+<a href=#568 id=568 data-nosnippet>568</a>                    <span class="string">"read MAIN FLAG: a cell is not of the shape its window gives"</span>,
+<a href=#569 id=569 data-nosnippet>569</a>                ));
+<a href=#570 id=570 data-nosnippet>570</a>            }
+<a href=#571 id=571 data-nosnippet>571</a>        }
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="kw">if </span>shape.reads_data {
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="self">self</span>.data.clear();
+<a href=#574 id=574 data-nosnippet>574</a>            main.column_accessor(<span class="string">"DATA"</span>)
+<a href=#575 id=575 data-nosnippet>575</a>                .and_then(|column| {
+<a href=#576 id=576 data-nosnippet>576</a>                    column.fill_array_cells_2d_channel_range_typed_uncached(
+<a href=#577 id=577 data-nosnippet>577</a>                        rows,
+<a href=#578 id=578 data-nosnippet>578</a>                        <span class="number">0</span>,
+<a href=#579 id=579 data-nosnippet>579</a>                        shape.channels,
+<a href=#580 id=580 data-nosnippet>580</a>                        SelectedArray2DCellsMut::RowChannelComplex32(<span class="kw-2">&amp;mut </span><span class="self">self</span>.data),
+<a href=#581 id=581 data-nosnippet>581</a>                    )
+<a href=#582 id=582 data-nosnippet>582</a>                })
+<a href=#583 id=583 data-nosnippet>583</a>                .map_err(error(<span class="string">"DATA"</span>))<span class="question-mark">?</span>;
+<a href=#584 id=584 data-nosnippet>584</a>            <span class="kw">if </span><span class="self">self</span>.data.len() != rows.len() * shape.samples() {
+<a href=#585 id=585 data-nosnippet>585</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
+<a href=#586 id=586 data-nosnippet>586</a>                    <span class="string">"read MAIN DATA: a cell is not of the shape its window gives"</span>,
+<a href=#587 id=587 data-nosnippet>587</a>                ));
+<a href=#588 id=588 data-nosnippet>588</a>            }
+<a href=#589 id=589 data-nosnippet>589</a>        }
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">for </span>(slot, name, destination) <span class="kw">in </span>[
+<a href=#591 id=591 data-nosnippet>591</a>            (<span class="number">0</span>, <span class="string">"MODEL_DATA"</span>, <span class="kw-2">&amp;mut </span><span class="self">self</span>.model_data),
+<a href=#592 id=592 data-nosnippet>592</a>            (<span class="number">1</span>, <span class="string">"CORRECTED_DATA"</span>, <span class="kw-2">&amp;mut </span><span class="self">self</span>.corrected_data),
+<a href=#593 id=593 data-nosnippet>593</a>        ] {
+<a href=#594 id=594 data-nosnippet>594</a>            <span class="kw">if </span>!shape.reads_scratch[slot] {
+<a href=#595 id=595 data-nosnippet>595</a>                <span class="kw">continue</span>;
+<a href=#596 id=596 data-nosnippet>596</a>            }
+<a href=#597 id=597 data-nosnippet>597</a>            destination.clear();
+<a href=#598 id=598 data-nosnippet>598</a>            main.column_accessor(name)
+<a href=#599 id=599 data-nosnippet>599</a>                .and_then(|column| {
+<a href=#600 id=600 data-nosnippet>600</a>                    column.fill_array_cells_2d_channel_range_typed_uncached(
+<a href=#601 id=601 data-nosnippet>601</a>                        rows,
+<a href=#602 id=602 data-nosnippet>602</a>                        <span class="number">0</span>,
+<a href=#603 id=603 data-nosnippet>603</a>                        shape.channels,
+<a href=#604 id=604 data-nosnippet>604</a>                        SelectedArray2DCellsMut::RowChannelComplex32(destination),
+<a href=#605 id=605 data-nosnippet>605</a>                    )
+<a href=#606 id=606 data-nosnippet>606</a>                })
+<a href=#607 id=607 data-nosnippet>607</a>                .map_err(error(name))<span class="question-mark">?</span>;
+<a href=#608 id=608 data-nosnippet>608</a>            <span class="kw">if </span>destination.len() != rows.len() * shape.samples() {
+<a href=#609 id=609 data-nosnippet>609</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#610 id=610 data-nosnippet>610</a>                    <span class="string">"read MAIN {name}: scratch cell shape differs"
+<a href=#611 id=611 data-nosnippet>611</a>                </span>)));
+<a href=#612 id=612 data-nosnippet>612</a>            }
+<a href=#613 id=613 data-nosnippet>613</a>        }
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="self">self</span>.geometry.clear();
+<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">for </span>(index, <span class="kw-2">&amp;</span>row) <span class="kw">in </span>rows.iter().enumerate() {
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">let </span>antenna = |value: i32| {
+<a href=#617 id=617 data-nosnippet>617</a>                usize::try_from(value)
+<a href=#618 id=618 data-nosnippet>618</a>                    .ok()
+<a href=#619 id=619 data-nosnippet>619</a>                    .filter(|<span class="kw-2">&amp;</span>antenna| antenna &lt; antennas)
+<a href=#620 id=620 data-nosnippet>620</a>                    .ok_or_else(|| {
+<a href=#621 id=621 data-nosnippet>621</a>                        SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#622 id=622 data-nosnippet>622</a>                            <span class="string">"MAIN row {row} names antenna {value}, which ANTENNA does not have"
+<a href=#623 id=623 data-nosnippet>623</a>                        </span>))
+<a href=#624 id=624 data-nosnippet>624</a>                    })
+<a href=#625 id=625 data-nosnippet>625</a>            };
+<a href=#626 id=626 data-nosnippet>626</a>            <span class="kw">let </span>uvw = <span class="kw-2">&amp;</span><span class="self">self</span>.uvw[<span class="number">3 </span>* index..<span class="number">3 </span>* index + <span class="number">3</span>];
+<a href=#627 id=627 data-nosnippet>627</a>            <span class="self">self</span>.geometry.push(RowGeometry {
+<a href=#628 id=628 data-nosnippet>628</a>                antenna1: antenna(<span class="self">self</span>.antenna1[index])<span class="question-mark">?</span>,
+<a href=#629 id=629 data-nosnippet>629</a>                antenna2: antenna(<span class="self">self</span>.antenna2[index])<span class="question-mark">?</span>,
+<a href=#630 id=630 data-nosnippet>630</a>                uvw_m: [uvw[<span class="number">0</span>], uvw[<span class="number">1</span>], uvw[<span class="number">2</span>]],
+<a href=#631 id=631 data-nosnippet>631</a>                flagged: <span class="self">self</span>.flag_row[index],
+<a href=#632 id=632 data-nosnippet>632</a>                time_s: <span class="self">self</span>.time.get(index).copied().unwrap_or(<span class="number">0.0</span>),
+<a href=#633 id=633 data-nosnippet>633</a>                airmass: [f32::NAN; <span class="number">2</span>],
+<a href=#634 id=634 data-nosnippet>634</a>                exposure_s: <span class="self">self</span>.exposure.get(index).copied().unwrap_or(<span class="number">0.0</span>),
+<a href=#635 id=635 data-nosnippet>635</a>                ..RowGeometry::default()
+<a href=#636 id=636 data-nosnippet>636</a>            });
+<a href=#637 id=637 data-nosnippet>637</a>        }
+<a href=#638 id=638 data-nosnippet>638</a>        <span class="prelude-val">Ok</span>(())
+<a href=#639 id=639 data-nosnippet>639</a>    }
+<a href=#640 id=640 data-nosnippet>640</a>
+<a href=#641 id=641 data-nosnippet>641</a>    <span class="doccomment">/// Give each row of the batch's `runs` the airmasses of its antennas,
+<a href=#642 id=642 data-nosnippet>642</a>    /// of the first `antennas`, at its scan's phase centre at its TIME,
+<a href=#643 id=643 data-nosnippet>643</a>    /// from `array`: computed once for each integration (scan and TIME)
+<a href=#644 id=644 data-nosnippet>644</a>    /// the rows follow one another in.
+<a href=#645 id=645 data-nosnippet>645</a>    </span><span class="kw">fn </span>fill_airmass(
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#647 id=647 data-nosnippet>647</a>        array: <span class="kw-2">&amp;</span>ArrayGeometry&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#648 id=648 data-nosnippet>648</a>        (scans, runs): (<span class="kw-2">&amp;</span>[Scan], <span class="kw-2">&amp;</span>[Run]),
+<a href=#649 id=649 data-nosnippet>649</a>        antennas: usize,
+<a href=#650 id=650 data-nosnippet>650</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
+<a href=#652 id=652 data-nosnippet>652</a>            <span class="kw">for </span>index <span class="kw">in </span>start..start + count {
+<a href=#653 id=653 data-nosnippet>653</a>                <span class="kw">let </span>time_s = <span class="self">self</span>.time[index];
+<a href=#654 id=654 data-nosnippet>654</a>                <span class="kw">if </span><span class="self">self</span>.airmass_at != <span class="prelude-val">Some</span>((scan, time_s.to_bits())) {
+<a href=#655 id=655 data-nosnippet>655</a>                    <span class="self">self</span>.airmasses =
+<a href=#656 id=656 data-nosnippet>656</a>                        array.airmasses(scans[scan].phase_center_rad, time_s, antennas)<span class="question-mark">?</span>;
+<a href=#657 id=657 data-nosnippet>657</a>                    <span class="self">self</span>.airmass_at = <span class="prelude-val">Some</span>((scan, time_s.to_bits()));
+<a href=#658 id=658 data-nosnippet>658</a>                }
+<a href=#659 id=659 data-nosnippet>659</a>                <span class="kw">let </span>row = <span class="kw-2">&amp;mut </span><span class="self">self</span>.geometry[index];
+<a href=#660 id=660 data-nosnippet>660</a>                row.airmass = [<span class="self">self</span>.airmasses[row.antenna1], <span class="self">self</span>.airmasses[row.antenna2]];
+<a href=#661 id=661 data-nosnippet>661</a>            }
+<a href=#662 id=662 data-nosnippet>662</a>        }
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="prelude-val">Ok</span>(())
+<a href=#664 id=664 data-nosnippet>664</a>    }
+<a href=#665 id=665 data-nosnippet>665</a>}
+<a href=#666 id=666 data-nosnippet>666</a>
+<a href=#667 id=667 data-nosnippet>667</a><span class="doccomment">/// Admit the patch for `shape`, writing `columns`, within `resources`, the
+<a href=#668 id=668 data-nosnippet>668</a>/// pipeline predicting with `prediction` when a step predicts.
+<a href=#669 id=669 data-nosnippet>669</a></span><span class="kw">fn </span>admit_patch(
+<a href=#670 id=670 data-nosnippet>670</a>    resources: <span class="kw-2">&amp;</span>SessionResources,
+<a href=#671 id=671 data-nosnippet>671</a>    shape: <span class="kw-2">&amp;</span>PatchShape,
+<a href=#672 id=672 data-nosnippet>672</a>    columns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
+<a href=#673 id=673 data-nosnippet>673</a>    prediction: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>DataStage&lt;<span class="lifetime">'_</span>&gt;&gt;,
+<a href=#674 id=674 data-nosnippet>674</a>) -&gt; SimulatorResult&lt;PatchAdmission&gt; {
+<a href=#675 id=675 data-nosnippet>675</a>    <span class="kw">let </span>(host, policy) = (resources.host(), resources.policy());
+<a href=#676 id=676 data-nosnippet>676</a>    <span class="comment">// The patch reads the MeasurementSet through the process's table cache.
+<a href=#677 id=677 data-nosnippet>677</a>    </span>charge_process_caches(host, policy).map_err(SimulatorError::admission)<span class="question-mark">?</span>;
+<a href=#678 id=678 data-nosnippet>678</a>    <span class="kw">let </span>free = free_memory(host, policy);
+<a href=#679 id=679 data-nosnippet>679</a>    <span class="comment">// The plan holds the selected rows, and copies them once to check them.
+<a href=#680 id=680 data-nosnippet>680</a>    // Its batches aim at casa-ms's batch size, whatever the budget allows,
+<a href=#681 id=681 data-nosnippet>681</a>    // as a new MeasurementSet's tile bands do.
+<a href=#682 id=682 data-nosnippet>682</a>    </span><span class="kw">let </span>index_bytes = <span class="number">2 </span>* (shape.rows * size_of::&lt;usize&gt;()) <span class="kw">as </span>u64;
+<a href=#683 id=683 data-nosnippet>683</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer_bytes = usize::try_from((free / <span class="number">2</span>).saturating_sub(index_bytes))
+<a href=#684 id=684 data-nosnippet>684</a>        .unwrap_or(usize::MAX)
+<a href=#685 id=685 data-nosnippet>685</a>        .min(TARGET_BATCH_BYTES);
+<a href=#686 id=686 data-nosnippet>686</a>    <span class="kw">loop </span>{
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="kw">let </span>plan = patch_plan(shape, columns, writer_bytes).map_err(|<span class="kw">_</span>| {
+<a href=#688 id=688 data-nosnippet>688</a>            SimulatorError::admission(casa_imaging_runtime::Admission {
+<a href=#689 id=689 data-nosnippet>689</a>                phase: WRITER_PHASE,
+<a href=#690 id=690 data-nosnippet>690</a>                required: index_bytes
+<a href=#691 id=691 data-nosnippet>691</a>                    + <span class="number">2 </span>* (shape.columns * shape.samples() * size_of::&lt;Complex32&gt;()) <span class="kw">as </span>u64,
+<a href=#692 id=692 data-nosnippet>692</a>                available: free,
+<a href=#693 id=693 data-nosnippet>693</a>            })
+<a href=#694 id=694 data-nosnippet>694</a>        })<span class="question-mark">?</span>;
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span><span class="kw-2">mut </span>reservation = admit(
+<a href=#696 id=696 data-nosnippet>696</a>            host,
+<a href=#697 id=697 data-nosnippet>697</a>            policy,
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw-2">&amp;</span>Demand {
+<a href=#699 id=699 data-nosnippet>699</a>                phase: WRITER_PHASE,
+<a href=#700 id=700 data-nosnippet>700</a>                memory: plan.maximum_resident_bytes() <span class="kw">as </span>u64 + index_bytes,
+<a href=#701 id=701 data-nosnippet>701</a>            },
+<a href=#702 id=702 data-nosnippet>702</a>        )
+<a href=#703 id=703 data-nosnippet>703</a>        .map_err(SimulatorError::admission)<span class="question-mark">?</span>;
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>policy_cores = resources
+<a href=#705 id=705 data-nosnippet>705</a>            .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
+<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>free = free_memory(host, policy);
+<a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">let </span>batch_rows = plan.batch_rows().max(<span class="number">1</span>);
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="kw">let </span>demand = |cores: CoreAllocation, block_rows: usize| {
+<a href=#709 id=709 data-nosnippet>709</a>            pipeline_bytes(shape, columns.len(), batch_rows)
+<a href=#710 id=710 data-nosnippet>710</a>                + shape
+<a href=#711 id=711 data-nosnippet>711</a>                    .noise_scales
+<a href=#712 id=712 data-nosnippet>712</a>                    .bytes(batch_rows, cores.streaming_workers)
+<a href=#713 id=713 data-nosnippet>713</a>                + prediction.map_or(<span class="number">0</span>, |stage| {
+<a href=#714 id=714 data-nosnippet>714</a>                    stage.bytes(block_rows, cores.streaming_workers, batch_rows)
+<a href=#715 id=715 data-nosnippet>715</a>                })
+<a href=#716 id=716 data-nosnippet>716</a>        };
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="comment">// As `close` admits a new MeasurementSet's pipeline: a batch predicted
+<a href=#718 id=718 data-nosnippet>718</a>        // as one block when that fits with the policy's workers, else small
+<a href=#719 id=719 data-nosnippet>719</a>        // blocks with the workers shrinking first.
+<a href=#720 id=720 data-nosnippet>720</a>        </span><span class="kw">let </span>(cores, block_rows) = <span class="kw">if </span>demand(policy_cores, batch_rows) &lt;= free {
+<a href=#721 id=721 data-nosnippet>721</a>            (policy_cores, batch_rows)
+<a href=#722 id=722 data-nosnippet>722</a>        } <span class="kw">else </span>{
+<a href=#723 id=723 data-nosnippet>723</a>            <span class="kw">let </span>small = prediction.map_or(batch_rows, |stage| stage.small_block_rows(batch_rows));
+<a href=#724 id=724 data-nosnippet>724</a>            <span class="kw">let </span>cores = (<span class="number">1</span>..=policy_cores.streaming_workers)
+<a href=#725 id=725 data-nosnippet>725</a>                .rev()
+<a href=#726 id=726 data-nosnippet>726</a>                .map(|workers| policy_cores.at_most(workers))
+<a href=#727 id=727 data-nosnippet>727</a>                .find(|cores| demand(<span class="kw-2">*</span>cores, small) &lt;= free)
+<a href=#728 id=728 data-nosnippet>728</a>                .unwrap_or_else(|| policy_cores.at_most(<span class="number">1</span>));
+<a href=#729 id=729 data-nosnippet>729</a>            (cores, small)
+<a href=#730 id=730 data-nosnippet>730</a>        };
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="comment">// Prediction blocks can shrink independently, but selected-run masks,
+<a href=#732 id=732 data-nosnippet>732</a>        // original scratch columns and mutation cells live for the entire batch.
+<a href=#733 id=733 data-nosnippet>733</a>        // If those do not fit, reduce the writer's batch as well. The ordinary
+<a href=#734 id=734 data-nosnippet>734</a>        // all-row path keeps its first plan when it already fits.
+<a href=#735 id=735 data-nosnippet>735</a>        </span><span class="kw">if </span>demand(cores, block_rows) &gt; free &amp;&amp; writer_bytes &gt; <span class="number">1 </span>{
+<a href=#736 id=736 data-nosnippet>736</a>            writer_bytes /= <span class="number">2</span>;
+<a href=#737 id=737 data-nosnippet>737</a>            <span class="kw">continue</span>;
+<a href=#738 id=738 data-nosnippet>738</a>        }
+<a href=#739 id=739 data-nosnippet>739</a>        <span class="kw">let </span>pipeline = admit(
+<a href=#740 id=740 data-nosnippet>740</a>            host,
+<a href=#741 id=741 data-nosnippet>741</a>            policy,
+<a href=#742 id=742 data-nosnippet>742</a>            <span class="kw-2">&amp;</span>Demand {
+<a href=#743 id=743 data-nosnippet>743</a>                phase: PIPELINE_PHASE,
+<a href=#744 id=744 data-nosnippet>744</a>                memory: demand(cores, block_rows),
+<a href=#745 id=745 data-nosnippet>745</a>            },
+<a href=#746 id=746 data-nosnippet>746</a>        )
+<a href=#747 id=747 data-nosnippet>747</a>        .map_err(SimulatorError::admission)<span class="question-mark">?</span>;
+<a href=#748 id=748 data-nosnippet>748</a>        reservation.join(pipeline);
+<a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>grid_bytes = admit_field_grids(resources, prediction, <span class="kw-2">&amp;mut </span>reservation)<span class="question-mark">?</span>;
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PatchAdmission {
+<a href=#751 id=751 data-nosnippet>751</a>            plan,
+<a href=#752 id=752 data-nosnippet>752</a>            cores,
+<a href=#753 id=753 data-nosnippet>753</a>            block_rows,
+<a href=#754 id=754 data-nosnippet>754</a>            grid_bytes,
+<a href=#755 id=755 data-nosnippet>755</a>            reservation,
+<a href=#756 id=756 data-nosnippet>756</a>        });
+<a href=#757 id=757 data-nosnippet>757</a>    }
+<a href=#758 id=758 data-nosnippet>758</a>}
+<a href=#759 id=759 data-nosnippet>759</a>
+<a href=#760 id=760 data-nosnippet>760</a><span class="doccomment">/// The mutation of every row of `shape` writing `columns`, with
+<a href=#761 id=761 data-nosnippet>761</a>/// `available_bytes` for its batch.
+<a href=#762 id=762 data-nosnippet>762</a></span><span class="kw">fn </span>patch_plan(
+<a href=#763 id=763 data-nosnippet>763</a>    shape: <span class="kw-2">&amp;</span>PatchShape,
+<a href=#764 id=764 data-nosnippet>764</a>    columns: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
+<a href=#765 id=765 data-nosnippet>765</a>    available_bytes: usize,
+<a href=#766 id=766 data-nosnippet>766</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MeasurementSetWritePlan, casa_ms::MeasurementSetWriteError&gt; {
+<a href=#767 id=767 data-nosnippet>767</a>    <span class="comment">// A row's cell of each column: its samples and the array holding them.
+<a href=#768 id=768 data-nosnippet>768</a>    </span><span class="kw">let </span>bytes_per_row = shape.samples() * size_of::&lt;Complex32&gt;() + size_of::&lt;ArrayValue&gt;();
+<a href=#769 id=769 data-nosnippet>769</a>    MeasurementSetWritePlan::selected_row_mutation(
+<a href=#770 id=770 data-nosnippet>770</a>        (<span class="number">0</span>..shape.rows).collect(),
+<a href=#771 id=771 data-nosnippet>771</a>        columns
+<a href=#772 id=772 data-nosnippet>772</a>            .iter()
+<a href=#773 id=773 data-nosnippet>773</a>            .map(|name| MeasurementSetWriteColumnPlan {
+<a href=#774 id=774 data-nosnippet>774</a>                name: (<span class="kw-2">*</span>name).to_string(),
+<a href=#775 id=775 data-nosnippet>775</a>                bytes_per_row,
+<a href=#776 id=776 data-nosnippet>776</a>                mode: MeasurementSetColumnWriteMode::Replace,
+<a href=#777 id=777 data-nosnippet>777</a>                storage_manager: MeasurementSetColumnStorage::Persisted,
+<a href=#778 id=778 data-nosnippet>778</a>                tile_shape: <span class="prelude-val">None</span>,
+<a href=#779 id=779 data-nosnippet>779</a>                create_source_column: <span class="prelude-val">None</span>,
+<a href=#780 id=780 data-nosnippet>780</a>            })
+<a href=#781 id=781 data-nosnippet>781</a>            .collect(),
+<a href=#782 id=782 data-nosnippet>782</a>        MeasurementSetWriteResources {
+<a href=#783 id=783 data-nosnippet>783</a>            available_bytes,
+<a href=#784 id=784 data-nosnippet>784</a>            maximum_live_batches: <span class="number">1</span>,
+<a href=#785 id=785 data-nosnippet>785</a>            tiled_column_buffer_bytes: <span class="number">0</span>,
+<a href=#786 id=786 data-nosnippet>786</a>        },
+<a href=#787 id=787 data-nosnippet>787</a>    )
+<a href=#788 id=788 data-nosnippet>788</a>}
+<a href=#789 id=789 data-nosnippet>789</a>
+<a href=#790 id=790 data-nosnippet>790</a><span class="doccomment">/// The tiled managers' I/O while the patch reads one column of a batch, or
+<a href=#791 id=791 data-nosnippet>791</a>/// writes the batch: tiles read, decoded and rewritten, which the tile
+<a href=#792 id=792 data-nosnippet>792</a>/// layout bounds and the rows do not (`casa_tables::SelectedReadFootprint`
+<a href=#793 id=793 data-nosnippet>793</a>/// leaves them out). It is charged as `close`'s writer charges a tiled
+<a href=#794 id=794 data-nosnippet>794</a>/// column's buffer; the reads and the write come one after another.
+<a href=#795 id=795 data-nosnippet>795</a></span><span class="kw">const </span>TILED_IO_BYTES: u64 = STREAMING_TILED_COLUMN_BUFFER_BYTES <span class="kw">as </span>u64;
+<a href=#796 id=796 data-nosnippet>796</a>
+<a href=#797 id=797 data-nosnippet>797</a><span class="doccomment">/// Copies of a written batch's cells casa-ms's mutation holds beside the
+<a href=#798 id=798 data-nosnippet>798</a>/// batch itself (measured by `tests/session_memory/patch.rs`):
+<a href=#799 id=799 data-nosnippet>799</a>/// `write_mutation_batch` clones each cell into the table's pending cells,
+<a href=#800 id=800 data-nosnippet>800</a>/// the in-place save clones the changed rows' cells again to collect them,
+<a href=#801 id=801 data-nosnippet>801</a>/// and the tiled manager stages them into its tiles.
+<a href=#802 id=802 data-nosnippet>802</a></span><span class="kw">const </span>MUTATION_CELL_COPIES: u64 = <span class="number">3</span>;
+<a href=#803 id=803 data-nosnippet>803</a>
+<a href=#804 id=804 data-nosnippet>804</a><span class="doccomment">/// Copies of a column a typed row-major read stages beside its output: the
+<a href=#805 id=805 data-nosnippet>805</a>/// cells it reorders into the output's layout (measured as above).
+<a href=#806 id=806 data-nosnippet>806</a></span><span class="kw">const </span>READ_CELL_COPIES: u64 = <span class="number">1</span>;
+<a href=#807 id=807 data-nosnippet>807</a>
+<a href=#808 id=808 data-nosnippet>808</a><span class="doccomment">/// Per antenna, when the noise needs airmasses: the array geometry's
+<a href=#809 id=809 data-nosnippet>809</a>/// position, and one integration's elevation and airmass, with room for the
+<a href=#810 id=810 data-nosnippet>810</a>/// measures frame of the conversion (as `close`'s geometry charges its
+<a href=#811 id=811 data-nosnippet>811</a>/// antennas' scratch).
+<a href=#812 id=812 data-nosnippet>812</a></span><span class="kw">const </span>AIRMASS_ANTENNA_BYTES: u64 = size_of::&lt;MPosition&gt;() <span class="kw">as </span>u64 + <span class="number">64</span>;
+<a href=#813 id=813 data-nosnippet>813</a>
+<a href=#814 id=814 data-nosnippet>814</a><span class="doccomment">/// Bytes the patch holds beside its writer for batches of `batch_rows`
+<a href=#815 id=815 data-nosnippet>815</a>/// rows writing `columns` columns: the columns read (ANTENNA1, ANTENNA2,
+<a href=#816 id=816 data-nosnippet>816</a>/// FLAG_ROW, UVW, TIME when the corruption needs it, EXPOSURE when the
+<a href=#817 id=817 data-nosnippet>817</a>/// noise needs airmasses, DATA when the fold starts from it, and FLAG for
+<a href=#818 id=818 data-nosnippet>818</a>/// image predictions) and
+<a href=#819 id=819 data-nosnippet>819</a>/// their staging, the rows' geometry, the new DATA, the mutation's copies
+<a href=#820 id=820 data-nosnippet>820</a>/// of the cells written, the tiled managers' I/O, the batch's runs and
+<a href=#821 id=821 data-nosnippet>821</a>/// jobs, and the airmasses' antennas.
+<a href=#822 id=822 data-nosnippet>822</a></span><span class="kw">fn </span>pipeline_bytes(shape: <span class="kw-2">&amp;</span>PatchShape, columns: usize, batch_rows: usize) -&gt; u64 {
+<a href=#823 id=823 data-nosnippet>823</a>    <span class="kw">let </span>samples = shape.samples() <span class="kw">as </span>u64;
+<a href=#824 id=824 data-nosnippet>824</a>    <span class="kw">let </span>cell = samples * size_of::&lt;Complex32&gt;() <span class="kw">as </span>u64;
+<a href=#825 id=825 data-nosnippet>825</a>    <span class="kw">let </span>staged = <span class="number">1 </span>+ READ_CELL_COPIES;
+<a href=#826 id=826 data-nosnippet>826</a>    <span class="kw">let </span>scratch = shape.reads_scratch.iter().filter(|&amp;&amp;read| read).count() <span class="kw">as </span>u64 * cell;
+<a href=#827 id=827 data-nosnippet>827</a>    <span class="kw">let </span>read = staged
+<a href=#828 id=828 data-nosnippet>828</a>        * (<span class="kw">if </span>shape.reads_data { cell } <span class="kw">else </span>{ <span class="number">0 </span>}
+<a href=#829 id=829 data-nosnippet>829</a>            + <span class="kw">if </span>shape.reads_flags { samples } <span class="kw">else </span>{ <span class="number">0 </span>}
+<a href=#830 id=830 data-nosnippet>830</a>            + scratch);
+<a href=#831 id=831 data-nosnippet>831</a>    <span class="kw">let </span>times = staged * <span class="number">8 </span>* (u64::from(shape.times) + u64::from(shape.airmass));
+<a href=#832 id=832 data-nosnippet>832</a>    <span class="kw">let </span>written = columns <span class="kw">as </span>u64 * MUTATION_CELL_COPIES * (cell + size_of::&lt;ArrayValue&gt;() <span class="kw">as </span>u64);
+<a href=#833 id=833 data-nosnippet>833</a>    <span class="kw">let </span>row = <span class="number">4
+<a href=#834 id=834 data-nosnippet>834</a>        </span>+ <span class="number">4
+<a href=#835 id=835 data-nosnippet>835</a>        </span>+ <span class="number">1
+<a href=#836 id=836 data-nosnippet>836</a>        </span>+ staged * <span class="number">3 </span>* <span class="number">8
+<a href=#837 id=837 data-nosnippet>837</a>        </span>+ times
+<a href=#838 id=838 data-nosnippet>838</a>        + read
+<a href=#839 id=839 data-nosnippet>839</a>        + size_of::&lt;RowGeometry&gt;() <span class="kw">as </span>u64
+<a href=#840 id=840 data-nosnippet>840</a>        + cell
+<a href=#841 id=841 data-nosnippet>841</a>        + written;
+<a href=#842 id=842 data-nosnippet>842</a>    <span class="kw">let </span>antennas = <span class="kw">if </span>shape.airmass {
+<a href=#843 id=843 data-nosnippet>843</a>        shape.antennas <span class="kw">as </span>u64 * AIRMASS_ANTENNA_BYTES
+<a href=#844 id=844 data-nosnippet>844</a>    } <span class="kw">else </span>{
+<a href=#845 id=845 data-nosnippet>845</a>        <span class="number">0
+<a href=#846 id=846 data-nosnippet>846</a>    </span>};
+<a href=#847 id=847 data-nosnippet>847</a>    batch_rows <span class="kw">as </span>u64 * row + TILED_IO_BYTES + run_bytes(shape.scans, batch_rows) + antennas
+<a href=#848 id=848 data-nosnippet>848</a>}
+<a href=#849 id=849 data-nosnippet>849</a>
+<a href=#850 id=850 data-nosnippet>850</a><span class="doccomment">/// Bytes of a batch's runs, and of the noise and component-list jobs they
+<a href=#851 id=851 data-nosnippet>851</a>/// split into, for batches of `batch_rows` rows of `scans` scans: a run of
+<a href=#852 id=852 data-nosnippet>852</a>/// each scan the batch reaches, which may be one a row (#886 review), and
+<a href=#853 id=853 data-nosnippet>853</a>/// of each kind a job a run and one more every [`MINIMUM_NOISE_JOB_ROWS`]
+<a href=#854 id=854 data-nosnippet>854</a>/// and [`components::JOB_ROWS`] rows.
+<a href=#855 id=855 data-nosnippet>855</a></span><span class="kw">fn </span>run_bytes(scans: usize, batch_rows: usize) -&gt; u64 {
+<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">let </span>runs = most_runs(scans, batch_rows);
+<a href=#857 id=857 data-nosnippet>857</a>    <span class="kw">let </span>noise_jobs = runs + batch_rows / MINIMUM_NOISE_JOB_ROWS;
+<a href=#858 id=858 data-nosnippet>858</a>    <span class="kw">let </span>component_jobs = runs + batch_rows / components::JOB_ROWS;
+<a href=#859 id=859 data-nosnippet>859</a>    (runs * size_of::&lt;Run&gt;()
+<a href=#860 id=860 data-nosnippet>860</a>        + noise_jobs * size_of::&lt;NoiseJob&lt;<span class="lifetime">'static</span>&gt;&gt;()
+<a href=#861 id=861 data-nosnippet>861</a>        + component_jobs * components::JOB_BYTES) <span class="kw">as </span>u64
+<a href=#862 id=862 data-nosnippet>862</a>}
 </code></pre></div></section></main></body></html>
