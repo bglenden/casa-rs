@@ -128,17 +128,24 @@ locations are in `docs/agent-reference.md`.
 - One agent per issue. Before starting, look for a claim (an open PR, or a
   status comment naming a branch), then claim it in the status comment.
   Never push to another agent's branch; coordinate on the issue.
-- Organize CASA conversion work in one short table on its issue: **ID,
-  user-visible outcome, status, next remaining step**. Use a short area prefix
-  and number (for example, `SIM-16`); keep the ID stable when clarifying a name.
+- Organize CASA conversion work around named user-visible outcomes. Use a
+  short area prefix and number (for example, `SIM-16`); keep each ID stable
+  when clarifying a name or grouping targets.
   Name each target for what it does in the authorized task: "corrupt simulated
   visibilities using supplied tables", rather than "implement calibration".
-  Group related methods, parameter variants and cases under that outcome;
-  do not turn every argument, helper or test into a separate target or PR.
-  Link existing tests and PRs for detail, and preserve completed work.
-  Keep one target under implementation and queue unrelated findings on the
-  appropriate backlog. While checks run, take the next independent listed
-  target. Report progress by target and its remaining behavior.
+  Give independently finishable, unfinished outcomes their own issues,
+  reusing existing issues where they fit. Combine small related targets in
+  one issue and list all their IDs. Do not create retrospective issues for
+  completed targets or an issue per argument, helper or test.
+  Keep a short parent index of IDs, outcomes and issue links, with execution
+  order and completed targets. Child issues own progress: what remains,
+  a concrete "done when", and links to existing tests/PRs. Name actual
+  dependencies and keep shared fixes in one owning issue; other issues
+  cover their own integration. Do not duplicate progress narratives in
+  the parent, catalogs or new files, or reset valid completed work.
+  Keep one behavior issue under implementation and queue unrelated findings
+  on the appropriate backlog. While checks run, take the next independent
+  listed issue. Report progress by target IDs and their remaining behavior.
   Keep this bookkeeping cheap: no duplicate ledgers, SHA/hash inventories,
   tracking contracts, sealing steps or new administrative completion gates.
   The ordinary engineering checks elsewhere in this file still apply.
