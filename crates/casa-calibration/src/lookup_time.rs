@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Simulator time curves: local cubic stencils and retained natural splines.
+//! Complex parameters use amplitude/phase; real parameters preserve their sign.
 use super::{
     ApplyExecutionError, ApplyInterpolationMode, CalibrationGrid, CalibrationSolution,
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection, GainGrid,
@@ -65,7 +66,7 @@ impl CalibrationTableLookup {
     /// time loading/kept bytes before calling, retaining the kept charges.
     ///
     /// # Errors
-    /// The table cannot be read or is not complex. Spline time axes must be
+    /// The parameter table cannot be read. Spline time axes must be
     /// strictly increasing after CASA's relative Float time conversion, and
     /// their parameter shapes must match. Interior cubic queries require at
     /// least four times; exact and endpoint queries do not.

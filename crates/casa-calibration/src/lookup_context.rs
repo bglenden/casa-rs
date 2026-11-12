@@ -115,7 +115,7 @@ impl CalibrationTableLookup {
     /// Admit ordinary layout, time and context loading/kept costs first.
     ///
     /// # Errors
-    /// The complex table, its scalar context, or its time curves are invalid.
+    /// The parameter table, its scalar context, or its time curves are invalid.
     pub fn open_for_simulation(
         path: impl AsRef<Path>,
         options: TimeInterpolationOptions,

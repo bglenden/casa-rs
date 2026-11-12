@@ -55,7 +55,8 @@ pub struct ApplySpec {
     /// `table`: the calibration table to corrupt by.
     pub table: String,
     /// `type`: its calibration type; empty takes the table's. Supports complex
-    /// G/D/T/B/Tf/Df, J/Jf, Dgen/Dfgen and supplied K/KAntPos/TOpac/EGainCurve/B TSYS parameters.
+    /// G/D/T/B/Tf/Df, J/Jf, Dgen/Dfgen, X/Xf/GlinXph/GlinXphf, and
+    /// supplied delay, opacity, gain/power-curve and Tsys parameters.
     pub kind: String,
     /// `t`: CASA records this interval, but G/D/T table application still
     /// evaluates the requested interpolation at each data time.
@@ -235,7 +236,7 @@ impl Simulator {
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
     ///   raises. A table whose parameter count disagrees with its type
     ///   raises at `corrupt`, as CASA does.
-    /// - Other than G/D/T/B/Tf/Df, J/Jf, Dgen/Dfgen, K/KAntPos, TOpac, EGainCurve and B TSYS:
+    /// - Table types beyond the documented complex, delay, opacity, curve and Tsys families:
     ///   not yet implemented (#1291).
     /// - Time interpolation supports nearest, linear, cubic and natural spline.
     ///   Cubic interior queries require four times; exact and endpoint queries
