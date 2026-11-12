@@ -383,8 +383,8 @@ fn select_runs(
             continue;
         }
         let workspace = workspace.as_deref_mut().expect("query workspace admitted");
-        for row in start..start + count {
-            let geometry = &batch.rows[row];
+        for (offset, geometry) in batch.rows[start..start + count].iter().enumerate() {
+            let row = start + offset;
             if phase.selection.matches_row(
                 metadata,
                 RowHeader {

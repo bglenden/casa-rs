@@ -622,7 +622,7 @@ impl NoiseJob<'_> {
             for term in jones {
                 for (cell, row) in self.cells.chunks_exact_mut(samples).zip(self.rows) {
                     term.apply(
-                        (corruption.window, row.time_s),
+                        (corruption.window, row.time_s, corruption.scan),
                         (row.antenna1, row.antenna2),
                         (corruption.receptors, self.scales),
                         cell,

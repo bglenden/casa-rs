@@ -602,10 +602,7 @@ fn is_function_call(chars: &[char], mut idx: usize) -> bool {
 /// is an image reference unless it is immediately followed by `(`.
 fn is_image_reference(token: &str) -> bool {
     // Skip numeric literals
-    if token.parse::<f64>().is_ok() {
-        return false;
-    }
-    true
+    token.parse::<f64>().is_err()
 }
 
 #[cfg(test)]

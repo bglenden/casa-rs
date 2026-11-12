@@ -18,7 +18,7 @@
 //!
 //! CASA's `setapply` ignores its `field`, and its interpolation does not
 //! partition the table by field: a row takes the solutions of every field
-//! as one series in time ([`FieldSelection::AnyField`]; measured on CASA
+//! as one series in time (measured on CASA
 //! 6.7.6, #893 review).
 //!
 //! Loading a table is admitted against the session's resource policy
@@ -30,14 +30,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use casa_calibration::{
-    ApplyInterpolationMode, CalibrationTableLookup, FieldSelection, FrequencyInterpolation,
+    CalibrationTableLookup, FrequencyInterpolation, TimeInterpolation, TimeInterpolationOptions,
 };
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use num_complex::Complex32;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
-use crate::corrupt::jones::{Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency};
+use crate::corrupt::jones::{
+    Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency, applied_matrices,
+};
+#[path = "apply_matrix.rs"]
+mod matrix;
+#[path = "apply_physical.rs"]
+mod physical;
 
 /// The phase loading a `setapply` table is admitted as: the table as it is
 /// read, and what the loaded lookup keeps.
@@ -48,12 +54,14 @@ const LOOKUP_PHASE: &str = "loading a setapply calibration table";
 pub struct ApplySpec {
     /// `table`: the calibration table to corrupt by.
     pub table: String,
-    /// `type`: its calibration type (`G`, `D`, scalar `T`, `B`, `Tf`, `Df`); empty takes the table's.
+    /// `type`: its calibration type; empty takes the table's. Supports complex
+    /// G/D/T/B/Tf/Df, J/Jf, Dgen/Dfgen, X/Xf/GlinXph/GlinXphf, and
+    /// supplied delay, opacity, gain/power-curve and Tsys parameters.
     pub kind: String,
     /// `t`: CASA records this interval, but G/D/T table application still
     /// evaluates the requested interpolation at each data time.
     pub interval_s: f64,
-    /// `interp`: the time interpolation (`linear` or `nearest`), optionally
+    /// `interp`: time interpolation (`nearest`, `linear`, `cubic`, `spline`), optionally
     /// followed by `,` and a frequency interpolation; empty is `linear`.
     pub interp: String,
     /// `calwt`: accepted as in CASA; corruption explicitly disables weight
@@ -64,8 +72,8 @@ pub struct ApplySpec {
     /// [-999] broadcasts the first window with solutions. Other negative
     /// or out-of-range ids raise.
     pub spwmap: Vec<i64>,
-    /// `opacity`: used by CASA's TOPAC term; ignored for the supported G/D/T
-    /// tables, as their application ignores it in CASA.
+    /// `opacity`: ignored when a supplied table defines the parameters, even
+    /// for TOpac, as in CASA.
     pub opacity: f64,
 }
 
@@ -95,18 +103,50 @@ enum AppliedKind {
     Gain,
     Leakage,
     Scalar,
+    Delay,
+    MultiBandDelay,
+    AntennaPosition,
+    Opacity,
+    GainCurve,
+    PowerCurve,
+    SystemTemperature,
+    General,
+    FullLeakage,
+    CrossPhase,
+    SkyReceptorGain,
 }
 
 impl AppliedKind {
     fn operator(self) -> JonesKind {
         match self {
-            Self::Gain | Self::Scalar => JonesKind::Gain,
-            Self::Leakage => JonesKind::Leakage,
+            Self::Gain
+            | Self::Scalar
+            | Self::Delay
+            | Self::MultiBandDelay
+            | Self::AntennaPosition
+            | Self::Opacity
+            | Self::SystemTemperature => JonesKind::Gain,
+            Self::Leakage | Self::FullLeakage => JonesKind::Leakage,
+            Self::General => JonesKind::General,
+            Self::GainCurve | Self::PowerCurve | Self::CrossPhase | Self::SkyReceptorGain => {
+                JonesKind::SkyGain
+            }
         }
     }
 
     fn receptors(self) -> usize {
-        if self == Self::Scalar { 1 } else { 2 }
+        match self {
+            Self::Scalar | Self::Opacity | Self::CrossPhase => 1,
+            Self::AntennaPosition => 3,
+            Self::GainCurve => 8,
+            Self::PowerCurve => 16,
+            Self::General => 4,
+            _ => 2,
+        }
+    }
+
+    fn matrix(self) -> bool {
+        matches!(self, Self::General | Self::FullLeakage)
     }
 }
 
@@ -118,9 +158,15 @@ pub(crate) struct AppliedTable {
     kind: AppliedKind,
     frequency: Option<FrequencyInterpolation>,
     spwmap: Vec<usize>,
+    phase_delay: bool,
 }
 
 impl AppliedTable {
+    fn channel_dependent(&self) -> bool {
+        self.frequency.is_some()
+            || matches!(self.kind, AppliedKind::Delay | AppliedKind::MultiBandDelay)
+    }
+
     fn calibration_window(&self, window: usize) -> Option<usize> {
         let mapped = *self.spwmap.get(window)?;
         self.lookup
@@ -146,6 +192,7 @@ struct AppliedSolutions {
     chunks: Chunks,
     values: Vec<[Complex32; 2]>,
     offsets: Vec<usize>,
+    matrices: Vec<[Complex32; 4]>,
 }
 
 /// A loaded table with the memory admitted for what it keeps.
@@ -166,7 +213,7 @@ fn raised(reason: impl std::fmt::Display) -> SimulatorError {
 
 fn not_yet(what: impl std::fmt::Display) -> SimulatorError {
     SimulatorError::not_yet_implemented(format!(
-        "setapply {what} is not yet implemented in casa-rs (#1053)"
+        "setapply {what} is not yet implemented in casa-rs (#1291)"
     ))
 }
 
@@ -189,8 +236,13 @@ impl Simulator {
     ///   or `interp` is CASA's deprecated `aipslin`: raised, as CASA
     ///   raises. A table whose parameter count disagrees with its type
     ///   raises at `corrupt`, as CASA does.
-    /// - Other than `G`, `D`, scalar `T`, `B`, `Tf` and `Df`, or time
-    ///   interpolation other than `linear`/`nearest`: not yet implemented.
+    /// - Table types beyond the documented complex, delay, opacity, curve and Tsys families:
+    ///   not yet implemented (#1291).
+    /// - Time interpolation supports nearest, linear, cubic and natural spline.
+    ///   Cubic interior queries require four times; exact and endpoint queries
+    ///   accept shorter axes. Spline corrects CASA's setup crash (#1053).
+    ///   PD scales complex phases; perobs/perscan select time segments.
+    ///   Real FPARAM curves interpolate signed parameters before forming gains.
     /// - Frequency interpolation supports nearest, linear, cubic and spline,
     ///   their flag-retaining forms, and CASA's default linear fallback.
     ///   Cubic interior interpolation with fewer than four valid input
@@ -206,7 +258,8 @@ impl Simulator {
     /// For D tables an invalid receptor or missing antenna uses neutral leakage (both coefficients zero), correcting CASA's unit
     /// leakage substitution. Input data flags, weights and sigma persist.
     pub fn set_apply(&mut self, spec: &ApplySpec) -> SimulatorResult<()> {
-        let interp = apply_interpolation(&spec.interp)?;
+        let mut interp = apply_interpolation(&spec.interp)?;
+        interp.observation_count = self.observations.len();
         // VisCal::corrupt turns weight calibration off. G/D/T table lookup
         // uses each row's time regardless of t, and only TOPAC reads opacity.
         if spec.table.is_empty() {
@@ -225,12 +278,26 @@ impl Simulator {
                 )));
             }
         };
-        let frequency = matches!(kind.as_str(), "B" | "TF" | "DF")
-            .then(|| frequency_interpolation(&spec.interp));
+        let frequency = matches!(
+            kind.as_str(),
+            "B" | "TF" | "DF" | "B TSYS" | "JF" | "DFGEN" | "TFOPAC" | "XF" | "GLINXPHF"
+        )
+        .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
             "G" | "B" => AppliedKind::Gain,
             "D" | "DF" => AppliedKind::Leakage,
             "T" | "TF" => AppliedKind::Scalar,
+            "K" | "KCROSS" => AppliedKind::Delay,
+            "KMBD" => AppliedKind::MultiBandDelay,
+            "KANTPOS" => AppliedKind::AntennaPosition,
+            "TOPAC" | "TFOPAC" => AppliedKind::Opacity,
+            "EGAINCURVE" => AppliedKind::GainCurve,
+            "EPOWERCURVE" => AppliedKind::PowerCurve,
+            "B TSYS" => AppliedKind::SystemTemperature,
+            "J" | "JF" => AppliedKind::General,
+            "DGEN" | "DFGEN" => AppliedKind::FullLeakage,
+            "X" | "XF" => AppliedKind::CrossPhase,
+            "GLINXPH" | "GLINXPHF" => AppliedKind::SkyReceptorGain,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
         let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;
@@ -246,6 +313,7 @@ impl Simulator {
             kind,
             frequency,
             spwmap,
+            phase_delay: interp.phase_delay,
         }));
         Ok(())
     }
@@ -256,7 +324,7 @@ impl Simulator {
     fn load_table(
         &self,
         path: &std::path::Path,
-        interp: ApplyInterpolationMode,
+        interp: TimeInterpolationOptions,
     ) -> SimulatorResult<HeldLookup> {
         let metadata_bytes =
             CalibrationTableLookup::metadata_bytes_on_disk(path).map_err(raised)?;
@@ -272,20 +340,26 @@ impl Simulator {
             },
         )
         .map_err(SimulatorError::admission)?;
-        let layout = CalibrationTableLookup::layout_on_disk(path).map_err(raised)?;
+        let layout = CalibrationTableLookup::layout_for_simulation(path, interp).map_err(raised)?;
         drop(metadata);
-        let kept = layout.kept_bytes();
+        let kept = layout
+            .kept_bytes()
+            .saturating_add(layout.time_kept_bytes(interp.mode))
+            .saturating_add(layout.context_kept_bytes(interp));
         let mut reservation = admit(
             resources.host(),
             resources.policy(),
             &Demand {
                 phase: LOOKUP_PHASE,
-                memory: layout.loading_bytes().saturating_add(kept),
+                memory: layout
+                    .loading_bytes()
+                    .saturating_add(layout.time_loading_bytes(interp.mode))
+                    .saturating_add(layout.context_loading_bytes(interp))
+                    .saturating_add(kept),
             },
         )
         .map_err(SimulatorError::admission)?;
-        let lookup = CalibrationTableLookup::open_with(path, interp, FieldSelection::AnyField)
-            .map_err(raised)?;
+        let lookup = CalibrationTableLookup::open_for_simulation(path, interp).map_err(raised)?;
         let frequencies = if layout.frequency_values > 0 {
             CalibrationTableLookup::frequency_grids_on_disk(path).map_err(raised)?
         } else {
@@ -334,7 +408,7 @@ impl Simulator {
                         }
                     })
                     .collect::<Vec<_>>();
-                let bytes = if table.frequency.is_some() {
+                let mut bytes = if table.channel_dependent() {
                     TermBytes::frequency(
                         &per_window,
                         &channels,
@@ -344,10 +418,48 @@ impl Simulator {
                 } else {
                     TermBytes::per_chunk(&per_window, antennas)
                 };
+                if matches!(
+                    table.kind,
+                    AppliedKind::Opacity | AppliedKind::GainCurve | AppliedKind::PowerCurve
+                ) {
+                    bytes.forming += (antennas * size_of::<f64>()) as u64;
+                }
+                if !table.channel_dependent() && !table.kind.matrix() {
+                    bytes.forming += (table.lookup.max_cell_values.saturating_sub(2) * 16) as u64;
+                }
+                if table.kind.matrix() {
+                    let count: usize = per_window
+                        .iter()
+                        .enumerate()
+                        .map(|(window, count)| {
+                            count
+                                * antennas
+                                * if table.channel_dependent() {
+                                    channels[window]
+                                } else {
+                                    1
+                                }
+                        })
+                        .sum();
+                    bytes.kept += (count * size_of::<[Complex32; 2]>()) as u64;
+                    if !table.channel_dependent() {
+                        bytes.kept +=
+                            ((per_window.iter().sum::<usize>() + 1) * size_of::<usize>()) as u64;
+                    }
+                    bytes.forming += (table.lookup.max_cell_values * 32) as u64;
+                }
                 let mut reservation = self.admit_term(bytes)?;
                 let evaluated = self.applied_solutions(table, &per_window)?;
                 reservation.retain(bytes.kept);
-                let term = if table.frequency.is_some() {
+                let term = if table.kind.matrix() {
+                    applied_matrices(
+                        table.kind.operator(),
+                        antennas,
+                        evaluated.chunks,
+                        evaluated.matrices,
+                        evaluated.offsets,
+                    )
+                } else if table.channel_dependent() {
                     applied_frequency(
                         table.kind.operator(),
                         antennas,
@@ -382,7 +494,7 @@ impl Simulator {
         // JonesGenLin instead substitutes one for BOTH leakage values;
         // correct that data-corrupting defect with the neutral zero pair.
         let neutral = Complex32::new(
-            if kind.operator() == JonesKind::Gain {
+            if kind.operator() != JonesKind::Leakage {
                 1.0
             } else {
                 0.0
@@ -396,15 +508,24 @@ impl Simulator {
             .map(|(window, count)| {
                 count
                     * self.antennas.len()
-                    * if table.frequency.is_some() {
+                    * if table.channel_dependent() {
                         self.spectral_windows[window].channel_count
                     } else {
                         1
                     }
             })
             .sum();
-        let mut values = Vec::with_capacity(value_count);
-        let mut offsets = if table.frequency.is_some() {
+        let mut values = if kind.matrix() {
+            Vec::new()
+        } else {
+            Vec::with_capacity(value_count)
+        };
+        let mut matrices = if kind.matrix() {
+            Vec::with_capacity(value_count)
+        } else {
+            Vec::new()
+        };
+        let mut offsets = if table.channel_dependent() || kind.matrix() {
             Vec::with_capacity(per_window.iter().sum::<usize>() + 1)
         } else {
             Vec::new()
@@ -416,27 +537,48 @@ impl Simulator {
             let Some(window) = table.calibration_window(scan.spectral_window_id) else {
                 continue;
             };
-            let output_hz = if table.frequency.is_some() {
+            let output_hz = if table.channel_dependent() {
                 self.spectral_windows[scan.spectral_window_id].channel_frequencies_hz()
             } else {
                 Vec::new()
             };
-            let channels = if table.frequency.is_some() {
+            let channels = if table.channel_dependent() {
                 output_hz.len()
             } else {
                 1
             };
+            let phase_frequency = (table.phase_delay && table.frequency.is_none()).then(|| {
+                let data = &self.spectral_windows[scan.spectral_window_id];
+                data.start_frequency_hz
+                    + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.
+            });
             for time_s in self.integration_times_s(index) {
-                if table.frequency.is_some() {
-                    offsets.push(values.len());
+                if table.channel_dependent() || kind.matrix() {
+                    offsets.push(if kind.matrix() {
+                        matrices.len()
+                    } else {
+                        values.len()
+                    });
                 }
-                chunks.push(scan.spectral_window_id, time_s, scan.field_id);
+                chunks.push_for_scan(scan.spectral_window_id, time_s, scan.field_id, index);
+                let geometry = physical::Geometry::new(self, kind, scan.field_id, time_s)?;
                 for antenna in 0..self.antennas.len() {
                     let Some(solution) = lookup
-                        .solution(scan.field_id as i32, window as i32, antenna as i32, time_s)
+                        .simulation_solution(
+                            scan.observation_id,
+                            scan.scan_number,
+                            window as i32,
+                            antenna as i32,
+                            time_s,
+                            phase_frequency,
+                        )
                         .map_err(raised)?
                     else {
-                        values.extend(std::iter::repeat_n([neutral; 2], channels));
+                        if kind.matrix() {
+                            matrices.extend(std::iter::repeat_n(matrix::IDENTITY, channels));
+                        } else {
+                            values.extend(std::iter::repeat_n([neutral; 2], channels));
+                        }
                         continue;
                     };
                     if solution.channels != 1 && table.frequency.is_none() {
@@ -457,13 +599,37 @@ impl Simulator {
                             .get(window)
                             .map(Vec::as_slice)
                             .unwrap_or(&[]);
-                        solution
-                            .resample_frequency(input_hz, &output_hz, mode)
-                            .map_err(raised)?
+                        if matches!(kind, AppliedKind::SystemTemperature | AppliedKind::Opacity) {
+                            solution.resample_real_frequency(input_hz, &output_hz, mode)
+                        } else {
+                            solution.resample_frequency(input_hz, &output_hz, mode)
+                        }
+                        .map_err(raised)?
                     } else {
                         solution
                     };
+                    let reference = table
+                        .lookup
+                        .frequencies
+                        .get(window)
+                        .and_then(|axis| axis.get(axis.len() / 2))
+                        .copied()
+                        .unwrap_or(0.);
                     for channel in 0..channels {
+                        if kind.matrix() {
+                            matrices.push(matrix::parameters(kind, &solution, channel));
+                            continue;
+                        }
+                        if let Some(pair) = geometry.values(
+                            kind,
+                            &solution,
+                            antenna,
+                            (channel, output_hz.get(channel).copied().unwrap_or(0.)),
+                            reference,
+                        ) {
+                            values.push(pair);
+                            continue;
+                        }
                         let invalid_leakage = kind == AppliedKind::Leakage
                             && (0..solution.receptors)
                                 .any(|receptor| solution.flags[receptor * channels + channel]);
@@ -483,31 +649,52 @@ impl Simulator {
                 }
             }
         }
-        if table.frequency.is_some() {
-            offsets.push(values.len());
+        if table.channel_dependent() || kind.matrix() {
+            offsets.push(if kind.matrix() {
+                matrices.len()
+            } else {
+                values.len()
+            });
         }
         Ok(AppliedSolutions {
             chunks: chunks.sorted(),
             values,
             offsets,
+            matrices,
         })
     }
 }
 
-/// `interp`'s time interpolation (`linear[,…]` or `nearest[,…]`; empty is
-/// `linear`), refusing CASA's deprecated `aipslin` as CASA does.
-fn apply_interpolation(interp: &str) -> SimulatorResult<ApplyInterpolationMode> {
+/// The simulator's time interpolation, refusing deprecated and unknown modes
+/// as CASA does; unsupported modifiers remain explicit refusals (#1053).
+fn apply_interpolation(interp: &str) -> SimulatorResult<TimeInterpolationOptions> {
     if interp.contains("aips") {
         return Err(raised(
             "The (peculiar) 'aipslin' interpolation type was deprecated in CASA v3.4; use \
              'linear'.",
         ));
     }
-    match interp.split(',').next().unwrap_or("").trim() {
-        "" | "linear" => Ok(ApplyInterpolationMode::Linear),
-        "nearest" => Ok(ApplyInterpolationMode::Nearest),
-        other => Err(not_yet(format!("with interp='{other}'"))),
-    }
+    let requested = interp.split(',').next().unwrap_or("").trim();
+    let mode = if requested.contains("nearest") {
+        TimeInterpolation::Nearest
+    } else if requested.is_empty() || requested.contains("linear") {
+        TimeInterpolation::Linear
+    } else if requested.contains("cubic") {
+        TimeInterpolation::Cubic
+    } else if requested.contains("spline") {
+        TimeInterpolation::Spline
+    } else {
+        return Err(raised(format!(
+            "Unrecognized time interpolation type '{requested}'"
+        )));
+    };
+    Ok(TimeInterpolationOptions {
+        mode,
+        phase_delay: requested.contains("PD"),
+        per_observation: requested.contains("perobs"),
+        per_scan: requested.contains("perscan"),
+        observation_count: 1,
+    })
 }
 
 /// CASA defaults frequency interpolation to linear for frequency-dependent parameters.
