@@ -6,6 +6,7 @@ Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-nite
 CASA behaviours casa-rs follows for parity:
 [AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
 [AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
+[AW MT-MFS restart weights](#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again),
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
@@ -489,6 +490,32 @@ term's raw `getWeightImage` moment, so `.weight.tt1` and `.weight.tt2` stay
 the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
+
+## AW MT-MFS restart multiplies saved higher Taylor weights again
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. casa-rs recomputes the weights with the PSF (#1070).
+- Affected code: `TransformMachines2/CFCache.cc` (`loadWtImage`),
+  `AWProjectFT.cc` (`getWeightImage`) and
+  `AWProjectWBFT.cc` (`initializeToSky`).
+
+With `gridder='awproject'`, `deconvolver='mtmfs'` and the default
+`calcpsf=True`, CASA can read each saved `.weight.ttN` when a run continues
+at the same image prefix. `CFCache::loadWtImage` multiplies each saved plane
+by `.sumwt.tt0`. The higher Taylor weight images were already written as
+raw moments (see the preceding normalization bug).
+`AWProjectFT::getWeightImage` also reapplies its sinc grid correction to
+the saved, already corrected planes.
+
+In `test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield` on
+`refim_oneshiftpoint.mosaic.ms`, a dirty run followed by ten CLEAN
+iterations multiplies the central values of `.weight.tt1` and
+`.weight.tt2` by 49,971.44, the principal sum of weights. The final
+restored images and residuals also depend on the saved weights. Moving
+only the three saved weight images aside before CLEAN makes CASA agree
+with a fresh CLEAN on the same observation. casa-rs recomputes weights
+when it recomputes the PSF. All 19 products and the iteration counts
+agree with both CASA controls under the existing tolerances.
 
 ## A Taylor term gives every Stokes plane the first correlation's sum of weights
 
