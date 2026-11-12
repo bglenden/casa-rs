@@ -46,7 +46,7 @@ def read(path):
         tb.close()
 
 
-def verify(run, case, actual, cases):
+def verify(run, case, actual, cases, native_baseline=None):
     rows = case["rows"]
     assert actual["DATA"].shape == (2, 4, len(rows))
     data = actual["DATA"].transpose(2, 1, 0).reshape(len(rows), 8)
@@ -73,8 +73,12 @@ def verify(run, case, actual, cases):
         baseline = (complex_values([row["data"] for row in cases["all_replace"]["rows"]])
                     if case["name"] == "selected_prediction_noise" else np.full_like(data, 3 + 4j))
         selected = np.any(reference != baseline, axis=1)
-        np.testing.assert_allclose(data[~selected], baseline[~selected], rtol=0, atol=1e-5)
-        residual = data - baseline
+        # CASA and native models have already passed the independent 1e-3
+        # NRMS gate. Preservation is exact against the same native clean
+        # model, so model rounding cannot be mistaken for changed rows.
+        clean = native_baseline if native_baseline is not None else baseline
+        np.testing.assert_array_equal(data[~selected], clean[~selected])
+        residual = data - clean
         auto = actual["ANTENNA1"] == actual["ANTENNA2"]
         np.testing.assert_allclose(residual[selected & auto].imag, 0, rtol=0, atol=1e-6)
         cross = residual[selected & ~auto]
@@ -117,7 +121,11 @@ def main():
         seen.add(key)
         case = cases[run["name"]]
         path = manifest.parent / ("selection.ms" if case.get("fresh") else "existing.ms")
-        reports.append(verify(run, case, read(path), cases))
+        native_baseline = None
+        if case["name"] == "selected_prediction_noise":
+            control = args.root / f"all_replace-{run['backend']}-w{run['workers']}" / "existing.ms"
+            native_baseline = read(control)["DATA"].transpose(2, 1, 0).reshape(len(case["rows"]), 8)
+        reports.append(verify(run, case, read(path), cases, native_baseline))
     assert seen == expected, ("missing", sorted(expected - seen))
     args.out.write_text(json.dumps({"casa_version": casatasks.version_string(), "runs": reports},
                                    indent=2, allow_nan=False) + "\n")
