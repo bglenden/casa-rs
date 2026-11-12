@@ -134,7 +134,7 @@ impl CalibrationTableLookup {
     }
 
     /// One simulator antenna's solution with observation/scan context.
-    /// `frequency_hz` is the data centre-channel frequency for scalar-channel
+    /// `frequency_hz` is the native data spectral-centroid frequency for scalar-channel
     /// phase-delay application; frequency-dependent tables pass `None`, as
     /// CASA's vector-frequency interpolation does not apply phase-delay scaling.
     /// All calibration fields participate in the selected time segment.
@@ -195,8 +195,8 @@ impl TimePlan {
                     .and_then(casa_types::Value::as_table_ref)
                     .map(|name| casa_tables::add_directory(name, &lookup.path))
                     .unwrap_or_else(|| lookup.path.join("OBSERVATION"));
-                let count =
-                    Table::rows_on_disk(path).map_err(|e| invalid(&lookup.path, &e.to_string()))?;
+                let count = Table::rows_on_disk(&path)
+                    .map_err(|e| invalid(&lookup.path, &e.to_string()))?;
                 if observations.len() > 1
                     && observations.len() == count
                     && count == options.observation_count

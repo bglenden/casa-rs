@@ -67,6 +67,24 @@ fn long_time_spline_axes_hold_coefficient_formation_scratch() {
     }
     run_case(("Tf", 4, 8193), 4, 4, true, "spline,linear");
 }
+
+#[test]
+fn time_context_headers_remain_bounded_across_many_read_batches() {
+    if !super::alone(
+        "apply_frequency::time_context_headers_remain_bounded_across_many_read_batches",
+    ) {
+        return;
+    }
+    run_case(("Tf", 4, 8193), 4, 4, true, "linearperscan,linear");
+}
+
+#[test]
+fn wide_phase_delay_cycle_arrays_hold_their_admission() {
+    if !super::alone("apply_frequency::wide_phase_delay_cycle_arrays_hold_their_admission") {
+        return;
+    }
+    run_case(("B", 8192, 16), 4, 4, true, "nearestPD,linear");
+}
 fn run_case(
     (kind, channels, slots): (&str, usize, usize),
     data_channels: usize,

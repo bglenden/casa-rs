@@ -189,7 +189,7 @@ fn context(path: &Path, calibration: &Path, case: &Json) {
             let observation = root.join("OBSERVATION");
             let mut table = Table::open(TableOptions::new(&observation)).unwrap();
             if table.row_count() == 1 {
-                let row = table.row(0).unwrap().clone();
+                let row = table.row_accessor().row(0).unwrap().clone();
                 table.add_row(row).unwrap();
             }
             table.save(TableOptions::new(&observation)).unwrap();

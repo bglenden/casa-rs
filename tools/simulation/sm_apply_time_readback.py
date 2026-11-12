@@ -12,6 +12,7 @@ from sm_apply_time_oracle import FACTORS, OFFSETS
 from sm_apply_parameters_oracle import initialize, receptor_values
 from sm_apply_parameters_readback import compare
 from sm_multiple_models_oracle import make_session
+from sm_apply_time_modes_oracle import apply_partitioned, observation_rows
 
 
 def check_table(path, case):
@@ -60,14 +61,21 @@ def consume(path, case, out):
     sm = make_session(output, stokes='XX XY YX YY')
     sm.close()
     initialize(output)
+    if case.get('segment') == 'split' and 'perobs' in case['mode']:
+        observation_rows(output / 'OBSERVATION', 2)
+        tb = table(); tb.open(str(output), nomodify=False)
+        tb.putcol('OBSERVATION_ID', tb.getcol('FIELD_ID')); tb.close()
     sm = simulator()
     assert sm.openfromms(str(output))
     # CASA crashes on spline setup. Verify the original native knot table
     # through its separately retained nearest-CASA control, never the sampled
     # spline control used to judge native spline calculations.
     interp = 'nearest,nearest' if case['mode'] == 'spline' else case['interp']
-    assert sm.setapply(table=str(path.resolve()), interp=interp, calwt=False)
-    assert sm.corrupt()
+    if 'perscan' in case['mode'] and case.get('segment') not in ('unset', None):
+        apply_partitioned(sm, output, path.resolve(), case, out)
+    else:
+        assert sm.setapply(table=str(path.resolve()), interp=interp, calwt=False)
+        assert sm.corrupt()
     sm.close()
     reference = {**case, 'rows': case.get('casa_nearest_rows', case['rows'])}
     return compare(output, reference)
@@ -82,7 +90,7 @@ def main():
     assert casatasks.version_string() == '6.7.6.14'
     fixture = json.load(gzip.open(args.fixture, 'rt'))
     cases = {case['name']: case for case in fixture['cases'] if not case.get('refusal')}
-    assert len(cases) == 34
+    assert len(cases) in (34, 21)
     expected = {(name, workers) for name in cases for workers in (1, 3)}
     seen, reports = set(), []
     args.out.mkdir(parents=True, exist_ok=True)

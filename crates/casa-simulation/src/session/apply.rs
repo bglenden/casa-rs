@@ -440,7 +440,8 @@ impl Simulator {
             };
             let phase_frequency = (table.phase_delay && table.frequency.is_none()).then(|| {
                 let data = &self.spectral_windows[scan.spectral_window_id];
-                data.start_frequency_hz + (data.channel_count / 2) as f64 * data.channel_width_hz
+                data.start_frequency_hz
+                    + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.
             });
             for time_s in self.integration_times_s(index) {
                 if table.frequency.is_some() {

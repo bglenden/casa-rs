@@ -4458,3 +4458,26 @@ the applied term before staging any DATA writes. A short-axis interior
 failure therefore leaves the entire input DATA intact. The regression test
 checks both exact-first partial-write cases as well as the initially interior
 failures. This preserves the simulator's existing fail-closed write contract.
+
+
+## Simulator per-scan calibration does not synchronize its scan number
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing crash rule (#1291)
+- Affected code: CASA 6.7.6.14 `VisCal::syncMeta(const VisBuffer&)`,
+  called by simulator corruption, and `CTPatchedInterp` per-scan lookup.
+
+The old VisBuffer synchronization copies the observation ID but never the
+scan number, leaving `currScan` at its initialized value of -1. The newer
+VisBuffer2 synchronization copies both. A calibration table with valid scan
+numbers activates per-scan lookup; the simulator supplies -1 as the segment
+index. All five independent active-per-scan probes terminate with signal11.
+Tables whose SCAN_NUMBER is -1 disable the modifier and still work.
+
+casa-rs uses each simulated or opened scan's actual SCAN_NUMBER and retains
+OBSERVATION_ID as well. Independent CASA controls explicitly partition the
+input table and select the corresponding one-field-per-scan DATA, using the
+ordinary nearest/linear/cubic method within each partition. These controls
+cover nearest/linear behavior, missing segments, scan-over-observation
+precedence and a short cubic-axis refusal. The ordinary per-observation
+cases run directly in CASA. No tolerance is relaxed.

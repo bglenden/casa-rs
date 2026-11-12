@@ -73,7 +73,10 @@ def apply_partitioned(sm, path, terms, spec, out):
             values=tb.getcol('CPARAM');tb.putcol('CPARAM',np.ones_like(values))
             tb.putcol('FLAG',np.zeros_like(tb.getcol('FLAG')))
         tb.putcol('SCAN_NUMBER',np.full(tb.nrows(),-1,dtype=np.int32));tb.close()
-        assert sm.reset();assert sm.setdata(msselect=f'SCAN_NUMBER=={scan}')
+        # Reopen the original MS so each control has independent selection
+        # and calibration state, and sees the preceding selected write.
+        sm.close();assert sm.openfromms(str(path))
+        assert sm.setdata(fieldid=[int(scan)-1])
         mode=spec['mode'].replace('perscan','').replace('perobs','')
         assert sm.setapply(table=str(subset),interp=mode+',nearest',calwt=False)
         assert sm.corrupt()
@@ -99,6 +102,8 @@ def worker(spec,out,fixture,partition_control=False):
     except RuntimeError as error:
         record.update(outcome='raises',stage=stage,error=str(error),exception_class=type(error).__name__)
     sm.close();rows=read_rows(path)
+    if partition_control and record['outcome']=='returned':
+        assert all(row['corrected_data']==row['data'] for row in rows), 'both selected scans must be processed'
     tb=table();tb.open(str(path));times=tb.getcol('TIME');obs=tb.getcol('OBSERVATION_ID');scans=tb.getcol('SCAN_NUMBER');tb.close()
     for row,time,observation,scan in zip(rows,times,obs,scans):
         row.update(time_s=float(time),observation=int(observation),scan=int(scan))
