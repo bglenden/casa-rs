@@ -112,6 +112,13 @@ fn check_uvw(table: &Table, case: &Value, expected: &Value, native: bool) {
     };
     // Absolute geometry uses the ordinary agreement tolerance. The feed-offset
     // delta below removes the baseline's existing reference-frame residual.
+    let absolute = actual
+        .iter()
+        .zip(&target)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f64, f64::max);
+    println!("max absolute UVW residual {absolute:e} m");
+    assert!(absolute <= 1e-3, "preserve the existing 1-mm UVW allowance");
     let residual = nrms(&actual, &target);
     println!("absolute UVW NRMS {residual:e}");
     assert!(residual < 1e-3);

@@ -60,6 +60,7 @@ def verify_native(root):
                 if column == 'UVW':
                     residual=np.linalg.norm(actual-expected)/np.linalg.norm(expected)
                     assert residual<1e-3,residual
+                    np.testing.assert_allclose(actual,expected,rtol=0,atol=1e-3)
                     block=len(actual)//case['count']
                     for feed in range(1,case['count']):
                         a=actual[feed*block:(feed+1)*block]-actual[:block]
