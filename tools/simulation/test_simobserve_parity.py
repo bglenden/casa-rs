@@ -19,13 +19,14 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from simobserve_parity import CASES, casars_params, compare_frequency_frames, compare_images, copy_inputs, main, repredict
+from simobserve_parity import CASES, casars_params, compare_case, compare_frequency_frames, compare_images, copy_inputs, main, repredict
 
 
 class ComponentLists:
@@ -190,6 +191,50 @@ class FrequencyFramesTest(unittest.TestCase):
         windows["b/SPECTRAL_WINDOW"][0]["MEAS_FREQ_REF"] = 3
         windows["b/SPECTRAL_WINDOW"][0]["CHAN_FREQ"] = [1e9, 1.2e9]
         self.assertEqual(len(compare_frequency_frames(table, "a", "b")), 2)
+
+
+class GeometryTables(SpectralWindows):
+    def getcol(self, column):
+        return self.rows[column]
+
+
+class StrictGeometryTest(unittest.TestCase):
+    def compare(self, *, time_delta=False, uvw=0.0, uvw_delta=0.0, caller_limit=1e-3):
+        # Exercise the actual task comparator, replacing only CASA's I/O and
+        # the external legacy-comparator process (which reports success).
+        with tempfile.TemporaryDirectory() as out:
+            columns = {}
+            paths = []
+            for side in ("casa", "casars"):
+                project = pathlib.Path(out, side)
+                project.mkdir()
+                (project / "x.ptg.txt").write_text("pointing\n")
+                ms = project / "x.ms"
+                ms.mkdir()
+                paths.append(str(project))
+                time = np.nextafter(5e9, np.inf) if time_delta and side == "casars" else 5e9
+                coordinate = uvw + uvw_delta if side == "casars" else uvw
+                columns[str(ms)] = {"TIME": np.array([time]), "UVW": np.array([[coordinate], [0.0], [0.0]])}
+                columns[str(ms / "SPECTRAL_WINDOW")] = [{"MEAS_FREQ_REF": 5, "CHAN_FREQ": [1e9]}]
+            case = dict(next(case for case in CASES if case["name"] == "uvw_long_vla_2017"))
+            args = SimpleNamespace(uvw_tolerance_m=caller_limit, atmosphere_model=None)
+            with patch("simobserve_parity.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="")):
+                return compare_case({"tb": GeometryTables(columns)}, case, *paths, out, args)
+
+    def test_equal_time_is_required_even_for_one_ulp(self):
+        self.assertEqual(self.compare()["differences"], [])
+        self.assertTrue(any("TIME" in line for line in self.compare(time_delta=True)["differences"]))
+
+    def test_one_micrometre_is_an_absolute_cap_even_with_a_looser_caller(self):
+        self.assertEqual(self.compare(uvw_delta=1e-6)["differences"], [])
+        self.assertTrue(self.compare(uvw_delta=np.nextafter(1e-6, np.inf))["differences"])
+        # This 30 km coordinate passed the old comparator's relative margin.
+        self.assertTrue(self.compare(uvw=3e4, uvw_delta=1e-6 + 1e-10)["differences"])
+
+    def test_a_stricter_caller_and_non_finite_geometry_fail_closed(self):
+        self.assertTrue(self.compare(uvw_delta=1e-8, caller_limit=1e-9)["differences"])
+        for value in (np.nan, np.inf):
+            self.assertTrue(self.compare(uvw_delta=value)["differences"])
 
 
 class InputSelectionTest(unittest.TestCase):

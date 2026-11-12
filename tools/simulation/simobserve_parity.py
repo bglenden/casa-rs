@@ -640,6 +640,37 @@ def compare_frequency_frames(tb, casa: str, casars: str, details=None) -> list[s
     return differences
 
 
+def compare_geometry(tb, casa: str, casars: str, limit_m: float) -> tuple[dict, list[str]]:
+    """A strict absolute UVW bound at exactly equal stored TIME, over all rows."""
+    details = {"uvw_absolute_limit_m": limit_m}
+    if not np.isfinite(limit_m) or limit_m < 0:
+        return details, ["invalid absolute UVW limit"]
+    columns = []
+    for path in (casa, casars):
+        tb.open(path)
+        try:
+            columns.append({name: np.asarray(tb.getcol(name)) for name in ("TIME", "UVW")})
+        finally:
+            tb.close()
+    a, b = columns
+    times_equal = (np.all(np.isfinite(a["TIME"])) and np.all(np.isfinite(b["TIME"]))
+                   and np.array_equal(a["TIME"], b["TIME"]))
+    details["times_equal"] = bool(times_equal)
+    if not times_equal:
+        return details, ["MAIN.TIME: strict UVW comparison requires exactly equal finite stored TIME"]
+    details["rows"] = int(a["TIME"].size)
+    if a["UVW"].shape != b["UVW"].shape:
+        return details, ["MAIN.UVW: shape differs"]
+    difference = np.abs(a["UVW"] - b["UVW"])
+    if not np.all(np.isfinite(difference)):
+        return details, ["MAIN.UVW: non-finite difference"]
+    maximum = float(np.max(difference, initial=0.0))
+    details["max_uvw_difference_m"] = maximum
+    if maximum > limit_m:
+        return details, [f"MAIN.UVW: absolute difference {maximum:.17g} m exceeds {limit_m:.17g} m"]
+    return details, []
+
+
 def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     report = {"name": case["name"], "differences": []}
     differ = report["differences"].append
@@ -660,9 +691,13 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     if a and b:
         report["differences"].extend(compare_components(t, a, b))
     a, b = stem_of(casa, ".ms"), stem_of(casars, ".ms")
+    uvw_limit = min(args.uvw_tolerance_m, case.get("uvw_tolerance_m", args.uvw_tolerance_m))
     if a and b:
         report["spectral_windows"] = {}
         report["differences"].extend(compare_frequency_frames(t["tb"], a, b, report["spectral_windows"]))
+        if "uvw_tolerance_m" in case:
+            report["geometry"], failures = compare_geometry(t["tb"], a, b, uvw_limit)
+            report["differences"].extend(failures)
     compare = os.path.join(out, "compare", case["name"])
     shutil.rmtree(compare, ignore_errors=True)
     links = os.path.join(compare, "casars")
@@ -671,8 +706,7 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
         json.dump({"scenarios": scenarios(t, case, casa, casars, links)}, handle, indent=1)
     command = [sys.executable, os.path.join(HERE, "compare_sm_ms.py"), "--casa", compare, "--casars", links,
                "--json", os.path.join(compare, "report.json"),
-               "--uvw-tolerance-m", str(min(args.uvw_tolerance_m,
-                                             case.get("uvw_tolerance_m", args.uvw_tolerance_m)))]
+               "--uvw-tolerance-m", str(uvw_limit)]
     if args.atmosphere_model:
         command += ["--atmosphere-model", args.atmosphere_model]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
