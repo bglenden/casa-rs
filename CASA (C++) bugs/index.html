@@ -5236,6 +5236,74 @@ half-knot amplitudes. That control is also checked against the closed-form
 receptor equation; the native spline is compared against it. C++ consumption
 of the original native spline table is checked separately against the raw
 CASA result. This exception changes no numerical tolerance.</p>
+<h2 id="simulator-time-spline-setup-uses-an-uninitialized-interpolator">Simulator time-spline setup uses an uninitialized interpolator<a class="headerlink" href="#simulator-time-spline-setup-uses-an-uninitialized-interpolator" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: corrected under the standing crash/evident-intent rule (#1053)</li>
+<li>Affected code: CASA 6.7.6.14 <code>CTTimeInterp1</code> constructor and
+  <code>interpolate</code>, with casacore <code>Interpolate1D&lt;Float,Array&lt;Float&gt;&gt;</code>.</li>
+</ul>
+<p>For G/D/T/B/Tf/Df calibration tables, <code>sm.setapply(interp='spline')</code>
+selects the spline method before supplying the interpolator's data.
+<code>Interpolate1D::setMethod</code> accesses the uninitialized sample count and
+knot arrays. All eight independent four-time curve/analytic probes terminate
+with signal 11 during <code>setapply</code>; <code>corrupt</code> is never called. The later time
+registration supplies data for linear and cubic methods, but has no spline
+branch. The same interpolator also skips the first interior back-substitution
+identified in the natural-spline defect above.</p>
+<p>casa-rs initializes a natural amplitude/continuous-phase spline from the
+loaded time series, completes every interior back-substitution and retains
+its coefficients. Exact times and queries outside the range retain the
+registered knot or endpoint; one knot is constant and two knots form a line.
+Flags combine only the adjacent time samples, without removing flagged
+knots, as CASA's other time interpolators do.</p>
+<p><code>sm_apply_time_casa.json.gz</code> retains each raw CASA termination and separate
+nearest-CASA controls. A dense NumPy linear-system solution, independent of
+the native tridiagonal solver, samples the corrected amplitude/phase curves
+at the requested times and supplies them to CASA's nearest interpolation.
+The four real amplitudes <code>[1,2,1/2,5/4]</code> additionally give exact half-knot
+amplitudes <code>[289/160,203/160,47/80]</code>. C++ consumption of the original native
+knot tables uses the separate original-table nearest controls, because the
+CASA spline setup itself crashes. No numerical tolerance is relaxed.</p>
+<h2 id="simulator-short-cubic-time-axes-can-alter-data-before-failing">Simulator short cubic time axes can alter DATA before failing<a class="headerlink" href="#simulator-short-cubic-time-axes-can-alter-data-before-failing" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: corrected under the standing data-loss rule (#1053, #1054)</li>
+<li>Affected code: CASA 6.7.6.14 <code>CTTimeInterp1::interpolate</code> and simulator
+  corruption writes.</li>
+</ul>
+<p>With two calibration times coincident with the first and last data times,
+G and scalar-T cubic application first writes the exact-time solution.
+The following interior query then asks for a four-time stencil and raises
+<code>RuntimeError</code>; the already changed DATA remains. The reference fixture
+retains both partial-write outcomes. With two or three knots and an initial
+interior query, CASA raises before changing DATA. Single-time, exact and
+outside-range queries do not need a cubic stencil.</p>
+<p>casa-rs preserves those mathematical success/refusal rules, but evaluates
+the applied term before staging any DATA writes. A short-axis interior
+failure therefore leaves the entire input DATA intact. The regression test
+checks both exact-first partial-write cases as well as the initially interior
+failures. This preserves the simulator's existing fail-closed write contract.</p>
+<h2 id="simulator-per-scan-calibration-does-not-synchronize-its-scan-number">Simulator per-scan calibration does not synchronize its scan number<a class="headerlink" href="#simulator-per-scan-calibration-does-not-synchronize-its-scan-number" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-12</li>
+<li>Status: corrected under the standing crash rule (#1291)</li>
+<li>Affected code: CASA 6.7.6.14 <code>VisCal::syncMeta(const VisBuffer&amp;)</code>,
+  called by simulator corruption, and <code>CTPatchedInterp</code> per-scan lookup.</li>
+</ul>
+<p>The old VisBuffer synchronization copies the observation ID but never the
+scan number, leaving <code>currScan</code> at its initialized value of -1. The newer
+VisBuffer2 synchronization copies both. A calibration table with valid scan
+numbers activates per-scan lookup; the simulator supplies -1 as the segment
+index. All five independent active-per-scan probes terminate with signal11.
+Tables whose SCAN_NUMBER is -1 disable the modifier and still work.</p>
+<p>casa-rs uses each simulated or opened scan's actual SCAN_NUMBER and retains
+OBSERVATION_ID as well. Independent CASA controls explicitly partition the
+input table and select the corresponding one-field-per-scan DATA, using the
+ordinary nearest/linear/cubic method within each partition. These controls
+cover nearest/linear behavior, missing segments, scan-over-observation
+precedence and a short cubic-axis refusal. The ordinary per-observation
+cases run directly in CASA. No tolerance is relaxed.</p>
 
 
 

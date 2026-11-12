@@ -264,12 +264,12 @@
 <a href=#264 id=264 data-nosnippet>264</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>)
 <a href=#265 id=265 data-nosnippet>265</a>    }
 <a href=#266 id=266 data-nosnippet>266</a>
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="doccomment">/// Bind an earlier MFS mosaic's PB and pixel mask for the products of a
-<a href=#268 id=268 data-nosnippet>268</a>    /// continuation, polarization-major with x-major image planes.
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="doccomment">/// Bind an earlier direction-dependent run's PB and pixel mask for
+<a href=#268 id=268 data-nosnippet>268</a>    /// the products of a continuation, with x-major image planes.
 <a href=#269 id=269 data-nosnippet>269</a>    ///
 <a href=#270 id=270 data-nosnippet>270</a>    /// # Errors
-<a href=#271 id=271 data-nosnippet>271</a>    /// The completion is outside the single-term mosaic layout, or the
-<a href=#272 id=272 data-nosnippet>272</a>    /// saved PB does not match its grid.
+<a href=#271 id=271 data-nosnippet>271</a>    /// The completion has multiple domains, or the saved PB does not
+<a href=#272 id=272 data-nosnippet>272</a>    /// match its grid.
 <a href=#273 id=273 data-nosnippet>273</a>    </span><span class="kw">pub fn </span>with_saved_mosaic_beam(
 <a href=#274 id=274 data-nosnippet>274</a>        <span class="kw-2">mut </span><span class="self">self</span>,
 <a href=#275 id=275 data-nosnippet>275</a>        beam: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw">crate</span>::SavedMosaicBeam,
@@ -282,7 +282,7 @@
 <a href=#282 id=282 data-nosnippet>282</a>            normal.polarization_count(),
 <a href=#283 id=283 data-nosnippet>283</a>            normal.channel_count(),
 <a href=#284 id=284 data-nosnippet>284</a>        ];
-<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">if </span>normal.basis() == NormalBasis::Taylor || normal.domain_count() != <span class="number">1 </span>{
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">if </span>normal.domain_count() != <span class="number">1 </span>{
 <a href=#286 id=286 data-nosnippet>286</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="kw">crate</span>::ProductsError::UnsupportedProblem);
 <a href=#287 id=287 data-nosnippet>287</a>        }
 <a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">if </span>beam.shape() != expected {

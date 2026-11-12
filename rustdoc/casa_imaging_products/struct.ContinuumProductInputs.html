@@ -52,11 +52,11 @@ nonfinite.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.with_saved_mosaic_beam" class="method"><a class="src rightside" href="../src/casa_imaging_products/source.rs.html#273-296">Source</a><h4 class="code-header">pub fn <a href="#method.with_saved_mosaic_beam" class="fn">with_saved_mosaic_beam</a>(
     self,
     beam: &amp;'a <a class="struct" href="struct.SavedMosaicBeam.html" title="struct casa_imaging_products::SavedMosaicBeam">SavedMosaicBeam</a>,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Bind an earlier MFS mosaic’s PB and pixel mask for the products of a
-continuation, polarization-major with x-major image planes.</p>
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.ProductsError.html" title="enum casa_imaging_products::ProductsError">ProductsError</a>&gt;</h4></section></summary><div class="docblock"><p>Bind an earlier direction-dependent run’s PB and pixel mask for
+the products of a continuation, with x-major image planes.</p>
 <h5 id="errors-4"><a class="doc-anchor" href="#errors-4">§</a>Errors</h5>
-<p>The completion is outside the single-term mosaic layout, or the
-saved PB does not match its grid.</p>
+<p>The completion has multiple domains, or the saved PB does not
+match its grid.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.with_facet_sum_weights" class="method"><a class="src rightside" href="../src/casa_imaging_products/source.rs.html#316-331">Source</a><h4 class="code-header">pub fn <a href="#method.with_facet_sum_weights" class="fn">with_facet_sum_weights</a>(self, sums: &amp;'a <a class="type" href="type.FacetSumWeights.html" title="type casa_imaging_products::FacetSumWeights">FacetSumWeights</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Bind each faceted domain’s facets’ own sums of weights, which its
 <code>.sumwt</code> publishes one per facet pixel; an unfaceted domain publishes
 its normal state’s sum.</p>
