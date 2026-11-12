@@ -453,3 +453,44 @@ fn subtract_vectors(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
 fn scale_vector(vector: [f64; 3], scale: f64) -> [f64; 3] {
     [vector[0] * scale, vector[1] * scale, vector[2] * scale]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annual_aberration_matches_casa_baseline_rotations() {
+        // Independent MCBaseline matrix quotient, with no IERS tables involved.
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/data/casa_baseline_aberration.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture["casa_version"], "6.7.6.14");
+        let cases = fixture["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 6);
+        let mut maximum_error = 0.0_f64;
+        for case in cases {
+            let epoch = case["epoch_tdb_mjd"].as_f64().unwrap();
+            let angles: [f64; 2] =
+                serde_json::from_value(case["phase_center_rad"].clone()).unwrap();
+            let expected: [[f64; 3]; 3] =
+                serde_json::from_value(case["inverse_aberration_rotation"].clone()).unwrap();
+            let phase_center = MDirection::from_angles(angles[0], angles[1], DirectionRef::J2000);
+            let frame = MeasFrame::new()
+                .with_epoch(MEpoch::from_mjd(epoch, EpochRef::TDB))
+                .with_direction(phase_center.clone());
+            let actual = rotate_shift_matrix(
+                inverse_aberration_shift(&phase_center, &frame).unwrap(),
+                phase_center.cosines(),
+            );
+            for (actual_row, expected_row) in actual.iter().zip(expected) {
+                for (actual, expected) in actual_row.iter().zip(expected_row) {
+                    assert!(actual.is_finite() && expected.is_finite());
+                    maximum_error = maximum_error.max((actual - expected).abs());
+                }
+            }
+        }
+        println!("CASA baseline annual-aberration maximum matrix error: {maximum_error:e}");
+        assert!(maximum_error <= 2.0e-12, "matrix error {maximum_error:e}");
+    }
+}
