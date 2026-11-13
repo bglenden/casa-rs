@@ -142,30 +142,59 @@ fn awp2_stays_within_its_admission() {
     if !alone("aw::awp2_stays_within_its_admission") {
         return;
     }
+    check_awp2_admission("mfs", &[1.5e9], 2);
+}
+
+/// AWP2 shares one admitted kernel set across the spectral cube planes.
+#[test]
+fn awp2_cube_stays_within_its_admission() {
+    if !alone("aw::awp2_cube_stays_within_its_admission") {
+        return;
+    }
+    check_awp2_admission("cube", &[1.2e9, 1.5e9, 1.8e9], 1);
+}
+
+fn check_awp2_admission(mode: &str, frequencies: &[f64], channels_per_window: usize) {
     let root = tempfile::tempdir().expect("test root");
-    let measurement_set = super::l_band_observation(root.path(), "VLA");
+    let measurement_set =
+        super::l_band_observation(root.path(), "VLA", frequencies, channels_per_window);
     let mut ms = casa_ms::MeasurementSet::open(&measurement_set).unwrap();
-    ms.spectral_window_mut()
-        .unwrap()
-        .set_i32(
-            0,
-            "MEAS_FREQ_REF",
-            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
-        )
-        .unwrap();
+    for spw in 0..frequencies.len() {
+        ms.spectral_window_mut()
+            .unwrap()
+            .set_i32(
+                spw,
+                "MEAS_FREQ_REF",
+                casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+            )
+            .unwrap();
+    }
     ms.save().unwrap();
     drop(ms);
     warm(&measurement_set, root.path());
-    let request = imaging::request(json!({
+    let mut values = json!({
         "vis": measurement_set,
         "imagename": root.path().join("awp2"),
         "gridder": "awp2",
+        "specmode": mode,
         "imsize": 100,
-        "cell": "4arcsec",
+        "cell": "8arcsec",
         "evla_surface": evla_surface(root.path()),
         "stage_timing": true,
-    }));
+    });
+    if mode == "cube" {
+        values["nchan"] = json!(frequencies.len());
+        values["start"] = json!("1.2GHz");
+        values["width"] = json!("300MHz");
+    }
+    let request = imaging::request(values);
     let mut breaches = Vec::new();
-    check(&mut breaches, "AWP2 dirty MFS", &request, 1, AMPLE);
+    let measured = check(&mut breaches, "AWP2", &request, 1, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
+    let outcome = measured.outcome.unwrap();
+    assert_eq!(
+        outcome.problem.geometry().spectral().output_channels(),
+        frequencies.len(),
+        "the AWP2 cube keeps every output channel",
+    );
 }

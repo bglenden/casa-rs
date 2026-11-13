@@ -53,7 +53,12 @@ pub(crate) fn validate_awp2_scope(
         computepastep,
         ..
     } = request.gridder
-        && (request.specmode != SpecMode::Mfs
+        && (!matches!(request.specmode, SpecMode::Mfs | SpecMode::Cube)
+            || (request.specmode == SpecMode::Cube
+                && (computepastep < 180.0
+                    || wprojplanes.is_some_and(|count| count.get() != 1)
+                    || request.weighting != Weighting::Natural
+                    || request.savemodel != SaveModel::None))
             || request.mvc_output_channels.is_some()
             || request.mvc_auto_channels
             || request.deconvolver != Deconvolver::Hogbom
@@ -83,7 +88,7 @@ pub(crate) fn validate_awp2_scope(
     {
         return Err(InvalidRequest {
             parameters: "gridder",
-            reason: "AWP2 currently supports a fresh natural- or uniform-weighted Högbom MFS run with double-precision gridding, using Stokes I without squint or Stokes IV with squint and multiple W planes (#1071)",
+            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted Stokes I cubes with one W plane, no squint and no saved model (#1071)",
         });
     }
     Ok(())
