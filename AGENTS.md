@@ -181,14 +181,19 @@ locations are in `docs/agent-reference.md`.
 
 ## Delivery First
 
-Always be closing: optimize for merged, scientifically sound behavior.
-Choose a finishable delivery from the authorized work and bring it to its
-stated endpoint. Organize a large programme into bounded deliveries;
-elapsed time alone is not a reason to stop useful work.
+**Finish the ticket.** The primary objective is its full authorized acceptance
+implemented, required evidence passed, changes merged, and issue closed.
+Choose one primary ticket and drive it through that endpoint. Merged partial
+PRs are progress, not ticket completion. Do not move to another ticket while
+actionable work remains on the primary ticket. Elapsed time alone is not a
+reason to stop useful work.
 
-- Before implementation, put three short items in the existing issue or PR:
-  the observable behavior, its independent reference case and the done
-  condition. Freeze that scope. Do not start a new planning document.
+- Read the primary ticket's full remaining list and done condition before
+  implementation. In its existing issue or PR, record the next behavior
+  blocking closure, its independent reference and done condition. A partial
+  PR's scope never replaces the ticket's acceptance. Batch related remaining
+  criteria toward closure; use partial PRs when needed for size, risk or
+  dependencies, then continue the same ticket. Do not start a planning document.
 - Use progress checkpoints, not a default time limit. At about 30 minutes
   of active work, check what concrete evidence has advanced the frozen done
   condition. If progress is unclear, investigation is expanding or the same
@@ -196,15 +201,17 @@ elapsed time alone is not a reason to stop useful work.
   Otherwise request one at about 60 minutes of active work, and every
   60 minutes thereafter while the delivery remains open. Passive CI/runtime
   waits do not trigger these checks. Honor any explicit owner spending limit.
-- The progress reviewer uses fresh, concise context: the frozen target,
-  changes/results since the last checkpoint, current blocker and next action.
-  Use one cheap, capable reviewer for a brief scope/progress assessment,
-  checking the actual diff/results as needed to verify claimed progress,
-  without another code audit, test run or research project. It reports either
-  on-target progress or a concrete redirection toward closure. Act on that
-  redirection within the existing scope. Keep at most a short note in the
-  existing issue/PR; no new tracker or report. A progress check cannot waive
-  acceptance or authorize scope expansion.
+- The progress reviewer assesses closure of the whole primary ticket. Give
+  it the ticket's full acceptance, remaining criteria, changes/results, current
+  blocker and next action. It independently reads the issue and PR status and
+  identifies exactly what still prevents closure and the next action to remove
+  that blocker. Activity, passing checks or progress inside a smaller PR do not
+  establish on-target progress. It must flag work on another ticket while the
+  primary has actionable criteria, repeated validation and supporting-work
+  expansion, and redirect toward closure. Use one cheap, capable reviewer;
+  this is not another code audit, test run or research project. Act on its
+  redirection. Keep at most a short note in the existing issue/PR, with no new
+  tracker or report. A progress check cannot waive acceptance or expand scope.
 - Finish the selected behavior before exploring another. A factory listing,
   adjacent capability or new oracle case does not expand the assignment.
   Capture worthwhile discoveries as non-blocking ideas in the existing
@@ -215,9 +222,12 @@ elapsed time alone is not a reason to stop useful work.
   continue toward the frozen done condition. Treat it as a current blocker
   only when evidence shows that condition cannot be met without it.
   Expanding the selected behavior needs owner direction.
-- Close the issue when its stated criteria are met. Until then, ship completed
-  behaviors through bounded PRs and keep an explicit remaining list. Do not
-  narrow the issue's acceptance or invent retrospective tickets to claim success.
+- Immediately after the final required merge, verify the full acceptance,
+  close the issue and verify its actual state. Do not wait for an owner prompt.
+  Until then, retain an explicit remaining list and keep working on it. Partial
+  PRs must not close an unfinished ticket. Do not narrow acceptance or invent
+  retrospective tickets to claim success. Lead progress reports with completed
+  tickets out of the assigned set; PR counts are secondary context.
 - A choice not on the stop list is yours: make it, list it under
   `Decisions:` (what, why, the alternative not taken), add the
   `owner-review` label and continue. An overturned decision becomes
@@ -225,9 +235,12 @@ elapsed time alone is not a reason to stop useful work.
 - Act on authorized work without routine confirmation. A recommendation is
   not a substitute for implementation when implementation was requested.
   Continue useful authorized work through progress checkpoints without
-  asking the owner to say "please continue". Move to the next listed,
-  independent authorized delivery when the current one is complete or waiting
-  for CI. Stop only when no useful authorized work can advance. Follow
+  asking the owner to say "please continue". Move to the next listed ticket
+  after closure. While the primary ticket's complete implementation and evidence
+  await only final CI/merge, or a concrete blocker prevents further action on it,
+  advance at most one independent listed ticket. Immediately return to failures,
+  merge and closure of the primary ticket. Stop only when no useful authorized
+  work can advance. Follow
   "While Checks Run" for pending ownership; do not invent work to keep a session active.
 - Use the cheapest capable model and effort for the work. No additional
   agents or expensive reviews by default; use one reviewer for the progress
@@ -235,8 +248,9 @@ elapsed time alone is not a reason to stop useful work.
   parallel investigations.
 - Before a long or overnight run, check what fails cheaply first (inputs,
   admission, a short dry run), then schedule it yourself.
-- Fix a small defect in the PR when it blocks the selected behavior; queue
-  unrelated defects without expanding the implementation.
+- Fix a supporting defect only when a named failing scenario proves that the
+  primary ticket cannot close without it. Queue other discoveries in one short
+  backlog note and return to completion; do not investigate them further now.
 - Keep long work's state in one status comment on its issue, edited in
   place. A handoff is that comment plus a startup prompt naming no model or
   host-specific tool. A resumed branch follows `AGENTS.md` on `origin/main`.
@@ -362,12 +376,16 @@ isolated, strengthen its demonstration test instead of adding a review.
 
 ### While Checks Run
 
-- Run CI and reviews alongside the next independent, authorized work.
-  It must already be listed. Preserve the revision under test; use a separate
-  branch for independent deliveries.
-- Before stopping for CI, review or runtime waits, check the next listed
-  tickets for useful, independent authorized work and continue with it when available. A pending CI run alone
-  does not block the programme or require another owner prompt.
+- Finish all actionable criteria of the primary ticket before taking another
+  ticket alongside CI or review. A partial PR waiting for checks does not permit
+  leaving the primary ticket's other criteria unfinished. When only final
+  CI/merge or a concrete blocker remains, the Delivery First rule permits one
+  independent listed ticket. Preserve the revision under test on its own branch.
+- Before stopping for CI, review or runtime waits, first check for remaining
+  work on the primary ticket, then for the permitted independent listed work.
+  Continue when available. Pending CI alone does not block the programme or
+  require another owner prompt. CI failures and final issue closure take priority
+  over implementation on the next ticket.
 - When no such work can advance and only an external result remains, stop
   active model work. Use existing result notifications when available. Otherwise leave one short handoff in
   the existing issue/PR: link, pending result and next action. State that a
