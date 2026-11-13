@@ -2640,8 +2640,9 @@ refuses it (<a href="#the-beam-on-a-moved-pointing-stays-where-the-fields-first-
 <h2 id="the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points">The beam on a moved pointing stays where the field's first row points<a class="headerlink" href="#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-24</li>
-<li>Status: CASA bug; casa-rs refuses a primary beam, and the mosaic machine,
-  on a moved pointing rather than follow it (#884, PR #888 review)</li>
+<li>Status: CASA bug; resumed simulations centre each integration's beam and
+  mosaic kernels on its stored POINTING. Fresh moved <code>observemany</code> beams
+  remain explicitly refused (#884, #1294).</li>
 <li>Affected code: <code>synthesis/TransformMachines/BeamSkyJones.cc</code> (<code>changed</code>,
   <code>update</code>) and <code>synthesis/MeasurementEquations/Simulator.cc</code>
   (<code>makeVisSet</code>'s sort)</li>
@@ -2667,10 +2668,18 @@ points, whichever direction a later pointing of the field was moved to.</p>
   stays where the first row pointed. With one antenna, a constant model and
   the BOX kernel, CASA's moved samples are 0.671.</p>
 <p>None of these is the beam the moved pointing sees, which follows the
-antennas. casa-rs refuses a primary beam over a model image, a component
-list or total power, and the mosaic machine, on a pointing <code>observemany</code>
-moved off its field. It does not reproduce a cache. <code>simobserve</code> gives each
-pointing its own field and never reaches this.</p>
+antennas. Resumed simulations now separate FIELD's visibility phase from
+POINTING's beam and total-power sample direction. For changing pointings,
+<code>tools/simulation/sm_offset_pointings_oracle.py</code> retains the raw CASA output
+and records a second independent CASA control with a distinct, equal-phase
+FIELD identity per integration, forcing the stale cache to refresh. Native
+beam and mosaic predictions agree with that control. Native total power
+continues to use autocorrelations only, correcting the separate <code>SDGrid</code>
+cross-correlation defect documented above. Incomplete or disagreeing antenna
+pointings are explicitly refused before changing the DATA plan.</p>
+<p>Fresh <code>observemany</code> beams on pointings moved off their fields remain
+explicitly refused. <code>simobserve</code> gives each pointing its own field and does
+not reach this cache defect.</p>
 <h2 id="predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them"><code>predict</code> and <code>corrupt</code> add scratch columns to a MeasurementSet without them<a class="headerlink" href="#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>

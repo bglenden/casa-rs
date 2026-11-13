@@ -84,15 +84,15 @@
 <a href=#84 id=84 data-nosnippet>84</a>}
 <a href=#85 id=85 data-nosnippet>85</a>
 <a href=#86 id=86 data-nosnippet>86</a><span class="doccomment">/// What a component list is predicted into: the session's windows, the
-<a href=#87 id=87 data-nosnippet>87</a>/// distinct pointings of its scans (`(pointing, J2000 phase centre rad)`),
-<a href=#88 id=88 data-nosnippet>88</a>/// each scan's pointing, and the primary beam with `setvp(dovp=True)`. A
-<a href=#89 id=89 data-nosnippet>89</a>/// scan is phased, and the beam centred, on its field's phase centre; the
-<a href=#90 id=90 data-nosnippet>90</a>/// session refuses a beam on a pointing `observemany` moved off the field
-<a href=#91 id=91 data-nosnippet>91</a>/// (#884).
-<a href=#92 id=92 data-nosnippet>92</a></span><span class="attr">#[derive(Clone, Copy)]
-<a href=#93 id=93 data-nosnippet>93</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ComponentTargets&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) windows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[ComponentWindow],
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) pointings: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[(usize, [f64; <span class="number">2</span>])],
+<a href=#87 id=87 data-nosnippet>87</a>/// distinct pairs of visibility phase centre and antenna beam centre,
+<a href=#88 id=88 data-nosnippet>88</a>/// each scan's pair, and the primary beam with `setvp(dovp=True)`.
+<a href=#89 id=89 data-nosnippet>89</a>/// FIELD determines phase; stored POINTING independently determines beam
+<a href=#90 id=90 data-nosnippet>90</a>/// attenuation in a resumed simulation.
+<a href=#91 id=91 data-nosnippet>91</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#92 id=92 data-nosnippet>92</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ComponentTargets&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) windows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[ComponentWindow],
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// Slot, visibility phase centre, and antenna beam centre, J2000 rad.
+<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) pointings: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[(usize, [f64; <span class="number">2</span>], [f64; <span class="number">2</span>])],
 <a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// `[scan]`: the scan's pointing.
 <a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) pointing_of_scan: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[usize],
 <a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) beam: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>BeamPattern&gt;,
@@ -111,7 +111,7 @@
 <a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>field_slots = <span class="self">self
 <a href=#112 id=112 data-nosnippet>112</a>            </span>.pointings
 <a href=#113 id=113 data-nosnippet>113</a>            .iter()
-<a href=#114 id=114 data-nosnippet>114</a>            .map(|(id, <span class="kw">_</span>)| id + <span class="number">1</span>)
+<a href=#114 id=114 data-nosnippet>114</a>            .map(|(id, <span class="kw">_</span>, <span class="kw">_</span>)| id + <span class="number">1</span>)
 <a href=#115 id=115 data-nosnippet>115</a>            .max()
 <a href=#116 id=116 data-nosnippet>116</a>            .unwrap_or(<span class="number">0</span>);
 <a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span>per_field = components * size_of::&lt;GridFtProjection&gt;()
@@ -213,11 +213,11 @@
 <a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>slots = targets
 <a href=#214 id=214 data-nosnippet>214</a>            .pointings
 <a href=#215 id=215 data-nosnippet>215</a>            .iter()
-<a href=#216 id=216 data-nosnippet>216</a>            .map(|(id, <span class="kw">_</span>)| id + <span class="number">1</span>)
+<a href=#216 id=216 data-nosnippet>216</a>            .map(|(id, <span class="kw">_</span>, <span class="kw">_</span>)| id + <span class="number">1</span>)
 <a href=#217 id=217 data-nosnippet>217</a>            .max()
 <a href=#218 id=218 data-nosnippet>218</a>            .unwrap_or(<span class="number">0</span>);
 <a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span><span class="kw-2">mut </span>fields: Vec&lt;<span class="prelude-ty">Option</span>&lt;FieldTerms&gt;&gt; = (<span class="number">0</span>..slots).map(|<span class="kw">_</span>| <span class="prelude-val">None</span>).collect();
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(field, direction) <span class="kw">in </span>targets.pointings {
+<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(field, direction, beam_centre) <span class="kw">in </span>targets.pointings {
 <a href=#221 id=221 data-nosnippet>221</a>            <span class="kw">let </span>projections = directions_rad
 <a href=#222 id=222 data-nosnippet>222</a>                .iter()
 <a href=#223 id=223 data-nosnippet>223</a>                .map(|component| GridFtProjection::between_j2000_directions(direction, <span class="kw-2">*</span>component))
@@ -229,7 +229,7 @@
 <a href=#229 id=229 data-nosnippet>229</a>                    .map(|window| {
 <a href=#230 id=230 data-nosnippet>230</a>                        <span class="kw">let </span><span class="kw-2">mut </span>powers = Vec::with_capacity(directions_rad.len() * window.channels);
 <a href=#231 id=231 data-nosnippet>231</a>                        <span class="kw">for </span>component <span class="kw">in </span><span class="kw-2">&amp;</span>directions_rad {
-<a href=#232 id=232 data-nosnippet>232</a>                            <span class="kw">let </span>separation = separation_rad(<span class="kw-2">*</span>component, direction);
+<a href=#232 id=232 data-nosnippet>232</a>                            <span class="kw">let </span>separation = separation_rad(<span class="kw-2">*</span>component, beam_centre);
 <a href=#233 id=233 data-nosnippet>233</a>                            powers.extend((<span class="number">0</span>..window.channels).map(|channel| {
 <a href=#234 id=234 data-nosnippet>234</a>                                pattern.power_at(separation, window.frequency_hz(channel))
 <a href=#235 id=235 data-nosnippet>235</a>                            }));
