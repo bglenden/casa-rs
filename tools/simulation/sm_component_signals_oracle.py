@@ -5,6 +5,8 @@ import argparse
 from pathlib import Path
 import shutil
 
+import numpy as np
+
 from casatasks import version_string
 from casatools import componentlist, measures, simulator
 
@@ -12,6 +14,7 @@ from sm_apply_time_oracle import write
 from sm_existing_append_oracle import snapshot
 from sm_multiple_models_oracle import CENTRE, make_session
 from sm_limb_disk_reference import add_limb_references
+from sm_image_layouts_oracle import EXTRA_FRAMES, earth_orientation
 
 
 CASES = [dict(name=f"limb_{n:g}", shape="limbdarkeneddisk", exponent=n)
@@ -23,6 +26,10 @@ CASES += [dict(name="point_control", shape="point"),
 CASES += [dict(name="point_distance", shape="point", distance=1e6),
           dict(name="gaussian_distance", shape="gaussian", distance=-1e6),
           dict(name="limb_distance", shape="limbdarkeneddisk", exponent=.05, distance=1e6)]
+CASES += [dict(name=f"frame_{frame.lower()}", shape="point", frame=frame)
+          for frame in ("B1950", "GALACTIC", "ICRS", *EXTRA_FRAMES)]
+CASES += [dict(name=f"frame_{frame.lower()}_gaussian", shape="gaussian", frame=frame)
+          for frame in ("B1950", "GALACTIC", "HADEC")]
 
 
 def main():
@@ -39,6 +46,13 @@ def main():
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
     cases = []
+    frame_measures = measures()
+    location = frame_measures.observatory("ALMA")
+    if any("frame" in spec and (not args.only or spec["name"] in args.only) for spec in CASES):
+        base = snapshot(args.base)
+        epoch = base["rows"][0]["time"]/86400.
+        frame_measures.doframe(frame_measures.epoch("UTC", f"{epoch}d"))
+        frame_measures.doframe(location)
     for spec in CASES:
         if args.only and spec["name"] not in args.only:
             continue
@@ -63,6 +77,13 @@ def main():
             cl.done()
             cl = componentlist()
             assert cl.fromrecord(record)
+        if "frame" in spec:
+            record = cl.torecord()
+            direction = frame_measures.direction("J2000", f"{CENTRE[0]+6e-6}rad", f"{CENTRE[1]-4e-6}rad")
+            record["component0"]["shape"]["direction"] = frame_measures.measure(direction, spec["frame"])
+            cl.done()
+            cl = componentlist()
+            assert cl.fromrecord(record)
         assert cl.getcomponent(0)["shape"]["type"].lower() == spec["shape"]
         # addcomponent's index argument keeps only a scalar index. For
         # polarized signals use the explicit four-index method; the scalar
@@ -79,6 +100,8 @@ def main():
             sm = simulator()
             assert sm.openfromms(str(path))
         before = snapshot(path)
+        if "frame" in spec:
+            assert sm.setoptions(location=location)
         if "distance" in spec:
             direction = measures().direction("J2000", f"{CENTRE[0]}rad", f"{CENTRE[1]}rad")
             assert sm.setfield(sourcename="last", sourcedirection=direction,
@@ -92,8 +115,15 @@ def main():
         if spec.get("incremental"):
             assert sm.predict(complist=str(component), incremental=True)
         sm.close()
-        cases.append(dict(name=name, spec=spec, returned=True,
-            before=before, after=snapshot(path)))
+        case = dict(name=name, spec=spec, returned=True, before=before, after=snapshot(path),
+            native_created="distance" in spec)
+        if "frame" in spec:
+            itrf = frame_measures.measure(location, "ITRF")
+            lon, lat, radius = [itrf[f"m{i}"]["value"] for i in range(3)]
+            case["location_itrf_m"] = [radius*np.cos(lat)*np.cos(lon),
+                radius*np.cos(lat)*np.sin(lon), radius*np.sin(lat)]
+            case["eop"] = earth_orientation(before)
+        cases.append(case)
         write(args.fixture, dict(casa_version=version_string(), cases=cases))
         print(name, "passed", flush=True)
     if any(case["name"] == "point_control" for case in cases) and any(

@@ -3,6 +3,7 @@ use casa_components::{
     ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent, SpectralIndex,
     SpectralKind, SpectralModel,
 };
+use casa_imaging_model::GridFtProjection;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
@@ -51,11 +52,13 @@ fn prepare(
     windows: &[ComponentWindow],
     beam: Option<&BeamPattern>,
 ) -> Result<ComponentPrediction, ComponentRefusal> {
+    let frame = MeasFrame::default();
     let targets = ComponentTargets {
         windows,
         pointings: &[(0, CENTRE, CENTRE)],
         pointing_of_scan: &[0],
         beam,
+        frame: &frame,
     };
     ComponentPrediction::new(list, targets, Reservation::none())
 }
@@ -73,7 +76,9 @@ fn a_point_at_the_phase_centre_adds_its_flux_in_the_windows_basis() {
     prediction
         .add_rows(
             (0, 0),
-            [[120.0, -40.0, 3.0], [0.0, 0.0, 0.0]].into_iter(),
+            [[120.0, -40.0, 3.0], [0.0, 0.0, 0.0]]
+                .into_iter()
+                .map(|row| (row, 0.)),
             &mut out,
         )
         .unwrap();
@@ -100,7 +105,7 @@ fn the_beam_scales_each_component_by_its_power_at_its_separation() {
     let mut out = vec![Complex32::new(0.0, 0.0); 2 * 2];
     // The zero spacing: the flux times the beam, whatever the phase.
     prediction
-        .add_rows((0, 0), [[0.0, 0.0, 0.0]].into_iter(), &mut out)
+        .add_rows((0, 0), [([0.0, 0.0, 0.0], 0.)].into_iter(), &mut out)
         .unwrap();
     let separation = separation_rad(offset, CENTRE);
     assert!((separation - 1.0e-4 * CENTRE[1].cos()).abs() < 1.0e-12);
@@ -214,7 +219,7 @@ fn a_rows_channels_predict_as_each_components_visibility_one_channel_at_a_time()
     let samples = window.channels * 4;
     let mut out = vec![Complex32::new(0.0, 0.0); rows.len() * samples];
     prediction
-        .add_rows((0, 0), rows.into_iter(), &mut out)
+        .add_rows((0, 0), rows.into_iter().map(|row| (row, 0.)), &mut out)
         .unwrap();
     for (row, uvw_m) in rows.into_iter().enumerate() {
         let expected = direct(
@@ -245,6 +250,7 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
         wide
     }];
     for beam in [None, Some(&pattern)] {
+        let frame = MeasFrame::default();
         let targets = ComponentTargets {
             windows: &windows,
             pointings: &[
@@ -257,6 +263,7 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
             ],
             pointing_of_scan: &[2, 0, 2],
             beam,
+            frame: &frame,
         };
         let prediction =
             ComponentPrediction::new(&listed, targets, Reservation::none()).expect("prepared");
@@ -271,14 +278,14 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
 
 #[test]
 fn directions_and_correlations_casa_rs_does_not_predict_are_refused() {
-    let galactic = list(vec![point(
+    let horizon = list(vec![point(
         Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
         CENTRE,
-        DirectionRef::GALACTIC,
+        DirectionRef::HADEC,
     )]);
     assert!(matches!(
-        prepare(&galactic, &[window(vec![9, 12])], None),
-        Err(ComponentRefusal::NotYetImplemented(reason)) if reason.contains("J2000")
+        prepare(&horizon, &[window(vec![9, 12])], Some(&PrimaryBeam::ALMA.pattern())),
+        Err(ComponentRefusal::NotYetImplemented(reason)) if reason.contains("#1297")
     ));
     let j2000 = list(vec![point(
         Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),

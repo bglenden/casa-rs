@@ -675,8 +675,14 @@ impl Simulator {
             }
             return Ok(());
         }
+        let component_frame_epoch = list.as_ref().is_some_and(|(_, list, _)| {
+            list.components().iter().any(|component| {
+                component.shape().reference_direction().refer()
+                    != casa_types::measures::direction::DirectionRef::J2000
+            })
+        });
         let phase_centres = if list.is_some() {
-            super::from_ms::polynomial::selected_centres(self, false, false)?
+            super::from_ms::polynomial::selected_centres(self, false, component_frame_epoch)?
         } else {
             None
         };
@@ -733,6 +739,27 @@ impl Simulator {
         Ok(())
     }
 
+    fn prediction_frame(
+        &self,
+        phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
+    ) -> casa_types::measures::MeasFrame {
+        use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+        let mut frame = MeasFrame::new()
+            .with_measures(self.options.measures.clone())
+            .with_position({
+                let [x, y, z] = self.prediction_location_itrf_m;
+                MPosition::new_itrf(x, y, z)
+            });
+        if let Some(time) = self
+            .scans
+            .iter()
+            .find_map(|scan| super::from_ms::polynomial::epoch(phase_centres, scan))
+        {
+            frame = frame.with_epoch(MEpoch::from_mjd(time / 86400., EpochRef::UTC));
+        }
+        frame
+    }
+
     /// `model` admitted and prepared for rows with `correlations` through
     /// the FTMachine `setoptions` chose: its kernels, then its grids, with
     /// `beam` in the image plane except through the mosaic machine, whose
@@ -747,7 +774,6 @@ impl Simulator {
         phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
         use casa_types::measures::direction::DirectionRef;
-        use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
         let fixed_celestial_frame = matches!(
             model.tangent_direction().refer(),
             DirectionRef::J2000
@@ -770,19 +796,7 @@ impl Simulator {
                  the beam's actual array observer context (#1297)",
             ));
         }
-        let mut frame = MeasFrame::new()
-            .with_measures(self.options.measures.clone())
-            .with_position({
-                let [x, y, z] = self.prediction_location_itrf_m;
-                MPosition::new_itrf(x, y, z)
-            });
-        if let Some(time) = self
-            .scans
-            .iter()
-            .find_map(|scan| super::from_ms::polynomial::epoch(phase_centres.as_ref(), scan))
-        {
-            frame = frame.with_epoch(MEpoch::from_mjd(time / 86400., EpochRef::UTC));
-        }
+        let frame = self.prediction_frame(phase_centres.as_ref());
         let model = model.with_frame(frame);
         let machine = self.ft_machine()?;
         let mut mosaic_state = None;
@@ -933,11 +947,16 @@ impl Simulator {
                     })
             })
             .collect();
+        let [x, y, z] = self.antennas[0].position_itrf_m;
+        let frame = self
+            .prediction_frame(phase_centres)
+            .with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
         let targets = ComponentTargets {
             windows: &windows,
             pointings: &pointings,
             pointing_of_scan: &pointing_of_scan,
             beam: pattern.as_ref(),
+            frame: &frame,
         };
         let resources = &self.options.resources;
         let preparation = ComponentTargets::preparation_bytes(list.len());

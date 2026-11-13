@@ -265,7 +265,12 @@ fn patch_range(
                     prediction.focus.is_some()
                         || prediction.tangent.refer()
                             != casa_types::measures::direction::DirectionRef::J2000
-                }),
+                })
+            || plan
+                .phases()
+                .iter()
+                .flat_map(|phase| phase.components_for_scan(0))
+                .any(crate::predict::ComponentPrediction::needs_epoch),
         noise_scales: NoiseScales::of(plan, channels, None),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref(), &rows)?;

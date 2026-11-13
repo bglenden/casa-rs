@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Synthetic sky-component signals against actual CASA 6.7.6.14 DATA.
+#[path = "image_frame_combinations/eop.rs"]
+mod eop;
 mod existing_ms_calculations;
-use casa_simulation::{BackendRequest, PredictSpec, SessionResources, Simulator, SimulatorOptions};
+use casa_simulation::{
+    BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
+};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
@@ -10,7 +14,7 @@ use serde_json::Value;
 use std::path::Path;
 
 #[test]
-fn limb_darkened_component_signals_match_casa() {
+fn component_frames_shapes_and_distances_match_casa() {
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
         &include_bytes!("data/sm_component_signals_casa.json.gz")[..],
     ))
@@ -49,13 +53,24 @@ fn limb_darkened_component_signals_match_casa() {
                 Simulator::open_from_ms(
                     &path,
                     SimulatorOptions {
-                        measures: casa_test_support::deterministic_measures_provider(),
+                        measures: if case.get("eop").is_some() {
+                            eop::provider(&case["eop"])
+                        } else {
+                            casa_test_support::deterministic_measures_provider()
+                        },
                         resources,
                         now: MEpoch::from_mjd(support::REFERENCE_MJD, EpochRef::UTC),
                     },
                 )
                 .unwrap()
             };
+            if let Some(location) = case.get("location_itrf_m") {
+                sm.set_options(&PredictionOptions {
+                    location_itrf_m: std::array::from_fn(|axis| location[axis].as_f64().unwrap()),
+                    ..PredictionOptions::default()
+                })
+                .unwrap();
+            }
             if let Some(distance) = case["spec"]["distance"].as_f64() {
                 let direction = MDirection::from_angles(
                     support::CENTRE_RAD[0],
@@ -63,8 +78,12 @@ fn limb_darkened_component_signals_match_casa() {
                     DirectionRef::J2000,
                 );
                 sm.set_field("last", &direction, "", distance).unwrap();
-                sm.observe(&support::scan("target", 0., 20.)).unwrap();
-                sm.observe(&support::scan("offset", 20., 40.)).unwrap();
+                for (source, start, stop) in [("target", 0., 20.), ("offset", 20., 40.)] {
+                    let mut scan = support::scan(source, start, stop);
+                    scan.observer = "CASA simulator".into();
+                    scan.project = "CASA simulation".into();
+                    sm.observe(&scan).unwrap();
+                }
                 sm.set_data(&[], &[], "FIELD_ID == 0").unwrap();
             } else {
                 sm.set_data(&[], &[0], "").unwrap();

@@ -75,7 +75,7 @@ pub(super) fn add_components(
             components
                 .add_rows(
                     (job.index, job.scan.data_description_id),
-                    job.rows.iter().map(|row| row.uvw_m),
+                    job.rows.iter().map(|row| (row.uvw_m, row.time_s)),
                     job.cells,
                 )
                 .map_err(|error| {
