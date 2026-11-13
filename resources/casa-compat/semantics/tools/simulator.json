@@ -229,7 +229,7 @@
   },
   "corrupt": {
    "status": "Partial",
-   "scope": "Applies the selected noise, gain, leakage, tropospheric and applied-table terms. Each corruption step skips a spectral window any Jones term has no solution for, including its noise and corrected-data updates; predictions and later covered steps persist. A covered window defined after a tsys-atm setnoise remains explicitly refused under #1053.",
+   "scope": "Applies the selected noise, gain, leakage, tropospheric and applied-table terms. Each corruption step skips a spectral window any Jones term has no solution for, including its noise and corrected-data updates; predictions and later covered steps persist. Later scans reuse the original noise solutions and original window coverage; supplied-table families outside setapply scope remain unfinished.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -239,7 +239,8 @@
     "refusals",
     "flagged-samples-20261112",
     "selection-ordered-data-20261112",
-    "corruption-window-coverage-20261112"
+    "corruption-window-coverage-20261112",
+    "noise-troposphere-completion"
    ],
    "issue": 1053
   },
@@ -285,15 +286,15 @@
    ]
   },
   "settrop": {
-   "status": "Partial",
-   "scope": "Individual and screen modes with tables; the source-defined test ramp with default integration sampling, correcting CASA's initialization-order failure. Custom positive test-ramp simint remains unfinished (#1292).",
+   "status": "Implemented",
+   "scope": "Individual and screen modes with tables; the source-defined test ramp with default integration sampling and custom positive simint, correcting CASA's documented initialization-order failure. Positive test intervals group integrations at CASA iterator boundaries and store the midpoint solution time. Existing ATM/troposphere corrections remain explicit.",
    "evidence": [
     "signature",
     "binding-tests",
     "troposphere-20261103",
-    "refusals"
-   ],
-   "issue": 1053
+    "refusals",
+    "noise-troposphere-completion"
+   ]
   },
   "setpointingerror": {
    "status": "Disabled in CASA",
@@ -321,15 +322,15 @@
    ]
   },
   "setnoise": {
-   "status": "Partial",
-   "scope": "simplenoise, tsys-manual and tsys-atm noise with the ATM model; optional T/Tf noise-scale tables. OTF=False reuses a full additive field on the original observations, including unit A draws scaled by T/Tf in Tsys modes, and optionally saves A plus T/Tf tables. Later-window/scan behavior remains unfinished (#1292).",
+   "status": "Implemented",
+   "scope": "simplenoise, tsys-manual and tsys-atm noise with the ATM model; optional T/Tf noise-scale tables. OTF=False reuses the original additive A field and T/Tf solutions, including after adding observations; optional output saves A plus T/Tf tables. Noise terms preserve the original covered/uncovered-window behavior and nearest-time reuse. Corrects the documented CASA simple-OTF added-window crash by skipping uncovered windows.",
    "evidence": [
     "signature",
     "binding-tests",
     "noise-20261103",
-    "refusals"
-   ],
-   "issue": 1053
+    "refusals",
+    "noise-troposphere-completion"
+   ]
   },
   "setpa": {
    "status": "Disabled in CASA",
@@ -1545,6 +1546,15 @@
    "revision": "30517424209d7531ce6f4c93e1e8ef94a5e4e66b",
    "command": "RUST_TEST_THREADS=1 CASA_RS_COVERAGE_OUT=EXPORT cargo test -p casa-simulation --test corruption_coverage -- --nocapture; cargo test -p casa-simulation --test session_memory coverage:: -- --nocapture; cargo test -p casa-simulation --test backends coverage::actual_metal_prediction_preserves_whole_step_window_coverage -- --exact --nocapture; CASAPY tools/simulation/sm_corruption_coverage_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data --out CPP; cargo test -p casa-simulation -p casars-python",
    "receipt": "resources/casa-compat/evidence/sm-corruption-window-coverage-20261112.json"
+  },
+  "noise-troposphere-completion": {
+   "kind": "Completed simulation noise/troposphere delivery",
+   "state": "recorded",
+   "scope": "OTF=False simple/manual/atmospheric noise, A/T/Tf output, later-observation coverage and reuse, default/custom test-ramp intervals. Existing individual/screen evidence remains valid.",
+   "result": "Issue #1292 is closed after #1316, #1322, #1324, #1326, #1329 and #1331 merged. Independent CASA6.7.6.14, statistical noise, documented source/ATM controls, C++ interoperability, CPU/Metal/workers and affected memory laws pass as recorded in those PRs. Final CI 43339695734 passed all required jobs.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1292"
+   ]
   }
  }
 }
