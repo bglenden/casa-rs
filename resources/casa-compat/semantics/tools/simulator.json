@@ -16,16 +16,17 @@
   },
   "openfromms": {
    "status": "Partial",
-   "scope": "Opens an existing MeasurementSet for predict and corrupt, preserving unselected DATA and existing scratch cells and respecting image sample flags while components and corruption also operate on flagged samples. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, and POINTING away from PHASE_DIR.",
+   "scope": "Opens an existing MeasurementSet for selected prediction/corruption and appended observe/observemany, preserving unselected DATA and existing scratch cells and respecting image sample flags while components and corruption also operate on flagged samples. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, and POINTING away from PHASE_DIR.",
    "evidence": [
     "signature",
     "binding-tests",
     "openfromms-20261103",
     "refusals",
     "flagged-samples-20261112",
-    "selection-ordered-data-20261112"
+    "selection-ordered-data-20261112",
+    "existing-append-20261113"
    ],
-   "issue": 1053
+   "issue": 1294
   },
   "close": {
    "status": "Implemented",
@@ -81,8 +82,8 @@
    ]
   },
   "observe": {
-   "status": "Partial",
-   "scope": "Adds a scan's rows as CASA does, with shadowing and elevation limits (decisions). Refused after openfromms.",
+   "status": "Implemented",
+   "scope": "Adds a scan's rows, including after openfromms, with shadowing/elevation limits, preserved existing cells and atomic append publication. Time labeling remains a recorded decision.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -90,22 +91,22 @@
     "scripts",
     "refusals",
     "uvw-sidereal-20261112",
-    "uvw-long-baselines-20261112"
-   ],
-   "issue": 1053
+    "uvw-long-baselines-20261112",
+    "existing-append-20261113"
+   ]
   },
   "observemany": {
-   "status": "Partial",
-   "scope": "Adds several pointings' rows. Refused after openfromms. CASA's padding and row-order defects are decisions.",
+   "status": "Implemented",
+   "scope": "Adds several pointings' rows, including after openfromms, preserving existing cells and appended observation/state/pointing metadata. CASA's padding and row-order defects remain recorded decisions.",
    "evidence": [
     "signature",
     "binding-tests",
     "observe-20261103",
     "refusals",
     "uvw-sidereal-20261112",
-    "uvw-long-baselines-20261112"
-   ],
-   "issue": 1053
+    "uvw-long-baselines-20261112",
+    "existing-append-20261113"
+   ]
   },
   "setlimits": {
    "status": "Implemented",
@@ -1568,6 +1569,19 @@
    "command": "CASAPY tools/simulation/sm_apply_polynomial_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_baseline_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_remaining_priors_oracle.py --out OUT --fixture FILE; cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors -- --nocapture; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT/parameters CASA_RS_POLYNOMIAL_OUT=EXPORT/polynomial cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors; CASAPY tools/simulation/sm_apply_supplied_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data; cargo test -p casa-simulation --test session_memory offline_noise::narrow_supplied_noise_admits_wide_output_interpolation -- --exact --nocapture",
    "revision": "9747c2cb64eaf86f1650c749eb352be4802b2635",
    "receipt": "https://github.com/bglenden/casa-rs/pull/1338"
+  },
+  "existing-append-20261113": {
+   "kind": "Actual CASA existing-MS append and call-order controls, C++ readback and allocation law",
+   "state": "passed",
+   "scope": "observe/observemany after openfromms on the accepted existing-MS layouts; original and appended DATA/quality/scratch, OBSERVATION/STATE/POINTING, physical noise rows and failure preservation. Remaining layouts and selection forms stay on SIM-05/06.",
+   "result": "Nine actual CASA6.7.6.14 cases pass CPU W1/W3. CASA C++ reads and reopens18 native MSs with zero DATA NRMS and matching quality/metadata. The original12,600/126,000-row copy cases peak at47,515,681bytes within48,579,988admitted; oversized numeric/string cells are additionally admitted. Atomic publication copies existing MS bytes (measured0.493s/4.310s append closes). One Astra xhigh review found three issues, addressed with call-order/ARRAY_ID controls and oversized-cell allocation checks.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/1339"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_existing_append_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_APPEND_EXPORT=EXPORT cargo test -p casa-simulation --test existing_append; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE; cargo test -p casa-simulation --test session_memory existing_append::existing_rows_are_copied_within_append_admission -- --exact --nocapture",
+   "revision": "28d0a0153a77593ae234775b8dc48c1094b147eb",
+   "receipt": "https://github.com/bglenden/casa-rs/pull/1339"
   }
  }
 }
