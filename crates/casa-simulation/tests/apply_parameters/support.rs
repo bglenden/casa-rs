@@ -187,6 +187,15 @@ pub(super) fn run(case: &Value, workers: usize) -> Vec<Vec<Complex32>> {
             .into_owned();
     }
     sm.set_apply(&spec).unwrap();
+    if let Some(extra) = case["extra_fixture"].as_str() {
+        let mut extra_spec = spec.clone();
+        extra_spec.table = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data")
+            .join(extra)
+            .display()
+            .to_string();
+        sm.set_apply(&extra_spec).unwrap();
+    }
     sm.corrupt().unwrap();
     sm.close().unwrap();
     let rows = compare(&path, case);
@@ -291,6 +300,12 @@ pub(super) fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
                         reference[0].as_f64().unwrap() as f32,
                         reference[1].as_f64().unwrap() as f32,
                     )
+                } else if case["outcome"] == "raises" {
+                    let reference = &expected["corrected_data"][sample];
+                    Complex32::new(
+                        reference[0].as_f64().unwrap() as f32,
+                        reference[1].as_f64().unwrap() as f32,
+                    )
                 } else {
                     assert_eq!(expected["corrected_data"][sample], expected["data"][sample]);
                     *value
@@ -372,7 +387,10 @@ pub(super) fn prepared(
     let mut sm = session(
         &path,
         "ALMA",
-        case["stokes"].as_str().unwrap_or("XX XY YX YY"),
+        case["unused_stokes"]
+            .as_str()
+            .or_else(|| case["stokes"].as_str())
+            .unwrap_or("XX XY YX YY"),
         resources(workers, 2 << 30),
     );
     let second_window = case["data_window"] == 1;
@@ -386,7 +404,7 @@ pub(super) fn prepared(
             resolution_hz: CHANNEL_HZ,
             frame: FrequencyRef::TOPO,
             channel_count: 4,
-            stokes: "XX XY YX YY".to_string(),
+            stokes: case["stokes"].as_str().unwrap_or("XX XY YX YY").to_string(),
         })
         .unwrap();
     }
@@ -399,8 +417,49 @@ pub(super) fn prepared(
     }
     sm.close().unwrap();
     input::prepare(&path);
-    let calibration = directory.join("terms.cal");
-    table(&path, &calibration, case);
+    if let Some(context) = case["context_fixture"].as_str() {
+        use casa_tables::{Table, TableOptions};
+        let context = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data")
+            .join(context);
+        let mut root = Table::open(TableOptions::new(&path)).unwrap();
+        for name in ["SYSPOWER", "CALDEVICE"] {
+            Table::open(TableOptions::new(context.join(name)))
+                .unwrap()
+                .save(TableOptions::new(path.join(name)))
+                .unwrap();
+            root.keywords_mut()
+                .upsert(name, casa_types::Value::table_ref(name));
+        }
+        root.save(TableOptions::new(&path)).unwrap();
+    }
+    if let Some(shift) = case["time_shift"].as_f64().filter(|s| *s != 0.) {
+        use casa_tables::{Table, TableOptions};
+        let mut table = Table::open(TableOptions::new(&path)).unwrap();
+        for row in 0..table.row_count() {
+            let ScalarValue::Float64(time) =
+                table.cell_accessor(row, "TIME").unwrap().scalar().unwrap()
+            else {
+                panic!("TIME")
+            };
+            let shifted = *time + shift;
+            table
+                .cell_accessor_mut(row, "TIME")
+                .unwrap()
+                .set(casa_types::Value::Scalar(ScalarValue::Float64(shifted)))
+                .unwrap();
+        }
+        table.save(TableOptions::new(&path)).unwrap();
+    }
+    let calibration = if let Some(input) = case["input_fixture"].as_str() {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data")
+            .join(input)
+    } else {
+        let calibration = directory.join("terms.cal");
+        table(&path, &calibration, case);
+        calibration
+    };
     let sm = Simulator::open_from_ms(
         &path,
         SimulatorOptions {

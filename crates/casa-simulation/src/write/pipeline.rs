@@ -502,6 +502,7 @@ pub(super) fn noise_jobs<'a>(
         for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
             let start = start + index * job_rows;
             jobs.push(NoiseJob {
+                scan,
                 first_row: first_row + start as u64,
                 cells,
                 rows: &rows[start..],
@@ -588,6 +589,7 @@ pub(super) fn batch_scales<'a>(
 
 /// One noise job: consecutive rows of one scan.
 pub(super) struct NoiseJob<'a> {
+    scan: usize,
     /// The MAIN row of the first cell.
     first_row: u64,
     cells: &'a mut [Complex32],
@@ -650,44 +652,64 @@ impl NoiseJob<'_> {
     /// the applications in their order.
     fn add_noise(&mut self, noise: &[NoiseApplication], correlations: usize, samples: usize) {
         let mut scratch = NoiseScratch::new(self.scales);
+        let mut additive = if noise
+            .iter()
+            .any(|application| !application.baseline.is_empty())
+        {
+            vec![Complex32::new(0., 0.); samples]
+        } else {
+            Vec::new()
+        };
         for application in noise {
-            if let Some(fixed) = application.fixed() {
-                let scale = application.fixed_scale(&self.window);
-                for (cell, row) in self.cells.chunks_exact_mut(samples).zip(self.rows) {
-                    if let Some(scale) = &scale {
-                        let sigma = scale.fixed_sigma(&row.noise(self.antennas), &mut scratch);
-                        fixed.add_scaled_to_cell(
-                            (self.window.spectral_window_id, row.time_s),
-                            (row.antenna1, row.antenna2),
-                            self.receptors,
-                            cell,
-                            |channel| sigma.at(channel),
-                        );
-                        continue;
-                    }
-                    fixed.add_to_cell(
-                        self.window.spectral_window_id,
-                        row.time_s,
-                        (row.antenna1, row.antenna2),
-                        self.receptors,
-                        cell,
-                    );
-                }
-                continue;
-            }
-            let noise = application.for_window(&self.window);
+            let fixed = application.fixed();
+            let scale = application.fixed_scale(&self.window);
+            let drawn = fixed
+                .is_none()
+                .then(|| application.for_window(&self.window));
             for (offset, (cell, row)) in self
                 .cells
                 .chunks_exact_mut(samples)
                 .zip(self.rows)
                 .enumerate()
             {
-                noise.add_to_row(
-                    (self.first_row + offset as u64, &row.noise(self.antennas)),
-                    (row.antenna1 == row.antenna2, correlations),
-                    cell,
-                    &mut scratch,
-                );
+                let corrected = !application.baseline.is_empty();
+                let output = if corrected {
+                    additive.fill(Complex32::new(0., 0.));
+                    &mut additive[..]
+                } else {
+                    &mut *cell
+                };
+                let query = (self.window.spectral_window_id, row.time_s, self.scan);
+                let antennas = (row.antenna1, row.antenna2);
+                if let Some(fixed) = fixed {
+                    if let Some(scale) = &scale {
+                        let sigma = scale.fixed_sigma(&row.noise(self.antennas), &mut scratch);
+                        fixed.add_scaled_to_cell(
+                            query,
+                            antennas,
+                            self.receptors,
+                            output,
+                            |channel| sigma.at(channel),
+                        );
+                    } else {
+                        fixed.add_to_cell(query, antennas, self.receptors, output);
+                    }
+                } else {
+                    drawn.as_ref().expect("drawn noise").add_to_row(
+                        (self.first_row + offset as u64, &row.noise(self.antennas)),
+                        (row.antenna1 == row.antenna2, correlations),
+                        output,
+                        &mut scratch,
+                    );
+                }
+                for baseline in &application.baseline {
+                    baseline.multiply_cell(query, antennas, self.receptors, output);
+                }
+                if corrected {
+                    for (value, noise) in cell.iter_mut().zip(additive.iter()) {
+                        *value += noise;
+                    }
+                }
             }
         }
     }

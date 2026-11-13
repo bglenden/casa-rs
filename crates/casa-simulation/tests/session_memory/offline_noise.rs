@@ -6,6 +6,45 @@ use casa_simulation::NoiseSpec;
 const BUDGET: u64 = 512 << 20;
 
 #[test]
+fn narrow_supplied_noise_admits_wide_output_interpolation() {
+    if !alone("offline_noise::narrow_supplied_noise_admits_wide_output_interpolation") {
+        return;
+    }
+    let policy = resources(BUDGET);
+    charge_process_caches(policy.host(), policy.policy()).unwrap();
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().unwrap();
+    let prefix = root.path().join("narrow");
+    let mut reference = configured(&root.path().join("reference.ms"), &measures, BUDGET, 1);
+    reference.observe(&scan(1)).unwrap();
+    reference
+        .set_noise(&NoiseSpec {
+            simple_noise_jy: 0.25,
+            on_the_fly: false,
+            table: prefix.display().to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+    reference.close().unwrap();
+    let mut sm = configured(&root.path().join("wide.ms"), &measures, BUDGET, 16385);
+    sm.observe(&scan(1)).unwrap();
+    sm.set_apply(&casa_simulation::ApplySpec {
+        table: format!("{}.A.cal", prefix.display()),
+        kind: String::new(),
+        interp: "linear,linear".into(),
+        interval_s: 0.,
+        calwt: false,
+        spwmap: vec![-1],
+        opacity: 0.,
+    })
+    .unwrap();
+    // Warm process caches, then measure a second independent application.
+    sm.corrupt().unwrap();
+    let call = measured(|| sm.corrupt().unwrap());
+    check("narrow A table on a wide output", &call);
+}
+
+#[test]
 fn additive_fields_hold_their_admission_and_reset_releases_unsaved_fields() {
     if !alone(
         "offline_noise::additive_fields_hold_their_admission_and_reset_releases_unsaved_fields",

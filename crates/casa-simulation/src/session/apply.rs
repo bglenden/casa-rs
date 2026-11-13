@@ -33,6 +33,8 @@ use casa_calibration::{
     CalibrationTableLookup, FrequencyInterpolation, TimeInterpolation, TimeInterpolationOptions,
 };
 use casa_imaging_runtime::{Demand, Reservation, admit};
+use casa_tables::{Table, TableOptions};
+use casa_types::{ScalarValue, Value};
 use num_complex::Complex32;
 
 use super::Simulator;
@@ -40,10 +42,42 @@ use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::jones::{
     Chunks, HeldTerm, JonesKind, TermBytes, applied, applied_frequency, applied_matrices,
 };
+#[path = "apply_baseline.rs"]
+mod baseline;
 #[path = "apply_matrix.rs"]
 mod matrix;
 #[path = "apply_physical.rs"]
 mod physical;
+#[path = "apply_spline.rs"]
+mod spline;
+
+enum Lookup {
+    Sampled(Box<CalibrationTableLookup>),
+    Spline(spline::SplineTable),
+}
+
+impl Lookup {
+    fn subtype(&self) -> &str {
+        match self {
+            Self::Sampled(table) => table.subtype(),
+            Self::Spline(_) => "GSPLINE",
+        }
+    }
+
+    fn has_spectral_window(&self, window: i32) -> bool {
+        match self {
+            Self::Sampled(table) => table.has_spectral_window(window),
+            Self::Spline(table) => window >= 0 && (window as usize) < table.windows,
+        }
+    }
+
+    fn first_spectral_window(&self) -> Option<i32> {
+        match self {
+            Self::Sampled(table) => table.first_spectral_window(),
+            Self::Spline(table) => (table.windows > 0).then_some(0),
+        }
+    }
+}
 
 /// The phase loading a `setapply` table is admitted as: the table as it is
 /// read, and what the loaded lookup keeps.
@@ -87,6 +121,19 @@ pub(crate) enum JonesSource {
 }
 
 impl JonesSource {
+    pub(super) fn baseline(&self) -> Option<&AppliedTable> {
+        match self {
+            Self::Applied(table) if table.kind == AppliedKind::BaselineIdentity => Some(table),
+            _ => None,
+        }
+    }
+    pub(super) fn additive(&self) -> Option<&AppliedTable> {
+        match self {
+            Self::Applied(table) if table.kind == AppliedKind::Additive => Some(table),
+            _ => None,
+        }
+    }
+
     /// Metadata-only coverage, before any applied solutions are formed.
     pub(super) fn covers(&self, window: usize) -> bool {
         match self {
@@ -100,6 +147,11 @@ impl JonesSource {
 /// to the same gain on both receptors; it shares the gain kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppliedKind {
+    Additive,
+    BaselineIdentity,
+    Fringe,
+    SwitchedPower,
+    IonosphereLinear,
     Gain,
     Leakage,
     Scalar,
@@ -120,6 +172,10 @@ impl AppliedKind {
     fn operator(self) -> JonesKind {
         match self {
             Self::Gain
+            | Self::Additive
+            | Self::BaselineIdentity
+            | Self::Fringe
+            | Self::SwitchedPower
             | Self::Scalar
             | Self::Delay
             | Self::MultiBandDelay
@@ -131,6 +187,7 @@ impl AppliedKind {
             Self::GainCurve | Self::PowerCurve | Self::CrossPhase | Self::SkyReceptorGain => {
                 JonesKind::SkyGain
             }
+            Self::IonosphereLinear => JonesKind::SkyGeneral,
         }
     }
 
@@ -141,12 +198,19 @@ impl AppliedKind {
             Self::GainCurve => 8,
             Self::PowerCurve => 16,
             Self::General => 4,
+            Self::Additive => 4,
+            Self::SwitchedPower => 4,
+            Self::Fringe => 8,
+            Self::IonosphereLinear => 1,
             _ => 2,
         }
     }
 
     fn matrix(self) -> bool {
-        matches!(self, Self::General | Self::FullLeakage)
+        matches!(
+            self,
+            Self::General | Self::FullLeakage | Self::IonosphereLinear
+        )
     }
 }
 
@@ -162,9 +226,62 @@ pub(crate) struct AppliedTable {
 }
 
 impl AppliedTable {
+    fn solution(
+        &self,
+        sm: &Simulator,
+        scan_index: usize,
+        antenna: usize,
+        time_s: f64,
+        phase_frequency: Option<f64>,
+    ) -> SimulatorResult<Option<casa_calibration::ComplexSolution>> {
+        let scan = &sm.scans[scan_index];
+        let window = self
+            .calibration_window(scan.spectral_window_id)
+            .expect("covered table");
+        Ok(match &self.lookup.lookup {
+            Lookup::Sampled(lookup) if self.kind == AppliedKind::Fringe => lookup
+                .simulation_fringe_solution(
+                    scan.observation_id,
+                    scan.scan_number,
+                    window as i32,
+                    antenna as i32,
+                    time_s,
+                    self.lookup
+                        .frequencies
+                        .get(window)
+                        .and_then(|axis| axis.first())
+                        .copied()
+                        .unwrap_or(0.),
+                )
+                .map_err(raised)?,
+            Lookup::Sampled(lookup) => lookup
+                .simulation_solution(
+                    scan.observation_id,
+                    scan.scan_number,
+                    window as i32,
+                    antenna as i32,
+                    time_s,
+                    phase_frequency,
+                )
+                .map_err(raised)?,
+            Lookup::Spline(lookup) => {
+                let data = &sm.spectral_windows[scan.spectral_window_id];
+                let centroid = data.start_frequency_hz
+                    + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.;
+                lookup.solution(antenna as i32, scan.field_id, time_s, centroid)
+            }
+        })
+    }
+
     fn channel_dependent(&self) -> bool {
         self.frequency.is_some()
-            || matches!(self.kind, AppliedKind::Delay | AppliedKind::MultiBandDelay)
+            || matches!(
+                self.kind,
+                AppliedKind::Delay
+                    | AppliedKind::MultiBandDelay
+                    | AppliedKind::Fringe
+                    | AppliedKind::IonosphereLinear
+            )
     }
 
     fn calibration_window(&self, window: usize) -> Option<usize> {
@@ -197,10 +314,11 @@ struct AppliedSolutions {
 
 /// A loaded table with the memory admitted for what it keeps.
 struct HeldLookup {
-    lookup: CalibrationTableLookup,
+    lookup: Lookup,
     frequencies: Vec<Vec<f64>>,
     max_cell_values: usize,
     windows: usize,
+    ionosphere_height_m: f64,
     _reservation: Reservation,
 }
 
@@ -219,10 +337,18 @@ fn not_yet(what: impl std::fmt::Display) -> SimulatorError {
 
 /// The calibration type a table's subtype names: `G Jones` is `G`.
 fn table_type(subtype: &str) -> String {
-    subtype
-        .strip_suffix(" Jones")
-        .unwrap_or(subtype)
-        .to_uppercase()
+    let upper = subtype.to_uppercase();
+    match upper.as_str() {
+        "XJ" | "X JONES" => "XJ".into(),
+        "X" | "X MUELLER" => "X MUELLER".into(),
+        "M" | "M MUELLER" => "M MUELLER".into(),
+        "MF" | "MF MUELLER" => "MF MUELLER".into(),
+        "A" | "A MUELLER" => "A MUELLER".into(),
+        "N" | "A NOISE" => "A NOISE".into(),
+        "T NOISE" => "T".into(),
+        "TF NOISE" => "TF".into(),
+        _ => upper.strip_suffix(" JONES").unwrap_or(&upper).to_owned(),
+    }
 }
 
 impl Simulator {
@@ -268,7 +394,7 @@ impl Simulator {
         let path = std::path::absolute(&spec.table).map_err(raised)?;
         let lookup = self.load_table(&path, interp)?;
         let table_kind = table_type(lookup.lookup.subtype());
-        let kind = match spec.kind.to_uppercase() {
+        let kind = match table_type(&spec.kind) {
             requested if requested.is_empty() || requested == table_kind => table_kind,
             requested => {
                 return Err(raised(format!(
@@ -280,11 +406,40 @@ impl Simulator {
         };
         let frequency = matches!(
             kind.as_str(),
-            "B" | "TF" | "DF" | "B TSYS" | "JF" | "DFGEN" | "TFOPAC" | "XF" | "GLINXPHF"
+            "B" | "BPOLY"
+                | "TF"
+                | "DF"
+                | "B TSYS"
+                | "JF"
+                | "DFGEN"
+                | "TFOPAC"
+                | "XF"
+                | "GLINXPHF"
+                | "A NOISE"
+                | "MF MUELLER"
+                | "SDGAIN_OTFD"
         )
         .then(|| frequency_interpolation(&spec.interp));
         let kind = match kind.as_str() {
-            "G" | "B" => AppliedKind::Gain,
+            "G" | "B" | "BPOLY" | "GSPLINE" | "ACCOR" | "SDGAIN_OTFD" => AppliedKind::Gain,
+            "FRINGE" => AppliedKind::Fringe,
+            "G EVLASWPOW" => {
+                let ms = Table::open(TableOptions::new(self.path())).map_err(raised)?;
+                for name in ["SYSPOWER", "CALDEVICE"] {
+                    if ms
+                        .keywords()
+                        .get(name)
+                        .and_then(Value::as_table_ref)
+                        .is_none()
+                    {
+                        return Err(raised(format!("RecordInterface: field {name} is unknown")));
+                    }
+                }
+                AppliedKind::SwitchedPower
+            }
+            "F" => AppliedKind::IonosphereLinear,
+            "A NOISE" => AppliedKind::Additive,
+            "M MUELLER" | "MF MUELLER" => AppliedKind::BaselineIdentity,
             "D" | "DF" => AppliedKind::Leakage,
             "T" | "TF" => AppliedKind::Scalar,
             "K" | "KCROSS" => AppliedKind::Delay,
@@ -296,11 +451,16 @@ impl Simulator {
             "B TSYS" => AppliedKind::SystemTemperature,
             "J" | "JF" => AppliedKind::General,
             "DGEN" | "DFGEN" => AppliedKind::FullLeakage,
-            "X" | "XF" => AppliedKind::CrossPhase,
+            "XJ" | "XF" => AppliedKind::CrossPhase,
             "GLINXPH" | "GLINXPHF" => AppliedKind::SkyReceptorGain,
             other => return Err(not_yet(format!("of a {other} table"))),
         };
-        let spwmap = mapped_windows(&spec.spwmap, &lookup, self.spectral_windows.len())?;
+        let map = if matches!(kind, AppliedKind::IonosphereLinear) {
+            &[0][..]
+        } else {
+            &spec.spwmap
+        };
+        let spwmap = mapped_windows(map, &lookup, self.spectral_windows.len())?;
         self.require_rows()?;
         tracing::info!(
             "Arranging to CORRUPT with: {} ({})",
@@ -340,12 +500,69 @@ impl Simulator {
             },
         )
         .map_err(SimulatorError::admission)?;
-        let layout = CalibrationTableLookup::layout_for_simulation(path, interp).map_err(raised)?;
+        let table = Table::open(TableOptions::new(path)).map_err(raised)?;
+        let bpoly = table.info().sub_type == "BPOLY";
+        let gspline = table.info().sub_type == "GSPLINE";
+        let ionosphere_height_m = if table_type(&table.info().sub_type) == "F" {
+            match table.keywords().get("IonosphereHeight(km)") {
+                Some(Value::Scalar(ScalarValue::Float64(v))) => *v * 1000.,
+                Some(Value::Scalar(ScalarValue::Float32(v))) => f64::from(*v) * 1000.,
+                Some(_) => return Err(raised("IonosphereHeight(km) is not numeric")),
+                None => 450000.,
+            }
+        } else {
+            450000.
+        };
+        let baseline = matches!(
+            table.info().sub_type.to_uppercase().as_str(),
+            "A NOISE" | "M MUELLER" | "MF MUELLER"
+        );
+        drop(table);
+        let _grid_reservation = if bpoly {
+            Some(
+                admit(
+                    resources.host(),
+                    resources.policy(),
+                    &Demand {
+                        phase: LOOKUP_PHASE,
+                        memory: self
+                            .spectral_windows
+                            .iter()
+                            .map(|w| w.channel_count as u64 * 8 + 24)
+                            .sum(),
+                    },
+                )
+                .map_err(SimulatorError::admission)?,
+            )
+        } else {
+            None
+        };
+        let data_frequencies = if bpoly {
+            self.spectral_windows
+                .iter()
+                .map(|w| w.channel_frequencies_hz())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let layout = if gspline {
+            spline::SplineTable::layout(path, self.spectral_windows.len())?
+        } else {
+            CalibrationTableLookup::layout_for_simulation_on_grids(path, interp, &data_frequencies)
+                .map_err(raised)?
+        };
         drop(metadata);
+        // GSPLINE evaluates its stored B-splines directly and ignores the
+        // requested table interpolator; it retains no additional time plan.
+        let time_costs = if gspline {
+            TimeInterpolationOptions::new(TimeInterpolation::Nearest)
+        } else {
+            interp
+        };
         let kept = layout
             .kept_bytes()
-            .saturating_add(layout.time_kept_bytes(interp.mode))
-            .saturating_add(layout.context_kept_bytes(interp));
+            .saturating_add(layout.time_kept_bytes(time_costs.mode))
+            .saturating_add(layout.context_kept_bytes(time_costs));
         let mut reservation = admit(
             resources.host(),
             resources.policy(),
@@ -353,14 +570,39 @@ impl Simulator {
                 phase: LOOKUP_PHASE,
                 memory: layout
                     .loading_bytes()
-                    .saturating_add(layout.time_loading_bytes(interp.mode))
-                    .saturating_add(layout.context_loading_bytes(interp))
+                    .saturating_add(layout.time_loading_bytes(time_costs.mode))
+                    .saturating_add(layout.context_loading_bytes(time_costs))
                     .saturating_add(kept),
             },
         )
         .map_err(SimulatorError::admission)?;
-        let lookup = CalibrationTableLookup::open_for_simulation(path, interp).map_err(raised)?;
-        let frequencies = if layout.frequency_values > 0 {
+        let lookup = if gspline {
+            Lookup::Spline(spline::SplineTable::open(
+                path,
+                self.spectral_windows.len(),
+            )?)
+        } else if baseline {
+            Lookup::Sampled(Box::new(
+                CalibrationTableLookup::open_for_baseline_simulation(
+                    path,
+                    interp,
+                    self.antennas.len(),
+                )
+                .map_err(raised)?,
+            ))
+        } else {
+            Lookup::Sampled(Box::new(
+                CalibrationTableLookup::open_for_simulation_on_grids(
+                    path,
+                    interp,
+                    &data_frequencies,
+                )
+                .map_err(raised)?,
+            ))
+        };
+        let frequencies = if bpoly {
+            data_frequencies
+        } else if layout.frequency_values > 0 {
             CalibrationTableLookup::frequency_grids_on_disk(path).map_err(raised)?
         } else {
             Vec::new()
@@ -371,6 +613,7 @@ impl Simulator {
             frequencies,
             max_cell_values: layout.max_cell_values,
             windows: layout.frequency_windows,
+            ionosphere_height_m,
             _reservation: reservation,
         })
     }
@@ -489,7 +732,6 @@ impl Simulator {
         per_window: &[usize],
     ) -> SimulatorResult<AppliedSolutions> {
         let kind = table.kind;
-        let lookup = &table.lookup.lookup;
         // JonesDiag::setMatByOk substitutes unit gains per receptor.
         // JonesGenLin instead substitutes one for BOTH leakage values;
         // correct that data-corrupting defect with the neutral zero pair.
@@ -553,6 +795,15 @@ impl Simulator {
                     + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.
             });
             for time_s in self.integration_times_s(index) {
+                if kind == AppliedKind::BaselineIdentity {
+                    self.check_baseline_identity(
+                        table,
+                        index,
+                        time_s,
+                        &output_hz,
+                        phase_frequency,
+                    )?;
+                }
                 if table.channel_dependent() || kind.matrix() {
                     offsets.push(if kind.matrix() {
                         matrices.len()
@@ -561,19 +812,28 @@ impl Simulator {
                     });
                 }
                 chunks.push_for_scan(scan.spectral_window_id, time_s, scan.field_id, index);
-                let geometry = physical::Geometry::new(self, kind, scan.field_id, time_s)?;
+                let edges = [
+                    output_hz.first().copied().unwrap_or(0.),
+                    output_hz.last().copied().unwrap_or(0.),
+                ];
+                let geometry = physical::Geometry::new(
+                    self,
+                    kind,
+                    scan.field_id,
+                    time_s,
+                    table.lookup.ionosphere_height_m,
+                    edges,
+                )?;
                 for antenna in 0..self.antennas.len() {
-                    let Some(solution) = lookup
-                        .simulation_solution(
-                            scan.observation_id,
-                            scan.scan_number,
-                            window as i32,
-                            antenna as i32,
-                            time_s,
-                            phase_frequency,
-                        )
-                        .map_err(raised)?
-                    else {
+                    // Below the simulator's B pivot, M corrects the zero
+                    // additive side; its multiplicative baseline gains do
+                    // not alter the model that is added afterward.
+                    if kind == AppliedKind::BaselineIdentity {
+                        values.extend(std::iter::repeat_n([neutral; 2], channels));
+                        continue;
+                    }
+                    let solution = table.solution(self, index, antenna, time_s, phase_frequency)?;
+                    let Some(solution) = solution else {
                         if kind.matrix() {
                             matrices.extend(std::iter::repeat_n(matrix::IDENTITY, channels));
                         } else {
@@ -617,7 +877,19 @@ impl Simulator {
                         .unwrap_or(0.);
                     for channel in 0..channels {
                         if kind.matrix() {
-                            matrices.push(matrix::parameters(kind, &solution, channel));
+                            matrices.push(if kind == AppliedKind::IonosphereLinear {
+                                geometry.ionosphere_matrix(
+                                    &solution,
+                                    antenna,
+                                    output_hz[channel],
+                                    self.spectral_windows[scan.spectral_window_id]
+                                        .correlations
+                                        .first()
+                                        .is_some_and(|c| (5..=8).contains(c)),
+                                )
+                            } else {
+                                matrix::parameters(kind, &solution, channel)
+                            });
                             continue;
                         }
                         if let Some(pair) = geometry.values(

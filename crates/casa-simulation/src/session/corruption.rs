@@ -295,10 +295,26 @@ impl Simulator {
         let terms = self
             .jones_terms
             .iter()
+            .filter(|source| source.additive().is_none())
             .map(|source| self.jones_term(source, &covered))
             .collect::<SimulatorResult<Vec<_>>>()?;
-        self.check_jones_coverage(&terms)?;
-        self.prepare_later_noise(&terms)?;
+        let applied_noise = self
+            .jones_terms
+            .iter()
+            .filter_map(super::apply::JonesSource::additive)
+            .map(|table| self.applied_noise(table, &covered))
+            .collect::<SimulatorResult<Vec<_>>>()?;
+        let baseline = if !self.noise_terms.is_empty() || !applied_noise.is_empty() {
+            self.jones_terms
+                .iter()
+                .filter_map(super::apply::JonesSource::baseline)
+                .map(|table| self.applied_baseline_field(table, &covered))
+                .collect::<SimulatorResult<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+        self.check_jones_coverage(&terms, &covered)?;
+        self.prepare_later_noise(&terms, &applied_noise)?;
         if self
             .noise_terms
             .iter()
@@ -315,6 +331,7 @@ impl Simulator {
                 seed: term.seed,
                 level: term.application_level(self.scans.len()),
                 ordinal: term.applications,
+                baseline: baseline.clone(),
             };
             term.applications += 1;
             application
@@ -325,25 +342,28 @@ impl Simulator {
         let mut jones: Vec<(usize, Arc<HeldTerm>)> = terms.into_iter().enumerate().collect();
         jones.sort_by(|a, b| b.1.kind.cmp(&a.1.kind).then(b.0.cmp(&a.0)));
         let jones: Vec<Arc<HeldTerm>> = jones.into_iter().map(|(_, term)| term).collect();
-        self.data_plan
-            .corrupt(applications, jones, self.scans.len());
+        self.data_plan.corrupt(
+            applications.chain(applied_noise.into_iter().map(|mut application| {
+                application.baseline.clone_from(&baseline);
+                application
+            })),
+            jones,
+            self.scans.len(),
+        );
         Ok(())
     }
 
     /// Validate the correlations of covered scans. CASA gates the entire
     /// corruption step before checking or applying any Jones operator.
-    fn check_jones_coverage(&self, terms: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
+    fn check_jones_coverage(
+        &self,
+        terms: &[Arc<HeldTerm>],
+        covered: &impl Fn(usize) -> bool,
+    ) -> SimulatorResult<()> {
         for scan in &self.scans {
             // VisEquation::spwOK gates the entire step: no term is
             // applied when any Jones term has no solution in this window.
-            if self
-                .noise_terms
-                .iter()
-                .any(|term| !term.domain.covers(scan.spectral_window_id))
-                || terms
-                    .iter()
-                    .any(|term| !term.covers(scan.spectral_window_id))
-            {
+            if !covered(scan.spectral_window_id) {
                 continue;
             }
             let window = &self.spectral_windows[scan.spectral_window_id];
@@ -359,7 +379,13 @@ impl Simulator {
                         "JonesGenLin matrix apply (J::aR) incompatible with VisVector.",
                     ));
                 }
-                if term.kind == JonesKind::General && !full {
+                let needs_matrix = term.kind == JonesKind::General
+                    || (term.kind == JonesKind::SkyGeneral
+                        && !window
+                            .correlations
+                            .first()
+                            .is_some_and(|c| (5..=8).contains(c)));
+                if needs_matrix && !full {
                     return Err(SimulatorError::raised(
                         "Jones matrix apply (J::aR) incompatible with VisVector.",
                     ));

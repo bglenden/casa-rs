@@ -51,6 +51,19 @@ impl FrequencyValues<4> {
     ) {
         let start = self.offsets[block];
         let channels = (self.offsets[block + 1] - start) / antennas;
+        // Circular-feed F is diagonal and also applies to one/two products.
+        // Full-matrix operators are checked for four products before recording.
+        if receptors.len() != 4 {
+            for (channel, sample) in cell.chunks_exact_mut(receptors.len()).enumerate() {
+                let channel = if channels == 1 { 0 } else { channel };
+                let p = self.values[start + p * channels + channel];
+                let q = self.values[start + q * channels + channel];
+                for (value, &[r1, r2]) in sample.iter_mut().zip(receptors) {
+                    *value *= p[3 * r1] * q[3 * r2].conj();
+                }
+            }
+            return;
+        }
         let positions: [usize; 4] = std::array::from_fn(|index| {
             receptors
                 .iter()

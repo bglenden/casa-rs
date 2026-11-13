@@ -84,6 +84,66 @@ pub(super) struct TimeQuery {
 }
 
 impl CalibrationTableLookup {
+    pub(in crate::lookup) fn fringe_phases(
+        &self,
+        observation: i32,
+        scan: i32,
+        window: i32,
+        antenna: i32,
+        time: f64,
+        frequency: f64,
+    ) -> Result<[f32; 2], ApplyExecutionError> {
+        let plan = self
+            .advanced_time
+            .as_ref()
+            .ok_or_else(|| invalid(&self.path, "fringe requires real time curves"))?;
+        let segment = match plan.scope {
+            TimeScope::All => -1,
+            TimeScope::Observation => observation,
+            TimeScope::Scan => scan,
+        };
+        let rows = plan
+            .series
+            .get(&(segment, window, antenna))
+            .or_else(|| plan.series.get(&(segment, window, -1)))
+            .filter(|rows| !rows.is_empty())
+            .ok_or_else(|| invalid(&self.path, "fringe time series is missing"))?;
+        let reference = (rows[0].time_seconds - 1.).floor();
+        let query = relative(time, reference);
+        let at = |index: usize| relative(rows[index].time_seconds, reference);
+        let upper = rows.partition_point(|row| relative(row.time_seconds, reference) < query);
+        let exact = upper == 0 || upper == rows.len() || at(upper) == query;
+        let mut output = [0.; 2];
+        for (receptor, phase) in output.iter_mut().enumerate() {
+            let advanced = |index| {
+                crate::lookup::fringe::advanced_phase(
+                    &rows[index],
+                    receptor,
+                    time,
+                    frequency,
+                    &self.path,
+                )
+            };
+            *phase = if exact || plan.mode == TimeInterpolation::Nearest {
+                let index = if exact {
+                    upper.min(rows.len() - 1)
+                } else if at(upper) - query < query - at(upper - 1) {
+                    upper
+                } else {
+                    upper - 1
+                };
+                advanced(index)? as f32
+            } else {
+                let weight = ((at(upper) - query) / (at(upper) - at(upper - 1))) as f32;
+                let phasor = |phase: f64| Complex32::new(phase.cos() as f32, phase.sin() as f32);
+                let lower = phasor(advanced(upper - 1)?);
+                let higher = phasor(advanced(upper)?);
+                (weight * lower + (1. - weight) * higher).arg()
+            };
+        }
+        Ok(output)
+    }
+
     /// Inspect dimensions for simulator lookup, including a phase-delay
     /// reference frequency axis even for frequency-independent parameters.
     /// Callers first admit the ordinary metadata charge.
@@ -94,11 +154,28 @@ impl CalibrationTableLookup {
         path: impl AsRef<Path>,
         options: TimeInterpolationOptions,
     ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
+        Self::layout_for_simulation_on_grids(path, options, &[])
+    }
+
+    /// Simulator layout with the data frequencies used to sample legacy
+    /// BPOLY coefficients. Other table families retain their own grids.
+    ///
+    /// # Errors
+    /// Shape metadata is invalid, or BPOLY has no supplied data grid.
+    pub fn layout_for_simulation_on_grids(
+        path: impl AsRef<Path>,
+        options: TimeInterpolationOptions,
+        frequencies: &[Vec<f64>],
+    ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
         let path = path.as_ref();
         let table =
             Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
+        let bpoly = table.info().sub_type == "BPOLY";
         let real = real_parameters(&table);
         drop(table);
+        if bpoly {
+            return Self::bpoly_layout(path, frequencies);
+        }
         let mut layout = Self::parameter_layout(path, if real { "FPARAM" } else { "CPARAM" })?;
         if (options.phase_delay || real)
             && layout.frequency_values == 0
@@ -120,6 +197,20 @@ impl CalibrationTableLookup {
         path: impl AsRef<Path>,
         options: TimeInterpolationOptions,
     ) -> Result<Self, ApplyExecutionError> {
+        Self::open_for_simulation_on_grids(path, options, &[])
+    }
+
+    /// Load supplied simulator tables, sampling legacy BPOLY on the data
+    /// frequency grids before the ordinary time interpolation is prepared.
+    /// Admit `layout_for_simulation_on_grids` and time/context costs first.
+    ///
+    /// # Errors
+    /// The table, frequency grids, or time curves are invalid.
+    pub fn open_for_simulation_on_grids(
+        path: impl AsRef<Path>,
+        options: TimeInterpolationOptions,
+        frequencies: &[Vec<f64>],
+    ) -> Result<Self, ApplyExecutionError> {
         let basic = if options.mode == TimeInterpolation::Nearest {
             ApplyInterpolationMode::Nearest
         } else {
@@ -129,8 +220,25 @@ impl CalibrationTableLookup {
         let table =
             Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
         let real = real_parameters(&table);
+        let bpoly = table.info().sub_type == "BPOLY";
         drop(table);
-        let mut lookup = Self::open_parameters(path, basic, FieldSelection::AnyField, real)?;
+        let mut lookup = if bpoly {
+            Self::open_bpoly(path, basic, frequencies)?
+        } else {
+            Self::open_parameters(path, basic, FieldSelection::AnyField, real)?
+        };
+        // CASA's BPOLY-to-B conversion writes unpartitioned (-1) scan and
+        // observation headers. The legacy input has neither modern column.
+        let options = if bpoly {
+            TimeInterpolationOptions {
+                per_scan: false,
+                per_observation: false,
+                phase_delay: false,
+                ..options
+            }
+        } else {
+            options
+        };
         if real
             || options.contextual()
             || matches!(
@@ -140,6 +248,37 @@ impl CalibrationTableLookup {
         {
             let plan = TimePlan::new(&mut lookup, options, real)?;
             lookup.advanced_time = Some(plan);
+        }
+        Ok(lookup)
+    }
+
+    /// Load a baseline-based complex table for simulation. Query indices
+    /// are `min(p,q) * antennas + max(p,q)`; numerical interpolation and
+    /// flags are the ordinary simulator lookup's. Admit the ordinary layout,
+    /// time and context costs before loading.
+    ///
+    /// # Errors
+    /// The table, baseline coordinates, or interpolation parameters are invalid.
+    pub fn open_for_baseline_simulation(
+        path: impl AsRef<Path>,
+        options: TimeInterpolationOptions,
+        antennas: usize,
+    ) -> Result<Self, ApplyExecutionError> {
+        let basic = if options.mode == TimeInterpolation::Nearest {
+            ApplyInterpolationMode::Nearest
+        } else {
+            ApplyInterpolationMode::Linear
+        };
+        let mut lookup =
+            Self::open_parameters(path.as_ref(), basic, FieldSelection::AnyField, false)?;
+        lookup.baseline_rows(antennas)?;
+        if options.contextual()
+            || matches!(
+                options.mode,
+                TimeInterpolation::Cubic | TimeInterpolation::Spline
+            )
+        {
+            lookup.advanced_time = Some(TimePlan::new(&mut lookup, options, false)?);
         }
         Ok(lookup)
     }
@@ -187,7 +326,8 @@ impl TimePlan {
     ) -> Result<Self, ApplyExecutionError> {
         let mut scope = TimeScope::All;
         let series = if options.per_observation || options.per_scan {
-            let rows = headers(&lookup.path)?;
+            let mut rows = headers(&lookup.path)?;
+            lookup.baseline_headers(&mut rows)?;
             if options.per_scan {
                 if rows
                     .iter()
