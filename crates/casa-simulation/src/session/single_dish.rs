@@ -42,6 +42,11 @@ impl Simulator {
         kernel: SingleDishKernel,
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<SingleDishPrediction> {
+        if !model.is_stokes_i_only() {
+            return Err(SimulatorError::not_yet_implemented(
+                "single-dish prediction of polarized image models is not yet implemented in casa-rs (#1299)",
+            ));
+        }
         let telescope = self.observing_telescope();
         // The PB kernel is compared with CASA for ALMA's and ACA's patterns;
         // the VLA's and EVLA's are not yet.

@@ -108,6 +108,8 @@ mod field_grids;
 mod gain_setters;
 #[path = "session_memory/heap.rs"]
 mod heap;
+#[path = "session_memory/image_stokes.rs"]
+mod image_stokes;
 #[path = "session_memory/irregular_channels.rs"]
 mod irregular_channels;
 #[path = "session_memory/jones.rs"]

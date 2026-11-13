@@ -448,7 +448,7 @@ fn a_model_without_direction_stokes_and_spectral_axes_is_refused() {
     image.save().expect("save");
     assert!(matches!(
         SkyModel::open(&path),
-        Err(PredictError::UnsupportedModel(_))
+        Err(PredictError::InvalidModel(_))
     ));
 }
 

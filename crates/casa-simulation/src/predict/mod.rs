@@ -39,7 +39,7 @@
 //! blocks on the worker team; [`ModelPredictor`] predicts one row at a time
 //! and is the reference the session is tested against.
 //!
-//! The model must be Stokes I, J2000 and in the axis order `simobserve`
+//! The model must contain Stokes I/Q/U/V, be J2000 and use the axis order `simobserve`
 //! writes.
 //!
 //! `setoptions(ftmachine='sd')` predicts total power instead, by sampling
@@ -62,7 +62,6 @@ pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDi
 
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
-use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
     MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules, MosaicWindow,
@@ -94,6 +93,9 @@ pub enum PredictError {
     /// not support yet.
     #[error("unsupported model image: {0}")]
     UnsupportedModel(String),
+    /// A model layout CASA's simulator refuses before prediction.
+    #[error("invalid simulator model image: {0}")]
+    InvalidModel(String),
     /// The measurement operator refused the model or a row.
     #[error(transparent)]
     Operator(#[from] OperatorError),
@@ -163,7 +165,7 @@ impl ModelLayout {
     ///
     /// # Errors
     ///
-    /// A geometry the grid cannot hold, correlations the Stokes I model
+    /// A geometry the grid cannot hold, correlations the model’s Stokes planes
     /// cannot feed, or the mosaic machine without beams.
     pub(crate) fn new(
         model: &SkyModel,
@@ -195,8 +197,7 @@ impl ModelLayout {
             },
             padding,
         )?;
-        let polarization =
-            PolarizationRouting::compile(correlations, &[PolarizationCoordinate::StokesI])?;
+        let polarization = PolarizationRouting::compile(correlations, model.polarizations())?;
         let planes = u32::try_from(model.planes())
             .map_err(|_| PredictError::UnsupportedModel("too many model planes".into()))?;
         let axis = SpectralAxis::new(
@@ -364,7 +365,7 @@ impl ModelOperator {
             let Some(target) = target.take() else {
                 return Ok(());
             };
-            let images = vec![model.read_plane(plane)?];
+            let images = model.read_polarizations(plane)?;
             let factor =
                 beam.map(|(pattern, centre)| beam::power_plane(pattern, model, plane, centre));
             self.operator
@@ -449,7 +450,7 @@ impl ModelPredictor {
     ///
     /// # Errors
     ///
-    /// A geometry the grid cannot hold, correlations the Stokes I model
+    /// A geometry the grid cannot hold, correlations the model’s Stokes planes
     /// cannot feed, a pointing outside the model's coordinate system, or a
     /// plane that cannot be read.
     pub fn new(
