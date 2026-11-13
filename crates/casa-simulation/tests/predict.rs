@@ -422,10 +422,10 @@ fn flagged_samples_and_rows_predict_zero_and_lengths_are_checked() {
 }
 
 #[test]
-fn a_model_in_another_frame_is_refused() {
+fn a_model_in_a_time_dependent_frame_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut spec = Model::points(&[(N / 2, N / 2, 1.0)]);
-    spec.frame = DirectionRef::B1950;
+    spec.frame = DirectionRef::APP;
     assert!(matches!(
         spec.open(dir.path()),
         Err(PredictError::UnsupportedModel(reason)) if reason.contains("J2000")
@@ -453,7 +453,7 @@ fn a_model_without_direction_stokes_and_spectral_axes_is_refused() {
 }
 
 #[test]
-fn a_model_with_a_non_j2000_conversion_frame_is_refused() {
+fn a_model_with_a_time_dependent_conversion_frame_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = Model::points(&[(1, 1, 1.0)]).write(dir.path());
     let mut image = PagedImage::<f32>::open(&path).unwrap();
@@ -463,7 +463,7 @@ fn a_model_with_a_non_j2000_conversion_frame_is_refused() {
     };
     let changed = direction
         .clone()
-        .with_conversion_direction_ref(DirectionRef::GALACTIC);
+        .with_conversion_direction_ref(DirectionRef::APP);
     coordinates.replace_coordinate(0, changed);
     image.set_coordinates(coordinates).unwrap();
     image.save().unwrap();

@@ -46,6 +46,7 @@ pub fn compare(path: &Path, case: &Value) -> f64 {
             };
             let science = case["pointing_cache_corrected_rows"]
                 .get(row)
+                .or_else(|| case["direction_frame_corrected_rows"].get(row))
                 .unwrap_or(expected);
             let reference = science[column.to_lowercase()].as_array().unwrap();
             assert_eq!(values.len(), reference.len());

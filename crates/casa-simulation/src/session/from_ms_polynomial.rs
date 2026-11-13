@@ -10,7 +10,22 @@ use super::{Simulator, SimulatorError, SimulatorResult, raw_field_phase_directio
 use std::{collections::HashMap, sync::Arc};
 
 pub(in crate::session) type PhaseCentres =
-    Arc<casa_imaging_runtime::Admitted<Vec<((i32, usize, usize), [f64; 2])>>>;
+    Arc<casa_imaging_runtime::Admitted<Vec<((i32, usize, usize), SelectedFrame)>>>;
+
+#[derive(Debug, Clone, Copy)]
+pub(in crate::session) struct SelectedFrame {
+    direction: [f64; 2],
+    epoch_s: f64,
+}
+
+pub(in crate::session) fn epoch(centres: Option<&PhaseCentres>, scan: &Scan) -> Option<f64> {
+    centres.and_then(|p| {
+        p.value
+            .binary_search_by_key(&key(scan), |v| v.0)
+            .ok()
+            .map(|i| p.value[i].1.epoch_s)
+    })
+}
 
 pub(in crate::session) fn centre(centres: Option<&PhaseCentres>, scan: &Scan) -> [f64; 2] {
     centres
@@ -18,7 +33,7 @@ pub(in crate::session) fn centre(centres: Option<&PhaseCentres>, scan: &Scan) ->
             p.value
                 .binary_search_by_key(&key(scan), |v| v.0)
                 .ok()
-                .map(|i| p.value[i].1)
+                .map(|i| p.value[i].1.direction)
         })
         .unwrap_or(scan.phase_center_rad)
 }
@@ -67,11 +82,12 @@ pub(super) fn set_scan_centres(
 pub(in crate::session) fn selected_centres(
     session: &Simulator,
     image_frame: bool,
+    require_epoch: bool,
 ) -> SimulatorResult<Option<PhaseCentres>> {
     let selection = session.data_plan.selection();
-    if session.opened.is_none()
-        || (!selection.has_query() && !image_frame)
-        || !session.fields.iter().any(|f| f.polynomial)
+    let polynomial = session.fields.iter().any(|f| f.polynomial);
+    if !require_epoch
+        && (session.opened.is_none() || (!selection.has_query() && !image_frame) || !polynomial)
     {
         return Ok(None);
     }
@@ -82,15 +98,21 @@ pub(in crate::session) fn selected_centres(
         &Demand {
             phase: "the simulator's selected polynomial FIELD epochs",
             memory: (session.scans.len() as u64)
-                .saturating_mul(160)
+                .saturating_mul(224)
                 .saturating_add(256 << 10)
                 .saturating_add(selection.evaluation_bytes()),
         },
     )
     .map_err(SimulatorError::admission)?;
-    let phase_memory;
-    let ms = MeasurementSet::open(session.path()).map_err(error)?;
-    phase_memory = admit_fields(&ms, resources)?;
+    let ms = if polynomial {
+        Some(MeasurementSet::open(session.path()).map_err(error)?)
+    } else {
+        None
+    };
+    let phase_memory = ms
+        .as_ref()
+        .map(|ms| admit_fields(ms, resources))
+        .transpose()?;
     let value = {
         let mut first = HashMap::<_, f64>::new();
         if selection.has_query() {
@@ -102,13 +124,14 @@ pub(in crate::session) fn selected_centres(
                 Ok(())
             })?;
         } else {
-            let opened = session.opened.as_ref().expect("opened");
             for (index, scan) in session.scans.iter().enumerate() {
                 if !selection.contains_scan(scan) || scan.row_count() == 0 {
                     continue;
                 }
                 let time = match scan.rows {
-                    ScanRows::OnDisk(_) => opened.scan_times_s[index][0],
+                    ScanRows::OnDisk(_) => {
+                        session.opened.as_ref().expect("opened").scan_times_s[index][0]
+                    }
                     ScanRows::Planned(ref rows) => rows.integration_times_s().next().unwrap_or(0.),
                 };
                 first
@@ -122,6 +145,22 @@ pub(in crate::session) fn selected_centres(
         let mut field_frames = HashMap::new();
         let mut centres = Vec::with_capacity(chunks.len());
         for (chunk, time) in chunks {
+            let evaluate = || -> SimulatorResult<SelectedFrame> {
+                let direction = if polynomial {
+                    at(
+                        session,
+                        ms.as_ref().expect("polynomial input"),
+                        chunk.1,
+                        time,
+                    )?
+                } else {
+                    session.fields[chunk.1].direction_rad
+                };
+                Ok(SelectedFrame {
+                    direction,
+                    epoch_s: time,
+                })
+            };
             // ComponentFT uses MSIter's current chunk. Image prediction runs
             // per FIELD; its FTMachine retains that field's first frame
             // across ARRAY_ID and DD boundaries.
@@ -129,12 +168,12 @@ pub(in crate::session) fn selected_centres(
                 if let Some(&direction) = field_frames.get(&chunk.1) {
                     direction
                 } else {
-                    let direction = at(session, &ms, chunk.1, time)?;
+                    let direction = evaluate()?;
                     field_frames.insert(chunk.1, direction);
                     direction
                 }
             } else {
-                at(session, &ms, chunk.1, time)?
+                evaluate()?
             };
             centres.push((chunk, frame_direction));
         }
@@ -144,7 +183,7 @@ pub(in crate::session) fn selected_centres(
     drop(ms);
     drop(phase_memory);
     reservation
-        .retain((value.capacity() * size_of::<((i32, usize, usize), [f64; 2])>() + 64) as u64);
+        .retain((value.capacity() * size_of::<((i32, usize, usize), SelectedFrame)>() + 64) as u64);
     Ok(Some(Arc::new(casa_imaging_runtime::Admitted {
         value,
         reservation,

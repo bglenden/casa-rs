@@ -39,7 +39,8 @@
 //! blocks on the worker team; [`ModelPredictor`] predicts one row at a time
 //! and is the reference the session is tested against.
 //!
-//! The model must contain Stokes I/Q/U/V, be J2000 and use the axis order `simobserve`
+//! The model must contain Stokes I/Q/U/V, use a supported celestial reference
+//! and use the axis order `simobserve`
 //! writes.
 //!
 //! `setoptions(ftmachine='sd')` predicts total power instead, by sampling

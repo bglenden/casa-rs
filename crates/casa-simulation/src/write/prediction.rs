@@ -42,6 +42,7 @@ use casa_imaging_runtime::pass::{
 };
 use casa_numerics::cell_noise::metal_draws_exactly;
 use casa_types::Complex32;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 
 use super::geometry::RowGeometry;
 use super::grids::{FieldGridCache, GridKey};
@@ -126,9 +127,15 @@ fn segment_of(
     scan: &Scan,
     scan_index: usize,
 ) -> SimulatorResult<Segment> {
+    // Header predicates can reject every row of a chunk without excluding
+    // its field/window. Those steps have neither science nor a captured
+    // frame there; omit their domains instead of inventing an epoch.
+    let mut selected_steps = Vec::with_capacity(steps.len());
+    selected_steps.extend(steps.filter(|&step| predictions[step].has_selected_chunk(scan)));
+    let steps = selected_steps;
     let mut projections = Vec::with_capacity(steps.len());
     let mut pointing_offsets = Vec::with_capacity(steps.len());
-    for step in steps.clone() {
+    for &step in &steps {
         let prediction = predictions[step];
         if prediction.grids_for(prediction.grid_id(scan)).is_none() {
             return Err(SimulatorError::raised(format!(
@@ -138,21 +145,29 @@ fn segment_of(
         }
         // `MosaicFT` reprojects through `girarUVW`, the others through
         // `rotateUVW`.
-        let project = match prediction.model.machine() {
-            FtMachine::Mosaic => GridFtProjection::mosaic_between_j2000_directions,
+        let phase = prediction.phase_centre(scan);
+        let projection = match prediction.model.machine() {
+            FtMachine::Mosaic => {
+                GridFtProjection::mosaic_between_j2000_directions(phase, prediction.tangent_rad)
+            }
             FtMachine::Grid(_) | FtMachine::WProject(_) => {
-                GridFtProjection::between_j2000_directions
+                let source = MDirection::from_angles(phase[0], phase[1], DirectionRef::J2000);
+                GridFtProjection::between_directions_with_frame(
+                    &source,
+                    &prediction.tangent,
+                    &prediction.frame(scan)?,
+                )
+                .map_err(|error| {
+                    SimulatorError::raised(format!("simulator image-frame projection: {error}"))
+                })?
             }
         };
-        projections.push(project(
-            prediction.phase_centre(scan),
-            prediction.tangent_rad,
-        ));
+        projections.push(projection);
         pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
     }
     Ok(Segment {
         source_scan: scan_index,
-        steps: steps.collect(),
+        steps,
         field: scan.field_id,
         projections,
         pointing_offsets,

@@ -42,6 +42,12 @@ impl Simulator {
         kernel: SingleDishKernel,
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<SingleDishPrediction> {
+        if model.tangent_direction().refer() != casa_types::measures::direction::DirectionRef::J2000
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "single-dish prediction in other image direction frames is not yet implemented in casa-rs (#1299)",
+            ));
+        }
         if !model.is_stokes_i_only() {
             return Err(SimulatorError::not_yet_implemented(
                 "single-dish prediction of polarized image models is not yet implemented in casa-rs (#1299)",

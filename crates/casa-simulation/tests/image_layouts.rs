@@ -9,6 +9,44 @@ use serde_json::Value;
 use std::path::Path;
 
 #[test]
+fn query_rejected_fields_leave_no_frame_projection_to_build() {
+    let fixture: Value = serde_json::from_reader(GzDecoder::new(
+        &include_bytes!("data/sm_image_layouts_casa.json.gz")[..],
+    ))
+    .unwrap();
+    let case = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "frame_b1950")
+        .unwrap();
+    let inputs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_image_layouts");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("query.ms");
+    copy(&inputs.join("base.ms"), &path);
+    let mut sm = Simulator::open_from_ms(
+        &path,
+        SimulatorOptions {
+            measures: casa_test_support::deterministic_measures_provider(),
+            resources: predict_support::resources(1, 2 << 30),
+            now: MEpoch::from_mjd(predict_support::REFERENCE_MJD, EpochRef::UTC),
+        },
+    )
+    .unwrap();
+    // The row predicate and explicit field selection select the same rows.
+    // Frame-epoch capture must not make the rejected field an error at close.
+    sm.set_data(&[], &[], "FIELD_ID == 0").unwrap();
+    sm.predict(&PredictSpec {
+        images: vec![inputs.join("frame_b1950.image")],
+        component_lists: Vec::new(),
+        incremental: false,
+    })
+    .unwrap();
+    sm.close().unwrap();
+    assert!(existing_ms_calculations::compare(&path, case) < 1e-3);
+}
+
+#[test]
 fn direct_image_layouts_and_stokes_match_casa() {
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
         &include_bytes!("data/sm_image_layouts_casa.json.gz")[..],
@@ -17,7 +55,7 @@ fn direct_image_layouts_and_stokes_match_casa() {
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let inputs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_image_layouts");
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 7);
+    assert_eq!(cases.len(), 12);
     let host = casa_imaging_runtime::HostResources::detect().unwrap();
     let mut policies = vec![
         ("w1", predict_support::resources(1, 2 << 30)),
