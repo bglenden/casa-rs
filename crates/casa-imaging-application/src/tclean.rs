@@ -769,7 +769,7 @@ impl<'a> Tclean<'a> {
             ("awp2", n) => {
                 return Err(TcleanRefusal::not_yet(
                     "wprojplanes",
-                    &format!("with AWP2 and {n} planes"),
+                    format!("with AWP2 and {n} planes"),
                     1071,
                 ));
             }
