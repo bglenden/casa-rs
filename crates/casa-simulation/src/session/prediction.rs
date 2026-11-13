@@ -277,6 +277,15 @@ impl std::fmt::Debug for Prediction {
 }
 
 impl Prediction {
+    pub(crate) fn matches_correlations(&self, codes: &[i32]) -> bool {
+        self.model
+            .operator
+            .polarization()
+            .correlations()
+            .iter()
+            .map(|correlation| correlation.casacore_code())
+            .eq(codes.iter().copied())
+    }
     pub(crate) fn has_selected_chunk(&self, scan: &super::observe::Scan) -> bool {
         self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000
             || super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan).is_some()
@@ -614,6 +623,15 @@ impl Simulator {
             ));
         }
         let correlations = self.predicted_correlations()?;
+        if self.single_dish.is_some()
+            && self.scans.iter().any(|scan| {
+                self.correlations_for_scan(scan) != self.correlations_for_scan(&self.scans[0])
+            })
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "total-power prediction over different correlation setups is not yet implemented in casa-rs (#1299)",
+            ));
+        }
         let beam = self.voltage_pattern_beam()?;
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
@@ -662,9 +680,26 @@ impl Simulator {
         } else {
             None
         };
-        let mut predictions = opened_models(model, &images)
-            .map(|model| self.prepare_image(model?, &correlations, beam, image_centres.clone()))
-            .collect::<SimulatorResult<Vec<_>>>()?;
+        let mut predictions = Vec::with_capacity(images.len() * correlations.len());
+        let mut first_model = model;
+        for (group, correlations) in correlations.iter().enumerate() {
+            let first = if group == 0 {
+                first_model.take()
+            } else {
+                images
+                    .first()
+                    .map(|path| SkyModel::open(path).map_err(model_error))
+                    .transpose()?
+            };
+            for model in opened_models(first, &images) {
+                predictions.push(self.prepare_image(
+                    model?,
+                    correlations,
+                    beam,
+                    image_centres.clone(),
+                )?);
+            }
+        }
         if predictions
             .iter()
             .any(|prediction| prediction.distance_m != 0.)
@@ -822,14 +857,26 @@ impl Simulator {
         let windows: Vec<ComponentWindow> = self
             .spectral_windows
             .iter()
-            .map(|window| ComponentWindow {
-                stored_frequencies: window.stored_frequencies.clone(),
-                first_hz: window.start_frequency_hz,
-                step_hz: window.channel_width_hz,
-                channels: window.channel_count,
-                correlations: self.correlations_for_scan(&self.scans[0]).to_vec(),
+            .enumerate()
+            .map(|(id, window)| {
+                let mut scans = self.scans.iter().filter(|scan| scan.spectral_window_id == id);
+                let correlations = scans.next().map_or(window.correlations.as_slice(), |scan| {
+                    self.correlations_for_scan(scan)
+                });
+                if scans.any(|scan| self.correlations_for_scan(scan) != correlations) {
+                    return Err(SimulatorError::not_yet_implemented(
+                        "component prediction through differing polarization aliases of one spectral window is not yet implemented in casa-rs (#1295)",
+                    ));
+                }
+                Ok(ComponentWindow {
+                    stored_frequencies: window.stored_frequencies.clone(),
+                    first_hz: window.start_frequency_hz,
+                    step_hz: window.channel_width_hz,
+                    channels: window.channel_count,
+                    correlations: correlations.to_vec(),
+                })
             })
-            .collect();
+            .collect::<SimulatorResult<Vec<_>>>()?;
         let pattern = beam.map(PrimaryBeam::pattern);
         // A scan is phased on its field's phase centre, as CASA's
         // `VisBuffer` phases it, and the beam centred there: a beam on a
@@ -892,30 +939,28 @@ impl Simulator {
 
     /// The correlations of the scans observed so far, which one operator
     /// predicts.
-    fn predicted_correlations(&self) -> SimulatorResult<Vec<Correlation>> {
+    fn predicted_correlations(&self) -> SimulatorResult<Vec<Vec<Correlation>>> {
         self.check_visibility_correlations("predicted")?;
-        let first = self.correlations_for_scan(&self.scans[0]);
-        if self
-            .scans
-            .iter()
-            .any(|scan| self.correlations_for_scan(scan) != first)
-        {
-            return Err(SimulatorError::not_yet_implemented(
-                "predicting scans whose spectral windows have different correlations is not yet \
-                 implemented in casa-rs (#1053)",
-            ));
+        let mut groups = Vec::<Vec<Correlation>>::new();
+        for scan in &self.scans {
+            if !self.data_plan.selection().contains_scan(scan) {
+                continue;
+            }
+            let codes = self.correlations_for_scan(scan);
+            if groups.iter().any(|group| {
+                group
+                    .iter()
+                    .map(|c| c.casacore_code())
+                    .eq(codes.iter().copied())
+            }) {
+                continue;
+            }
+            let group = codes.iter().map(|&code|Correlation::from_casacore_code(code).ok_or_else(|| {
+                SimulatorError::not_yet_implemented(format!("predicting correlation code {code} is not yet implemented in casa-rs (#1295)"))
+            })).collect::<SimulatorResult<Vec<_>>>()?;
+            groups.push(group);
         }
-        first
-            .iter()
-            .map(|&code| {
-                Correlation::from_casacore_code(code).ok_or_else(|| {
-                    SimulatorError::not_yet_implemented(format!(
-                        "predicting correlation code {code} is not yet implemented in casa-rs \
-                         (#1053)"
-                    ))
-                })
-            })
-            .collect()
+        Ok(groups)
     }
 
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION

@@ -79,6 +79,22 @@ impl<'s> DataStage<'s> {
         shape: (usize, usize),
         backend: BackendChoice,
     ) -> SimulatorResult<Option<Self>> {
+        Self::for_scans(
+            session,
+            shape,
+            backend,
+            0..session.scans().len(),
+            session.data_plan().has_partial_rows(session.scans()),
+        )
+    }
+
+    pub(super) fn for_scans(
+        session: &'s Simulator,
+        shape: (usize, usize),
+        backend: BackendChoice,
+        scans: std::ops::Range<usize>,
+        partial_rows: bool,
+    ) -> SimulatorResult<Option<Self>> {
         if session.data_plan().is_empty() {
             return Ok(None);
         }
@@ -89,7 +105,13 @@ impl<'s> DataStage<'s> {
             .map(|phase| {
                 Ok(PhaseStage {
                     phase,
-                    prediction: PredictionStage::new(session, shape, backend, phase)?,
+                    prediction: PredictionStage::new(
+                        session,
+                        shape,
+                        backend,
+                        phase,
+                        scans.clone(),
+                    )?,
                 })
             })
             .collect::<SimulatorResult<Vec<_>>>()?;
@@ -110,7 +132,7 @@ impl<'s> DataStage<'s> {
             last_host_noise: false,
             receptors: super::polarization_receptors(session)?,
             query: session.data_plan().has_query().then(QueryWorkspace::new),
-            track_rows: session.data_plan().has_partial_rows(session.scans()),
+            track_rows: partial_rows,
             touched: Vec::new(),
             predicted: Vec::new(),
         }))
