@@ -472,6 +472,26 @@ fn prediction_w_cell_uses_the_same_frequency_scale_as_gridding() {
 }
 
 #[test]
+fn rest_aw_prediction_w_uses_the_native_wavelength() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), false, usize::MAX).with_native_prediction_frequency(true);
+    let frequency_hz = FREQUENCIES_HZ[0];
+    let native_ratio = 1.000_1;
+    let boundary = 0.25 / catalog.w_increment();
+    let rest_w = boundary / ((1.0 + native_ratio) / 2.0);
+    let native_w = rest_w * native_ratio;
+    let row = RowContext {
+        native_frequency_ratio: native_ratio,
+        original_uvw_m: Some([0.0, 0.0, rest_w * 299_792_458.0 / frequency_hz]),
+        ..context(17.0, 0)
+    };
+    assert_eq!(catalog.w_cell(rest_w), 0);
+    assert_eq!(catalog.w_cell(native_w), 1);
+    let key = catalog.key(&row, frequency_hz, native_w);
+    assert_eq!(usize::from(key.cube), catalog.group_index(0, 0, 1));
+}
+
+#[test]
 fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
     let root = tempfile::tempdir().expect("cache directory");
     let catalog = generated(root.path(), false, usize::MAX);

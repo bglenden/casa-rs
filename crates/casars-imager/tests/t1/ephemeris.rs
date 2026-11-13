@@ -116,6 +116,67 @@ fn trackfield_images_mfs_and_a_rest_frame_cube() {
     );
 }
 
+/// A moving source's AW cube uses its REST axis for channel selection.
+#[test]
+fn aw_nearest_images_a_multichannel_rest_cube() {
+    let mut setup = super::aw_projection::setup();
+    setup.spectral_windows[0].channel_count = 4;
+    let observation = following_body(Observation::synthesise_setup(setup, &[("point", POINT)]));
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(
+            0,
+            "MEAS_FREQ_REF",
+            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+        )
+        .expect("declare TOPO input");
+    ms.save().expect("save TOPO input");
+    drop(ms);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, super::aw_projection::surface_text()).expect("write EVLA surface");
+    let mut request =
+        super::aw_projection::cached_clean("0", &observation.scratch("rest-cf"), &surface);
+    request["phasecenter"] = json!("TRACKFIELD");
+    request["specmode"] = json!("cubesource");
+    request["outframe"] = json!("REST");
+    request["restfreq"] = json!("1.5GHz");
+    request["nchan"] = json!(4);
+    request["niter"] = json!(0);
+    request["interpolation"] = json!("nearest");
+    request["wprojplanes"] = json!(1);
+    let (_, products) = observation.image("aw-rest-cube", request.clone());
+    // Nearest selects the same stored channels on both axes. The ephemeris,
+    // geometry, cache, and native wavelengths are identical for the two PSFs.
+    request["specmode"] = json!("cubedata");
+    request["outframe"] = json!("TOPO");
+    let (_, native_axis) = observation.image("aw-native-axis-cube", request);
+    let psf_difference = products
+        .get(".psf")
+        .values()
+        .into_iter()
+        .zip(native_axis.get(".psf").values())
+        .map(|(rest, native)| (rest - native).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        psf_difference < 1e-5,
+        "REST AW native wavelength PSF: {psf_difference}"
+    );
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 4);
+    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
+    let coordinate = products
+        .get(".image")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    assert_eq!(
+        coordinate.frequency_ref(),
+        casa_types::measures::frequency::FrequencyRef::REST
+    );
+}
+
 /// CASA centres a moving field's primary beam on its phase centre shifted by
 /// the body's motion to the image epoch (`SynthesisImagerVi2::makePrimaryBeam`):
 /// tracking the body, the beam stays on the field's offset from the image

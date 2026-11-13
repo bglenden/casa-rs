@@ -28,9 +28,21 @@ pub(crate) use visibility_write::VisibilityWriteTarget;
 use casa_imaging_deconvolution::{
     MajorCycleError, MaskError, ModelLifecycleError, NormalStateError,
 };
+use casa_imaging_model::{CompiledProblem, FrequencyFrame};
 use casa_imaging_operator::OperatorError;
 use casa_imaging_runtime::pass::PassError;
 use casa_imaging_runtime::{Admission, Cancelled, MinorCycleRunError};
+
+/// CASA's REST AW channel map uses source-shifted frequencies, while
+/// AWProjectFT::setupVBStore supplies the native wavelengths to the gridder.
+fn rest_aw_uses_native_wavelengths(problem: &CompiledProblem) -> bool {
+    problem
+        .science()
+        .measurement_equation()
+        .aw_projection()
+        .is_some()
+        && problem.geometry().spectral().output_frame() == FrequencyFrame::Rest
+}
 
 /// A failure of a native imaging run.
 #[derive(Debug, thiserror::Error)]
