@@ -125,7 +125,7 @@ fn component_frames_shapes_and_distances_match_casa() {
                 existing_ms_calculations::compare(&path, &reference)
             };
             println!("component {name} {prefix}: NRMS {nrms}");
-            if nrms >= 1e-3 {
+            if !within_science_tolerance(nrms) {
                 failures.push(format!("{name} {prefix}: NRMS {nrms}"));
             }
             if let Some(export) = std::env::var_os("CASA_RS_COMPONENT_SIGNALS_OUT") {
@@ -137,4 +137,17 @@ fn component_frames_shapes_and_distances_match_casa() {
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
+}
+
+fn within_science_tolerance(nrms: f64) -> bool {
+    nrms.is_finite() && nrms < 1e-3
+}
+
+#[test]
+fn nonfinite_visibility_errors_fail_the_science_gate() {
+    for error in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(!within_science_tolerance(error), "accepted {error}");
+    }
+    assert!(within_science_tolerance(4.75e-6));
+    assert!(!within_science_tolerance(1e-3));
 }
