@@ -4,6 +4,7 @@
 
 use casa_coordinates::{CoordinateModel, CoordinateType};
 use casa_imaging_runtime::{Demand, admit};
+use casa_ms::CubeInterpolation;
 use casa_types::measures::{
     direction::MDirection,
     frequency::{FrequencyRef, MFrequencyConverter},
@@ -31,14 +32,7 @@ pub(super) fn plan(
         return Ok(None);
     };
     let windows = &surveyed.survey.spectral_windows;
-    let cube = request.specmode == SpecMode::Cube;
-    if windows.is_empty()
-        || (!cube && windows.len() != 1)
-        || (cube
-            && windows
-                .iter()
-                .any(|window| window.frequencies_hz.len() != 1))
-    {
+    if !supported_windows(windows, request.specmode, request.interpolation) {
         return Err(PrepareError::Awp2Selection);
     }
     let window = &windows[0];
@@ -207,6 +201,24 @@ fn pa_centres(max_abs_pa: f64, step_deg: f32, limit: usize) -> Result<Box<[f64]>
         .collect())
 }
 
+fn supported_windows(
+    windows: &[SourceSpectralWindow],
+    mode: SpecMode,
+    interpolation: CubeInterpolation,
+) -> bool {
+    match mode {
+        SpecMode::Mfs => windows.len() == 1,
+        SpecMode::Cube => {
+            !windows.is_empty()
+                && (interpolation == CubeInterpolation::Nearest
+                    || windows
+                        .iter()
+                        .all(|window| window.frequencies_hz.len() == 1))
+        }
+        _ => false,
+    }
+}
+
 /// SimplePBConvFunc samples the entire native window before applying the
 /// image band. AWPLPG merges the surviving frequencies of all buffers.
 fn beam_frequencies(
@@ -263,6 +275,24 @@ mod tests {
             &*pa_centres(half_turn, 90.0, 2).unwrap(),
             &[-half_turn, 0.0]
         );
+    }
+
+    #[test]
+    fn awp2_cube_nearest_accepts_a_multichannel_window() {
+        let windows = [SourceSpectralWindow {
+            spw_id: 0,
+            frequency_reference: FrequencyRef::TOPO,
+            frequencies_hz: vec![1.0e9, 1.5e9, 2.0e9],
+            channel_widths_hz: vec![0.5e9; 3],
+        }];
+        assert!(supported_windows(
+            &windows,
+            SpecMode::Cube,
+            CubeInterpolation::Nearest
+        ));
+        for interpolation in [CubeInterpolation::Linear, CubeInterpolation::Cubic] {
+            assert!(!supported_windows(&windows, SpecMode::Cube, interpolation));
+        }
     }
 
     #[test]
