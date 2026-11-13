@@ -24,6 +24,7 @@ mod data;
 pub(crate) mod geometry;
 mod grids;
 mod patch;
+mod patch_ranges;
 mod pipeline;
 mod prediction;
 mod resources;

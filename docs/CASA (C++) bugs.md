@@ -4827,3 +4827,22 @@ NRMS. An independent CASA control that grows the holder before
 180). All eight products then agree with casa-rs within 2.50e-7 NRMS,
 with exact masks and sum of weights. casa-rs always centres the PA
 planes. [Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
+
+## Simulator image prediction retains the first window's polarization map
+
+CASA 6.7.6.14 image prediction over windows with different `CORR_TYPE` arrays
+can route later windows using the first window's map. For example, an IQUV
+image predicted into XX/YY followed by YY/XX retains XX/YY values in the
+second window's slots; circular and two/four-correlation combinations also
+misroute or lose image values. `FTMachine::initMaps` builds `polMap` from the
+initial buffer, while `GridFT::get` refreshes channel mappings at window changes
+without refreshing that polarization mapping.
+
+casa-rs prepares the existing forward operator for each selected correlation
+setup and uses only the matching setup for a scan. The mixed-correlation oracle
+retains the raw combined-window CASA result and independently predicts each
+window through a fresh CASA simulator to obtain the correct per-window map.
+Seeded flags, quality and untouched-window cells still use their raw references.
+Combined image/component controls additionally reuse the independent image-only
+plus component-only correction for the flagged-component duplication documented
+above. No CASA tolerance is relaxed.

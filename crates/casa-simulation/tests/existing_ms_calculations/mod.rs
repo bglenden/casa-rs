@@ -57,6 +57,7 @@ fn compare_columns(path: &Path, case: &Value, columns: &[&str]) -> f64 {
                 .get(row)
                 .or_else(|| case["direction_frame_corrected_rows"].get(row))
                 .or_else(|| case["field_distance_corrected_rows"].get(row))
+                .or_else(|| case["polarization_map_corrected_rows"].get(row))
                 .unwrap_or(expected);
             let reference = science[column.to_lowercase()].as_array().unwrap();
             assert_eq!(values.len(), reference.len());

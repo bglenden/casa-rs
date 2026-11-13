@@ -54,6 +54,7 @@ use casa_ms::{
 use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut,
     STREAMING_TILED_COLUMN_BUFFER_BYTES, SelectedArray1DCellsMut, SelectedArray2DCellsMut,
+    TableWriteLock,
 };
 use casa_types::measures::MPosition;
 use casa_types::{ArrayValue, Complex32};
@@ -124,10 +125,23 @@ struct PatchAdmission {
     reservation: Reservation,
 }
 
+/// One close owns one MAIN lock and opens the table only after admission.
+struct PatchContext<'s> {
+    session: &'s Simulator,
+    ms: Option<MeasurementSet>,
+    lock: Option<TableWriteLock>,
+    rows: usize,
+    partial_rows: bool,
+}
+
+fn lock_error(error: impl std::fmt::Display) -> SimulatorError {
+    SimulatorError::raised(format!("the simulator's MAIN lock: {error}"))
+}
+
 /// Patch the session's opened MeasurementSet with its DATA steps.
 pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> {
     let plan = session.data_plan();
-    let Some(opened) = session.opened() else {
+    let Some(_) = session.opened() else {
         return Err(SimulatorError::raised(
             "only a MeasurementSet openfromms opened is patched",
         ));
@@ -141,16 +155,79 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             "a scan observed after openfromms cannot be patched",
         ));
     }
-    let Some((correlations, channels)) = cell_shape(session)? else {
+    let rows = session.scans().iter().map(Scan::row_count).sum::<usize>();
+    if rows == 0 {
         return Ok(());
+    }
+    let mut context = PatchContext {
+        session,
+        ms: None,
+        lock: Some(TableWriteLock::acquire(session.path(), 1).map_err(lock_error)?),
+        rows,
+        partial_rows: plan.has_partial_rows(session.scans()),
     };
+    if let Ok(Some(cell)) = cell_shape(session) {
+        patch_range(&mut context, 0..rows, cell, false)?;
+        return context
+            .lock
+            .take()
+            .expect("returned MAIN lock")
+            .release()
+            .map_err(lock_error);
+    }
+    let resources = &session.options().resources;
+    let ranges = super::patch_ranges::plan(
+        session.scans().iter().map(|scan| {
+            (
+                scan.on_disk().expect("checked stored rows").clone(),
+                (
+                    session.correlations_for_scan(scan).len(),
+                    session.spectral_windows()[scan.spectral_window_id].channel_count,
+                ),
+            )
+        }),
+        resources.host(),
+        resources.policy(),
+    )
+    .map_err(SimulatorError::admission)?;
+    // Establish every run's admission before changing any original cells.
+    // Each run uses the same bounded patcher, never a second DATA engine.
+    for (range, cell) in &ranges.value {
+        patch_range(&mut context, range.clone(), *cell, true)?;
+    }
+    for (range, cell) in &ranges.value {
+        patch_range(&mut context, range.clone(), *cell, false)?;
+    }
+    context
+        .lock
+        .take()
+        .expect("returned MAIN lock")
+        .release()
+        .map_err(lock_error)
+}
+
+fn patch_range(
+    context: &mut PatchContext<'_>,
+    rows: std::ops::Range<usize>,
+    (correlations, channels): (usize, usize),
+    preflight: bool,
+) -> SimulatorResult<()> {
+    let session = context.session;
+    let plan = session.data_plan();
+    let scans = session.scans();
+    let scan_scope = scans
+        .partition_point(|scan| scan.on_disk().expect("stored rows").end <= rows.start)
+        ..scans.partition_point(|scan| scan.on_disk().expect("stored rows").start < rows.end);
+    let opened = session.opened().expect("checked stored MS");
     let window = ReservationWindow::open();
     let started = Instant::now();
     let resources = &session.options().resources;
-    let mut prediction = DataStage::new(
+    let mut prediction = DataStage::for_scans(
         session,
         (correlations, channels),
         resources.prediction_backend(),
+        scan_scope.clone(),
+        context.partial_rows,
     )?;
     let mut columns = vec!["DATA"];
     if opened.corrected_data {
@@ -160,15 +237,15 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         columns.push("MODEL_DATA");
     }
     let shape = PatchShape {
-        rows: session.scans().iter().map(|scan| scan.row_count()).sum(),
+        rows: context.rows,
         scans: session.scans().len(),
         correlations,
         channels,
         reads_data: !plan.replaced(),
         reads_flags: plan.predicts_images() || plan.predicts_single_dish(),
         reads_scratch: [
-            plan.has_partial_rows(session.scans()) && opened.model_data && plan.predicts(),
-            plan.has_partial_rows(session.scans()) && opened.corrected_data,
+            context.partial_rows && opened.model_data && plan.predicts(),
+            context.partial_rows && opened.corrected_data,
         ],
         columns: columns.len(),
         antennas: session.antennas().len(),
@@ -187,9 +264,16 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
                 .any(|(prediction, _)| prediction.focus.is_some()),
         noise_scales: NoiseScales::of(plan, channels, None),
     };
-    let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;
-    let mut ms = MeasurementSet::open(session.path())
-        .map_err(|error| SimulatorError::raised(format!("reopen the MeasurementSet: {error}")))?;
+    let admission = admit_patch(resources, &shape, &columns, prediction.as_ref(), &rows)?;
+    if preflight {
+        return Ok(());
+    }
+    if context.ms.is_none() {
+        context.ms = Some(MeasurementSet::open(session.path()).map_err(|error| {
+            SimulatorError::raised(format!("reopen the MeasurementSet: {error}"))
+        })?);
+    }
+    let ms = context.ms.as_mut().expect("opened MAIN");
     if ms.row_count() != shape.rows {
         return Err(SimulatorError::raised(format!(
             "the MeasurementSet has {} MAIN rows, where openfromms read {}",
@@ -229,12 +313,15 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         data: Vec::new(),
         // As many runs as a batch can have, as admitted.
         runs: Vec::with_capacity(most_runs(shape.scans, batch_rows)),
-        cursor: 0,
+        cursor: scan_scope.start,
         batches: 0,
     };
-    let mut writer =
-        MeasurementSetWriteSession::start_selected_row_mutation(&mut ms, admission.plan)
-            .map_err(write_error("start the MAIN patch"))?;
+    let mut writer = MeasurementSetWriteSession::start_selected_row_mutation_holding(
+        ms,
+        admission.plan,
+        context.lock.take().expect("owned MAIN lock"),
+    )
+    .map_err(write_error("start the MAIN patch"))?;
     loop {
         let rows = writer
             .next_mutation_rows()
@@ -243,14 +330,15 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         if rows.is_empty() {
             break;
         }
-        let batch = patch.batch(&ms, rows)?;
+        let batch = patch.batch(ms, rows)?;
         writer
-            .write_mutation_batch(&mut ms, batch)
+            .write_mutation_batch(ms, batch)
             .map_err(write_error("write a MAIN patch batch"))?;
     }
-    let written = writer
-        .finish_mutation()
+    let (written, lock) = writer
+        .finish_mutation_holding()
         .map_err(write_error("finish the MAIN patch"))?;
+    context.lock = Some(lock);
     let (grid_preparations, grid_prepare) = patch
         .prediction
         .as_ref()
@@ -679,6 +767,7 @@ fn admit_patch(
     shape: &PatchShape,
     columns: &[&str],
     prediction: Option<&DataStage<'_>>,
+    rows: &std::ops::Range<usize>,
 ) -> SimulatorResult<PatchAdmission> {
     let (host, policy) = (resources.host(), resources.policy());
     // The patch reads the MeasurementSet through the process's table cache.
@@ -692,7 +781,7 @@ fn admit_patch(
         .unwrap_or(usize::MAX)
         .min(TARGET_BATCH_BYTES);
     loop {
-        let plan = patch_plan(shape, columns, writer_bytes).map_err(|_| {
+        let plan = patch_plan(shape, columns, writer_bytes, rows).map_err(|_| {
             SimulatorError::admission(casa_imaging_runtime::Admission {
                 phase: WRITER_PHASE,
                 required: index_bytes
@@ -771,11 +860,12 @@ fn patch_plan(
     shape: &PatchShape,
     columns: &[&str],
     available_bytes: usize,
+    rows: &std::ops::Range<usize>,
 ) -> Result<MeasurementSetWritePlan, casa_ms::MeasurementSetWriteError> {
     // A row's cell of each column: its samples and the array holding them.
     let bytes_per_row = shape.samples() * size_of::<Complex32>() + size_of::<ArrayValue>();
     MeasurementSetWritePlan::selected_row_mutation(
-        (0..shape.rows).collect(),
+        rows.clone().collect(),
         columns
             .iter()
             .map(|name| MeasurementSetWriteColumnPlan {

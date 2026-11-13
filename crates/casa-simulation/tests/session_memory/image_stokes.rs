@@ -6,7 +6,7 @@ use casa_images::PagedImage;
 use ndarray::{ArrayD, IxDyn};
 use std::path::Path;
 
-fn model(path: &Path, size: usize) {
+pub(super) fn model(path: &Path, size: usize) {
     let source = PagedImage::<f32>::open(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_image_layouts/iquv.image"),
     )
