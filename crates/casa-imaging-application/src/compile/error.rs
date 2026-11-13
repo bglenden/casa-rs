@@ -27,7 +27,7 @@ pub enum PrepareError {
     MvcExecutionUnsupported,
     /// The additional MVC view is not yet bounded for this configuration.
     #[error(
-        "MVC currently supports one fixed-centre Stokes I domain, one standard-gridder facet, natural weighting, and two Taylor terms (#1069)"
+        "MVC currently supports one fixed-centre Stokes I domain, natural weighting, a single standard-gridder facet or unsquinted zero-W AWP2, and two Taylor terms (#1069)"
     )]
     MvcViewUnsupported,
     /// CASA MVC could not choose enough output channels for its Taylor terms.

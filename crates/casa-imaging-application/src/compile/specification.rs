@@ -117,6 +117,11 @@ pub(super) fn specification(
         request.gridder,
         Gridder::Standard { .. } | Gridder::Wproject { .. }
     );
+    // CASA's MVC helper converts the normalized cube's PSF and residual
+    // to Taylor moments. The Taylor store has no gridded sensitivity of
+    // its own, and its model is already in apparent units.
+    let mvc_taylor = request.specmode == SpecMode::Mfs
+        && (request.mvc_output_channels.is_some() || request.mvc_auto_channels);
     let algorithm = reconstruction_algorithm(request);
     let basis = match request.deconvolver {
         Deconvolver::Mtmfs => ReconstructionBasis::Taylor {
@@ -160,11 +165,15 @@ pub(super) fn specification(
             requested_products(
                 request,
                 minor_cycle,
-                direction_dependent,
+                direction_dependent && !mvc_taylor,
                 inputs.force_primary_beam,
                 inputs.force_model,
             ),
-            normalization(request),
+            if mvc_taylor {
+                ProductNormalization::UnitResponse
+            } else {
+                normalization(request)
+            },
             restoring_beam,
             ProductValidityPolicies::new(
                 primary_beam_validity(request)?,

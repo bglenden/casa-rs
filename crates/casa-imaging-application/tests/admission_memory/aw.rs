@@ -181,6 +181,16 @@ fn awp2_taylor_stays_within_its_admission() {
     check_awp2_admission("mfs", "mtmfs", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
 }
 
+/// The cube kernels, Taylor solve, projected model and output families
+/// stay within admission through a flat-noise AWP2 MVC run.
+#[test]
+fn awp2_mvc_stays_within_its_admission() {
+    if !alone("aw::awp2_mvc_stays_within_its_admission") {
+        return;
+    }
+    check_awp2_admission("mvc", "mtmfs", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
+}
+
 fn check_awp2_admission(
     mode: &str,
     deconvolver: &str,
@@ -217,7 +227,12 @@ fn check_awp2_admission(
         "evla_surface": evla_surface(root.path()),
         "stage_timing": true,
     });
-    let output_channels = if mode == "cube" {
+    let output_channels = if mode == "mvc" {
+        values["nchan"] = json!(3);
+        values["cycleniter"] = json!(2);
+        values["pbcor"] = json!(true);
+        3
+    } else if mode == "cube" {
         let output_channels = frequencies.len() * channels_per_window;
         values["nchan"] = json!(output_channels);
         if channels_per_window == 1 {
@@ -238,7 +253,16 @@ fn check_awp2_admission(
     let measured = check(&mut breaches, "AWP2", &request, 1, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
     let outcome = measured.outcome.unwrap();
-    if deconvolver == "mtmfs" {
+    if mode == "mvc" {
+        assert!(
+            outcome.major_cycle_count > 1,
+            "MVC refreshes the cube model"
+        );
+        let products = outcome.product_names();
+        assert!(products.iter().any(|name| name == ".weight"));
+        assert!(!products.iter().any(|name| name.starts_with(".weight.tt")));
+        assert!(products.iter().any(|name| name == ".image.tt1.pbcor"));
+    } else if deconvolver == "mtmfs" {
         assert_eq!(
             outcome.problem.reconstruction().basis(),
             casa_imaging_model::ReconstructionBasis::Taylor { terms: 2 },

@@ -6,7 +6,7 @@ use casa_imaging_deconvolution::{
     MajorCycle, MajorCycleCompletion, ModelLifecycle, ModelStoragePlan, NormalStoragePlan,
     normal_state_window_residency_bytes, resident_bytes_per_cell,
 };
-use casa_imaging_model::{CompiledProblem, ModelSample, ReconstructionBasis};
+use casa_imaging_model::{CompiledProblem, ModelSample, ProductNormalization, ReconstructionBasis};
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, PlannedContinuumGeneration,
     PrimaryBeamCentres, ProductsError, encode_mvc_blank_taylor_planes, encode_mvc_taylor_planes,
@@ -223,6 +223,7 @@ pub(crate) struct MvcModelChannel<'a> {
     pub(crate) channel_hz: f64,
     pub(crate) reference_hz: f64,
     pub(crate) cutoff: f32,
+    pub(crate) normalization: ProductNormalization,
 }
 
 impl MvcModelChannel<'_> {
@@ -268,7 +269,16 @@ impl MvcModelChannel<'_> {
             *value = if channel_max <= 0.0 || mean_max <= 0.0 {
                 model
             } else if self.channel_pb[index] > self.cutoff {
-                model * self.channel_pb[index] / self.mean_pb[index]
+                match self.normalization {
+                    ProductNormalization::UnitResponse => {
+                        model * self.channel_pb[index] / self.mean_pb[index]
+                    }
+                    // CASA's applyFreqDepPB puts the channel PB into the
+                    // apparent cube model. CubeMajorCycleAlgorithm divides
+                    // by that PB before degridding flat-noise data.
+                    ProductNormalization::FlatNoise => model / self.mean_pb[index],
+                    _ => return Err(invalid()),
+                }
             } else {
                 0.0
             };
@@ -403,6 +413,7 @@ pub(crate) fn project_mvc_model(
                 channel_hz: frequency,
                 reference_hz: expansion_reference_hz,
                 cutoff: cube_problem.products().validity().primary_beam().cutoff(),
+                normalization: cube_problem.products().normalization(),
             }
             .evaluate(&mut output)?;
             loaded_channel = Some(channel);
@@ -452,7 +463,7 @@ fn model_projection_demand(
 
 #[cfg(test)]
 mod model_channel_tests {
-    use super::MvcModelChannel;
+    use super::{MvcModelChannel, ProductNormalization};
 
     /// Values captured from CASA's real three-channel clean MVC model at
     /// the source pixel after the first and third minor cycles (#1069).
@@ -479,12 +490,33 @@ mod model_channel_tests {
                     channel_hz: frequencies[channel],
                     reference_hz: 45.0e9,
                     cutoff: 0.1,
+                    normalization: ProductNormalization::UnitResponse,
                 }
                 .evaluate(&mut output)
                 .unwrap();
                 assert!((output[0] - expected[channel]).abs() < 1.0e-6);
             }
         }
+    }
+
+    /// The flat-noise cube must divide CASA's apparent model by the channel
+    /// PB before prediction. Its Taylor coefficient already includes the
+    /// common PB, while the standard-gridder model keeps the channel PB.
+    #[test]
+    fn flat_noise_mvc_projects_a_physical_cube_model() {
+        let mut output = [0.0; 2];
+        MvcModelChannel {
+            terms: [&[2.0, 2.0], &[1.0, 1.0]],
+            channel_pb: &[0.5, 0.1],
+            mean_pb: &[0.25, 0.25],
+            channel_hz: 110.0,
+            reference_hz: 100.0,
+            cutoff: 0.1,
+            normalization: ProductNormalization::FlatNoise,
+        }
+        .evaluate(&mut output)
+        .unwrap();
+        assert_eq!(output, [8.4, 0.0]);
     }
 
     /// CASA promotes the Float term into the Double Taylor expression and
@@ -499,6 +531,7 @@ mod model_channel_tests {
             channel_hz: 2.0 + 2.0_f64.powi(-25),
             reference_hz: 1.0,
             cutoff: 0.1,
+            normalization: ProductNormalization::UnitResponse,
         }
         .evaluate(&mut output)
         .unwrap();
@@ -517,6 +550,7 @@ mod model_channel_tests {
                 channel_hz: 110.0,
                 reference_hz: 100.0,
                 cutoff: 0.1,
+                normalization: ProductNormalization::UnitResponse,
             }
             .evaluate(output)
             .unwrap();
@@ -540,6 +574,7 @@ mod model_channel_tests {
             channel_hz: 100.0,
             reference_hz: 100.0,
             cutoff: 0.1,
+            normalization: ProductNormalization::UnitResponse,
         };
         input.channel_pb = &[0.5];
         assert!(input.evaluate(&mut output).is_err());
