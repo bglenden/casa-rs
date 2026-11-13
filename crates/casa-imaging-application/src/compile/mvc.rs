@@ -264,7 +264,6 @@ pub(super) fn check_execution_scope(
         || request.savemodel != crate::SaveModel::None
         || request.outlierfile.is_some()
         || request.fitspw.is_some()
-        || request.pbcor
         || request.usemask != crate::UseMask::User
         || request.mask_image.is_some()
         || request.pbmask != 0.0
@@ -401,9 +400,6 @@ mod tests {
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.fitspw = Some("0".into());
-        assert!(check_execution_scope(&other, 1).is_err());
-        let mut other = parent.clone();
-        other.pbcor = true;
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.usemask = crate::UseMask::Pb;
