@@ -137,6 +137,18 @@ pub(crate) struct DataPhase {
 }
 
 impl DataPhase {
+    pub(super) fn cloned_bytes(&self) -> usize {
+        self.steps.len() * size_of::<DataStep>()
+            + self.noise.len() * size_of::<NoiseApplication>()
+            + self.jones.len() * size_of::<Arc<HeldTerm>>()
+            + self
+                .noise
+                .iter()
+                .map(|noise| {
+                    noise.baseline.len() * size_of::<Arc<crate::corrupt::offline::OfflineNoise>>()
+                })
+                .sum::<usize>()
+    }
     pub(crate) fn new(selection: DataSelection, replace: bool) -> Self {
         Self {
             selection,

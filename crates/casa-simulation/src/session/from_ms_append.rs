@@ -6,6 +6,116 @@ use crate::session::observe::{PlannedRows, ScanRows, StateSpec};
 use casa_types::ArrayValue;
 
 impl Simulator {
+    /// Evaluate cell-dependent selection against the current logical MS.
+    /// A private stage reuses the existing writer when DATA steps are pending;
+    /// the original input and deferred DATA plan remain unchanged.
+    pub(in crate::session) fn with_selection_ms<T>(
+        &self,
+        computed: bool,
+        read: impl FnOnce(&MeasurementSet) -> SimulatorResult<T>,
+    ) -> SimulatorResult<T> {
+        let resources = &self.options.resources;
+        let _opening = casa_imaging_runtime::admit(
+            resources.host(),
+            resources.policy(),
+            &casa_imaging_runtime::Demand {
+                phase: "reading simulator selection metadata",
+                memory: (self.data_descriptions.len() as u64)
+                    .saturating_mul(128)
+                    .saturating_add(256 << 10),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let planned = self.scans.iter().any(|scan| scan.planned().is_some());
+        if self.opened.is_some() && !planned && (!computed || self.data_plan.is_empty()) {
+            let ms = MeasurementSet::open(self.path()).map_err(read_error("selection"))?;
+            return read(&ms);
+        }
+        let memory = casa_imaging_runtime::admit(
+            resources.host(),
+            resources.policy(),
+            &casa_imaging_runtime::Demand {
+                phase: "previewing pending simulator DATA for selection",
+                memory: self.copied_metadata_bytes().saturating_add(256 << 10),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let parent = self
+            .path()
+            .parent()
+            .ok_or_else(|| SimulatorError::raised("MS has no parent directory"))?;
+        let scratch = tempfile::Builder::new()
+            .prefix(".simulation-selection-")
+            .tempdir_in(parent)
+            .map_err(|error| SimulatorError::raised(error.to_string()))?;
+        let path = scratch.path().join("preview.ms");
+        let mut preview = self.append_context(&path);
+        preview.scans = self.scans.clone();
+        preview.opened = self.opened.clone();
+        preview.noise_row_offset = self.noise_row_offset;
+        preview.scan_memory = Some(memory);
+        if self.opened.is_some() {
+            crate::write::append::copy_tree(self.path(), &path)?;
+            if planned {
+                preview.append_existing()?;
+            } else {
+                crate::write::patch_measurement_set(&preview)?;
+            }
+        } else {
+            crate::write::write_measurement_set(&preview)?;
+        }
+        let ms = MeasurementSet::open(&path).map_err(read_error("selection preview"))?;
+        read(&ms)
+    }
+
+    fn copied_metadata_bytes(&self) -> u64 {
+        let mut bytes = self.data_plan.cloned_bytes() + self.scans.len() * size_of::<Scan>();
+        if let Some(opened) = &self.opened {
+            bytes += opened.scan_times_s.len() * size_of::<[f64; 2]>()
+                + opened.integration_times_s.len() * size_of::<Vec<f64>>()
+                + opened
+                    .integration_times_s
+                    .iter()
+                    .map(|times| times.len() * 8)
+                    .sum::<usize>();
+        }
+        bytes += std::mem::size_of_val(self.antennas.as_slice())
+            + self
+                .antennas
+                .iter()
+                .map(|antenna| antenna.name.len() + antenna.station.len() + antenna.mount.len())
+                .sum::<usize>();
+        bytes += std::mem::size_of_val(self.fields.as_slice())
+            + self
+                .fields
+                .iter()
+                .map(|field| field.name.len() + field.code.len())
+                .sum::<usize>();
+        bytes += std::mem::size_of_val(self.feeds.as_slice());
+        bytes += std::mem::size_of_val(self.spectral_windows.as_slice())
+            + self
+                .spectral_windows
+                .iter()
+                .map(|window| window.name.len() + window.correlations.len() * 4)
+                .sum::<usize>();
+        bytes += std::mem::size_of_val(self.observations.as_slice())
+            + self
+                .observations
+                .iter()
+                .map(|observation| {
+                    observation.telescope.len()
+                        + observation.observer.len()
+                        + observation.project.len()
+                })
+                .sum::<usize>();
+        bytes += std::mem::size_of_val(self.states.as_slice())
+            + self
+                .states
+                .iter()
+                .map(|state| state.obs_mode.len())
+                .sum::<usize>();
+        bytes as u64 + 16 * 1024
+    }
     pub(in crate::session) fn prepare_existing_append(&mut self) -> SimulatorResult<()> {
         if self.opened.is_none() || !self.feeds.is_empty() {
             return Ok(());
@@ -70,6 +180,9 @@ impl Simulator {
                 })
             })
             .collect::<SimulatorResult<Vec<_>>>()?;
+        // The stored FEED table may be feed-major; observe's internal layout
+        // is antenna-major. Keep physical table rows untouched on append.
+        feeds.sort_by_key(|feed| (feed.antenna_id, feed.feed_id));
         self.feeds = feeds;
         self.states = states;
         let main = ms

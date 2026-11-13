@@ -21,18 +21,21 @@ use super::super::error::{SimulatorError, SimulatorResult};
 use super::super::observe::{Scan, ScanRows};
 use super::DataSelection;
 
-const HEADER_COLUMNS: [&str; 6] = [
+const HEADER_COLUMNS: [&str; 8] = [
     "ANTENNA1",
     "ANTENNA2",
     "TIME",
     "FIELD_ID",
     "DATA_DESC_ID",
     "SCAN_NUMBER",
+    "ARRAY_ID",
+    "OBSERVATION_ID",
 ];
 const READ_ROWS: usize = 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RowHeader {
+    pub(crate) row: u64,
     pub(crate) antennas: [usize; 2],
     pub(crate) time_s: f64,
 }
@@ -78,7 +81,7 @@ impl RowQuery {
     }
 }
 
-fn unsupported(what: &str) -> SimulatorError {
+pub(super) fn unsupported(what: &str) -> SimulatorError {
     SimulatorError::not_yet_implemented(format!(
         "setdata {what} is not yet implemented in casa-rs (#1053)"
     ))
@@ -206,6 +209,8 @@ impl QueryWorkspace {
             ScalarValue::Int64(scan.field_id as i64),
             ScalarValue::Int64(scan.data_description_id as i64),
             ScalarValue::Int64(i64::from(scan.scan_number)),
+            ScalarValue::Int64(i64::from(scan.array_id)),
+            ScalarValue::Int64(i64::from(scan.observation_id)),
         ];
         for (field, value) in self.row.fields_mut().iter_mut().zip(values) {
             field.value = Value::Scalar(value);
@@ -299,7 +304,9 @@ impl Simulator {
                     .map_err(|error| {
                         SimulatorError::raised(format!("setdata: row headers: {error}"))
                     })?;
-                    for ((&a, &b), &time_s) in first.iter().zip(&second).zip(&times) {
+                    for (offset, ((&a, &b), &time_s)) in
+                        first.iter().zip(&second).zip(&times).enumerate()
+                    {
                         let antennas = [usize::try_from(a), usize::try_from(b)].map(|value| {
                             value.map_err(|_| {
                                 SimulatorError::raised("setdata: negative antenna index")
@@ -307,6 +314,7 @@ impl Simulator {
                         });
                         let [a, b] = antennas;
                         let header = RowHeader {
+                            row: (start + offset) as u64,
                             antennas: [a?, b?],
                             time_s,
                         };
@@ -323,21 +331,27 @@ impl Simulator {
             }
         }
         // Appended scans are still planned while the original rows stay on disk.
+        let mut row = 0u64;
         for scan in &self.scans {
+            let first_row = row;
+            row += scan.row_count() as u64;
             if !selection.contains_scan(scan) {
                 continue;
             }
             let ScanRows::Planned(rows) = &scan.rows else {
                 continue;
             };
+            let mut row = first_row;
             for time_s in rows.integration_times_s() {
                 for first in 0..rows.antenna_count {
                     let start = first + usize::from(rows.autocorrelation_weight <= 0.0);
                     for second in start..rows.antenna_count {
                         let header = RowHeader {
+                            row,
                             antennas: [first, second],
                             time_s,
                         };
+                        row += 1;
                         if selection.matches_row(
                             scan,
                             header,

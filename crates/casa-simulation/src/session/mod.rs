@@ -535,11 +535,14 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// Metadata predicates support ANTENNA1, ANTENNA2, TIME, FIELD_ID,
-    /// DATA_DESC_ID and SCAN_NUMBER, numeric operators and abs/near/nearabs.
-    /// Other columns, row-number/random predicates and additional query
-    /// clauses are not yet implemented. Invalid predicates return CASA's
-    /// `False` after installing the field/window selection.
+    /// Header predicates stream through the existing row plan. Stored scalar
+    /// and numeric/Boolean array cells, row-number functions, bounded numeric
+    /// and string expressions, ORDERBY, GROUPBY, scalar HAVING, LIMIT and
+    /// OFFSET are captured against the current logical MeasurementSet.
+    /// Selecting pending DATA renders a private preview through the existing
+    /// writer, including a copy of an opened MS. Aggregates, joins and stored
+    /// string columns are not yet implemented. Invalid predicates return
+    /// CASA's `False` after installing the field/window selection.
     pub fn set_data(
         &mut self,
         spectral_window_ids: &[i64],
@@ -572,9 +575,19 @@ impl Simulator {
         // CASA installs the field/window selection before parsing TaQL.
         self.data_plan.select(selection.clone());
         if !ms_select.is_empty() && !ms_select.chars().all(|ch| ch == ' ') {
+            let parsed = match selection::RowQuery::parse(ms_select) {
+                Ok(query) => query,
+                Err(error) if error.outcome() == error::CasaOutcome::NotYetImplemented => {
+                    if let Some(captured) = selection::capture(self, selection, ms_select)? {
+                        self.data_plan.select(captured);
+                    }
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             let query = selection::DataSelection::Query {
                 base: Arc::new(selection),
-                query: Arc::new(selection::RowQuery::parse(ms_select)?),
+                query: Arc::new(parsed),
             };
             if self.query_keeps_rows(&query)? {
                 self.data_plan.select(query);

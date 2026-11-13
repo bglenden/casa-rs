@@ -92,6 +92,8 @@
 mod apply;
 #[path = "session_memory/apply_frequency.rs"]
 mod apply_frequency;
+#[path = "session_memory/captured_selection.rs"]
+mod captured_selection;
 #[path = "session_memory/coverage.rs"]
 mod coverage;
 #[path = "session_memory/data_descriptions.rs"]

@@ -394,6 +394,7 @@ fn select_runs(
             if phase.selection.matches_row(
                 metadata,
                 RowHeader {
+                    row: session.noise_row_offset() + batch.first_row + row as u64,
                     antennas: [geometry.antenna1, geometry.antenna2],
                     time_s: geometry.time_s,
                 },

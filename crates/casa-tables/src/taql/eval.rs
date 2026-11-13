@@ -20,6 +20,8 @@ use std::fmt;
 use casa_types::quanta::Quantity;
 use casa_types::{RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
+#[path = "eval_arrays.rs"]
+mod arrays;
 
 use super::ast::{self, *};
 use super::error::TaqlError;
@@ -77,6 +79,12 @@ impl PartialEq for ExprValue {
                 a.unit().conformant(b.unit()) && a.get_si_value() == b.get_si_value()
             }
             (Self::Complex(a), Self::Complex(b)) => a == b,
+            (Self::Complex(a), Self::Int(b)) | (Self::Int(b), Self::Complex(a)) => {
+                a.im == 0. && a.re == *b as f64
+            }
+            (Self::Complex(a), Self::Float(b)) | (Self::Float(b), Self::Complex(a)) => {
+                a.im == 0. && a.re == *b
+            }
             (Self::String(a), Self::String(b)) => a == b,
             (Self::DateTime(a), Self::DateTime(b)) => a == b,
             (Self::Array(a), Self::Array(b)) => a.shape == b.shape && a.data == b.data,
@@ -470,6 +478,7 @@ pub struct EvalContext<'a> {
 pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlError> {
     match expr {
         Expr::Literal(lit) => Ok(eval_literal(lit)),
+        Expr::ArrayLiteral(values) => arrays::literal(values, ctx),
         Expr::ColumnRef(col_ref) => eval_column_ref(col_ref, ctx),
         Expr::Unary { op, operand } => {
             let val = eval_expr(operand, ctx)?;
@@ -758,6 +767,10 @@ fn eval_binary(op: BinaryOp, lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue
     // NULL propagation for all operators
     if lhs.is_null() || rhs.is_null() {
         return Ok(ExprValue::Null);
+    }
+
+    if let Some(result) = arrays::binary(op, &lhs, &rhs) {
+        return result;
     }
 
     match op {
