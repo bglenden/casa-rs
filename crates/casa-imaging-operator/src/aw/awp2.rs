@@ -90,6 +90,13 @@ impl Awp2Sampling {
         if side >= 200 && sampling.factor() / oversampling as f32 >= 1.0 {
             return Err(invalid("AWP2 FFT resampling remains unsupported (#1071)"));
         }
+        // The wider-than-beam A term uses a different support cutoff,
+        // including on small images that still select Lanczos.
+        if field_of_view > aperture_side as f64 * beam_cell_rad {
+            return Err(invalid(
+                "AWP2 wider-than-beam support remains unsupported (#1071)",
+            ));
+        }
         Ok(sampling)
     }
 
@@ -593,6 +600,26 @@ mod tests {
             Awp2Sampling::new(&wide, false),
             Err(OperatorError::ConvolutionFunction {
                 reason: "AWP2 FFT resampling remains unsupported (#1071)",
+            })
+        ));
+    }
+
+    #[test]
+    fn awp2_refuses_wider_than_beam_support_even_with_lanczos() {
+        let cell_rad = 120.0_f64.to_radians() / 3600.0;
+        let geometry = GridGeometry::new(
+            crate::ImageExtent {
+                shape: [100; 2],
+                increment_rad: [-cell_rad, cell_rad],
+                reference_pixel: [50; 2],
+            },
+            crate::GridPadding::None,
+        )
+        .unwrap();
+        assert!(matches!(
+            Awp2Sampling::new(&geometry, false),
+            Err(OperatorError::ConvolutionFunction {
+                reason: "AWP2 wider-than-beam support remains unsupported (#1071)",
             })
         ));
     }
