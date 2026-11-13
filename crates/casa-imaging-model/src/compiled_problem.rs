@@ -340,7 +340,7 @@ pub enum InstrumentModel {
     /// beams among them), consumed through validated paired AW convolution
     /// functions.
     CasaEvlaWidebandAwV1,
-    /// VLA L-band AWPLPG response with one W plane and the real RL
+    /// VLA or EVLA L-band AWPLPG response with one W plane and the real RL
     /// aperture beam shared by all correlations.
     CasaVlaAwplpg,
 }

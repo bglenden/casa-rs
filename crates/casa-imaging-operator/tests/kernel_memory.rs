@@ -689,9 +689,17 @@ fn awp2_stages_hold_at_most_what_they_state() {
     if !alone("awp2_stages_hold_at_most_what_they_state") {
         return;
     }
-    let geometry = geometry(100, 8.0_f64.to_radians() / 3600.0, GridPadding::None);
-    let sampling = casa_imaging_operator::Awp2Sampling::new(&geometry).unwrap();
-    let frequencies = [1.0e9, 1.5e9];
+    for (side, cell_arcsec, single_field, frequencies) in [
+        (100, 8.0_f64, true, &[1.0e9, 1.5e9][..]),
+        (512, 10.0_f64, false, &[1.5e9][..]),
+    ] {
+        let geometry = geometry(side, cell_arcsec.to_radians() / 3600.0, GridPadding::None);
+        check_awp2_stages(&geometry, single_field, frequencies);
+    }
+}
+
+fn check_awp2_stages(geometry: &GridGeometry, single_field: bool, frequencies: &[f64]) {
+    let sampling = casa_imaging_operator::Awp2Sampling::new(geometry, single_field).unwrap();
     let surface = EvlaDishSurface::new(
         (0..=1250)
             .map(|i| {
@@ -702,15 +710,18 @@ fn awp2_stages_hold_at_most_what_they_state() {
     )
     .unwrap();
     let screens_bytes = sampling.screens_bytes(frequencies.len());
-    let (peak, _, screens) = measure(|| sampling.screens(&frequencies, surface).unwrap());
+    let (screen_peak, _, screens) = measure(|| {
+        sampling
+            .screens(frequencies, surface, single_field)
+            .unwrap()
+    });
     assert!(
-        peak <= screens_bytes,
-        "aperture scratch {peak} exceeds {screens_bytes}"
+        screen_peak <= screens_bytes,
+        "aperture scratch {screen_peak} exceeds {screens_bytes}"
     );
-    let kernel_bytes = screens.kernel_bytes(&geometry);
+    let kernel_bytes = screens.kernel_bytes(geometry);
     let polarization = routing();
-    let (peak, _, set) =
-        measure(|| screens.finish(&geometry, &polarization, Box::new(frequencies)));
+    let (peak, _, set) = measure(|| screens.finish(geometry, &polarization, frequencies.into()));
     assert!(
         peak <= kernel_bytes,
         "kernel construction {peak} exceeds {kernel_bytes}"
@@ -725,5 +736,7 @@ fn awp2_stages_hold_at_most_what_they_state() {
         measured, resident,
         "all resident AWP2 data and weight taps stay charged"
     );
-    eprintln!("AWP2 kernel construction {peak}/{kernel_bytes} B, resident {resident} B");
+    eprintln!(
+        "AWP2 aperture {screen_peak}/{screens_bytes} B, kernel construction {peak}/{kernel_bytes} B, resident {resident} B"
+    );
 }

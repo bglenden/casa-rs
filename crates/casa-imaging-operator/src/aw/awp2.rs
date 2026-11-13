@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The single-field, W=0, unsquinted VLA L-band branch of CASA AWPLPG.
+//! The W=0, unsquinted VLA and EVLA L-band branch of CASA AWPLPG.
 //! It uses the existing BeamCalc aperture and mosaic gridding rules, with
 //! the A/AW support and sampling of AWConvFunc and AWConvFuncHolder.
 
@@ -10,7 +10,7 @@ use num_complex::Complex32;
 use super::{EvlaApertureGrid, EvlaApertureModel, native::sky_jones_normalization};
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, GridEdge, ImageCorrection, KernelNormalisation,
-    MuellerRouting, RowContext, TapFootprint, TapLayout,
+    MuellerRouting, RowContext, TapFootprint, TapLayout, mosaic_pointing_on_image,
 };
 use crate::dense::{OversampledPlane, dense_cell, dense_cell_bytes};
 use crate::error::OperatorError;
@@ -24,19 +24,21 @@ const L_BAND_BEAM_SIDE: usize = 512;
 const L_BAND_BEAM_CELL_RAD: f64 = 0.024 / 256.0;
 
 /// The aperture grid and the cropped sky grid used by
-/// `AWConvFunc::makeAConvFunc` for a small single-field image.
+/// `AWConvFunc::makeAConvFunc` for an AWPLPG image.
 pub struct Awp2Sampling {
     image_side: usize,
     cell_rad: f64,
+    beam_cell_rad: f64,
     aperture_side: usize,
     sky_side: usize,
     oversampling: u16,
 }
 
 impl Awp2Sampling {
-    /// Derive sampling from a square, unpadded image with square cells.
-    /// Only the small-field Lanczos branch is currently supported.
-    pub fn new(geometry: &GridGeometry) -> Result<Self, OperatorError> {
+    /// Derive AWPLPG sampling from a square, unpadded image with square
+    /// cells. `single_field` selects the aperture extent and cropping in
+    /// `AWConvFunc::makeAConvFunc`. This path implements Lanczos resampling.
+    pub fn new(geometry: &GridGeometry, single_field: bool) -> Result<Self, OperatorError> {
         let extent = geometry.image();
         let [side, ny] = extent.shape;
         let [dx, dy] = extent.increment_rad.map(f64::abs);
@@ -45,38 +47,56 @@ impl Awp2Sampling {
         let oversampling = if side < 100 {
             100
         } else {
-            10000_usize.div_ceil(side)
+            10000_usize.div_ceil(side).max(4)
         };
-        if side != ny
-            || side >= 200
-            || (dx - dy).abs() > dx * f64::EPSILON
-            || !oversampling.is_multiple_of(2)
-            || field_of_view > 0.125 * beam_field_of_view
-        {
+        if side != ny || (dx - dy).abs() > dx * f64::EPSILON || !oversampling.is_multiple_of(2) {
             return Err(invalid(
-                "AWP2 requires a small square image with square cells and even oversampling (#1071)",
+                "AWP2 requires a square image with square cells and even oversampling (#1071)",
             ));
         }
-        let aperture_side = ((L_BAND_BEAM_SIDE as f64 / dx * L_BAND_BEAM_CELL_RAD / 16.0).ceil()
-            as usize)
-            .checked_mul(8)
-            .filter(|side| {
-                side.checked_mul(*side)
-                    .is_some_and(|n| n <= isize::MAX as usize / 64)
-            })
-            .ok_or_else(|| invalid("AWP2 aperture grid is too large"))?;
-        let sky_side =
-            ((field_of_view / beam_field_of_view * aperture_side as f64 / 2.0).ceil() as usize) * 2;
+        let (aperture_side, sky_side, beam_cell_rad) = if field_of_view > 0.125 * beam_field_of_view
+        {
+            let side = if single_field || field_of_view < beam_field_of_view {
+                2 * L_BAND_BEAM_SIDE
+            } else {
+                L_BAND_BEAM_SIDE
+            };
+            (side, side, L_BAND_BEAM_CELL_RAD)
+        } else {
+            let aperture_side =
+                ((L_BAND_BEAM_SIDE as f64 / dx * L_BAND_BEAM_CELL_RAD / 16.0).ceil() as usize)
+                    .checked_mul(8)
+                    .filter(|side| {
+                        side.checked_mul(*side)
+                            .is_some_and(|n| n <= isize::MAX as usize / 64)
+                    })
+                    .ok_or_else(|| invalid("AWP2 aperture grid is too large"))?;
+            let sky_side = ((field_of_view / beam_field_of_view * aperture_side as f64 / 2.0).ceil()
+                as usize)
+                * 2;
+            (aperture_side, sky_side, dx)
+        };
         if sky_side < 12 || sky_side > aperture_side {
             return Err(invalid("AWP2 sky crop does not fit its aperture grid"));
         }
-        Ok(Self {
+        let sampling = Self {
             image_side: side,
             cell_rad: dx,
+            beam_cell_rad,
             aperture_side,
             sky_side,
             oversampling: oversampling as u16,
-        })
+        };
+        if side >= 200 && sampling.factor() / oversampling as f32 >= 1.0 {
+            return Err(invalid("AWP2 FFT resampling remains unsupported (#1071)"));
+        }
+        Ok(sampling)
+    }
+
+    fn factor(&self) -> f32 {
+        self.image_side as f32 * f32::from(self.oversampling)
+            / self.sky_side as f32
+            / (self.beam_cell_rad / self.cell_rad) as f32
     }
 
     /// Temporary Jones and sky FFT planes and their planning workspaces.
@@ -91,11 +111,13 @@ impl Awp2Sampling {
     }
 
     /// Calculate the A terms and their one-plane AW normalization with the
-    /// supplied VLA surface. Scratch is charged before calling this method.
+    /// supplied dish surface. `legacy_vla` selects the original VLA feed.
+    /// Scratch is charged before calling this method.
     pub fn screens(
         self,
         frequencies_hz: &[f64],
         surface: EvlaDishSurface,
+        legacy_vla: bool,
     ) -> Result<Awp2Screens, OperatorError> {
         if frequencies_hz.is_empty()
             || frequencies_hz.len() > usize::from(u16::MAX)
@@ -114,7 +136,8 @@ impl Awp2Sampling {
         // CASA crops every A plane to the support of the highest frequency.
         let mut a_support = None;
         for &frequency in frequencies_hz.iter().rev() {
-            let beam = self.sky_beam(&model, frequency, &mut aperture_fft, &mut jones)?;
+            let beam =
+                self.sky_beam(&model, frequency, legacy_vla, &mut aperture_fft, &mut jones)?;
             let cell = ApertureCell::new(beam, self.sky_side, &mut sky_fft, a_support)?;
             a_support.get_or_insert(cell.a_side / 2);
             cells.push(cell);
@@ -130,18 +153,22 @@ impl Awp2Sampling {
         &self,
         model: &EvlaApertureModel,
         frequency: f64,
+        legacy_vla: bool,
         aperture_fft: &mut PlaneFft<f32>,
         jones: &mut [Complex32],
     ) -> Result<Vec<Complex32>, OperatorError> {
         let wavelength = SPEED_OF_LIGHT_M_PER_S / f64::from(frequency as f32);
-        let cell_m = wavelength / (self.aperture_side as f64 * self.cell_rad);
+        let cell_m = wavelength / (self.aperture_side as f64 * self.beam_cell_rad);
         let grid = EvlaApertureGrid::new(self.aperture_side, cell_m, 3, frequency, 0.0)
             .map_err(|_| invalid("invalid AWP2 aperture sampling"))?;
-        model
-            .fill_vla_l_aperture(grid, jones)
-            .map_err(|_| invalid("AWP2 could not evaluate its VLA aperture"))?;
+        if legacy_vla {
+            model.fill_vla_l_aperture(grid, jones)
+        } else {
+            model.fill_aperture(grid, jones)
+        }
+        .map_err(|_| invalid("AWP2 could not evaluate its aperture"))?;
         let norm = sky_jones_normalization(self.aperture_side, aperture_fft, jones)
-            .map_err(|_| invalid("AWP2 could not normalize its VLA aperture"))?;
+            .map_err(|_| invalid("AWP2 could not normalize its aperture"))?;
         let plane = self.aperture_side * self.aperture_side;
         let mut beam = Vec::with_capacity(self.sky_side * self.sky_side);
         let first = (self.aperture_side - self.sky_side) / 2;
@@ -297,8 +324,7 @@ impl Awp2Screens {
         let half_support = self.half_support();
         let fine_side = self.fine_side();
         let oversampling = self.sampling.oversampling;
-        let factor = self.sampling.image_side as f32 * f32::from(oversampling)
-            / self.sampling.sky_side as f32;
+        let factor = self.sampling.factor();
         let mut plane = vec![Complex32::default(); fine_side * fine_side];
         let sinc_table: Vec<_> = (-4000..4000)
             .map(|i| sinc((i as f64 / 1000.0) as f32))
@@ -417,7 +443,7 @@ struct Awp2Cell {
     weight: DenseCell,
 }
 
-/// AWPLPG's resident cells for one field, one W plane, and no squint.
+/// AWPLPG's resident cells for one W plane and no squint.
 pub struct Awp2 {
     frequencies_hz: Box<[f64]>,
     cells: Box<[Awp2Cell]>,
@@ -481,6 +507,10 @@ impl ConvolutionFunctionSet for Awp2 {
         true
     }
 
+    fn admits_pointing(&self, geometry: &GridGeometry, offset_rad: [f64; 2]) -> bool {
+        mosaic_pointing_on_image(geometry, offset_rad)
+    }
+
     fn grid_edge(&self) -> GridEdge {
         GridEdge::Clipped
     }
@@ -518,7 +548,7 @@ mod tests {
             crate::GridPadding::None,
         )
         .unwrap();
-        let sampling = Awp2Sampling::new(&geometry).unwrap();
+        let sampling = Awp2Sampling::new(&geometry, true).unwrap();
         // Captured from BeamCalc::calculateAperture and makeAConvFunc.
         assert_eq!(
             (
@@ -528,6 +558,43 @@ mod tests {
             ),
             (624, 52, 100)
         );
+    }
+
+    #[test]
+    fn awp2_two_field_sampling_matches_the_captured_convolution_grid() {
+        let cell_rad = 10.0_f64.to_radians() / 3600.0;
+        let geometry = GridGeometry::new(
+            crate::ImageExtent {
+                shape: [512; 2],
+                increment_rad: [-cell_rad, cell_rad],
+                reference_pixel: [256; 2],
+            },
+            crate::GridPadding::None,
+        )
+        .unwrap();
+        let sampling = Awp2Sampling::new(&geometry, false).unwrap();
+        // refim_mawproject.ms, SPW 1: makeAConvFunc keeps the full aperture.
+        assert_eq!((sampling.aperture_side, sampling.sky_side), (1024, 1024));
+        assert_eq!(sampling.oversampling, 20);
+        assert_eq!(resampled_side(38, sampling.factor()), 200);
+
+        // A wider two-field image keeps the original 512-pixel beam grid.
+        // The holder would use FFT resampling there, which is still guarded.
+        let wide_cell = 2.0 * cell_rad;
+        let wide = GridGeometry::new(
+            crate::ImageExtent {
+                increment_rad: [-wide_cell, wide_cell],
+                ..geometry.image()
+            },
+            crate::GridPadding::None,
+        )
+        .unwrap();
+        assert!(matches!(
+            Awp2Sampling::new(&wide, false),
+            Err(OperatorError::ConvolutionFunction {
+                reason: "AWP2 FFT resampling remains unsupported (#1071)",
+            })
+        ));
     }
 
     #[test]

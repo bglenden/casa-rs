@@ -403,7 +403,11 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "facets",
             "#1063",
         ),
-        (json!({ "gridder": "awp2", "niter": 1 }), "gridder", "#1071"),
+        (
+            json!({ "gridder": "awp2", "stokes": "Q" }),
+            "gridder",
+            "#1071",
+        ),
         (
             json!({ "gridder": "awp2", "wprojplanes": 2 }),
             "wprojplanes",

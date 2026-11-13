@@ -564,7 +564,7 @@ pub enum Gridder {
     },
     /// EVLA A-projection with W-projection.
     Awproject(AwProjection),
-    /// AWPLPG with one W plane and an unsquinted VLA L-band beam.
+    /// AWPLPG with one W plane and an unsquinted VLA or EVLA L-band beam.
     Awp2 {
         /// Optional explicit VLA radial dish surface in the CASA data format.
         #[serde(deserialize_with = "optional")]

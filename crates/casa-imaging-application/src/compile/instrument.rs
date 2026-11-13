@@ -152,7 +152,7 @@ pub(super) fn scientific_instrument_model(
                 (diameter - 25.0).abs() < 1.0
             })
         }
-        Gridder::Awp2 { .. } if all(|name| name == "VLA") => {
+        Gridder::Awp2 { .. } if all(|name| matches!(name, "VLA" | "EVLA")) => {
             (InstrumentModel::CasaVlaAwplpg, |diameter| diameter == 25.0)
         }
         Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_alma_aca_telescope) => (
