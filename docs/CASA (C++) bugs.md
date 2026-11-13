@@ -4686,3 +4686,22 @@ under the standing crash rule. `tools/simulation/sm_later_noise_oracle.py`
 records each control in a separate CASA process; the native regression is
 `crates/casa-simulation/tests/later_noise.rs`, with actual Metal coverage in
 `tests/backends/offline_noise.rs`.
+
+### Multi-feed observations accumulate the previous feed rotation
+
+CASA 6.7.6.14's `NewMSSimulator::observe` loads a feed's fixed BEAM_OFFSET
+before its integration loop, then rotates that same vector in place by each
+integration's parallactic angle. Later integrations therefore accumulate
+previous rotations instead of rotating the fixed antenna-frame offset once
+at their current epoch. Four integrations with two/three feeds and offsets
+of a few 1e-4 radians differ from otherwise identical single-integration
+calls by up to 0.045/0.092 m in UVW. Feed zero, whose offset is zero, agrees
+exactly; equatorial mounts require no rotation.
+
+casa-rs rotates the fixed offset at the current integration's epoch. This
+corrects a result that depends on how the same observation is split into
+calls and contradicts the fixed BEAM_OFFSET metadata. The independent
+reference consists of actual CASA single-integration controls, matched by
+TIME, antennas and FEED1/FEED2. FEED/POINTING metadata, row order and scan
+numbers still match the combined observation. Evidence is captured in
+`tools/simulation/sm_feeds_oracle.py` and `tests/feeds.rs` (#1293).

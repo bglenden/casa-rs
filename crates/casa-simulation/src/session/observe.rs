@@ -207,6 +207,9 @@ pub(crate) struct PlannedRows {
     pub(crate) state_id: usize,
     /// Antennas and feeds defined when `observe` was called.
     pub(crate) antenna_count: usize,
+    /// The observed feed, and its offset common to both receptors.
+    pub(crate) feed_id: i32,
+    pub(crate) feed_offset_rad: [f64; 2],
     /// Autocorrelation rows are written when the weight is positive.
     pub(crate) autocorrelation_weight: f32,
     pub(crate) elevation_limit_rad: f64,
@@ -372,40 +375,45 @@ impl super::Simulator {
             }
         };
         let mut scan_number = self.scans.last().map_or(0, |scan| scan.scan_number);
-        let mut pointing_rad = first_direction_rad;
         let mut integrations = 0;
-        for (index, pointing) in spec.pointings.iter().enumerate() {
-            let field_id = field_ids[index];
-            if index == 0 || pointing.source != spec.pointings[index - 1].source {
-                scan_number += 1;
-                pointing_rad = self.fields[field_id].direction_rad;
-            }
-            if let Some(direction) = directions[index] {
-                pointing_rad = direction;
-            }
-            let start_s = utc_s(pointing.start_s);
-            let integration_count =
-                integration_count(start_s, utc_s(pointing.stop_s), integration_s);
-            integrations += integration_count;
-            self.scans.push(Scan {
-                scan_number,
-                observation_id,
-                field_id,
-                spectral_window_id,
-                phase_center_rad: self.fields[field_id].direction_rad,
-                pointing_rad,
-                rows: ScanRows::Planned(PlannedRows {
-                    start_s,
-                    integration_s,
-                    integration_count,
+        let feeds = self.feeds.len() / self.antennas.len();
+        for feed in 0..feeds {
+            let mut pointing_rad = first_direction_rad;
+            for (index, pointing) in spec.pointings.iter().enumerate() {
+                let field_id = field_ids[index];
+                if index == 0 || pointing.source != spec.pointings[index - 1].source {
+                    scan_number += 1;
+                    pointing_rad = self.fields[field_id].direction_rad;
+                }
+                if let Some(direction) = directions[index] {
+                    pointing_rad = direction;
+                }
+                let start_s = utc_s(pointing.start_s);
+                let integration_count =
+                    integration_count(start_s, utc_s(pointing.stop_s), integration_s);
+                integrations += integration_count;
+                self.scans.push(Scan {
+                    scan_number,
                     observation_id,
-                    state_id,
-                    antenna_count: self.antennas.len(),
-                    autocorrelation_weight: self.autocorrelation_weight,
-                    elevation_limit_rad: self.elevation_limit_rad,
-                    shadow_fraction_limit: self.shadow_fraction_limit,
-                }),
-            });
+                    field_id,
+                    spectral_window_id,
+                    phase_center_rad: self.fields[field_id].direction_rad,
+                    pointing_rad,
+                    rows: ScanRows::Planned(PlannedRows {
+                        start_s,
+                        integration_s,
+                        integration_count,
+                        observation_id,
+                        state_id,
+                        antenna_count: self.antennas.len(),
+                        feed_id: feed as i32,
+                        feed_offset_rad: self.feeds[feed].offset_rad,
+                        autocorrelation_weight: self.autocorrelation_weight,
+                        elevation_limit_rad: self.elevation_limit_rad,
+                        shadow_fraction_limit: self.shadow_fraction_limit,
+                    }),
+                });
+            }
         }
         tracing::info!("Calculating a total of {integrations} integrations");
         self.data_plan.reset_selection();
@@ -413,7 +421,7 @@ impl super::Simulator {
     }
 
     /// The checks `NewMSSimulator::observe` makes before its fields, and
-    /// the default feeds it sets: antennas, feeds as one per antenna, and
+    /// the default feeds it sets: antennas, a rectangular feed layout, and
     /// the spectral window named `name`, whose index it returns.
     fn observable_window(&mut self, name: &str) -> SimulatorResult<usize> {
         if self.antennas.is_empty() {
@@ -429,7 +437,13 @@ impl super::Simulator {
             tracing::warn!("Times have not been set - using defaults");
             tracing::warn!("     Times will be interpreted as hour angles for first source");
         }
-        if self.feeds.len() != self.antennas.len() {
+        let feeds = self.feeds.len() / self.antennas.len();
+        if feeds == 0
+            || !self.feeds.len().is_multiple_of(self.antennas.len())
+            || self.feeds.iter().enumerate().any(|(row, feed)| {
+                feed.antenna_id != (row / feeds) as i32 || feed.feed_id != (row % feeds) as i32
+            })
+        {
             return Err(SimulatorError::refused(
                 "Feed table format is incompatible with existing code of NewMSSimulator::observe",
             ));

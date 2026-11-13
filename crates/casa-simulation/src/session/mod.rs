@@ -268,13 +268,13 @@ impl Simulator {
         Ok(())
     }
 
-    /// `sm.setfeed(mode, x, y, pol)`: append one perfect feed per antenna.
+    /// `sm.setfeed(mode, x, y, pol)`: append perfect or list-position feeds.
     ///
     /// # Errors
     ///
     /// A mode other than `perfect R L`, `perfect X Y` or `list` (CASA
-    /// returns `False`), no antennas yet, or several feeds per antenna,
-    /// which casa-rs does not write yet.
+    /// returns `False`), no antennas yet, or mismatched list coordinates
+    /// and receptor labels.
     pub fn set_feed(
         &mut self,
         mode: &str,

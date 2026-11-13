@@ -1468,3 +1468,23 @@ def test_noise_later_observations_keep_original_window_coverage(tmp_path: Path, 
         assert np.linalg.norm(data[:50] - expected) / np.linalg.norm(expected) < 1e-3
         assert Table.open(tmp_path / "noise.A.cal" / "SPECTRAL_WINDOW").row_count == 1
     assert Table.open(path / "SPECTRAL_WINDOW").row_count == 2
+
+
+@needs_measures
+def test_multiple_list_feeds_write_their_offsets_and_observation_rows(tmp_path: Path) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setfeed(mode="list", x=[0., 0.0002], y=[0., -0.0001], pol=["X", "R"])
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    assert sm.setnoise(simplenoise="0.1Jy") and sm.corrupt() and sm.close()
+    feeds = Table.open(tmp_path / "x.ms" / "FEED")
+    assert feeds.row_count == 8
+    assert np.array_equal(feeds.get_column("FEED_ID"), [0, 1] * 4)
+    assert np.array_equal(np.asarray(feeds.get_column("POLARIZATION_TYPE"))[1], ["L", "R"])
+    assert np.array_equal(np.asarray(feeds.get_column("BEAM_OFFSET"))[1], [[0.0002, 0.0002], [-0.0001, -0.0001]])
+    main = Table.open(tmp_path / "x.ms")
+    assert main.row_count == 60
+    assert np.array_equal(main.get_column("FEED1"), [0] * 30 + [1] * 30)
+    assert np.array_equal(main.get_column("FEED1"), main.get_column("FEED2"))
+    data = np.asarray(main.get_column("DATA"))
+    assert np.all(np.isfinite(data)) and np.any(data[:30]) and np.any(data[30:])
