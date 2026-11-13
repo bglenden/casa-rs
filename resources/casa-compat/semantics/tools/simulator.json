@@ -261,8 +261,8 @@
    ]
   },
   "setapply": {
-   "status": "Partial",
-   "scope": "Applies G/D/B/Df, scalar T/Tf, full polarized J/Jf, general Dgen/Dfgen leakage and X/Xf/GlinXph/GlinXphf polarized phase gains, and supplied K/Kcross/KMBD/KAntPos/TOpac/TfOpac/EGainCurve/EPowerCurve/B TSYS tables. Time interpolation supports nearest, linear, local cubic and corrected natural spline, with complex phase-delay and observation/scan modifiers. Real FPARAM values interpolate as signed parameters before physical gain evaluation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows skip the whole corruption step, including noise and corrected-data updates, as in CASA. Only covered windows allocate applied sample grids. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t does not change these solutions; supplied TOpac tables take precedence over the opacity argument. KAntPos accepts offsets but leaves simulated DATA unchanged, as CASA does below its B pivot. EGainCurve acts before leakage; Tsys uses CASA's reversed inversion sense and neutral invalid parameters. Invalid mappings, malformed parameter counts and cubic interior grids on physical axes of four or more channels with fewer than four valid samples raise; shorter physical axes use CASA linear fallback. Corrects the documented natural-spline first-knot defect. Cubic time interiors require four samples; exact/endpoint queries accept shorter axes. Corrects CASA spline-setup and unsynchronized per-scan crashes, retaining atomic failure. Other table types remain explicit #1291 refusals. Full polarized matrices use Jp V Jq^H, require all four correlations, and substitute identity for an invalid whole matrix; Dgen includes the second-order leakage term. Cross-hand phase and phase gains act upstream of leakage; multi-band delays use zero frequency as the phase reference.",
+   "status": "Implemented",
+   "scope": "Applies G/D/B/BPOLY/GSPLINE/Df, scalar T/Tf, full polarized J/Jf, general Dgen/Dfgen leakage and X/Xf/GlinXph/GlinXphf polarized phase gains, and supplied K/Kcross/KMBD/KAntPos/TOpac/TfOpac/EGainCurve/EPowerCurve/B TSYS, fringe, linear/circular ionosphere, switched-power, Accor and single-dish gain tables. Time interpolation supports nearest, linear, local cubic and corrected natural spline, with complex phase-delay and observation/scan modifiers. Real FPARAM values interpolate as signed parameters before physical gain evaluation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows skip the whole corruption step, including noise and corrected-data updates, as in CASA. Only covered windows allocate applied sample grids. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t does not change these solutions; supplied TOpac tables take precedence over the opacity argument. KAntPos accepts offsets but leaves simulated DATA unchanged, as CASA does below its B pivot. EGainCurve acts before leakage; Tsys uses CASA's reversed inversion sense and neutral invalid parameters. Invalid mappings, malformed parameter counts and cubic interior grids on physical axes of four or more channels with fewer than four valid samples raise; shorter physical axes use CASA linear fallback. Corrects the documented natural-spline first-knot defect. Cubic time interiors require four samples; exact/endpoint queries accept shorter axes. Corrects CASA spline-setup and unsynchronized per-scan crashes, retaining atomic failure. Supplied A Noise uses baseline/correlation parameters and the same time/frequency interpolation; supplied M/Mf tables apply inverse parallel-hand gains to the additive side, zero its cross hands, and leave the sky model unchanged below CASA's simulation B pivot. BPOLY uses the data frequency grid; GSPLINE uses legacy amplitude/phase B-splines, reference-frequency scaling and zero outside the fitted interval. Fringe phases advance by rate before time interpolation, then include delay and dispersion. Switched-power application requires the same SYSPOWER/CALDEVICE context as CASA. Factory-only calibration families are outside the demonstrated supplied-table simulation scope. Full polarized matrices use Jp V Jq^H, require all four correlations (circular-feed F is diagonal and also accepts partial products), and substitute identity for an invalid whole matrix; Dgen includes the second-order leakage term. Cross-hand phase and phase gains act upstream of leakage; multi-band delays use zero frequency as the phase reference.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -272,9 +272,9 @@
     "apply-flags-20261112",
     "apply-scalar-20261112",
     "apply-frequency-20261112",
-    "corruption-window-coverage-20261112"
-   ],
-   "issue": 1291
+    "corruption-window-coverage-20261112",
+    "supplied-simulation-tables-20261113"
+   ]
   },
   "setgain": {
    "status": "Implemented",
@@ -1555,6 +1555,19 @@
    "links": [
     "https://github.com/bglenden/casa-rs/issues/1292"
    ]
+  },
+  "supplied-simulation-tables-20261113": {
+   "kind": "Actual CASA 6.7.6.14 supplied calibration tables applied to simulated DATA",
+   "state": "passed",
+   "result": "19 independent reference cases pass under the unchanged 1e-3 DATA NRMS gate (largest 7.46e-7); successful baseline/physical cases agree for CPU W1/W3. Missing switched-power context raises with DATA and scratch/quality columns unchanged. CASA C++ reads 41 native outputs at maximum NRMS 7.46e-7. The narrow-input/wide-output law peaks at 11,731,954 bytes within 12,061,146 admitted, at most 24 bytes beyond reservation at an allocation; retained 11,010,961 within 11,011,897 charged. One Astra xhigh review is resolved. Final affected regression passes615 tests with0 failures and2 helper ignores, including memory and actual Metal cases. All required CI jobs pass in PR1338.",
+   "scope": "BPOLY including per-observation/per-scan fallback; GSPLINE inside/outside its fitted time range and at a second observing frequency; saved A Noise exact/interpolated times; M/Mf simulation pivot and combined A+M/Mf; single/interpolated fringe phases with rates/delays/dispersion; linear/circular F ionosphere; supplied switched-power, Accor and SDGAIN_OTFD. Earlier interpolation/context/mapping/matrix evidence remains applicable.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/1338"
+   ],
+   "casa_version": "6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_apply_polynomial_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_baseline_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_remaining_priors_oracle.py --out OUT --fixture FILE; cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors -- --nocapture; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT/parameters CASA_RS_POLYNOMIAL_OUT=EXPORT/polynomial cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors; CASAPY tools/simulation/sm_apply_supplied_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data; cargo test -p casa-simulation --test session_memory offline_noise::narrow_supplied_noise_admits_wide_output_interpolation -- --exact --nocapture",
+   "revision": "9747c2cb64eaf86f1650c749eb352be4802b2635",
+   "receipt": "https://github.com/bglenden/casa-rs/pull/1338"
   }
  }
 }
