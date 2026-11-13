@@ -227,7 +227,7 @@ fn diagonal_support(plane: &[Complex32], side: usize, cutoff: f32) -> Option<usi
     (1..=centre - 2).rev().find_map(|offset| {
         let index = (centre - offset) * (side + 1);
         (plane[index].norm() > cutoff * maximum)
-            .then(|| (std::f64::consts::SQRT_2 * offset as f64) as usize)
+            .then_some((std::f64::consts::SQRT_2 * offset as f64) as usize)
     })
 }
 
