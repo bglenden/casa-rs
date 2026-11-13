@@ -1115,6 +1115,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#array-configuration-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        array-configuration-controls
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5504,6 +5515,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#array-configuration-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        array-configuration-controls
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9704,7 +9726,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code>; <code>antennalist</code> → <code>antennalist</code></td>
 <td>Implemented</td>
 <td>An interferometer configuration file or an ALMA resolution string. <a href="#simobserve-behavior-antennas">antennas</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a>, <a href="#simobserve-evidence-array-configuration-controls">array-configuration-controls</a></td>
 </tr>
 <tr>
 <td><code>sdantlist</code></td>
@@ -9828,9 +9850,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-model-overrides-20261111">model-overrides-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>.</p>
 <p><a id="simobserve-behavior-antennas"></a></p>
 <h5 id="antenna-lists">Antenna lists<a class="headerlink" href="#antenna-lists" title="Permanent link">&para;</a></h5>
-<p><strong>Partial</strong> — antennalist and sdantlist as files, ALMA resolution strings ('alma;0.5arcsec'), the search through the project directory and CASA's alma/simmos, and sdant.</p>
-<p>Configuration names need CASA's data directory: casa-rs does not ship alma/simmos (an open owner question on #1053).</p>
-<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a>.</p>
+<p><strong>Implemented</strong> — antennalist and sdantlist as files, ALMA resolution strings ('alma;0.5arcsec'), the search through the project directory and CASA's alma/simmos, and sdant.</p>
+<p>Named configurations require external public alma/simmos files in a valid CASA_RS_MEASURESPATH or ~/.casa/data runtime. README describes obtaining them from NRAO's runtime-data archive; the compact measures snapshot does not bundle them. Project-local and explicit configuration files remain supported.</p>
+<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a>, <a href="#simobserve-evidence-array-configuration-controls">array-configuration-controls</a>.</p>
 <p><a id="simobserve-behavior-pointings"></a></p>
 <h5 id="pointings">Pointings<a class="headerlink" href="#pointings" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — setpointings with direction, mapsize, maptype and pointingspacing, or a ptgfile; written to <stem>.ptg.txt and checked against the model.</p>
@@ -10135,6 +10157,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>d7d5aa380ac1f7d0ec3ea87c623fff9ac7fbaa8b</code>; CASA: <code>casatasks 6.7.6.14, casatools 6.7.6-14</code>.</li>
 <li>Command: <code>CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --only uvw_long_vla_2017 uvw_long_vla_2025 uvw_long_alma_2017; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/simulation-uvw-long-baselines-20261112.json</code>.</li>
+</ul>
+<p><a id="simobserve-evidence-array-configuration-controls"></a></p>
+<h5 id="array-configuration-controls">array-configuration-controls<a class="headerlink" href="#array-configuration-controls" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-paired installed native task controls — recorded.</strong> CASA 6.7.6.14 and the installed native task agree for alma.out01.cfg, alma;0.078arcsec (out20), and project-local custom.cfg. Each writes 1,225 rows; names, stations, mounts, dish sizes, row IDs, scan numbers and TIME agree exactly. Maximum position/UVW differences are 4.66e-10/8.22e-8 m; DATA NRMS is zero. Standard runtime discovery and a separate runtime with 253 public configurations from casarundata-2026.10.27-1 both pass. Existing measures tables are held constant between implementations. Configuration discovery and resulting array/observation metadata. Public configuration files remain external runtime inputs; no new bundled-data policy or updater changes.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/issues/1293">https://github.com/bglenden/casa-rs/issues/1293</a></li>
 </ul>
 <h3 id="split">split<a class="headerlink" href="#split" title="Permanent link">&para;</a></h3>
 <ul>
