@@ -741,6 +741,7 @@ impl Simulator {
             .spectral_windows
             .iter()
             .map(|window| ComponentWindow {
+                stored_frequencies: window.stored_frequencies.clone(),
                 first_hz: window.start_frequency_hz,
                 step_hz: window.channel_width_hz,
                 channels: window.channel_count,

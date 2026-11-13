@@ -37,6 +37,7 @@ fn point(flux: Flux, direction: [f64; 2], frame: DirectionRef) -> SkyComponent {
 
 fn window(correlations: Vec<i32>) -> ComponentWindow {
     ComponentWindow {
+        stored_frequencies: None,
         first_hz: 230.0e9,
         step_hz: 0.1e9,
         channels: 2,
@@ -194,6 +195,7 @@ fn a_rows_channels_predict_as_each_components_visibility_one_channel_at_a_time()
     let listed = list(components.clone());
     // 2,048 channels of 2 MHz: the phasor's recurrence crosses the band.
     let window = ComponentWindow {
+        stored_frequencies: None,
         first_hz: 226.0e9,
         step_hz: 2.0e6,
         channels: 2_048,

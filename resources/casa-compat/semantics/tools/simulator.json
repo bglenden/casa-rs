@@ -16,7 +16,7 @@
   },
   "openfromms": {
    "status": "Partial",
-   "scope": "Opens an existing MeasurementSet for selected prediction/corruption and appended observe/observemany, preserving unselected DATA and existing scratch cells and respecting image sample flags while components and corruption also operate on flagged samples. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, and POINTING away from PHASE_DIR.",
+   "scope": "Opens an existing MeasurementSet for selected prediction/corruption and appended observe/observemany, preserving unselected DATA and existing scratch cells and respecting image sample flags while components and corruption also operate on flagged samples. Refused: data descriptions that are not the spectral windows in order, several feeds per antenna, polynomial PHASE_DIR, and POINTING away from PHASE_DIR. Stored irregular channel frequencies feed component/image predictions and supplied-table corruption. Channel and reference-frequency columns resolve their own fixed or mapped frame descriptors.",
    "evidence": [
     "signature",
     "binding-tests",
@@ -24,7 +24,9 @@
     "refusals",
     "flagged-samples-20261112",
     "selection-ordered-data-20261112",
-    "existing-append-20261113"
+    "existing-append-20261113",
+    "irregular-channels-20261113",
+    "frequency-frames-20261113"
    ],
    "issue": 1294
   },
@@ -1582,6 +1584,32 @@
    "command": "CASAPY tools/simulation/sm_existing_append_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_APPEND_EXPORT=EXPORT cargo test -p casa-simulation --test existing_append; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE; cargo test -p casa-simulation --test session_memory existing_append::existing_rows_are_copied_within_append_admission -- --exact --nocapture",
    "revision": "28d0a0153a77593ae234775b8dc48c1094b147eb",
    "receipt": "https://github.com/bglenden/casa-rs/pull/1339"
+  },
+  "irregular-channels-20261113": {
+   "kind": "Actual CASA calculations on stored irregular channel axes and retained-frequency allocation law",
+   "state": "passed",
+   "scope": "Ascending, descending and unordered CHAN_FREQ with unequal widths; displaced spectral-index components, four-plane images, B and GSPLINE table corruption. Other listed existing-MS layouts and selection forms remain on SIM-05/06.",
+   "result": "Twelve actual CASA6.7.6.14 cases pass CPU W1/W3 plus3 actualMetal image cases. CASA C++ reads and reopens27 nativeMSs, maximum rowDATA NRMS2.75e-7 under1e-3. Untouched DATA/quality/scratch/TIME and storedfrequencycells persist. The200k-channel ownership law peaks9,807,401bytes within12,800,256admitted and retains1,602,086within1,600,064plus existingallowance; smallbudgetrefuses beforepayloadread. 42 affected regressions and strictClippy pass. One Astra review finding fixed: explicitly select a spectral-index component and assert nonconstant CASA amplitudes.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_irregular_channels_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_IRREGULAR_EXPORT=EXPORT cargo test -p casa-simulation --test irregular_channels; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE; cargo test -p casa-simulation --test session_memory irregular_channels::stored_channel_axes_are_admitted_before_read_and_while_retained -- --exact --nocapture",
+   "revision": "0d316e310cc1b182ef33b8489c5e143e5eedd4ef",
+   "receipt": "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
+  },
+  "frequency-frames-20261113": {
+   "kind": "Actual CASA simulation with fixed/mapped distinct channel and reference-frequency frames",
+   "state": "passed",
+   "scope": "TOPO channel frequencies with BARY reference frequencies stored using fixed or custom integer-mapped descriptors; component/primary-beam/image prediction and B/GSPLINE corruption.",
+   "result": "Ten actual CASA6.7.6.14 cases pass CPU W1/W3 plus two actualMetal image cases. CASA C++ reads and reopens22 nativeMSs, maximum rowDATA NRMS1.014e-4 under1e-3. Untouched DATA/quality/scratch/TIME/frequency values and reference-frequency keywords persist. The old reader refuses the input; native existing-MS and irregular-grid regressions and strictClippy pass.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_frequency_frames_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_FRAMES_EXPORT=EXPORT cargo test -p casa-simulation --test frequency_frames --test irregular_channels --test open_from_ms; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE",
+   "revision": "5c12261cbff5b158fff32daf61ba2af22accbf52",
+   "receipt": "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
   }
  }
 }

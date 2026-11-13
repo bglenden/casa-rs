@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""CASA C++ reads appended native MSs and compares the actual CASA references."""
+"""CASA C++ reads native simulator MSs and compares actual CASA references."""
 import argparse
 import gzip
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from casatasks import version_string
-from casatools import simulator
+from casatools import simulator, table
 
 from sm_existing_append_oracle import snapshot
 
@@ -23,10 +23,18 @@ def main():
         fixture = json.load(stream)
     count = 0
     for case in fixture["cases"]:
-        for workers in (1, 3):
-            path = args.native / f"w{workers}-{case['name']}.ms"
+        prefixes = ["w1", "w3"]
+        if (args.native / f"metal3-{case['name']}.ms").exists():
+            prefixes.append("metal3")
+        for prefix in prefixes:
+            path = args.native / f"{prefix}-{case['name']}.ms"
             actual = snapshot(path)
             expected = case["after"]
+            if "frequencies_hz" in case:
+                tb = table()
+                tb.open(str(path / "SPECTRAL_WINDOW"))
+                assert np.array_equal(tb.getcell("CHAN_FREQ", 0), case["frequencies_hz"]), path
+                tb.close()
             assert len(actual["rows"]) == len(expected["rows"]), path
             worst = 0.
             for row, (observed, reference) in enumerate(zip(actual["rows"], expected["rows"])):
@@ -56,7 +64,7 @@ def main():
             assert sm.openfromms(str(path)), path
             sm.close()
             count += 1
-    print(f"CASA C++ read {count} appended native MeasurementSets")
+    print(f"CASA C++ read {count} native simulator MeasurementSets")
 
 
 if __name__ == "__main__":
