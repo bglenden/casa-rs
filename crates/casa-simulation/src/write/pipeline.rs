@@ -211,16 +211,16 @@ impl<'s> Pipeline<'s> {
 
     /// Write every row of the scans: `next` yields each integration with
     /// rows, as (scan, stored TIME), in MAIN order.
-    pub(super) fn write_rows(
+    pub(super) fn write_range(
         &mut self,
         writer: &mut MainWriter,
         mut next: impl Iterator<Item = (usize, f64)>,
-        row_count: usize,
+        range: std::ops::Range<usize>,
         batch_rows: usize,
     ) -> SimulatorResult<()> {
-        let mut first_row = 0;
-        while first_row < row_count {
-            let rows = batch_rows.min(row_count - first_row);
+        let mut first_row = range.start;
+        while first_row < range.end {
+            let rows = batch_rows.min(range.end - first_row);
             let started = Instant::now();
             self.rows.compute_geometry(&mut next, rows)?;
             self.times.geometry += started.elapsed();

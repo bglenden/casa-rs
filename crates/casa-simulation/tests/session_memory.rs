@@ -118,6 +118,8 @@ mod irregular_channels;
 mod jones;
 #[path = "session_memory/mixed_correlations.rs"]
 mod mixed_correlations;
+#[path = "session_memory/mixed_creation.rs"]
+mod mixed_creation;
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
 #[path = "session_memory/noise_tables.rs"]

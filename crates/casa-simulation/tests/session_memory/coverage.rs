@@ -72,25 +72,40 @@ fn partial_window_coverage_admits_batch_masks_and_preserved_scratch() {
             sm.set_noise(&NoiseSpec::simple(0.1)).unwrap();
         }
         sm.corrupt().unwrap();
-        let (closed, _) = measured_close(sm, &path, false);
+        let ordering = std::sync::atomic::Ordering::Relaxed;
+        let own_baseline = super::OWN_LIVE.load(ordering);
+        super::OWN_PEAK.store(own_baseline, ordering);
+        let batches_before = super::BATCH_ALLOCATED.load(ordering);
+        let (closed, pass) = measured_close(sm, &path, true);
+        let own = super::OWN_PEAK.load(ordering) - own_baseline;
+        if !opened {
+            assert!(pass.unwrap().batches > 2, "exercise the queued writer");
+            assert!(super::BATCH_ALLOCATED.load(ordering) > batches_before);
+        }
         assert!(
             closed.heap <= closed.admitted + ALLOWANCE_BYTES,
             "opened={opened}: {closed:?}"
         );
         std::fs::remove_dir_all(reference).unwrap();
         std::fs::remove_dir_all(table).unwrap();
-        closed
+        (closed, own)
     };
     for opened in [false, true] {
         run(60, opened);
-        let few = run(60, opened);
-        let many = run(600, opened);
+        let (few, few_own) = run(60, opened);
+        let (many, many_own) = run(600, opened);
         let admitted_growth = many.admitted.saturating_sub(few.admitted);
+        // Already-admitted write batches can overlap differently with the
+        // writer's pace. Count masks and preserved scratch apart from those
+        // buffers, using the allocator's existing batch tags; the full heap
+        // remains bounded by admission in every run above.
         assert!(
-            many.heap <= few.heap + admitted_growth + ROWS_ALLOWANCE_BYTES,
-            "coverage row growth: {few:?} -> {many:?}"
+            many_own <= few_own + admitted_growth + ROWS_ALLOWANCE_BYTES,
+            "coverage row growth: {few:?} -> {many:?}, non-batch {few_own} -> {many_own}"
         );
-        println!("coverage opened={opened}: {few:?} -> {many:?}");
+        println!(
+            "coverage opened={opened}: {few:?} -> {many:?}, non-batch {few_own} -> {many_own}"
+        );
     }
 }
 
