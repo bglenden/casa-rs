@@ -4450,6 +4450,16 @@ bound of the upper halo and remains excluded. CASA's image coordinate
 evaluates that boundary one floating-point step lower, which can
 admit the equality case.
 
+For native-LSRK cubic cubes with Briggs and uniform weighting, CASA's
+standard gridder applies the per-channel density weights by nearest
+neighbor while interpolating the data cubically. Capturing both gives
+identical standard dirty products when replayed with the weights in
+`WEIGHT_SPECTRUM`. CASA AW nearest applies those captured weights
+once, with the original cache. The clean comparison again predicts on
+stored channels before residual resampling. The two dirty and clean
+pairs agree with casa-rs on their masks, beams, controller counts and
+MODEL_DATA.
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed

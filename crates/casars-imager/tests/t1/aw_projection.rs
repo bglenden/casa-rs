@@ -739,6 +739,26 @@ fn an_aw_cubic_cube_uses_the_cubic_stencil() {
     assert_eq!(weights.len(), 5);
     assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
 
+    for weighting in ["briggs", "uniform"] {
+        let mut weighted_request = request.clone();
+        weighted_request["weighting"] = json!(weighting);
+        weighted_request["robust"] = json!(0.5);
+        let (_, weighted) =
+            observation.image(&format!("aw-offset-cubic-{weighting}"), weighted_request);
+        let sums = weighted.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), weights.len());
+        assert!(
+            sums.iter().all(|weight| *weight > 0.0),
+            "{weighting}: {sums:?}"
+        );
+        assert!(
+            sums.iter()
+                .zip(&weights)
+                .any(|(weighted, natural)| (weighted - natural).abs() > 1e-3 * natural),
+            "{weighting}: {sums:?}, natural: {weights:?}"
+        );
+    }
+
     request["interpolation"] = json!("linear");
     let (_, linear) = observation.image("aw-offset-linear-control", request);
     let difference = cubic
