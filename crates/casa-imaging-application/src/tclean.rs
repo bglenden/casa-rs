@@ -161,10 +161,9 @@ fn read(
 /// The modes that decide which parameters the request reads.
 struct Modes {
     cube: bool,
+    mvc: bool,
     gridder: &'static str,
-    /// Whether CASA weighs density by field, as it does for the gridder
-    /// named `mosaic` alone: it sets `mosweight=False` for `mosaicft` and
-    /// `ftmosaic` (`task_tclean.py`).
+    /// Whether CASA keeps `mosweight` for the selected gridder name.
     per_field_density: bool,
     deconvolver: String,
     weighting: String,
@@ -448,8 +447,9 @@ impl<'a> Tclean<'a> {
         self.set("usemask", usemask);
         Ok(Modes {
             cube: specmode != "mfs",
+            mvc,
             gridder,
-            per_field_density: gridder_name == "mosaic",
+            per_field_density: matches!(gridder_name, "mosaic" | "awp2"),
             deconvolver: deconvolver.to_string(),
             weighting: weighting.to_string(),
             user_mask: usemask == "user",
@@ -719,7 +719,7 @@ impl<'a> Tclean<'a> {
     fn gridding(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.copy(&["pblimit"])?;
         if modes.gridder == "awp2" {
-            self.awp2_controls()?;
+            self.awp2_controls(modes.mvc)?;
         }
         if modes.gridder == "awproject" {
             self.copy(&["computepastep", "rotatepastep"])?;
@@ -788,13 +788,10 @@ impl<'a> Tclean<'a> {
         if matches!(modes.gridder, "mosaic" | "awproject" | "awp2") {
             self.set("normtype", normtype);
         }
-        // CASA weighs density by field only for the gridder named mosaic
-        // (`task_tclean.py`), and over all fields for mosaicft and
-        // ftmosaic: a continuum density per field (`VisImagingWeight`'s
-        // `multiField`) or a cube's per-channel density per field
-        // (`BriggsCubeWeightor`'s).
+        // task_tclean.py keeps mosweight for mosaic and awp2. Its
+        // mosaicft and ftmosaic aliases use the density over all fields.
         let mosweight = self.flag("mosweight")?;
-        if modes.gridder == "mosaic" {
+        if matches!(modes.gridder, "mosaic" | "awp2") {
             self.set("mosweight", mosweight && modes.per_field_density);
         }
         self.aw_terms(modes)?;
@@ -838,13 +835,14 @@ impl<'a> Tclean<'a> {
     }
 
     /// AWPLPG selects W planes and squint independently of AWProjectFT.
-    fn awp2_controls(&mut self) -> Result<(), TcleanRefusal> {
+    fn awp2_controls(&mut self, mvc: bool) -> Result<(), TcleanRefusal> {
         let pa_step = self
             .value("computepastep")?
             .as_f64()
             .map(|step| step as f32)
             .filter(|step| step.is_finite() && *step > 0.0);
-        let squint_supported = self.text("stokes")? == "IV" && self.integer("wprojplanes")? > 1;
+        let squint_supported = self.integer("wprojplanes")? > 1
+            && (self.text("stokes")? == "IV" || (mvc && self.text("stokes")? == "I"));
         let controls = [
             (
                 "computepastep",

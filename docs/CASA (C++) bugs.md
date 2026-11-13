@@ -4828,6 +4828,32 @@ NRMS. An independent CASA control that grows the holder before
 with exact masks and sum of weights. casa-rs always centres the PA
 planes. [Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
 
+## AWP2's Float sensitivity FFT can flip the primary-beam cutoff
+
+AWPLPG accumulates the sensitivity grid in double precision.
+`MosaicFT::finalizeToSky` converts that grid to Float for its inverse FFT.
+`SIImageStore::makePBFromWeight` and `divideResidualByWeight` then apply the
+strict `abs(pblimit)` cut. CASA's single-precision FFT can move a value
+across that cutoff by rounding alone.
+
+The named CASA 6.7.6-14 `test_widefield_mvc_squint_awp2` clean uses two fields
+of `vla_wideband_2ptg_w_squint.ms`, a 2000-square Stokes I image, uniform
+weighting, four W planes, a 15° PA step, and `pblimit=-0.1`. Four of
+20 million cube PB mask pixels differ between the release and native runs.
+The uncut beams at those pixels are within 1.3e-7 of 0.1. In output
+channel 3 (zero-based), one cutoff pixel raises the clean residual error
+to 1.132e-3 NRMS. Its error away from the cutoff crossings is 1.84e-4.
+
+A local CASA C++ control replaces only the Float inverse sensitivity FFT
+with CASA's own `FFT2D::c2cFFTInDouble`, preserving Float image storage
+and the strict cutoff. It reproduces all four PB mask flips within CASA,
+including the residual difference in channel 3. Native keeps its existing
+double-precision transform and the same cutoff. It agrees with this CASA
+control on all 25 clean products, with exact masks and cube sum of weights,
+the same 20 iterations, two major cycles and stop code 1, and a maximum
+per-plane NRMS of 1.60e-5. The channel-3 residual agrees within 7.58e-6.
+[Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
+
 ## Simulator image prediction retains the first window's polarization map
 
 CASA 6.7.6.14 image prediction over windows with different `CORR_TYPE` arrays

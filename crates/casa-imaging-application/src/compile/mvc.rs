@@ -35,6 +35,8 @@ pub(crate) fn cube_request(
     cube.start = Some(format!("{lower}Hz"));
     cube.width = Some(format!("{}Hz", (upper - lower) / channels as f64));
     cube.interpolation = CubeInterpolation::Nearest;
+    // CASA's MVC cube uses usecubebriggs=False and reuses the continuum density.
+    cube.perchanweightdensity = false;
     cube.restoration = false;
     cube.write_pb = true;
     Ok(casa_imaging_runtime::Admitted {
@@ -243,17 +245,25 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     })
 }
 
-/// The first native MVC slice forms a fresh cube and its two-term Taylor
-/// products. Cleaning uses nsigma=0 and spatial-only user boxes. Restart
-/// and side effects remain refused (#1069).
+/// MVC forms a fresh cube and its two-term Taylor products. Cleaning uses
+/// nsigma=0 and spatial-only user boxes. Restart and side effects are
+/// outside this execution scope (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
 ) -> Result<(), super::PrepareError> {
     use casa_imaging_model::RestoringBeamPolicy;
     use casa_types::measures::frequency::FrequencyRef;
+    let field_limit = if matches!(
+        request.gridder,
+        crate::Gridder::Awp2 { computepastep, .. } if computepastep < 180.0
+    ) {
+        2
+    } else {
+        1
+    };
     if request.vis.len() != 1
-        || selected_fields != 1
+        || !(1..=field_limit).contains(&selected_fields)
         || (request.niter != 0
             && (request.nsigma != 0.0
                 || request.mask_box.iter().any(|region| region.range.is_some())))
@@ -291,7 +301,9 @@ fn check_view_scope(
             || matches!(parent.gridder, crate::Gridder::Awp2 { .. }))
         || parent.stokes != [casa_imaging_model::PolarizationCoordinate::StokesI]
         || parent.nterms != 2
-        || parent.weighting != crate::Weighting::Natural
+        || (parent.weighting != crate::Weighting::Natural
+            && !matches!(parent.gridder, crate::Gridder::Awp2 { computepastep, .. }
+                if computepastep < 180.0 && parent.weighting == crate::Weighting::Uniform))
     {
         return Err(super::PrepareError::MvcViewUnsupported);
     }

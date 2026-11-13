@@ -152,9 +152,14 @@ pub(super) fn scientific_instrument_model(
                 (diameter - 25.0).abs() < 1.0
             })
         }
-        Gridder::Awp2 { .. } if all(|name| matches!(name, "VLA" | "EVLA")) => {
-            (InstrumentModel::CasaVlaAwplpg, |diameter| diameter == 25.0)
-        }
+        Gridder::Awp2 { computepastep, .. } if all(|name| matches!(name, "VLA" | "EVLA")) => (
+            if *computepastep < 180.0 {
+                InstrumentModel::CasaVlaAwplpgSquint
+            } else {
+                InstrumentModel::CasaVlaAwplpg
+            },
+            |diameter| diameter == 25.0,
+        ),
         Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_alma_aca_telescope) => (
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
             |diameter| AntennaResponseClass::casa_alma_aca(diameter).is_some(),

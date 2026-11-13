@@ -619,6 +619,9 @@ fn specification_inputs(
     let density_fields = match request.gridder {
         Gridder::Mosaic {
             mosweight: true, ..
+        }
+        | Gridder::Awp2 {
+            mosweight: true, ..
         } => density_field_keys(surveyed.stores),
         _ => None,
     };

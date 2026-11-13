@@ -41,7 +41,8 @@ pub(super) fn plan(
         return Err(PrepareError::Awp2Selection);
     }
     let window = &windows[0];
-    if surveyed.stores.len() != 1
+    if (*computepastep < 180.0 && windows.len() != 1)
+        || surveyed.stores.len() != 1
         || surveyed.msv2.is_none()
         || surveyed
             .survey
@@ -130,6 +131,7 @@ pub(super) fn plan(
             *computepastep,
             count,
             frequencies_hz.len(),
+            request.mvc_output_channels.is_some(),
         )?
     } else {
         (Box::default(), 0.0)
@@ -161,8 +163,9 @@ fn squint_centres(
     step_deg: f32,
     w_count: usize,
     frequency_count: usize,
+    mvc: bool,
 ) -> Result<(Box<[f64]>, f32), PrepareError> {
-    if surveyed.survey.fields.len() != 1 {
+    if surveyed.survey.fields.len() != 1 && !mvc {
         return Err(PrepareError::Awp2Selection);
     }
     let feed_rad =

@@ -34,11 +34,6 @@ use casa_imaging_application::{
     Admission, ApplicationDispatchError, HostResources, ImagingOutcome, ImagingRequest,
     ResourcePolicy, RunContext,
 };
-use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
-    SyntheticSkyModel, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
-};
 use serde_json::{Value, json};
 
 #[path = "common/imaging.rs"]
@@ -1411,71 +1406,7 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
 /// pads drawn 35 times towards their centroid (a 41″ beam), a 1 Jy point
 /// at the phase centre, two 8 MHz channels at 1.5 GHz over an hour.
 fn evla_observation(root: &Path) -> PathBuf {
-    l_band_observation(root, "EVLA", &[1.5e9], 2)
-}
-
-fn l_band_observation(
-    root: &Path,
-    telescope: &str,
-    frequencies_hz: &[f64],
-    channels_per_window: usize,
-) -> PathBuf {
-    let measurement_set = root.join(format!("admission-{telescope}.ms"));
-    let mut antennas = tutorial_vla_a_antennas();
-    let count = antennas.len() as f64;
-    let centroid = antennas.iter().fold([0.0; 3], |sum, antenna| {
-        [
-            sum[0] + antenna.position_m[0] / count,
-            sum[1] + antenna.position_m[1] / count,
-            sum[2] + antenna.position_m[2] / count,
-        ]
-    });
-    for antenna in &mut antennas {
-        for (position, centre) in antenna.position_m.iter_mut().zip(centroid) {
-            *position = centre + (*position - centre) / 35.0;
-        }
-    }
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
-        root.join("unused.fits"),
-        &measurement_set,
-        antennas,
-    );
-    request.telescope_name = telescope.to_string();
-    request.duration_seconds = 3_600.0;
-    request.integration_seconds = 60.0;
-    request.spectral_windows = frequencies_hz
-        .iter()
-        .enumerate()
-        .map(|(index, &frequency)| SyntheticSpectralSetup {
-            name: format!("admission-lband-{index}"),
-            start_frequency_hz: frequency,
-            channel_width_hz: 8.0e6,
-            channel_count: channels_per_window,
-        })
-        .collect();
-    request.model = Some(SyntheticSkyModel::AnalyticComponents {
-        path: None,
-        schema_version: Some(1),
-        name: Some("admission-aw".to_string()),
-        components: vec![SyntheticAnalyticComponent::Point {
-            name: Some("point".to_string()),
-            l_rad: 0.0,
-            m_rad: 0.0,
-            spectrum: SyntheticAnalyticSpectrum {
-                flux_jy: 1.0,
-                spectral_index: -0.7,
-                reference_frequency_hz: Some(1.5e9),
-                line_peak_jy: 0.0,
-                line_center_fraction: 0.5,
-                line_sigma_fraction: 0.1,
-                absorption_peak_jy: 0.0,
-                absorption_center_fraction: 0.5,
-                absorption_sigma_fraction: 0.1,
-            },
-        }],
-    });
-    generate_synthetic_observation_ms(&request).expect("synthesise the EVLA MS");
-    measurement_set
+    aw::l_band_observation(root, "EVLA", &[1.5e9], 2, false)
 }
 
 /// A paraboloid EVLA dish surface in the radius/height/slope text format,

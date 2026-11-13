@@ -22,12 +22,12 @@ use casa_types::measures::{
 pub enum PrepareError {
     /// The initial MVC execution cannot honour this run's controls yet.
     #[error(
-        "MVC supports fresh imaging of one selected field and MeasurementSet with LSRK coordinates, no model-column or virtual-model writes, and a user box or full mask; cleaning requires nsigma=0 and spatial-only user boxes (#1069)"
+        "MVC supports fresh imaging of one selected MeasurementSet with LSRK coordinates, up to two fields for squinted AWP2 or one field for the other modes, no model-column or virtual-model writes, and a user box or full mask; cleaning requires nsigma=0 and spatial-only user boxes (#1069)"
     )]
     MvcExecutionUnsupported,
     /// The additional MVC view is not yet bounded for this configuration.
     #[error(
-        "MVC currently supports one fixed-centre Stokes I domain, natural weighting, a single standard-gridder facet or unsquinted zero-W AWP2, and two Taylor terms (#1069)"
+        "MVC supports one fixed-centre Stokes I domain and two Taylor terms, with natural weighting for a single standard-gridder facet or unsquinted zero-W AWP2, or uniform weighting for squinted AWP2 (#1069, #1071)"
     )]
     MvcViewUnsupported,
     /// CASA MVC could not choose enough output channels for its Taylor terms.
