@@ -107,6 +107,19 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) diagnostics: Diagnostics,
 }
 
+impl ImagingInputs<'_> {
+    fn kernel_deployments(&self) -> (Option<(&AwCatalogDeployment, f64)>, Option<&Awp2Deployment>) {
+        // Availability restricts AW to a single MeasurementSet.
+        let aw = self.aw_catalog.as_ref().map(|catalog| {
+            (
+                catalog,
+                self.source.stores[0].plan.gridding_frequency_scale(),
+            )
+        });
+        (aw, self.awp2.as_ref())
+    }
+}
+
 /// The independently compiled Taylor view used by an MVC cleaning cycle.
 #[derive(Clone, Copy)]
 pub(crate) struct MvcCycleSpec<'a> {
@@ -543,11 +556,6 @@ impl<'a> Run<'a> {
         let correlations = selected_correlations(problem)?;
         let route = inputs.source;
         let keys = route.keys();
-        // Availability restricts AW to a single MeasurementSet.
-        let aw_catalog = inputs
-            .aw_catalog
-            .as_ref()
-            .map(|catalog| (catalog, route.stores[0].plan.gridding_frequency_scale()));
         let (host, policy) = (inputs.host, inputs.policy);
         // The passes' workers hold the kernels: at most the policy's.
         let ceiling = policy.cores(&host);
@@ -569,7 +577,7 @@ impl<'a> Run<'a> {
                     backend,
                     inputs.grid_precision,
                     inputs.ft_padding,
-                    (aw_catalog, inputs.awp2.as_ref()),
+                    inputs.kernel_deployments(),
                     &keys,
                     admission,
                 )
