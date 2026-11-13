@@ -261,7 +261,11 @@ fn patch_range(
                 .phases()
                 .iter()
                 .flat_map(|phase| phase.predictions())
-                .any(|(prediction, _)| prediction.focus.is_some()),
+                .any(|(prediction, _)| {
+                    prediction.focus.is_some()
+                        || prediction.tangent.refer()
+                            != casa_types::measures::direction::DirectionRef::J2000
+                }),
         noise_scales: NoiseScales::of(plan, channels, None),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref(), &rows)?;

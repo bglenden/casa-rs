@@ -43,8 +43,8 @@ pub struct SkyModel {
     polarizations: Vec<PolarizationCoordinate>,
     /// Signed radians per pixel `[Δx, Δy]`.
     pub(super) increment_rad: [f64; 2],
-    /// J2000 direction of pixel `(nx/2, ny/2)`, CASA's tangent point.
-    centre_rad: [f64; 2],
+    /// Context for interpreting the native direction frame.
+    frame: MeasFrame,
     /// The tangent in the direction coordinate's native reference.
     tangent: MDirection,
     /// Frequency of plane 0 in Hz.
@@ -80,7 +80,7 @@ impl std::fmt::Debug for SkyModel {
             .field("shape", &self.shape)
             .field("planes", &self.planes)
             .field("increment_rad", &self.increment_rad)
-            .field("centre_rad", &self.centre_rad)
+            .field("tangent", &self.tangent)
             .field("first_frequency_hz", &self.first_frequency_hz)
             .field("frequency_increment_hz", &self.frequency_increment_hz)
             .finish_non_exhaustive()
@@ -100,8 +100,7 @@ impl SkyModel {
     /// # Errors
     ///
     /// An unreadable image, one whose axes are not those above, a direction
-    /// coordinate outside J2000/B1950/GALACTIC/ICRS, or a spectral axis not in
-    /// frequency units.
+    /// coordinate that cannot be read, or a spectral axis not in frequency units.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PredictError> {
         let path = path.as_ref();
         let image =
@@ -142,26 +141,6 @@ impl SkyModel {
                 })
             })
             .collect::<Result<Vec<_>, PredictError>>()?;
-        // Stored UVW is J2000. The projection carries it into these image
-        // frames; epoch-dependent FK4 conversion uses the selected MS epoch.
-        let fixed = |reference| {
-            matches!(
-                reference,
-                DirectionRef::J2000
-                    | DirectionRef::B1950
-                    | DirectionRef::GALACTIC
-                    | DirectionRef::ICRS
-            )
-        };
-        if let CoordinateModel::Direction(direction) = coordinates.coordinate(0)
-            && (!fixed(direction.direction_ref()) || !fixed(direction.conversion_direction_ref()))
-        {
-            return unsupported(format!(
-                "the native and conversion frames must be fixed J2000/B1950/GALACTIC/ICRS (got {:?} and {:?})",
-                direction.direction_ref(),
-                direction.conversion_direction_ref()
-            ));
-        }
         // A conversion layer changes displayed world coordinates, not the
         // physical pixel grid. DirectionCoordinate's MDirection overload in
         // CASA incorrectly relabels converted values with the native type.
@@ -192,16 +171,6 @@ impl SkyModel {
         };
         let tangent =
             MDirection::from_angles(centre[0], centre[1], direction.conversion_direction_ref());
-        let physical = if tangent.refer() == DirectionRef::J2000 {
-            (centre[0], centre[1])
-        } else {
-            tangent
-                .convert_to(DirectionRef::J2000, &MeasFrame::new())
-                .map_err(|error| {
-                    casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
-                })?
-                .as_angles()
-        };
         let distance_m = match image.misc_info().get("distance") {
             Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(value))) => *value,
             Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float32(value))) => {
@@ -237,7 +206,7 @@ impl SkyModel {
             planes,
             polarizations,
             increment_rad: [increment[0], increment[1]],
-            centre_rad: [physical.0, physical.1],
+            frame: MeasFrame::new(),
             tangent,
             first_frequency_hz: centre[3] * hz_per_unit,
             frequency_increment_hz: coordinates.coordinate(2).increment()[0] * hz_per_unit,
@@ -269,9 +238,28 @@ impl SkyModel {
     }
 
     /// J2000 direction of pixel `(nx/2, ny/2)`, CASA's tangent point.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion requires context not supplied by [`Self::with_frame`].
+    pub fn centre_rad(&self) -> Result<[f64; 2], PredictError> {
+        let (ra, dec) = self
+            .tangent
+            .convert_to(DirectionRef::J2000, &self.frame)
+            .map_err(|error| {
+                casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
+            })?
+            .as_angles();
+        Ok([ra, dec])
+    }
+
+    /// Set the epoch/position context used to interpret native image directions.
+    /// The simulator supplies its selected visibility-buffer context before
+    /// preparing beams; opening an image alone only reads its header.
     #[must_use]
-    pub fn centre_rad(&self) -> [f64; 2] {
-        self.centre_rad
+    pub fn with_frame(mut self, frame: MeasFrame) -> Self {
+        self.frame = frame;
+        self
     }
 
     /// The centre pixel's direction in the image's native reference.
@@ -306,7 +294,7 @@ impl SkyModel {
             (direction_rad[0], direction_rad[1])
         } else {
             MDirection::from_angles(direction_rad[0], direction_rad[1], DirectionRef::J2000)
-                .convert_to(self.tangent.refer(), &MeasFrame::new())
+                .convert_to(self.tangent.refer(), &self.frame)
                 .map_err(|error| {
                     casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
                 })?
@@ -440,7 +428,7 @@ impl SkyModel {
             planes: self.planes,
             polarizations: self.polarizations.clone(),
             increment_rad: self.increment_rad,
-            centre_rad: self.centre_rad,
+            frame: self.frame.clone(),
             tangent: self.tangent.clone(),
             first_frequency_hz: self.first_frequency_hz,
             frequency_increment_hz: self.frequency_increment_hz,

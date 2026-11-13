@@ -590,7 +590,11 @@ fn default_ref_maps() {
     assert_eq!(codes[6], 6);
 
     let (types, codes) = default_direction_ref_map();
-    assert_eq!(types.len(), 19);
+    assert_eq!(types.len(), 22);
+    for (name, code) in [("B1950_VLA", 5), ("BMEAN", 6), ("BTRUE", 7)] {
+        let index = types.iter().position(|value| value == name).unwrap();
+        assert_eq!(codes[index], code);
+    }
     // J2000 should be code 0
     let j2000_idx = types.iter().position(|t| t == "J2000").unwrap();
     assert_eq!(codes[j2000_idx], 0);

@@ -233,10 +233,11 @@ fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
         let team = WorkerTeam::new(workers).expect("team");
         let admitted = row_work_pass_bytes(&domains, workers, weight)
             + source_block_bytes(rows.maximum_block());
+        let cancel = Cancel::new();
         let baseline = LIVE.load(Ordering::Relaxed);
         PEAK.store(baseline, Ordering::Relaxed);
         MEASURING.store(true, Ordering::Relaxed);
-        let result = run_row_work_pass(&domains, &weighting, &mut rows, &team, &Cancel::new());
+        let result = run_row_work_pass(&domains, &weighting, &mut rows, &team, &cancel);
         MEASURING.store(false, Ordering::Relaxed);
         let work = result.expect("row-work pass").rows;
         assert!(work.iter().all(Option::is_some), "both domains are split");

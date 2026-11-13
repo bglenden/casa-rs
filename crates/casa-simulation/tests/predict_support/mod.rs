@@ -395,8 +395,9 @@ pub fn reference_through(
     let predictors = [CENTRE_RAD, OFFSET_RAD].map(|pointing| {
         ModelPredictor::new(&model, correlations, pointing, &options).expect("predictor")
     });
-    let projections = [CENTRE_RAD, OFFSET_RAD]
-        .map(|phase| GridFtProjection::between_j2000_directions(phase, model.centre_rad()));
+    let projections = [CENTRE_RAD, OFFSET_RAD].map(|phase| {
+        GridFtProjection::between_j2000_directions(phase, model.centre_rad().unwrap())
+    });
     let mut workspace = PredictionWorkspace::default();
     let flags = vec![false; CHANNELS * correlations.len()];
     rows.iter()

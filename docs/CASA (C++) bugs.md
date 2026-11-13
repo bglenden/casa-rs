@@ -5003,3 +5003,70 @@ Seeded flags, quality and untouched-window cells still use their raw references.
 Combined image/component controls additionally reuse the independent image-only
 plus component-only correction for the flagged-component duplication documented
 above. No CASA tolerance is relaxed.
+
+## Zero observer radius creates spurious diurnal aberration
+
+- Date noted: 2026-11-13
+- Status: CASA defect; casa-rs uses the zero-radius limit (#1295).
+- Affected code: casacore `MeasMath::applyTOPOtoHADEC` and
+  `MVPosition::readjust`; CASA `FTMachine`'s default reference position.
+
+The simulator's unset reference position is the geocentre. Its diurnal
+aberration factor is zero, but `MVPosition::readjust(0)` scales the unit
+correction direction by `1e-6`. The resulting spurious aberration changes
+HADEC, horizon and terrestrial image prediction. The same C++ calculation at
+an ITRF radius of one micrometre has negligible physical aberration and
+removes the discontinuity. For the image-frame control's first baseline,
+C++ gives path delays of -14.597005554443669 m at exactly zero radius and
+-14.597027123114067 m at the one-micrometre limit. Direct C++ calls reproduce
+this without the Python position-record conversion.
+
+casa-rs retains zero aberration at zero radius. The horizon-frame oracle in
+`tools/simulation/sm_image_layouts_oracle.py` prepares and predicts images in
+the same limit frame; it records this correction in the fixture. Separate
+nonzero-delay C++ UVWMachine controls at two visibility epochs check both the
+rotation refresh and the retained construction-time phase centre. The
+end-to-end controls keep the existing 1e-3 tolerance.
+
+## GridFT's visibility phase uses a single-precision pi constant
+
+- Date noted: 2026-11-13
+- Status: CASA defect; casa-rs retains double-precision phase arithmetic (#1295).
+- Affected code: `synthesis/fortran/fgridft.f`, `locuvw`.
+
+`locuvw` declares `pi` double precision but initializes it with the
+default-real literal `data pi/3.14159265358979323846/`. The literal is rounded
+to single precision before conversion. Calling the shipped CASA 6.7.6.14
+Fortran routine directly with a 100 m delay and 100 GHz frequency returns
+`(-0.8458330035, -0.5334478021)`; double-precision pi gives
+`(-0.8427074474, -0.5383717657)`. The returned phasor agrees with pi first
+rounded to float32. Large absolute delays can therefore exceed the usual
+DATA tolerance even when the C++ and Rust UVW and physical path delays agree.
+
+casa-rs keeps the double-precision constant. The image-frame DATA controls
+use matching observer frames and a small initial phase offset; an independent
+C++ projection control also checks a nonzero delay. This avoids assigning
+CASA's phase-constant error to the direction conversion.
+
+## The simulator mosaic beam axis mislabels irregular frequencies
+
+- Date noted: 2026-11-13
+- Status: CASA defect; casa-rs evaluates beams at the actual frequencies (#1295).
+- Affected code: `synthesis/TransformMachines/HetArrayConvFunc.cc`,
+  `findConvFunction`.
+
+`findUsefulChannels` preserves an irregular selected frequency vector, but
+`findConvFunction` constructs the beam image's spectral coordinate with only
+its first frequency and first spacing. For `[100, 150, 210, 300]` GHz the
+beam planes are consequently evaluated at `[100, 150, 200, 250]` GHz. A
+four-plane image with a central source and an offset source reproduces the
+error even in J2000, independently of direction-frame conversion.
+
+casa-rs builds each beam at its actual frequency. The oracle retains CASA's
+raw DATA and obtains the 210 and 300 GHz DATA and CORRECTED_DATA columns from
+independent constant-frequency CASA predictions of the same sky. The first
+two channels, model column, unselected rows and quality columns retain their
+ordinary CASA references. These controls agree with native prediction at
+5.4e-7 NRMS in the J2000 case, without changing the 1e-3 threshold. Reproduce
+a frequency control with `sm_image_layouts_oracle.py --case
+frame_j2000_mosaic --constant-frequency 210000000000 --out OUT --fixture FILE`.

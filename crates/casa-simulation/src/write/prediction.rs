@@ -112,6 +112,7 @@ struct Segment {
     field: usize,
     projections: Vec<GridFtProjection>,
     pointing_offsets: Vec<[f64; 2]>,
+    projection_epoch_s: Option<f64>,
 }
 
 /// The segment of `scan`, which the predict steps `steps` of `predictions`
@@ -150,22 +151,25 @@ fn segment_of(
         // `MosaicFT` reprojects through `girarUVW`, the others through
         // `rotateUVW`.
         let phase = prediction.phase_centre(scan);
+        let source = MDirection::from_angles(phase[0], phase[1], DirectionRef::J2000);
+        let frame = prediction.frame(scan)?;
         let projection = match prediction.model.machine() {
-            FtMachine::Mosaic => {
-                GridFtProjection::mosaic_between_j2000_directions(phase, prediction.tangent_rad)
-            }
+            FtMachine::Mosaic => GridFtProjection::mosaic_between_directions_with_frame(
+                &source,
+                &prediction.tangent,
+                &frame,
+            ),
             FtMachine::Grid(_) | FtMachine::WProject(_) => {
-                let source = MDirection::from_angles(phase[0], phase[1], DirectionRef::J2000);
                 GridFtProjection::between_directions_with_frame(
                     &source,
                     &prediction.tangent,
-                    &prediction.frame(scan)?,
+                    &frame,
                 )
-                .map_err(|error| {
-                    SimulatorError::raised(format!("simulator image-frame projection: {error}"))
-                })?
             }
-        };
+        }
+        .map_err(|error| {
+            SimulatorError::raised(format!("simulator image-frame projection: {error}"))
+        })?;
         projections.push(projection);
         pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
     }
@@ -175,6 +179,7 @@ fn segment_of(
         field: scan.field_id,
         projections,
         pointing_offsets,
+        projection_epoch_s: None,
     })
 }
 
@@ -705,7 +710,7 @@ impl<'s> PredictionStage<'s> {
                     scan,
                     &rows[block_start..block_end],
                     self.noise_row_offset + first_row + block_start as u64,
-                );
+                )?;
                 self.fill_time += started.elapsed();
                 let Some((_, predictor)) = &mut self.predictor else {
                     unreachable!("selected above");
@@ -797,8 +802,14 @@ impl<'s> PredictionStage<'s> {
 
     /// Fill the block with `rows` of `scan`, the first MAIN row
     /// `first_row`, projected on `segment`'s domains.
-    fn fill_block(&mut self, segment: usize, scan: &Scan, rows: &[RowGeometry], first_row: u64) {
-        let segment = &self.segments[segment];
+    fn fill_block(
+        &mut self,
+        segment: usize,
+        scan: &Scan,
+        rows: &[RowGeometry],
+        first_row: u64,
+    ) -> SimulatorResult<()> {
+        let segment = &mut self.segments[segment];
         // Every row of the scan has its window's frequencies, and unit
         // weights and no sample flags, so the block keeps them once.
         self.block.reset_shared(
@@ -816,6 +827,32 @@ impl<'s> PredictionStage<'s> {
             self.antenna_types.get(antenna).copied().unwrap_or(0)
         };
         for (offset, row) in rows.iter().enumerate() {
+            if segment.projection_epoch_s != Some(row.time_s) {
+                for (&step, projection) in segment.steps.iter().zip(&mut segment.projections) {
+                    let prediction = self.predictions[step];
+                    if prediction.tangent.refer() == DirectionRef::J2000 {
+                        continue;
+                    }
+                    let phase = prediction.phase_centre(scan);
+                    let source = MDirection::from_angles(phase[0], phase[1], DirectionRef::J2000);
+                    let initial = prediction.frame(scan)?;
+                    let current =
+                        initial
+                            .clone()
+                            .with_epoch(casa_types::measures::MEpoch::from_mjd(
+                                row.time_s / 86400.,
+                                casa_types::measures::EpochRef::UTC,
+                            ));
+                    projection
+                        .recalculate_with_frame(&source, &prediction.tangent, &initial, &current)
+                        .map_err(|error| {
+                            SimulatorError::raised(format!(
+                                "simulator image-frame rotation: {error}"
+                            ))
+                        })?;
+                }
+                segment.projection_epoch_s = Some(row.time_s);
+            }
             self.projections.clear();
             self.projections.extend(
                 segment
@@ -863,5 +900,6 @@ impl<'s> PredictionStage<'s> {
             };
             self.block.push_shared_row(header, &self.projections);
         }
+        Ok(())
     }
 }

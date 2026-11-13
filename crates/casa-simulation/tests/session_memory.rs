@@ -1097,7 +1097,7 @@ fn predict_components(
     (list, channels): (&Path, usize),
     measures: &Arc<dyn MeasuresProvider>,
     budget: u64,
-) -> (Predicted, Closed) {
+) -> (Predicted, Closed, u64) {
     let mut sm = configured(ms, measures, budget, channels);
     sm.observe(&scan(20)).expect("observe");
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
@@ -1125,7 +1125,14 @@ fn predict_components(
         },
     };
     drop(window);
-    (predicted, measured_close(sm, ms, false).0)
+    let own = OWN_LIVE.load(Ordering::Relaxed);
+    OWN_PEAK.store(own, Ordering::Relaxed);
+    let allocated = BATCH_ALLOCATED.load(Ordering::Relaxed);
+    let (closed, pass) = measured_close(sm, ms, true);
+    assert!(pass.unwrap().batches > 0);
+    assert!(BATCH_ALLOCATED.load(Ordering::Relaxed) > allocated);
+    let non_batch = OWN_PEAK.load(Ordering::Relaxed).saturating_sub(own);
+    (predicted, closed, non_batch)
 }
 
 /// `predict(complist=…)` admits, once the list is read, the list and what
@@ -1181,10 +1188,8 @@ fn components_hold_their_admission(
     };
     let [(few, few_beyond), (many, many_beyond)] = [0, 1].map(|case| {
         let count = counts[case];
-        // `close`'s peak depends on whether the band writer's I/O thread
-        // still holds a band when the next fills, which varies from run to
-        // run on a loaded host (59.2 or 61.4 MB here on CI), so its worst run
-        // is compared: a per-component cost raises every run alike.
+        // Admitted writer batches overlap differently on a loaded host.
+        // Keep the full admission check; compare non-batch owner growth.
         let most = Closed {
             heap: 0,
             admitted: 0,
@@ -1198,6 +1203,7 @@ fn components_hold_their_admission(
                     kept,
                 },
                 closed,
+                non_batch,
             ) = predict_components(
                 &ms,
                 (&lists[case], channels),
@@ -1207,7 +1213,7 @@ fn components_hold_their_admission(
             println!(
                 "{count} components in {channels} channels: predict held {} bytes against {} \
                  admitted, {beyond} at most beyond its reservations, and kept {} against {} \
-                 charged; close held {} against {}",
+                 charged; close held {} against {}, non-batch peak {non_batch}",
                 during.heap,
                 during.admitted,
                 kept.heap,
@@ -1247,7 +1253,7 @@ fn components_hold_their_admission(
             );
             predicts.heap = predicts.heap.min(during.heap);
             predicts.admitted = predicts.admitted.max(during.admitted);
-            closes.heap = closes.heap.max(closed.heap);
+            closes.heap = closes.heap.max(non_batch);
             closes.admitted = closes.admitted.max(closed.admitted);
         }
         ([predicts, closes], least_beyond)

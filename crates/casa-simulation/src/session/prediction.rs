@@ -138,8 +138,8 @@ impl PredictSpec {
 }
 
 /// The arguments of `sm.setoptions` that casa-rs reads. `cache`, `tile`,
-/// `location`, `facets` and `maxdata` do not change what `GridFT` and
-/// `WProjectFT` predict; the session's memory budget stands for `cache`.
+/// `facets` and `maxdata` do not change the supported prediction path;
+/// the session's memory budget stands for `cache`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PredictionOptions {
     /// `ftmachine`: `WProjectFT` for `wproject`, `SDGrid` for `sd`, and
@@ -153,6 +153,10 @@ pub struct PredictionOptions {
     pub padding: f64,
     /// `wprojplanes`, `WProjectFT`'s planes.
     pub w_planes: i64,
+    /// `location`: the FTMachine's reference position in ITRF metres,
+    /// used when converting native image direction frames. Defaults to
+    /// the geocentre, as CASA's unset `MPosition` does.
+    pub location_itrf_m: [f64; 3],
 }
 
 impl Default for PredictionOptions {
@@ -163,6 +167,7 @@ impl Default for PredictionOptions {
             grid_function: "SF".to_string(),
             padding: 1.3,
             w_planes: 1,
+            location_itrf_m: [0.; 3],
         }
     }
 }
@@ -205,10 +210,10 @@ impl Default for VoltagePatternSpec {
 /// the covered scans' rows from.
 pub(crate) struct Prediction {
     pub(crate) model: ModelOperator,
-    /// The model's tangent point (pixel `(nx/2, ny/2)`), J2000 radians.
-    pub(crate) tangent_rad: [f64; 2],
+    /// The model's tangent point (pixel `(nx/2, ny/2)`) in its native frame.
     pub(crate) tangent: casa_types::measures::direction::MDirection,
     frame_measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+    frame_position_itrf_m: [f64; 3],
     phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     pub(crate) focus: Option<super::focus::Positions>,
     pub(crate) distance_m: f64,
@@ -269,7 +274,6 @@ impl std::fmt::Debug for Prediction {
         };
         formatter
             .debug_struct("Prediction")
-            .field("tangent_rad", &self.tangent_rad)
             .field("fields", &fields)
             .field("per_field", &matches!(self.grids, StepGrids::PerField(_)))
             .finish_non_exhaustive()
@@ -296,7 +300,12 @@ impl Prediction {
         scan: &super::observe::Scan,
     ) -> SimulatorResult<casa_types::measures::MeasFrame> {
         use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
-        let frame = MeasFrame::new().with_measures(self.frame_measures.clone());
+        let frame = MeasFrame::new()
+            .with_measures(self.frame_measures.clone())
+            .with_position({
+                let [x, y, z] = self.frame_position_itrf_m;
+                casa_types::measures::MPosition::new_itrf(x, y, z)
+            });
         if self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000 {
             return Ok(frame);
         }
@@ -472,6 +481,7 @@ impl Simulator {
         self.w_projection_planes = (ftmachine == "wproject").then_some(options.w_planes);
         self.mosaic = ftmachine == "mosaic";
         self.single_dish = single_dish;
+        self.prediction_location_itrf_m = options.location_itrf_m;
         Ok(())
     }
 
@@ -736,13 +746,44 @@ impl Simulator {
         beam: Option<PrimaryBeam>,
         phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
-        if model.tangent_direction().refer() != casa_types::measures::direction::DirectionRef::J2000
-            && (beam.is_some() || self.mosaic)
-        {
+        use casa_types::measures::direction::DirectionRef;
+        use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+        let fixed_celestial_frame = matches!(
+            model.tangent_direction().refer(),
+            DirectionRef::J2000
+                | DirectionRef::B1950
+                | DirectionRef::B1950Vla
+                | DirectionRef::GALACTIC
+                | DirectionRef::ICRS
+                | DirectionRef::SUPERGAL
+                | DirectionRef::ECLIPTIC
+        );
+        if self.mosaic && !fixed_celestial_frame {
             return Err(SimulatorError::not_yet_implemented(
-                "image direction-frame conversion with beams or mosaic prediction is not yet implemented in casa-rs (#1295)",
+                "mosaic prediction with a time-dependent image direction frame needs \
+                 a valid CASA reference (#1298)",
             ));
         }
+        if beam.is_some() && !fixed_celestial_frame {
+            return Err(SimulatorError::not_yet_implemented(
+                "primary-beam prediction with a time-dependent image direction frame needs \
+                 the beam's actual array observer context (#1297)",
+            ));
+        }
+        let mut frame = MeasFrame::new()
+            .with_measures(self.options.measures.clone())
+            .with_position({
+                let [x, y, z] = self.prediction_location_itrf_m;
+                MPosition::new_itrf(x, y, z)
+            });
+        if let Some(time) = self
+            .scans
+            .iter()
+            .find_map(|scan| super::from_ms::polynomial::epoch(phase_centres.as_ref(), scan))
+        {
+            frame = frame.with_epoch(MEpoch::from_mjd(time / 86400., EpochRef::UTC));
+        }
+        let model = model.with_frame(frame);
         let machine = self.ft_machine()?;
         let mut mosaic_state = None;
         let (beams, antenna_types, pointings) = match machine {
@@ -1126,7 +1167,6 @@ impl Simulator {
         pointings.dedup_by_key(|direction| direction.map(f64::to_bits));
         let _ = &point_memory;
         let pattern = beam.map(PrimaryBeam::pattern);
-        let tangent_rad = model.centre_rad();
         let tangent = model.tangent_direction().clone();
         let (grids, reservation) = match pattern {
             Some(pattern) if pointings.len() > 1 => {
@@ -1188,9 +1228,9 @@ impl Simulator {
         };
         Ok(Prediction {
             model: operator,
-            tangent_rad,
             tangent,
             frame_measures: self.options.measures.clone(),
+            frame_position_itrf_m: self.prediction_location_itrf_m,
             phase_centres: None,
             focus: None,
             distance_m: 0.,

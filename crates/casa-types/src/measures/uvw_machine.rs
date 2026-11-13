@@ -72,6 +72,26 @@ impl UvwMachine {
         ))
     }
 
+    /// Refresh the rotation for a changed conversion frame, retaining the
+    /// construction-time phase vector, as casacore's `reCalculate` does.
+    ///
+    /// `output` and `input` must be the directions used to build this machine.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion lacks required epoch or position context.
+    pub fn recalculate_with_frame(
+        &mut self,
+        output: &MDirection,
+        input: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<(), MeasureError> {
+        let refreshed = Self::with_frame(output, input, frame)?;
+        self.rotation = refreshed.rotation;
+        self.input_plane_projection = refreshed.input_plane_projection;
+        Ok(())
+    }
+
     fn from_frame_rotation(
         output: &MDirection,
         input: &MDirection,
