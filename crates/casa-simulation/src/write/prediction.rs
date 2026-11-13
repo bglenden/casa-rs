@@ -126,12 +126,16 @@ fn segment_of(
     steps: std::ops::Range<usize>,
     scan: &Scan,
     scan_index: usize,
+    correlations: &[i32],
 ) -> SimulatorResult<Segment> {
     // Header predicates can reject every row of a chunk without excluding
     // its field/window. Those steps have neither science nor a captured
     // frame there; omit their domains instead of inventing an epoch.
     let mut selected_steps = Vec::with_capacity(steps.len());
-    selected_steps.extend(steps.filter(|&step| predictions[step].has_selected_chunk(scan)));
+    selected_steps.extend(steps.filter(|&step| {
+        predictions[step].has_selected_chunk(scan)
+            && predictions[step].matches_correlations(correlations)
+    }));
     let steps = selected_steps;
     let mut projections = Vec::with_capacity(steps.len());
     let mut pointing_offsets = Vec::with_capacity(steps.len());
@@ -181,10 +185,14 @@ impl Segment {
         scans: &[Scan],
         scan: &Scan,
         steps: std::ops::Range<usize>,
+        correlations: &[i32],
     ) -> bool {
         let original = &scans[self.source_scan];
         self.field == scan.field_id
-            && self.steps.iter().copied().eq(steps.clone())
+            && self.steps.iter().copied().eq(steps.clone().filter(|&step| {
+                predictions[step].has_selected_chunk(scan)
+                    && predictions[step].matches_correlations(correlations)
+            }))
             && original.pointing_rad.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
             && steps.into_iter().all(|step| {
                 predictions[step].phase_centre(original).map(f64::to_bits)
@@ -204,6 +212,7 @@ pub(super) struct PredictionStage<'s> {
     segments: Vec<Segment>,
     /// Each scan's segment; `None` for a scan no step covers.
     scan_segments: Vec<Option<usize>>,
+    scan_offset: usize,
     /// Each spectral window's channel frequencies.
     frequencies: Vec<Vec<f64>>,
     /// Each antenna's dish class, which keys the mosaic machine's kernels
@@ -251,6 +260,7 @@ impl<'s> PredictionStage<'s> {
         (correlations, channels): (usize, usize),
         backend: BackendChoice,
         plan: &'s DataPlan,
+        scan_scope: std::ops::Range<usize>,
     ) -> SimulatorResult<Option<Self>> {
         let predictions: Vec<&'s Prediction> = plan
             .predictions()
@@ -272,11 +282,14 @@ impl<'s> PredictionStage<'s> {
         };
         let mut keys = HashMap::new();
         let mut segments: Vec<Segment> = Vec::new();
-        let mut scan_segments = Vec::with_capacity(session.scans().len());
+        let mut scan_segments = Vec::with_capacity(scan_scope.len());
         // Each per-field set's visits, by their first scans: a visit is a
         // run of scans of one segment.
         let mut visits: HashMap<GridKey, Vec<usize>> = HashMap::new();
-        for (index, scan) in session.scans().iter().enumerate() {
+        let mut prepared_scans = 0usize;
+        for (relative, scan) in session.scans()[scan_scope.clone()].iter().enumerate() {
+            let index = scan_scope.start + relative;
+            prepared_scans += 1;
             if scan.row_count() == 0 || !plan.selection.contains_scan(scan) {
                 scan_segments.push(None);
                 continue;
@@ -297,18 +310,36 @@ impl<'s> PredictionStage<'s> {
             // The first centre is a cheap lookup key. A later fused image
             // can carry a different epoch after append, so compare them all.
             let cached = keys.get(&key).copied().and_then(|candidate: usize| {
-                if segments[candidate].matches(&predictions, session.scans(), scan, key.0.clone()) {
+                if segments[candidate].matches(
+                    &predictions,
+                    session.scans(),
+                    scan,
+                    key.0.clone(),
+                    session.correlations_for_scan(scan),
+                ) {
                     Some(candidate)
                 } else {
                     segments.iter().position(|segment| {
-                        segment.matches(&predictions, session.scans(), scan, key.0.clone())
+                        segment.matches(
+                            &predictions,
+                            session.scans(),
+                            scan,
+                            key.0.clone(),
+                            session.correlations_for_scan(scan),
+                        )
                     })
                 }
             });
             let segment = match cached {
                 Some(segment) => segment,
                 None => {
-                    segments.push(segment_of(&predictions, key.0.clone(), scan, index)?);
+                    segments.push(segment_of(
+                        &predictions,
+                        key.0.clone(),
+                        scan,
+                        index,
+                        session.correlations_for_scan(scan),
+                    )?);
                     keys.insert(key, segments.len() - 1);
                     segments.len() - 1
                 }
@@ -329,6 +360,10 @@ impl<'s> PredictionStage<'s> {
             }
             scan_segments.push(Some(segment));
         }
+        tracing::trace!(
+            simulation_prepared_scans = prepared_scans as u64,
+            "prepared simulator prediction scans"
+        );
         // An opened MeasurementSet may have a segment a row, gathered with
         // room to spare.
         segments.shrink_to_fit();
@@ -370,7 +405,8 @@ impl<'s> PredictionStage<'s> {
             .max_by_key(|types| types.len())
             .unwrap_or_default()
             .to_vec();
-        let most_terms = (0..session.scans().len())
+        let most_terms = scan_scope
+            .clone()
             .map(|scan| plan.noise_for_scan(scan).len())
             .max()
             .unwrap_or(0);
@@ -382,6 +418,7 @@ impl<'s> PredictionStage<'s> {
             predictions,
             segments,
             scan_segments,
+            scan_offset: scan_scope.start,
             frequencies,
             antenna_types,
             prepared_bytes,
@@ -421,7 +458,14 @@ impl<'s> PredictionStage<'s> {
 
     /// Whether a step predicts scan `scan`'s rows.
     pub(super) fn predicts(&self, scan: usize) -> bool {
-        self.scan_segments[scan].is_some()
+        self.segment_for_scan(scan).is_some()
+    }
+
+    fn segment_for_scan(&self, scan: usize) -> Option<usize> {
+        self.scan_segments
+            .get(scan.checked_sub(self.scan_offset)?)
+            .copied()
+            .flatten()
     }
 
     /// The most domains a segment sums.
@@ -632,7 +676,7 @@ impl<'s> PredictionStage<'s> {
     ) -> SimulatorResult<()> {
         let samples = self.correlations * self.channels;
         for &(scan, start, count) in runs {
-            let Some(segment) = self.scan_segments[scan] else {
+            let Some(segment) = self.segment_for_scan(scan) else {
                 continue;
             };
             self.select(segment, scan, team)?;

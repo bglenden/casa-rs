@@ -116,6 +116,8 @@ mod image_stokes;
 mod irregular_channels;
 #[path = "session_memory/jones.rs"]
 mod jones;
+#[path = "session_memory/mixed_correlations.rs"]
+mod mixed_correlations;
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
 #[path = "session_memory/noise_tables.rs"]
