@@ -5484,8 +5484,12 @@ for integration i of N and antenna a of A, its excess is
 <code>(float(i)/N + float(a)/A) * float(pwv) * 10</code>. It uses the existing corrected
 whole wet phase delay at each channel's CHAN_FREQ, then applies the resulting
 unit phasors through the ordinary Tf path. Seed, beta and deltapwv do not enter
-this debugging formula. Positive custom simint remains explicitly unfinished
-under #1292.</p>
+this debugging formula. Positive custom simint uses CASA's uncombined iterator chunks: a new
+chunk starts when an integration reaches the requested interval from the
+chunk's first integration, with scan/field/window boundaries preserved.
+Saved solutions use the midpoint of each chunk's first and last integration.
+<code>tools/simulation/sm_trop_test_interval_oracle.py</code> gets those chunks from the
+installed CASA iterator and evaluates the source formula through CASA ATM.</p>
 <p>This corrects an initialization-order failure that contradicts the defined
 mode, under AGENTS.md's standing CASA-bug rule. Evidence:
 <code>tools/simulation/sm_trop_test_oracle.py</code> records the actual failure and evaluates
