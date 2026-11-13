@@ -1595,7 +1595,7 @@
    ],
    "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
    "command": "CASAPY tools/simulation/sm_irregular_channels_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_IRREGULAR_EXPORT=EXPORT cargo test -p casa-simulation --test irregular_channels; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE; cargo test -p casa-simulation --test session_memory irregular_channels::stored_channel_axes_are_admitted_before_read_and_while_retained -- --exact --nocapture",
-   "revision": "3baca7903d0a3b04d71e82e21489e48865ff1eef",
+   "revision": "0d316e310cc1b182ef33b8489c5e143e5eedd4ef",
    "receipt": "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
   },
   "frequency-frames-20261113": {
@@ -1608,7 +1608,7 @@
    ],
    "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
    "command": "CASAPY tools/simulation/sm_frequency_frames_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_FRAMES_EXPORT=EXPORT cargo test -p casa-simulation --test frequency_frames --test irregular_channels --test open_from_ms; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE",
-   "revision": "f2aa8ea4bdc90aca49ec63e86beeb0800feb91cf",
+   "revision": "5c12261cbff5b158fff32daf61ba2af22accbf52",
    "receipt": "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
   }
  }
