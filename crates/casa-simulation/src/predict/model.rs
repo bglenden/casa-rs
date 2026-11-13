@@ -277,9 +277,30 @@ impl SkyModel {
         &self,
         plane: usize,
     ) -> Result<Vec<Array2<f32>>, PredictError> {
-        (0..self.polarizations.len())
-            .map(|polarization| self.read_polarized_plane(plane, polarization))
-            .collect()
+        let count = self.polarizations.len();
+        if count == 1 {
+            return Ok(vec![self.read_polarized_plane(plane, 0)?]);
+        }
+        if let Pixels::Held(planes) = &self.pixels {
+            return Ok(planes[plane * count..(plane + 1) * count].to_vec());
+        }
+        let Pixels::Image(image) = &self.pixels else {
+            unreachable!()
+        };
+        let [nx, ny] = self.shape;
+        let pixels = image
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_slice(&[0, 0, 0, plane], &[nx, ny, count, 1])
+            .map_err(|source| PredictError::Image {
+                path: self.path.display().to_string(),
+                source,
+            })?;
+        Ok((0..count)
+            .map(|polarization| {
+                Array2::from_shape_fn((ny, nx), |(y, x)| pixels[IxDyn(&[x, y, polarization, 0])])
+            })
+            .collect())
     }
 
     fn read_polarized_plane(
@@ -307,11 +328,11 @@ impl SkyModel {
         }))
     }
 
-    /// Bytes reading one spectral plane holds: all its Stokes planes and
-    /// the current slice being converted to the operator's image order.
+    /// Bytes reading one spectral plane holds: its complete Stokes slice
+    /// beside the separate operator images being extracted from it.
     pub(crate) fn plane_bytes(&self) -> u64 {
         let [nx, ny] = self.shape;
-        ((self.polarizations.len() + 1) * nx * ny * size_of::<f32>()
+        (2 * self.polarizations.len() * nx * ny * size_of::<f32>()
             + self.polarizations.len() * size_of::<Array2<f32>>()) as u64
     }
 
@@ -327,9 +348,7 @@ impl SkyModel {
     pub(crate) fn held(&self) -> Result<Self, PredictError> {
         let mut planes = Vec::with_capacity(self.planes * self.polarizations.len());
         for plane in 0..self.planes {
-            for polarization in 0..self.polarizations.len() {
-                planes.push(self.read_polarized_plane(plane, polarization)?);
-            }
+            planes.extend(self.read_polarizations(plane)?);
         }
         Ok(Self {
             path: self.path.clone(),
