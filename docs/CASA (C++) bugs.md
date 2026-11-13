@@ -4460,6 +4460,15 @@ stored channels before residual resampling. The two dirty and clean
 pairs agree with casa-rs on their masks, beams, controller counts and
 MODEL_DATA.
 
+For TOPO input to the same LSRK cubic cube, the measured input spacing
+after conversion is slightly smaller than the 50 MHz image spacing.
+CASA GridFT builds ten fine-grid samples for the eight image channels.
+The control keeps the ten samples on the materialized MeasurementSet
+and assigns them to the original eight-channel output axis. This
+reproduces all standard dirty products exactly for natural, Briggs
+and uniform weighting. The clean control evaluates predictions at
+each buffer's converted frequencies before sampling the residuals.
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed
