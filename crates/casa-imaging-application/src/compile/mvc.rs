@@ -169,7 +169,7 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
         has_primary_beam,
     } = inputs;
     // This initial MVC implementation owns exactly one fixed-centre image
-    // domain and one Stokes-I, two-term standard-gridder problem. In
+    // domain and one Stokes-I, two-term problem. In
     // particular, an outlier file or facets would make the small metadata
     // envelope below scale with data it does not yet account for.
     check_view_scope(parent, surveyed.stores.len(), centre.ephemeris.is_some())?;
@@ -287,7 +287,8 @@ fn check_view_scope(
     if store_count != 1
         || parent.outlierfile.is_some()
         || moving_centre
-        || !matches!(parent.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
+        || !(matches!(parent.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
+            || matches!(parent.gridder, crate::Gridder::Awp2 { .. }))
         || parent.stokes != [casa_imaging_model::PolarizationCoordinate::StokesI]
         || parent.nterms != 2
         || parent.weighting != crate::Weighting::Natural
@@ -448,6 +449,17 @@ mod tests {
         let mut other = parent;
         other.weighting = crate::Weighting::Uniform;
         assert!(check_view_scope(&other, 1, false).is_err());
+    }
+
+    #[test]
+    fn awp2_mvc_taylor_view_keeps_the_one_domain_envelope() {
+        let parent = request(json!({
+            "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs",
+            "nterms": 2, "nchan": 3,
+        }));
+        assert!(check_view_scope(&parent, 1, false).is_ok());
+        assert!(check_view_scope(&parent, 2, false).is_err());
+        assert!(check_view_scope(&parent, 1, true).is_err());
     }
 
     #[test]

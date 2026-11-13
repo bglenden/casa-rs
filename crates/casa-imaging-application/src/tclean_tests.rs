@@ -415,6 +415,29 @@ fn awp2_taylor_reads_the_two_term_unsquinted_continuum() {
     }
 }
 
+#[test]
+fn awp2_mvc_admits_natural_flatnoise_stokes_i_with_zero_w() {
+    let values = json!({
+        "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs", "nchan": 3,
+        "niter": 100, "pbcor": true,
+    });
+    let read = request(values.clone());
+    assert_eq!(read.mvc_output_channels, NonZeroUsize::new(3));
+    assert_eq!(read.nterms, 2);
+    for (parameter, value) in [
+        ("wprojplanes", json!(2)),
+        ("normtype", json!("flatsky")),
+        ("weighting", json!("uniform")),
+        ("stokes", json!("Q")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
 /// A value casa-rs cannot honour is refused at its parameter, naming the
 /// issue that tracks it.
 #[test]

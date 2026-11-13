@@ -266,9 +266,15 @@ pub(crate) fn run(
     let reconstruction = mvc.map_or(problem, |view| view.taylor_problem);
     let controls = reconstruction.reconstruction().controls();
     let cleaning = controls.max_minor_iterations() > 0;
+    // MVC's cube-to-Taylor reduction has already applied the beam response.
+    let minor_response = if mvc.is_some() {
+        None
+    } else {
+        inputs.image_response
+    };
     let setup = minor_setup(
         reconstruction,
-        (inputs.image_response, inputs.primary_beam),
+        (minor_response, inputs.primary_beam),
         &inputs.masks,
         inputs.psf_cutoff,
         inputs.psf_beams.clone(),

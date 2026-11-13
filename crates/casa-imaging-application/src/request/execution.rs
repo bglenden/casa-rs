@@ -45,12 +45,13 @@ pub(crate) fn validate_awp2_scope(
     request: &super::ImagingRequest,
 ) -> Result<(), super::InvalidRequest> {
     use super::{
-        Deconvolver, FrequencyRef, Gridder, InvalidRequest, PolarizationCoordinate, SaveModel,
-        SpecMode, Weighting,
+        Deconvolver, FrequencyRef, Gridder, InvalidRequest, PolarizationCoordinate,
+        ProductNormalization, SaveModel, SpecMode, Weighting,
     };
     if let Gridder::Awp2 {
         wprojplanes,
         computepastep,
+        normtype,
         ..
     } = request.gridder
         && (!matches!(request.specmode, SpecMode::Mfs | SpecMode::Cube)
@@ -59,8 +60,8 @@ pub(crate) fn validate_awp2_scope(
                     || wprojplanes.is_some_and(|count| count.get() != 1)
                     || request.weighting != Weighting::Natural
                     || request.savemodel != SaveModel::None))
-            || request.mvc_output_channels.is_some()
-            || request.mvc_auto_channels
+            || ((request.mvc_output_channels.is_some() || request.mvc_auto_channels)
+                && normtype != ProductNormalization::FlatNoise)
             || (request.deconvolver != Deconvolver::Hogbom
                 && !(request.deconvolver == Deconvolver::Mtmfs
                     && request.specmode == SpecMode::Mfs
@@ -109,7 +110,7 @@ pub(crate) fn validate_awp2_scope(
     {
         return Err(InvalidRequest {
             parameters: "gridder",
-            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted cubes with one W plane, no squint and no saved model. Unsquinted polarized imaging is available for I, Q, U, V, IV, QU and IQUV with one W plane and no saved model. Natural-weighted two-term Stokes I MT-MFS also runs without squint or a saved model and with one W plane (#1071)",
+            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted cubes with one W plane, no squint and no saved model. Unsquinted polarized imaging is available for I, Q, U, V, IV, QU and IQUV with one W plane and no saved model. Natural-weighted two-term Stokes I MT-MFS also runs without squint or a saved model and with one W plane. Its MVC combination currently requires flatnoise normalization (#1071)",
         });
     }
     Ok(())
