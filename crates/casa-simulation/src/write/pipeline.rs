@@ -137,7 +137,7 @@ struct Rows<'s> {
     scales: NoiseScales,
     /// `[polarization]`: each correlation's receptors, which gains and leakage
     /// take.
-    receptors: super::Receptors,
+    receptors: Option<super::Receptors>,
     correlations: usize,
     samples: usize,
     /// Rows of the integrations in hand: those the last batch left
@@ -173,7 +173,7 @@ impl<'s> Pipeline<'s> {
             NoiseContext<'s>,
             NoiseScales,
         ),
-        (correlations, channels, receptors): (usize, usize, super::Receptors),
+        (correlations, channels, receptors): (usize, usize, Option<super::Receptors>),
     ) -> Self {
         Self {
             rows: Rows {
@@ -350,7 +350,11 @@ impl Rows<'_> {
             jobs.extend(
                 noise_jobs(
                     (pending.plan, self.noise, self.team),
-                    &self.receptors.value,
+                    &self
+                        .receptors
+                        .as_ref()
+                        .expect("noise has DATA-stage receptors")
+                        .value,
                     (&self.rows, pending.runs),
                     (first_row, data),
                     (self.samples, &scales),

@@ -153,7 +153,7 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
 }
 
 /// Each polarization setup's receptors, admitted before their expansion.
-pub(super) type Receptors = casa_imaging_runtime::Admitted<Vec<Vec<[usize; 2]>>>;
+pub(super) type Receptors = std::sync::Arc<casa_imaging_runtime::Admitted<Vec<Vec<[usize; 2]>>>>;
 
 fn polarization_receptors(session: &Simulator) -> SimulatorResult<Receptors> {
     use casa_imaging_runtime::{Demand, admit};
@@ -191,7 +191,10 @@ fn polarization_receptors(session: &Simulator) -> SimulatorResult<Receptors> {
                 .sum::<usize>()
             + 64) as u64,
     );
-    Ok(casa_imaging_runtime::Admitted { value, reservation })
+    Ok(std::sync::Arc::new(casa_imaging_runtime::Admitted {
+        value,
+        reservation,
+    }))
 }
 
 /// MAIN as the session's planned scans make it, with cells of
@@ -277,6 +280,7 @@ fn write_main<'s>(
     .with_airmass(noise_varies_by_row(session.data_plan()));
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
+    let receptors = prediction.as_ref().map(DataStage::shared_receptors);
     let mut pipeline = Pipeline::new(
         (session.scans(), planned),
         &geometry,
@@ -287,11 +291,7 @@ fn write_main<'s>(
             NoiseContext::of(session),
             shape.noise_scales,
         ),
-        (
-            shape.correlations,
-            shape.channels,
-            polarization_receptors(session)?,
-        ),
+        (shape.correlations, shape.channels, receptors),
     );
     let integrations = planned
         .iter()

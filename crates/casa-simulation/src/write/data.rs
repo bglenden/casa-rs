@@ -116,6 +116,10 @@ impl<'s> DataStage<'s> {
         }))
     }
 
+    pub(super) fn shared_receptors(&self) -> super::Receptors {
+        std::sync::Arc::clone(&self.receptors)
+    }
+
     pub(super) fn backend(&self) -> BackendChoice {
         self.backend
     }
