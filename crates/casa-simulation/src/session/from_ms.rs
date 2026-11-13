@@ -26,8 +26,8 @@
 //! copies the existing MS, so its I/O cost grows with the existing data.
 //!
 //! What casa-rs does not read yet is refused, here or by the step needing
-//! it, rather than predicted wrongly: a PHASE_DIR polynomial, channel
-//! frequencies off a linear axis, several feeds per antenna, data
+//! it, rather than predicted wrongly: a PHASE_DIR polynomial,
+//! several feeds per antenna, data
 //! descriptions out of the windows' order, and a primary beam, the mosaic
 //! machine or total-power sampling when POINTING does not point at the
 //! scans' phase centres. Adding to the MeasurementSet after `openfromms`
@@ -53,6 +53,8 @@ use super::{Simulator, SimulatorOptions};
 
 #[path = "from_ms_append.rs"]
 mod append;
+#[path = "from_ms_channels.rs"]
+mod channels;
 
 /// MAIN rows read at a time while finding the scans.
 const SCAN_READ_ROWS: usize = 1 << 16;
@@ -109,7 +111,7 @@ impl Simulator {
         let mut session = Self::open(&path, options);
         session.antennas = read_antennas(&ms)?;
         session.observations = read_observations(&ms)?;
-        session.spectral_windows = read_windows(&ms)?;
+        session.spectral_windows = read_windows(&ms, &session.options.resources)?;
         refuse_several_feeds(&ms)?;
         // Append reads the feed rows when observe first needs them.
         session.feeds_set = true;
@@ -221,7 +223,10 @@ fn read_observations(ms: &MeasurementSet) -> SimulatorResult<Vec<Observation>> {
 /// The windows, one per data description: casa-rs's window `w` is data
 /// description `w` and spectral window `w`, with data description `w`'s
 /// correlations.
-fn read_windows(ms: &MeasurementSet) -> SimulatorResult<Vec<SpectralWindow>> {
+fn read_windows(
+    ms: &MeasurementSet,
+    resources: &super::SessionResources,
+) -> SimulatorResult<Vec<SpectralWindow>> {
     let error = read_error("SPECTRAL_WINDOW");
     let windows = ms.spectral_window().map_err(&error)?;
     let descriptions = ms
@@ -256,19 +261,27 @@ fn read_windows(ms: &MeasurementSet) -> SimulatorResult<Vec<SpectralWindow>> {
                         .corr_type(id)
                         .map_err(read_error("POLARIZATION"))
                 })?;
-            read_window(&windows, row, correlations)
+            read_window(
+                &windows,
+                ms.subtable(casa_ms::SubtableId::SpectralWindow)
+                    .expect("spectral window"),
+                row,
+                correlations,
+                resources,
+            )
         })
         .collect()
 }
 
 fn read_window(
     windows: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    raw: &Table,
     row: usize,
     correlations: Vec<i32>,
+    resources: &super::SessionResources,
 ) -> SimulatorResult<SpectralWindow> {
     let error = read_error("SPECTRAL_WINDOW");
-    let frequencies = windows.chan_freq(row).map_err(&error)?;
-    let widths = windows.chan_width(row).map_err(&error)?;
+    let (frequencies, widths, mut reservation) = channels::read(raw, row, resources)?;
     let (Some(&start_frequency_hz), Some(&channel_width_hz)) =
         (frequencies.first(), widths.first())
     else {
@@ -283,7 +296,8 @@ fn read_window(
             "openfromms on spectral window {row} with different channel and reference frequency frames is not yet implemented in casa-rs (#1053)"
         )));
     }
-    let window = SpectralWindow {
+    let mut window = SpectralWindow {
+        stored_frequencies: None,
         name: windows.name(row).map_err(&error)?,
         channel_count: frequencies.len(),
         start_frequency_hz,
@@ -293,19 +307,21 @@ fn read_window(
         frame,
         correlations,
     };
-    // The prediction takes the channels as the start plus whole channel
-    // widths, as both simulators write them.
+    // Generated windows retain the compact linear representation. Other
+    // observed axes keep their stored frequencies and their memory charge.
     let linear = widths.iter().all(|&width| width == channel_width_hz)
         && window
             .channel_frequencies_hz()
             .iter()
             .zip(&frequencies)
             .all(|(axis, stored)| (axis - stored).abs() <= 4.0 * f64::EPSILON * stored.abs());
+    drop(widths);
     if !linear {
-        return Err(SimulatorError::not_yet_implemented(format!(
-            "openfromms on spectral window {row}, whose channels are not evenly spaced by their \
-             width, is not yet implemented in casa-rs (#1053)"
-        )));
+        reservation.retain((frequencies.capacity() * size_of::<f64>() + 64) as u64);
+        window.stored_frequencies = Some(std::sync::Arc::new(casa_imaging_runtime::Admitted {
+            value: frequencies,
+            reservation,
+        }));
     }
     Ok(window)
 }

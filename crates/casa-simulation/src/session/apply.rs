@@ -266,8 +266,7 @@ impl AppliedTable {
                 .map_err(raised)?,
             Lookup::Spline(lookup) => {
                 let data = &sm.spectral_windows[scan.spectral_window_id];
-                let centroid = data.start_frequency_hz
-                    + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.;
+                let centroid = data.centroid_hz();
                 lookup.solution(antenna as i32, scan.field_id, time_s, centroid)
             }
         })
@@ -791,8 +790,7 @@ impl Simulator {
             };
             let phase_frequency = (table.phase_delay && table.frequency.is_none()).then(|| {
                 let data = &self.spectral_windows[scan.spectral_window_id];
-                data.start_frequency_hz
-                    + (data.channel_count - 1) as f64 * data.channel_width_hz / 2.
+                data.centroid_hz()
             });
             for time_s in self.integration_times_s(index) {
                 if kind == AppliedKind::BaselineIdentity {

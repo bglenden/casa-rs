@@ -43,9 +43,10 @@
 
 use casa_components::{ComponentList, Polarisation, ShapeTransform, SkyComponent};
 use casa_imaging_model::GridFtProjection;
-use casa_imaging_runtime::Reservation;
+use casa_imaging_runtime::{Admitted, Reservation};
 use casa_types::measures::direction::DirectionRef;
 use num_complex::{Complex32, Complex64};
+use std::sync::Arc;
 
 use super::BeamPattern;
 
@@ -56,9 +57,10 @@ const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 /// into them.
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentWindow {
+    pub(crate) stored_frequencies: Option<Arc<Admitted<Vec<f64>>>>,
     /// The first channel's frequency, Hz.
     pub(crate) first_hz: f64,
-    /// The channel spacing, Hz: a window's channels are evenly spaced.
+    /// The channel spacing, Hz, for the generated linear axis.
     pub(crate) step_hz: f64,
     pub(crate) channels: usize,
     /// casacore `Stokes::StokesTypes` codes, one per correlation.
@@ -67,7 +69,10 @@ pub(crate) struct ComponentWindow {
 
 impl ComponentWindow {
     fn frequency_hz(&self, channel: usize) -> f64 {
-        self.first_hz + channel as f64 * self.step_hz
+        self.stored_frequencies.as_ref().map_or_else(
+            || self.first_hz + channel as f64 * self.step_hz,
+            |frequencies| frequencies.value[channel],
+        )
     }
 }
 
@@ -145,6 +150,7 @@ pub(crate) struct ComponentPrediction {
 
 #[derive(Debug)]
 struct PreparedWindow {
+    stored_frequencies: Option<Arc<Admitted<Vec<f64>>>>,
     first_hz: f64,
     step_hz: f64,
     channels: usize,
@@ -324,12 +330,20 @@ impl ComponentPrediction {
                     [..channels * correlations];
                 let powers = powers.map(|powers| &powers[component * channels..][..channels]);
                 for channel in 0..channels {
-                    let frequency_hz = prepared.first_hz + channel as f64 * prepared.step_hz;
+                    let frequency_hz = prepared.stored_frequencies.as_ref().map_or_else(
+                        || prepared.first_hz + channel as f64 * prepared.step_hz,
+                        |frequencies| frequencies.value[channel],
+                    );
+                    let channel_phasor = if prepared.stored_frequencies.is_some() {
+                        Complex64::from_polar(1.0, radians_per_hz * frequency_hz)
+                    } else {
+                        phasor
+                    };
                     let mut scale = baseline.at_frequency(frequency_hz);
                     if let Some(powers) = powers {
                         scale *= f64::from(powers[channel]);
                     }
-                    let value = phasor * scale;
+                    let value = channel_phasor * scale;
                     let cells = channel * correlations..(channel + 1) * correlations;
                     for (cell, flux) in samples[cells.clone()].iter_mut().zip(&fluxes[cells]) {
                         let sample = flux * value;
@@ -380,6 +394,7 @@ fn prepare_window(
         }
     }
     Ok(PreparedWindow {
+        stored_frequencies: window.stored_frequencies.clone(),
         first_hz: window.first_hz,
         step_hz: window.step_hz,
         channels: window.channels,
