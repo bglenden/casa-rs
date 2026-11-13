@@ -14,6 +14,43 @@ use serde_json::Value;
 use std::path::Path;
 
 #[test]
+fn time_dependent_primary_beam_requires_its_observer_context() {
+    let fixture: Value = serde_json::from_reader(GzDecoder::new(
+        &include_bytes!("data/sm_image_frames_casa.json.gz")[..],
+    ))
+    .unwrap();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("beam.ms");
+    copy(&data.join("sm_image_layouts/base.ms"), &path);
+    let mut sm = Simulator::open_from_ms(
+        &path,
+        SimulatorOptions {
+            measures: eop::provider(&fixture["cases"][0]["eop"]),
+            resources: support::resources(1, 2 << 30),
+            now: MEpoch::from_mjd(support::REFERENCE_MJD, EpochRef::UTC),
+        },
+    )
+    .unwrap();
+    sm.set_data(&[], &[0], "").unwrap();
+    sm.set_vp(&VoltagePatternSpec {
+        do_squint: false,
+        ..VoltagePatternSpec::default()
+    })
+    .unwrap();
+    // The MS array is ALMA, while the FTMachine's location is the default
+    // geocentre. BeamSkyJones uses the actual array, independently of that
+    // option; accepting this without a separate beam frame misplaces power.
+    let error = sm
+        .predict(&PredictSpec {
+            images: vec![data.join("sm_image_frames/frame_hadec.image")],
+            ..PredictSpec::default()
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("#1297"), "{error}");
+}
+
+#[test]
 fn accepted_image_frames_and_beams_match_casa() {
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
         &include_bytes!("data/sm_image_frames_casa.json.gz")[..],

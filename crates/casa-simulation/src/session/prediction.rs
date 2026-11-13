@@ -748,21 +748,26 @@ impl Simulator {
     ) -> SimulatorResult<Prediction> {
         use casa_types::measures::direction::DirectionRef;
         use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
-        if self.mosaic
-            && !matches!(
-                model.tangent_direction().refer(),
-                DirectionRef::J2000
-                    | DirectionRef::B1950
-                    | DirectionRef::B1950Vla
-                    | DirectionRef::GALACTIC
-                    | DirectionRef::ICRS
-                    | DirectionRef::SUPERGAL
-                    | DirectionRef::ECLIPTIC
-            )
-        {
+        let fixed_celestial_frame = matches!(
+            model.tangent_direction().refer(),
+            DirectionRef::J2000
+                | DirectionRef::B1950
+                | DirectionRef::B1950Vla
+                | DirectionRef::GALACTIC
+                | DirectionRef::ICRS
+                | DirectionRef::SUPERGAL
+                | DirectionRef::ECLIPTIC
+        );
+        if self.mosaic && !fixed_celestial_frame {
             return Err(SimulatorError::not_yet_implemented(
                 "mosaic prediction with a time-dependent image direction frame needs \
                  a valid CASA reference (#1298)",
+            ));
+        }
+        if beam.is_some() && !fixed_celestial_frame {
+            return Err(SimulatorError::not_yet_implemented(
+                "primary-beam prediction with a time-dependent image direction frame needs \
+                 the beam's actual array observer context (#1297)",
             ));
         }
         let mut frame = MeasFrame::new()

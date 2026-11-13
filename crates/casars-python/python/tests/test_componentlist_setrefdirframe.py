@@ -14,7 +14,7 @@ from casars.data import schema_bundle
 DATA = Path(__file__).parent / "data"
 ORACLE = json.loads((DATA / "casa_componentlist_setrefdirframe.json").read_text())
 INVALID = json.loads((DATA / "casa_componentlist_setrefdirframe_invalid.json").read_text())
-UNSUPPORTED = {"B1950_VLA", "BMEAN", "BTRUE", "MARS", "SUN"}
+UNSUPPORTED = {"MARS", "SUN"}
 
 
 def components(cl):
