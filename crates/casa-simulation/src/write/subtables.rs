@@ -255,7 +255,7 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
     let mut spws = Vec::new();
     let mut polarizations = Vec::new();
     let mut descriptions = Vec::new();
-    for (index, window) in session.spectral_windows().iter().enumerate() {
+    for window in session.spectral_windows() {
         let channels = window.channel_count;
         let widths = vec![window.channel_width_hz; channels];
         spws.push(row(
@@ -280,8 +280,10 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
                 ("TOTAL_BANDWIDTH", scalar_f64(window.total_bandwidth_hz)),
             ],
         ));
-        let correlations = window.correlations.len();
-        let products = window.correlation_products();
+    }
+    for codes in session.polarizations() {
+        let correlations = codes.len();
+        let products = crate::session::spectral::correlation_products(codes);
         let mut product_cells = vec![0; 2 * correlations];
         for (correlation, pair) in products.iter().enumerate() {
             product_cells[correlation] = pair[0];
@@ -291,20 +293,22 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
             SubtableId::Polarization,
             vec![
                 ("CORR_PRODUCT", i32_array(&[2, correlations], product_cells)),
-                (
-                    "CORR_TYPE",
-                    i32_array(&[correlations], window.correlations.clone()),
-                ),
+                ("CORR_TYPE", i32_array(&[correlations], codes.clone())),
                 ("FLAG_ROW", scalar_bool(false)),
                 ("NUM_CORR", scalar_i32(correlations as i32)),
             ],
         ));
+    }
+    for description in session.data_descriptions() {
         descriptions.push(row(
             SubtableId::DataDescription,
             vec![
                 ("FLAG_ROW", scalar_bool(false)),
-                ("POLARIZATION_ID", scalar_i32(index as i32)),
-                ("SPECTRAL_WINDOW_ID", scalar_i32(index as i32)),
+                (
+                    "POLARIZATION_ID",
+                    scalar_i32(description.polarization as i32),
+                ),
+                ("SPECTRAL_WINDOW_ID", scalar_i32(description.window as i32)),
             ],
         ));
     }

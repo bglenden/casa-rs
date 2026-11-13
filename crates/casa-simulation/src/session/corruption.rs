@@ -366,8 +366,7 @@ impl Simulator {
             if !covered(scan.spectral_window_id) {
                 continue;
             }
-            let window = &self.spectral_windows[scan.spectral_window_id];
-            let products = window.correlation_products();
+            let products = super::spectral::correlation_products(self.correlations_for_scan(scan));
             // The linearised D takes the parallel hands into the cross
             // hands: CASA's 4-vector apply needs all four.
             let full = [[0, 0], [0, 1], [1, 0], [1, 1]]
@@ -381,8 +380,8 @@ impl Simulator {
                 }
                 let needs_matrix = term.kind == JonesKind::General
                     || (term.kind == JonesKind::SkyGeneral
-                        && !window
-                            .correlations
+                        && !self
+                            .correlations_for_scan(scan)
                             .first()
                             .is_some_and(|c| (5..=8).contains(c)));
                 if needs_matrix && !full {
@@ -417,9 +416,7 @@ impl Simulator {
     /// Raised: "No such VisVector type".
     pub(super) fn check_visibility_correlations(&self, what: &str) -> SimulatorResult<()> {
         for scan in &self.scans {
-            let correlations = self.spectral_windows[scan.spectral_window_id]
-                .correlations
-                .len();
+            let correlations = self.correlations_for_scan(scan).len();
             if !matches!(correlations, 1 | 2 | 4) {
                 return Err(SimulatorError::raised(format!(
                     "No such VisVector type: scan {} has {correlations} correlations; \

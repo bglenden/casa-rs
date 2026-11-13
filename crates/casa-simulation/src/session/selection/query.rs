@@ -204,7 +204,7 @@ impl QueryWorkspace {
             ScalarValue::Int64(header.antennas[1] as i64),
             ScalarValue::Float64(header.time_s),
             ScalarValue::Int64(scan.field_id as i64),
-            ScalarValue::Int64(scan.spectral_window_id as i64),
+            ScalarValue::Int64(scan.data_description_id as i64),
             ScalarValue::Int64(i64::from(scan.scan_number)),
         ];
         for (field, value) in self.row.fields_mut().iter_mut().zip(values) {

@@ -808,12 +808,11 @@ impl Simulator {
     /// predicts.
     fn predicted_correlations(&self) -> SimulatorResult<Vec<Correlation>> {
         self.check_visibility_correlations("predicted")?;
-        let window = |scan: &super::observe::Scan| &self.spectral_windows[scan.spectral_window_id];
-        let first = &window(&self.scans[0]).correlations;
+        let first = self.correlations_for_scan(&self.scans[0]);
         if self
             .scans
             .iter()
-            .any(|scan| window(scan).correlations != *first)
+            .any(|scan| self.correlations_for_scan(scan) != first)
         {
             return Err(SimulatorError::not_yet_implemented(
                 "predicting scans whose spectral windows have different correlations is not yet \

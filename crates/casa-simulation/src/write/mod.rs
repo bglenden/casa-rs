@@ -134,7 +134,10 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     let mut shape = None;
     for scan in session.scans() {
         let window = &session.spectral_windows()[scan.spectral_window_id];
-        let this = (window.correlations.len(), window.channel_count);
+        let this = (
+            session.correlations_for_scan(scan).len(),
+            window.channel_count,
+        );
         match shape {
             None => shape = Some(this),
             Some(first) if first != this => {
@@ -153,14 +156,15 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
 /// windows (`Stokes::receptor1`, `receptor2`), which gains and leakage take.
 pub(super) fn window_receptors(session: &Simulator) -> Vec<Vec<[usize; 2]>> {
     session
-        .spectral_windows()
+        .data_descriptions()
         .iter()
-        .map(|window| {
-            window
-                .correlation_products()
-                .iter()
-                .map(|pair| pair.map(|receptor| usize::try_from(receptor).unwrap_or(0)))
-                .collect()
+        .map(|description| {
+            crate::session::spectral::correlation_products(
+                &session.polarizations()[description.polarization],
+            )
+            .into_iter()
+            .map(|pair| pair.map(|receptor| usize::try_from(receptor).unwrap_or(0)))
+            .collect()
         })
         .collect()
 }
@@ -425,7 +429,7 @@ impl MainWriter {
         for (column, name) in columns.constants {
             let value = match name {
                 "ARRAY_ID" => ScalarValue::Int32(planned.array_id),
-                "DATA_DESC_ID" => ScalarValue::Int32(scan.spectral_window_id as i32),
+                "DATA_DESC_ID" => ScalarValue::Int32(scan.data_description_id as i32),
                 "EXPOSURE" | "INTERVAL" => ScalarValue::Float64(planned.integration_s),
                 "FIELD_ID" => ScalarValue::Int32(scan.field_id as i32),
                 "OBSERVATION_ID" => ScalarValue::Int32(planned.observation_id),

@@ -737,7 +737,7 @@ impl<'s> PredictionStage<'s> {
                 },
                 address: RowAddress {
                     physical_row: first_row + offset as u64,
-                    data_description: scan.spectral_window_id as i32,
+                    data_description: scan.data_description_id as i32,
                 },
             };
             self.block.push_shared_row(header, &self.projections);

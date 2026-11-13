@@ -4709,3 +4709,41 @@ reference consists of actual CASA single-integration controls, matched by
 TIME, antennas and FEED1/FEED2. FEED/POINTING metadata, row order and scan
 numbers still match the combined observation. Evidence is captured in
 `tools/simulation/sm_feeds_oracle.py` and `tests/feeds.rs` (#1293).
+
+### Reopened simulator labels appended rows with the physical window ID
+
+CASA 6.7.6.14 accepts an existing MS whose DATA_DESCRIPTION rows map to
+spectral windows in a different order. However, `sm.observe` writes the
+requested physical SPECTRAL_WINDOW row number into MAIN.DATA_DESC_ID.
+With DD window IDs `[1, 0]`, appending window 0 writes DD 0, which labels
+the new rows as window 1. With DD window IDs `[1]`, appending window 1
+writes DD 1, which is outside the DATA_DESCRIPTION table.
+`NewMSSimulator::observe` writes `spWin` to `dataDescId`, without resolving
+it through DATA_DESCRIPTION.
+
+casa-rs resolves the requested window to its first existing description,
+preserving the window's meaning and producing an in-range foreign key.
+It refuses append when the requested window has no description. This
+corrects data corruption under the standing CASA-bug rule. The raw CASA
+results remain in `sm_data_descriptions_casa.json.gz`; the native and C++
+readback checks explicitly validate the corrected appended label against
+the input mapping. All other row cells and observation metadata still
+compare to CASA. Evidence: `tools/simulation/sm_data_descriptions_oracle.py`
+and `crates/casa-simulation/tests/data_descriptions.rs`.
+
+### Simulator gain application ignores a reversed correlation order
+
+CASA 6.7.6.14's supplied G-table corruption produces the same four ordered
+products for `[XX, XY, YX, YY]` and `[YY, YX, XY, XX]`, even when an aliased
+DATA_DESCRIPTION row selects a POLARIZATION row declaring the latter
+CORR_TYPE and CORR_PRODUCT. With constant input DATA `3+4i` and receptor
+gains `2+0.1i` and `3-0.2i`, its first product remains the XX result
+`(3+4i)*|2+0.1i|²` instead of the declared YY result.
+
+casa-rs applies `g[a,p] * conj(g[b,q])` according to each description's
+actual receptor pair, correcting mislabeled science under the standing
+CASA-bug rule. The oracle retains the raw CASA result; the native and C++
+readback checks reverse each channel's four G products explicitly for
+that case. Other descriptions, unselected rows and metadata still match
+CASA directly. Evidence: the `alias_polarization_gain` case in
+`tools/simulation/sm_data_descriptions_oracle.py` and `tests/data_descriptions.rs`.

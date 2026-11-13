@@ -162,6 +162,9 @@ impl Simulator {
             feeds,
             feeds_set,
             spectral_windows,
+            polarizations,
+            data_descriptions,
+            description_memory,
             fields,
             times,
             elevation_limit_rad,
@@ -200,8 +203,12 @@ impl Simulator {
             .scans
             .iter()
             .find(|scan| scan.row_count() > 0)
-            .map(|scan| &self.spectral_windows[scan.spectral_window_id])
-            .map(|window| [window.correlations.len(), window.channel_count])
+            .map(|scan| {
+                [
+                    self.correlations_for_scan(scan).len(),
+                    self.spectral_windows[scan.spectral_window_id].channel_count,
+                ]
+            })
             .ok_or_else(|| SimulatorError::raised("appended MS has no shape"))?;
         crate::write::append::scratch(
             self.path(),

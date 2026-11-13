@@ -498,7 +498,7 @@ pub(super) fn noise_jobs<'a>(
                     plan,
                     scan,
                     window,
-                    receptors: &receptors[window],
+                    receptors: &receptors[context.scans[scan].data_description_id],
                 }
             });
         for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
@@ -510,7 +510,7 @@ pub(super) fn noise_jobs<'a>(
                 rows: &rows[start..],
                 noise,
                 window,
-                receptors: &receptors[window.spectral_window_id],
+                receptors: &receptors[context.scans[scan].data_description_id],
                 antennas: context.antennas,
                 scales,
                 corruption,
