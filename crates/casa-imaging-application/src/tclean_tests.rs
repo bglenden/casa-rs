@@ -106,6 +106,30 @@ fn every_request_field_is_required_or_consumed_internal_provenance() {
                 assert!(default.psfphasecenter.is_none());
                 continue;
             }
+            if name == "mosweight" && overrides["gridder"] == "awp2" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("typed AWP2 requests default mosweight to false");
+                assert!(matches!(
+                    default.gridder,
+                    Gridder::Awp2 {
+                        mosweight: false,
+                        ..
+                    }
+                ));
+                let mut explicit = fields.clone();
+                explicit.insert(name.clone(), Value::Bool(true));
+                let explicit = serde_json::from_value::<ImagingRequest>(Value::Object(explicit))
+                    .expect("AWP2 mosweight is consumed");
+                assert!(matches!(
+                    explicit.gridder,
+                    Gridder::Awp2 {
+                        mosweight: true,
+                        ..
+                    }
+                ));
+                assert_ne!(explicit, default);
+                continue;
+            }
             assert!(
                 serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
                 "{overrides}: the request does not read {name}"
