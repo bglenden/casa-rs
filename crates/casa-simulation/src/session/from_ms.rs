@@ -290,12 +290,10 @@ fn read_window(
         )));
     };
     let frame = windows.frequency_reference(row).map_err(&error)?;
-    let reference_frame = windows.reference_frequency_reference(row).map_err(&error)?;
-    if reference_frame != frame {
-        return Err(SimulatorError::not_yet_implemented(format!(
-            "openfromms on spectral window {row} with different channel and reference frequency frames is not yet implemented in casa-rs (#1053)"
-        )));
-    }
+    // Validate each column's own reference descriptor. CASA's VPSkyJones
+    // selects the beam model from REF_FREQUENCY's raw Hz value; its frame
+    // need not equal the channel frequencies' frame.
+    windows.reference_frequency_reference(row).map_err(&error)?;
     let mut window = SpectralWindow {
         stored_frequencies: None,
         name: windows.name(row).map_err(&error)?,

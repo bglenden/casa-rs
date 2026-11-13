@@ -49,7 +49,7 @@ fn simple_noise(sigma_jy: f64) -> NoiseSpec {
 }
 
 #[test]
-fn openfromms_refuses_distinct_channel_and_reference_frequency_frames() {
+fn openfromms_accepts_distinct_channel_and_reference_frequency_frames() {
     use casa_ms::{MeasurementSet, SubtableId};
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 
@@ -64,16 +64,10 @@ fn openfromms_refuses_distinct_channel_and_reference_frequency_frames() {
         .unwrap();
     ms.save().unwrap();
     drop(ms);
-    let error = Simulator::open_from_ms(&path, options())
-        .err()
-        .expect("mixed frames refused");
-    assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(
-        error
-            .message()
-            .contains("different channel and reference frequency frames")
-    );
-    assert!(error.message().contains("#1053"));
+    Simulator::open_from_ms(&path, options())
+        .unwrap()
+        .close()
+        .unwrap();
     assert_eq!(bits(&data(&read_main(&path).0)), bits(&data(&before)));
 }
 
