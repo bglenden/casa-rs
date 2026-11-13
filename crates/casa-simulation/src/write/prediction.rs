@@ -130,7 +130,7 @@ fn segment_of(
     let mut pointing_offsets = Vec::with_capacity(steps.len());
     for step in steps.clone() {
         let prediction = predictions[step];
-        if prediction.grids_for(scan.field_id).is_none() {
+        if prediction.grids_for(prediction.grid_id(scan)).is_none() {
             return Err(SimulatorError::raised(format!(
                 "predict prepared no grids for field {}",
                 scan.field_id
@@ -180,6 +180,7 @@ impl Segment {
 
 /// The prediction stage's state across batches.
 pub(super) struct PredictionStage<'s> {
+    scans: &'s [Scan],
     backend: BackendChoice,
     correlations: usize,
     channels: usize,
@@ -298,13 +299,16 @@ impl<'s> PredictionStage<'s> {
                 }
             };
             if scan_segments.last() != Some(&Some(segment)) {
-                let Segment { steps, field, .. } = &segments[segment];
+                let Segment { steps, .. } = &segments[segment];
                 for &step in steps {
                     if matches!(
-                        predictions[step].grids_for(*field),
+                        predictions[step].grids_for(predictions[step].grid_id(scan)),
                         Some(FieldGrids::PerField)
                     ) {
-                        visits.entry((step, *field)).or_default().push(index);
+                        visits
+                            .entry((step, predictions[step].grid_id(scan)))
+                            .or_default()
+                            .push(index);
                     }
                 }
             }
@@ -356,6 +360,7 @@ impl<'s> PredictionStage<'s> {
             .max()
             .unwrap_or(0);
         Ok(Some(Self {
+            scans: session.scans(),
             backend,
             correlations,
             channels,
@@ -687,13 +692,20 @@ impl<'s> PredictionStage<'s> {
         // The previous predictor is dropped first, so at most one is held,
         // and the grids it kept can be evicted.
         self.predictor = None;
-        let Segment { steps, field, .. } = &self.segments[segment];
-        let field = *field;
+        let Segment {
+            steps, source_scan, ..
+        } = &self.segments[segment];
+        let source = &self.scans[*source_scan];
         self.keep.clear();
-        self.keep.extend(steps.iter().map(|&step| (step, field)));
+        self.keep.extend(
+            steps
+                .iter()
+                .map(|&step| (step, self.predictions[step].grid_id(source))),
+        );
         let mut domains = Vec::with_capacity(steps.len());
         for &step in steps {
             let prediction = self.predictions[step];
+            let field = prediction.grid_id(source);
             let model = match prediction.grids_for(field) {
                 Some(FieldGrids::Prepared(grids)) => DomainModel::Borrowed(grids),
                 Some(FieldGrids::PerField) => DomainModel::Shared(self.grids.grids(

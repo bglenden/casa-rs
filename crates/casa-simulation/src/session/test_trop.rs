@@ -70,20 +70,42 @@ impl Simulator {
     /// A positive interval starts at the first integration of each chunk; keep
     /// the midpoint of its first and last integration as setSimulate does.
     fn test_trop_times(&self, interval: f64, mut emit: impl FnMut(usize, usize, f64)) {
+        let mut previous = None;
+        let mut pending: Option<(usize, usize, f64, f64)> = None;
         for (index, scan) in self.scans.iter().enumerate() {
-            let mut times = self.integration_times_s(index);
-            let Some(mut first) = times.next() else {
-                continue;
-            };
-            let mut last = first;
-            for time in times {
-                if time - first >= interval {
-                    emit(scan.spectral_window_id, scan.field_id, 0.5 * (first + last));
-                    first = time;
-                }
-                last = time;
+            // Stored integration spans are internal POINTING partitions.
+            // CASA resets custom solution chunks at physical scan boundaries.
+            let key = scan.on_disk().map(|_| {
+                (
+                    scan.array_id,
+                    scan.observation_id,
+                    scan.scan_number,
+                    scan.field_id,
+                    scan.data_description_id,
+                )
+            });
+            if (key.is_none() || key != previous)
+                && let Some((window, field, first, last)) = pending.take()
+            {
+                emit(window, field, 0.5 * (first + last));
             }
-            emit(scan.spectral_window_id, scan.field_id, 0.5 * (first + last));
+            previous = key;
+            for time in self.integration_times_s(index) {
+                let (_, _, first, last) =
+                    pending.get_or_insert((scan.spectral_window_id, scan.field_id, time, time));
+                if time - *first >= interval {
+                    emit(
+                        scan.spectral_window_id,
+                        scan.field_id,
+                        0.5 * (*first + *last),
+                    );
+                    *first = time;
+                }
+                *last = time;
+            }
+        }
+        if let Some((window, field, first, last)) = pending {
+            emit(window, field, 0.5 * (first + last));
         }
     }
 }

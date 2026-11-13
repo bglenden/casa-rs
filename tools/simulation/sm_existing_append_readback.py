@@ -48,6 +48,15 @@ def main():
             worst = 0.
             for row, (observed, reference) in enumerate(zip(actual["rows"], expected["rows"])):
                 for name, value in reference.items():
+                    if "pointing_cache_corrected_rows" in case and name in ("data", "corrected_data", "model_data"):
+                        value = case["pointing_cache_corrected_rows"][row][name]
+                    if (case.get("native_single_dish") and reference["field"] == 0
+                            and reference["antennas"][0] != reference["antennas"][1]
+                            and name in ("data", "corrected_data")):
+                        # The documented SDGrid uvw-sign defect: native
+                        # total power belongs to autocorrelations only.
+                        value = np.zeros_like(value)
+                        assert np.array_equal(observed[name], value), (path, row, name)
                     if ("mapping" in case and case["operation"] == "append"
                             and row >= before and name == "data_desc_id"):
                         # CASA labels appended rows with the physical SPW ID,

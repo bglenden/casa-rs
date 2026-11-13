@@ -387,6 +387,13 @@ impl super::Simulator {
         };
         let data_description_id = self.data_descriptions.iter().position(|d| d.window == spectral_window_id)
             .ok_or_else(|| SimulatorError::not_yet_implemented("observing a spectral window without an existing data description is not yet implemented (#1294)"))?;
+        let feeds = self.feeds.len() / self.antennas.len();
+        self.reserve_stored_scans(
+            spec.pointings
+                .len()
+                .checked_mul(feeds)
+                .ok_or_else(|| SimulatorError::raised("simulation pointing count overflow"))?,
+        )?;
         let observation_id = self.observation_for(spec, [start_s, stop_s]);
         let state_id = match self.states.iter().rposition(|state| *state == spec.state) {
             Some(existing) => existing,
@@ -397,7 +404,6 @@ impl super::Simulator {
         };
         let mut scan_number = self.scans.last().map_or(0, |scan| scan.scan_number);
         let mut integrations = 0;
-        let feeds = self.feeds.len() / self.antennas.len();
         for feed in 0..feeds {
             let mut pointing_rad = first_direction_rad;
             for (index, pointing) in spec.pointings.iter().enumerate() {

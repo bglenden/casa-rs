@@ -242,7 +242,7 @@ enum StepGrids {
 struct FieldModel {
     model: SkyModel,
     pattern: BeamPattern,
-    centres: Vec<(usize, [f64; 2])>,
+    centres: Vec<([u64; 2], [f64; 2])>,
 }
 
 /// Where the grids of a field come from: a set prepared at `predict`, or
@@ -256,9 +256,12 @@ impl std::fmt::Debug for Prediction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fields: Vec<Option<usize>> = match &self.grids {
             StepGrids::Prepared(field, _) => vec![*field],
-            StepGrids::PerField(held) => {
-                held.centres.iter().map(|(field, _)| Some(*field)).collect()
-            }
+            StepGrids::PerField(held) => held
+                .centres
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Some(index))
+                .collect(),
         };
         formatter
             .debug_struct("Prediction")
@@ -274,6 +277,19 @@ impl Prediction {
         super::from_ms::polynomial::centre(self.phase_centres.as_ref(), scan)
     }
 
+    /// Index the grids by antenna beam direction, independently of FIELD.
+    pub(crate) fn grid_id(&self, scan: &super::observe::Scan) -> usize {
+        match &self.grids {
+            StepGrids::Prepared(..) => 0,
+            StepGrids::PerField(held) => held
+                .centres
+                .binary_search_by_key(&scan.pointing_rad.map(f64::to_bits), |(direction, _)| {
+                    *direction
+                })
+                .expect("prepared pointing"),
+        }
+    }
+
     /// Where the grids rows of `field` are predicted from come from; `None`
     /// for a field the step did not observe.
     pub(crate) fn grids_for(&self, field: usize) -> Option<FieldGrids<'_>> {
@@ -281,11 +297,7 @@ impl Prediction {
             StepGrids::Prepared(grid_field, grids) => grid_field
                 .is_none_or(|grid_field| grid_field == field)
                 .then_some(FieldGrids::Prepared(grids)),
-            StepGrids::PerField(held) => held
-                .centres
-                .iter()
-                .any(|(observed, _)| *observed == field)
-                .then_some(FieldGrids::PerField),
+            StepGrids::PerField(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
         }
     }
 
@@ -346,8 +358,7 @@ impl Prediction {
         };
         let centre = held
             .centres
-            .iter()
-            .find(|(observed, _)| *observed == field)
+            .get(field)
             .map(|(_, centre)| *centre)
             .ok_or_else(|| {
                 SimulatorError::raised(format!("predict did not observe field {field}"))
@@ -582,16 +593,8 @@ impl Simulator {
         }
         let correlations = self.predicted_correlations()?;
         let beam = self.voltage_pattern_beam()?;
-        // Each of these points a scan at its phase centre, which on an
-        // opened MeasurementSet POINTING must agree with.
-        if self.mosaic && model.is_some() {
-            self.require_pointings_at_phase_centres("setoptions(ftmachine='mosaic')")?;
-        }
-        if beam.is_some() {
-            self.require_pointings_at_phase_centres("setvp(dovp=True)")?;
-        }
-        if self.single_dish.is_some() {
-            self.require_pointings_at_phase_centres("setoptions(ftmachine='sd')")?;
+        if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
+            self.load_pointings()?;
         }
         // A primary beam, over a model image, a component list or total
         // power, and the mosaic machine's kernels are centred on each
@@ -757,6 +760,19 @@ impl Simulator {
                  Primary beam will be applied by telescope name."
             );
         }
+        let resources = &self.options.resources;
+        let _target_memory = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: COMPONENTS_PHASE,
+                memory: (self.scans.len() as u64)
+                    .saturating_mul(128)
+                    .saturating_add((self.spectral_windows.len() as u64).saturating_mul(256))
+                    .saturating_add(128 << 10),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
         let windows: Vec<ComponentWindow> = self
             .spectral_windows
             .iter()
@@ -773,7 +789,7 @@ impl Simulator {
         // `VisBuffer` phases it, and the beam centred there: a beam on a
         // pointing `observemany` moved was refused above (#884). Scans at
         // one centre share a pointing.
-        let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
+        let mut pointings: Vec<(usize, [f64; 2], [f64; 2])> = Vec::new();
         let pointing_of_scan: Vec<usize> = self
             .scans
             .iter()
@@ -782,9 +798,12 @@ impl Simulator {
                 let centre = direction.map(f64::to_bits);
                 pointings
                     .iter()
-                    .position(|(_, known)| known.map(f64::to_bits) == centre)
+                    .position(|(_, known, beam)| {
+                        known.map(f64::to_bits) == centre
+                            && beam.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
+                    })
                     .unwrap_or_else(|| {
-                        pointings.push((pointings.len(), direction));
+                        pointings.push((pointings.len(), direction, scan.pointing_rad));
                         pointings.len() - 1
                     })
             })
@@ -896,10 +915,10 @@ impl Simulator {
     /// `BeamSkyJones` keeps for the field's other rows (#884, `docs/CASA
     /// (C++) bugs.md`); casa-rs does not follow it yet.
     fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
-        let moved = self
-            .scans
-            .iter()
-            .find(|scan| scan.pointing_rad != scan.phase_center_rad);
+        let moved = self.scans.iter().find(|scan| {
+            !matches!(scan.rows, super::observe::ScanRows::OnDisk(_))
+                && scan.pointing_rad != scan.phase_center_rad
+        });
         match moved {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "predict with {what} for scan {} pointed away from its field {} is not yet \
@@ -909,18 +928,6 @@ impl Simulator {
             ))),
             None => Ok(()),
         }
-    }
-
-    /// The fields of the scans observed so far, each once, in the order
-    /// first observed.
-    pub(super) fn observed_fields(&self) -> Vec<usize> {
-        let mut fields = Vec::new();
-        for scan in &self.scans {
-            if !fields.contains(&scan.field_id) {
-                fields.push(scan.field_id);
-            }
-        }
-        fields
     }
 
     /// Build `layout`'s kernels, admitted as they are built, as imaging
@@ -1013,15 +1020,37 @@ impl Simulator {
         let resources = &self.options.resources;
         let (host, policy) = (resources.host(), resources.policy());
         charge_process_caches(host, policy).map_err(SimulatorError::admission)?;
-        let fields = self.observed_fields();
+        let point_memory = admit(
+            host,
+            policy,
+            &Demand {
+                phase: PREPARATION_PHASE,
+                memory: if beam.is_some() {
+                    (self.scans.len() as u64)
+                        .saturating_mul(64)
+                        .saturating_add(256)
+                } else {
+                    0
+                },
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let mut pointings: Vec<_> = if beam.is_some() {
+            self.scans.iter().map(|scan| scan.pointing_rad).collect()
+        } else {
+            Vec::new()
+        };
+        pointings.sort_unstable_by_key(|direction| direction.map(f64::to_bits));
+        pointings.dedup_by_key(|direction| direction.map(f64::to_bits));
+        let _ = &point_memory;
         let pattern = beam.map(PrimaryBeam::pattern);
         let tangent_rad = model.centre_rad();
         let (grids, reservation) = match pattern {
-            Some(pattern) if fields.len() > 1 => {
-                self.hold_for_fields(model, &operator, pattern, &fields)?
+            Some(pattern) if pointings.len() > 1 => {
+                self.hold_for_fields(model, &operator, pattern, &pointings)?
             }
             pattern => {
-                let field = pattern.as_ref().map(|_| fields[0]);
+                let field = None;
                 let reservation = admit(
                     host,
                     policy,
@@ -1049,13 +1078,15 @@ impl Simulator {
                 .map_err(SimulatorError::admission)?;
                 let team = WorkerTeam::new(workers)
                     .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
-                let centre = match (&pattern, field) {
-                    (Some(pattern), Some(field)) => {
-                        let pointing = self.fields[field].direction_rad;
-                        Some((pattern, model.pixel_of(pointing).map_err(model_error)?))
-                    }
-                    _ => None,
-                };
+                let centre = pattern
+                    .as_ref()
+                    .map(|pattern| {
+                        model
+                            .pixel_of(pointings[0])
+                            .map(|pixel| (pattern, pixel))
+                            .map_err(model_error)
+                    })
+                    .transpose()?;
                 let prepared = operator
                     .prepare(&model, centre, Some(&team))
                     .map_err(model_error)?;
@@ -1097,23 +1128,25 @@ impl Simulator {
         model: SkyModel,
         operator: &ModelOperator,
         pattern: BeamPattern,
-        fields: &[usize],
+        pointings: &[[f64; 2]],
     ) -> SimulatorResult<(StepGrids, Reservation)> {
         let resources = &self.options.resources;
         let (host, policy) = (resources.host(), resources.policy());
         let admitted = |phase, memory| {
             admit(host, policy, &Demand { phase, memory }).map_err(SimulatorError::admission)
         };
-        let centres = fields
+        let centres = pointings
             .iter()
-            .map(|&field| {
-                let pointing = self.fields[field].direction_rad;
-                Ok((field, model.pixel_of(pointing).map_err(model_error)?))
+            .map(|&pointing| {
+                Ok((
+                    pointing.map(f64::to_bits),
+                    model.pixel_of(pointing).map_err(model_error)?,
+                ))
             })
             .collect::<SimulatorResult<Vec<_>>>()?;
         let kept = model.held_bytes()
             + BeamPattern::BYTES
-            + (size_of::<FieldModel>() + centres.capacity() * size_of::<(usize, [f64; 2])>())
+            + (size_of::<FieldModel>() + centres.capacity() * size_of::<([u64; 2], [f64; 2])>())
                 as u64;
         let reservation = admitted(MODEL_PHASE, kept)?;
         drop(admitted(
@@ -1126,7 +1159,7 @@ impl Simulator {
         drop(reading);
         tracing::info!(
             planes = held.planes(),
-            fields = fields.len(),
+            pointings = pointings.len(),
             bytes = held.held_bytes(),
             grid_bytes = operator.grid_bytes(),
             "held the model {} for each field's grids",

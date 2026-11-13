@@ -15,7 +15,7 @@ use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::path::Path;
 
-fn copy(source: &Path, output: &Path) {
+pub fn copy(source: &Path, output: &Path) {
     std::fs::create_dir_all(output).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
@@ -44,7 +44,10 @@ pub fn compare(path: &Path, case: &Value) -> f64 {
             else {
                 panic!("{column}");
             };
-            let reference = expected[column.to_lowercase()].as_array().unwrap();
+            let science = case["pointing_cache_corrected_rows"]
+                .get(row)
+                .unwrap_or(expected);
+            let reference = science[column.to_lowercase()].as_array().unwrap();
             assert_eq!(values.len(), reference.len());
             for index in 0..reference.len() {
                 // CASA's gain VisVector assumes canonical ordering even when
@@ -61,10 +64,21 @@ pub fn compare(path: &Path, case: &Value) -> f64 {
                     index
                 }];
                 let actual = values[[index % 4, index / 4]];
-                let reference = [
+                let mut reference = [
                     reference[0].as_f64().unwrap(),
                     reference[1].as_f64().unwrap(),
                 ];
+                // SDGrid's uvw-sign test wrongly predicts cross-correlations
+                // as total power. Retain its raw reference, but require the
+                // existing corrected behavior: exactly zero on those rows.
+                if case["native_single_dish"] == true
+                    && expected["field"] == 0
+                    && expected["antennas"][0] != expected["antennas"][1]
+                    && column != "MODEL_DATA"
+                {
+                    reference = [0., 0.];
+                    assert_eq!([actual.re, actual.im], [0., 0.]);
+                }
                 if (expected["field"] == 1 && case["all_fields_selected"] != true)
                     || column == "MODEL_DATA"
                 {

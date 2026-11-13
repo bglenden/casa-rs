@@ -343,9 +343,9 @@ fn set_cell(table: &mut Table, row: usize, column: &str, value: Value) {
 /// `MSPointingColumns::pointingIndex` takes it as valid for (#886 review):
 /// within half its INTERVAL of its TIME; with INTERVAL 0, within half the
 /// gap to its antenna's next row at another TIME, or at every time when
-/// there is none; with a negative INTERVAL, at every time. A beam is refused
-/// when a row pointing away from the field is valid during the scan, which
-/// has two integrations, at `t1` and 10 s later.
+/// there is none; with a negative INTERVAL, at every time. The beam uses an
+/// offset only when it covers the integration; conflicting overlaps remain
+/// explicitly refused. The scan has integrations at `t1` and 10 s later.
 #[test]
 fn pointing_rows_apply_for_the_times_casacore_takes_them_as_valid() {
     use casa_simulation::{PredictSpec, VoltagePatternSpec};
@@ -392,21 +392,25 @@ fn pointing_rows_apply_for_the_times_casacore_takes_them_as_valid() {
         });
         let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        match sm.predict(&PredictSpec {
+        let predicted = sm.predict(&PredictSpec {
             images: Vec::new(),
             component_lists: vec![point.clone()],
             incremental: false,
-        }) {
-            Ok(()) => false,
-            Err(refused) => {
-                assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
-                assert!(
-                    refused.message().contains("POINTING points scan"),
-                    "{refused}"
-                );
-                true
-            }
+        });
+        if name == "negative.ms" {
+            let error =
+                predicted.expect_err("overlapping different pointings remain explicitly refused");
+            assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
+            assert!(error.message().contains("POINTING changes"));
+            return true;
         }
+        predicted.expect("consume a valid stored pointing");
+        sm.close().unwrap();
+        let rows = read_main(&path).0;
+        // The model is at FIELD's phase centre; an offset beam changes its
+        // amplitude while its visibility phase remains zero.
+        assert!(rows[0].data[0].im.abs() < 1e-6);
+        rows[0].data[0].re < 0.999
     };
     // Valid from t1 − 6 s to t1 + 4 s, and to t1 − 1 s.
     assert!(refused("covering.ms", -1.0, 10.0, false));
@@ -541,8 +545,8 @@ fn components_under_the_beam_and_total_power_predict_after_openfromms_as_before(
 /// session that observed it and after `openfromms` (#884): a source at the
 /// field's direction predicts zero phase in both pointings, as it does in
 /// CASA 6.7.6 (measured), although the moved pointing's UVW were computed
-/// at the moved direction. A primary beam after `openfromms`, centred on
-/// POINTING's direction, is refused.
+/// at the moved direction. A primary beam after `openfromms` is centred on
+/// POINTING while the visibility phase remains on FIELD.
 #[test]
 fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
     use casa_simulation::{ObserveManySpec, Pointing, PredictSpec, VoltagePatternSpec};
@@ -601,12 +605,23 @@ fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
     let mut sm =
         Simulator::open_from_ms(directory.path().join("two.ms"), options()).expect("openfromms");
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-    let refused = predict(&mut sm).expect_err("the beam needs POINTING at the phase centres");
-    assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(
-        refused.message().contains("POINTING points scan"),
-        "{refused}"
-    );
+    predict(&mut sm).expect("the beam consumes moved POINTING independently of FIELD phase");
+    sm.close().unwrap();
+    let beamed = read_main(&directory.path().join("two.ms")).0;
+    let midway = beamed.len() / 2;
+    for (index, row) in beamed.into_iter().enumerate() {
+        for value in row.data {
+            assert!(
+                value.im.abs() < 1e-6,
+                "FIELD remains the visibility phase centre"
+            );
+            if index >= midway {
+                assert!(value.re < 0.999);
+            } else {
+                assert!((value.re - 1.).abs() < 1e-6);
+            }
+        }
+    }
 }
 
 /// Install MODEL_DATA and CORRECTED_DATA in `path`'s MAIN as copies of
