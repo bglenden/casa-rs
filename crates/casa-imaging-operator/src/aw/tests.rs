@@ -119,6 +119,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
     AwCatalog {
         root: PathBuf::new(),
         prediction_frequency_scale: 1.0,
+        prediction_uses_native_frequency: false,
         indexing: AwIndexing {
             conjugate_beams: false,
             image_reference_hz: 1.0e9,
@@ -161,7 +162,7 @@ fn catalog_charge_counts_its_origin_selector_and_prediction_scale() {
     let feed_bytes = 2 * size_of::<f32>() + 2 * size_of::<usize>();
     assert_eq!(
         catalog.cache_charge().kept,
-        (allocated + feed_bytes + size_of::<f64>()) as u64
+        (allocated + feed_bytes + size_of::<f64>() + size_of::<bool>()) as u64
             + (catalog.mueller_elements.capacity() * size_of::<u32>()) as u64
             + catalog.mueller.bytes()
             + catalog.correction.resident_bytes()

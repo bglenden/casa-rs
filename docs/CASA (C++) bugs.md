@@ -4421,6 +4421,27 @@ original cache agrees with casa-rs AW linear on products and masks. Both
 clean runs report three iterations, four major cycles and stop code 1.
 The saved MODEL_DATA agrees within 7.6e-7 normalized RMS.
 
+## AW pointing can read an uninitialized frame on an ephemeris field
+
+CASA 6.7.6.14's `PointingOffsets` owns a default-constructed
+`VisBufferUtil`. With `usepointing=False`, its first field direction
+lookup falls through to `getEphemBasedPhaseDir`. That function resets
+the epoch on the empty frame, raising `Attempt to reset non-existent frame
+member Epoch`. Initializing only the epoch exposes a missing observatory
+position. A local comparison control initializes both from the epoch
+already passed to the call and the VLA observatory used by the normal
+buffer-based constructor. The remaining CASA imaging code is unchanged.
+
+On the three-channel VLA AW fixture with an attached test ephemeris,
+`specmode='cubesource', interpolation='nearest'` maps channels with the
+source-shifted frequencies from `FTMachine::matchChannel`. The executing
+`AWProjectFT::setupVBStore` supplies the stored 1.5 and 2 GHz frequencies
+to the UVW and phase calculation. casa-rs follows both rules. The dirty
+and clean pairs with the frame-initialized CASA control agree on all
+17 products, masks and clean counts, with maximum product normalized RMS
+6.16e-7 and saved MODEL_DATA normalized RMS 5.09e-7. The unscaled native
+comparison had PSF normalized RMS 2.24e-3.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05

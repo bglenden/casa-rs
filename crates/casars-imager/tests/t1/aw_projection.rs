@@ -90,7 +90,7 @@ fn compact_evla_antennas() -> Vec<SyntheticAntenna> {
     antennas
 }
 
-fn setup() -> Setup {
+pub(super) fn setup() -> Setup {
     Setup {
         telescope: "EVLA".to_string(),
         antennas: compact_evla_antennas(),
@@ -316,7 +316,7 @@ fn two_window_setup() -> Setup {
 
 /// A short native-AW Högbom clean of the SPWs `spw` with its cells in
 /// `cache`, generated when it lacks them.
-fn cached_clean(spw: &str, cache: &Path, surface: &Path) -> Value {
+pub(super) fn cached_clean(spw: &str, cache: &Path, surface: &Path) -> Value {
     json!({
         "spw": spw,
         "weighting": "natural",

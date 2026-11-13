@@ -545,7 +545,8 @@ fn kernel_set(
                 polarization,
                 deployment.resident_bytes,
             )?
-            .with_prediction_frequency_scale(gridding_frequency_scale);
+            .with_prediction_frequency_scale(gridding_frequency_scale)
+            .with_native_prediction_frequency(super::rest_aw_uses_native_wavelengths(problem));
             let kernels = Kernels::Catalog {
                 charge: catalog.cache_charge(),
                 bound: catalog.cache_bound(),

@@ -48,8 +48,8 @@ pub enum Unsupported {
     FacetedKernelSet,
     /// W-facet modes outside the verified scalar continuum scope (#1063).
     FacetedWMode,
-    /// Multi-channel AW cubes use nearest outside REST or linear in the
-    /// verified frame and weighting combinations (#1121).
+    /// Multi-channel AW cubes use nearest or linear in the verified frame
+    /// and weighting combinations (#1121).
     MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
@@ -96,9 +96,9 @@ impl fmt::Display for Unsupported {
                  weighting, explicit W planes and one image domain (#1063)",
             ),
             Self::MultiChannelWindowAwCube => formatter.write_str(
-                "AW projection of a multi-channel window supports nearest outside the rest frame \
-                 and linear in the frame and weighting combinations documented for tclean; \
-                 this combination is tracked in #1121",
+                "AW projection of a multi-channel window supports the nearest and linear \
+                 frame and weighting combinations documented for tclean; this combination \
+                 is tracked in #1121",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -412,7 +412,9 @@ fn aw_multichannel_sampling_supported(
         WeightingScheme::Natural | WeightingScheme::Briggs { .. } | WeightingScheme::Uniform
     );
     match kernel {
-        SpectralKernel::Nearest => output != Rest,
+        SpectralKernel::Nearest => {
+            output != Rest || (source == Topocentric && weighting == WeightingScheme::Natural)
+        }
         SpectralKernel::Linear => match (source, output) {
             (Lsrk, Lsrk) => true,
             (Topocentric | Barycentric, Lsrk) | (Lsrk, Barycentric) => common_weighting,
@@ -427,6 +429,30 @@ fn aw_multichannel_sampling_supported(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_channel_aw_rest_accepts_natural_nearest_from_topo() {
+        use FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
+
+        for source in [Topocentric, Lsrk, Barycentric, Rest] {
+            for weighting in [
+                WeightingScheme::Natural,
+                WeightingScheme::Briggs { robust: 0.5 },
+                WeightingScheme::Uniform,
+            ] {
+                assert_eq!(
+                    aw_multichannel_sampling_supported(
+                        SpectralKernel::Nearest,
+                        source,
+                        Rest,
+                        weighting
+                    ),
+                    source == Topocentric && weighting == WeightingScheme::Natural,
+                    "REST from {source:?} with {weighting:?}",
+                );
+            }
+        }
+    }
 
     #[test]
     fn multi_channel_aw_accepts_verified_linear_frame_pairs() {

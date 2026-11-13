@@ -293,6 +293,7 @@ pub struct AwCatalog {
     root: PathBuf,
     indexing: AwIndexing,
     prediction_frequency_scale: f64,
+    prediction_uses_native_frequency: bool,
     pa_deg: Vec<f64>,
     frequencies_hz: Vec<f64>,
     w_values: Vec<f64>,
@@ -492,6 +493,7 @@ impl AwCatalog {
             root,
             indexing,
             prediction_frequency_scale: 1.0,
+            prediction_uses_native_frequency: false,
             pa_deg,
             frequencies_hz,
             w_values,
@@ -619,6 +621,13 @@ impl AwCatalog {
         self
     }
 
+    /// Use the stored frequency for REST AW prediction's original W.
+    #[must_use]
+    pub fn with_native_prediction_frequency(mut self, native: bool) -> Self {
+        self.prediction_uses_native_frequency = native;
+        self
+    }
+
     /// Sorted unique w values in wavelengths.
     #[must_use]
     pub fn w_values(&self) -> &[f64] {
@@ -704,6 +713,7 @@ impl AwCatalog {
                     angles.len() * size_of::<f32>() + 2 * size_of::<usize>()
                 })
             + size_of::<f64>()
+            + size_of::<bool>()
             + (self.pa_deg.capacity() + self.frequencies_hz.capacity() + self.w_values.capacity())
                 * size_of::<f64>()
             + self.mueller_elements.capacity() * size_of::<u32>()
@@ -1009,7 +1019,12 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// the resampler grid frequency needs its scale to LSRK (#1121).
     fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 {
         row.original_uvw_m.map_or(w_lambda, |uvw_m| {
-            uvw_m[2] * (freq_hz * self.prediction_frequency_scale) / SPEED_OF_LIGHT_M_PER_S
+            let scale = if self.prediction_uses_native_frequency {
+                row.native_frequency_ratio
+            } else {
+                self.prediction_frequency_scale
+            };
+            uvw_m[2] * (freq_hz * scale) / SPEED_OF_LIGHT_M_PER_S
         })
     }
 

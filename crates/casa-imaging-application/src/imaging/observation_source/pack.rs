@@ -492,6 +492,7 @@ impl Packer<'_> {
                 );
             }
         }
+        let rest_aw = super::super::rest_aw_uses_native_wavelengths(self.problem);
         let (mut packed_time, mut native_frequency_ratio) = (None, 1.0);
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
@@ -513,6 +514,14 @@ impl Packer<'_> {
                 time_s: batch.time.seconds_since(time, origin),
             };
             self.project(geometry, sample, &mut scratch.projections)?;
+            if rest_aw {
+                for projection in &mut scratch.projections {
+                    projection.uvw_m = projection
+                        .uvw_m
+                        .map(|metres| metres * native_frequency_ratio);
+                    projection.phase_shift_m *= native_frequency_ratio;
+                }
+            }
             let nonfinite_uvw = !scratch.projections.iter().all(|projection| {
                 projection.uvw_m.iter().all(|value| value.is_finite())
                     && projection.phase_shift_m.is_finite()
