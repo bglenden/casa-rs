@@ -23,7 +23,8 @@ use casa_imaging_operator::{
     AiryDish, AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend,
     GridBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator, Mode,
     ModeSet, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, Placement, PlaneRange,
-    PolarizationRouting, SampleBuffer, Spheroidal, WPlaneCount, WPlanes, Work,
+    PolarizationRouting, RowContext, SampleBuffer, Spheroidal, TapLayout, WPlaneCount, WPlanes,
+    Work,
 };
 use casa_numerics::PrimaryBeam;
 use casa_types::Correlation;
@@ -689,16 +690,28 @@ fn awp2_stages_hold_at_most_what_they_state() {
     if !alone("awp2_stages_hold_at_most_what_they_state") {
         return;
     }
-    for (side, cell_arcsec, single_field, frequencies) in [
-        (100, 8.0_f64, true, &[1.0e9, 1.5e9][..]),
-        (512, 10.0_f64, false, &[1.5e9][..]),
+    for (side, cell_arcsec, single_field, frequencies, w_planes) in [
+        (100, 8.0_f64, true, &[1.0e9, 1.5e9][..], &[0.0][..]),
+        (512, 10.0_f64, false, &[1.5e9][..], &[0.0][..]),
+        (
+            1200,
+            1.6_f64,
+            false,
+            &[1.2e9, 1.3e9, 1.4e9, 1.5e9, 1.6e9][..],
+            &[0.0, 2_152.12, 8_608.48, 19_369.08, 34_433.92, 53_803.0][..],
+        ),
     ] {
         let geometry = geometry(side, cell_arcsec.to_radians() / 3600.0, GridPadding::None);
-        check_awp2_stages(&geometry, single_field, frequencies);
+        check_awp2_stages(&geometry, single_field, frequencies, w_planes);
     }
 }
 
-fn check_awp2_stages(geometry: &GridGeometry, single_field: bool, frequencies: &[f64]) {
+fn check_awp2_stages(
+    geometry: &GridGeometry,
+    single_field: bool,
+    frequencies: &[f64],
+    w_planes: &[f64],
+) {
     let sampling = casa_imaging_operator::Awp2Sampling::new(geometry, single_field).unwrap();
     let surface = EvlaDishSurface::new(
         (0..=1250)
@@ -709,10 +722,10 @@ fn check_awp2_stages(geometry: &GridGeometry, single_field: bool, frequencies: &
             .collect(),
     )
     .unwrap();
-    let screens_bytes = sampling.screens_bytes(frequencies.len());
+    let screens_bytes = sampling.screens_bytes(frequencies.len(), w_planes.len());
     let (screen_peak, _, screens) = measure(|| {
         sampling
-            .screens(frequencies, surface, single_field)
+            .screens(frequencies, surface, single_field, w_planes)
             .unwrap()
     });
     assert!(
@@ -721,11 +734,22 @@ fn check_awp2_stages(geometry: &GridGeometry, single_field: bool, frequencies: &
     );
     let kernel_bytes = screens.kernel_bytes(geometry);
     let polarization = routing();
-    let (peak, _, set) = measure(|| screens.finish(geometry, &polarization, frequencies.into()));
+    let (peak, _, set) = measure(|| {
+        screens.finish(
+            geometry,
+            &polarization,
+            frequencies.into(),
+            w_planes.into(),
+            1.5e9,
+        )
+    });
     assert!(
         peak <= kernel_bytes,
         "kernel construction {peak} exceeds {kernel_bytes}"
     );
+    if w_planes.len() > 1 {
+        check_awp2_routing(&set);
+    }
     // The screens were already live at the start of construction. Take
     // another baseline after dropping the set to measure its retained heap.
     let before_drop = LIVE.load(Ordering::Relaxed);
@@ -739,4 +763,43 @@ fn check_awp2_stages(geometry: &GridGeometry, single_field: bool, frequencies: &
     eprintln!(
         "AWP2 aperture {screen_peak}/{screens_bytes} B, kernel construction {peak}/{kernel_bytes} B, resident {resident} B"
     );
+}
+
+fn check_awp2_routing(set: &casa_imaging_operator::Awp2) {
+    let row = RowContext {
+        native_frequency_ratio: 1.0,
+        original_uvw_m: None,
+        time_s: 0.0,
+        antennas: [0, 1],
+        antenna_types: [0; 2],
+        parallactic_angle_rad: [0.0; 2],
+        field: 0,
+        spectral_window: 0,
+    };
+    let lo = set.key(&row, 1.2e9, 5_800.0 * 1.2 / 1.5);
+    let hi = set.key(&row, 1.6e9, -5_800.0 * 1.6 / 1.5);
+    assert_eq!(
+        (lo.group, hi.group),
+        (2, 2),
+        "W uses the row mean frequency"
+    );
+    assert_eq!((lo.cube, hi.cube), (0, 4), "A uses the sample frequency");
+    let set_tap = |key: CfKey, psf: bool| {
+        let mut hold = CellHold::new();
+        let layout = if psf {
+            set.psf_taps(key, &mut hold)
+        } else {
+            set.taps(key, &mut hold)
+        };
+        let TapLayout::Dense { data, .. } = layout else {
+            panic!("AWP2 uses dense taps");
+        };
+        data.iter().map(|v| f64::from(v.im).abs()).sum::<f64>()
+    };
+    assert_eq!(
+        set_tap(lo, true),
+        set_tap(CfKey { group: 0, ..lo }, false),
+        "PSF uses W=0 imaging taps"
+    );
+    assert_ne!(set_tap(lo, true), set_tap(lo, false));
 }

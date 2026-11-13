@@ -344,7 +344,7 @@
     },
     "gridder": {
       "status": "Partial",
-      "scope": "Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural-weighted Stokes I Högbom MFS with fixed VLA or EVLA L-band fields, one TOPO window, square Lanczos-resampled images within the beam grid, one W plane and no squint (#1071).",
+      "scope": "Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural- or uniform-weighted Stokes I Högbom MFS with fixed VLA or EVLA L-band fields, one TOPO window, square Lanczos-resampled images within the beam grid, positive W-plane counts and no squint (#1071).",
       "evidence": [
         "signature",
         "reader",
@@ -376,7 +376,7 @@
     },
     "wprojplanes": {
       "status": "Implemented",
-      "scope": "W: -1 becomes derive/None and positive counts pass; non-positive other than -1 refused. W aliases with one plane normalize to standard. AW: any positive count, one plane co-planar without the W term (createAWPFTMachine); a native EVLA cache generates that many planes, an imported CASA cache holds its own; -1 refused (issue 980). AWP2 currently takes one W plane (#1071). Ignored by other gridders.",
+      "scope": "W: -1 becomes derive/None and positive counts pass; non-positive other than -1 refused. W aliases with one plane normalize to standard. AW: any positive count, one plane co-planar without the W term (createAWPFTMachine); a native EVLA cache generates that many planes, an imported CASA cache holds its own; -1 refused (issue 980). AWP2 accepts positive W-plane counts, including one for W=0 (#1071). Ignored by other gridders.",
       "evidence": [
         "signature",
         "reader"
@@ -1454,8 +1454,8 @@
     },
     "awp2-dirty-mfs": {
       "kind": "Frozen CASA comparison",
-      "state": "Single-field dirty and two-field clean MFS verified",
-      "scope": "CASA 6.7.6-14, refim_point_linRL.ms FIELD/SPW 0, 100-square at 8 arcsec, natural Stokes I, default W and PA settings. Seven products agree with exact masks and sum of weights. The two-field refim_mawproject.ms SPW 1 clean at 512-square and 10 arcsec agrees on eight products, controller counts and the model column.",
+      "state": "Single-field dirty, two-field clean and nonzero W MFS verified",
+      "scope": "CASA 6.7.6-14, refim_point_linRL.ms FIELD/SPW 0, 100-square at 8 arcsec, natural Stokes I, default W and PA settings. Seven products agree with exact masks and sum of weights. The two-field refim_mawproject.ms SPW 1 clean at 512-square and 10 arcsec agrees on eight products, controller counts and the model column. The 1200-square nonzero-W uniform clean with six W planes agrees on nine products including PB correction.",
       "links": [
         "https://github.com/bglenden/casa-rs/issues/1071#issuecomment-6698488720"
       ]

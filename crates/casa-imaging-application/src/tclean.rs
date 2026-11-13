@@ -765,7 +765,14 @@ impl<'a> Tclean<'a> {
         }
         match (modes.gridder, planes) {
             ("wproject" | "awproject", -1) => self.set("wprojplanes", "none"),
-            ("wproject" | "awproject", n) if n >= 1 => self.set("wprojplanes", n),
+            ("wproject" | "awproject" | "awp2", n) if n >= 1 => self.set("wprojplanes", n),
+            ("awp2", n) => {
+                return Err(TcleanRefusal::not_yet(
+                    "wprojplanes",
+                    format!("with AWP2 and {n} planes"),
+                    1071,
+                ));
+            }
             ("wproject" | "awproject", n) => {
                 return Err(TcleanRefusal::new(
                     "wprojplanes",
@@ -830,7 +837,6 @@ impl<'a> Tclean<'a> {
     /// AWPLPG selects W planes and squint independently of AWProjectFT.
     fn awp2_controls(&mut self) -> Result<(), TcleanRefusal> {
         let controls = [
-            ("wprojplanes", self.integer("wprojplanes")? == 1),
             (
                 "computepastep",
                 self.value("computepastep")?

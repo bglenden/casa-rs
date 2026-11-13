@@ -468,7 +468,7 @@ fn survey_observation(
         w_range: matches!(
             request.gridder,
             Gridder::Wproject { .. } | Gridder::Awproject(_)
-        ),
+        ) || matches!(request.gridder, Gridder::Awp2 { wprojplanes: Some(count), .. } if count.get() > 1),
         track_pb_antennas: request.vis.len() == 1
             && request.specmode == SpecMode::Mfs
             && matches!(request.gridder, Gridder::Standard { .. })

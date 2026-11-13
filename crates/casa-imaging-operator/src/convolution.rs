@@ -13,8 +13,7 @@ use crate::sample::CfKey;
 /// Taps of one convolution-function cell in the layout the kernels read.
 ///
 /// Fine-offset rows are indexed by [`CellLocation`]'s
-/// `ox`/`oy`, which run over `0..=oversampling`, so every layout holds
-/// `oversampling + 1` rows per axis and `oversampling` must be even.
+/// `ox`/`oy`, which run over `0..CellLocation::fine_rows(oversampling)`.
 #[derive(Clone, Copy, Debug)]
 pub enum TapLayout<'a> {
     /// Separable real kernel (standard spheroidal). `rows[o * support + i]`
@@ -22,11 +21,11 @@ pub enum TapLayout<'a> {
     /// offset row `o`; one fractional offset is one contiguous row
     /// (oversampling-major, Obit `ConvFunc`).
     SeparableReal {
-        /// `(oversampling + 1) × support` tap values.
+        /// `fine_rows × support` tap values.
         rows: &'a [f32],
         /// Taps per axis (odd).
         support: u16,
-        /// Fine offsets per cell (even).
+        /// Fine sampling intervals per cell.
         oversampling: u16,
     },
     /// Dense complex kernel (W, AW, mosaic) ordered
@@ -34,16 +33,16 @@ pub enum TapLayout<'a> {
     /// `mueller × sy × sx` tile per fractional offset. Tap `(ix, iy)` sits
     /// at grid offset `(ix − sx/2, iy − sy/2)` from the anchor.
     Dense {
-        /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
+        /// `fine_rows² × mueller_planes × sy × sx` tap values.
         data: &'a [Complex32],
-        /// Each tile's tap sum in `f64`, `(oversampling + 1)² ×
+        /// Each tile's tap sum in `f64`, `fine_rows² ×
         /// mueller_planes` of them in the tiles' order
         /// ([`DenseCell::new`]), from which [`TapLayout::norm`] reads a
         /// sample's norm rather than summing its tile.
         norms: &'a [Complex64],
         /// Taps per axis `[sx, sy]` (odd).
         support: [u16; 2],
-        /// Fine offsets per cell (even).
+        /// Fine sampling intervals per cell.
         oversampling: u16,
         /// Mueller planes per tile; 1 for a scalar kernel.
         mueller_planes: u8,
@@ -93,7 +92,7 @@ impl TapLayout<'_> {
     /// `(ox, oy)`).
     #[must_use]
     pub fn norm_bytes(&self) -> u64 {
-        let rows = u64::from(self.oversampling()) + 1;
+        let rows = CellLocation::fine_rows(self.oversampling()) as u64;
         rows * rows * u64::from(self.mueller_planes()) * size_of::<Complex64>() as u64
     }
 
@@ -164,13 +163,13 @@ fn dense_norms(data: &[Complex32], support: [u16; 2]) -> Box<[Complex64]> {
 /// accessors (#770 review).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DenseCell {
-    /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
+    /// `fine_rows² × mueller_planes × sy × sx` tap values.
     data: Box<[Complex32]>,
     /// Each tile's tap sum, in the tiles' order.
     norms: Box<[Complex64]>,
     /// Taps per axis `[sx, sy]` (odd).
     support: [u16; 2],
-    /// Fine offsets per cell (even).
+    /// Fine sampling intervals per cell.
     oversampling: u16,
     /// Mueller planes per tile.
     mueller_planes: u8,
@@ -215,14 +214,14 @@ impl DenseCell {
         std::mem::size_of_val(self.data.as_ref()) + std::mem::size_of_val(self.norms.as_ref())
     }
 
-    /// The tap values, `(oversampling + 1)² × mueller_planes × sy × sx` of
+    /// The tap values, `fine_rows² × mueller_planes × sy × sx` of
     /// them in the [`TapLayout::Dense`] order.
     #[must_use]
     pub fn data(&self) -> &[Complex32] {
         &self.data
     }
 
-    /// Each tile's tap sum, `(oversampling + 1)² × mueller_planes` of them
+    /// Each tile's tap sum, `fine_rows² × mueller_planes` of them
     /// in the tiles' order.
     #[must_use]
     pub fn norms(&self) -> &[Complex64] {
@@ -235,7 +234,7 @@ impl DenseCell {
         self.support
     }
 
-    /// Fine offsets per cell (even).
+    /// Fine sampling intervals per cell.
     #[must_use]
     pub const fn oversampling(&self) -> u16 {
         self.oversampling

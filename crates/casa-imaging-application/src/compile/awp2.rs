@@ -18,7 +18,12 @@ pub(super) fn plan(
     domain: &PreparedImageDomain,
     context: &RunContext,
 ) -> Result<Option<Awp2Deployment>, PrepareError> {
-    let Gridder::Awp2 { evla_surface, .. } = &request.gridder else {
+    let Gridder::Awp2 {
+        evla_surface,
+        wprojplanes,
+        ..
+    } = &request.gridder
+    else {
         return Ok(None);
     };
     let [window] = surveyed.survey.spectral_windows.as_slice() else {
@@ -65,6 +70,22 @@ pub(super) fn plan(
     let frequencies_hz =
         beam_frequencies(&window.frequencies_hz, window.channel_widths_hz[0], band)?;
 
+    let count = wprojplanes.map_or(1, std::num::NonZeroUsize::get);
+    let maximum_w = surveyed.survey.w.maximum_abs_m * frequencies_hz.last().unwrap()
+        / super::specification::SPEED_OF_LIGHT_M_PER_S;
+    let step = maximum_w / (count.saturating_sub(1).max(1) as f64).powi(2);
+    let w_planes: Box<[f64]> = (0..count).map(|i| (i as f64).powi(2) * step).collect();
+    let channels = super::selection::selected_channels(
+        request,
+        &surveyed.survey.spw_channels,
+        window.spw_id,
+        &window.frequencies_hz,
+    )?;
+    let row_frequency_hz = channels
+        .iter()
+        .map(|&channel| window.frequencies_hz[channel])
+        .sum::<f64>()
+        / channels.len() as f64;
     let path = evla_surface
         .as_deref()
         .ok_or(PrepareError::Awp2SurfacePath)?;
@@ -82,12 +103,15 @@ pub(super) fn plan(
     charge.retain(
         (std::mem::size_of_val(surface.samples())
             + std::mem::size_of_val(frequencies_hz.as_ref())
+            + std::mem::size_of_val(w_planes.as_ref())
             + 2 * size_of::<usize>()) as u64,
     );
     Ok(Some(Awp2Deployment {
-        single_field: surveyed.survey.fields.len() == 1,
+        single_field: surveyed.survey.fields.len() == 1 && count == 1,
         legacy_vla: domain.telescope.trim() == "VLA",
         frequencies_hz,
+        w_planes,
+        row_frequency_hz,
         surface,
         _charge: charge,
     }))
