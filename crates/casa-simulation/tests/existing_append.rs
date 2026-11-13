@@ -270,8 +270,20 @@ fn reopened_observe_and_observemany_match_actual_casa() {
             case["returned"].as_bool().unwrap(),
             "{name}"
         );
-        if name.starts_with("append_then_selected") {
-            sm.set_data(&[], &[0], "").unwrap();
+        if name.starts_with("append_then_") {
+            if name.contains("query") {
+                let boundary = predict_support::REFERENCE_MJD * 86400. + 40.;
+                let query = if name.ends_with("old") {
+                    format!("TIME < {boundary}")
+                } else if name.ends_with("new") {
+                    format!("TIME >= {boundary}")
+                } else {
+                    "TIME < 0".into()
+                };
+                sm.set_data(&[], &[0], &query).unwrap();
+            } else {
+                sm.set_data(&[], &[0], "").unwrap();
+            }
             sm.predict(&casa_simulation::PredictSpec {
                 images: Vec::new(),
                 component_lists: vec![inputs.join("point.cl")],
