@@ -234,6 +234,19 @@ impl Simulator {
         &self,
         selection: &DataSelection,
     ) -> SimulatorResult<bool> {
+        let mut found = false;
+        self.visit_selected_headers(selection, |_, _| {
+            found = true;
+            Ok(())
+        })?;
+        Ok(found)
+    }
+
+    pub(in crate::session) fn visit_selected_headers(
+        &self,
+        selection: &DataSelection,
+        mut visit: impl FnMut(&super::super::observe::Scan, RowHeader) -> SimulatorResult<()>,
+    ) -> SimulatorResult<()> {
         let resources = &self.options.resources;
         let _reservation = admit(
             resources.host(),
@@ -245,7 +258,6 @@ impl Simulator {
         )
         .map_err(SimulatorError::admission)?;
         let mut workspace = QueryWorkspace::new();
-        let mut found = false;
         if self.opened.is_some() {
             charge_process_caches(resources.host(), resources.policy())
                 .map_err(SimulatorError::admission)?;
@@ -294,15 +306,18 @@ impl Simulator {
                             })
                         });
                         let [a, b] = antennas;
-                        found |= selection.matches_row(
+                        let header = RowHeader {
+                            antennas: [a?, b?],
+                            time_s,
+                        };
+                        if selection.matches_row(
                             scan,
-                            RowHeader {
-                                antennas: [a?, b?],
-                                time_s,
-                            },
+                            header,
                             &mut workspace,
                             &self.options.measures,
-                        )?;
+                        )? {
+                            visit(scan, header)?;
+                        }
                     }
                 }
             }
@@ -319,19 +334,22 @@ impl Simulator {
                 for first in 0..rows.antenna_count {
                     let start = first + usize::from(rows.autocorrelation_weight <= 0.0);
                     for second in start..rows.antenna_count {
-                        found |= selection.matches_row(
+                        let header = RowHeader {
+                            antennas: [first, second],
+                            time_s,
+                        };
+                        if selection.matches_row(
                             scan,
-                            RowHeader {
-                                antennas: [first, second],
-                                time_s,
-                            },
+                            header,
                             &mut workspace,
                             &self.options.measures,
-                        )?;
+                        )? {
+                            visit(scan, header)?;
+                        }
                     }
                 }
             }
         }
-        Ok(found)
+        Ok(())
     }
 }

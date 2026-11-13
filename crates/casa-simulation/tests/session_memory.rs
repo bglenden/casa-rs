@@ -119,6 +119,8 @@ mod offline_noise;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;
+#[path = "session_memory/polynomial_fields.rs"]
+mod polynomial_fields;
 #[path = "session_memory/selection.rs"]
 mod selection;
 #[path = "selection/input.rs"]

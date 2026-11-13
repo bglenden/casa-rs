@@ -65,7 +65,9 @@ pub fn compare(path: &Path, case: &Value) -> f64 {
                     reference[0].as_f64().unwrap(),
                     reference[1].as_f64().unwrap(),
                 ];
-                if expected["field"] == 1 || column == "MODEL_DATA" {
+                if (expected["field"] == 1 && case["all_fields_selected"] != true)
+                    || column == "MODEL_DATA"
+                {
                     assert_eq!(
                         [f64::from(actual.re), f64::from(actual.im)],
                         reference,
