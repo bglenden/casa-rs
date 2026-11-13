@@ -226,7 +226,7 @@
     },
     "specmode": {
       "status": "Partial",
-      "scope": "cont aliases mfs. Cube, cubedata and cubesource pass into spectral compilation. Standard-gridder MVC supports fresh natural-weighted Stokes I imaging with two Taylor terms and one selected field and MeasurementSet. The Taylor images copy their spectral axis from the published cube. Remaining MVC combinations are tracked in #1069.",
+      "scope": "cont aliases mfs. Cube, cubedata and cubesource pass into spectral compilation. Standard-gridder MVC supports fresh natural-weighted Stokes I imaging with two Taylor terms and one selected field and MeasurementSet. The Taylor images copy their spectral axis from the published cube. With pbcor=True both restored Taylor images are divided by the shared Taylor PB and inherit its validity mask. Remaining MVC combinations are tracked in #1069.",
       "evidence": [
         "signature",
         "reader"
@@ -1236,9 +1236,9 @@
       "state": "Unfinished",
       "inputs": "specmode='mvc'.",
       "casa": "Supports the MVC task path.",
-      "ours": "Supports the bounded fresh standard-gridder mode. The three-SPW dirty and clean references agree on all published images, masks, coordinates and controller counts.",
+      "ours": "Supports the bounded fresh standard-gridder mode. The three-SPW dirty, clean and PB-corrected clean references agree on all published images, masks, coordinates and controller counts.",
       "rationale": "The Taylor header spans the first and last published cube channel centres and preserves the cube rest-frequency label. The polynomial expansion has its own reference frequency.",
-      "impact": "PB-corrected imaging, continuation, other gridders and the separate dirty alpha boundary remain on #1069.",
+      "impact": "Continuation, start models and other gridders remain on #1069. The separate dirty alpha case agrees with CASA after correcting its standard-grid sector bounds.",
       "evidence": [
         "mvc-decision",
         "reader"
@@ -1453,8 +1453,8 @@
     },
     "mvc-decision": {
       "kind": "Frozen CASA comparisons and MVC scope",
-      "state": "Standard dirty and clean comparisons passed",
-      "scope": "CASA 6.7.6.14, refim_oneshiftpoint.mosaic.ms FIELD 0, three spectral windows, 512-square, three output channels. The Taylor axis follows the published cube axis. #1069 owns the remaining combinations.",
+      "state": "Standard dirty, clean and PB-corrected comparisons passed",
+      "scope": "CASA 6.7.6.14, refim_oneshiftpoint.mosaic.ms FIELD 0, three spectral windows, 512-square, three output channels. The Taylor axis follows the published cube axis. Both signs of pblimit in the PB-corrected case agree on 24 products. #1069 owns the remaining combinations.",
       "links": [
         "https://github.com/bglenden/casa-rs/issues/1069",
         "https://github.com/bglenden/casa-rs/issues/1069#issuecomment-6801927969"
