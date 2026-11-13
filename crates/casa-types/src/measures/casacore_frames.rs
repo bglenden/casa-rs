@@ -8,6 +8,9 @@
 //! casacore's 10-digit literals, so they are orthogonal only to about 1e-10;
 //! results are renormalized, which leaves every angle unchanged.
 
+mod fk4;
+pub(super) use fk4::{nutation as besselian_nutation, precession as besselian_precession};
+
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 

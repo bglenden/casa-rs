@@ -10,7 +10,8 @@
 //! - The primary beam scales a point by the analytic Airy power pattern.
 //! - A Stokes I model leaves the cross-hands at zero, and flagged samples
 //!   and rows predict zero.
-//! - Models in other frames or layouts are refused rather than misread.
+//! - Time-dependent native frames require explicit conversion context;
+//!   display conversions preserve physical pixels and unsupported layouts fail.
 //!
 //! Agreement with CASA's own `sm.predict`, sample by sample, is measured by
 //! `tools/simulation/predict_spike.py` against an installed CASA (#841).
@@ -165,7 +166,10 @@ fn a_point_at_the_tangent_point_predicts_its_flux_on_every_baseline() {
     let model = Model::points(&[(N / 2, N / 2, 2.5)])
         .open(dir.path())
         .expect("model");
-    assert_eq!(model.centre_rad(), CENTRE_RAD);
+    // Converting through direction cosines can change an angle by one ULP.
+    for (actual, expected) in model.centre_rad().unwrap().into_iter().zip(CENTRE_RAD) {
+        assert!((actual - expected).abs() < 1e-15);
+    }
     let predictor = predictor(&model, &XX_YY);
     for uvw in baselines() {
         for value in predict(&predictor, uvw, &[FREQUENCY_HZ]) {
@@ -204,7 +208,7 @@ fn the_tangent_point_is_the_centre_pixel_whatever_the_reference_pixel() {
     let mut spec = Model::points(&[(N / 2, N / 2, 1.0)]);
     spec.reference_pixel = [(N / 2 - 5) as f64, (N / 2 + 3) as f64];
     let model = spec.open(dir.path()).expect("model");
-    assert_ne!(model.centre_rad(), CENTRE_RAD);
+    assert_ne!(model.centre_rad().unwrap(), CENTRE_RAD);
     // The point on pixel (n/2, n/2) sits on the tangent point: flux, no phase.
     let predictor = predictor(&model, &XX_YY);
     for uvw in baselines() {
@@ -422,13 +426,15 @@ fn flagged_samples_and_rows_predict_zero_and_lengths_are_checked() {
 }
 
 #[test]
-fn a_model_in_a_time_dependent_frame_is_refused() {
+fn a_time_dependent_model_defers_conversion_until_context_is_supplied() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut spec = Model::points(&[(N / 2, N / 2, 1.0)]);
     spec.frame = DirectionRef::APP;
+    let model = spec.open(dir.path()).unwrap();
+    assert_eq!(model.tangent_direction().refer(), DirectionRef::APP);
     assert!(matches!(
-        spec.open(dir.path()),
-        Err(PredictError::UnsupportedModel(reason)) if reason.contains("J2000")
+        model.centre_rad(),
+        Err(PredictError::Coordinates(_))
     ));
 }
 
@@ -453,7 +459,7 @@ fn a_model_without_direction_stokes_and_spectral_axes_is_refused() {
 }
 
 #[test]
-fn a_model_with_a_time_dependent_conversion_frame_is_refused() {
+fn a_time_dependent_display_frame_preserves_physical_image_directions() {
     let dir = tempfile::tempdir().unwrap();
     let path = Model::points(&[(1, 1, 1.0)]).write(dir.path());
     let mut image = PagedImage::<f32>::open(&path).unwrap();
@@ -468,7 +474,17 @@ fn a_model_with_a_time_dependent_conversion_frame_is_refused() {
     image.set_coordinates(coordinates).unwrap();
     image.save().unwrap();
     drop(image);
-    assert!(
-        matches!(SkyModel::open(&path), Err(PredictError::UnsupportedModel(reason)) if reason.contains("conversion"))
-    );
+    let displayed = SkyModel::open(&path).unwrap();
+    assert_eq!(displayed.tangent_direction().refer(), DirectionRef::J2000);
+    let reference_dir = tempfile::tempdir().unwrap();
+    let native = Model::points(&[(1, 1, 1.0)])
+        .open(reference_dir.path())
+        .unwrap();
+    let (displayed, native) = (predictor(&displayed, &XX_YY), predictor(&native, &XX_YY));
+    for uvw in baselines() {
+        assert_eq!(
+            predict(&displayed, uvw, &[FREQUENCY_HZ]),
+            predict(&native, uvw, &[FREQUENCY_HZ])
+        );
+    }
 }

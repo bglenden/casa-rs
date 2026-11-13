@@ -61,6 +61,8 @@ def main():
                         value = case["direction_frame_corrected_rows"][row][name]
                     if "polarization_map_corrected_rows" in case and name in ("data", "corrected_data", "model_data"):
                         value = case["polarization_map_corrected_rows"][row][name]
+                    if "corrected_rows" in case and name in ("data", "corrected_data", "model_data"):
+                        value = case["corrected_rows"][row][name]
                     if (case.get("native_single_dish") and reference["field"] == 0
                             and reference["antennas"][0] != reference["antennas"][1]
                             and name in ("data", "corrected_data")):
