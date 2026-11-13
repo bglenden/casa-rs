@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The `simobserve` task (simulation Phase 5c, #841): CASA 6.7.6's
-//! `task_simobserve.py`, ported as its specification (ADR-0018) onto the
+//! `task_simobserve.py`, ported as its specification (ADR-0017) onto the
 //! simulator session ([`Simulator`]) and the `simutil` helpers
 //! ([`crate::simutil`]).
 //!
@@ -24,8 +24,9 @@
 //! `.compskymodel` and `.compskymodel.flat`), `.ptg.txt`, `.cal.cclist`,
 //! `.ms` (or `.sd.ms`), `.fullpol.ms` and `.fullpol.cal`, and `.noisy.ms`,
 //! `.noisier.ms` or `.noisy.sd.ms`. Graphics (`.skymodel.png`,
-//! `.observe.png`, `.quick.psf`) come in Phase 5e; until then `graphics`
-//! writes none and says so.
+//! `.observe.png`) come in Phase 5e; until then `graphics` warns that PNG
+//! rendering is unfinished. Interferometric graphics also write the
+//! numerical `.quick.psf` through the native imaging application.
 //!
 //! Where CASA raises, the task returns [`SimobserveError`] with CASA's
 //! message. Where CASA's task does something physically wrong, casa-rs
@@ -72,6 +73,7 @@ mod noise;
 mod observe;
 mod parameters;
 mod pointings;
+mod quick_psf;
 mod schedule;
 mod sky;
 #[cfg(test)]
@@ -194,6 +196,7 @@ pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, Simo
         }
         run.uvmode = !noise::is_total_power(&ms)?;
     }
+    quick_psf::prepare(&mut run, &sky)?;
     noise::corrupt(&mut run, &sky, &array)?;
     run.clean_up(&sky)?;
     Ok(SimobserveOutcome {
@@ -282,8 +285,8 @@ impl<'a> Run<'a> {
         run.check_sky_inputs()?;
         if !matches!(parameters.graphics.as_str(), "none" | "") {
             let warning = format!(
-                "graphics='{}' is not yet implemented in casa-rs (#1025): no .png or \
-                 .quick.psf is written",
+                "graphics='{}' PNG rendering is not yet implemented in casa-rs (#1025): \
+                 no .png is written",
                 parameters.graphics
             );
             tracing::warn!("{warning}");

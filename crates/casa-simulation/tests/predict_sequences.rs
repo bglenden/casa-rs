@@ -209,10 +209,6 @@ fn predict_refuses_as_casa_does() {
         assert_eq!(outcome, CasaOutcome::ReturnsFalse);
         assert!(message.contains("No model images found"), "{message}");
     }
-    // What CASA does and casa-rs does not yet.
-    let (outcome, message) = refusal(sm.predict(&spec(&[&model, &model])));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("#1053"), "{message}");
     // A component list that is not a readable table is CASA's False.
     let (outcome, message) = refusal(sm.predict(&PredictSpec {
         component_lists: vec![directory.path().join("model.cl")],
@@ -641,7 +637,8 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     assert_eq!(outcome, CasaOutcome::Raises);
     assert!(message.starts_with("No such VisVector type"), "{message}");
 
-    // A near-field distance on the last field CASA defines.
+    // Last-field focusing is supported; field_distance.rs supplies the
+    // independent CASA science comparisons.
     let mut near = session(
         &directory.path().join("near.ms"),
         "ALMA",
@@ -660,10 +657,9 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         3.0e11,
     )
     .expect("setfield");
-    assert_eq!(
-        refusal(near.predict(&spec(&[&model]))).0,
-        CasaOutcome::NotYetImplemented
-    );
+    near.predict(&spec(&[&model]))
+        .expect("finite-distance prediction");
+    near.close().expect("close focused prediction");
 }
 
 #[test]
@@ -677,7 +673,9 @@ fn a_refused_predict_leaves_the_plan_as_it_was() {
         session.predict(&predict_spec(&model, false))?;
         let missing = directory.path().join("missing.image");
         assert!(session.predict(&spec(&[&missing])).is_err());
-        assert!(session.predict(&spec(&[&model, &model])).is_err());
+        // Multiple valid images are supported; an invalid later image
+        // must still refuse without replacing the earlier DATA plan.
+        assert!(session.predict(&spec(&[&model, &missing])).is_err());
         assert!(session.predict(&PredictSpec::default()).is_err());
         Ok(())
     });

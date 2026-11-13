@@ -57,7 +57,7 @@ const W_PLANES: usize = 32;
 
 /// A paraboloid dish surface in the EVLA radius/height/slope text format:
 /// 12.5 m radius sampled every centimetre.
-fn surface_text() -> String {
+pub(super) fn surface_text() -> String {
     (0..=1250)
         .map(|index| {
             let radius = f64::from(index) / 100.0;
@@ -379,6 +379,225 @@ fn assert_same_products(products: &Products, fresh: &Products) {
     }
 }
 
+/// A dirty run leaves raw higher Taylor weight moments. Recomputing the
+/// PSF during CLEAN must preserve their scale and give the same result as
+/// a fresh CLEAN. CASA can multiply those saved moments by the principal
+/// sum of weights on restart (#1070).
+#[test]
+fn aw_mtmfs_restart_recomputes_taylor_weights() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    controls["deconvolver"] = json!("mtmfs");
+    controls["nterms"] = json!(2);
+    controls["scales"] = json!([0]);
+    controls["reffreq"] = json!("1.45GHz");
+    controls["threshold"] = json!("0Jy");
+    controls["pbcor"] = json!(false);
+    controls["niter"] = json!(0);
+    let (_, dirty) = observation.image("continued", controls.clone());
+
+    controls["niter"] = json!(10);
+    let (continued, products) = observation.image("continued", controls.clone());
+    let (fresh, fresh_products) = observation.image("fresh", controls);
+    assert!(continued.minor_iterations > 0, "the restarted run cleans");
+    assert_eq!(continued.minor_iterations, fresh.minor_iterations);
+    assert_eq!(continued.major_cycles, fresh.major_cycles);
+    for suffix in [".weight.tt1", ".weight.tt2"] {
+        let before = dirty.get(suffix).values();
+        let after = products.get(suffix).values();
+        let peak = before
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(peak > 0.0, "{suffix} must exercise a nonzero weight moment");
+        let difference = before
+            .iter()
+            .zip(&after)
+            .map(|(before, after)| (before - after).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            difference <= 1.0e-6 * peak,
+            "{suffix} changed by {difference} from a dirty peak of {peak}"
+        );
+    }
+    assert_same_products(&products, &fresh_products);
+}
+
+fn two_term_aw_restart() -> (Observation, Value) {
+    let source = Component {
+        spectral_index: -0.7,
+        ..CENTRE
+    };
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", source)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    controls["deconvolver"] = json!("mtmfs");
+    controls["nterms"] = json!(2);
+    controls["scales"] = json!([0]);
+    controls["reffreq"] = json!("1.45GHz");
+    controls["threshold"] = json!("0Jy");
+    controls["pbcor"] = json!(false);
+    controls["niter"] = json!(0);
+    (observation, controls)
+}
+
+/// The saved AW Taylor PSF and weights stay on disk while the new
+/// residual is formed and cleaned (#1070).
+#[test]
+fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
+    use super::restart::{assert_unchanged, snapshot};
+
+    let (observation, mut controls) = two_term_aw_restart();
+    let (_, dirty) = observation.image("continued", controls.clone());
+    let [x, y] = observation.geometry().pixel(CENTRE);
+    {
+        let mut beam =
+            casa_images::PagedImage::<f32>::open(observation.scratch("continued.pb.tt0")).unwrap();
+        let mask_name = beam.default_mask_name().expect("the saved PB has a mask");
+        let pixel = ndarray::Array4::from_elem((1, 1, 1, 1), false).into_dyn();
+        assert!(dirty.get(".pb.tt0").mask().unwrap()[[x, y, 0, 0]]);
+        beam.put_mask_slice(&mask_name, &pixel, &[x, y, 0, 0])
+            .unwrap();
+        beam.save().unwrap();
+    }
+    for term in [0, 1] {
+        let mut residual = casa_images::PagedImage::<f32>::open(
+            observation.scratch(&format!("continued.residual.tt{term}")),
+        )
+        .unwrap();
+        residual.unset_default_mask().unwrap();
+        residual.save().unwrap();
+    }
+    let saved_paths = dirty
+        .suffixes()
+        .into_iter()
+        .filter(|name| {
+            name.starts_with(".psf")
+                || name.starts_with(".weight")
+                || name.starts_with(".sumwt")
+                || name == ".pb.tt0"
+        })
+        .map(|name| observation.scratch(&format!("continued{name}")))
+        .collect::<Vec<_>>();
+    assert_eq!(saved_paths.len(), 10);
+    let saved = saved_paths
+        .iter()
+        .map(|path| snapshot(path))
+        .collect::<Vec<_>>();
+
+    controls["niter"] = json!(10);
+    let (fresh, fresh_products) = observation.image("fresh", controls.clone());
+    controls["calcpsf"] = json!(false);
+    let missing = observation.scratch("continued.weight.tt1");
+    let parked = observation.scratch("saved-weight-tt1");
+    std::fs::rename(&missing, &parked).unwrap();
+    let error = observation
+        .try_image("continued", controls.clone())
+        .err()
+        .expect("missing weight must refuse");
+    assert!(error.contains("continued.weight.tt1"), "{error}");
+    std::fs::rename(parked, missing).unwrap();
+    for (path, before) in saved_paths.iter().zip(&saved) {
+        assert_unchanged(before, &snapshot(path));
+    }
+
+    let (continued, products) = observation.image("continued", controls);
+    assert!(continued.minor_iterations > 0);
+    assert_eq!(continued.minor_iterations, fresh.minor_iterations);
+    assert_eq!(continued.major_cycles, fresh.major_cycles);
+    assert!(products.suffixes().contains(".image.tt0"));
+    assert_eq!(
+        products.suffixes().len() + saved_paths.len(),
+        fresh_products.suffixes().len()
+    );
+    for suffix in products.suffixes() {
+        let actual = products.get(&suffix).values();
+        let expected = fresh_products.get(&suffix).values();
+        assert_eq!(actual.shape(), expected.shape(), "{suffix} shape");
+        let reference_power = expected
+            .iter()
+            .map(|value| f64::from(*value).powi(2))
+            .sum::<f64>();
+        let difference_power = actual
+            .iter()
+            .zip(&expected)
+            .map(|(actual, expected)| (f64::from(*actual) - f64::from(*expected)).powi(2))
+            .sum::<f64>();
+        assert!(
+            difference_power <= 1.0e-12 * reference_power,
+            "{suffix}: saved-PSF CLEAN differs from fresh CLEAN (error power {difference_power}, reference power {reference_power})"
+        );
+    }
+    for suffix in [".image.tt0", ".residual.tt0"] {
+        assert!(
+            !products.get(suffix).mask().unwrap()[[x, y, 0, 0]],
+            "{suffix}: use the saved PB mask"
+        );
+    }
+    for (path, before) in saved_paths.iter().zip(&saved) {
+        assert_unchanged(before, &snapshot(path));
+    }
+}
+
+/// A resumed correction divides both Taylor images by the saved principal
+/// PB. CASA opens the auxiliary PB image without replacing it if it exists.
+#[test]
+fn aw_mtmfs_restart_corrects_both_terms_with_the_saved_pb() {
+    use super::restart::{assert_unchanged, snapshot};
+
+    let (observation, controls) = two_term_aw_restart();
+    let [x, y] = observation.geometry().pixel(CENTRE);
+    let saved_pb = 0.05;
+    for (name, initial_pbcor) in [("correct-after", false), ("correct-both", true)] {
+        let mut dirty_controls = controls.clone();
+        dirty_controls["pbcor"] = json!(initial_pbcor);
+        let (_, dirty) = observation.image(name, dirty_controls);
+        let pb_mask = dirty.get(".pb.tt0").mask().unwrap();
+        assert!(pb_mask[[x, y, 0, 0]]);
+        let mut beam =
+            casa_images::PagedImage::<f32>::open(observation.scratch(&format!("{name}.pb.tt0")))
+                .unwrap();
+        let pixel = ndarray::Array4::from_elem((1, 1, 1, 1), saved_pb).into_dyn();
+        beam.put_slice(&pixel, &[x, y, 0, 0]).unwrap();
+        beam.save().unwrap();
+
+        let auxiliary = observation.scratch(&format!("{name}.pb.tt1"));
+        assert_eq!(auxiliary.exists(), initial_pbcor);
+        let before = initial_pbcor.then(|| snapshot(&auxiliary));
+        let mut restart = controls.clone();
+        restart["pbcor"] = json!(true);
+        restart["calcpsf"] = json!(false);
+        restart["niter"] = json!(10);
+        let (run, products) = observation.image(name, restart);
+
+        assert_eq!(run.minor_iterations, 10);
+        for term in [0, 1] {
+            let image_name = format!(".image.tt{term}");
+            let image = products.get(&image_name).pixels[[x, y]];
+            assert!(
+                image.abs() > 0.01,
+                "{image_name}: test a nonzero coefficient"
+            );
+            let corrected = products.get(&format!("{image_name}.pbcor"));
+            assert_eq!(corrected.pixels[[x, y]], image / saved_pb, "{image_name}");
+            assert_eq!(corrected.mask().as_ref(), Some(&pb_mask), "{image_name}");
+        }
+        if let Some(before) = before {
+            assert!(!products.suffixes().contains(".pb.tt1"));
+            assert_unchanged(&before, &snapshot(&auxiliary));
+        } else {
+            let beam = products.get(".pb.tt1");
+            assert!(beam.values().iter().all(|value| *value == 0.0));
+            assert!(beam.mask().is_none());
+        }
+    }
+}
+
 /// #735 end to end: a cell's conjugate beam and its lookup depend on the
 /// whole selected frequency list, so a native cache generated for two SPWs
 /// does not serve a run of one. Run A images both windows into the cache,
@@ -669,4 +888,158 @@ fn aw_projection_images_on_its_pointing_table() {
     let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
     controls["usepointing"] = json!(true);
     observation.image("aw-pointing-image", controls);
+}
+
+/// AW uses each visibility's FIELD phase direction when `usepointing` has
+/// no antenna pointing sample, even with a different requested phasecentre
+/// (`VisBufferUtil::getPointingDir`, #1070).
+#[test]
+fn aw_without_pointing_samples_points_at_its_fields() {
+    use casa_ms::{MeasurementSet, SubtableId};
+
+    let setup = Setup {
+        fields: vec![
+            Setup::pointing([0.002, -0.001]),
+            Setup::pointing([-0.002, 0.001]),
+        ],
+        ..two_window_setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).expect("ms");
+        let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+        let rows: Vec<_> = (0..pointing.row_count()).collect();
+        assert!(!rows.is_empty(), "fixture initially has pointing samples");
+        pointing.remove_rows(&rows).expect("empty POINTING");
+        ms.save().expect("save");
+    }
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
+    controls["niter"] = json!(0);
+    controls["pbcor"] = json!(false);
+    let [ra, dec] = Setup::pointing([0.0003, 0.0007]);
+    controls["phasecenter"] = json!(format!("J2000 {ra}rad {dec}rad"));
+    let (_, fields) = observation.image("aw-field-directions", controls.clone());
+    controls["usepointing"] = json!(true);
+    let (_, pointed) = observation.image("aw-empty-pointing", controls);
+    let expected = fields.get(".weight").values();
+    let actual = pointed.get(".weight").values();
+    let scale = expected.mapv(|pixel| pixel.powi(2)).sum();
+    let squared_error = (&actual - &expected).mapv(|pixel| pixel.powi(2)).sum();
+    let nrms = (squared_error / scale).sqrt();
+    assert!(scale > 0.0 && nrms < 1.0e-5, "AW weight NRMS {nrms}");
+}
+
+/// A selected row outside the imported cache's PA range fails through
+/// tclean before it publishes an image. A compatible step reads the same
+/// cells, as `CFStore2::nearestPA` limits the lookup (#1070).
+#[test]
+fn imported_aw_rejects_an_uncovered_pa_before_publication() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0", &cache, &surface);
+    native["niter"] = json!(0);
+    observation.image("generate-pa-cache", native);
+    let mut imported = json!({
+        "spw": "0", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": W_PLANES, "weighting": "natural", "niter": 0,
+    });
+    observation.image("read-pa-cache", imported.clone());
+    imported["computepastep"] = json!(0.0001);
+    let name = "outside-pa-cache";
+    let Err(error) = observation.try_image(name, imported) else {
+        panic!("imaging accepted an uncovered PA");
+    };
+    assert!(
+        error.contains("no imported AW buffer within computepastep"),
+        "{error}"
+    );
+    assert!(!observation.scratch(&format!("{name}.image")).exists());
+}
+
+/// The task rotates both imaging and weight cells for an imported aperture.
+#[test]
+fn imported_aw_runtime_pa_rotation_changes_the_residual_and_psf() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0", &cache, &surface);
+    native["niter"] = json!(0);
+    native["wprojplanes"] = json!(1);
+    observation.image("generate-rotation-cache", native);
+    let mut imported = json!({
+        "spw": "0", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": 1, "weighting": "natural", "niter": 0,
+    });
+    let (_, unrotated) = observation.image("unrotated-pa-cache", imported.clone());
+    imported["rotatepastep"] = json!(0.1);
+    let (_, rotated) = observation.image("rotated-pa-cache", imported.clone());
+    for suffix in [".residual", ".psf"] {
+        let a = rotated.get(suffix).values();
+        let b = unrotated.get(suffix).values();
+        let difference = a
+            .iter()
+            .zip(b.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(difference > 1.0e-6, "{suffix}: {difference}");
+    }
+    imported["niter"] = json!(1);
+    let Err(error) = observation.try_image("rotation-clean", imported) else {
+        panic!("runtime rotation accepted a clean");
+    };
+    assert!(
+        error.contains("rotatepastep currently supports dirty imported AW"),
+        "{error}"
+    );
+    assert!(!observation.scratch("rotation-clean.image").exists());
+}
+
+/// A native cache is generated over all covered PA groups and reopened
+/// through the same sorted selection rule.
+#[test]
+fn native_aw_generates_and_reuses_multiple_pa_buffers() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("native-pa-cf");
+    let mut request = cached_clean("0", &cache, &surface);
+    request["niter"] = json!(0);
+    request["wprojplanes"] = json!(1);
+    request["computepastep"] = json!(2.0);
+    let (_, cold) = observation.image("native-pa-cold", request.clone());
+    let payloads = || {
+        entries(&cache)
+            .into_iter()
+            .filter(|name| name.starts_with("CFS_") || name.starts_with("WTCFS_"))
+            .map(|name| {
+                let meta =
+                    std::fs::metadata(cache.join(&name).join("table.dat")).expect("cell header");
+                (
+                    name,
+                    meta.len(),
+                    meta.modified().expect("cell modification time"),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = payloads();
+    assert!(before.len() > 4, "expected at least two PA buffers");
+    request["native_cf_policy"] = json!("reuse-only");
+    let (_, warm) = observation.image("native-pa-warm", request.clone());
+    assert_same_products(&warm, &cold);
+    assert_eq!(payloads(), before, "warm replay preserves the cell payload");
+
+    request["spw"] = json!("0,1");
+    let Err(error) = observation.try_image("native-pa-two-windows", request) else {
+        panic!("non-default native PA accepted two windows");
+    };
+    assert!(
+        error.contains("native computepastep currently supports MFS"),
+        "{error}"
+    );
 }

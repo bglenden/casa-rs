@@ -7,10 +7,10 @@ use casa_imaging_model::{
     ReconstructionBasis, SpectralKernel, SpectralWcs,
 };
 use casa_imaging_operator::{
-    AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
-    DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, PrimaryBeam,
-    SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    AiryDish, AwCatalog, Awp2Sampling, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet,
+    DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+    MeasurementOperator, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting,
+    PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -20,7 +20,7 @@ use casa_types::Correlation;
 
 use super::ImagingError;
 use super::observation_source::StoreKeys;
-use crate::AwCatalogDeployment;
+use crate::{AwCatalogDeployment, Awp2Deployment};
 
 /// The operator of one image domain and the resampler that places rows on
 /// its planes.
@@ -225,7 +225,7 @@ pub(crate) fn metal_kernel_set(problem: &CompiledProblem) -> bool {
         // Metal predicts with the cells it grids with, which a mosaic's
         // conjugate beams part.
         KernelSetKind::Mosaic => !mosaic_conjugate_beams(problem),
-        KernelSetKind::WPlanes | KernelSetKind::Aw => false,
+        KernelSetKind::WPlanes | KernelSetKind::Aw | KernelSetKind::Awp2 => false,
     }
 }
 
@@ -262,6 +262,8 @@ enum KernelSetKind {
     Mosaic,
     /// The AW catalog (`AWProjectFT`).
     Aw,
+    /// The resident AWPLPG kernels.
+    Awp2,
 }
 
 fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
@@ -270,6 +272,11 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
         KernelSetKind::Aw
     } else if equation.w_projection().is_some() {
         KernelSetKind::WPlanes
+    } else if matches!(
+        problem.science().instrument_model(),
+        Some(InstrumentModel::CasaVlaAwplpg | InstrumentModel::CasaVlaAwplpgSquint)
+    ) {
+        KernelSetKind::Awp2
     } else if matches!(
         problem.science().instrument_model(),
         Some(
@@ -303,17 +310,19 @@ pub(crate) fn domain_operator(
     correlations: &[Correlation],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
-    aw_catalog: Option<&AwCatalogDeployment>,
+    requested_padding: Option<PaddingFactor>,
+    deployment: (Option<&AwCatalogDeployment>, Option<&Awp2Deployment>),
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
     // Each CASA facet's GridFT pads its own facet grid.
     let padding = match kind {
-        KernelSetKind::Standard | KernelSetKind::WPlanes => {
-            GridPadding::CasaComposite(PaddingFactor::TCLEAN)
+        KernelSetKind::Standard => {
+            GridPadding::CasaComposite(requested_padding.unwrap_or(PaddingFactor::TCLEAN))
         }
-        KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
+        KernelSetKind::WPlanes => GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        KernelSetKind::Mosaic | KernelSetKind::Aw | KernelSetKind::Awp2 => GridPadding::None,
     };
     let geometry = GridGeometry::new(extent, padding)?;
     let polarization = PolarizationRouting::compile(
@@ -326,7 +335,7 @@ pub(crate) fn domain_operator(
         problem,
         kind,
         (&geometry, &polarization),
-        aw_catalog,
+        deployment,
         keys,
         admission,
     )?;
@@ -339,7 +348,10 @@ pub(crate) fn domain_operator(
             precision(backend, requested_precision),
         ),
         resampler,
-        weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
+        weight_image: matches!(
+            kind,
+            KernelSetKind::Mosaic | KernelSetKind::Aw | KernelSetKind::Awp2
+        ),
         kernels,
     })
 }
@@ -399,7 +411,7 @@ fn kernel_set(
     problem: &CompiledProblem,
     kind: KernelSetKind,
     (geometry, polarization): (&GridGeometry, &PolarizationRouting),
-    aw_catalog: Option<&AwCatalogDeployment>,
+    (aw_catalog, awp2): (Option<&AwCatalogDeployment>, Option<&Awp2Deployment>),
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<(Box<dyn ConvolutionFunctionSet>, Kernels), ImagingError> {
@@ -477,13 +489,57 @@ fn kernel_set(
             kernels.retain(set.resident_bytes());
             (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
+        KernelSetKind::Awp2 => {
+            let deployment = awp2.ok_or(ImagingError::Unsupported {
+                reason: "AWP2 requires a VLA dish surface and beam frequencies",
+            })?;
+            let sampling = if deployment.pa_centres.is_empty() {
+                Awp2Sampling::new(geometry, deployment.single_field)?
+            } else if [Correlation::RR, Correlation::LL]
+                .iter()
+                .all(|hand| polarization.correlations().contains(hand))
+            {
+                Awp2Sampling::squinted(geometry)?
+            } else {
+                return Err(ImagingError::Unsupported {
+                    reason: "AWP2 squint requires RR and LL data (#1071)",
+                });
+            };
+            let screen_charge = admission.admit(
+                "AWP2 aperture screens",
+                sampling.screens_bytes(
+                    deployment.frequencies_hz.len(),
+                    deployment.w_planes.len(),
+                    deployment.pa_centres.len(),
+                ),
+            )?;
+            let screens = sampling.screens(
+                &deployment.frequencies_hz,
+                deployment.surface.clone(),
+                deployment.legacy_vla,
+                &deployment.w_planes,
+                &deployment.pa_centres,
+            )?;
+            let mut kernels = admission.admit(PHASE, screens.kernel_bytes(geometry))?;
+            let set = screens.finish(
+                geometry,
+                polarization,
+                deployment.frequencies_hz.clone(),
+                deployment.w_planes.clone(),
+                deployment.row_frequency_hz,
+                (deployment.pa_centres.clone(), deployment.feed_angle_rad),
+            );
+            drop(screen_charge);
+            kernels.retain(set.resident_bytes());
+            (Box::new(set), Kernels::Admitted { _charge: kernels })
+        }
         KernelSetKind::Aw => {
             let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
                 reason: "an A-projection run needs its convolution-function catalog",
             })?;
             let catalog = AwCatalog::open_casa(
                 &deployment.root,
-                deployment.indexing,
+                deployment.indexing.clone(),
                 geometry,
                 polarization,
                 deployment.resident_bytes,

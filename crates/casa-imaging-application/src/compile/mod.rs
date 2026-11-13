@@ -11,6 +11,7 @@
 
 #[cfg(test)]
 mod aw_plan_tests;
+mod awp2;
 mod continuation;
 mod direction;
 mod domains;
@@ -27,6 +28,7 @@ mod native_aw;
 mod opening;
 mod outliers;
 mod partitions;
+pub(crate) mod psf_view;
 mod selection;
 mod specification;
 pub(crate) mod spectral;
@@ -84,6 +86,7 @@ use survey::{Survey, SurveyPlan};
 pub(crate) struct Prepared {
     pub(crate) specification: ProblemSpecification,
     pub(crate) geometry: GeometryInput,
+    pub(crate) psf_view: Option<psf_view::PsfView>,
     pub(crate) model_lifecycle: ModelLifecycleRequirements,
     /// The separately coordinated Taylor view of an MVC run.
     pub(crate) mvc_taylor: Option<TaylorView>,
@@ -256,12 +259,12 @@ pub(crate) fn prepare_with_view_hooks(
         (&observation_info, object_name),
         domains::MaskPreparation::ForRun,
     )?;
-    let primary_beam = primary_beam_model(request, catalogue)?;
+    let primary_beam = primary_beam_model(request, catalogue, &survey.pb_antennas)?;
     let primary_beam_centres = match primary_beam {
         None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
         Some(_) => Some(primary_beam_centres(&domains, &stores, &centre)?),
     };
-    let deployment = deployment(
+    let mut deployment = deployment(
         request,
         context,
         surveyed,
@@ -313,23 +316,23 @@ pub(crate) fn prepare_with_view_hooks(
         _ => spectral.output_channels,
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
-    let continuation =
-        continuation::prepare(request, &mut domains[0], spectral.output_channels, context)?;
-    let start_model = if request.has_start_model() {
-        let terms = match request.deconvolver {
-            Deconvolver::Mtmfs => request.nterms,
-            _ => 1,
-        };
-        Some(StartModel::prepare(
-            &request.startmodel,
-            &domains[0],
-            request.stokes.len(),
-            (reconstruction_planes, terms),
-        )?)
-    } else {
-        continuation.start_model
-    };
+    let continuation = continuation::prepare(
+        request,
+        &mut domains[0],
+        (spectral.output_channels, reconstruction_planes),
+        context,
+        &mut deployment.publication.writer,
+    )?;
     let geometry = geometry(request, &domains, &centre, &spectral);
+    let psf_view = psf_view::prepare(
+        request,
+        &domains[0],
+        &centre,
+        &spectral,
+        context,
+        &specification,
+        &mut deployment.publication.writer,
+    )?;
     // A moving phase centre names a body and a table alike; the table, when
     // it is one, was read here.
     let phase_table = centre
@@ -351,6 +354,7 @@ pub(crate) fn prepare_with_view_hooks(
     Ok(Prepared {
         specification,
         geometry,
+        psf_view,
         mvc_taylor,
         model_lifecycle: ModelLifecycleRequirements::new(
             ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)?,
@@ -358,13 +362,15 @@ pub(crate) fn prepare_with_view_hooks(
         ),
         masks,
         mask_resident,
-        start_model,
+        start_model: continuation.start_model,
         existing: continuation.existing,
         minor_cycle_image_response: match &request.gridder {
-            Gridder::Mosaic { .. } | Gridder::Awproject(_) => Some(MinorCycleImageResponse::new(
-                specification::normalization(request),
-                specification::primary_beam_validity(request)?,
-            )?),
+            Gridder::Mosaic { .. } | Gridder::Awproject(_) | Gridder::Awp2 { .. } => {
+                Some(MinorCycleImageResponse::new(
+                    specification::normalization(request),
+                    specification::primary_beam_validity(request)?,
+                )?)
+            }
             Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
         },
         snapshot,
@@ -462,7 +468,17 @@ fn survey_observation(
         w_range: matches!(
             request.gridder,
             Gridder::Wproject { .. } | Gridder::Awproject(_)
-        ),
+        ) || matches!(request.gridder, Gridder::Awp2 { wprojplanes: Some(count), .. } if count.get() > 1),
+        track_pb_antennas: request.vis.len() == 1
+            && request.specmode == SpecMode::Mfs
+            && matches!(request.gridder, Gridder::Standard { .. })
+            && (request.write_pb || request.pbcor)
+            && instrument::mixed_alma_dish_classes(catalogue),
+        track_aw_pa_epochs: matches!(&request.gridder, Gridder::Awproject(aw)
+            if aw.rotatepastep != 360.0 || (aw.computepastep != 360.0
+                && matches!(aw.cf_source, AwCfSource::NativeEvla { .. })))
+            || matches!(request.gridder, Gridder::Awp2 { computepastep, .. }
+                if computepastep < 180.0),
         first_cross: matches!(
             &request.gridder,
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
@@ -603,6 +619,9 @@ fn specification_inputs(
     let density_fields = match request.gridder {
         Gridder::Mosaic {
             mosweight: true, ..
+        }
+        | Gridder::Awp2 {
+            mosweight: true, ..
         } => density_field_keys(surveyed.stores),
         _ => None,
     };
@@ -721,7 +740,7 @@ fn geometry(
 ) -> GeometryInput {
     let direction_dependent = matches!(
         request.gridder,
-        Gridder::Mosaic { .. } | Gridder::Awproject(_)
+        Gridder::Mosaic { .. } | Gridder::Awproject(_) | Gridder::Awp2 { .. }
     );
     GeometryInput::new(
         domains.iter().map(PreparedImageDomain::spec).collect(),
@@ -744,15 +763,19 @@ fn geometry(
 fn primary_beam_model(
     request: &ImagingRequest,
     catalogue: &Catalogue,
+    pb_antennas: &[bool],
 ) -> Result<Option<AnalyticPrimaryBeamModel>, PrepareError> {
     Ok(match request.gridder {
-        Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
+        Gridder::Mosaic { .. } | Gridder::Awproject(_) | Gridder::Awp2 { .. } => {
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. }
             if request.write_pb || request.pbcor =>
         {
-            Some(instrument::standard_primary_beam_model(catalogue)?)
+            Some(instrument::standard_primary_beam_model(
+                catalogue,
+                pb_antennas,
+            )?)
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
     })
@@ -809,6 +832,7 @@ pub(crate) struct Deployment {
     /// Every domain's output directory.
     output_directories: Vec<PathBuf>,
     aw: Option<AwPlan>,
+    awp2: Option<crate::Awp2Deployment>,
 }
 
 /// The run's runtime but for its device, which the compiled problem resolves
@@ -818,6 +842,7 @@ struct PendingRuntime {
     host: crate::HostResources,
     resource_policy: crate::ResourcePolicy,
     grid_precision: Option<crate::GridPrecision>,
+    ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     cancel: crate::Cancel,
     spill_directory: PathBuf,
     diagnostics: crate::Diagnostics,
@@ -855,6 +880,7 @@ impl Deployment {
             host,
             resource_policy,
             grid_precision,
+            ft_padding,
             cancel,
             spill_directory,
             diagnostics,
@@ -872,11 +898,13 @@ impl Deployment {
                 resource_policy,
                 backend,
                 grid_precision,
+                ft_padding,
                 cancel,
                 spill_directory,
                 diagnostics,
             },
             publication: self.publication,
+            awp2: self.awp2,
             aw_catalog: self
                 .aw
                 .map(|aw| aw.deploy((&host, &resource_policy)))
@@ -1022,6 +1050,7 @@ fn deployment(
             host: context.host,
             resource_policy: context.policy,
             grid_precision: request.gridprecision,
+            ft_padding: request.ft_padding,
             cancel: context.cancel.clone(),
             spill_directory: parent(&request.imagename),
             diagnostics: request.diagnostics,
@@ -1042,8 +1071,9 @@ fn deployment(
             .iter()
             .map(|domain| parent(&domain.output))
             .collect(),
+        awp2: awp2::plan(request, surveyed, &domains[0], context)?,
         aw: match &request.gridder {
-            Gridder::Awproject(aw) => Some(aw_plan(request, aw, surveyed)?),
+            Gridder::Awproject(aw) => Some(aw_plan(request, aw, surveyed, context)?),
             _ => None,
         },
     })
@@ -1055,6 +1085,7 @@ fn aw_plan(
     request: &ImagingRequest,
     aw: &AwProjection,
     surveyed: &Surveyed<'_>,
+    context: &RunContext,
 ) -> Result<AwPlan, PrepareError> {
     let (root, native) = match &aw.cf_source {
         AwCfSource::CasaImport { cfcache } => (cfcache.clone(), None),
@@ -1067,17 +1098,38 @@ fn aw_plan(
                 .survey
                 .first_cross
                 .ok_or(PrepareError::NoCrossCorrelationRow)?;
-            let input = native_aw::resolve(request, aw, surveyed, first_cross)?;
+            let input = native_aw::resolve(request, aw, surveyed, first_cross, context)?;
             input.validate()?;
             (native_cf_cache.clone(), Some((*native_cf_policy, input)))
         }
     };
+    let feed_zero_angles_rad = if native.is_none() || aw.computepastep != 360.0 {
+        let mut feed_zero_angles = vec![0.0; surveyed.catalogue.windows.len()];
+        for window in &surveyed.survey.spectral_windows {
+            let spw = u32::try_from(window.spw_id).expect("a surveyed window fits u32");
+            feed_zero_angles[window.spw_id] =
+                native_aw::receptor_zero_angle(surveyed.catalogue, surveyed.msv2, spw)? as f32;
+        }
+        Some(feed_zero_angles.into())
+    } else {
+        None
+    };
+    let rotation = aw_rotation(
+        request,
+        aw,
+        surveyed,
+        feed_zero_angles_rad.as_deref(),
+        context,
+    )?;
     Ok(AwPlan {
         root,
         native,
         indexing: AwIndexing {
             conjugate_beams: aw.conjbeams,
             image_reference_hz: surveyed.spectral.reference_frequency_hz,
+            pa_tolerance_rad: aw.pa_tolerance_rad(),
+            feed_zero_angles_rad,
+            rotation,
         },
         resident_bytes: match aw.cf_resident_mb {
             Some(megabytes) => megabytes
@@ -1087,4 +1139,68 @@ fn aw_plan(
         },
         automatic: aw.cf_resident_mb.is_none(),
     })
+}
+
+fn aw_rotation(
+    request: &ImagingRequest,
+    aw: &AwProjection,
+    surveyed: &Surveyed<'_>,
+    feed: Option<&[f32]>,
+    context: &RunContext,
+) -> Result<Option<casa_imaging_operator::AwPaRotation>, PrepareError> {
+    if aw.rotatepastep == 360.0 {
+        return Ok(None);
+    }
+    let [window] = surveyed.survey.spectral_windows.as_slice() else {
+        return Err(PrepareError::AwRotationScope);
+    };
+    let Some(feed) = feed else {
+        return Err(PrepareError::AwRotationScope);
+    };
+    let evla = surveyed.survey.observation_ids.iter().all(|&id| {
+        surveyed
+            .catalogue
+            .observations
+            .get(id as usize)
+            .is_some_and(|observation| matches!(observation.telescope.trim(), "EVLA" | "VLA"))
+    });
+    if !evla
+        || !aw.aterm
+        || aw.computepastep != 360.0
+        || surveyed.survey.fields.len() != 1
+        || request.specmode != SpecMode::Mfs
+        || request.solves()
+        || request.predicts_final_model()
+        || request.tclean_restart
+        || request.has_start_model()
+        || request.savemodel != crate::SaveModel::None
+        || !request.calcpsf
+        || !request.calcres
+    {
+        return Err(PrepareError::AwRotationScope);
+    }
+    let epochs = surveyed.survey.window_epochs(window.spw_id);
+    // The vector and the Arc slice can coexist while converting it.
+    let _admission = casa_imaging_runtime::admit(
+        &context.host,
+        &context.policy,
+        &casa_imaging_runtime::Demand {
+            phase: "AW rotation epochs",
+            memory: (2 * epochs.len() * size_of::<(f64, f32)>() + 2 * size_of::<usize>()) as u64,
+        },
+    )?;
+    let mut samples = Vec::with_capacity(epochs.len());
+    for epoch in epochs.iter().filter(|epoch| epoch.has_unflagged_cross) {
+        let pa = native_aw::feed_pa(
+            surveyed,
+            epoch.time_mjd_seconds,
+            epoch.field_id,
+            feed[window.spw_id],
+        )?;
+        samples.push((epoch.time_mjd_seconds, pa));
+    }
+    Ok(Some(casa_imaging_operator::AwPaRotation {
+        step_rad: f64::from(aw.rotatepastep as f32).to_radians(),
+        samples: samples.into(),
+    }))
 }

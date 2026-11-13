@@ -5,6 +5,7 @@
 
 use casa_types::measures::UvwMachine;
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{MeasFrame, MeasureError};
 
 /// One of CASA's reprojections of rows from one phase centre to an image's
 /// tangent point, built once and applied to every row:
@@ -42,6 +43,25 @@ enum Reprojection {
 }
 
 impl GridFtProjection {
+    /// GridFT's rotation including conversion into the image tangent's frame.
+    ///
+    /// # Errors
+    ///
+    /// The reference conversion is unavailable or lacks required context.
+    pub fn between_directions_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        Ok(Self {
+            machine: Reprojection::Rotate(UvwMachine::with_frame(
+                tangent_point,
+                phase_centre,
+                frame,
+            )?),
+        })
+    }
+
     /// `GridFT`'s rotation from rows phased on `phase_centre` to an image
     /// whose tangent point is `tangent_point`, both J2000.
     #[must_use]

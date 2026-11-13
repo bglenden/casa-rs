@@ -91,14 +91,18 @@ impl Family {
                 BASES.contains(&image) && (!pbcor || image == "image")
                     || matches!(suffix, "image.pbcor")
             }
-            Self::Taylor { .. } => {
-                matches!(
-                    suffix,
-                    "alpha" | "alpha.error" | "alpha.pbcor" | "beta" | "beta.error"
-                ) || BASES
-                    .iter()
-                    .any(|base| self.names(base).iter().any(|name| name == image))
-                    && (!pbcor || image.starts_with("image."))
+            Self::Taylor { terms } => {
+                let is_primary_beam = image.starts_with("pb.tt")
+                    && (0..terms).any(|term| image == format!("pb.tt{term}"));
+                (!pbcor && is_primary_beam)
+                    || matches!(
+                        suffix,
+                        "alpha" | "alpha.error" | "alpha.pbcor" | "beta" | "beta.error"
+                    )
+                    || BASES
+                        .iter()
+                        .any(|base| self.names(base).iter().any(|name| name == image))
+                        && (!pbcor || image.starts_with("image."))
             }
         }
     }
@@ -152,6 +156,26 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
     Ok(())
 }
 
+/// Whether a direction-dependent run reuses its PSF, weight and PB products
+/// while forming a new residual (`calcpsf=False, calcres=True`).
+pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
+    if request.calcpsf || !request.calcres {
+        return false;
+    }
+    match (&request.gridder, Family::of(request)) {
+        (Gridder::Mosaic { .. }, Family::Single) => {
+            matches!(
+                request.specmode,
+                crate::SpecMode::Mfs | crate::SpecMode::Cube
+            )
+        }
+        (Gridder::Awproject(_), Family::Taylor { terms }) => {
+            request.specmode == crate::SpecMode::Mfs && (!request.pbcor || terms == 2)
+        }
+        _ => false,
+    }
+}
+
 /// Check that what `calcpsf=False` and `calcres=False` read exists and that
 /// casa-rs reads it for the request's gridder; `continuing` is whether the
 /// run continues on existing products at all.
@@ -171,8 +195,14 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             Some("with facets")
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
+        Gridder::Mosaic { .. } | Gridder::Awproject(_)
+            if reuses_direction_dependent_psf(request) =>
+        {
+            None
+        }
         Gridder::Mosaic { .. } => Some("with the mosaic gridder"),
         Gridder::Awproject(_) => Some("with A-projection"),
+        Gridder::Awp2 { .. } => Some("with AWP2 (#1071)"),
     };
     if let Some(unsupported) = unsupported {
         return refuse(
@@ -196,6 +226,20 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
                     "calcpsf=False reads the PSF and sums of weights an earlier run left at \
                      imagename, and this one does not exist"
                         .into(),
+                );
+            }
+        }
+    }
+    if reuses_direction_dependent_psf(request) {
+        for base in ["weight", "pb"] {
+            if let Some(path) = missing(base) {
+                let gridder = match request.gridder {
+                    Gridder::Mosaic { .. } => "the mosaic gridder",
+                    _ => "A-projection",
+                };
+                return refuse(
+                    path,
+                    format!("calcpsf=False with {gridder} requires the saved weight and PB images"),
                 );
             }
         }
@@ -420,6 +464,7 @@ mod tests {
             "sumwt.tt2",
             "weight.tt2",
             "pb.tt0",
+            "pb.tt1",
             "alpha",
             "alpha.error",
             "alpha.pbcor",
@@ -432,7 +477,7 @@ mod tests {
             "psf",
             "model.tt2",
             "psf.tt3",
-            "pb.tt1",
+            "pb.tt2",
             "psf.tt0.pbcor",
         ] {
             assert!(!taylor.admits(suffix), "{suffix}");

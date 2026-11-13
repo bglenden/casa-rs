@@ -2,7 +2,7 @@
 //! The primary beam `sm.setvp(dovp=True)` applies: CASA's default voltage
 //! patterns, as `PBMath` gives them by telescope name and frequency
 //! ([`PrimaryBeam`], from `casa-numerics`), unsquinted, which is what CASA
-//! applies to the simulator's one-plane Stokes I model.
+//! applies equally to the simulator’s Stokes image planes.
 
 pub use casa_numerics::{BeamPattern, PrimaryBeam};
 use ndarray::Array2;

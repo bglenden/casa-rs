@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use casa_ms::MsSelection;
 use casa_provider_contracts::{ParameterValue, TaskFailureKind, builtin_surface_bundle};
 use casa_task_runtime::{
-    BaseSource, OpenSessionRequest, ParameterRuntime, ResolutionPatch, TaskFailure, TaskInvocation,
+    OpenSessionRequest, ParameterRuntime, ResolutionPatch, TaskFailure, TaskInvocation,
 };
 use serde_json::{Value, json};
 
@@ -41,23 +41,6 @@ fn casa(surface: &str, values: Value) -> Result<CalibrationTaskRequest, TaskFail
         .open_session(request)
         .expect("session");
     read::task_request(&TaskInvocation::new(&session, Path::new(".")))
-}
-
-/// The request `parameters`, a contract-5 profile of `surface`, makes once
-/// it loads as a saved profile loads.
-fn from_old_profile(surface: &str, parameters: &str) -> CalibrationTaskRequest {
-    let bundle = builtin_surface_bundle(surface).expect("calibration surface");
-    let mut request = OpenSessionRequest::defaults(bundle, ".");
-    request.source = BaseSource::File(PathBuf::from("old.toml"));
-    request.profile_text = Some(format!(
-        "[casars]\nformat = 1\nsurface = \"{surface}\"\nkind = \"task\"\ncontract = 5\n\n\
-         [parameters]\n{parameters}"
-    ));
-    request.managed_save = false;
-    let session = ParameterRuntime::default()
-        .open_session(request)
-        .expect("session");
-    read::task_request(&TaskInvocation::new(&session, Path::new("."))).expect("request")
 }
 
 fn refused(result: Result<CalibrationTaskRequest, TaskFailure>, parameter: &str) -> String {
@@ -104,34 +87,6 @@ fn applycal_lists_are_positional_and_short_lists_take_casas_defaults() {
     );
     assert_eq!(request.apply_mode, ApplyMode::CalFlag);
     assert!(request.flagbackup);
-}
-
-/// A contract-5 chain held one gainfield, interp and spwmap for every
-/// table, and its tables could be text; its explicit absence of calwt
-/// applied without calibrating the weights. Each loads as the run it was.
-#[test]
-fn an_old_profile_chain_applies_to_every_table_it_named() {
-    for gaintables in ["\"a.cal, b.cal\"", "[\"a.cal\", \"b.cal\"]"] {
-        for calwt in ["none", ""] {
-            let CalibrationTaskRequest::ExecuteApply(request) = from_old_profile(
-                "applycal",
-                &format!(
-                    "vis = \"in.ms\"\ngaintables = {gaintables}\ngainfield = \"0\"\n\
-                     interp = \"nearest\"\nspwmap = \"0,0\"\ncalwt = \"{calwt}\"\n"
-                ),
-            ) else {
-                panic!("an applycal request");
-            };
-            let tables = ["a.cal", "b.cal"].map(|path| {
-                let mut table = table(path, false);
-                table.gainfield = Some(GainFieldSelector::FieldId(0));
-                table.interp = ApplyInterpolationMode::Nearest;
-                table.spwmap = vec![0, 0];
-                table
-            });
-            assert_eq!(request.calibration_tables, tables, "{gaintables} {calwt:?}");
-        }
-    }
 }
 
 #[test]

@@ -59,7 +59,6 @@ pub mod plot;
 mod plot_data;
 pub mod plot_document;
 mod plot_visibility;
-pub mod presentation;
 mod probes;
 pub mod schema;
 pub mod scratch_columns;

@@ -58,11 +58,14 @@
 
 mod batch_scales;
 pub(crate) mod jones;
+pub(crate) mod noise_domain;
+pub(crate) mod offline;
 #[cfg(test)]
 mod tests;
 pub(crate) mod troposphere;
 pub(crate) mod tsys;
 pub(crate) mod tsys_atm;
+pub(crate) mod tsys_snapshot;
 
 use std::sync::Arc;
 
@@ -90,11 +93,20 @@ pub(crate) enum NoiseLevel {
     /// `simplenoise`: σ of each real and imaginary draw, Jy, held as CASA
     /// holds it.
     Simple(f32),
+    /// A Noise calculated at setnoise and reused by later corrupt calls.
+    Fixed(Arc<offline::OfflineNoise>),
+    /// A fixed unit field, with the Tsys noise model scaling its contribution.
+    ScaledFixed {
+        field: Arc<offline::OfflineNoise>,
+        scale: Arc<NoiseLevel>,
+    },
     /// `tsys-manual`: σ of each row from the model ([`tsys`]).
     TsysManual(TsysManual),
     /// `tsys-atm`: σ of each row and channel from the atmosphere
     /// ([`tsys_atm`]), shared by the term and the corruptions applying it.
     TsysAtm(Arc<TsysAtm>),
+    /// The original T/Tf solutions selected nearest in time on later scans.
+    Snapshot(Arc<tsys_snapshot::TsysSnapshot>),
 }
 
 impl PartialEq for NoiseLevel {
@@ -103,8 +115,14 @@ impl PartialEq for NoiseLevel {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Simple(left), Self::Simple(right)) => left == right,
+            (Self::Fixed(left), Self::Fixed(right)) => Arc::ptr_eq(left, right),
+            (
+                Self::ScaledFixed { field: a, scale: x },
+                Self::ScaledFixed { field: b, scale: y },
+            ) => Arc::ptr_eq(a, b) && x == y,
             (Self::TsysManual(left), Self::TsysManual(right)) => left == right,
             (Self::TsysAtm(left), Self::TsysAtm(right)) => Arc::ptr_eq(left, right),
+            (Self::Snapshot(left), Self::Snapshot(right)) => Arc::ptr_eq(left, right),
             _ => false,
         }
     }
@@ -112,8 +130,9 @@ impl PartialEq for NoiseLevel {
 
 /// One application of a noise term: the noise one `corrupt` adds for one
 /// `setnoise` term.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct NoiseApplication {
+    pub(crate) domain: Arc<noise_domain::NoiseDomain>,
     /// The seed in force when the term was set (`sm.setseed`).
     pub(crate) seed: i32,
     /// How large its draws are.
@@ -121,9 +140,33 @@ pub(crate) struct NoiseApplication {
     /// How many times the term had been applied before; below
     /// [`MAXIMUM_APPLICATIONS`].
     pub(crate) ordinal: u32,
+    /// Inverse M/Mf factors on the additive side of CASA's simulation pivot.
+    pub(crate) baseline: Vec<Arc<offline::OfflineNoise>>,
+}
+
+impl PartialEq for NoiseApplication {
+    fn eq(&self, other: &Self) -> bool {
+        self.domain == other.domain
+            && self.seed == other.seed
+            && self.level == other.level
+            && self.ordinal == other.ordinal
+            && self.baseline.len() == other.baseline.len()
+            && self
+                .baseline
+                .iter()
+                .zip(&other.baseline)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+    }
 }
 
 impl NoiseApplication {
+    fn physical_level(&self) -> &NoiseLevel {
+        match &self.level {
+            NoiseLevel::ScaledFixed { scale, .. } => scale,
+            level => level,
+        }
+    }
+
     /// The stream key: the seed's 32 bits (two's complement), then the
     /// thermal-noise purpose byte above the ordinal.
     fn key(&self) -> [u32; 2] {
@@ -138,23 +181,69 @@ impl NoiseApplication {
     /// (`simplenoise`): σ under [`Self::key`]; `None` when σ depends on the
     /// row (the Tsys modes).
     pub(crate) fn uniform(&self) -> Option<CellNoise> {
+        if !self.baseline.is_empty() {
+            return None;
+        }
         match self.level {
             NoiseLevel::Simple(sigma_jy) => Some(CellNoise::new(self.key(), sigma_jy)),
-            NoiseLevel::TsysManual(_) | NoiseLevel::TsysAtm(_) => None,
+            NoiseLevel::Fixed(_)
+            | NoiseLevel::ScaledFixed { .. }
+            | NoiseLevel::TsysManual(_)
+            | NoiseLevel::TsysAtm(_) => None,
+            NoiseLevel::Snapshot(_) => None,
         }
     }
 
     /// Whether σ depends on the row (the Tsys modes), which then needs each
     /// row's [`RowNoise`].
     pub(crate) fn varies_by_row(&self) -> bool {
-        !matches!(self.level, NoiseLevel::Simple(_))
+        matches!(
+            self.physical_level(),
+            NoiseLevel::TsysManual(_) | NoiseLevel::TsysAtm(_)
+        )
+    }
+
+    pub(crate) fn fixed(&self) -> Option<&offline::OfflineNoise> {
+        match &self.level {
+            NoiseLevel::Fixed(noise) | NoiseLevel::ScaledFixed { field: noise, .. } => Some(noise),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn fixed_scale(&self, window: &WindowNoise) -> Option<ScanNoise<'_>> {
+        matches!(self.level, NoiseLevel::ScaledFixed { .. }).then(|| self.for_window(window))
+    }
+
+    pub(crate) fn covers(&self, window: usize) -> bool {
+        self.domain.covers(window)
+            && match self.physical_level() {
+                NoiseLevel::Snapshot(snapshot) => snapshot.covers(window),
+                NoiseLevel::Fixed(field) => field.covers(window),
+                _ => true,
+            }
+    }
+
+    pub(crate) fn needs_time(&self) -> bool {
+        self.varies_by_row()
+            || self.fixed().is_some()
+            || matches!(self.physical_level(), NoiseLevel::Snapshot(_))
+    }
+
+    pub(crate) fn channel_sigma(&self) -> bool {
+        !self.baseline.is_empty()
+            || matches!(self.physical_level(), NoiseLevel::TsysAtm(_))
+            || matches!(self.physical_level(), NoiseLevel::Snapshot(snapshot) if snapshot.kind.depends_on_frequency())
     }
 
     /// The `tsys-atm` model, if the term is one.
     pub(crate) fn tsys_atm(&self) -> Option<&TsysAtm> {
-        match &self.level {
+        match self.physical_level() {
             NoiseLevel::TsysAtm(model) => Some(model),
-            NoiseLevel::Simple(_) | NoiseLevel::TsysManual(_) => None,
+            NoiseLevel::Fixed(_)
+            | NoiseLevel::ScaledFixed { .. }
+            | NoiseLevel::Simple(_)
+            | NoiseLevel::TsysManual(_) => None,
+            NoiseLevel::Snapshot(_) => None,
         }
     }
 
@@ -162,13 +251,20 @@ impl NoiseApplication {
     pub(crate) fn for_window(&self, window: &WindowNoise) -> ScanNoise<'_> {
         ScanNoise {
             key: self.key(),
-            level: match &self.level {
+            level: match self.physical_level() {
                 NoiseLevel::Simple(sigma_jy) => ScanLevel::Simple(*sigma_jy),
+                NoiseLevel::Fixed(_) | NoiseLevel::ScaledFixed { .. } => {
+                    unreachable!("fixed fields are added directly")
+                }
                 NoiseLevel::TsysManual(model) => ScanLevel::TsysManual(model.for_window(window)),
                 NoiseLevel::TsysAtm(model) => ScanLevel::TsysAtm {
                     model,
                     window_id: window.spectral_window_id,
                     window: model.window(window.spectral_window_id),
+                },
+                NoiseLevel::Snapshot(snapshot) => ScanLevel::Snapshot {
+                    snapshot,
+                    window: window.spectral_window_id,
                 },
             },
         }
@@ -182,7 +278,7 @@ impl NoiseApplication {
         rows: impl Iterator<Item = RowNoise>,
         scales: &mut BatchScalesBuilder<'a>,
     ) {
-        if let NoiseLevel::TsysAtm(model) = &self.level {
+        if let NoiseLevel::TsysAtm(model) = self.physical_level() {
             let id = window.spectral_window_id;
             scales.add_rows(
                 (model, id, model.window(id)),
@@ -209,6 +305,10 @@ enum ScanLevel<'a> {
         window_id: usize,
         window: &'a tsys_atm::WindowAtmosphere,
     },
+    Snapshot {
+        snapshot: &'a tsys_snapshot::TsysSnapshot,
+        window: usize,
+    },
 }
 
 /// What a noise job reads and keeps between rows for `tsys-atm`: its
@@ -231,7 +331,7 @@ impl<'s> NoiseScratch<'s> {
 
     /// The most a scratch for windows of at most `channels` channels holds.
     pub(crate) fn bytes(channels: usize) -> u64 {
-        (channels * size_of::<f32>()) as u64
+        (channels * (size_of::<f32>() + 4 * size_of::<Complex32>())) as u64
     }
 
     /// σ per channel of a row of `row`'s antennas: s_i(c)·s_j(c).
@@ -247,9 +347,47 @@ impl<'s> NoiseScratch<'s> {
             .extend(first.iter().zip(second).map(|(s_i, s_j)| s_i * s_j));
         &self.sigma
     }
+
+    fn snapshot_sigma(
+        &mut self,
+        snapshot: &tsys_snapshot::TsysSnapshot,
+        window: usize,
+        row: &RowNoise,
+    ) -> &[f32] {
+        let (first, second) = snapshot.gains(window, row.time_s, row.antennas);
+        self.sigma.clear();
+        self.sigma
+            .extend(first.iter().zip(second).map(|(p, q)| 1. / (p * q)));
+        &self.sigma
+    }
 }
 
 impl ScanNoise<'_> {
+    /// The same Tsys standard deviations as on-the-fly draws, for a saved field.
+    pub(crate) fn fixed_sigma<'a>(
+        &self,
+        inputs: &RowNoise,
+        scratch: &'a mut NoiseScratch<'_>,
+    ) -> FixedSigma<'a> {
+        match &self.level {
+            ScanLevel::Simple(sigma) => FixedSigma::Uniform(*sigma),
+            ScanLevel::TsysManual(model) => FixedSigma::Uniform(model.sigma(inputs)),
+            ScanLevel::TsysAtm {
+                model,
+                window_id,
+                window,
+            } => FixedSigma::Channels(scratch.row_sigma((model, *window_id, window), inputs)),
+            ScanLevel::Snapshot { snapshot, window } => {
+                if snapshot.kind.depends_on_frequency() {
+                    FixedSigma::Channels(scratch.snapshot_sigma(snapshot, *window, inputs))
+                } else {
+                    let (p, q) = snapshot.gains(*window, inputs.time_s, inputs.antennas);
+                    FixedSigma::Uniform(1. / (p[0] * q[0]))
+                }
+            }
+        }
+    }
+
     /// Add this application's noise to the cell of MAIN row `row`, whose
     /// antennas, airmasses and integration time are `inputs`:
     /// `correlations × channels` samples, correlation fastest. An
@@ -264,27 +402,56 @@ impl ScanNoise<'_> {
         cell: &mut [Complex32],
         scratch: &mut NoiseScratch<'_>,
     ) {
-        let sigma = match &self.level {
-            ScanLevel::Simple(sigma_jy) => *sigma_jy,
-            ScanLevel::TsysManual(model) => model.sigma(inputs),
-            ScanLevel::TsysAtm {
-                model,
-                window_id,
-                window,
-            } => {
-                let sigma = scratch.row_sigma((model, *window_id, window), inputs);
-                // The draws of a unit term, scaled channel by channel, as
-                // CASA's `T` scales its unit `ANoise`.
-                CellNoise::new(self.key, 1.0).add_to_row_scaled(
-                    row,
-                    autocorrelation,
-                    correlations,
-                    sigma,
-                    cell,
-                );
-                return;
-            }
-        };
+        let sigma =
+            match &self.level {
+                ScanLevel::Simple(sigma_jy) => *sigma_jy,
+                ScanLevel::TsysManual(model) => model.sigma(inputs),
+                ScanLevel::TsysAtm {
+                    model,
+                    window_id,
+                    window,
+                } => {
+                    let sigma = scratch.row_sigma((model, *window_id, window), inputs);
+                    // The draws of a unit term, scaled channel by channel, as
+                    // CASA's `T` scales its unit `ANoise`.
+                    CellNoise::new(self.key, 1.0).add_to_row_scaled(
+                        row,
+                        autocorrelation,
+                        correlations,
+                        sigma,
+                        cell,
+                    );
+                    return;
+                }
+                ScanLevel::Snapshot { .. } => {
+                    match self.fixed_sigma(inputs, scratch) {
+                        FixedSigma::Uniform(sigma) => CellNoise::new(self.key, sigma).add_to_row(
+                            row,
+                            autocorrelation,
+                            correlations,
+                            cell,
+                        ),
+                        FixedSigma::Channels(sigma) => CellNoise::new(self.key, 1.)
+                            .add_to_row_scaled(row, autocorrelation, correlations, sigma, cell),
+                    }
+                    return;
+                }
+            };
         CellNoise::new(self.key, sigma).add_to_row(row, autocorrelation, correlations, cell);
+    }
+}
+
+/// A saved unit field's multiplier: one standard deviation per row or channel.
+pub(crate) enum FixedSigma<'a> {
+    Uniform(f32),
+    Channels(&'a [f32]),
+}
+
+impl FixedSigma<'_> {
+    pub(crate) fn at(&self, channel: usize) -> f32 {
+        match self {
+            Self::Uniform(sigma) => *sigma,
+            Self::Channels(sigma) => sigma[channel],
+        }
     }
 }

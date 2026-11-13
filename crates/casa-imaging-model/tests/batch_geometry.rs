@@ -383,3 +383,38 @@ fn a_time_without_rows_holds_no_geometry() {
         );
     }
 }
+
+/// CASA's AW buffer lookup uses antenna 0 at the integration time even
+/// when the selected rows only contain other antennas (#1070).
+#[test]
+fn aw_pa_uses_antenna_zero_outside_the_selected_baseline() {
+    let field = j2000(0.9, -0.45);
+    let catalogue = catalogue(field.clone(), 1);
+    let problem = batch_observation::aw_problem();
+    let plan = GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("plan");
+    let mut buffers = BatchBuffers::default();
+    fill(&mut buffers, &catalogue, 0, 1);
+    let batch = buffers.batch().expect("batch");
+    let mut geometry = BatchGeometry::default();
+    plan.apply(
+        &batch,
+        &[false, false, true],
+        None,
+        &mut GeometryTraversal::default(),
+        &mut geometry,
+    )
+    .expect("geometry");
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd_seconds(MJD_DAYS * 86_400.0, EpochRef::UTC))
+        .with_position(catalogue.antennas[0].position.clone())
+        .with_measures(measures());
+    let expected = field.parallactic_angle(&frame).expect("antenna-0 angle") as f32;
+    assert_eq!(geometry.aw_parallactic_angle(0), Some(expected));
+    let baseline_pa = geometry.parallactic_angles(2).expect("baseline angles");
+    assert_ne!(expected, -baseline_pa[0] as f32);
+    let bytes = plan.geometry_bytes(batch.samples(), batch.times(), batch.channel_count());
+    assert!(
+        geometry.capacity_bytes() <= bytes,
+        "AW PA scratch is charged"
+    );
+}

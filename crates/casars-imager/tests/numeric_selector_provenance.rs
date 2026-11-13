@@ -20,18 +20,14 @@ const TEXTS: &[&str] = &[
     "+1", ">1",
 ];
 
-fn profile_session(
-    version: u32,
-    surface: &str,
-    name: &str,
-    text: Option<&str>,
-) -> ParameterSession {
+fn profile_session(name: &str, text: Option<&str>) -> ParameterSession {
+    let bundle = builtin_surface_bundle("tclean").unwrap();
+    let version = bundle.surface.contract_version();
     let selector = text.map_or_else(String::new, |text| format!("{name} = {}\n", json!(text)));
     let source = format!(
-        "[casars]\nformat = 1\nsurface = {surface:?}\nkind = \"task\"\ncontract = {version}\n\n[parameters]\nvis = \"unused.ms\"\nimagename = \"unused\"\ncell = \"1arcsec\"\n{selector}",
+        "[casars]\nformat = 1\nsurface = \"tclean\"\nkind = \"task\"\ncontract = {version}\n\n[parameters]\nvis = \"unused.ms\"\nimagename = \"unused\"\ncell = \"1arcsec\"\n{selector}",
     );
     let profile = parse_profile(&source).unwrap();
-    let bundle = builtin_surface_bundle("tclean").unwrap();
     let resolved = resolve_profile(&profile, &bundle).unwrap();
     let session =
         ParameterSession::from_profile(bundle, BaseSource::File("input.toml".into()), &profile)
@@ -103,15 +99,15 @@ fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
 #[test]
 fn current_profiles_and_provider_projection_preserve_selector_text() {
     for name in SELECTORS {
-        assert_transports(&profile_session(40, "tclean", name, None), name, "");
+        assert_transports(&profile_session(name, None), name, "");
         for &text in TEXTS {
-            assert_transports(&profile_session(40, "tclean", name, Some(text)), name, text);
+            assert_transports(&profile_session(name, Some(text)), name, text);
         }
     }
 }
 
 #[test]
-fn direct_current_values_preserve_selector_text_without_profile_migration() {
+fn direct_current_values_preserve_selector_text() {
     for name in SELECTORS {
         for &text in TEXTS {
             let mut values = json!({"vis":"unused.ms", "imagename":"unused", "cell":"1arcsec"});
@@ -120,37 +116,6 @@ fn direct_current_values_preserve_selector_text_without_profile_migration() {
                 resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
             assert_plain(&parameters.0, name, text);
             assert_request(&request, name, text);
-        }
-    }
-}
-
-#[test]
-fn supported_old_profiles_migrate_only_exact_typed_none_before_exact_text() {
-    for version in 28..=37 {
-        for surface in ["tclean", "imager"] {
-            for name in SELECTORS {
-                assert_transports(&profile_session(version, surface, name, None), name, "");
-                for &text in TEXTS {
-                    // Each selector's "none" was the stored absence until the
-                    // contract that kept its text exact: 33 for scan and
-                    // observation, 34 for antenna and timerange.
-                    let exact_from = if matches!(name, "scan" | "observation") {
-                        33
-                    } else {
-                        34
-                    };
-                    let expected = if text == "none" && version < exact_from {
-                        ""
-                    } else {
-                        text
-                    };
-                    assert_transports(
-                        &profile_session(version, surface, name, Some(text)),
-                        name,
-                        expected,
-                    );
-                }
-            }
         }
     }
 }

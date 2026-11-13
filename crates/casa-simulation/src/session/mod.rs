@@ -37,15 +37,21 @@ mod corruption;
 pub mod error;
 mod feeds;
 pub mod fields;
+pub(crate) mod focus;
 mod from_ms;
 mod gains;
+mod later_noise;
 mod mosaic;
+mod noise_tables;
 pub mod observe;
+mod offline_noise;
 pub(crate) mod plan;
 pub(crate) mod prediction;
 pub mod resources;
+pub(crate) mod selection;
 mod single_dish;
 pub mod spectral;
+mod test_trop;
 #[cfg(test)]
 mod tests;
 mod troposphere;
@@ -74,7 +80,7 @@ use feeds::Feed;
 use fields::Field;
 use observe::{Observation, ObserveManySpec, ObserveSpec, Scan, StateSpec, Times};
 use plan::{DataPlan, NoiseTerm};
-use spectral::{SpectralWindow, SpectralWindowSpec};
+use spectral::{DataDescription, SpectralWindow, SpectralWindowSpec};
 
 /// Controls CASA's `sm` lacks: the session's measures data, its resources
 /// and the clock that stands for "now".
@@ -118,7 +124,7 @@ fn system_now() -> MEpoch {
 }
 
 // A session moves between threads, so the Python tool can release the GIL
-// while it writes (ADR-0019).
+// while it writes (ADR-0017).
 const _: () = {
     const fn assert_send<T: Send>() {}
     assert_send::<Simulator>();
@@ -139,6 +145,9 @@ pub struct Simulator {
     /// Whether `setfeed` was called (CASA's `feedsHaveBeenSet`).
     feeds_set: bool,
     spectral_windows: Vec<SpectralWindow>,
+    polarizations: Arc<Vec<Vec<i32>>>,
+    data_descriptions: Arc<Vec<DataDescription>>,
+    description_memory: Option<Arc<casa_imaging_runtime::Reservation>>,
     fields: Vec<Field>,
     times: Times,
     elevation_limit_rad: f64,
@@ -151,6 +160,10 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
+    /// Saved A Noise fields requested by setnoise, retained across reset.
+    offline_tables: Vec<(PathBuf, Arc<crate::corrupt::offline::OfflineNoise>)>,
+    /// Parameter snapshots for the optional Tsys calibration tables.
+    noise_tables: Vec<noise_tables::NoiseTable>,
     /// The antenna-based terms `setgain`, `setleakage` and `setapply` set,
     /// in the order they were set, until `reset`.
     jones_terms: Vec<apply::JonesSource>,
@@ -179,6 +192,10 @@ pub struct Simulator {
     /// The MeasurementSet `openfromms` opened, whose rows `close` patches;
     /// `None` when `close` creates the MeasurementSet.
     opened: Option<from_ms::OpenedMs>,
+    scan_memory: Option<casa_imaging_runtime::Reservation>,
+    /// Original MAIN rows preceding a separately rendered append segment.
+    noise_row_offset: u64,
+    existing_array_id: i32,
 }
 
 impl Simulator {
@@ -198,6 +215,9 @@ impl Simulator {
             feeds: Vec::new(),
             feeds_set: false,
             spectral_windows: Vec::new(),
+            polarizations: Arc::default(),
+            data_descriptions: Arc::default(),
+            description_memory: None,
             fields: Vec::new(),
             times,
             elevation_limit_rad: 8.0_f64.to_radians(),
@@ -206,8 +226,11 @@ impl Simulator {
             observations: Vec::new(),
             states: Vec::new(),
             scans: Vec::new(),
+            scan_memory: None,
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
+            offline_tables: Vec::new(),
+            noise_tables: Vec::new(),
             jones_terms: Vec::new(),
             jones_tables: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
@@ -218,6 +241,8 @@ impl Simulator {
             squint: false,
             data_plan: DataPlan::default(),
             opened: None,
+            noise_row_offset: 0,
+            existing_array_id: 0,
         }
     }
 
@@ -233,7 +258,27 @@ impl Simulator {
     /// MeasurementSet `openfromms` opened. DATA is written only at
     /// [`close`](Self::close); a session dropped without it writes nothing.
     pub fn scan_count(&self) -> usize {
-        self.scans.len()
+        let mut count = 0;
+        let mut previous = None;
+        for scan in &self.scans {
+            if matches!(scan.rows, observe::ScanRows::OnDisk(_)) {
+                let key = (
+                    scan.array_id,
+                    scan.observation_id,
+                    scan.scan_number,
+                    scan.field_id,
+                    scan.data_description_id,
+                );
+                if previous != Some(key) {
+                    count += 1;
+                }
+                previous = Some(key);
+            } else {
+                count += 1;
+                previous = None;
+            }
+        }
+        count
     }
 
     /// `sm.setconfig(...)`: append the antennas.
@@ -257,13 +302,13 @@ impl Simulator {
         Ok(())
     }
 
-    /// `sm.setfeed(mode, x, y, pol)`: append one perfect feed per antenna.
+    /// `sm.setfeed(mode, x, y, pol)`: append perfect or list-position feeds.
     ///
     /// # Errors
     ///
     /// A mode other than `perfect R L`, `perfect X Y` or `list` (CASA
-    /// returns `False`), no antennas yet, or several feeds per antenna,
-    /// which casa-rs does not write yet.
+    /// returns `False`), no antennas yet, or mismatched list coordinates
+    /// and receptor labels.
     pub fn set_feed(
         &mut self,
         mode: &str,
@@ -292,6 +337,11 @@ impl Simulator {
             window.name,
             self.spectral_windows.len() + 1
         );
+        Arc::make_mut(&mut self.data_descriptions).push(DataDescription {
+            window: self.spectral_windows.len(),
+            polarization: self.polarizations.len(),
+        });
+        Arc::make_mut(&mut self.polarizations).push(window.correlations.clone());
         self.spectral_windows.push(window);
         Ok(())
     }
@@ -316,6 +366,7 @@ impl Simulator {
         }
         let direction_rad = self.j2000_rad(direction, "source direction")?;
         self.fields.push(Field {
+            polynomial: false,
             name: name.to_string(),
             code: calcode.to_string(),
             direction_rad,
@@ -449,7 +500,7 @@ impl Simulator {
     /// No antennas, spectral window or field, or none of the given names
     /// (CASA logs the error and returns `False`).
     pub fn observe(&mut self, spec: &ObserveSpec) -> SimulatorResult<()> {
-        self.refuse_after_openfromms("observe")?;
+        self.prepare_existing_append()?;
         self.plan_pointings(&ObserveManySpec::from(spec))
     }
 
@@ -463,7 +514,7 @@ impl Simulator {
     /// pointings; or a direction that cannot be converted to J2000 without
     /// an epoch and position.
     pub fn observe_many(&mut self, spec: &ObserveManySpec) -> SimulatorResult<()> {
-        self.refuse_after_openfromms("observemany")?;
+        self.prepare_existing_append()?;
         self.plan_pointings(spec)
     }
 
@@ -477,16 +528,22 @@ impl Simulator {
     ///   names, when it names any (casa-rs's data description `w` is
     ///   window `w`);
     /// - then the TaQL `msselect` applies;
-    /// - a selection that keeps no row reverts to every row, with a warning.
+    /// - empty field/window results revert to all rows; an empty TaQL result
+    ///   retains the field/window selection, with a warning.
     ///
-    /// casa-rs takes a selection that keeps every row, as `simobserve`'s
-    /// `setdata(fieldid=range(nfld))` does. The following steps then act on
-    /// every row observed so far, as without `setdata`.
+    /// Each DATA operation retains the selection in force at that call;
+    /// later selections leave earlier operations unchanged.
     ///
     /// # Errors
     ///
-    /// Not yet implemented: a selection that keeps some but not all of the
-    /// rows, or a non-blank `msselect`.
+    /// Header predicates stream through the existing row plan. Stored scalar
+    /// and numeric/Boolean array cells, row-number functions, bounded numeric
+    /// and string expressions, ORDERBY, GROUPBY, scalar HAVING, LIMIT and
+    /// OFFSET are captured against the current logical MeasurementSet.
+    /// Selecting pending DATA renders a private preview through the existing
+    /// writer, including a copy of an opened MS. Aggregates, joins and stored
+    /// string columns are not yet implemented. Invalid predicates return
+    /// CASA's `False` after installing the field/window selection.
     pub fn set_data(
         &mut self,
         spectral_window_ids: &[i64],
@@ -494,17 +551,15 @@ impl Simulator {
         ms_select: &str,
     ) -> SimulatorResult<()> {
         tracing::info!("Selecting data");
-        if !ms_select.trim().is_empty() {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#1053)"
-            )));
-        }
         let windows: Vec<usize> = (0..self.spectral_windows.len())
-            .filter(|window| spectral_window_ids.contains(&(*window as i64)))
+            .filter(|window| {
+                spectral_window_ids.contains(&(*window as i64))
+                    && self
+                        .data_descriptions
+                        .iter()
+                        .any(|description| description.window == *window)
+            })
             .collect();
-        if field_ids.is_empty() && windows.is_empty() {
-            return Ok(());
-        }
         let selected = |scan: &Scan| {
             (field_ids.is_empty() || field_ids.contains(&(scan.field_id as i64)))
                 && (windows.is_empty() || windows.contains(&scan.spectral_window_id))
@@ -512,21 +567,44 @@ impl Simulator {
         let kept = self.scans.iter().filter(|scan| selected(scan)).count();
         if kept == 0 {
             tracing::warn!("Selection is empty: reverting to original MeasurementSet");
-            return Ok(());
         }
-        if kept == self.scans.len() {
-            return Ok(());
+        let selection = if kept == 0 || kept == self.scans.len() {
+            selection::DataSelection::All
+        } else {
+            selection::DataSelection::fields(field_ids, windows)
+        };
+        // CASA installs the field/window selection before parsing TaQL.
+        self.data_plan.select(selection.clone());
+        if !ms_select.is_empty() && !ms_select.chars().all(|ch| ch == ' ') {
+            let parsed = match selection::RowQuery::parse(ms_select) {
+                Ok(query) => query,
+                Err(error) if error.outcome() == error::CasaOutcome::NotYetImplemented => {
+                    if let Some(captured) = selection::capture(self, selection, ms_select)? {
+                        self.data_plan.select(captured);
+                    }
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
+            let query = selection::DataSelection::Query {
+                base: Arc::new(selection),
+                query: Arc::new(parsed),
+            };
+            if self.query_keeps_rows(&query)? {
+                self.data_plan.select(query);
+            } else {
+                tracing::warn!(
+                    "Selection string results in empty MS: reverting to original MeasurementSet"
+                );
+            }
         }
-        Err(SimulatorError::not_yet_implemented(format!(
-            "setdata selecting {kept} of the {} scans observed so far is not yet implemented in \
-             casa-rs (#1053); a selection of them all is",
-            self.scans.len()
-        )))
+        Ok(())
     }
 
     /// `sm.close()` / `sm.done()`: write the MeasurementSet, or, after
-    /// `openfromms`, patch the rows the DATA steps rewrite in place; then
-    /// write the calibration tables `setgain` and `setleakage` named.
+    /// `openfromms`, patch the selected DATA and append observations. Appending
+    /// publishes a private copy atomically and currently copies the existing
+    /// data as well as the new rows. Then write the requested calibration tables.
     ///
     /// # Errors
     ///
@@ -534,11 +612,21 @@ impl Simulator {
     /// calibration table.
     pub fn close(self) -> SimulatorResult<()> {
         if self.opened.is_some() {
-            write::patch_measurement_set(&self)?;
+            if self.scans.iter().any(|scan| scan.planned().is_some()) {
+                self.append_existing()?;
+            } else {
+                write::patch_measurement_set(&self)?;
+            }
         } else {
             write::write_measurement_set(&self)?;
         }
-        self.write_jones_tables()
+        self.write_jones_tables()?;
+        self.write_noise_tables()?;
+        self.write_offline_tables()
+    }
+
+    pub(crate) fn noise_row_offset(&self) -> u64 {
+        self.noise_row_offset
     }
 
     /// `direction` in J2000, as `[ra, dec]` radians with the longitude in
@@ -584,6 +672,19 @@ impl Simulator {
 
     pub(crate) fn spectral_windows(&self) -> &[SpectralWindow] {
         &self.spectral_windows
+    }
+
+    pub(crate) fn polarizations(&self) -> &[Vec<i32>] {
+        &self.polarizations
+    }
+    pub(crate) fn data_descriptions(&self) -> &[DataDescription] {
+        &self.data_descriptions
+    }
+    pub(crate) fn shared_descriptions(&self) -> Arc<Vec<DataDescription>> {
+        Arc::clone(&self.data_descriptions)
+    }
+    pub(crate) fn correlations_for_scan(&self, scan: &Scan) -> &[i32] {
+        &self.polarizations[self.data_descriptions[scan.data_description_id].polarization]
     }
 
     pub(crate) fn fields(&self) -> &[Field] {

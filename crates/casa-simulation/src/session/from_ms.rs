@@ -10,9 +10,7 @@
 //! - OBSERVATION, whose first telescope picks the beams (`VPSkyJones`). The
 //!   session's own telescope stays `Unknown`, as `NewMSSimulator`'s does:
 //!   only `setconfig` sets it;
-//! - each data description's spectral window and correlations. casa-rs's
-//!   window `w` is data description `w`, so the data descriptions must name
-//!   the windows in order, as both simulators write them;
+//! - each data description's actual spectral-window and polarization IDs;
 //! - each field's name, code and PHASE_DIR, the phase centre CASA's
 //!   `VisBuffer` predicts at;
 //! - MAIN's rows as scans: each run of consecutive rows with one
@@ -20,16 +18,17 @@
 //!   ([`ScanRows::OnDisk`]). They were observed before any step, so every
 //!   later `predict` and `corrupt` covers them.
 //!
-//! `close` then patches DATA in place (`crate::write::patch`).
+//! `close` patches DATA in place (`crate::write::patch`). Observations added
+//! after opening are rendered through the same geometry and DATA operators,
+//! then published atomically with the existing rows. Publishing currently
+//! copies the existing MS, so its I/O cost grows with the existing data.
 //!
 //! What casa-rs does not read yet is refused, here or by the step needing
-//! it, rather than predicted wrongly: a PHASE_DIR polynomial, channel
-//! frequencies off a linear axis, several feeds per antenna, data
-//! descriptions out of the windows' order, and a primary beam, the mosaic
+//! it, rather than predicted wrongly: a primary beam, the mosaic
 //! machine or total-power sampling when POINTING does not point at the
 //! scans' phase centres. Adding to the MeasurementSet after `openfromms`
-//! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`,
-//! `observe`, `observemany`) is not yet implemented.
+//! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`)
+//! is not yet implemented; `observe` and `observemany` extend the schedule.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -45,11 +44,22 @@ use super::array::Antenna;
 use super::error::{SimulatorError, SimulatorResult};
 use super::fields::Field;
 use super::observe::{Observation, Scan, ScanRows};
-use super::spectral::SpectralWindow;
+use super::spectral::{DataDescription, SpectralWindow};
 use super::{Simulator, SimulatorOptions};
 
+#[path = "from_ms_append.rs"]
+mod append;
+#[path = "from_ms_channels.rs"]
+mod channels;
+#[path = "from_ms_descriptions.rs"]
+mod descriptions;
+#[path = "from_ms_polynomial.rs"]
+pub(super) mod polynomial;
+#[path = "from_ms_scans.rs"]
+mod scan_groups;
+
 /// MAIN rows read at a time while finding the scans.
-const SCAN_READ_ROWS: usize = 1 << 16;
+const SCAN_READ_ROWS: usize = 1024;
 
 /// Two directions closer than this, radians, are one: a POINTING row at a
 /// scan's phase centre (about 0.2 mas).
@@ -99,22 +109,35 @@ impl Simulator {
         // The session holds the MeasurementSet it read: `close` and the
         // POINTING reads find it whatever the working directory is by then.
         let path = std::path::absolute(path.as_ref()).map_err(|error| raised(&error))?;
+        // Declare admission first so cached FIELD cells drop before its
+        // reservation on errors as well as on the successful return.
+        let phase_memory;
         let ms = MeasurementSet::open(&path).map_err(|error| raised(&error))?;
         let mut session = Self::open(&path, options);
         session.antennas = read_antennas(&ms)?;
         session.observations = read_observations(&ms)?;
-        session.spectral_windows = read_windows(&ms)?;
-        refuse_several_feeds(&ms)?;
-        // CASA's `getFeedMode` reads the feeds back; `observe`, which takes
-        // them, is refused after `openfromms`.
+        let mappings = descriptions::read(&ms, &session.options.resources)?;
+        session.polarizations = mappings.polarizations;
+        session.data_descriptions = mappings.descriptions;
+        session.description_memory = Some(mappings.memory);
+        session.spectral_windows = read_windows(
+            &ms,
+            &session.data_descriptions,
+            &session.polarizations,
+            &session.options.resources,
+        )?;
+        // Append reads the feed rows when observe first needs them.
         session.feeds_set = true;
+        phase_memory = polynomial::admit_fields(&ms, &session.options.resources)?;
         session.fields = read_fields(&session, &ms)?;
         let ReadScans {
             scans,
             times_s: scan_times_s,
             integrations,
-        } = read_scans(&ms, &session.fields, session.spectral_windows.len())?;
+            memory,
+        } = read_scans(&ms, &session)?;
         session.scans = scans;
+        session.scan_memory = Some(memory);
         let main = ms.main_table();
         let has = |column: &str| {
             main.schema()
@@ -135,6 +158,9 @@ impl Simulator {
             "Opened MeasurementSet {}",
             path.display()
         );
+        // Borrowed FIELD cells may remain cached in ms until it drops.
+        drop(ms);
+        drop(phase_memory);
         Ok(session)
     }
 
@@ -148,23 +174,25 @@ impl Simulator {
         Ok(())
     }
 
-    /// Refuse `what` (a primary beam, the mosaic machine, total-power
-    /// sampling), which points each scan at its phase centre, on an opened
-    /// MeasurementSet whose POINTING points a scan elsewhere: a pointing
-    /// `observemany` moved off its field, or an offset or tracking error.
-    /// POINTING is read here, when a step needs it.
-    pub(super) fn require_pointings_at_phase_centres(&self, what: &str) -> SimulatorResult<()> {
+    /// Read POINTING only when a prediction consumes it, leaving visibility
+    /// phase centres independent of the antennas' beam/sample directions.
+    pub(super) fn load_pointings(&mut self) -> SimulatorResult<()> {
         let Some(opened) = &self.opened else {
             return Ok(());
         };
-        match pointing_away_from_phase_centre(self.path(), &self.scans, &opened.scan_times_s)? {
-            Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
-                "{what} on a MeasurementSet whose POINTING points scan {} away from its \
-                 field's PHASE_DIR is not yet implemented in casa-rs (#1053)",
-                self.scans[scan].scan_number
-            ))),
-            None => Ok(()),
+        let directions = read_pointings(
+            self.path(),
+            &self.scans,
+            &opened.scan_times_s,
+            &self.options.resources,
+            self.antennas.len(),
+        )?;
+        for (scan, direction) in self.scans.iter_mut().zip(directions) {
+            if matches!(scan.rows, ScanRows::OnDisk(_)) {
+                scan.pointing_rad = direction.unwrap_or(scan.phase_center_rad);
+            }
         }
+        Ok(())
     }
 
     /// The MeasurementSet `openfromms` opened, `None` for a session that
@@ -213,57 +241,45 @@ fn read_observations(ms: &MeasurementSet) -> SimulatorResult<Vec<Observation>> {
         .collect()
 }
 
-/// The windows, one per data description: casa-rs's window `w` is data
-/// description `w` and spectral window `w`, with data description `w`'s
-/// correlations.
-fn read_windows(ms: &MeasurementSet) -> SimulatorResult<Vec<SpectralWindow>> {
-    let error = read_error("SPECTRAL_WINDOW");
-    let windows = ms.spectral_window().map_err(&error)?;
-    let descriptions = ms
-        .data_description()
-        .map_err(read_error("DATA_DESCRIPTION"))?;
-    let polarizations = ms.polarization().map_err(read_error("POLARIZATION"))?;
-    let in_order = descriptions.row_count() == windows.row_count()
-        && (0..descriptions.row_count())
-            .all(|row| descriptions.spectral_window_id(row).ok() == Some(row as i32));
-    if !in_order {
-        return Err(SimulatorError::not_yet_implemented(
-            "openfromms on a MeasurementSet whose data descriptions are not its spectral \
-             windows in order is not yet implemented in casa-rs (#1053)",
-        ));
-    }
+/// Physical spectral windows; each MAIN data description supplies its own
+/// polarization setup independently of this physical frequency index.
+fn read_windows(
+    ms: &MeasurementSet,
+    descriptions: &[DataDescription],
+    polarizations: &[Vec<i32>],
+    resources: &super::SessionResources,
+) -> SimulatorResult<Vec<SpectralWindow>> {
+    let windows = ms
+        .spectral_window()
+        .map_err(read_error("SPECTRAL_WINDOW"))?;
     (0..windows.row_count())
         .map(|row| {
-            let polarization = descriptions
-                .polarization_id(row)
-                .map_err(read_error("DATA_DESCRIPTION"))?;
-            let correlations = usize::try_from(polarization)
-                .ok()
-                .filter(|&id| id < polarizations.row_count())
-                .ok_or_else(|| {
-                    SimulatorError::raised(format!(
-                        "openfromms: data description {row} names POLARIZATION row \
-                         {polarization}, which does not exist"
-                    ))
-                })
-                .and_then(|id| {
-                    polarizations
-                        .corr_type(id)
-                        .map_err(read_error("POLARIZATION"))
-                })?;
-            read_window(&windows, row, correlations)
+            let correlations = descriptions
+                .iter()
+                .find(|d| d.window == row)
+                .map(|d| polarizations[d.polarization].clone())
+                .unwrap_or_default();
+            read_window(
+                &windows,
+                ms.subtable(casa_ms::SubtableId::SpectralWindow)
+                    .expect("spectral window"),
+                row,
+                correlations,
+                resources,
+            )
         })
         .collect()
 }
 
 fn read_window(
     windows: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    raw: &Table,
     row: usize,
     correlations: Vec<i32>,
+    resources: &super::SessionResources,
 ) -> SimulatorResult<SpectralWindow> {
     let error = read_error("SPECTRAL_WINDOW");
-    let frequencies = windows.chan_freq(row).map_err(&error)?;
-    let widths = windows.chan_width(row).map_err(&error)?;
+    let (frequencies, widths, mut reservation) = channels::read(raw, row, resources)?;
     let (Some(&start_frequency_hz), Some(&channel_width_hz)) =
         (frequencies.first(), widths.first())
     else {
@@ -272,13 +288,12 @@ fn read_window(
         )));
     };
     let frame = windows.frequency_reference(row).map_err(&error)?;
-    let reference_frame = windows.reference_frequency_reference(row).map_err(&error)?;
-    if reference_frame != frame {
-        return Err(SimulatorError::not_yet_implemented(format!(
-            "openfromms on spectral window {row} with different channel and reference frequency frames is not yet implemented in casa-rs (#1053)"
-        )));
-    }
-    let window = SpectralWindow {
+    // Validate each column's own reference descriptor. CASA's VPSkyJones
+    // selects the beam model from REF_FREQUENCY's raw Hz value; its frame
+    // need not equal the channel frequencies' frame.
+    windows.reference_frequency_reference(row).map_err(&error)?;
+    let mut window = SpectralWindow {
+        stored_frequencies: None,
         name: windows.name(row).map_err(&error)?,
         channel_count: frequencies.len(),
         start_frequency_hz,
@@ -288,37 +303,23 @@ fn read_window(
         frame,
         correlations,
     };
-    // The prediction takes the channels as the start plus whole channel
-    // widths, as both simulators write them.
+    // Generated windows retain the compact linear representation. Other
+    // observed axes keep their stored frequencies and their memory charge.
     let linear = widths.iter().all(|&width| width == channel_width_hz)
         && window
             .channel_frequencies_hz()
             .iter()
             .zip(&frequencies)
             .all(|(axis, stored)| (axis - stored).abs() <= 4.0 * f64::EPSILON * stored.abs());
+    drop(widths);
     if !linear {
-        return Err(SimulatorError::not_yet_implemented(format!(
-            "openfromms on spectral window {row}, whose channels are not evenly spaced by their \
-             width, is not yet implemented in casa-rs (#1053)"
-        )));
+        reservation.retain((frequencies.capacity() * size_of::<f64>() + 64) as u64);
+        window.stored_frequencies = Some(std::sync::Arc::new(casa_imaging_runtime::Admitted {
+            value: frequencies,
+            reservation,
+        }));
     }
     Ok(window)
-}
-
-/// Refuse a FEED table with several feeds per antenna, which `setfeed`
-/// cannot write either.
-fn refuse_several_feeds(ms: &MeasurementSet) -> SimulatorResult<()> {
-    let error = read_error("FEED");
-    let feed = ms.feed().map_err(&error)?;
-    for row in 0..feed.row_count() {
-        if feed.i32(row, "FEED_ID").map_err(&error)? != 0 {
-            return Err(SimulatorError::not_yet_implemented(
-                "openfromms on a MeasurementSet with several feeds per antenna is not yet \
-                 implemented in casa-rs (#1053)",
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<Field>> {
@@ -326,14 +327,9 @@ fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<
     let field = ms.field().map_err(&error)?;
     (0..field.row_count())
         .map(|row| {
-            if field.num_poly(row).map_err(&error)? != 0 {
-                return Err(SimulatorError::not_yet_implemented(format!(
-                    "openfromms on field {row}, whose PHASE_DIR is a polynomial, is not yet \
-                     implemented in casa-rs (#1053)"
-                )));
-            }
             let direction = raw_field_phase_direction(ms, row).map_err(&error)?;
             Ok(Field {
+                polynomial: field.num_poly(row).map_err(&error)? > 0,
                 name: field.name(row).map_err(&error)?,
                 code: field.code(row).map_err(&error)?,
                 direction_rad: session.j2000_rad(&direction, "the field's PHASE_DIR")?,
@@ -355,13 +351,31 @@ fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<
 /// direction with zero phase there although the pointing's UVW were
 /// computed at the moved direction (measured on CASA 6.7.6;
 /// `docs/CASA (C++) bugs.md`).
-fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> SimulatorResult<ReadScans> {
+fn read_scans(ms: &MeasurementSet, session: &Simulator) -> SimulatorResult<ReadScans> {
+    let fields = &session.fields;
+    let mappings = &session.data_descriptions;
     let main = ms.main_table();
     let rows = main.row_count();
-    let mut scans: Vec<Scan> = Vec::new();
-    let mut times_s: Vec<[f64; 2]> = Vec::new();
-    let mut integrations: Vec<Vec<f64>> = Vec::new();
+    let count = scan_groups::count(ms, &session.options.resources)?;
+    let mut memory = casa_imaging_runtime::admit(
+        session.options.resources.host(),
+        session.options.resources.policy(),
+        &casa_imaging_runtime::Demand {
+            phase: "reading stored simulation integrations",
+            memory: (count as u64)
+                .saturating_mul(
+                    (size_of::<Scan>() + size_of::<[f64; 2]>() + size_of::<Vec<f64>>() + 8) as u64,
+                )
+                .saturating_add(512 << 10),
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let mut scans: Vec<Scan> = Vec::with_capacity(count);
+    let mut times_s: Vec<[f64; 2]> = Vec::with_capacity(count);
+    let mut integrations: Vec<Vec<f64>> = Vec::with_capacity(count);
     let (mut numbers, mut field_ids, mut descriptions) = (Vec::new(), Vec::new(), Vec::new());
+    let mut observation_ids = Vec::new();
+    let mut array_ids = Vec::new();
     let mut row_times = Vec::new();
     let mut indices = Vec::with_capacity(SCAN_READ_ROWS.min(rows));
     for first in (0..rows).step_by(SCAN_READ_ROWS) {
@@ -371,9 +385,19 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
             column.clear();
         }
         row_times.clear();
+        observation_ids.clear();
+        array_ids.clear();
         main.required_scalar_columns_for_rows_into(
             &indices,
             &mut [
+                RequiredScalarColumnDestination::new(
+                    "ARRAY_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut array_ids),
+                ),
+                RequiredScalarColumnDestination::new(
+                    "OBSERVATION_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut observation_ids),
+                ),
                 RequiredScalarColumnDestination::new(
                     "SCAN_NUMBER",
                     RequiredScalarColumnValuesMut::Int32(&mut numbers),
@@ -402,13 +426,26 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
         {
             let row = first + offset;
             let field_id = index(field, fields.len(), row, "FIELD_ID")?;
-            let window = index(description, windows, row, "DATA_DESC_ID")?;
+            let data_description_id = index(description, mappings.len(), row, "DATA_DESC_ID")?;
+            let window = mappings[data_description_id].window;
             if let Some(scan) = scans.last_mut()
-                && (scan.scan_number, scan.field_id, scan.spectral_window_id)
-                    == (number, field_id, window)
+                && (
+                    scan.scan_number,
+                    scan.array_id,
+                    scan.observation_id,
+                    scan.field_id,
+                    scan.data_description_id,
+                ) == (
+                    number,
+                    array_ids[offset],
+                    observation_ids[offset],
+                    field_id,
+                    data_description_id,
+                )
                 && let ScanRows::OnDisk(scan_rows) = &mut scan.rows
                 && let Some(span) = times_s.last_mut()
                 && let Some(times) = integrations.last_mut()
+                && span[0] == time_s
             {
                 scan_rows.end = row + 1;
                 *span = [span[0].min(time_s), span[1].max(time_s)];
@@ -418,12 +455,14 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
                 continue;
             }
             scans.push(Scan {
+                array_id: array_ids[offset],
                 scan_number: number,
+                observation_id: observation_ids[offset],
                 field_id,
                 spectral_window_id: window,
+                data_description_id,
                 phase_center_rad: fields[field_id].direction_rad,
-                // POINTING, read when a step needs it, must point there
-                // (`require_pointings_at_phase_centres`).
+                // A beam or total-power step reads stored POINTING lazily.
                 pointing_rad: fields[field_id].direction_rad,
                 rows: ScanRows::OnDisk(row..row + 1),
             });
@@ -435,10 +474,21 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
         times.sort_by(f64::total_cmp);
         times.dedup();
     }
+    polynomial::set_scan_centres(session, ms, &mut scans, &times_s)?;
+    memory.retain(
+        (scans.capacity() * size_of::<Scan>()
+            + times_s.capacity() * size_of::<[f64; 2]>()
+            + integrations.capacity() * size_of::<Vec<f64>>()
+            + integrations
+                .iter()
+                .map(|times| times.capacity() * 8)
+                .sum::<usize>()) as u64,
+    );
     Ok(ReadScans {
         scans,
         times_s,
         integrations,
+        memory,
     })
 }
 
@@ -449,6 +499,7 @@ struct ReadScans {
     times_s: Vec<[f64; 2]>,
     /// Each scan's distinct TIMEs in order.
     integrations: Vec<Vec<f64>>,
+    memory: casa_imaging_runtime::Reservation,
 }
 
 /// `value`, MAIN row `row`'s `column`, as an index below `count`.
@@ -463,9 +514,8 @@ fn index(value: i32, count: usize, row: usize, column: &str) -> SimulatorResult<
         })
 }
 
-/// The first scan a POINTING row valid within its time span points away
-/// from its phase centre, `None` when every row points at the scans it is
-/// valid for; without POINTING rows CASA points at the fields.
+/// Resolve valid stored pointings for each integration, retaining FIELD as
+/// the fallback when no POINTING row covers it.
 ///
 /// A row is valid for the times casacore's `MSPointingColumns::
 /// pointingIndex` finds it at, which CASA's `VisBuffer` reads each row's
@@ -473,27 +523,55 @@ fn index(value: i32, count: usize, row: usize, column: &str) -> SimulatorResult<
 /// last TIME, so a row valid between two of its integrations counts too:
 /// that refuses what CASA might not use, rather than predicting a scan at
 /// a pointing it does not have.
-fn pointing_away_from_phase_centre(
+fn read_pointings(
     path: &Path,
     scans: &[Scan],
     times_s: &[[f64; 2]],
-) -> SimulatorResult<Option<usize>> {
+    resources: &super::SessionResources,
+    antenna_count: usize,
+) -> SimulatorResult<Vec<Option<[f64; 2]>>> {
     let error =
         |error: casa_tables::TableError| SimulatorError::raised(format!("read POINTING: {error}"));
     let pointing_path = path.join("POINTING");
     if !pointing_path.exists() {
-        return Ok(None);
+        return Ok(vec![None; scans.len()]);
     }
+    let words = antenna_count.div_ceil(64);
+    let memory;
     let pointing = Table::open(TableOptions::new(&pointing_path)).map_err(error)?;
+    memory = casa_imaging_runtime::admit(
+        resources.host(),
+        resources.policy(),
+        &casa_imaging_runtime::Demand {
+            phase: "reading stored simulation POINTING",
+            memory: (scans.len() as u64)
+                .saturating_mul(128 + words as u64 * 8)
+                .saturating_add((pointing.row_count() as u64).saturating_mul(256))
+                .saturating_add(256 << 10),
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let _ = &memory;
+    let frame = casa_tables::table_measures::TableMeasDesc::reconstruct(&pointing, "DIRECTION")
+        .ok_or_else(|| SimulatorError::raised("POINTING.DIRECTION has no measure descriptor"))?;
+    if !matches!(frame.ref_desc(), casa_tables::table_measures::MeasRefDesc::Fixed { refer } if refer == "J2000")
+        || frame.offset_desc().is_some()
+    {
+        return Err(SimulatorError::not_yet_implemented(
+            "POINTING frame/measure offsets are not yet implemented (#1294)",
+        ));
+    }
     let by_time = ScansByTime::new(times_s);
+    let mut centres = vec![None; scans.len()];
+    let mut coverage = vec![0u64; scans.len() * words];
     let mut validity = Validity::default();
     let (mut antennas, mut times, mut intervals, mut rows) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut valid = Vec::new();
     let count = pointing.row_count();
-    for first in (0..count).step_by(SCAN_READ_ROWS) {
+    for first in (0..count).step_by(256) {
         rows.clear();
-        rows.extend(first..count.min(first + SCAN_READ_ROWS));
+        rows.extend(first..count.min(first + 256));
         antennas.clear();
         times.clear();
         intervals.clear();
@@ -518,22 +596,40 @@ fn pointing_away_from_phase_centre(
             .map_err(error)?;
         // Cell by cell, which every data manager serves: CASA keeps
         // DIRECTION in a StandardStMan.
-        let directions = pointing
-            .column_accessor("DIRECTION")
-            .and_then(|column| column.array_cells_owned_uncached(&rows))
-            .map_err(error)?;
+        let column = pointing.column_accessor("DIRECTION").map_err(error)?;
+        for shape in column.array_shapes_uncached(&rows).map_err(error)? {
+            if shape.as_deref() != Some(&[2, 1]) {
+                return Err(SimulatorError::not_yet_implemented(
+                    "POINTING polynomials are not yet implemented (#1294)",
+                ));
+            }
+        }
+        let directions = column.array_cells_owned_uncached(&rows).map_err(error)?;
         for (((&antenna, &time_s), &interval_s), direction) in
             antennas.iter().zip(&times).zip(&intervals).zip(&directions)
         {
             let direction = fixed_direction(direction.as_ref());
             validity.push((antenna, time_s, interval_s), direction, &mut valid);
-            if let Some(scan) = by_time.away(&mut valid, scans) {
-                return Ok(Some(scan));
-            }
+            by_time.assign(&mut valid, &mut centres, &mut coverage, antenna_count)?;
         }
     }
     validity.finish(&mut valid);
-    Ok(by_time.away(&mut valid, scans))
+    by_time.assign(&mut valid, &mut centres, &mut coverage, antenna_count)?;
+    for (index, direction) in centres.iter().enumerate() {
+        if direction.is_some_and(|direction| {
+            separation_rad(direction, scans[index].phase_center_rad) >= SAME_DIRECTION_RAD
+        }) && coverage[index * words..(index + 1) * words]
+            .iter()
+            .map(|word| word.count_ones() as usize)
+            .sum::<usize>()
+            != antenna_count
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "offset POINTING without coverage for every antenna is not yet implemented (#1294)",
+            ));
+        }
+    }
+    Ok(centres)
 }
 
 /// A POINTING row's DIRECTION, as (longitude, latitude), radians: its
@@ -555,7 +651,7 @@ fn fixed_direction(cell: Option<&ArrayValue>) -> Option<[f64; 2]> {
 
 /// A POINTING row's direction ([`fixed_direction`]) and the times it is
 /// valid for, seconds.
-type ValidPointing = (Option<[f64; 2]>, [f64; 2]);
+type ValidPointing = (i32, Option<[f64; 2]>, [f64; 2]);
 
 /// The times POINTING rows are valid for, found in table order as
 /// casacore's `MSPointingColumns::pointingIndex` finds them. A row is
@@ -600,7 +696,11 @@ impl Validity {
         if rows.last_s != time_s {
             let half = (time_s - rows.last_s).abs() / 2.0;
             let span = [rows.last_s - half, rows.last_s + half];
-            valid.extend(rows.waiting.drain(..).map(|direction| (direction, span)));
+            valid.extend(
+                rows.waiting
+                    .drain(..)
+                    .map(|direction| (antenna, direction, span)),
+            );
             rows.earlier_s = Some(rows.last_s);
             rows.last_s = time_s;
         }
@@ -608,23 +708,27 @@ impl Validity {
             rows.waiting.push(direction);
         } else if interval_s > 0.0 {
             let half = interval_s / 2.0;
-            valid.push((direction, [time_s - half, time_s + half]));
+            valid.push((antenna, direction, [time_s - half, time_s + half]));
         } else {
-            valid.push((direction, [f64::NEG_INFINITY, f64::INFINITY]));
+            valid.push((antenna, direction, [f64::NEG_INFINITY, f64::INFINITY]));
         }
     }
 
     /// Onto `valid` go the rows of INTERVAL 0 no later row bounds: by the
     /// antenna's earlier TIME, else at every time.
     fn finish(&mut self, valid: &mut Vec<ValidPointing>) {
-        for rows in self.antennas.values_mut() {
+        for (&antenna, rows) in &mut self.antennas {
             let span = rows
                 .earlier_s
                 .map_or([f64::NEG_INFINITY, f64::INFINITY], |earlier| {
                     let half = (rows.last_s - earlier).abs() / 2.0;
                     [rows.last_s - half, rows.last_s + half]
                 });
-            valid.extend(rows.waiting.drain(..).map(|direction| (direction, span)));
+            valid.extend(
+                rows.waiting
+                    .drain(..)
+                    .map(|direction| (antenna, direction, span)),
+            );
         }
     }
 }
@@ -655,10 +759,20 @@ impl<'t> ScansByTime<'t> {
         }
     }
 
-    /// The first scan of `scans` a row of `valid`, which this empties, is
-    /// valid during and points away from.
-    fn away(&self, valid: &mut Vec<ValidPointing>, scans: &[Scan]) -> Option<usize> {
-        for (direction, [from_s, to_s]) in valid.drain(..) {
+    /// Assign valid directions and preserve their per-antenna coverage.
+    fn assign(
+        &self,
+        valid: &mut Vec<ValidPointing>,
+        centres: &mut [Option<[f64; 2]>],
+        coverage: &mut [u64],
+        antenna_count: usize,
+    ) -> SimulatorResult<()> {
+        let words = antenna_count.div_ceil(64);
+        for (antenna, direction, [from_s, to_s]) in valid.drain(..) {
+            if antenna < 0 || antenna as usize >= antenna_count {
+                continue;
+            }
+            let antenna = antenna as usize;
             let started = self
                 .by_start
                 .partition_point(|&scan| self.times_s[scan][0] <= to_s);
@@ -667,15 +781,26 @@ impl<'t> ScansByTime<'t> {
                     break;
                 }
                 let scan = self.by_start[position];
-                let away = direction.is_none_or(|direction| {
-                    separation_rad(scans[scan].phase_center_rad, direction) >= SAME_DIRECTION_RAD
-                });
-                if self.times_s[scan][1] >= from_s && away {
-                    return Some(scan);
+                if self.times_s[scan][1] < from_s {
+                    continue;
                 }
+                let Some(direction) = direction else {
+                    return Err(SimulatorError::not_yet_implemented(
+                        "POINTING direction is not constant (#1294)",
+                    ));
+                };
+                if centres[scan]
+                    .is_some_and(|known| separation_rad(known, direction) >= SAME_DIRECTION_RAD)
+                {
+                    return Err(SimulatorError::not_yet_implemented(
+                        "POINTING changes within a scan or between antennas (#1294)",
+                    ));
+                }
+                centres[scan] = Some(direction);
+                coverage[scan * words + antenna / 64] |= 1 << (antenna % 64);
             }
         }
-        None
+        Ok(())
     }
 }
 

@@ -14,8 +14,10 @@
 //!
 //! Loading reads the whole table; [`CalibrationTableLookup::rows_on_disk`],
 //! [`CalibrationTableLookup::loading_bytes`] and
-//! [`CalibrationTableLookup::kept_bytes`] size it beforehand, for a caller
-//! that admits the memory first.
+//! [`CalibrationTableLookup::kept_bytes`] size narrow, two-parameter rows.
+//! For wide tables, [`CalibrationTableLookup::layout_on_disk`] inspects
+//! shape headers and counts parameter/frequency values before their payloads
+//! are read, so callers can admit the entire lookup first.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,11 +28,24 @@ use casa_types::Complex32;
 
 use crate::execute::{
     ApplyExecutionError, CalibrationGrid, CalibrationSolution, DelayGrid, GainGrid,
-    LoadedCalibrationTable, load_calibration_table,
+    LoadedCalibrationTable, load_calibration_table, load_simulator_table,
 };
 use crate::model::CalibrationParameterFamily;
 use crate::plan::{ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode};
 use crate::summary::summarize_table;
+
+#[path = "lookup_baseline.rs"]
+mod baseline;
+#[path = "lookup_bpoly.rs"]
+mod bpoly;
+#[path = "lookup_fringe.rs"]
+mod fringe;
+#[path = "lookup_real.rs"]
+mod real;
+#[path = "lookup_time.rs"]
+mod time;
+use time::TimePlan;
+pub use time::{TimeInterpolation, TimeInterpolationOptions};
 
 /// Which fields' solutions a row takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +71,53 @@ pub const LOOKUP_LOADING_ROW_BYTES: u64 = 4_096;
 /// 320 bytes with the loading figure, with a quarter more.
 pub const LOOKUP_KEPT_ROW_BYTES: u64 = 400;
 
+/// Payload dimensions used to admit a complex calibration-table lookup.
+///
+/// Row metadata and numerical values have separate costs: a wide table
+/// cannot be sized from its row count alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalibrationTableLayout {
+    /// Physical rows in the calibration table.
+    pub rows: usize,
+    /// Complex parameters across all defined CPARAM cells.
+    pub values: usize,
+    /// Largest CPARAM cell, for admitted interpolation scratch.
+    pub max_cell_values: usize,
+    /// CHAN_FREQ values needed for frequency-dependent solutions.
+    pub frequency_values: usize,
+    /// SPECTRAL_WINDOW rows used for mapping and frequency-grid metadata.
+    pub frequency_windows: usize,
+}
+
+impl CalibrationTableLayout {
+    fn extra_values(self) -> u64 {
+        self.values.saturating_sub(self.rows.saturating_mul(2)) as u64
+    }
+
+    /// Heap used temporarily while loading, beside the retained lookup.
+    /// Existing per-row admission includes up to two complex parameters.
+    #[must_use]
+    pub fn loading_bytes(self) -> u64 {
+        (self.rows as u64)
+            .saturating_mul(LOOKUP_LOADING_ROW_BYTES)
+            .saturating_add(self.extra_values().saturating_mul(24))
+            .saturating_add((self.frequency_values as u64).saturating_mul(16))
+            .saturating_add(
+                (self.frequency_windows as u64).saturating_mul(LOOKUP_LOADING_ROW_BYTES),
+            )
+    }
+
+    /// Heap retained by the lookup, including wide parameter grids.
+    #[must_use]
+    pub fn kept_bytes(self) -> u64 {
+        (self.rows as u64)
+            .saturating_mul(LOOKUP_KEPT_ROW_BYTES)
+            .saturating_add(self.extra_values().saturating_mul(12))
+            .saturating_add((self.frequency_values as u64).saturating_mul(12))
+            .saturating_add((self.frequency_windows as u64).saturating_mul(64))
+    }
+}
+
 /// A complex calibration table, loaded to look its solutions up.
 pub struct CalibrationTableLookup {
     path: PathBuf,
@@ -65,6 +127,8 @@ pub struct CalibrationTableLookup {
     /// For [`FieldSelection::AnyField`]: each (spectral window, antenna)'s
     /// solutions across the fields, in time order.
     across_fields: Option<HashMap<(i32, i32), Vec<CalibrationSolution>>>,
+    advanced_time: Option<TimePlan>,
+    baseline_antennas: Option<usize>,
 }
 
 /// One antenna's solution: CPARAM's values and FLAG, per receptor and
@@ -147,6 +211,68 @@ impl CalibrationTableLookup {
         })
     }
 
+    /// Admit the root and spectral-window row metadata before inspecting
+    /// shapes. This reads control files only, never numerical payloads.
+    ///
+    /// # Errors
+    /// A table control file cannot be read.
+    pub fn metadata_bytes_on_disk(path: impl AsRef<Path>) -> Result<u64, ApplyExecutionError> {
+        let path = path.as_ref();
+        let rows = Self::rows_on_disk(path)?;
+        let windows = spectral_window_path(path)?
+            .map(Self::rows_on_disk)
+            .transpose()?
+            .unwrap_or(0);
+        Ok((rows as u64)
+            .saturating_add(windows as u64)
+            .saturating_mul(LOOKUP_LOADING_ROW_BYTES)
+            .max(64 * 1024))
+    }
+
+    /// Inspect CPARAM dimensions without reading numerical cell payloads.
+    ///
+    /// The caller admits [`Self::metadata_bytes_on_disk`] first. Shapes
+    /// are scanned in bounded batches; only scalar counts survive here.
+    ///
+    /// # Errors
+    /// A table's shape metadata cannot be read, or value counts overflow.
+    pub fn layout_on_disk(
+        path: impl AsRef<Path>,
+    ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
+        Self::parameter_layout(path.as_ref(), "CPARAM")
+    }
+
+    fn parameter_layout(
+        path: &Path,
+        column: &str,
+    ) -> Result<CalibrationTableLayout, ApplyExecutionError> {
+        let error = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason,
+        };
+        let (rows, values, max_cell_values, channels) =
+            shape_counts(path, column).map_err(error)?;
+        let spectral = spectral_window_path(path)?;
+        let (frequency_windows, frequency_values) = if let Some(spectral) = spectral {
+            if channels > 1 {
+                let (windows, values, _, _) =
+                    shape_counts(&spectral, "CHAN_FREQ").map_err(error)?;
+                (windows, values)
+            } else {
+                (Self::rows_on_disk(spectral)?, 0)
+            }
+        } else {
+            (0, 0)
+        };
+        Ok(CalibrationTableLayout {
+            rows,
+            values,
+            max_cell_values,
+            frequency_values,
+            frequency_windows,
+        })
+    }
+
     /// Heap loading a table of `rows` rows holds at most, beside what the
     /// lookup then keeps.
     #[must_use]
@@ -170,13 +296,21 @@ impl CalibrationTableLookup {
         interp: ApplyInterpolationMode,
         fields: FieldSelection,
     ) -> Result<Self, ApplyExecutionError> {
-        let path = path.as_ref();
+        Self::open_parameters(path.as_ref(), interp, fields, false)
+    }
+
+    fn open_parameters(
+        path: &Path,
+        interp: ApplyInterpolationMode,
+        fields: FieldSelection,
+        real: bool,
+    ) -> Result<Self, ApplyExecutionError> {
         let unsupported = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason,
         };
         let summary = summarize_table(path).map_err(|error| unsupported(error.to_string()))?;
-        if summary.parameter_family != CalibrationParameterFamily::Complex
+        if (summary.parameter_family != CalibrationParameterFamily::Complex && !real)
             || summary.table_subtype == "BPOLY"
         {
             return Err(unsupported(format!(
@@ -199,7 +333,11 @@ impl CalibrationTableLookup {
             interp,
             calwt: false,
         };
-        let table = load_calibration_table(&plan, None)?;
+        let table = if real {
+            load_simulator_table(&plan)?
+        } else {
+            load_calibration_table(&plan, None)?
+        };
         let across_fields = (fields == FieldSelection::AnyField).then(|| across_fields(&table));
         Ok(Self {
             path: path.to_path_buf(),
@@ -207,7 +345,34 @@ impl CalibrationTableLookup {
             subtype,
             interp,
             across_fields,
+            advanced_time: None,
+            baseline_antennas: None,
         })
+    }
+
+    /// Whether this spectral window has any loaded solution series.
+    ///
+    /// A missing antenna is distinct from a missing entire window: CASA
+    /// substitutes neutral antenna values in the former case, but skips a
+    /// whole corruption step in the latter.
+    #[must_use]
+    pub fn has_spectral_window(&self, window: i32) -> bool {
+        self.table
+            .solutions
+            .keys()
+            .any(|&(_, spw, _)| spw == window)
+    }
+
+    /// First spectral-window id with actual calibration solutions.
+    /// CASA's automatic `spwmap=[-999]` fans this window out to all data windows.
+    #[must_use]
+    pub fn first_spectral_window(&self) -> Option<i32> {
+        self.table
+            .solutions
+            .keys()
+            .map(|&(_, window, _)| window)
+            .filter(|&window| window >= 0)
+            .min()
     }
 
     /// The table's subtype (`G Jones`, `D Jones`, `B Jones`, …).
@@ -232,6 +397,9 @@ impl CalibrationTableLookup {
         antenna: i32,
         time_s: f64,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
+        if self.advanced_time.is_some() {
+            return self.simulation_solution(0, 0, spw, antenna, time_s, None);
+        }
         let grid = match &self.across_fields {
             Some(series) => self.across_fields_grid(series, spw, antenna, time_s)?,
             None => self
@@ -454,4 +622,55 @@ pub(crate) fn interpolate_gain_amplitude_phase(
     }
     let phase = lower_phase + (upper_phase - lower_phase) * fraction;
     Complex32::new(amp * phase.cos(), amp * phase.sin())
+}
+
+/// Row count, logical value count, largest cell and largest second axis;
+/// arrays themselves are never read or retained during this inspection.
+fn shape_counts(path: &Path, name: &str) -> Result<(usize, usize, usize, usize), String> {
+    let table =
+        Table::open(casa_tables::TableOptions::new(path)).map_err(|error| error.to_string())?;
+    let rows = table.row_count();
+    let column = table
+        .column_accessor(name)
+        .map_err(|error| error.to_string())?;
+    let (mut values, mut maximum, mut channels) = (0usize, 0usize, 0usize);
+    for start in (0..rows).step_by(512) {
+        let selected = (start..rows.min(start.saturating_add(512))).collect::<Vec<_>>();
+        for shape in column
+            .array_shapes_uncached(&selected)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .flatten()
+        {
+            channels = channels.max(shape.get(1).copied().unwrap_or(1));
+            let size = shape
+                .into_iter()
+                .try_fold(1usize, |count, dimension| count.checked_mul(dimension))
+                .ok_or_else(|| "array shape size overflows usize".to_string())?;
+            maximum = maximum.max(size);
+            values = values
+                .checked_add(size)
+                .ok_or_else(|| "array value count overflows usize".to_string())?;
+        }
+    }
+    Ok((rows, values, maximum, channels))
+}
+
+/// Resolve the ordinary table keyword, including linked external subtables.
+pub(crate) fn spectral_window_path(path: &Path) -> Result<Option<PathBuf>, ApplyExecutionError> {
+    let table = Table::open(casa_tables::TableOptions::new(path)).map_err(|error| {
+        ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(table
+        .keywords()
+        .get("SPECTRAL_WINDOW")
+        .and_then(casa_types::Value::as_table_ref)
+        .map(|stored| casa_tables::add_directory(stored, path))
+        .or_else(|| {
+            let child = path.join("SPECTRAL_WINDOW");
+            child.is_dir().then_some(child)
+        }))
 }

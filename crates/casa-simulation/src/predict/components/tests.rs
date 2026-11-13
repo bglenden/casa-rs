@@ -37,6 +37,7 @@ fn point(flux: Flux, direction: [f64; 2], frame: DirectionRef) -> SkyComponent {
 
 fn window(correlations: Vec<i32>) -> ComponentWindow {
     ComponentWindow {
+        stored_frequencies: None,
         first_hz: 230.0e9,
         step_hz: 0.1e9,
         channels: 2,
@@ -52,7 +53,7 @@ fn prepare(
 ) -> Result<ComponentPrediction, ComponentRefusal> {
     let targets = ComponentTargets {
         windows,
-        pointings: &[(0, CENTRE)],
+        pointings: &[(0, CENTRE, CENTRE)],
         pointing_of_scan: &[0],
         beam,
     };
@@ -194,6 +195,7 @@ fn a_rows_channels_predict_as_each_components_visibility_one_channel_at_a_time()
     let listed = list(components.clone());
     // 2,048 channels of 2 MHz: the phasor's recurrence crosses the band.
     let window = ComponentWindow {
+        stored_frequencies: None,
         first_hz: 226.0e9,
         step_hz: 2.0e6,
         channels: 2_048,
@@ -239,7 +241,14 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
     for beam in [None, Some(&pattern)] {
         let targets = ComponentTargets {
             windows: &windows,
-            pointings: &[(2, CENTRE), (0, [CENTRE[0], CENTRE[1] + 1.0e-4])],
+            pointings: &[
+                (2, CENTRE, CENTRE),
+                (
+                    0,
+                    [CENTRE[0], CENTRE[1] + 1.0e-4],
+                    [CENTRE[0], CENTRE[1] + 1.0e-4],
+                ),
+            ],
             pointing_of_scan: &[2, 0, 2],
             beam,
         };

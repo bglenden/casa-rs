@@ -29,7 +29,7 @@ use super::spectral::PreparedSpectralAxis;
 use super::survey::WRange;
 use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, Weighting};
 
-const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+pub(super) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
 /// What the specification needs besides the request and the spectral axis.
 pub(super) struct SpecificationInputs {
@@ -89,9 +89,9 @@ fn scales_px(request: &ImagingRequest) -> Vec<f64> {
 /// gridder, unit response otherwise.
 pub(super) fn normalization(request: &ImagingRequest) -> ProductNormalization {
     match &request.gridder {
-        Gridder::Mosaic { normtype, .. } | Gridder::Awproject(AwProjection { normtype, .. }) => {
-            *normtype
-        }
+        Gridder::Mosaic { normtype, .. }
+        | Gridder::Awproject(AwProjection { normtype, .. })
+        | Gridder::Awp2 { normtype, .. } => *normtype,
         Gridder::Standard { .. } | Gridder::Wproject { .. } => ProductNormalization::UnitResponse,
     }
 }
@@ -117,6 +117,11 @@ pub(super) fn specification(
         request.gridder,
         Gridder::Standard { .. } | Gridder::Wproject { .. }
     );
+    // CASA's MVC helper converts the normalized cube's PSF and residual
+    // to Taylor moments. The Taylor store has no gridded sensitivity of
+    // its own, and its model is already in apparent units.
+    let mvc_taylor = request.specmode == SpecMode::Mfs
+        && (request.mvc_output_channels.is_some() || request.mvc_auto_channels);
     let algorithm = reconstruction_algorithm(request);
     let basis = match request.deconvolver {
         Deconvolver::Mtmfs => ReconstructionBasis::Taylor {
@@ -160,11 +165,15 @@ pub(super) fn specification(
             requested_products(
                 request,
                 minor_cycle,
-                direction_dependent,
+                direction_dependent && !mvc_taylor,
                 inputs.force_primary_beam,
                 inputs.force_model,
             ),
-            normalization(request),
+            if mvc_taylor {
+                ProductNormalization::UnitResponse
+            } else {
+                normalization(request)
+            },
             restoring_beam,
             ProductValidityPolicies::new(
                 primary_beam_validity(request)?,
@@ -415,6 +424,9 @@ fn requested_products(
         products.push(ProductKind::TaylorTerms);
         if restored && spectral_index {
             products.extend([ProductKind::SpectralIndex, ProductKind::SpectralIndexError]);
+            if request.nterms > 2 {
+                products.push(ProductKind::SpectralCurvature);
+            }
         }
     }
     if weight_image {
@@ -459,8 +471,8 @@ const CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC: [f64; 2] = [600.0, 600.0];
 
 /// The installed A-projection: CASA's EVLA aperture, prolate-spheroidal,
 /// wideband and conjugate-beam terms as tclean asks for them (wideband
-/// only with the aperture, [`AwProjection::wideband`]), and 360-degree
-/// parallactic-angle steps, over the selected `|w|` range.
+/// only with the aperture, [`AwProjection::wideband`]), and the PA lookup
+/// step, over the selected `|w|` range.
 pub(super) fn aw_projection(
     aw: &AwProjection,
     [_, highest_hz]: [f64; 2],
@@ -478,8 +490,8 @@ pub(super) fn aw_projection(
         aw.conjbeams,
         aw.usepointing,
         effective_aw_pointing_offset_sigdev_arcsec(aw.usepointing, &aw.pointingoffsetsigdev),
-        360.0,
-        360.0,
+        aw.computepastep,
+        aw.rotatepastep,
     )?)
 }
 

@@ -461,8 +461,8 @@ impl Packer<'_> {
         let uvw = batch.group.uvw.ok_or("the batch carries no UVW")?;
         // A pass reads a time's channels as CASA's frequency selection does:
         // tuned to the image for one that images, and for a density over the
-        // whole selection its untuned bands. A density per plane reads every
-        // selected channel.
+        // whole selection its untuned bands. The per-plane density's layout
+        // is already compacted to the time's imaging bands.
         let bands = if values {
             partition.frequency_bands.as_ref()
         } else {
@@ -549,7 +549,7 @@ impl Packer<'_> {
                         geometry.antenna_responses(sample),
                         &self.keys.dish_classes,
                     ),
-                    parallactic_angle_rad: geometry.parallactic_angles(sample).unwrap_or([0.0; 2]),
+                    parallactic_angle_rad: kernel_parallactic_angles(geometry, sample, time),
                     field: self.keys.field(store, field.0),
                     spectral_window: self.keys.window(store, partition.spectral_window),
                 },
@@ -830,6 +830,13 @@ fn fill_samples(
 /// [`crate::imaging::measurement::domain_operator`] lists the dishes in; a row
 /// without response classes (every problem without an instrument model)
 /// is on the first dish.
+fn kernel_parallactic_angles(geometry: &BatchGeometry, sample: usize, time: usize) -> [f64; 2] {
+    geometry.aw_parallactic_angle(time).map_or_else(
+        || geometry.parallactic_angles(sample).unwrap_or([0.0; 2]),
+        |pa| [-f64::from(pa); 2],
+    )
+}
+
 fn antenna_types(
     responses: Option<SelectedAntennaResponses>,
     classes: &[AntennaResponseClass],

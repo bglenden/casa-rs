@@ -21,6 +21,9 @@ fn modes() -> Vec<Value> {
         json!({ "specmode": "cube", "nchan": 4 }),
         json!({ "gridder": "wproject" }),
         json!({ "gridder": "mosaic", "mosweight": false }),
+        json!({ "gridder": "awp2" }),
+        json!({ "gridder": "awp2", "specmode": "cube" }),
+        json!({ "gridder": "awp2", "stokes": "IV", "computepastep": 15.0, "wprojplanes": 2 }),
         json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf", "wprojplanes": 32 }),
         json!({
             "gridder": "awproject",
@@ -95,6 +98,12 @@ fn every_request_field_is_required_or_consumed_internal_provenance() {
                     .expect("internal mask provenance is read");
                 assert!(explicit.explicit_empty_mask);
                 assert_ne!(explicit, default);
+                continue;
+            }
+            if name == "psfphasecenter" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("typed requests default to the image centre for the PSF");
+                assert!(default.psfphasecenter.is_none());
                 continue;
             }
             assert!(
@@ -172,14 +181,21 @@ fn parameters_a_mode_does_not_read_are_ignored() {
     assert_eq!(request(json!({ "spw": "*" })), plain);
 }
 
-/// What the catalog takes only at tclean's default, wherever CASA reads it.
+/// Only mosaic gridders use a separate PSF centre when they form the PSF.
 #[test]
-fn the_catalog_refuses_what_casa_reads_in_every_mode() {
-    // CASA reads psfphasecenter for every gridder named for a mosaic.
-    let overrides =
-        json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" });
-    let error = resolved(overrides.clone()).expect_err("refused at the catalog");
-    assert!(error.to_string().contains("#1062"), "{overrides}: {error}");
+fn the_psf_phase_centre_is_used_by_single_term_mfs_mosaics() {
+    let centre = "J2000 0rad 0rad";
+    for gridder in ["mosaic", "mosaicft", "ftmosaic"] {
+        let mfs = request(json!({"gridder": gridder, "psfphasecenter": centre}));
+        assert_eq!(mfs.psfphasecenter.as_deref(), Some(centre));
+        let cube =
+            refusal(json!({"gridder": gridder, "specmode": "cube", "psfphasecenter": centre}));
+        assert!(cube.to_string().contains("#1062"), "{cube}");
+    }
+    assert_eq!(
+        request(json!({"gridder": "standard", "psfphasecenter": centre})).psfphasecenter,
+        None
+    );
 }
 
 #[test]
@@ -349,6 +365,125 @@ fn an_automatic_mask_of_a_cube_or_stokes_planes_is_read() {
     }
 }
 
+#[test]
+fn awp2_unsquinted_stokes_reads_the_named_polarizations_at_zero_w() {
+    for stokes in ["I", "Q", "U", "V", "IV", "QU", "IQUV"] {
+        for specmode in ["mfs", "cube"] {
+            let read = request(json!({
+                "gridder": "awp2",
+                "specmode": specmode,
+                "stokes": stokes,
+                "wprojplanes": 1,
+            }));
+            assert_eq!(read.stokes.len(), stokes.len());
+        }
+    }
+    for stokes in ["RR", "IQ"] {
+        let refused = refusal(json!({ "gridder": "awp2", "stokes": stokes }));
+        assert_eq!(refused.parameter, "gridder");
+        assert!(refused.message.contains("#1071"));
+    }
+    let refused = refusal(json!({
+        "gridder": "awp2",
+        "stokes": "IV",
+        "savemodel": "modelcolumn",
+    }));
+    assert_eq!(refused.parameter, "gridder");
+    assert!(refused.message.contains("#1071"));
+}
+
+#[test]
+fn awp2_taylor_reads_the_two_term_unsquinted_continuum() {
+    let values = json!({"gridder": "awp2", "deconvolver": "mtmfs", "niter": 30});
+    let read = request(values.clone());
+    assert_eq!(read.deconvolver, Deconvolver::Mtmfs);
+    assert_eq!(read.nterms, 2);
+    assert_eq!(read.specmode, SpecMode::Mfs);
+
+    for (parameter, value) in [
+        ("nterms", json!(3)),
+        ("stokes", json!("Q")),
+        ("wprojplanes", json!(2)),
+        ("weighting", json!("uniform")),
+        ("savemodel", json!("modelcolumn")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
+#[test]
+fn awp2_mvc_admits_natural_flatnoise_stokes_i_with_zero_w() {
+    let values = json!({
+        "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs", "nchan": 3,
+        "niter": 100, "pbcor": true,
+    });
+    let read = request(values.clone());
+    assert_eq!(read.mvc_output_channels, NonZeroUsize::new(3));
+    assert_eq!(read.nterms, 2);
+    for (parameter, value) in [
+        ("wprojplanes", json!(2)),
+        ("normtype", json!("flatsky")),
+        ("weighting", json!("uniform")),
+        ("stokes", json!("Q")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
+#[test]
+fn awp2_mvc_reads_squint_w_planes_and_continuum_weighting() {
+    let values = json!({
+        "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs",
+        "nchan": -1, "stokes": "I", "weighting": "uniform",
+        "computepastep": 15.0, "wprojplanes": 4, "perchanweightdensity": true,
+    });
+    let read = request(values.clone());
+    assert!(read.mvc_auto_channels);
+    assert_eq!(read.weighting, crate::Weighting::Uniform);
+    let crate::Gridder::Awp2 {
+        wprojplanes,
+        computepastep,
+        mosweight,
+        ..
+    } = read.gridder
+    else {
+        panic!("expected AWP2");
+    };
+    assert_eq!(wprojplanes, NonZeroUsize::new(4));
+    assert_eq!(computepastep, 15.0);
+    assert!(mosweight);
+
+    let mut global_density = values.clone();
+    global_density["mosweight"] = json!(false);
+    assert!(matches!(
+        request(global_density).gridder,
+        crate::Gridder::Awp2 {
+            mosweight: false,
+            ..
+        }
+    ));
+    for (parameter, value) in [
+        ("weighting", json!("natural")),
+        ("normtype", json!("flatsky")),
+        ("savemodel", json!("modelcolumn")),
+        ("stokes", json!("IV")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
 /// A value casa-rs cannot honour is refused at its parameter, naming the
 /// issue that tracks it.
 #[test]
@@ -389,7 +524,31 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "facets",
             "#1063",
         ),
-        (json!({ "gridder": "awp2" }), "gridder", "#1071"),
+        (
+            json!({ "gridder": "awp2", "specmode": "cube", "wprojplanes": 2 }),
+            "gridder",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "specmode": "cube", "savemodel": "modelcolumn" }),
+            "gridder",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "stokes": "Q", "wprojplanes": 2 }),
+            "gridder",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "wprojplanes": -1 }),
+            "wprojplanes",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "computepastep": 90.0 }),
+            "computepastep",
+            "#1071",
+        ),
         (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#980"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
         // An mfs image's REST axis grids the data's frequencies as they are.
@@ -399,12 +558,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "specmode": "cube", "restfreq": ["", "2GHz"] }),
             "restfreq",
             "#980",
-        ),
-        (
-            json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
-                    "wprojplanes": 32, "facets": 2 }),
-            "facets",
-            "#1070",
         ),
         (json!({ "projection": "AZP" }), "projection", "#1101"),
         (json!({ "projection": "HPX" }), "projection", "#1101"),
@@ -442,6 +595,11 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "wprojplanes",
         ),
         (json!({ "gridder": "mosaic", "facets": 2 }), "facets"),
+        (
+            json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
+                    "wprojplanes": 32, "facets": 2 }),
+            "facets",
+        ),
         (json!({ "datacolumn": "model" }), "datacolumn"),
         (json!({ "specmode": "cube", "nchan": 0 }), "nchan"),
         (

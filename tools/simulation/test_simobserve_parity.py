@@ -12,16 +12,21 @@ NumPy is needed.
 from __future__ import annotations
 
 import os
+import contextlib
+import io
+import json
 import pathlib
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from simobserve_parity import CASES, compare_frequency_frames, compare_images, copy_inputs, repredict
+from simobserve_parity import CASES, casars_params, compare_case, compare_frequency_frames, compare_images, copy_inputs, main, repredict
 
 
 class ComponentLists:
@@ -188,6 +193,54 @@ class FrequencyFramesTest(unittest.TestCase):
         self.assertEqual(len(compare_frequency_frames(table, "a", "b")), 2)
 
 
+class GeometryTables(SpectralWindows):
+    def getcol(self, column):
+        return self.rows[column]
+
+
+class StrictGeometryTest(unittest.TestCase):
+    def compare(self, *, time_delta=False, uvw=0.0, uvw_delta=0.0, caller_limit=1e-3, write_ms=True):
+        # Exercise the actual task comparator, replacing only CASA's I/O and
+        # the external legacy-comparator process (which reports success).
+        with tempfile.TemporaryDirectory() as out:
+            columns = {}
+            paths = []
+            for side in ("casa", "casars"):
+                project = pathlib.Path(out, side)
+                project.mkdir()
+                (project / "x.ptg.txt").write_text("pointing\n")
+                ms = project / "x.ms"
+                if write_ms:
+                    ms.mkdir()
+                paths.append(str(project))
+                time = np.nextafter(5e9, np.inf) if time_delta and side == "casars" else 5e9
+                coordinate = uvw + uvw_delta if side == "casars" else uvw
+                columns[str(ms)] = {"TIME": np.array([time]), "UVW": np.array([[coordinate], [0.0], [0.0]])}
+                columns[str(ms / "SPECTRAL_WINDOW")] = [{"MEAS_FREQ_REF": 5, "CHAN_FREQ": [1e9]}]
+            case = dict(next(case for case in CASES if case["name"] == "uvw_long_vla_2017"))
+            args = SimpleNamespace(uvw_tolerance_m=caller_limit, atmosphere_model=None)
+            with patch("simobserve_parity.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="")):
+                return compare_case({"tb": GeometryTables(columns)}, case, *paths, out, args)
+
+    def test_equal_time_is_required_even_for_one_ulp(self):
+        self.assertEqual(self.compare()["differences"], [])
+        self.assertTrue(any("TIME" in line for line in self.compare(time_delta=True)["differences"]))
+
+    def test_strict_geometry_requires_both_measurement_sets(self):
+        self.assertTrue(self.compare(write_ms=False)["differences"])
+
+    def test_one_micrometre_is_an_absolute_cap_even_with_a_looser_caller(self):
+        self.assertEqual(self.compare(uvw_delta=1e-6)["differences"], [])
+        self.assertTrue(self.compare(uvw_delta=np.nextafter(1e-6, np.inf))["differences"])
+        # This 30 km coordinate passed the old comparator's relative margin.
+        self.assertTrue(self.compare(uvw=3e4, uvw_delta=1e-6 + 1e-10)["differences"])
+
+    def test_a_stricter_caller_and_non_finite_geometry_fail_closed(self):
+        self.assertTrue(self.compare(uvw_delta=1e-8, caller_limit=1e-9)["differences"])
+        for value in (np.nan, np.inf):
+            self.assertTrue(self.compare(uvw_delta=value)["differences"])
+
+
 class InputSelectionTest(unittest.TestCase):
     def test_only_selected_inputs_are_required(self):
         with tempfile.TemporaryDirectory() as data, tempfile.TemporaryDirectory() as out:
@@ -198,6 +251,62 @@ class InputSelectionTest(unittest.TestCase):
             copy_inputs(data, out, selected)
             self.assertEqual((pathlib.Path(out) / "inputs/core5ps.skymodel/data").read_text(), "model")
             self.assertFalse((pathlib.Path(out) / "inputs/core5ps.clist").exists())
+
+
+class ExpectedOutcomeTest(unittest.TestCase):
+    """Matching errors do not prove that a supported simulation works."""
+
+    def run_case(self, expect_refusal, refused):
+        case = {"name": "probe", "params": {}, "expect_refusal": expect_refusal}
+        with tempfile.TemporaryDirectory() as out:
+            args = ["simobserve_parity.py", "--out", out, "--casars-bin", "unused", "--casatestdata", "unused"]
+            with (
+                patch("simobserve_parity.CASES", [case]),
+                patch.object(sys, "argv", args),
+                patch("simobserve_parity.copy_inputs"),
+                patch("simobserve_parity.tools", return_value={}),
+                patch("simobserve_parity.run_casa", side_effect=RuntimeError("refused") if refused else None),
+                patch("simobserve_parity.run_casars", return_value=("unused", {"error": "refused"} if refused else {})),
+                patch("simobserve_parity.compare_case", return_value={"name": "probe", "differences": []}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                pathlib.Path(out, "casa").mkdir()
+                status = main()
+            return status, json.loads(pathlib.Path(out, "report.json").read_text())[0]
+
+    def test_matching_refusals_fail_a_success_case(self):
+        status, report = self.run_case(expect_refusal=False, refused=True)
+        self.assertEqual(status, 1)
+        self.assertIn("expected a successful simulation, not a refusal", report["differences"])
+
+    def test_matching_successes_fail_a_refusal_case(self):
+        status, report = self.run_case(expect_refusal=True, refused=False)
+        self.assertEqual(status, 1)
+        self.assertIn("expected a refusal, but both simulations succeeded", report["differences"])
+
+    def test_the_expected_success_or_refusal_passes(self):
+        for refused in (False, True):
+            status, report = self.run_case(expect_refusal=refused, refused=refused)
+            self.assertEqual(status, 0)
+            self.assertEqual(report["differences"], [])
+
+
+class ScheduleAlignmentTest(unittest.TestCase):
+    def test_time_alignment_preserves_the_numeric_hours_input_form(self):
+        params = {"hourangle": "-1.5", "refdate": "2017/01/02/09:30:00"}
+        with (patch("simobserve_parity.hour_angle_s", return_value=-5400.0),
+              patch("simobserve_parity.tai_minus_utc_s", return_value=37.0)):
+            aligned = casars_params({}, params)
+        self.assertAlmostEqual(float(aligned["hourangle"]) * 3600.0, -5363.0, places=9)
+        self.assertEqual(params["hourangle"], "-1.5")
+        self.assertEqual(aligned["refdate"], params["refdate"])
+
+    def test_quantity_and_transit_inputs_keep_the_seconds_alignment(self):
+        for hourangle, seconds in (("90min", 5400.0), ("transit", 0.0)):
+            with (patch("simobserve_parity.hour_angle_s", return_value=seconds),
+                  patch("simobserve_parity.tai_minus_utc_s", return_value=36.0)):
+                aligned = casars_params({}, {"hourangle": hourangle})
+            self.assertEqual(aligned["hourangle"], f"{seconds + 36.0}s")
 
 
 if __name__ == "__main__":

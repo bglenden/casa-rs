@@ -10,6 +10,7 @@
 //! directions, which leaves a rounding residue CASA's gridders depend on.
 
 use super::direction::MDirection;
+use super::{MeasFrame, MeasureError};
 
 /// casacore `UVWMachine` for an explicit output direction, both directions
 /// in J2000.
@@ -35,6 +36,48 @@ impl UvwMachine {
     /// then the identity, and is not formed).
     #[must_use]
     pub fn new(output: &MDirection, input: &MDirection) -> Self {
+        Self::from_frame_rotation(output, input, input, IDENTITY)
+    }
+
+    /// Build casacore's explicit-output machine with reference conversion.
+    ///
+    /// Convert the input XYZ unit directions and phase centre into the
+    /// output reference, as `UVWMachine::init` forms `rot2` and `outin`.
+    /// `frame` supplies any epoch or position required by those references.
+    /// Equal references retain the original rotation arithmetic.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion is unavailable or lacks required frame context.
+    pub fn with_frame(
+        output: &MDirection,
+        input: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        if input.refer() == output.refer() {
+            return Ok(Self::new(output, input));
+        }
+        let converted_input = input.convert_to(output.refer(), frame)?;
+        let mut axes = IDENTITY;
+        for (axis, value) in IDENTITY.into_iter().enumerate() {
+            axes[axis] = MDirection::from_cosines(value, input.refer())
+                .convert_to(output.refer(), frame)?
+                .cosines();
+        }
+        Ok(Self::from_frame_rotation(
+            output,
+            input,
+            &converted_input,
+            transpose(axes),
+        ))
+    }
+
+    fn from_frame_rotation(
+        output: &MDirection,
+        input: &MDirection,
+        converted_input: &MDirection,
+        frame_rotation: [[f64; 3]; 3],
+    ) -> Self {
         let [input_ra, input_dec] = angles(input);
         let [output_ra, output_dec] = angles(output);
         let rot1 = euler(&[
@@ -45,7 +88,7 @@ impl UvwMachine {
             (std::f64::consts::FRAC_PI_2 - output_dec, Axis::X),
             (-(output_ra - std::f64::consts::FRAC_PI_2), Axis::Z),
         ]);
-        let rotation = transpose(product(product(rot3, IDENTITY), rot1));
+        let rotation = transpose(product(product(rot3, frame_rotation), rot1));
         // The `project=true` reprojection of the rotated UV plane onto the
         // input direction's plane, with casacore's literal Euler rotation
         // and sparse assignment.
@@ -60,7 +103,7 @@ impl UvwMachine {
         input_plane_projection[1][1] = projection[0][0] / denominator;
         input_plane_projection[0][1] = projection[1][0] / denominator;
         input_plane_projection[1][0] = projection[0][1] / denominator;
-        let [output_cosines, input_cosines] = [output.cosines(), input.cosines()];
+        let [output_cosines, input_cosines] = [output.cosines(), converted_input.cosines()];
         let phase_rotation = matrix_vector(
             rot3,
             [

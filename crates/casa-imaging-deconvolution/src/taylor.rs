@@ -122,11 +122,21 @@ impl TaylorState {
                     let index = shape.index(x, y);
                     let mut work = 0.0;
                     for t1 in 0..self.terms {
-                        let coefficient = (0..self.terms)
-                            .map(|t2| {
-                                inverse[t1 * self.terms + t2] * self.rhs[t2 * scales + scale][index]
-                            })
-                            .sum::<f64>();
+                        let coefficient = if self.terms == 1 {
+                            // The scalar solve preserves the point-scale Högbom law.
+                            inverse[0] * self.rhs[scale][index]
+                        } else {
+                            // MultiTermMatrixCleaner forms each coefficient with Float
+                            // products and sums after inverting the Hessian in Double.
+                            f64::from(
+                                (0..self.terms)
+                                    .map(|t2| {
+                                        inverse[t1 * self.terms + t2] as f32
+                                            * self.rhs[t2 * scales + scale][index] as f32
+                                    })
+                                    .sum::<f32>(),
+                            )
+                        };
                         self.coefficients[t1 * scales + scale][index] = coefficient;
                         work += coefficient * self.rhs[t1 * scales + scale][index];
                     }

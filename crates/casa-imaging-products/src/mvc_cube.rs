@@ -215,7 +215,7 @@ fn apply_validity(
                 plane,
                 planned.primary_beam_model(),
                 inputs,
-                &ImageDomainRole::Main,
+                (&ImageDomainRole::Main, 0),
             )?;
             zero_invalid_plane_values(values, &valid);
         }

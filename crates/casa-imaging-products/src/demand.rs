@@ -268,6 +268,11 @@ impl PlannedContinuumGeneration {
             // The coupled family is built whole, then published member by
             // member: it peaks at the larger stage, not at their sum (#738).
             let stages = taylor_stages(shapes, beam_scratch_bytes)?;
+            let building = checked_add(
+                stages.building,
+                self.saved_mosaic_beam_read_bytes,
+                "Taylor saved primary beam",
+            )?;
             let publishing = [
                 bounds.member_payload,
                 bounds.member_validity,
@@ -281,7 +286,7 @@ impl PlannedContinuumGeneration {
             })?;
             checked_add(
                 retained_metadata_bytes,
-                stages.building.max(publishing),
+                building.max(publishing),
                 "Taylor generation residency",
             )?
         } else {
@@ -370,6 +375,11 @@ impl PlannedContinuumGeneration {
         } else {
             generic_scratch_bytes(self, shapes)?
         };
+        bytes = checked_add(
+            bytes,
+            self.saved_mosaic_beam_read_bytes,
+            "saved primary beam",
+        )?;
         bytes = checked_add(
             bytes,
             checked_add(

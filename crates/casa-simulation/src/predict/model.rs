@@ -7,7 +7,9 @@ use std::sync::{Mutex, PoisonError};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::PagedImage;
+use casa_imaging_model::PolarizationCoordinate;
 use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::{MeasFrame, direction::MDirection};
 use casa_types::quanta::{Quantity, Unit};
 use ndarray::{Array2, IxDyn};
 
@@ -19,7 +21,7 @@ const JY_PER_PIXEL: &str = "Jy/pixel";
 /// The tile cache a model is opened with, bytes: casa-tables' default.
 const MODEL_CACHE_BYTES: usize = 64 << 20;
 
-/// A CASA model image as `sm.predict` reads it: Stokes I planes in
+/// A CASA model image as `sm.predict` reads it: Stokes I/Q/U/V planes in
 /// Jy/pixel, with the direction of pixel `(nx/2, ny/2)` and the frequency of
 /// every plane.
 ///
@@ -37,10 +39,14 @@ pub struct SkyModel {
     shape: [usize; 2],
     /// Model planes.
     planes: usize,
+    /// Stokes coordinates in stored image-plane order.
+    polarizations: Vec<PolarizationCoordinate>,
     /// Signed radians per pixel `[Δx, Δy]`.
     pub(super) increment_rad: [f64; 2],
     /// J2000 direction of pixel `(nx/2, ny/2)`, CASA's tangent point.
     centre_rad: [f64; 2],
+    /// The tangent in the direction coordinate's native reference.
+    tangent: MDirection,
     /// Frequency of plane 0 in Hz.
     pub(super) first_frequency_hz: f64,
     /// Frequency step between planes in Hz.
@@ -53,6 +59,8 @@ pub struct SkyModel {
     /// The most the image's tile cache holds once a plane is read
     /// ([`Self::cache_bytes`]).
     cache_bytes: u64,
+    /// Optional finite focus distance from the image's miscellaneous record.
+    pub(crate) distance_m: f64,
 }
 
 /// Where a model's planes come from.
@@ -81,7 +89,7 @@ impl std::fmt::Debug for SkyModel {
 
 impl SkyModel {
     /// Open a CASA image with axes `[direction x, direction y, Stokes,
-    /// spectral]`, one Stokes plane (I), as `simobserve` writes its sky
+    /// spectral]`, with Stokes I/Q/U/V planes, as `simobserve` writes its sky
     /// model, and read its header.
     ///
     /// The spectral axis may be in any frequency unit; it is normalized to
@@ -92,7 +100,7 @@ impl SkyModel {
     /// # Errors
     ///
     /// An unreadable image, one whose axes are not those above, a direction
-    /// coordinate other than J2000, or a spectral axis that is not in
+    /// coordinate outside J2000/B1950/GALACTIC/ICRS, or a spectral axis not in
     /// frequency units.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PredictError> {
         let path = path.as_ref();
@@ -104,31 +112,63 @@ impl SkyModel {
                 }
             })?;
         let shape = image.shape().to_vec();
-        let coordinates = image.coordinates().clone();
+        let mut coordinates = image.coordinates().clone();
         let unsupported = |reason: String| Err(PredictError::UnsupportedModel(reason));
         if shape.len() != 4
             || coordinates.find_coordinate(CoordinateType::Direction) != Some(0)
             || coordinates.find_coordinate(CoordinateType::Stokes) != Some(1)
             || coordinates.find_coordinate(CoordinateType::Spectral) != Some(2)
         {
-            return unsupported(
+            return Err(PredictError::InvalidModel(
                 "axes must be direction, Stokes and spectral, in that order".into(),
-            );
+            ));
         }
-        if shape[2] != 1 || coordinates.coordinate(1).to_world(&[0.0])?[0] != 1.0 {
-            return unsupported("the model must be Stokes I only".into());
+        if !(1..=4).contains(&shape[2]) {
+            return unsupported("the model must contain at most four Stokes I/Q/U/V planes".into());
         }
-        // Rows and pointings are J2000; other frames need a conversion this
-        // predictor does not make yet.
+        let polarizations = (0..shape[2])
+            .map(|plane| {
+                let code = coordinates.coordinate(1).to_world(&[plane as f64])?[0];
+                Ok(match code as i32 {
+                    1 => PolarizationCoordinate::StokesI,
+                    2 => PolarizationCoordinate::StokesQ,
+                    3 => PolarizationCoordinate::StokesU,
+                    4 => PolarizationCoordinate::StokesV,
+                    _ => {
+                        return Err(PredictError::UnsupportedModel(
+                            "the model must contain Stokes I/Q/U/V planes".into(),
+                        ));
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, PredictError>>()?;
+        // Stored UVW is J2000. The projection carries it into these image
+        // frames; epoch-dependent FK4 conversion uses the selected MS epoch.
+        let fixed = |reference| {
+            matches!(
+                reference,
+                DirectionRef::J2000
+                    | DirectionRef::B1950
+                    | DirectionRef::GALACTIC
+                    | DirectionRef::ICRS
+            )
+        };
         if let CoordinateModel::Direction(direction) = coordinates.coordinate(0)
-            && (direction.direction_ref() != DirectionRef::J2000
-                || direction.conversion_direction_ref() != DirectionRef::J2000)
+            && (!fixed(direction.direction_ref()) || !fixed(direction.conversion_direction_ref()))
         {
             return unsupported(format!(
-                "the native and conversion direction frames must both be J2000 (got {:?} and {:?})",
+                "the native and conversion frames must be fixed J2000/B1950/GALACTIC/ICRS (got {:?} and {:?})",
                 direction.direction_ref(),
                 direction.conversion_direction_ref()
             ));
+        }
+        // A conversion layer changes displayed world coordinates, not the
+        // physical pixel grid. DirectionCoordinate's MDirection overload in
+        // CASA incorrectly relabels converted values with the native type.
+        if let CoordinateModel::Direction(direction) = coordinates.coordinate(0) {
+            let native = direction.direction_ref();
+            coordinates
+                .replace_coordinate(0, direction.clone().with_conversion_direction_ref(native));
         }
         let spectral_unit = coordinates.coordinate(2).axis_units()[0].clone();
         let Some(hz_per_unit) = hz_per_unit(&spectral_unit) else {
@@ -147,18 +187,64 @@ impl SkyModel {
         let cache_bytes = cache_bound(&shape, image.tile_shape());
         let increment = coordinates.coordinate(0).increment();
         let centre = coordinates.to_world(&[(nx / 2) as f64, (ny / 2) as f64, 0.0, 0.0])?;
+        let CoordinateModel::Direction(direction) = coordinates.coordinate(0) else {
+            unreachable!()
+        };
+        let tangent =
+            MDirection::from_angles(centre[0], centre[1], direction.conversion_direction_ref());
+        let physical = if tangent.refer() == DirectionRef::J2000 {
+            (centre[0], centre[1])
+        } else {
+            tangent
+                .convert_to(DirectionRef::J2000, &MeasFrame::new())
+                .map_err(|error| {
+                    casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
+                })?
+                .as_angles()
+        };
+        let distance_m = match image.misc_info().get("distance") {
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(value))) => *value,
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float32(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int64(value))) => *value as f64,
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int16(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt32(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt16(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt8(value))) => {
+                f64::from(*value)
+            }
+            Some(_) => {
+                return Err(PredictError::InvalidModel(
+                    "image distance must be numeric".into(),
+                ));
+            }
+            None => 0.,
+        };
         Ok(Self {
             path: path.to_path_buf(),
             pixels: Pixels::Image(Box::new(Mutex::new(image))),
             shape: [nx, ny],
             planes,
+            polarizations,
             increment_rad: [increment[0], increment[1]],
-            centre_rad: [centre[0], centre[1]],
+            centre_rad: [physical.0, physical.1],
+            tangent,
             first_frequency_hz: centre[3] * hz_per_unit,
             frequency_increment_hz: coordinates.coordinate(2).increment()[0] * hz_per_unit,
             coordinates,
             first_spectral_world: centre[3],
             cache_bytes,
+            distance_m,
         })
     }
 
@@ -188,10 +274,25 @@ impl SkyModel {
         self.centre_rad
     }
 
+    /// The centre pixel's direction in the image's native reference.
+    /// Use it with `GridFtProjection` to rotate stored J2000 UVW into the
+    /// image's tangent basis before predicting a row.
+    pub fn tangent_direction(&self) -> &MDirection {
+        &self.tangent
+    }
+
     /// Number of model planes.
     #[must_use]
     pub fn planes(&self) -> usize {
         self.planes
+    }
+
+    pub(super) fn polarizations(&self) -> &[PolarizationCoordinate] {
+        &self.polarizations
+    }
+
+    pub(crate) fn is_stokes_i_only(&self) -> bool {
+        self.polarizations == [PolarizationCoordinate::StokesI]
     }
 
     /// Frequency of model plane `plane`, in Hz.
@@ -201,10 +302,20 @@ impl SkyModel {
 
     /// Fractional pixel `[x, y]` of a J2000 direction.
     pub(crate) fn pixel_of(&self, direction_rad: [f64; 2]) -> Result<[f64; 2], PredictError> {
+        let direction = if self.tangent.refer() == DirectionRef::J2000 {
+            (direction_rad[0], direction_rad[1])
+        } else {
+            MDirection::from_angles(direction_rad[0], direction_rad[1], DirectionRef::J2000)
+                .convert_to(self.tangent.refer(), &MeasFrame::new())
+                .map_err(|error| {
+                    casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
+                })?
+                .as_angles()
+        };
         let pixel = self.coordinates.to_pixel(&[
-            direction_rad[0],
-            direction_rad[1],
-            1.0,
+            direction.0,
+            direction.1,
+            self.coordinates.coordinate(1).to_world(&[0.])?[0],
             self.first_spectral_world,
         ])?;
         Ok([pixel[0], pixel[1]])
@@ -237,14 +348,59 @@ impl SkyModel {
     ///
     /// The pixels could not be read.
     pub(super) fn read_plane(&self, plane: usize) -> Result<Array2<f32>, PredictError> {
+        if !self.is_stokes_i_only() {
+            return Err(PredictError::UnsupportedModel(
+                "total-power prediction currently requires Stokes I only".into(),
+            ));
+        }
+        self.read_polarized_plane(plane, 0)
+    }
+
+    pub(super) fn read_polarizations(
+        &self,
+        plane: usize,
+    ) -> Result<Vec<Array2<f32>>, PredictError> {
+        let count = self.polarizations.len();
+        if count == 1 {
+            return Ok(vec![self.read_polarized_plane(plane, 0)?]);
+        }
+        if let Pixels::Held(planes) = &self.pixels {
+            return Ok(planes[plane * count..(plane + 1) * count].to_vec());
+        }
+        let Pixels::Image(image) = &self.pixels else {
+            unreachable!()
+        };
+        let [nx, ny] = self.shape;
+        let pixels = image
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_slice(&[0, 0, 0, plane], &[nx, ny, count, 1])
+            .map_err(|source| PredictError::Image {
+                path: self.path.display().to_string(),
+                source,
+            })?;
+        Ok((0..count)
+            .map(|polarization| {
+                Array2::from_shape_fn((ny, nx), |(y, x)| pixels[IxDyn(&[x, y, polarization, 0])])
+            })
+            .collect())
+    }
+
+    fn read_polarized_plane(
+        &self,
+        plane: usize,
+        polarization: usize,
+    ) -> Result<Array2<f32>, PredictError> {
         let image = match &self.pixels {
             Pixels::Image(image) => image,
-            Pixels::Held(planes) => return Ok(planes[plane].clone()),
+            Pixels::Held(planes) => {
+                return Ok(planes[plane * self.polarizations.len() + polarization].clone());
+            }
         };
         let [nx, ny] = self.shape;
         let pixels = {
             let image = image.lock().unwrap_or_else(PoisonError::into_inner);
-            image.get_slice(&[0, 0, 0, plane], &[nx, ny, 1, 1])
+            image.get_slice(&[0, 0, polarization, plane], &[nx, ny, 1, 1])
         }
         .map_err(|source| PredictError::Image {
             path: self.path.display().to_string(),
@@ -255,11 +411,12 @@ impl SkyModel {
         }))
     }
 
-    /// Bytes [`Self::read_plane`] holds while it reads one plane: the slice
-    /// read and the plane returned.
+    /// Bytes reading one spectral plane holds: its complete Stokes slice
+    /// beside the separate operator images being extracted from it.
     pub(crate) fn plane_bytes(&self) -> u64 {
         let [nx, ny] = self.shape;
-        2 * (nx * ny * size_of::<f32>()) as u64
+        (2 * self.polarizations.len() * nx * ny * size_of::<f32>()
+            + self.polarizations.len() * size_of::<Array2<f32>>()) as u64
     }
 
     /// The model with every plane read and held, and no image open: what
@@ -272,29 +429,34 @@ impl SkyModel {
     ///
     /// A plane could not be read.
     pub(crate) fn held(&self) -> Result<Self, PredictError> {
-        let mut planes = Vec::with_capacity(self.planes);
+        let mut planes = Vec::with_capacity(self.planes * self.polarizations.len());
         for plane in 0..self.planes {
-            planes.push(self.read_plane(plane)?);
+            planes.extend(self.read_polarizations(plane)?);
         }
         Ok(Self {
             path: self.path.clone(),
             pixels: Pixels::Held(planes),
             shape: self.shape,
             planes: self.planes,
+            polarizations: self.polarizations.clone(),
             increment_rad: self.increment_rad,
             centre_rad: self.centre_rad,
+            tangent: self.tangent.clone(),
             first_frequency_hz: self.first_frequency_hz,
             frequency_increment_hz: self.frequency_increment_hz,
             coordinates: self.coordinates.clone(),
             first_spectral_world: self.first_spectral_world,
             cache_bytes: 0,
+            distance_m: self.distance_m,
         })
     }
 
     /// Bytes the planes of [`Self::held`] hold.
     pub(crate) fn held_bytes(&self) -> u64 {
         let [nx, ny] = self.shape;
-        (self.planes * (size_of::<Array2<f32>>() + nx * ny * size_of::<f32>())) as u64
+        (self.planes
+            * self.polarizations.len()
+            * (size_of::<Array2<f32>>() + nx * ny * size_of::<f32>())) as u64
     }
 }
 

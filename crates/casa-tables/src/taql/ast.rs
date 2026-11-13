@@ -329,6 +329,8 @@ pub enum Expr {
     },
     /// A function call.
     FunctionCall { name: String, args: Vec<Expr> },
+    /// A vector expression such as `[ANTENNA1, ANTENNA2]`.
+    ArrayLiteral(Vec<Expr>),
     /// `expr BETWEEN low AND high`
     Between {
         expr: Box<Expr>,
@@ -459,7 +461,7 @@ pub enum BinaryOp {
     Mul,
     /// Division `/`.
     Div,
-    /// Integer division `//`.
+    /// Floor division `//` (a real result, as CASA's `floor(a/b)`).
     IntDiv,
     /// Modulo `%`.
     Modulo,
@@ -874,6 +876,16 @@ impl fmt::Display for Expr {
                     write!(f, "{a}")?;
                 }
                 write!(f, ")")
+            }
+            Self::ArrayLiteral(values) => {
+                write!(f, "[")?;
+                for (index, value) in values.iter().enumerate() {
+                    if index != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{value}")?;
+                }
+                write!(f, "]")
             }
             Self::Between {
                 expr,

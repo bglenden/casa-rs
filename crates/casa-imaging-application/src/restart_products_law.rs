@@ -15,7 +15,8 @@ pub struct Input(ExistingProducts);
 impl Input {
     /// Open the products at `prefix` of a run of `taylor_terms` Taylor terms
     /// (`.psf.tt0`, ...; `None` for a single image, `.psf`) of `shape`,
-    /// `polarizations` and `channels`; the residual too when `residual`.
+    /// `polarizations` and `channels`; the residual and mosaic sensitivity
+    /// too when their respective flags are set.
     ///
     /// # Errors
     /// An image cannot be opened, or its sums of weights are not one per
@@ -24,7 +25,7 @@ impl Input {
         prefix: &Path,
         taylor_terms: Option<usize>,
         (shape, polarizations, channels): ([usize; 2], usize, usize),
-        residual: bool,
+        (residual, weight): (bool, bool),
     ) -> Result<Self, crate::PrepareError> {
         let family = taylor_terms.map_or(Family::Single, |terms| Family::Taylor { terms });
         ExistingProducts::new(
@@ -32,6 +33,7 @@ impl Input {
             family,
             (shape, polarizations, channels),
             (true, residual),
+            weight,
         )
         .map(Self)
     }
@@ -83,6 +85,12 @@ impl Input {
     #[must_use]
     pub fn beam_resident_bytes(&self) -> u64 {
         self.0.beam_resident_bytes()
+    }
+
+    /// Access the saved mosaic PB as product generation does.
+    #[must_use]
+    pub fn mosaic_beam(&self) -> Option<&casa_imaging_products::SavedMosaicBeam> {
+        self.0.mosaic_beam()
     }
 
     /// Bytes admitted for reading `channels` channels, besides the images.

@@ -1,5 +1,5 @@
 """The CASA tools #1025 adds to `casars.tools`: `image`, `coordsys`, `table`,
-`msmetadata` and `ms` (ADR-0019).
+`msmetadata` and `ms` (ADR-0017).
 
 Each class has every method of CASA 6.7.6.14's installed binding, with its
 signature (`data/casa_<tool>_signatures.json`, written by

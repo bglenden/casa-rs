@@ -70,6 +70,9 @@ INPUTS = {
     "flatone.model": "unittest/simobserve/flatone.model",
     "flatone.single.ptg.txt": "unittest/simobserve/flatone.single.ptg.txt",
 }
+LOCAL_INPUTS = {
+    "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
+}
 
 PPDISK_VLA = {
     "skymodel": "inputs/input50pc_672GHz.fits",
@@ -180,14 +183,108 @@ CASES = [
             CORE, setpointings=False, ptgfile="inputs/flatone.single.ptg.txt", integration="2s", totaltime="60s"
         ),
     },
+    # Three supplied pointings with different dwell times, repeated for
+    # two full map passes. This exercises FIELD/POINTING and scheduling.
+    {
+        "name": "pointing_file_multiple",
+        "params": dict(
+            CORE, setpointings=False, ptgfile="inputs/multiple.pointings.ptg.txt",
+            totaltime="120s",
+        ),
+    },
+    {
+        "name": "pointing_explicit_spacing",
+        "params": dict(
+            CORE, maptype="hexagonal", mapsize=["16arcsec", "12arcsec"],
+            pointingspacing="4arcsec", totaltime="120s",
+        ),
+    },
     # Non-default frequency reference codes, checked in the output MS as
     # well as through the visibility comparison.
     {"name": "frame_topo", "params": dict(CORE, outframe="TOPO")},
     {"name": "frame_bary", "params": dict(CORE, outframe="BARY")},
+    {"name": "frame_lsrd", "params": dict(CORE, outframe="LSRD", totaltime="60s")},
+    {"name": "frame_geo", "params": dict(CORE, outframe="GEO", totaltime="60s")},
+    {"name": "frame_galacto", "params": dict(CORE, outframe="GALACTO", totaltime="60s")},
+    {"name": "frame_lgroup", "params": dict(CORE, outframe="LGROUP", totaltime="60s")},
+    {"name": "frame_cmb", "params": dict(CORE, outframe="CMB", totaltime="60s")},
+    # Non-transit scheduling across dates with different TAI-UTC offsets.
+    # A time suffix in refdate is discarded in favor of hourangle.
+    {
+        "name": "schedule_hour_number",
+        "params": dict(CORE, hourangle="-1.5", refdate="2017/01/02/09:30:00", totaltime="60s"),
+    },
+    {
+        "name": "schedule_hour_quantity",
+        "params": dict(CORE, hourangle="90min", refdate="2016/06/21/12:34:56", totaltime="60s"),
+    },
+    {
+        "name": "schedule_refdate_modern",
+        "params": dict(CORE, hourangle="transit", refdate="2025/01/15", totaltime="60s"),
+    },
+    {
+        "name": "schedule_square",
+        "params": dict(
+            CORE, maptype="square", hourangle="-30min", refdate="2015/06/29", totaltime="60s"
+        ),
+    },
+    # The programme's micrometre geometry goal on the extended arrays.
+    # Keep these strict even when the general comparator keeps its legacy
+    # millimetre default; a caller can request a still tighter threshold.
+    {
+        "name": "uvw_long_vla_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_vla_2025",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="90min",
+            refdate="2025/01/15", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_alma_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="alma.out28.cfg", incell="0.001arcsec",
+            mapsize=["0.08arcsec", "0.08arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
+    # Model overrides must reach both the prepared image and the observed
+    # geometry, not just the task's accepted parameter list (#1053).
+    {
+        "name": "model_direction",
+        "params": dict(CORE, indirection="J2000 19h30m00 -30d00m00", totaltime="60s"),
+    },
+    {"name": "model_cell", "params": dict(CORE, incell="0.03arcsec", totaltime="60s")},
+    {
+        "name": "model_direction_cell",
+        "params": dict(
+            CORE, indirection="J2000 19h30m00 -30d00m00", incell="0.03arcsec", totaltime="60s"
+        ),
+    },
+    # A component-only model with an even channel count exercises the
+    # half-pixel spectral reference, channel spacing and prediction.
+    {
+        "name": "components_cube",
+        "params": dict(
+            CORE, skymodel="", complist="inputs/core5ps.clist", compwidth="8GHz", comp_nchan=4,
+            totaltime="60s",
+        ),
+    },
     # A model whose 4″ cells the configuration cannot sample: both refuse
     # with CASA's message, and remove the flat model.
     {
         "name": "coarse_cell",
+        "expect_refusal": True,
         "params": dict(CORE, skymodel="inputs/flatone.model"),
     },
 ]
@@ -238,8 +335,18 @@ def casars_params(t, params: dict) -> dict:
     documentation)."""
     shifted = dict(params)
     refdate = params.get("refdate", "2014/01/01")
-    offset = hour_angle_s(t, params.get("hourangle", "transit")) + tai_minus_utc_s(t, refdate)
+    hourangle = params.get("hourangle", "transit")
+    shift = tai_minus_utc_s(t, refdate)
+    offset = hour_angle_s(t, hourangle) + shift
     shifted["hourangle"] = f"{offset!r}s"
+    # Preserve bare numeric hours so those scenarios test the native
+    # task's numeric-hour parser rather than only its seconds parser.
+    try:
+        hours = float(hourangle)
+    except ValueError:
+        pass
+    else:
+        shifted["hourangle"] = repr(hours + shift / 3600.0)
     return shifted
 
 
@@ -533,6 +640,37 @@ def compare_frequency_frames(tb, casa: str, casars: str, details=None) -> list[s
     return differences
 
 
+def compare_geometry(tb, casa: str, casars: str, limit_m: float) -> tuple[dict, list[str]]:
+    """A strict absolute UVW bound at exactly equal stored TIME, over all rows."""
+    details = {"uvw_absolute_limit_m": limit_m}
+    if not np.isfinite(limit_m) or limit_m < 0:
+        return details, ["invalid absolute UVW limit"]
+    columns = []
+    for path in (casa, casars):
+        tb.open(path)
+        try:
+            columns.append({name: np.asarray(tb.getcol(name)) for name in ("TIME", "UVW")})
+        finally:
+            tb.close()
+    a, b = columns
+    times_equal = (np.all(np.isfinite(a["TIME"])) and np.all(np.isfinite(b["TIME"]))
+                   and np.array_equal(a["TIME"], b["TIME"]))
+    details["times_equal"] = bool(times_equal)
+    if not times_equal:
+        return details, ["MAIN.TIME: strict UVW comparison requires exactly equal finite stored TIME"]
+    details["rows"] = int(a["TIME"].size)
+    if a["UVW"].shape != b["UVW"].shape:
+        return details, ["MAIN.UVW: shape differs"]
+    difference = np.abs(a["UVW"] - b["UVW"])
+    if not np.all(np.isfinite(difference)):
+        return details, ["MAIN.UVW: non-finite difference"]
+    maximum = float(np.max(difference, initial=0.0))
+    details["max_uvw_difference_m"] = maximum
+    if maximum > limit_m:
+        return details, [f"MAIN.UVW: absolute difference {maximum:.17g} m exceeds {limit_m:.17g} m"]
+    return details, []
+
+
 def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     report = {"name": case["name"], "differences": []}
     differ = report["differences"].append
@@ -553,9 +691,16 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     if a and b:
         report["differences"].extend(compare_components(t, a, b))
     a, b = stem_of(casa, ".ms"), stem_of(casars, ".ms")
+    uvw_limit = min(args.uvw_tolerance_m, case.get("uvw_tolerance_m", args.uvw_tolerance_m))
     if a and b:
         report["spectral_windows"] = {}
         report["differences"].extend(compare_frequency_frames(t["tb"], a, b, report["spectral_windows"]))
+    if "uvw_tolerance_m" in case:
+        if a and b:
+            report["geometry"], failures = compare_geometry(t["tb"], a, b, uvw_limit)
+            report["differences"].extend(failures)
+        else:
+            differ("MAIN: strict UVW comparison requires both MeasurementSets")
     compare = os.path.join(out, "compare", case["name"])
     shutil.rmtree(compare, ignore_errors=True)
     links = os.path.join(compare, "casars")
@@ -563,7 +708,8 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     with open(os.path.join(compare, "manifest.json"), "w", encoding="utf-8") as handle:
         json.dump({"scenarios": scenarios(t, case, casa, casars, links)}, handle, indent=1)
     command = [sys.executable, os.path.join(HERE, "compare_sm_ms.py"), "--casa", compare, "--casars", links,
-               "--json", os.path.join(compare, "report.json")]
+               "--json", os.path.join(compare, "report.json"),
+               "--uvw-tolerance-m", str(uvw_limit)]
     if args.atmosphere_model:
         command += ["--atmosphere-model", args.atmosphere_model]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
@@ -577,18 +723,18 @@ def copy_inputs(casatestdata: str, out: str, cases=None) -> None:
     """Copy the inputs used by the selected cases, or all known inputs."""
     inputs = os.path.join(out, "inputs")
     os.makedirs(inputs, exist_ok=True)
-    needed = set(INPUTS)
+    needed = set(INPUTS) | set(LOCAL_INPUTS)
     if cases is not None:
         needed = {value.removeprefix("inputs/") for case in cases
                   for value in case["params"].values()
                   if isinstance(value, str) and value.startswith("inputs/")}
-    for name, path in INPUTS.items():
+    for name, path in {**INPUTS, **LOCAL_INPUTS}.items():
         if name not in needed:
             continue
         target = os.path.join(inputs, name)
         if os.path.exists(target):
             continue
-        source = os.path.join(casatestdata, path)
+        source = path if name in LOCAL_INPUTS else os.path.join(casatestdata, path)
         if os.path.isdir(source):
             shutil.copytree(source, target)
         else:
@@ -601,6 +747,8 @@ def main() -> int:
     parser.add_argument("--casars-bin", required=True, help="casa-rs's simobserve task binary")
     parser.add_argument("--casatestdata", required=True, help="a casatestdata clone")
     parser.add_argument("--atmosphere-model", help="casa-atmosphere's at_tool_quantities example, for tsys-atm")
+    parser.add_argument("--uvw-tolerance-m", type=float, default=1e-3,
+                        help="UVW absolute tolerance passed to compare_sm_ms.py; use 1e-6 for the programme goal")
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-casa", action="store_true", help="reuse OUT/casa")
     args = parser.parse_args()
@@ -625,16 +773,28 @@ def main() -> int:
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))
-        casa_error = open(error_file, encoding="utf-8").read() if os.path.exists(error_file) else None
+        casa_error = None
+        if os.path.exists(error_file):
+            with open(error_file, encoding="utf-8") as handle:
+                casa_error = handle.read()
         casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
         if casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
+            if not case.get("expect_refusal", False):
+                report["differences"].append("expected a successful simulation, not a refusal")
             if casa_error != outcome.get("error"):
                 report["differences"].append(f"CASA raised {casa_error!r}, casa-rs {outcome.get('error')!r}")
-            elif products(casa) != products(casars):
-                report["differences"].append(f"files: CASA {products(casa)} against casa-rs {products(casars)}")
+            else:
+                # An early refusal may precede creation of the project.
+                # Successful runs still require their directories below.
+                casa_files = products(casa) if os.path.isdir(casa) else []
+                casars_files = products(casars) if os.path.isdir(casars) else []
+                if casa_files != casars_files:
+                    report["differences"].append(f"files: CASA {casa_files} against casa-rs {casars_files}")
         else:
             report = compare_case(t, case, casa, casars, out, args)
+            if case.get("expect_refusal", False):
+                report["differences"].append("expected a refusal, but both simulations succeeded")
         # The task's own times: CASA's simobserve call, casa-rs's run report.
         report["seconds"] = {"casa": casa_s, "casa-rs": outcome.get("elapsed_s")}
         reports.append(report)

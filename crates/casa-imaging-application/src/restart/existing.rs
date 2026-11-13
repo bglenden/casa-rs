@@ -12,9 +12,10 @@
 //! cycle. A Taylor PSF family still uses the principal sum of weights to
 //! return all its moments in gridding units.
 //!
-//! Only direction-independent gridders (standard and W-projection, one
-//! facet) are read: their sensitivity is the sum of weights alone
-//! ([`super::check_inputs`] refuses the rest).
+//! Direction-independent gridders (standard and W-projection, one facet)
+//! use the sum of weights alone. A single-term continuum or cube mosaic reads its
+//! saved sensitivity and primary beam when it reuses the PSF and forms a
+//! new residual, as does an AW-projected MT-MFS continuum image.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,7 @@ use std::sync::Arc;
 
 use casa_images::{ImageBeamSet, ImageError, PagedImage};
 use casa_imaging_deconvolution::{PassImages, RestoringBeam};
+use casa_imaging_products::SavedMosaicBeam;
 
 use super::{Family, product_path};
 use crate::PrepareError;
@@ -43,6 +45,9 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
+    /// Saved PB reader. The mosaic's normal-state sensitivity also comes
+    /// from the saved `.weight` when this reader is present.
+    mosaic_beam: Option<SavedMosaicBeam>,
     /// A complete PSF beam set read from the earlier image, channel-major.
     psf_beams: Option<Arc<[RestoringBeam]>>,
     /// The same beam grid in pixels for minor-cycle preparation.
@@ -62,12 +67,14 @@ impl ExistingProducts {
         family: Family,
         (shape, polarizations, channels): ([usize; 2], usize, usize),
         (psf, residual): (bool, bool),
+        weight: bool,
     ) -> Result<Self, PrepareError> {
         let planes = match family {
             Family::Single => channels,
             Family::Taylor { .. } => 1,
         };
         let mut tile_bytes = 0;
+        let mut mosaic_beam = None;
         let mut bases = Vec::new();
         if psf {
             bases.extend(["psf", "sumwt"]);
@@ -75,10 +82,22 @@ impl ExistingProducts {
         if residual {
             bases.push("residual");
         }
+        if weight {
+            bases.extend(["weight", "pb"]);
+        }
         for base in bases {
             for name in family.names(base) {
                 let path = product_path(prefix, &name);
                 let image = open(&path)?;
+                if base == "pb" {
+                    mosaic_beam = Some(SavedMosaicBeam::new(&path, &image).map_err(|error| {
+                        PrepareError::Restart {
+                            path: path.clone(),
+                            reason: error.to_string(),
+                        }
+                    })?);
+                    continue;
+                }
                 tile_bytes = image
                     .tile_shape()
                     .iter()
@@ -104,6 +123,7 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
+            mosaic_beam,
             psf_beams: None,
             psf_pixel_beams: None,
             mask_beams: None,
@@ -232,6 +252,17 @@ impl ExistingProducts {
         self.residual
     }
 
+    /// Saved PB and mask, independent of the new residual cutoff.
+    pub(crate) fn mosaic_beam(&self) -> Option<&SavedMosaicBeam> {
+        self.mosaic_beam.as_ref()
+    }
+
+    /// Whether the two-term correction already left its auxiliary PB image.
+    pub(crate) fn has_higher_primary_beam(&self) -> bool {
+        matches!(self.family, Family::Taylor { terms: 2 })
+            && product_path(&self.prefix, "pb.tt1").exists()
+    }
+
     /// The `(terms, moments)` of each channel: one of each, or a Taylor
     /// family's coefficients and PSF moments.
     const fn terms(&self) -> (usize, usize) {
@@ -256,12 +287,19 @@ impl ExistingProducts {
     }
 
     /// Bytes the pass images of `channels` channels hold: the residual
-    /// terms and PSF moments in `f32` and two sums of weights per moment.
+    /// terms, PSF moments and saved sensitivity in `f32`, plus two
+    /// sums of weights per moment.
     pub(crate) fn images_bytes(&self, channels: usize) -> u64 {
         let (terms, moments) = self.terms();
         let planes = channels * self.polarizations;
         let cells = self.shape[0] * self.shape[1];
-        (planes * (cells * (terms + moments) * 4 + moments * 2 * 8)) as u64
+        let weight_planes = if self.mosaic_beam.is_some() {
+            moments
+        } else {
+            0
+        };
+        let image_planes = terms + moments + weight_planes;
+        (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
     }
 
     /// The images of domain 0 a pass forming its PSF and residual would
@@ -282,12 +320,13 @@ impl ExistingProducts {
                 }
             }
         }
+        let principal = |channel: usize, pol: usize| sums[channel * moments * pols + pol];
         // Single-term consumers fit and publish the saved PSF in image
         // units. Taylor consumers take every moment in the gridding units
         // obtained by undoing the shared principal normalization.
         let psf_scale = |channel: usize, pol: usize| match self.family {
             Family::Single => 1.0,
-            Family::Taylor { .. } => sums[channel * moments * pols + pol],
+            Family::Taylor { .. } => principal(channel, pol),
         };
         let mut psf = vec![0.0; channels.len() * moments * pols * cells];
         for (moment, name) in self.family.names("psf").iter().enumerate() {
@@ -304,6 +343,35 @@ impl ExistingProducts {
                 }
             }
         }
+        // SIImageStore::divideWeightBySumwt normalizes only the principal
+        // weight. The higher Taylor moments on disk already have their raw
+        // scale. Multiply the principal weight by its saved sum of weights
+        // to recover the sensitivity the normal state expects.
+        let weight = if self.mosaic_beam.is_some() {
+            let mut weight = vec![0.0; channels.len() * moments * pols * cells];
+            for (moment, name) in self.family.names("weight").iter().enumerate() {
+                let read = self.read(name, channels.clone())?;
+                for channel in 0..channels.len() {
+                    for pol in 0..pols {
+                        let plane = (channel * moments + moment) * pols + pol;
+                        let scale = if moment == 0 {
+                            principal(channel, pol)
+                        } else {
+                            1.0
+                        };
+                        self.write_plane(
+                            &mut weight[plane * cells..(plane + 1) * cells],
+                            &read,
+                            (channel, pol),
+                            scale,
+                        );
+                    }
+                }
+            }
+            Some(weight)
+        } else {
+            None
+        };
         let mut images = PassImages {
             domain: 0,
             shape: self.shape,
@@ -313,7 +381,7 @@ impl ExistingProducts {
             psf: Some(psf),
             sum_weights: sums.clone(),
             published_sum_weights: sums,
-            weight: None,
+            weight,
         };
         self.fill_residual(&mut images)?;
         Ok(images)
