@@ -530,7 +530,7 @@
 <a href=#530 id=530 data-nosnippet>530</a>    ///   image that does not exist or does not open
 <a href=#531 id=531 data-nosnippet>531</a>    ///   ([`PredictSpec::check_images`]).
 <a href=#532 id=532 data-nosnippet>532</a>    /// - Not yet implemented: a model layout CASA reads
-<a href=#533 id=533 data-nosnippet>533</a>    ///   and casa-rs does not (other than Stokes I, J2000,
+<a href=#533 id=533 data-nosnippet>533</a>    ///   and casa-rs does not (other than Stokes I/Q/U/V, J2000,
 <a href=#534 id=534 data-nosnippet>534</a>    ///   direction–Stokes–spectral axes), a component casa-rs does not
 <a href=#535 id=535 data-nosnippet>535</a>    ///   predict (a direction not in J2000, or a flux, spectrum or shape
 <a href=#536 id=536 data-nosnippet>536</a>    ///   casa-components does not evaluate), a near-field distance on the
@@ -1270,27 +1270,30 @@
 <a href=#1270 id=1270 data-nosnippet>1270</a>/// raised.
 <a href=#1271 id=1271 data-nosnippet>1271</a></span><span class="kw">fn </span>model_error(error: PredictError) -&gt; SimulatorError {
 <a href=#1272 id=1272 data-nosnippet>1272</a>    <span class="kw">match </span>error {
-<a href=#1273 id=1273 data-nosnippet>1273</a>        PredictError::UnsupportedModel(reason) =&gt; SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#1274 id=1274 data-nosnippet>1274</a>            <span class="string">"predict from this model is not yet implemented in casa-rs (#1053): {reason}"
-<a href=#1275 id=1275 data-nosnippet>1275</a>        </span>)),
-<a href=#1276 id=1276 data-nosnippet>1276</a>        PredictError::Image { path, .. } =&gt; {
-<a href=#1277 id=1277 data-nosnippet>1277</a>            SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Unable to open image {path}."</span>))
-<a href=#1278 id=1278 data-nosnippet>1278</a>        }
-<a href=#1279 id=1279 data-nosnippet>1279</a>        other =&gt; SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Caught exception: {other}"</span>)),
-<a href=#1280 id=1280 data-nosnippet>1280</a>    }
-<a href=#1281 id=1281 data-nosnippet>1281</a>}
-<a href=#1282 id=1282 data-nosnippet>1282</a>
-<a href=#1283 id=1283 data-nosnippet>1283</a><span class="doccomment">/// An operator refusal for `correlations`: a correlation set the Stokes I
-<a href=#1284 id=1284 data-nosnippet>1284</a>/// model cannot feed is not yet implemented; the rest is raised.
-<a href=#1285 id=1285 data-nosnippet>1285</a></span><span class="kw">fn </span>correlation_error(error: PredictError, correlations: <span class="kw-2">&amp;</span>[Correlation]) -&gt; SimulatorError {
-<a href=#1286 id=1286 data-nosnippet>1286</a>    <span class="kw">match </span>error {
-<a href=#1287 id=1287 data-nosnippet>1287</a>        PredictError::Operator(OperatorError::Polarization { reason }) =&gt; {
-<a href=#1288 id=1288 data-nosnippet>1288</a>            SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#1289 id=1289 data-nosnippet>1289</a>                <span class="string">"predicting a Stokes I model into the correlations {correlations:?} is not yet \
-<a href=#1290 id=1290 data-nosnippet>1290</a>                 implemented in casa-rs (#1053): {reason}"
-<a href=#1291 id=1291 data-nosnippet>1291</a>            </span>))
-<a href=#1292 id=1292 data-nosnippet>1292</a>        }
-<a href=#1293 id=1293 data-nosnippet>1293</a>        other =&gt; model_error(other),
-<a href=#1294 id=1294 data-nosnippet>1294</a>    }
-<a href=#1295 id=1295 data-nosnippet>1295</a>}
+<a href=#1273 id=1273 data-nosnippet>1273</a>        PredictError::InvalidModel(reason) =&gt; {
+<a href=#1274 id=1274 data-nosnippet>1274</a>            SimulatorError::refused(<span class="macro">format!</span>(<span class="string">"Caught exception: {reason}"</span>))
+<a href=#1275 id=1275 data-nosnippet>1275</a>        }
+<a href=#1276 id=1276 data-nosnippet>1276</a>        PredictError::UnsupportedModel(reason) =&gt; SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
+<a href=#1277 id=1277 data-nosnippet>1277</a>            <span class="string">"predict from this model is not yet implemented in casa-rs (#1053): {reason}"
+<a href=#1278 id=1278 data-nosnippet>1278</a>        </span>)),
+<a href=#1279 id=1279 data-nosnippet>1279</a>        PredictError::Image { path, .. } =&gt; {
+<a href=#1280 id=1280 data-nosnippet>1280</a>            SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Unable to open image {path}."</span>))
+<a href=#1281 id=1281 data-nosnippet>1281</a>        }
+<a href=#1282 id=1282 data-nosnippet>1282</a>        other =&gt; SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Caught exception: {other}"</span>)),
+<a href=#1283 id=1283 data-nosnippet>1283</a>    }
+<a href=#1284 id=1284 data-nosnippet>1284</a>}
+<a href=#1285 id=1285 data-nosnippet>1285</a>
+<a href=#1286 id=1286 data-nosnippet>1286</a><span class="doccomment">/// An operator refusal for `correlations`: a correlation set the Stokes I
+<a href=#1287 id=1287 data-nosnippet>1287</a>/// model cannot feed is not yet implemented; the rest is raised.
+<a href=#1288 id=1288 data-nosnippet>1288</a></span><span class="kw">fn </span>correlation_error(error: PredictError, correlations: <span class="kw-2">&amp;</span>[Correlation]) -&gt; SimulatorError {
+<a href=#1289 id=1289 data-nosnippet>1289</a>    <span class="kw">match </span>error {
+<a href=#1290 id=1290 data-nosnippet>1290</a>        PredictError::Operator(OperatorError::Polarization { reason }) =&gt; {
+<a href=#1291 id=1291 data-nosnippet>1291</a>            SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
+<a href=#1292 id=1292 data-nosnippet>1292</a>                <span class="string">"predicting a Stokes I model into the correlations {correlations:?} is not yet \
+<a href=#1293 id=1293 data-nosnippet>1293</a>                 implemented in casa-rs (#1053): {reason}"
+<a href=#1294 id=1294 data-nosnippet>1294</a>            </span>))
+<a href=#1295 id=1295 data-nosnippet>1295</a>        }
+<a href=#1296 id=1296 data-nosnippet>1296</a>        other =&gt; model_error(other),
+<a href=#1297 id=1297 data-nosnippet>1297</a>    }
+<a href=#1298 id=1298 data-nosnippet>1298</a>}
 </code></pre></div></section></main></body></html>
