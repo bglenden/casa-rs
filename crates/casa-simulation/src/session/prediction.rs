@@ -849,34 +849,25 @@ impl Simulator {
                 phase: COMPONENTS_PHASE,
                 memory: (self.scans.len() as u64)
                     .saturating_mul(128)
-                    .saturating_add((self.spectral_windows.len() as u64).saturating_mul(256))
+                    .saturating_add((self.data_descriptions.len() as u64).saturating_mul(256))
                     .saturating_add(128 << 10),
             },
         )
         .map_err(SimulatorError::admission)?;
         let windows: Vec<ComponentWindow> = self
-            .spectral_windows
+            .data_descriptions
             .iter()
-            .enumerate()
-            .map(|(id, window)| {
-                let mut scans = self.scans.iter().filter(|scan| scan.spectral_window_id == id);
-                let correlations = scans.next().map_or(window.correlations.as_slice(), |scan| {
-                    self.correlations_for_scan(scan)
-                });
-                if scans.any(|scan| self.correlations_for_scan(scan) != correlations) {
-                    return Err(SimulatorError::not_yet_implemented(
-                        "component prediction through differing polarization aliases of one spectral window is not yet implemented in casa-rs (#1295)",
-                    ));
-                }
-                Ok(ComponentWindow {
+            .map(|description| {
+                let window = &self.spectral_windows[description.window];
+                ComponentWindow {
                     stored_frequencies: window.stored_frequencies.clone(),
                     first_hz: window.start_frequency_hz,
                     step_hz: window.channel_width_hz,
                     channels: window.channel_count,
-                    correlations: correlations.to_vec(),
-                })
+                    correlations: self.polarizations[description.polarization].clone(),
+                }
             })
-            .collect::<SimulatorResult<Vec<_>>>()?;
+            .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
         // A scan is phased on its field's phase centre, as CASA's
         // `VisBuffer` phases it, and the beam centred there: a beam on a
