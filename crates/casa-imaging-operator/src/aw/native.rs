@@ -408,20 +408,7 @@ fn fill_sky_mueller(
         jones,
     )?;
     let n = request.size * request.size;
-    for plane in jones.chunks_exact_mut(n) {
-        transform(fft, plane)?;
-    }
-    let center = request.size / 2 * (request.size + 1);
-    let mut norm_squared = 0.0_f32;
-    for plane in jones.chunks_exact(n) {
-        norm_squared = (f64::from(norm_squared)
-            + f64::from((plane[center] * plane[center]).norm()) / 2.0)
-            as f32;
-    }
-    if !norm_squared.is_finite() || norm_squared <= 0.0 {
-        return Err(NativeAwGenerationError::InvalidNumerics);
-    }
-    let normalization = norm_squared.sqrt();
+    let normalization = sky_jones_normalization(request.size, fft, jones)?;
     let selected = if request.mueller == 0 { 0 } else { 3 };
     for (output, value) in output
         .iter_mut()
@@ -431,6 +418,29 @@ fn fill_sky_mueller(
         *output = value * value.conj();
     }
     Ok(())
+}
+
+/// Transform the four voltage planes and return CASA's on-axis voltage norm.
+pub(super) fn sky_jones_normalization(
+    size: usize,
+    fft: &mut PlaneFft<f32>,
+    jones: &mut [Complex32],
+) -> Result<f32, NativeAwGenerationError> {
+    let n = size * size;
+    for plane in jones.chunks_exact_mut(n) {
+        transform(fft, plane)?;
+    }
+    let center = size / 2 * (size + 1);
+    let mut norm_squared = 0.0_f32;
+    for plane in jones.chunks_exact(n) {
+        norm_squared = (f64::from(norm_squared)
+            + f64::from((plane[center] * plane[center]).norm()) / 2.0)
+            as f32;
+    }
+    if !norm_squared.is_finite() || norm_squared <= 0.0 {
+        return Err(NativeAwGenerationError::InvalidNumerics);
+    }
+    Ok(norm_squared.sqrt())
 }
 
 /// A centred forward transform of a `[y][x]` plane in `f32`

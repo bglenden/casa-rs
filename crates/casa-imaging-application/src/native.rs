@@ -29,7 +29,7 @@ mod psf;
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
-    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome,
+    ApplicationRuntime, AwCatalogDeployment, Awp2Deployment, ImagingOutcome,
 };
 
 /// The observation compile opened, and what its geometry evaluates with.
@@ -147,6 +147,7 @@ pub(crate) struct NativeRun {
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
+    awp2: Option<Awp2Deployment>,
     /// The observation's batches the passes read, and through whose update
     /// session a model or corrected column is written.
     route: Box<imaging::BatchRoute>,
@@ -276,6 +277,7 @@ pub(crate) fn prepare(
         runtime,
         mut publication,
         aw_catalog,
+        awp2,
     } = native;
     if let Some(existing) = &input.existing
         && let Some(beam) = existing.mosaic_beam()
@@ -314,6 +316,7 @@ pub(crate) fn prepare(
         runtime,
         publication,
         aw_catalog,
+        awp2,
         route: Box::new(route),
         source,
         products,
@@ -341,6 +344,7 @@ pub(crate) fn run(
         runtime,
         publication,
         aw_catalog,
+        awp2,
         mut route,
         source,
         products,
@@ -438,6 +442,7 @@ pub(crate) fn run(
             cancel: runtime.cancel.clone(),
             spill_directory: &runtime.spill_directory,
             aw_catalog,
+            awp2,
             backend: runtime.backend,
             grid_precision: runtime.grid_precision,
             ft_padding: runtime.ft_padding,

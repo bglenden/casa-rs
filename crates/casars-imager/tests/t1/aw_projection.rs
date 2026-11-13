@@ -57,7 +57,7 @@ const W_PLANES: usize = 32;
 
 /// A paraboloid dish surface in the EVLA radius/height/slope text format:
 /// 12.5 m radius sampled every centimetre.
-fn surface_text() -> String {
+pub(super) fn surface_text() -> String {
     (0..=1250)
         .map(|index| {
             let radius = f64::from(index) / 100.0;

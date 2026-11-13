@@ -55,7 +55,10 @@ mod separate_psf;
 pub(crate) use separate_psf::form as form_separate_psf;
 mod seeding;
 use crate::restart::ExistingProducts;
-use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason, PlaneRows};
+use crate::{
+    AwCatalogDeployment, Awp2Deployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
+    PlaneRows,
+};
 pub(crate) use continuation::Forms;
 
 /// What one native imaging run needs besides the compiled problem.
@@ -96,6 +99,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) spill_directory: &'a Path,
     /// The AW catalog of an A-projection run.
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
+    pub(crate) awp2: Option<Awp2Deployment>,
     pub(crate) backend: BackendChoice,
     /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
@@ -554,7 +558,7 @@ impl<'a> Run<'a> {
                     backend,
                     inputs.grid_precision,
                     inputs.ft_padding,
-                    inputs.aw_catalog.as_ref(),
+                    (inputs.aw_catalog.as_ref(), inputs.awp2.as_ref()),
                     &keys,
                     admission,
                 )

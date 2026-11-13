@@ -564,6 +564,15 @@ pub enum Gridder {
     },
     /// EVLA A-projection with W-projection.
     Awproject(AwProjection),
+    /// AWPLPG with one W plane and an unsquinted VLA L-band beam.
+    Awp2 {
+        /// Optional explicit VLA radial dish surface in the CASA data format.
+        #[serde(deserialize_with = "optional")]
+        evla_surface: Option<PathBuf>,
+        /// Direction-dependent product normalization.
+        #[serde(deserialize_with = "normalization")]
+        normtype: ProductNormalization,
+    },
 }
 
 /// The parameters of `gridder = awproject`.
@@ -737,6 +746,7 @@ impl ImagingRequest {
     pub fn validate(&self) -> Result<(), InvalidRequest> {
         execution::validate_ft_padding(self)?;
         self.validate_psf_phase_centre()?;
+        execution::validate_awp2_scope(self)?;
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         if self.phasecenter.is_some() && self.phasecenter_field.is_some() {
             return invalid(
@@ -1480,7 +1490,7 @@ fn rest_frequencies_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec
     Ok(frequencies)
 }
 
-mod execution;
+pub(crate) mod execution;
 
 mod beam;
 mod uv_taper;

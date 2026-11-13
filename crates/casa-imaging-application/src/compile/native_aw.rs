@@ -205,8 +205,13 @@ fn evla_dish(
     {
         return Err(PrepareError::NativeAwDishes);
     }
-    // The reference data is an explicit input with bounded acquisition, never
-    // discovered through a CASA installation or downloaded during execution.
+    read_dish_surface(evla_surface)
+}
+
+pub(super) fn read_dish_surface(
+    evla_surface: &std::path::Path,
+) -> Result<EvlaDishSurface, PrepareError> {
+    // Acquire the reference data through a bounded read.
     let mut bytes = Vec::new();
     std::fs::File::open(evla_surface)
         .and_then(|file| file.take(1_048_577).read_to_end(&mut bytes))

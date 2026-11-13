@@ -202,6 +202,7 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         }
         Gridder::Mosaic { .. } => Some("with the mosaic gridder"),
         Gridder::Awproject(_) => Some("with A-projection"),
+        Gridder::Awp2 { .. } => Some("with AWP2 (#1071)"),
     };
     if let Some(unsupported) = unsupported {
         return refuse(

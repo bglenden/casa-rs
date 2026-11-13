@@ -117,6 +117,8 @@ impl ImagingRequest {
         request
             .validate_mem_scope()
             .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
+        crate::request::execution::validate_awp2_scope(&request)
+            .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
         request
             .validate_psf_phase_centre()
             .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
@@ -342,6 +344,7 @@ impl<'a> Tclean<'a> {
             },
             "mosaic" | "mosaicft" | "ftmosaic" => "mosaic",
             "awproject" => "awproject",
+            "awp2" => "awp2",
             "awprojectft" => {
                 return Err(TcleanRefusal::not_yet(
                     "gridder",
@@ -351,9 +354,9 @@ impl<'a> Tclean<'a> {
                 ));
             }
             other => {
-                // awp2, awphpg and imagemosaic are #1071's.
+                // Other direction-dependent gridders remain tracked.
                 let issue = match other {
-                    "awp2" | "awphpg" | "imagemosaic" => 1071,
+                    "awphpg" | "imagemosaic" => 1071,
                     _ => 980,
                 };
                 return Err(TcleanRefusal::not_yet(
@@ -715,6 +718,9 @@ impl<'a> Tclean<'a> {
 
     fn gridding(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.copy(&["pblimit"])?;
+        if modes.gridder == "awp2" {
+            self.awp2_controls()?;
+        }
         if modes.gridder == "awproject" {
             self.copy(&["computepastep", "rotatepastep"])?;
         } else {
@@ -769,7 +775,7 @@ impl<'a> Tclean<'a> {
             _ => {}
         }
         let normtype = self.text("normtype")?;
-        if matches!(modes.gridder, "mosaic" | "awproject") {
+        if matches!(modes.gridder, "mosaic" | "awproject" | "awp2") {
             self.set("normtype", normtype);
         }
         // CASA weighs density by field only for the gridder named mosaic
@@ -805,6 +811,9 @@ impl<'a> Tclean<'a> {
                 self.set("cfcache", cfcache);
             }
         }
+        if modes.gridder == "awp2" && !self.values.contains_key("evla_surface") {
+            self.set("evla_surface", "none");
+        }
         self.copy_present(&[
             "aw_cf_source",
             "cf_resident_mb",
@@ -816,6 +825,32 @@ impl<'a> Tclean<'a> {
             "native_cf_cache_bytes",
             "native_cf_maximum_cells",
         ])
+    }
+
+    /// AWPLPG selects W planes and squint independently of AWProjectFT.
+    fn awp2_controls(&mut self) -> Result<(), TcleanRefusal> {
+        let controls = [
+            ("wprojplanes", self.integer("wprojplanes")? == 1),
+            (
+                "computepastep",
+                self.value("computepastep")?
+                    .as_f64()
+                    .is_some_and(|step| step >= 180.0),
+            ),
+            ("facets", self.integer("facets")? == 1),
+            ("usepointing", !self.flag("usepointing")?),
+            ("parallel", !self.flag("parallel")?),
+        ];
+        for (parameter, supported) in controls {
+            if !supported {
+                return Err(TcleanRefusal::not_yet(
+                    parameter,
+                    "with this AWP2 configuration",
+                    1071,
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The AW projection reads `aterm`, `psterm`, `wbawp` and `conjbeams`

@@ -152,6 +152,9 @@ pub(super) fn scientific_instrument_model(
                 (diameter - 25.0).abs() < 1.0
             })
         }
+        Gridder::Awp2 { .. } if all(|name| name == "VLA") => {
+            (InstrumentModel::CasaVlaAwplpg, |diameter| diameter == 25.0)
+        }
         Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_alma_aca_telescope) => (
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
             |diameter| AntennaResponseClass::casa_alma_aca(diameter).is_some(),
@@ -172,7 +175,7 @@ pub(super) fn scientific_instrument_model(
                 |diameter| AntennaResponseClass::casa_airy(diameter).is_some(),
             )
         }
-        Gridder::Awproject(_) | Gridder::Mosaic { .. } => {
+        Gridder::Awproject(_) | Gridder::Mosaic { .. } | Gridder::Awp2 { .. } => {
             return Err(PrepareError::UnsupportedInstrument {
                 telescopes: telescopes.into_iter().collect(),
             });
@@ -226,7 +229,9 @@ pub(super) fn pointing_centre_law(gridder: &Gridder) -> PointingCentreLaw {
             PointingExtrapolation::Reject,
             MissingPointingPolicy::FieldCentreWithoutPointingTable,
         )),
-        Gridder::Awproject(_) | Gridder::Mosaic { .. } => PointingCentreLaw::FieldCentre,
+        Gridder::Awproject(_) | Gridder::Mosaic { .. } | Gridder::Awp2 { .. } => {
+            PointingCentreLaw::FieldCentre
+        }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => {
             PointingCentreLaw::PhaseTrackingCentre
         }

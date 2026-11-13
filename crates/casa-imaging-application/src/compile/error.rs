@@ -36,6 +36,16 @@ pub enum PrepareError {
         /// The invalid band or channel count.
         reason: &'static str,
     },
+    /// The selected observation falls outside the initial AWP2 branch.
+    #[error(
+        "AWP2 currently requires one fixed VLA field and one L-band TOPO spectral window in one MeasurementSet (#1071)"
+    )]
+    Awp2Selection,
+    /// The required physical dish surface could not be located.
+    #[error(
+        "AWP2 needs the VLA dish surface: supply evla_surface or install VLA.surface under ~/.casa/data/nrao/VLA/"
+    )]
+    Awp2SurfacePath,
     /// Existing products require CASA restart, which is not implemented yet.
     #[error(
         "existing image product {path:?}: this CASA restart configuration is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"

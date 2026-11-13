@@ -107,6 +107,7 @@ pub(crate) struct ApplicationNative {
     pub(crate) runtime: ApplicationRuntime,
     pub(crate) publication: ApplicationPublication,
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
+    pub(crate) awp2: Option<Awp2Deployment>,
 }
 
 /// The AW catalog a run opens (`AwCatalog::open_casa`): a directory of CASA
@@ -128,6 +129,14 @@ pub(crate) struct AwCatalogDeployment {
     /// `None` when it generated none (#708).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) generation_workers: Option<usize>,
+}
+
+/// The observing frequencies and bounded physical data of a single-field
+/// AWPLPG run. The operator owns generating the convolution functions.
+pub(crate) struct Awp2Deployment {
+    pub(crate) frequencies_hz: Box<[f64]>,
+    pub(crate) surface: casa_imaging_model::EvlaDishSurface,
+    pub(crate) _charge: casa_imaging_runtime::Reservation,
 }
 
 /// Product-generation controls, the analytic primary beam's pointings and

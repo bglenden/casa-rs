@@ -7,10 +7,10 @@ use casa_imaging_model::{
     ReconstructionBasis, SpectralKernel, SpectralWcs,
 };
 use casa_imaging_operator::{
-    AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
-    DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, PrimaryBeam,
-    SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    AiryDish, AwCatalog, Awp2Sampling, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet,
+    DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+    MeasurementOperator, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting,
+    PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -20,7 +20,7 @@ use casa_types::Correlation;
 
 use super::ImagingError;
 use super::observation_source::StoreKeys;
-use crate::AwCatalogDeployment;
+use crate::{AwCatalogDeployment, Awp2Deployment};
 
 /// The operator of one image domain and the resampler that places rows on
 /// its planes.
@@ -225,7 +225,7 @@ pub(crate) fn metal_kernel_set(problem: &CompiledProblem) -> bool {
         // Metal predicts with the cells it grids with, which a mosaic's
         // conjugate beams part.
         KernelSetKind::Mosaic => !mosaic_conjugate_beams(problem),
-        KernelSetKind::WPlanes | KernelSetKind::Aw => false,
+        KernelSetKind::WPlanes | KernelSetKind::Aw | KernelSetKind::Awp2 => false,
     }
 }
 
@@ -262,6 +262,8 @@ enum KernelSetKind {
     Mosaic,
     /// The AW catalog (`AWProjectFT`).
     Aw,
+    /// The resident AWPLPG kernels.
+    Awp2,
 }
 
 fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
@@ -270,6 +272,8 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
         KernelSetKind::Aw
     } else if equation.w_projection().is_some() {
         KernelSetKind::WPlanes
+    } else if problem.science().instrument_model() == Some(InstrumentModel::CasaVlaAwplpg) {
+        KernelSetKind::Awp2
     } else if matches!(
         problem.science().instrument_model(),
         Some(
@@ -304,7 +308,7 @@ pub(crate) fn domain_operator(
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
     requested_padding: Option<PaddingFactor>,
-    aw_catalog: Option<&AwCatalogDeployment>,
+    deployment: (Option<&AwCatalogDeployment>, Option<&Awp2Deployment>),
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
@@ -315,7 +319,7 @@ pub(crate) fn domain_operator(
             GridPadding::CasaComposite(requested_padding.unwrap_or(PaddingFactor::TCLEAN))
         }
         KernelSetKind::WPlanes => GridPadding::CasaComposite(PaddingFactor::TCLEAN),
-        KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
+        KernelSetKind::Mosaic | KernelSetKind::Aw | KernelSetKind::Awp2 => GridPadding::None,
     };
     let geometry = GridGeometry::new(extent, padding)?;
     let polarization = PolarizationRouting::compile(
@@ -328,7 +332,7 @@ pub(crate) fn domain_operator(
         problem,
         kind,
         (&geometry, &polarization),
-        aw_catalog,
+        deployment,
         keys,
         admission,
     )?;
@@ -341,7 +345,10 @@ pub(crate) fn domain_operator(
             precision(backend, requested_precision),
         ),
         resampler,
-        weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
+        weight_image: matches!(
+            kind,
+            KernelSetKind::Mosaic | KernelSetKind::Aw | KernelSetKind::Awp2
+        ),
         kernels,
     })
 }
@@ -401,7 +408,7 @@ fn kernel_set(
     problem: &CompiledProblem,
     kind: KernelSetKind,
     (geometry, polarization): (&GridGeometry, &PolarizationRouting),
-    aw_catalog: Option<&AwCatalogDeployment>,
+    (aw_catalog, awp2): (Option<&AwCatalogDeployment>, Option<&Awp2Deployment>),
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<(Box<dyn ConvolutionFunctionSet>, Kernels), ImagingError> {
@@ -476,6 +483,23 @@ fn kernel_set(
             let mut kernels = admission.admit(PHASE, screens.kernel_bytes())?;
             let set = screens.finish()?;
             drop(screening);
+            kernels.retain(set.resident_bytes());
+            (Box::new(set), Kernels::Admitted { _charge: kernels })
+        }
+        KernelSetKind::Awp2 => {
+            let deployment = awp2.ok_or(ImagingError::Unsupported {
+                reason: "AWP2 requires a VLA dish surface and beam frequencies",
+            })?;
+            let sampling = Awp2Sampling::new(geometry)?;
+            let screen_charge = admission.admit(
+                "AWP2 aperture screens",
+                sampling.screens_bytes(deployment.frequencies_hz.len()),
+            )?;
+            let screens =
+                sampling.screens(&deployment.frequencies_hz, deployment.surface.clone())?;
+            let mut kernels = admission.admit(PHASE, screens.kernel_bytes(geometry))?;
+            let set = screens.finish(geometry, polarization, deployment.frequencies_hz.clone());
+            drop(screen_charge);
             kernels.retain(set.resident_bytes());
             (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
