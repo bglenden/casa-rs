@@ -31,8 +31,8 @@ pub(crate) enum PlaneBeam {
     Fitted(RestoringBeam),
     /// The plane has no PSF, and so no beam.
     Blank,
-    /// `FitGaussianPSF` refuses the plane when its positive peak is too weak
-    /// or outside the inner quarter. `SIImageStore::makeImageBeamSet` carries on.
+    /// The fit was refused for a weak peak, an off-centre peak, or collinear
+    /// samples. `SIImageStore::makeImageBeamSet` provides the domain beam.
     Refused,
 }
 
@@ -41,7 +41,7 @@ pub(crate) enum PlaneBeam {
 ///
 /// # Errors
 ///
-/// As [`fit_restoring_beam`], but for a peak outside the inner quarter.
+/// As [`fit_restoring_beam`], except for an off-centre peak or collinear samples.
 pub(crate) fn fit_plane_beam(
     psf: &[f32],
     shape: [usize; 2],
@@ -50,7 +50,9 @@ pub(crate) fn fit_plane_beam(
 ) -> Result<PlaneBeam, ProductsError> {
     match casa_imaging_deconvolution::fit_restoring_beam(psf, shape, cell_size_rad, cutoff) {
         Ok(beam) => Ok(PlaneBeam::Fitted(beam)),
-        Err(error @ PsfBeamFitError::PeakOutsideInnerQuarter) => {
+        Err(
+            error @ (PsfBeamFitError::PeakOutsideInnerQuarter | PsfBeamFitError::CollinearMainLobe),
+        ) => {
             tracing::warn!(
                 "Error Gaussian fit to PSF : {error} : Setting restoring beam to largest valid beam."
             );

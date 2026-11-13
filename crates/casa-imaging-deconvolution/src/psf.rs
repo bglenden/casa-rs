@@ -178,15 +178,23 @@ impl PsfSummary {
         }
         let single = psf_samples(psf, image_peak);
         let (fit_peak_index, fit_peak) = positive_peak(&single)?;
-        // FitGaussianPSF refuses a weak saved peak or one outside the inner
-        // quarter. Without a saved beam, the domain assigns its beam later.
+        // A weak saved peak, an off-centre peak, or collinear fit samples
+        // need a domain beam when there is no saved beam.
         let off_centre = peak_outside_inner_quarter(fit_peak_index, axes);
         let fit_refused = (image_peak.is_some() && f64::from(fit_peak) < 1e-7) || off_centre;
-        let unsettled_beam = fit_refused && saved_beam.is_none();
-        let beam = match saved_beam {
+        let fitted_beam = match saved_beam {
+            Some(beam) => Some(beam),
+            None if fit_refused => None,
+            None => match fit_main_lobe(&single, axes, cell, cutoff) {
+                Ok(beam) => Some(beam),
+                Err(PsfBeamFitError::CollinearMainLobe) => None,
+                Err(error) => return Err(error.into()),
+            },
+        };
+        let unsettled_beam = fitted_beam.is_none();
+        let beam = match fitted_beam {
             Some(beam) => beam,
-            None if fit_refused => RestoringBeam::new(1.0, 1.0, 0.0)?,
-            None => fit_main_lobe(&single, axes, cell, cutoff)?,
+            None => RestoringBeam::new(1.0, 1.0, 0.0)?,
         };
         let sidelobe = if unsettled_beam {
             psf.iter()
@@ -200,7 +208,7 @@ impl PsfSummary {
             sidelobe,
             clark: ClarkPatch::new(psf, shape, beam),
             off_centre,
-            fit_refused,
+            fit_refused: fit_refused || unsettled_beam,
             unsettled_beam,
         })
     }
@@ -211,7 +219,7 @@ impl PsfSummary {
         self.off_centre
     }
 
-    /// Whether CASA refuses to fit this PSF's peak.
+    /// Whether the PSF fit was refused and cannot contribute a domain beam.
     #[must_use]
     pub const fn fit_refused(&self) -> bool {
         self.fit_refused
