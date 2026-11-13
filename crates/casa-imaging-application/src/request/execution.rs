@@ -74,7 +74,20 @@ pub(crate) fn validate_awp2_scope(
                     ]
                     || wprojplanes.is_none_or(|count| count.get() < 2)
             } else {
-                request.stokes != [PolarizationCoordinate::StokesI]
+                use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+                match request.stokes.as_slice() {
+                    [StokesI] => false,
+                    [StokesQ]
+                    | [StokesU]
+                    | [StokesV]
+                    | [StokesI, StokesV]
+                    | [StokesQ, StokesU]
+                    | [StokesI, StokesQ, StokesU, StokesV] => {
+                        wprojplanes.is_some_and(|count| count.get() != 1)
+                            || request.savemodel != SaveModel::None
+                    }
+                    _ => true,
+                }
             }
             || request.vis.len() != 1
             || request.outframe != FrequencyRef::LSRK
@@ -88,7 +101,7 @@ pub(crate) fn validate_awp2_scope(
     {
         return Err(InvalidRequest {
             parameters: "gridder",
-            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted Stokes I cubes with one W plane, no squint and no saved model (#1071)",
+            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted cubes with one W plane, no squint and no saved model. Unsquinted polarized imaging is available for I, Q, U, V, IV, QU and IQUV with one W plane and no saved model (#1071)",
         });
     }
     Ok(())
