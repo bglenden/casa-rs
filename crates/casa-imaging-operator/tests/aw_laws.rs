@@ -19,7 +19,8 @@ use casa_imaging_operator::{
     GridGeometry, GridPadding, GridPrecision, GridScalar, ImageExtent, KernelNormalisation,
     MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeCacheLock,
     NativeCacheState, NativeManifest, NativeRow, Placement, PlaneRange, PolarizationRouting,
-    RowContext, SampleBuffer, SpectralResampler, TapLayout, WeightingGeneration, Work,
+    RowContext, SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, TapLayout,
+    WeightingGeneration, Work,
 };
 use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
@@ -405,6 +406,50 @@ fn aw_cells_use_native_frequency_across_a_frame_conversion() {
         actual, expected,
         "both gridding and prediction cells follow the native channel"
     );
+}
+
+#[test]
+fn linear_aw_places_the_interpolated_frequency_in_each_output_plane() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), false, usize::MAX);
+    let expected_group = catalog.group_index(0, 1, 0);
+    let axis = SpectralAxis::new(1.51e9, 0.1e9, 2).expect("axis");
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let operator = MeasurementOperator::new(
+        geometry(),
+        resampler.basis(),
+        routing(),
+        Box::new(catalog),
+        GridPrecision::F64,
+    );
+    let row = NativeRow {
+        uvw_m: [15.0, 0.0, 0.0],
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &[1.4e9, 1.6e9, 1.8e9],
+        values: &[Complex32::new(1.0, 0.0); 6],
+        weights: &[1.0; 6],
+        flags: &[false; 6],
+        row_flag: false,
+        context: context(17.0, 0),
+    };
+    let mut output = SampleBuffer::new(2);
+    resampler
+        .place(
+            &operator,
+            &WeightingGeneration::Natural { taper: None },
+            &row,
+            &mut output,
+        )
+        .expect("place linear AW samples");
+    assert_eq!(output.placements().len(), 2);
+    for (plane, frequency_hz) in [1.51e9, 1.61e9].into_iter().enumerate() {
+        let sample = &output.placements()[plane];
+        assert_eq!(sample.plane, plane as u32);
+        assert_eq!(usize::from(sample.cf.group), expected_group);
+        let expected_u = row.uvw_m[0] * frequency_hz / 299_792_458.0;
+        assert!((sample.u - expected_u).abs() < 1e-12, "{sample:?}");
+    }
 }
 
 #[test]
