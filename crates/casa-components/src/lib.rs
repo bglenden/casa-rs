@@ -81,8 +81,9 @@
 //! `SkyCompRep::visibility` does: the Stokes flux sampled by the spectral
 //! model ([`SpectralModel::sample_stokes`]), converted to the data's
 //! polarisation basis ([`stokes_in`]), times the shape's visibility
-//! ([`ComponentShape::visibility_scale`]). A limb-darkened disk's visibility
-//! and some tabular spectra are refused (the `visibility` module lists them).
+//! ([`ComponentShape::visibility_scale`]). Limb-darkened disks include the
+//! component's optional exponent through [`SkyComponent::transform`]. Some
+//! tabular spectra remain refused (the `visibility` module lists them).
 //! A predictor evaluating many baselines and channels prepares each shape's
 //! [`ShapeTransform`] once, takes it at each baseline
 //! ([`ShapeTransform::at_baseline`]) and leaves each channel a function of

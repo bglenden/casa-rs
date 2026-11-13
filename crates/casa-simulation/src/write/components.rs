@@ -72,11 +72,15 @@ pub(super) fn add_components(
     }
     team.for_each_mut(&mut jobs, |_, job| {
         for components in plan.components_for_scan(job.index) {
-            components.add_rows(
-                (job.index, job.scan.data_description_id),
-                job.rows.iter().map(|row| row.uvw_m),
-                job.cells,
-            );
+            components
+                .add_rows(
+                    (job.index, job.scan.data_description_id),
+                    job.rows.iter().map(|row| (row.uvw_m, row.time_s)),
+                    job.cells,
+                )
+                .map_err(|error| {
+                    SimulatorError::raised(format!("component prediction: {error}"))
+                })?;
         }
         Ok::<_, SimulatorError>(())
     })

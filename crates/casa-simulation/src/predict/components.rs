@@ -5,8 +5,8 @@
 //!
 //! For each row and component (`SimpleComponentFTMachine::get`):
 //! - the row's uvw is rotated from the scan's phase centre to the
-//!   component's reference direction, as `GridFT` rotates it
-//!   (`rotateUVW`, [`GridFtProjection`]);
+//!   component's reference direction through `ComponentFTMachine`'s
+//!   projected [`UvwMachine`] at the integration epoch and antenna 0;
 //! - the component's visibility is its flux, sampled by its spectral model
 //!   at the channel's frequency and converted to the window's polarisation
 //!   basis, times its shape's visibility at the rotated baseline
@@ -16,12 +16,14 @@
 //!   channel's frequency (`BeamSkyJones::apply` on a component, with its
 //!   full-spectral option, as `SkyEquation::applySkyJones` calls it);
 //! - the rotation's phase multiplies it: `e^{−2πi s ν/c}` with `s` the
-//!   phase shift of [`GridFtProjection::apply`].
+//!   phase shift of [`UvwMachine::convert_projected`], in CASA's sign.
 //!
 //! What does not depend on the row is prepared once: each component's flux
 //! in each window's correlations and the beam's power, per channel; each
 //! shape's transform ([`ShapeTransform`]); and, for each observed field,
 //! each component's rotation (a scan is phased on its field's direction).
+//! Native-frame transforms are rebuilt once per integration, as CASA's
+//! component machine does, using the first antenna's position.
 //! A row then takes one rotation and one phasor per component, and each
 //! channel advances the phasor by the channel spacing's rotation: a
 //! window's channels are evenly spaced (`setspwindow`).
@@ -39,12 +41,12 @@
 //!   table at the data's (here TOPO) frequencies, about 1e-4 of the
 //!   frequency away.
 //!
-//! casa-rs evaluates J2000 components in a circular or linear basis.
+//! Native direction references retain their axes when evaluating shapes.
 
 use casa_components::{ComponentList, Polarisation, ShapeTransform, SkyComponent};
-use casa_imaging_model::GridFtProjection;
 use casa_imaging_runtime::{Admitted, Reservation};
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{EpochRef, MEpoch, MeasFrame, UvwMachine};
 use num_complex::{Complex32, Complex64};
 use std::sync::Arc;
 
@@ -96,6 +98,7 @@ pub(crate) struct ComponentTargets<'a> {
     /// `[scan]`: the scan's pointing.
     pub(crate) pointing_of_scan: &'a [usize],
     pub(crate) beam: Option<&'a BeamPattern>,
+    pub(crate) frame: &'a MeasFrame,
 }
 
 impl ComponentTargets<'_> {
@@ -114,12 +117,15 @@ impl ComponentTargets<'_> {
             .map(|(id, _, _)| id + 1)
             .max()
             .unwrap_or(0);
-        let per_field = components * size_of::<GridFtProjection>()
+        let per_field = components * size_of::<UvwMachine>()
             + self.beam.map_or(0, |_| {
                 self.windows.len() * size_of::<Vec<f32>>()
                     + components * channels * size_of::<f32>()
             });
-        (components * (size_of::<ShapeTransform>() + samples * size_of::<Complex64>())
+        (components
+            * (size_of::<ShapeTransform>()
+                + size_of::<MDirection>()
+                + samples * size_of::<Complex64>())
             + self.windows.len() * size_of::<PreparedWindow>()
             + field_slots * size_of::<Option<FieldTerms>>()
             + self.pointings.len() * per_field
@@ -136,6 +142,8 @@ impl ComponentTargets<'_> {
 /// A component list prepared for prediction into a session's windows.
 #[derive(Debug)]
 pub(crate) struct ComponentPrediction {
+    directions: Vec<MDirection>,
+    frame: MeasFrame,
     /// Each component's shape transform.
     transforms: Vec<ShapeTransform>,
     windows: Vec<PreparedWindow>,
@@ -162,8 +170,9 @@ struct PreparedWindow {
 
 #[derive(Debug)]
 struct FieldTerms {
+    phase: MDirection,
     /// Each component's rotation from the field's direction.
-    projections: Vec<GridFtProjection>,
+    projections: Vec<UvwMachine>,
     /// `[window]`: the beam's power `[component][channel]`, with
     /// `setvp(dovp=True)`.
     powers: Option<Vec<Vec<f32>>>,
@@ -175,8 +184,8 @@ impl ComponentPrediction {
     ///
     /// # Errors
     ///
-    /// [`ComponentRefusal::NotYetImplemented`]: a component direction not in
-    /// J2000, a window whose correlations are not all circular or all
+    /// [`ComponentRefusal::NotYetImplemented`]: a time-dependent component
+    /// beam needing separate observer context, correlations not all circular or all
     /// linear, or a flux, spectrum or shape casa-components does not
     /// evaluate.
     pub(crate) fn new(
@@ -190,17 +199,30 @@ impl ComponentPrediction {
         let mut transforms = Vec::with_capacity(components.len());
         for (index, component) in components.iter().enumerate() {
             let direction = component.shape().reference_direction();
-            if direction.refer() != DirectionRef::J2000 {
+            if targets.beam.is_some()
+                && !matches!(
+                    direction.refer(),
+                    DirectionRef::J2000
+                        | DirectionRef::B1950
+                        | DirectionRef::B1950Vla
+                        | DirectionRef::GALACTIC
+                        | DirectionRef::ICRS
+                        | DirectionRef::SUPERGAL
+                        | DirectionRef::ECLIPTIC
+                )
+            {
                 return Err(refused(format!(
-                    "predicting component {index} in {:?}: casa-rs predicts J2000 components",
+                    "component {index} in {:?} needs its beam's actual array observer context (#1297)",
                     direction.refer()
                 )));
             }
-            let (ra, dec) = direction.as_angles();
+            let (ra, dec) = direction
+                .convert_to(DirectionRef::J2000, targets.frame)
+                .map_err(|error| refused(error.to_string()))?
+                .as_angles();
             directions_rad.push([ra, dec]);
             transforms.push(
                 component
-                    .shape()
                     .transform()
                     .map_err(|error| refused(format!("component {index}: {error}")))?,
             );
@@ -210,6 +232,10 @@ impl ComponentPrediction {
             .iter()
             .map(|window| prepare_window(components, window))
             .collect::<Result<Vec<_>, _>>()?;
+        let directions: Vec<MDirection> = components
+            .iter()
+            .map(|component| component.shape().reference_direction().clone())
+            .collect();
         let slots = targets
             .pointings
             .iter()
@@ -218,10 +244,14 @@ impl ComponentPrediction {
             .unwrap_or(0);
         let mut fields: Vec<Option<FieldTerms>> = (0..slots).map(|_| None).collect();
         for &(field, direction, beam_centre) in targets.pointings {
-            let projections = directions_rad
+            let phase = MDirection::from_angles(direction[0], direction[1], DirectionRef::J2000);
+            let projections = directions
                 .iter()
-                .map(|component| GridFtProjection::between_j2000_directions(direction, *component))
-                .collect();
+                .map(|component| {
+                    UvwMachine::with_frame(component, &phase, targets.frame)
+                        .map_err(|error| refused(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let powers = targets.beam.map(|pattern| {
                 targets
                     .windows
@@ -239,11 +269,14 @@ impl ComponentPrediction {
                     .collect()
             });
             fields[field] = Some(FieldTerms {
+                phase,
                 projections,
                 powers,
             });
         }
         Ok(Self {
+            directions,
+            frame: targets.frame.clone(),
             transforms,
             windows,
             fields,
@@ -277,14 +310,21 @@ impl ComponentPrediction {
                                 })
                                 .sum()
                         });
-                        terms.projections.len() * size_of::<GridFtProjection>() + powers
+                        terms.projections.len() * size_of::<UvwMachine>() + powers
                     })
             })
             .sum();
         (self.transforms.len() * size_of::<ShapeTransform>()
+            + self.directions.len() * size_of::<MDirection>()
             + windows
             + fields
             + self.of_scan.len() * size_of::<usize>()) as u64
+    }
+
+    pub(crate) fn needs_epoch(&self) -> bool {
+        self.directions
+            .iter()
+            .any(|direction| direction.refer() != DirectionRef::J2000)
     }
 
     /// Add to `out` the visibilities of `rows` (each row's raw uvw in
@@ -295,9 +335,9 @@ impl ComponentPrediction {
     pub(crate) fn add_rows(
         &self,
         (scan, description): (usize, usize),
-        rows: impl Iterator<Item = [f64; 3]>,
+        rows: impl Iterator<Item = ([f64; 3], f64)> + Clone,
         out: &mut [Complex32],
-    ) {
+    ) -> Result<(), casa_components::ComponentError> {
         let Some(terms) = self
             .of_scan
             .get(scan)
@@ -307,7 +347,7 @@ impl ComponentPrediction {
             // A prediction covers the scans observed before it, whose
             // pointings it prepared.
             debug_assert!(false, "scan {scan} was not observed before the prediction");
-            return;
+            return Ok(());
         };
         let prepared = &self.windows[description];
         let (channels, correlations) = (prepared.channels, prepared.correlations);
@@ -315,12 +355,30 @@ impl ComponentPrediction {
             .powers
             .as_ref()
             .map(|powers| powers[description].as_slice());
-        for (row, uvw_m) in rows.enumerate() {
-            let samples = &mut out[row * channels * correlations..][..channels * correlations];
-            for (component, (transform, projection)) in
-                self.transforms.iter().zip(&terms.projections).enumerate()
-            {
-                let (rotated, phase_shift_m) = projection.apply(uvw_m);
+        for (component, (transform, initial_projection)) in
+            self.transforms.iter().zip(&terms.projections).enumerate()
+        {
+            let direction = &self.directions[component];
+            let mut projection = *initial_projection;
+            let mut epoch = None;
+            for (row, (uvw_m, time_s)) in rows.clone().enumerate() {
+                if direction.refer() != DirectionRef::J2000 && epoch != Some(time_s) {
+                    let current = self
+                        .frame
+                        .clone()
+                        .with_epoch(MEpoch::from_mjd(time_s / 86400., EpochRef::UTC));
+                    projection = UvwMachine::with_frame(direction, &terms.phase, &current)
+                        .map_err(|error| casa_components::ComponentError::Visibility {
+                            shape: "component direction",
+                            reason: error.to_string(),
+                        })?;
+                    epoch = Some(time_s);
+                }
+                let samples = &mut out[row * channels * correlations..][..channels * correlations];
+                let (rotated, phase) =
+                    projection.convert_projected([-uvw_m[0], -uvw_m[1], uvw_m[2]]);
+                let rotated = [-rotated[0], -rotated[1], rotated[2]];
+                let phase_shift_m = -phase;
                 let baseline = transform.at_baseline(rotated);
                 // e^{−2πi s ν/c}, advanced a channel at a time.
                 let radians_per_hz =
@@ -340,7 +398,7 @@ impl ComponentPrediction {
                     } else {
                         phasor
                     };
-                    let mut scale = baseline.at_frequency(frequency_hz);
+                    let mut scale = baseline.at_frequency(frequency_hz)?;
                     if let Some(powers) = powers {
                         scale *= f64::from(powers[channel]);
                     }
@@ -354,6 +412,7 @@ impl ComponentPrediction {
                 }
             }
         }
+        Ok(())
     }
 }
 

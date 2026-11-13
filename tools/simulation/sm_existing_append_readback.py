@@ -54,6 +54,10 @@ def main():
             for row, (observed, reference) in enumerate(zip(actual["rows"], expected["rows"])):
                 for name, value in reference.items():
                     if case.get("native_created") and name in ("model_data", "corrected_data"):
+                        # Native fresh simulations keep only DATA. Scratch
+                        # columns are optional; existing-MS cases retain and
+                        # compare their original scratch cells below.
+                        assert name not in observed, (path, row, name)
                         continue
                     if "pointing_cache_corrected_rows" in case and name in ("data", "corrected_data", "model_data"):
                         value = case["pointing_cache_corrected_rows"][row][name]
