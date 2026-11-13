@@ -893,11 +893,28 @@ fn tracked_aw_linear_cubes_preserve_supported_planes() {
         request["start"] = json!("1.503GHz");
         request["width"] = json!("8.1MHz");
         request["nchan"] = json!(3);
-        let (_, products) = observation.image(&name, request);
+        let (_, products) = observation.image(&name, request.clone());
         let weights = products.get(".sumwt").channel_values();
         assert_eq!(weights.len(), 3);
         assert!(weights[0] > 0.0 && weights[1] > 0.0, "{name}: {weights:?}");
         assert_eq!(weights[2], 0.0, "{name}: {weights:?}");
+
+        if (input, output) == (FrequencyRef::BARY, FrequencyRef::TOPO) {
+            for weighting in ["briggs", "uniform"] {
+                request["weighting"] = json!(weighting);
+                request["robust"] = json!(0.5);
+                let (_, weighted) =
+                    observation.image(&format!("{name}-{weighting}"), request.clone());
+                let sums = weighted.get(".sumwt").channel_values();
+                assert_eq!(sums.len(), 3);
+                assert!(sums[0] > 0.0 && sums[1] > 0.0, "{weighting}: {sums:?}");
+                assert_eq!(sums[2], 0.0, "{weighting}: {sums:?}");
+                assert!(
+                    (sums[0] - weights[0]).abs() > 1e-3 * weights[0],
+                    "{weighting}: {sums:?}, natural: {weights:?}"
+                );
+            }
+        }
         let spectral = products
             .get(".image")
             .image
