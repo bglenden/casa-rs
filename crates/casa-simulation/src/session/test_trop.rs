@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA's source-defined debugging ramp, sampled at the observed integrations.
-use super::error::{SimulatorError, SimulatorResult};
+//! CASA's source-defined debugging ramp at integrations or custom time chunks.
+use super::error::SimulatorResult;
 use super::troposphere::{check_numbers, not_formed};
 use super::{Simulator, TroposphereSpec};
-use crate::corrupt::jones::{TermBytes, tropospheric};
+use crate::corrupt::jones::{Chunks, TermBytes, tropospheric};
 use crate::corrupt::troposphere::TroposphericPhase;
 use crate::corrupt::tsys_atm::single;
 
@@ -12,18 +12,20 @@ impl Simulator {
         check_numbers(spec, false)?;
         let table = self.table_path(&spec.table)?;
         self.require_rows()?;
-        if spec.simint_s > 0. {
-            return Err(SimulatorError::not_yet_implemented(
-                "settrop(mode='test') with a custom positive simint is not yet implemented (#1292)",
-            ));
-        }
         let pwv = single(spec.water_vapour_mm) as f32;
         if pwv <= 0. {
             return Err(not_formed(
                 "AtmCorruptor attempted initialization with undefined PWV",
             ));
         }
-        let (counts, _) = self.integration_counts();
+        let simint = single(spec.simint_s);
+        let counts = if simint > 0. {
+            let mut counts = vec![0; self.spectral_windows.len()];
+            self.test_trop_times(simint, |window, _, _| counts[window] += 1);
+            counts
+        } else {
+            self.integration_counts().0
+        };
         let integrations = counts.iter().sum::<usize>();
         let antennas = self.antennas.len();
         let channels = self
@@ -46,12 +48,42 @@ impl Simulator {
                 (i as f32 / integrations as f32 + a as f32 / antennas as f32) * pwv * 10.
             }));
         }
+        let chunks = if simint > 0. {
+            let mut chunks = Chunks::with_capacity(&counts);
+            self.test_trop_times(simint, |window, field, time| {
+                chunks.push(window, time, field);
+            });
+            chunks.sorted()
+        } else {
+            self.integration_chunks(&counts)
+        };
         let term = tropospheric(
             antennas,
-            (self.integration_chunks(&counts), None),
+            (chunks, None),
             TroposphericPhase::new(excess, delays),
         );
         self.hold_term(term, (reservation, bytes), table);
         Ok(())
+    }
+
+    /// sizeUpSim's uncombined VisIterator chunks, reset at every scan boundary.
+    /// A positive interval starts at the first integration of each chunk; keep
+    /// the midpoint of its first and last integration as setSimulate does.
+    fn test_trop_times(&self, interval: f64, mut emit: impl FnMut(usize, usize, f64)) {
+        for (index, scan) in self.scans.iter().enumerate() {
+            let mut times = self.integration_times_s(index);
+            let Some(mut first) = times.next() else {
+                continue;
+            };
+            let mut last = first;
+            for time in times {
+                if time - first >= interval {
+                    emit(scan.spectral_window_id, scan.field_id, 0.5 * (first + last));
+                    first = time;
+                }
+                last = time;
+            }
+            emit(scan.spectral_window_id, scan.field_id, 0.5 * (first + last));
+        }
     }
 }

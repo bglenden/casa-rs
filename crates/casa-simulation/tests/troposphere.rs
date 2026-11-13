@@ -511,11 +511,6 @@ fn settrop_refusals_add_no_term() {
         message.contains("unsupported mode 1d in settrop()"),
         "{message}"
     );
-    let (refused, _) = outcome(sm.set_trop(&TroposphereSpec {
-        simint_s: 20.,
-        ..trop("test", none)
-    }));
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
     let (refused, message) = outcome(sm.set_trop(&TroposphereSpec {
         water_vapour_mm: 0.0,
         ..trop("individual", none)
