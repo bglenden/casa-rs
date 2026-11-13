@@ -209,6 +209,6 @@ mod tests {
         let centre = term.screen[512 * 1024 + 512];
         assert!((centre - Complex32::new(499.056_34, -11_472.457)).norm() < 0.02);
         assert_eq!(screen_support(&term.screen, 1024), 97);
-        assert_eq!(term.convolution_side(53_802.997_514_852_686).unwrap(), 1024);
+        assert_eq!(term.convolution_side(53_802.997_514_852_69).unwrap(), 1024);
     }
 }
