@@ -126,699 +126,743 @@
 <a href=#126 id=126 data-nosnippet>126</a>    steps: std::ops::Range&lt;usize&gt;,
 <a href=#127 id=127 data-nosnippet>127</a>    scan: <span class="kw-2">&amp;</span>Scan,
 <a href=#128 id=128 data-nosnippet>128</a>    scan_index: usize,
-<a href=#129 id=129 data-nosnippet>129</a>) -&gt; SimulatorResult&lt;Segment&gt; {
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="comment">// Header predicates can reject every row of a chunk without excluding
-<a href=#131 id=131 data-nosnippet>131</a>    // its field/window. Those steps have neither science nor a captured
-<a href=#132 id=132 data-nosnippet>132</a>    // frame there; omit their domains instead of inventing an epoch.
-<a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>selected_steps = Vec::with_capacity(steps.len());
-<a href=#134 id=134 data-nosnippet>134</a>    selected_steps.extend(steps.filter(|<span class="kw-2">&amp;</span>step| predictions[step].has_selected_chunk(scan)));
-<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span>steps = selected_steps;
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">let </span><span class="kw-2">mut </span>projections = Vec::with_capacity(steps.len());
-<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">let </span><span class="kw-2">mut </span>pointing_offsets = Vec::with_capacity(steps.len());
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>step <span class="kw">in </span><span class="kw-2">&amp;</span>steps {
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>prediction = predictions[step];
-<a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">if </span>prediction.grids_for(prediction.grid_id(scan)).is_none() {
-<a href=#141 id=141 data-nosnippet>141</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#142 id=142 data-nosnippet>142</a>                <span class="string">"predict prepared no grids for field {}"</span>,
-<a href=#143 id=143 data-nosnippet>143</a>                scan.field_id
-<a href=#144 id=144 data-nosnippet>144</a>            )));
-<a href=#145 id=145 data-nosnippet>145</a>        }
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="comment">// `MosaicFT` reprojects through `girarUVW`, the others through
-<a href=#147 id=147 data-nosnippet>147</a>        // `rotateUVW`.
-<a href=#148 id=148 data-nosnippet>148</a>        </span><span class="kw">let </span>phase = prediction.phase_centre(scan);
-<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span>projection = <span class="kw">match </span>prediction.model.machine() {
-<a href=#150 id=150 data-nosnippet>150</a>            FtMachine::Mosaic =&gt; {
-<a href=#151 id=151 data-nosnippet>151</a>                GridFtProjection::mosaic_between_j2000_directions(phase, prediction.tangent_rad)
-<a href=#152 id=152 data-nosnippet>152</a>            }
-<a href=#153 id=153 data-nosnippet>153</a>            FtMachine::Grid(<span class="kw">_</span>) | FtMachine::WProject(<span class="kw">_</span>) =&gt; {
-<a href=#154 id=154 data-nosnippet>154</a>                <span class="kw">let </span>source = MDirection::from_angles(phase[<span class="number">0</span>], phase[<span class="number">1</span>], DirectionRef::J2000);
-<a href=#155 id=155 data-nosnippet>155</a>                GridFtProjection::between_directions_with_frame(
-<a href=#156 id=156 data-nosnippet>156</a>                    <span class="kw-2">&amp;</span>source,
-<a href=#157 id=157 data-nosnippet>157</a>                    <span class="kw-2">&amp;</span>prediction.tangent,
-<a href=#158 id=158 data-nosnippet>158</a>                    <span class="kw-2">&amp;</span>prediction.frame(scan)<span class="question-mark">?</span>,
-<a href=#159 id=159 data-nosnippet>159</a>                )
-<a href=#160 id=160 data-nosnippet>160</a>                .map_err(|error| {
-<a href=#161 id=161 data-nosnippet>161</a>                    SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"simulator image-frame projection: {error}"</span>))
-<a href=#162 id=162 data-nosnippet>162</a>                })<span class="question-mark">?
-<a href=#163 id=163 data-nosnippet>163</a>            </span>}
-<a href=#164 id=164 data-nosnippet>164</a>        };
-<a href=#165 id=165 data-nosnippet>165</a>        projections.push(projection);
-<a href=#166 id=166 data-nosnippet>166</a>        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
-<a href=#167 id=167 data-nosnippet>167</a>    }
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="prelude-val">Ok</span>(Segment {
-<a href=#169 id=169 data-nosnippet>169</a>        source_scan: scan_index,
-<a href=#170 id=170 data-nosnippet>170</a>        steps,
-<a href=#171 id=171 data-nosnippet>171</a>        field: scan.field_id,
-<a href=#172 id=172 data-nosnippet>172</a>        projections,
-<a href=#173 id=173 data-nosnippet>173</a>        pointing_offsets,
-<a href=#174 id=174 data-nosnippet>174</a>    })
-<a href=#175 id=175 data-nosnippet>175</a>}
-<a href=#176 id=176 data-nosnippet>176</a>
-<a href=#177 id=177 data-nosnippet>177</a><span class="kw">impl </span>Segment {
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">fn </span>matches(
-<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#180 id=180 data-nosnippet>180</a>        predictions: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>Prediction],
-<a href=#181 id=181 data-nosnippet>181</a>        scans: <span class="kw-2">&amp;</span>[Scan],
-<a href=#182 id=182 data-nosnippet>182</a>        scan: <span class="kw-2">&amp;</span>Scan,
-<a href=#183 id=183 data-nosnippet>183</a>        steps: std::ops::Range&lt;usize&gt;,
-<a href=#184 id=184 data-nosnippet>184</a>    ) -&gt; bool {
-<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw">let </span>original = <span class="kw-2">&amp;</span>scans[<span class="self">self</span>.source_scan];
-<a href=#186 id=186 data-nosnippet>186</a>        <span class="self">self</span>.field == scan.field_id
-<a href=#187 id=187 data-nosnippet>187</a>            &amp;&amp; <span class="self">self</span>.steps.iter().copied().eq(steps.clone())
-<a href=#188 id=188 data-nosnippet>188</a>            &amp;&amp; original.pointing_rad.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
-<a href=#189 id=189 data-nosnippet>189</a>            &amp;&amp; steps.into_iter().all(|step| {
-<a href=#190 id=190 data-nosnippet>190</a>                predictions[step].phase_centre(original).map(f64::to_bits)
-<a href=#191 id=191 data-nosnippet>191</a>                    == predictions[step].phase_centre(scan).map(f64::to_bits)
-<a href=#192 id=192 data-nosnippet>192</a>            })
-<a href=#193 id=193 data-nosnippet>193</a>    }
-<a href=#194 id=194 data-nosnippet>194</a>}
-<a href=#195 id=195 data-nosnippet>195</a>
-<a href=#196 id=196 data-nosnippet>196</a><span class="doccomment">/// The prediction stage's state across batches.
-<a href=#197 id=197 data-nosnippet>197</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PredictionStage&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#198 id=198 data-nosnippet>198</a>    scans: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[Scan],
-<a href=#199 id=199 data-nosnippet>199</a>    backend: BackendChoice,
-<a href=#200 id=200 data-nosnippet>200</a>    correlations: usize,
-<a href=#201 id=201 data-nosnippet>201</a>    channels: usize,
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// The plan's predict steps, in order.
-<a href=#203 id=203 data-nosnippet>203</a>    </span>predictions: Vec&lt;<span class="kw-2">&amp;</span><span class="lifetime">'s </span>Prediction&gt;,
-<a href=#204 id=204 data-nosnippet>204</a>    segments: Vec&lt;Segment&gt;,
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="doccomment">/// Each scan's segment; `None` for a scan no step covers.
-<a href=#206 id=206 data-nosnippet>206</a>    </span>scan_segments: Vec&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt;,
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="doccomment">/// Each spectral window's channel frequencies.
-<a href=#208 id=208 data-nosnippet>208</a>    </span>frequencies: Vec&lt;Vec&lt;f64&gt;&gt;,
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="doccomment">/// Each antenna's dish class, which keys the mosaic machine's kernels
-<a href=#210 id=210 data-nosnippet>210</a>    /// (the other machines ignore it); empty without a mosaic step.
-<a href=#211 id=211 data-nosnippet>211</a>    </span>antenna_types: Vec&lt;u8&gt;,
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// Bytes of the model grids `predict` prepared, which a device copies.
-<a href=#213 id=213 data-nosnippet>213</a>    </span>prepared_bytes: u64,
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="doccomment">/// The per-field grids `close` prepares, and the keys of the segment
-<a href=#215 id=215 data-nosnippet>215</a>    /// being selected, which it keeps.
-<a href=#216 id=216 data-nosnippet>216</a>    </span>grids: FieldGridCache,
-<a href=#217 id=217 data-nosnippet>217</a>    keep: Vec&lt;GridKey&gt;,
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// Rows of a block, once started.
-<a href=#219 id=219 data-nosnippet>219</a>    </span>block_rows: usize,
-<a href=#220 id=220 data-nosnippet>220</a>    workers: usize,
-<a href=#221 id=221 data-nosnippet>221</a>    block: NativeBlock,
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="doccomment">/// Time spent filling blocks of native rows.
-<a href=#223 id=223 data-nosnippet>223</a>    </span>fill_time: std::time::Duration,
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="doccomment">/// A run's noise terms and its block's rows, as the device reads them
-<a href=#225 id=225 data-nosnippet>225</a>    /// when the stage [`Self::noises_on_device`]; allocated on Metal only
-<a href=#226 id=226 data-nosnippet>226</a>    /// ([`Self::start`]).
-<a href=#227 id=227 data-nosnippet>227</a>    </span>noise_terms: Vec&lt;MetalNoiseTerm&gt;,
-<a href=#228 id=228 data-nosnippet>228</a>    noise_rows: Vec&lt;MetalNoiseRow&gt;,
-<a href=#229 id=229 data-nosnippet>229</a>    noise_row_offset: u64,
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// The most noise applications of one scan: the terms the device holds
-<a href=#231 id=231 data-nosnippet>231</a>    /// at most.
-<a href=#232 id=232 data-nosnippet>232</a>    </span>most_terms: usize,
-<a href=#233 id=233 data-nosnippet>233</a>    projections: Vec&lt;DomainProjection&gt;,
-<a href=#234 id=234 data-nosnippet>234</a>    <span class="doccomment">/// The predictor of the segment last predicted.
-<a href=#235 id=235 data-nosnippet>235</a>    </span>predictor: <span class="prelude-ty">Option</span>&lt;(usize, BlockPredictor&lt;<span class="lifetime">'s</span>&gt;)&gt;,
-<a href=#236 id=236 data-nosnippet>236</a>    channel_indices: Vec&lt;u32&gt;,
-<a href=#237 id=237 data-nosnippet>237</a>    correlation_indices: Vec&lt;u32&gt;,
-<a href=#238 id=238 data-nosnippet>238</a>}
-<a href=#239 id=239 data-nosnippet>239</a>
-<a href=#240 id=240 data-nosnippet>240</a><span class="kw">impl</span>&lt;<span class="lifetime">'s</span>&gt; PredictionStage&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// The stage for `session`'s predict steps on cells of `(correlations,
-<a href=#242 id=242 data-nosnippet>242</a>    /// channels)`, on `backend`, or on the CPU when a step projects w;
-<a href=#243 id=243 data-nosnippet>243</a>    /// `None` when no step predicts.
-<a href=#244 id=244 data-nosnippet>244</a>    ///
-<a href=#245 id=245 data-nosnippet>245</a>    /// # Errors
-<a href=#246 id=246 data-nosnippet>246</a>    ///
-<a href=#247 id=247 data-nosnippet>247</a>    /// A covered scan's field without grids, which `predict` prepares, or
-<a href=#248 id=248 data-nosnippet>248</a>    /// holds the model to prepare, for every field it covers.
-<a href=#249 id=249 data-nosnippet>249</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
-<a href=#250 id=250 data-nosnippet>250</a>        session: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>Simulator,
-<a href=#251 id=251 data-nosnippet>251</a>        (correlations, channels): (usize, usize),
-<a href=#252 id=252 data-nosnippet>252</a>        backend: BackendChoice,
-<a href=#253 id=253 data-nosnippet>253</a>        plan: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>DataPlan,
-<a href=#254 id=254 data-nosnippet>254</a>    ) -&gt; SimulatorResult&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;&gt; {
-<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>predictions: Vec&lt;<span class="kw-2">&amp;</span><span class="lifetime">'s </span>Prediction&gt; = plan
-<a href=#256 id=256 data-nosnippet>256</a>            .predictions()
-<a href=#257 id=257 data-nosnippet>257</a>            .map(|(prediction, <span class="kw">_</span>)| prediction)
-<a href=#258 id=258 data-nosnippet>258</a>            .collect();
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw">if </span>predictions.is_empty() {
-<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#261 id=261 data-nosnippet>261</a>        }
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="comment">// Metal predicts through `GridFT` only; a session that projects w
-<a href=#263 id=263 data-nosnippet>263</a>        // predicts on the CPU (`predict` refused it on an explicit Metal
-<a href=#264 id=264 data-nosnippet>264</a>        // backend).
-<a href=#265 id=265 data-nosnippet>265</a>        </span><span class="kw">let </span>backend = <span class="kw">if </span>predictions
-<a href=#266 id=266 data-nosnippet>266</a>            .iter()
-<a href=#267 id=267 data-nosnippet>267</a>            .all(|prediction| prediction.model.machine().runs_on_metal())
-<a href=#268 id=268 data-nosnippet>268</a>        {
-<a href=#269 id=269 data-nosnippet>269</a>            backend
-<a href=#270 id=270 data-nosnippet>270</a>        } <span class="kw">else </span>{
-<a href=#271 id=271 data-nosnippet>271</a>            BackendChoice::Cpu
-<a href=#272 id=272 data-nosnippet>272</a>        };
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">let </span><span class="kw-2">mut </span>keys = HashMap::new();
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="kw">let </span><span class="kw-2">mut </span>segments: Vec&lt;Segment&gt; = Vec::new();
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">let </span><span class="kw-2">mut </span>scan_segments = Vec::with_capacity(session.scans().len());
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="comment">// Each per-field set's visits, by their first scans: a visit is a
-<a href=#277 id=277 data-nosnippet>277</a>        // run of scans of one segment.
-<a href=#278 id=278 data-nosnippet>278</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>visits: HashMap&lt;GridKey, Vec&lt;usize&gt;&gt; = HashMap::new();
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span>session.scans().iter().enumerate() {
-<a href=#280 id=280 data-nosnippet>280</a>            <span class="kw">if </span>scan.row_count() == <span class="number">0 </span>|| !plan.selection.contains_scan(scan) {
-<a href=#281 id=281 data-nosnippet>281</a>                scan_segments.push(<span class="prelude-val">None</span>);
-<a href=#282 id=282 data-nosnippet>282</a>                <span class="kw">continue</span>;
-<a href=#283 id=283 data-nosnippet>283</a>            }
-<a href=#284 id=284 data-nosnippet>284</a>            <span class="kw">let </span>steps = plan.predictions_for_scan(index);
-<a href=#285 id=285 data-nosnippet>285</a>            <span class="kw">if </span>steps.is_empty() {
-<a href=#286 id=286 data-nosnippet>286</a>                scan_segments.push(<span class="prelude-val">None</span>);
-<a href=#287 id=287 data-nosnippet>287</a>                <span class="kw">continue</span>;
-<a href=#288 id=288 data-nosnippet>288</a>            }
-<a href=#289 id=289 data-nosnippet>289</a>            <span class="comment">// Rows are phased on their field (#884); the mosaic machine's
-<a href=#290 id=290 data-nosnippet>290</a>            // kernels ramp to where the antennas point.
-<a href=#291 id=291 data-nosnippet>291</a>            </span><span class="kw">let </span>phase_centre = predictions[steps.start].phase_centre(scan);
-<a href=#292 id=292 data-nosnippet>292</a>            <span class="kw">let </span>key = (
-<a href=#293 id=293 data-nosnippet>293</a>                steps,
-<a href=#294 id=294 data-nosnippet>294</a>                scan.field_id,
-<a href=#295 id=295 data-nosnippet>295</a>                [phase_centre, scan.pointing_rad].map(|direction| direction.map(f64::to_bits)),
-<a href=#296 id=296 data-nosnippet>296</a>            );
-<a href=#297 id=297 data-nosnippet>297</a>            <span class="comment">// The first centre is a cheap lookup key. A later fused image
-<a href=#298 id=298 data-nosnippet>298</a>            // can carry a different epoch after append, so compare them all.
-<a href=#299 id=299 data-nosnippet>299</a>            </span><span class="kw">let </span>cached = keys.get(<span class="kw-2">&amp;</span>key).copied().and_then(|candidate: usize| {
-<a href=#300 id=300 data-nosnippet>300</a>                <span class="kw">if </span>segments[candidate].matches(<span class="kw-2">&amp;</span>predictions, session.scans(), scan, key.<span class="number">0</span>.clone()) {
-<a href=#301 id=301 data-nosnippet>301</a>                    <span class="prelude-val">Some</span>(candidate)
-<a href=#302 id=302 data-nosnippet>302</a>                } <span class="kw">else </span>{
-<a href=#303 id=303 data-nosnippet>303</a>                    segments.iter().position(|segment| {
-<a href=#304 id=304 data-nosnippet>304</a>                        segment.matches(<span class="kw-2">&amp;</span>predictions, session.scans(), scan, key.<span class="number">0</span>.clone())
-<a href=#305 id=305 data-nosnippet>305</a>                    })
-<a href=#306 id=306 data-nosnippet>306</a>                }
-<a href=#307 id=307 data-nosnippet>307</a>            });
-<a href=#308 id=308 data-nosnippet>308</a>            <span class="kw">let </span>segment = <span class="kw">match </span>cached {
-<a href=#309 id=309 data-nosnippet>309</a>                <span class="prelude-val">Some</span>(segment) =&gt; segment,
-<a href=#310 id=310 data-nosnippet>310</a>                <span class="prelude-val">None </span>=&gt; {
-<a href=#311 id=311 data-nosnippet>311</a>                    segments.push(segment_of(<span class="kw-2">&amp;</span>predictions, key.<span class="number">0</span>.clone(), scan, index)<span class="question-mark">?</span>);
-<a href=#312 id=312 data-nosnippet>312</a>                    keys.insert(key, segments.len() - <span class="number">1</span>);
-<a href=#313 id=313 data-nosnippet>313</a>                    segments.len() - <span class="number">1
-<a href=#314 id=314 data-nosnippet>314</a>                </span>}
-<a href=#315 id=315 data-nosnippet>315</a>            };
-<a href=#316 id=316 data-nosnippet>316</a>            <span class="kw">if </span>scan_segments.last() != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="prelude-val">Some</span>(segment)) {
-<a href=#317 id=317 data-nosnippet>317</a>                <span class="kw">let </span>Segment { steps, .. } = <span class="kw-2">&amp;</span>segments[segment];
-<a href=#318 id=318 data-nosnippet>318</a>                <span class="kw">for </span><span class="kw-2">&amp;</span>step <span class="kw">in </span>steps {
-<a href=#319 id=319 data-nosnippet>319</a>                    <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#320 id=320 data-nosnippet>320</a>                        predictions[step].grids_for(predictions[step].grid_id(scan)),
-<a href=#321 id=321 data-nosnippet>321</a>                        <span class="prelude-val">Some</span>(FieldGrids::PerField)
-<a href=#322 id=322 data-nosnippet>322</a>                    ) {
-<a href=#323 id=323 data-nosnippet>323</a>                        visits
-<a href=#324 id=324 data-nosnippet>324</a>                            .entry((step, predictions[step].grid_id(scan)))
-<a href=#325 id=325 data-nosnippet>325</a>                            .or_default()
-<a href=#326 id=326 data-nosnippet>326</a>                            .push(index);
-<a href=#327 id=327 data-nosnippet>327</a>                    }
-<a href=#328 id=328 data-nosnippet>328</a>                }
-<a href=#329 id=329 data-nosnippet>329</a>            }
-<a href=#330 id=330 data-nosnippet>330</a>            scan_segments.push(<span class="prelude-val">Some</span>(segment));
-<a href=#331 id=331 data-nosnippet>331</a>        }
-<a href=#332 id=332 data-nosnippet>332</a>        <span class="comment">// An opened MeasurementSet may have a segment a row, gathered with
-<a href=#333 id=333 data-nosnippet>333</a>        // room to spare.
-<a href=#334 id=334 data-nosnippet>334</a>        </span>segments.shrink_to_fit();
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>frequencies = session
-<a href=#336 id=336 data-nosnippet>336</a>            .spectral_windows()
-<a href=#337 id=337 data-nosnippet>337</a>            .iter()
-<a href=#338 id=338 data-nosnippet>338</a>            .map(|window| window.channel_frequencies_hz())
-<a href=#339 id=339 data-nosnippet>339</a>            .collect();
-<a href=#340 id=340 data-nosnippet>340</a>        <span class="kw">let </span>prepared_bytes = predictions
-<a href=#341 id=341 data-nosnippet>341</a>            .iter()
-<a href=#342 id=342 data-nosnippet>342</a>            .map(|prediction| prediction.prepared_bytes())
-<a href=#343 id=343 data-nosnippet>343</a>            .sum();
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="comment">// A device copies each per-field set it predicts from.
-<a href=#345 id=345 data-nosnippet>345</a>        </span><span class="kw">let </span>copies = <span class="kw">match </span>backend {
-<a href=#346 id=346 data-nosnippet>346</a>            BackendChoice::Cpu =&gt; <span class="number">1</span>,
-<a href=#347 id=347 data-nosnippet>347</a>            BackendChoice::Metal =&gt; <span class="number">2</span>,
-<a href=#348 id=348 data-nosnippet>348</a>        };
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">let </span>costs = predictions
-<a href=#350 id=350 data-nosnippet>350</a>            .iter()
-<a href=#351 id=351 data-nosnippet>351</a>            .map(|prediction| {
-<a href=#352 id=352 data-nosnippet>352</a>                <span class="kw">if </span>prediction.per_field() {
-<a href=#353 id=353 data-nosnippet>353</a>                    copies * prediction.set_bytes()
-<a href=#354 id=354 data-nosnippet>354</a>                } <span class="kw">else </span>{
-<a href=#355 id=355 data-nosnippet>355</a>                    <span class="number">0
-<a href=#356 id=356 data-nosnippet>356</a>                </span>}
-<a href=#357 id=357 data-nosnippet>357</a>            })
-<a href=#358 id=358 data-nosnippet>358</a>            .collect();
-<a href=#359 id=359 data-nosnippet>359</a>        <span class="kw">let </span>grids = FieldGridCache::new(costs, visits.into_iter().collect());
-<a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">let </span>largest_segment = segments
-<a href=#361 id=361 data-nosnippet>361</a>            .iter()
-<a href=#362 id=362 data-nosnippet>362</a>            .map(|segment| segment.steps.len())
-<a href=#363 id=363 data-nosnippet>363</a>            .max()
-<a href=#364 id=364 data-nosnippet>364</a>            .unwrap_or(<span class="number">0</span>);
-<a href=#365 id=365 data-nosnippet>365</a>        <span class="comment">// A mosaic step classes the antennas of its time in first-seen
-<a href=#366 id=366 data-nosnippet>366</a>        // order, so a later step's classes extend an earlier one's.
-<a href=#367 id=367 data-nosnippet>367</a>        </span><span class="kw">let </span>antenna_types = predictions
-<a href=#368 id=368 data-nosnippet>368</a>            .iter()
-<a href=#369 id=369 data-nosnippet>369</a>            .map(|prediction| prediction.antenna_types())
-<a href=#370 id=370 data-nosnippet>370</a>            .max_by_key(|types| types.len())
-<a href=#371 id=371 data-nosnippet>371</a>            .unwrap_or_default()
-<a href=#372 id=372 data-nosnippet>372</a>            .to_vec();
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">let </span>most_terms = (<span class="number">0</span>..session.scans().len())
-<a href=#374 id=374 data-nosnippet>374</a>            .map(|scan| plan.noise_for_scan(scan).len())
-<a href=#375 id=375 data-nosnippet>375</a>            .max()
-<a href=#376 id=376 data-nosnippet>376</a>            .unwrap_or(<span class="number">0</span>);
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="self">Self </span>{
-<a href=#378 id=378 data-nosnippet>378</a>            scans: session.scans(),
-<a href=#379 id=379 data-nosnippet>379</a>            backend,
-<a href=#380 id=380 data-nosnippet>380</a>            correlations,
-<a href=#381 id=381 data-nosnippet>381</a>            channels,
-<a href=#382 id=382 data-nosnippet>382</a>            predictions,
-<a href=#383 id=383 data-nosnippet>383</a>            segments,
-<a href=#384 id=384 data-nosnippet>384</a>            scan_segments,
-<a href=#385 id=385 data-nosnippet>385</a>            frequencies,
-<a href=#386 id=386 data-nosnippet>386</a>            antenna_types,
-<a href=#387 id=387 data-nosnippet>387</a>            prepared_bytes,
-<a href=#388 id=388 data-nosnippet>388</a>            grids,
-<a href=#389 id=389 data-nosnippet>389</a>            keep: Vec::with_capacity(largest_segment),
-<a href=#390 id=390 data-nosnippet>390</a>            block_rows: <span class="number">0</span>,
-<a href=#391 id=391 data-nosnippet>391</a>            workers: <span class="number">0</span>,
-<a href=#392 id=392 data-nosnippet>392</a>            block: NativeBlock::default(),
-<a href=#393 id=393 data-nosnippet>393</a>            fill_time: std::time::Duration::ZERO,
-<a href=#394 id=394 data-nosnippet>394</a>            noise_terms: Vec::new(),
-<a href=#395 id=395 data-nosnippet>395</a>            noise_rows: Vec::new(),
-<a href=#396 id=396 data-nosnippet>396</a>            noise_row_offset: session.noise_row_offset(),
-<a href=#397 id=397 data-nosnippet>397</a>            most_terms,
-<a href=#398 id=398 data-nosnippet>398</a>            projections: Vec::new(),
-<a href=#399 id=399 data-nosnippet>399</a>            predictor: <span class="prelude-val">None</span>,
-<a href=#400 id=400 data-nosnippet>400</a>            channel_indices: (<span class="number">0</span>..channels <span class="kw">as </span>u32).collect(),
-<a href=#401 id=401 data-nosnippet>401</a>            correlation_indices: (<span class="number">0</span>..correlations <span class="kw">as </span>u32).collect(),
-<a href=#402 id=402 data-nosnippet>402</a>        }))
-<a href=#403 id=403 data-nosnippet>403</a>    }
-<a href=#404 id=404 data-nosnippet>404</a>
-<a href=#405 id=405 data-nosnippet>405</a>    <span class="doccomment">/// The backend the stage predicts on.
-<a href=#406 id=406 data-nosnippet>406</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>backend(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BackendChoice {
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="self">self</span>.backend
-<a href=#408 id=408 data-nosnippet>408</a>    }
-<a href=#409 id=409 data-nosnippet>409</a>
-<a href=#410 id=410 data-nosnippet>410</a>    <span class="doccomment">/// Time spent filling blocks of native rows, which the producer does
-<a href=#411 id=411 data-nosnippet>411</a>    /// alone before the team predicts them.
-<a href=#412 id=412 data-nosnippet>412</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fill_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::time::Duration {
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="self">self</span>.fill_time
-<a href=#414 id=414 data-nosnippet>414</a>    }
-<a href=#415 id=415 data-nosnippet>415</a>
-<a href=#416 id=416 data-nosnippet>416</a>    <span class="doccomment">/// Per-field sets of grids prepared so far, and the time preparing
-<a href=#417 id=417 data-nosnippet>417</a>    /// them took, part of the prediction's.
-<a href=#418 id=418 data-nosnippet>418</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>grid_preparations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (usize, Duration) {
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="self">self</span>.grids.preparations()
-<a href=#420 id=420 data-nosnippet>420</a>    }
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="doccomment">/// Whether a step predicts scan `scan`'s rows.
-<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>predicts(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize) -&gt; bool {
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="self">self</span>.scan_segments[scan].is_some()
-<a href=#425 id=425 data-nosnippet>425</a>    }
-<a href=#426 id=426 data-nosnippet>426</a>
-<a href=#427 id=427 data-nosnippet>427</a>    <span class="doccomment">/// The most domains a segment sums.
-<a href=#428 id=428 data-nosnippet>428</a>    </span><span class="kw">fn </span>largest_domains(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#429 id=429 data-nosnippet>429</a>        <span class="self">self</span>.segments
-<a href=#430 id=430 data-nosnippet>430</a>            .iter()
-<a href=#431 id=431 data-nosnippet>431</a>            .map(|segment| segment.steps.len())
-<a href=#432 id=432 data-nosnippet>432</a>            .max()
-<a href=#433 id=433 data-nosnippet>433</a>            .unwrap_or(<span class="number">0</span>)
-<a href=#434 id=434 data-nosnippet>434</a>    }
-<a href=#435 id=435 data-nosnippet>435</a>
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="doccomment">/// Bytes of the per-field grids the segment that needs most holds at
-<a href=#437 id=437 data-nosnippet>437</a>    /// once: the least the cache is admitted with.
-<a href=#438 id=438 data-nosnippet>438</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>minimum_grid_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#439 id=439 data-nosnippet>439</a>        <span class="self">self</span>.segments
-<a href=#440 id=440 data-nosnippet>440</a>            .iter()
-<a href=#441 id=441 data-nosnippet>441</a>            .map(|segment| {
-<a href=#442 id=442 data-nosnippet>442</a>                segment
-<a href=#443 id=443 data-nosnippet>443</a>                    .steps
-<a href=#444 id=444 data-nosnippet>444</a>                    .iter()
-<a href=#445 id=445 data-nosnippet>445</a>                    .map(|<span class="kw-2">&amp;</span>step| <span class="self">self</span>.grids.cost((step, segment.field)))
-<a href=#446 id=446 data-nosnippet>446</a>                    .sum::&lt;u64&gt;()
-<a href=#447 id=447 data-nosnippet>447</a>            })
-<a href=#448 id=448 data-nosnippet>448</a>            .max()
-<a href=#449 id=449 data-nosnippet>449</a>            .unwrap_or(<span class="number">0</span>)
-<a href=#450 id=450 data-nosnippet>450</a>    }
-<a href=#451 id=451 data-nosnippet>451</a>
-<a href=#452 id=452 data-nosnippet>452</a>    <span class="doccomment">/// Bytes of the per-field grids `close` may hold beyond the least it is
-<a href=#453 id=453 data-nosnippet>453</a>    /// admitted with ([`Self::bytes`]): enough to prepare each set once.
-<a href=#454 id=454 data-nosnippet>454</a>    /// `close` admits as much of them as its budget leaves free, after its
-<a href=#455 id=455 data-nosnippet>455</a>    /// workers ([`Self::start`]).
-<a href=#456 id=456 data-nosnippet>456</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>extra_grid_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="self">self</span>.grids
-<a href=#458 id=458 data-nosnippet>458</a>            .all_bytes()
-<a href=#459 id=459 data-nosnippet>459</a>            .saturating_sub(<span class="self">self</span>.minimum_grid_bytes())
-<a href=#460 id=460 data-nosnippet>460</a>    }
-<a href=#461 id=461 data-nosnippet>461</a>
-<a href=#462 id=462 data-nosnippet>462</a>    <span class="doccomment">/// Bytes preparing a per-field set holds beside it with `workers`
-<a href=#463 id=463 data-nosnippet>463</a>    /// workers, for the step that needs most; one set is prepared at a
-<a href=#464 id=464 data-nosnippet>464</a>    /// time.
-<a href=#465 id=465 data-nosnippet>465</a>    </span><span class="kw">fn </span>preparation_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, workers: usize) -&gt; u64 {
-<a href=#466 id=466 data-nosnippet>466</a>        <span class="self">self</span>.predictions
-<a href=#467 id=467 data-nosnippet>467</a>            .iter()
-<a href=#468 id=468 data-nosnippet>468</a>            .map(|prediction| prediction.preparation_bytes(workers))
-<a href=#469 id=469 data-nosnippet>469</a>            .max()
-<a href=#470 id=470 data-nosnippet>470</a>            .unwrap_or(<span class="number">0</span>)
-<a href=#471 id=471 data-nosnippet>471</a>    }
-<a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a>    <span class="doccomment">/// The block of `rows` rows projected on `domains` domains.
-<a href=#474 id=474 data-nosnippet>474</a>    </span><span class="kw">fn </span>block_shape(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: usize, domains: usize) -&gt; BlockShape {
-<a href=#475 id=475 data-nosnippet>475</a>        BlockShape {
-<a href=#476 id=476 data-nosnippet>476</a>            rows,
-<a href=#477 id=477 data-nosnippet>477</a>            spectrum: RowSpectrum::evenly_spaced(<span class="self">self</span>.channels),
-<a href=#478 id=478 data-nosnippet>478</a>            correlations: <span class="self">self</span>.correlations,
-<a href=#479 id=479 data-nosnippet>479</a>            domains,
-<a href=#480 id=480 data-nosnippet>480</a>        }
-<a href=#481 id=481 data-nosnippet>481</a>    }
-<a href=#482 id=482 data-nosnippet>482</a>
-<a href=#483 id=483 data-nosnippet>483</a>    <span class="doccomment">/// Rows of a small block for write batches of `batch_rows` rows: as
-<a href=#484 id=484 data-nosnippet>484</a>    /// many as [`SMALL_BLOCK_BYTES`] holds of native rows with all their
-<a href=#485 id=485 data-nosnippet>485</a>    /// samples, at most a batch and at least one. The block itself shares
-<a href=#486 id=486 data-nosnippet>486</a>    /// its rows' samples ([`NativeBlock::reset_shared`]), but what the
-<a href=#487 id=487 data-nosnippet>487</a>    /// predictor holds per row (its model cells and their output) is of
-<a href=#488 id=488 data-nosnippet>488</a>    /// that size.
-<a href=#489 id=489 data-nosnippet>489</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>small_block_rows(<span class="kw-2">&amp;</span><span class="self">self</span>, batch_rows: usize) -&gt; usize {
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="kw">let </span>row = <span class="self">self</span>.block_shape(<span class="number">1</span>, <span class="self">self</span>.largest_domains()).bytes().max(<span class="number">1</span>);
-<a href=#491 id=491 data-nosnippet>491</a>        usize::try_from(SMALL_BLOCK_BYTES / row)
-<a href=#492 id=492 data-nosnippet>492</a>            .unwrap_or(usize::MAX)
-<a href=#493 id=493 data-nosnippet>493</a>            .clamp(<span class="number">1</span>, batch_rows.max(<span class="number">1</span>))
+<a href=#129 id=129 data-nosnippet>129</a>    correlations: <span class="kw-2">&amp;</span>[i32],
+<a href=#130 id=130 data-nosnippet>130</a>) -&gt; SimulatorResult&lt;Segment&gt; {
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="comment">// Header predicates can reject every row of a chunk without excluding
+<a href=#132 id=132 data-nosnippet>132</a>    // its field/window. Those steps have neither science nor a captured
+<a href=#133 id=133 data-nosnippet>133</a>    // frame there; omit their domains instead of inventing an epoch.
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>selected_steps = Vec::with_capacity(steps.len());
+<a href=#135 id=135 data-nosnippet>135</a>    selected_steps.extend(steps.filter(|<span class="kw-2">&amp;</span>step| {
+<a href=#136 id=136 data-nosnippet>136</a>        predictions[step].has_selected_chunk(scan)
+<a href=#137 id=137 data-nosnippet>137</a>            &amp;&amp; predictions[step].matches_correlations(correlations)
+<a href=#138 id=138 data-nosnippet>138</a>    }));
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">let </span>steps = selected_steps;
+<a href=#140 id=140 data-nosnippet>140</a>    <span class="kw">let </span><span class="kw-2">mut </span>projections = Vec::with_capacity(steps.len());
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">let </span><span class="kw-2">mut </span>pointing_offsets = Vec::with_capacity(steps.len());
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>step <span class="kw">in </span><span class="kw-2">&amp;</span>steps {
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">let </span>prediction = predictions[step];
+<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">if </span>prediction.grids_for(prediction.grid_id(scan)).is_none() {
+<a href=#145 id=145 data-nosnippet>145</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#146 id=146 data-nosnippet>146</a>                <span class="string">"predict prepared no grids for field {}"</span>,
+<a href=#147 id=147 data-nosnippet>147</a>                scan.field_id
+<a href=#148 id=148 data-nosnippet>148</a>            )));
+<a href=#149 id=149 data-nosnippet>149</a>        }
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="comment">// `MosaicFT` reprojects through `girarUVW`, the others through
+<a href=#151 id=151 data-nosnippet>151</a>        // `rotateUVW`.
+<a href=#152 id=152 data-nosnippet>152</a>        </span><span class="kw">let </span>phase = prediction.phase_centre(scan);
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">let </span>projection = <span class="kw">match </span>prediction.model.machine() {
+<a href=#154 id=154 data-nosnippet>154</a>            FtMachine::Mosaic =&gt; {
+<a href=#155 id=155 data-nosnippet>155</a>                GridFtProjection::mosaic_between_j2000_directions(phase, prediction.tangent_rad)
+<a href=#156 id=156 data-nosnippet>156</a>            }
+<a href=#157 id=157 data-nosnippet>157</a>            FtMachine::Grid(<span class="kw">_</span>) | FtMachine::WProject(<span class="kw">_</span>) =&gt; {
+<a href=#158 id=158 data-nosnippet>158</a>                <span class="kw">let </span>source = MDirection::from_angles(phase[<span class="number">0</span>], phase[<span class="number">1</span>], DirectionRef::J2000);
+<a href=#159 id=159 data-nosnippet>159</a>                GridFtProjection::between_directions_with_frame(
+<a href=#160 id=160 data-nosnippet>160</a>                    <span class="kw-2">&amp;</span>source,
+<a href=#161 id=161 data-nosnippet>161</a>                    <span class="kw-2">&amp;</span>prediction.tangent,
+<a href=#162 id=162 data-nosnippet>162</a>                    <span class="kw-2">&amp;</span>prediction.frame(scan)<span class="question-mark">?</span>,
+<a href=#163 id=163 data-nosnippet>163</a>                )
+<a href=#164 id=164 data-nosnippet>164</a>                .map_err(|error| {
+<a href=#165 id=165 data-nosnippet>165</a>                    SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"simulator image-frame projection: {error}"</span>))
+<a href=#166 id=166 data-nosnippet>166</a>                })<span class="question-mark">?
+<a href=#167 id=167 data-nosnippet>167</a>            </span>}
+<a href=#168 id=168 data-nosnippet>168</a>        };
+<a href=#169 id=169 data-nosnippet>169</a>        projections.push(projection);
+<a href=#170 id=170 data-nosnippet>170</a>        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
+<a href=#171 id=171 data-nosnippet>171</a>    }
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="prelude-val">Ok</span>(Segment {
+<a href=#173 id=173 data-nosnippet>173</a>        source_scan: scan_index,
+<a href=#174 id=174 data-nosnippet>174</a>        steps,
+<a href=#175 id=175 data-nosnippet>175</a>        field: scan.field_id,
+<a href=#176 id=176 data-nosnippet>176</a>        projections,
+<a href=#177 id=177 data-nosnippet>177</a>        pointing_offsets,
+<a href=#178 id=178 data-nosnippet>178</a>    })
+<a href=#179 id=179 data-nosnippet>179</a>}
+<a href=#180 id=180 data-nosnippet>180</a>
+<a href=#181 id=181 data-nosnippet>181</a><span class="kw">impl </span>Segment {
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">fn </span>matches(
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#184 id=184 data-nosnippet>184</a>        predictions: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>Prediction],
+<a href=#185 id=185 data-nosnippet>185</a>        scans: <span class="kw-2">&amp;</span>[Scan],
+<a href=#186 id=186 data-nosnippet>186</a>        scan: <span class="kw-2">&amp;</span>Scan,
+<a href=#187 id=187 data-nosnippet>187</a>        steps: std::ops::Range&lt;usize&gt;,
+<a href=#188 id=188 data-nosnippet>188</a>        correlations: <span class="kw-2">&amp;</span>[i32],
+<a href=#189 id=189 data-nosnippet>189</a>    ) -&gt; bool {
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>original = <span class="kw-2">&amp;</span>scans[<span class="self">self</span>.source_scan];
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="self">self</span>.field == scan.field_id
+<a href=#192 id=192 data-nosnippet>192</a>            &amp;&amp; <span class="self">self</span>.steps.iter().copied().eq(steps.clone().filter(|<span class="kw-2">&amp;</span>step| {
+<a href=#193 id=193 data-nosnippet>193</a>                predictions[step].has_selected_chunk(scan)
+<a href=#194 id=194 data-nosnippet>194</a>                    &amp;&amp; predictions[step].matches_correlations(correlations)
+<a href=#195 id=195 data-nosnippet>195</a>            }))
+<a href=#196 id=196 data-nosnippet>196</a>            &amp;&amp; original.pointing_rad.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
+<a href=#197 id=197 data-nosnippet>197</a>            &amp;&amp; steps.into_iter().all(|step| {
+<a href=#198 id=198 data-nosnippet>198</a>                predictions[step].phase_centre(original).map(f64::to_bits)
+<a href=#199 id=199 data-nosnippet>199</a>                    == predictions[step].phase_centre(scan).map(f64::to_bits)
+<a href=#200 id=200 data-nosnippet>200</a>            })
+<a href=#201 id=201 data-nosnippet>201</a>    }
+<a href=#202 id=202 data-nosnippet>202</a>}
+<a href=#203 id=203 data-nosnippet>203</a>
+<a href=#204 id=204 data-nosnippet>204</a><span class="doccomment">/// The prediction stage's state across batches.
+<a href=#205 id=205 data-nosnippet>205</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PredictionStage&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#206 id=206 data-nosnippet>206</a>    scans: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[Scan],
+<a href=#207 id=207 data-nosnippet>207</a>    backend: BackendChoice,
+<a href=#208 id=208 data-nosnippet>208</a>    correlations: usize,
+<a href=#209 id=209 data-nosnippet>209</a>    channels: usize,
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="doccomment">/// The plan's predict steps, in order.
+<a href=#211 id=211 data-nosnippet>211</a>    </span>predictions: Vec&lt;<span class="kw-2">&amp;</span><span class="lifetime">'s </span>Prediction&gt;,
+<a href=#212 id=212 data-nosnippet>212</a>    segments: Vec&lt;Segment&gt;,
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="doccomment">/// Each scan's segment; `None` for a scan no step covers.
+<a href=#214 id=214 data-nosnippet>214</a>    </span>scan_segments: Vec&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt;,
+<a href=#215 id=215 data-nosnippet>215</a>    scan_offset: usize,
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="doccomment">/// Each spectral window's channel frequencies.
+<a href=#217 id=217 data-nosnippet>217</a>    </span>frequencies: Vec&lt;Vec&lt;f64&gt;&gt;,
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// Each antenna's dish class, which keys the mosaic machine's kernels
+<a href=#219 id=219 data-nosnippet>219</a>    /// (the other machines ignore it); empty without a mosaic step.
+<a href=#220 id=220 data-nosnippet>220</a>    </span>antenna_types: Vec&lt;u8&gt;,
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="doccomment">/// Bytes of the model grids `predict` prepared, which a device copies.
+<a href=#222 id=222 data-nosnippet>222</a>    </span>prepared_bytes: u64,
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="doccomment">/// The per-field grids `close` prepares, and the keys of the segment
+<a href=#224 id=224 data-nosnippet>224</a>    /// being selected, which it keeps.
+<a href=#225 id=225 data-nosnippet>225</a>    </span>grids: FieldGridCache,
+<a href=#226 id=226 data-nosnippet>226</a>    keep: Vec&lt;GridKey&gt;,
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="doccomment">/// Rows of a block, once started.
+<a href=#228 id=228 data-nosnippet>228</a>    </span>block_rows: usize,
+<a href=#229 id=229 data-nosnippet>229</a>    workers: usize,
+<a href=#230 id=230 data-nosnippet>230</a>    block: NativeBlock,
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="doccomment">/// Time spent filling blocks of native rows.
+<a href=#232 id=232 data-nosnippet>232</a>    </span>fill_time: std::time::Duration,
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="doccomment">/// A run's noise terms and its block's rows, as the device reads them
+<a href=#234 id=234 data-nosnippet>234</a>    /// when the stage [`Self::noises_on_device`]; allocated on Metal only
+<a href=#235 id=235 data-nosnippet>235</a>    /// ([`Self::start`]).
+<a href=#236 id=236 data-nosnippet>236</a>    </span>noise_terms: Vec&lt;MetalNoiseTerm&gt;,
+<a href=#237 id=237 data-nosnippet>237</a>    noise_rows: Vec&lt;MetalNoiseRow&gt;,
+<a href=#238 id=238 data-nosnippet>238</a>    noise_row_offset: u64,
+<a href=#239 id=239 data-nosnippet>239</a>    <span class="doccomment">/// The most noise applications of one scan: the terms the device holds
+<a href=#240 id=240 data-nosnippet>240</a>    /// at most.
+<a href=#241 id=241 data-nosnippet>241</a>    </span>most_terms: usize,
+<a href=#242 id=242 data-nosnippet>242</a>    projections: Vec&lt;DomainProjection&gt;,
+<a href=#243 id=243 data-nosnippet>243</a>    <span class="doccomment">/// The predictor of the segment last predicted.
+<a href=#244 id=244 data-nosnippet>244</a>    </span>predictor: <span class="prelude-ty">Option</span>&lt;(usize, BlockPredictor&lt;<span class="lifetime">'s</span>&gt;)&gt;,
+<a href=#245 id=245 data-nosnippet>245</a>    channel_indices: Vec&lt;u32&gt;,
+<a href=#246 id=246 data-nosnippet>246</a>    correlation_indices: Vec&lt;u32&gt;,
+<a href=#247 id=247 data-nosnippet>247</a>}
+<a href=#248 id=248 data-nosnippet>248</a>
+<a href=#249 id=249 data-nosnippet>249</a><span class="kw">impl</span>&lt;<span class="lifetime">'s</span>&gt; PredictionStage&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="doccomment">/// The stage for `session`'s predict steps on cells of `(correlations,
+<a href=#251 id=251 data-nosnippet>251</a>    /// channels)`, on `backend`, or on the CPU when a step projects w;
+<a href=#252 id=252 data-nosnippet>252</a>    /// `None` when no step predicts.
+<a href=#253 id=253 data-nosnippet>253</a>    ///
+<a href=#254 id=254 data-nosnippet>254</a>    /// # Errors
+<a href=#255 id=255 data-nosnippet>255</a>    ///
+<a href=#256 id=256 data-nosnippet>256</a>    /// A covered scan's field without grids, which `predict` prepares, or
+<a href=#257 id=257 data-nosnippet>257</a>    /// holds the model to prepare, for every field it covers.
+<a href=#258 id=258 data-nosnippet>258</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+<a href=#259 id=259 data-nosnippet>259</a>        session: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>Simulator,
+<a href=#260 id=260 data-nosnippet>260</a>        (correlations, channels): (usize, usize),
+<a href=#261 id=261 data-nosnippet>261</a>        backend: BackendChoice,
+<a href=#262 id=262 data-nosnippet>262</a>        plan: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>DataPlan,
+<a href=#263 id=263 data-nosnippet>263</a>        scan_scope: std::ops::Range&lt;usize&gt;,
+<a href=#264 id=264 data-nosnippet>264</a>    ) -&gt; SimulatorResult&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;&gt; {
+<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span>predictions: Vec&lt;<span class="kw-2">&amp;</span><span class="lifetime">'s </span>Prediction&gt; = plan
+<a href=#266 id=266 data-nosnippet>266</a>            .predictions()
+<a href=#267 id=267 data-nosnippet>267</a>            .map(|(prediction, <span class="kw">_</span>)| prediction)
+<a href=#268 id=268 data-nosnippet>268</a>            .collect();
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">if </span>predictions.is_empty() {
+<a href=#270 id=270 data-nosnippet>270</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#271 id=271 data-nosnippet>271</a>        }
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="comment">// Metal predicts through `GridFT` only; a session that projects w
+<a href=#273 id=273 data-nosnippet>273</a>        // predicts on the CPU (`predict` refused it on an explicit Metal
+<a href=#274 id=274 data-nosnippet>274</a>        // backend).
+<a href=#275 id=275 data-nosnippet>275</a>        </span><span class="kw">let </span>backend = <span class="kw">if </span>predictions
+<a href=#276 id=276 data-nosnippet>276</a>            .iter()
+<a href=#277 id=277 data-nosnippet>277</a>            .all(|prediction| prediction.model.machine().runs_on_metal())
+<a href=#278 id=278 data-nosnippet>278</a>        {
+<a href=#279 id=279 data-nosnippet>279</a>            backend
+<a href=#280 id=280 data-nosnippet>280</a>        } <span class="kw">else </span>{
+<a href=#281 id=281 data-nosnippet>281</a>            BackendChoice::Cpu
+<a href=#282 id=282 data-nosnippet>282</a>        };
+<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">let </span><span class="kw-2">mut </span>keys = HashMap::new();
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">let </span><span class="kw-2">mut </span>segments: Vec&lt;Segment&gt; = Vec::new();
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">let </span><span class="kw-2">mut </span>scan_segments = Vec::with_capacity(scan_scope.len());
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="comment">// Each per-field set's visits, by their first scans: a visit is a
+<a href=#287 id=287 data-nosnippet>287</a>        // run of scans of one segment.
+<a href=#288 id=288 data-nosnippet>288</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>visits: HashMap&lt;GridKey, Vec&lt;usize&gt;&gt; = HashMap::new();
+<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span><span class="kw-2">mut </span>prepared_scans = <span class="number">0usize</span>;
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">for </span>(relative, scan) <span class="kw">in </span>session.scans()[scan_scope.clone()].iter().enumerate() {
+<a href=#291 id=291 data-nosnippet>291</a>            <span class="kw">let </span>index = scan_scope.start + relative;
+<a href=#292 id=292 data-nosnippet>292</a>            prepared_scans += <span class="number">1</span>;
+<a href=#293 id=293 data-nosnippet>293</a>            <span class="kw">if </span>scan.row_count() == <span class="number">0 </span>|| !plan.selection.contains_scan(scan) {
+<a href=#294 id=294 data-nosnippet>294</a>                scan_segments.push(<span class="prelude-val">None</span>);
+<a href=#295 id=295 data-nosnippet>295</a>                <span class="kw">continue</span>;
+<a href=#296 id=296 data-nosnippet>296</a>            }
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="kw">let </span>steps = plan.predictions_for_scan(index);
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">if </span>steps.is_empty() {
+<a href=#299 id=299 data-nosnippet>299</a>                scan_segments.push(<span class="prelude-val">None</span>);
+<a href=#300 id=300 data-nosnippet>300</a>                <span class="kw">continue</span>;
+<a href=#301 id=301 data-nosnippet>301</a>            }
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="comment">// Rows are phased on their field (#884); the mosaic machine's
+<a href=#303 id=303 data-nosnippet>303</a>            // kernels ramp to where the antennas point.
+<a href=#304 id=304 data-nosnippet>304</a>            </span><span class="kw">let </span>phase_centre = predictions[steps.start].phase_centre(scan);
+<a href=#305 id=305 data-nosnippet>305</a>            <span class="kw">let </span>key = (
+<a href=#306 id=306 data-nosnippet>306</a>                steps,
+<a href=#307 id=307 data-nosnippet>307</a>                scan.field_id,
+<a href=#308 id=308 data-nosnippet>308</a>                [phase_centre, scan.pointing_rad].map(|direction| direction.map(f64::to_bits)),
+<a href=#309 id=309 data-nosnippet>309</a>            );
+<a href=#310 id=310 data-nosnippet>310</a>            <span class="comment">// The first centre is a cheap lookup key. A later fused image
+<a href=#311 id=311 data-nosnippet>311</a>            // can carry a different epoch after append, so compare them all.
+<a href=#312 id=312 data-nosnippet>312</a>            </span><span class="kw">let </span>cached = keys.get(<span class="kw-2">&amp;</span>key).copied().and_then(|candidate: usize| {
+<a href=#313 id=313 data-nosnippet>313</a>                <span class="kw">if </span>segments[candidate].matches(
+<a href=#314 id=314 data-nosnippet>314</a>                    <span class="kw-2">&amp;</span>predictions,
+<a href=#315 id=315 data-nosnippet>315</a>                    session.scans(),
+<a href=#316 id=316 data-nosnippet>316</a>                    scan,
+<a href=#317 id=317 data-nosnippet>317</a>                    key.<span class="number">0</span>.clone(),
+<a href=#318 id=318 data-nosnippet>318</a>                    session.correlations_for_scan(scan),
+<a href=#319 id=319 data-nosnippet>319</a>                ) {
+<a href=#320 id=320 data-nosnippet>320</a>                    <span class="prelude-val">Some</span>(candidate)
+<a href=#321 id=321 data-nosnippet>321</a>                } <span class="kw">else </span>{
+<a href=#322 id=322 data-nosnippet>322</a>                    segments.iter().position(|segment| {
+<a href=#323 id=323 data-nosnippet>323</a>                        segment.matches(
+<a href=#324 id=324 data-nosnippet>324</a>                            <span class="kw-2">&amp;</span>predictions,
+<a href=#325 id=325 data-nosnippet>325</a>                            session.scans(),
+<a href=#326 id=326 data-nosnippet>326</a>                            scan,
+<a href=#327 id=327 data-nosnippet>327</a>                            key.<span class="number">0</span>.clone(),
+<a href=#328 id=328 data-nosnippet>328</a>                            session.correlations_for_scan(scan),
+<a href=#329 id=329 data-nosnippet>329</a>                        )
+<a href=#330 id=330 data-nosnippet>330</a>                    })
+<a href=#331 id=331 data-nosnippet>331</a>                }
+<a href=#332 id=332 data-nosnippet>332</a>            });
+<a href=#333 id=333 data-nosnippet>333</a>            <span class="kw">let </span>segment = <span class="kw">match </span>cached {
+<a href=#334 id=334 data-nosnippet>334</a>                <span class="prelude-val">Some</span>(segment) =&gt; segment,
+<a href=#335 id=335 data-nosnippet>335</a>                <span class="prelude-val">None </span>=&gt; {
+<a href=#336 id=336 data-nosnippet>336</a>                    segments.push(segment_of(
+<a href=#337 id=337 data-nosnippet>337</a>                        <span class="kw-2">&amp;</span>predictions,
+<a href=#338 id=338 data-nosnippet>338</a>                        key.<span class="number">0</span>.clone(),
+<a href=#339 id=339 data-nosnippet>339</a>                        scan,
+<a href=#340 id=340 data-nosnippet>340</a>                        index,
+<a href=#341 id=341 data-nosnippet>341</a>                        session.correlations_for_scan(scan),
+<a href=#342 id=342 data-nosnippet>342</a>                    )<span class="question-mark">?</span>);
+<a href=#343 id=343 data-nosnippet>343</a>                    keys.insert(key, segments.len() - <span class="number">1</span>);
+<a href=#344 id=344 data-nosnippet>344</a>                    segments.len() - <span class="number">1
+<a href=#345 id=345 data-nosnippet>345</a>                </span>}
+<a href=#346 id=346 data-nosnippet>346</a>            };
+<a href=#347 id=347 data-nosnippet>347</a>            <span class="kw">if </span>scan_segments.last() != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="prelude-val">Some</span>(segment)) {
+<a href=#348 id=348 data-nosnippet>348</a>                <span class="kw">let </span>Segment { steps, .. } = <span class="kw-2">&amp;</span>segments[segment];
+<a href=#349 id=349 data-nosnippet>349</a>                <span class="kw">for </span><span class="kw-2">&amp;</span>step <span class="kw">in </span>steps {
+<a href=#350 id=350 data-nosnippet>350</a>                    <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#351 id=351 data-nosnippet>351</a>                        predictions[step].grids_for(predictions[step].grid_id(scan)),
+<a href=#352 id=352 data-nosnippet>352</a>                        <span class="prelude-val">Some</span>(FieldGrids::PerField)
+<a href=#353 id=353 data-nosnippet>353</a>                    ) {
+<a href=#354 id=354 data-nosnippet>354</a>                        visits
+<a href=#355 id=355 data-nosnippet>355</a>                            .entry((step, predictions[step].grid_id(scan)))
+<a href=#356 id=356 data-nosnippet>356</a>                            .or_default()
+<a href=#357 id=357 data-nosnippet>357</a>                            .push(index);
+<a href=#358 id=358 data-nosnippet>358</a>                    }
+<a href=#359 id=359 data-nosnippet>359</a>                }
+<a href=#360 id=360 data-nosnippet>360</a>            }
+<a href=#361 id=361 data-nosnippet>361</a>            scan_segments.push(<span class="prelude-val">Some</span>(segment));
+<a href=#362 id=362 data-nosnippet>362</a>        }
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="macro">tracing::trace!</span>(
+<a href=#364 id=364 data-nosnippet>364</a>            simulation_prepared_scans = prepared_scans <span class="kw">as </span>u64,
+<a href=#365 id=365 data-nosnippet>365</a>            <span class="string">"prepared simulator prediction scans"
+<a href=#366 id=366 data-nosnippet>366</a>        </span>);
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="comment">// An opened MeasurementSet may have a segment a row, gathered with
+<a href=#368 id=368 data-nosnippet>368</a>        // room to spare.
+<a href=#369 id=369 data-nosnippet>369</a>        </span>segments.shrink_to_fit();
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">let </span>frequencies = session
+<a href=#371 id=371 data-nosnippet>371</a>            .spectral_windows()
+<a href=#372 id=372 data-nosnippet>372</a>            .iter()
+<a href=#373 id=373 data-nosnippet>373</a>            .map(|window| window.channel_frequencies_hz())
+<a href=#374 id=374 data-nosnippet>374</a>            .collect();
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">let </span>prepared_bytes = predictions
+<a href=#376 id=376 data-nosnippet>376</a>            .iter()
+<a href=#377 id=377 data-nosnippet>377</a>            .map(|prediction| prediction.prepared_bytes())
+<a href=#378 id=378 data-nosnippet>378</a>            .sum();
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="comment">// A device copies each per-field set it predicts from.
+<a href=#380 id=380 data-nosnippet>380</a>        </span><span class="kw">let </span>copies = <span class="kw">match </span>backend {
+<a href=#381 id=381 data-nosnippet>381</a>            BackendChoice::Cpu =&gt; <span class="number">1</span>,
+<a href=#382 id=382 data-nosnippet>382</a>            BackendChoice::Metal =&gt; <span class="number">2</span>,
+<a href=#383 id=383 data-nosnippet>383</a>        };
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span>costs = predictions
+<a href=#385 id=385 data-nosnippet>385</a>            .iter()
+<a href=#386 id=386 data-nosnippet>386</a>            .map(|prediction| {
+<a href=#387 id=387 data-nosnippet>387</a>                <span class="kw">if </span>prediction.per_field() {
+<a href=#388 id=388 data-nosnippet>388</a>                    copies * prediction.set_bytes()
+<a href=#389 id=389 data-nosnippet>389</a>                } <span class="kw">else </span>{
+<a href=#390 id=390 data-nosnippet>390</a>                    <span class="number">0
+<a href=#391 id=391 data-nosnippet>391</a>                </span>}
+<a href=#392 id=392 data-nosnippet>392</a>            })
+<a href=#393 id=393 data-nosnippet>393</a>            .collect();
+<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">let </span>grids = FieldGridCache::new(costs, visits.into_iter().collect());
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">let </span>largest_segment = segments
+<a href=#396 id=396 data-nosnippet>396</a>            .iter()
+<a href=#397 id=397 data-nosnippet>397</a>            .map(|segment| segment.steps.len())
+<a href=#398 id=398 data-nosnippet>398</a>            .max()
+<a href=#399 id=399 data-nosnippet>399</a>            .unwrap_or(<span class="number">0</span>);
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="comment">// A mosaic step classes the antennas of its time in first-seen
+<a href=#401 id=401 data-nosnippet>401</a>        // order, so a later step's classes extend an earlier one's.
+<a href=#402 id=402 data-nosnippet>402</a>        </span><span class="kw">let </span>antenna_types = predictions
+<a href=#403 id=403 data-nosnippet>403</a>            .iter()
+<a href=#404 id=404 data-nosnippet>404</a>            .map(|prediction| prediction.antenna_types())
+<a href=#405 id=405 data-nosnippet>405</a>            .max_by_key(|types| types.len())
+<a href=#406 id=406 data-nosnippet>406</a>            .unwrap_or_default()
+<a href=#407 id=407 data-nosnippet>407</a>            .to_vec();
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>most_terms = scan_scope
+<a href=#409 id=409 data-nosnippet>409</a>            .clone()
+<a href=#410 id=410 data-nosnippet>410</a>            .map(|scan| plan.noise_for_scan(scan).len())
+<a href=#411 id=411 data-nosnippet>411</a>            .max()
+<a href=#412 id=412 data-nosnippet>412</a>            .unwrap_or(<span class="number">0</span>);
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="self">Self </span>{
+<a href=#414 id=414 data-nosnippet>414</a>            scans: session.scans(),
+<a href=#415 id=415 data-nosnippet>415</a>            backend,
+<a href=#416 id=416 data-nosnippet>416</a>            correlations,
+<a href=#417 id=417 data-nosnippet>417</a>            channels,
+<a href=#418 id=418 data-nosnippet>418</a>            predictions,
+<a href=#419 id=419 data-nosnippet>419</a>            segments,
+<a href=#420 id=420 data-nosnippet>420</a>            scan_segments,
+<a href=#421 id=421 data-nosnippet>421</a>            scan_offset: scan_scope.start,
+<a href=#422 id=422 data-nosnippet>422</a>            frequencies,
+<a href=#423 id=423 data-nosnippet>423</a>            antenna_types,
+<a href=#424 id=424 data-nosnippet>424</a>            prepared_bytes,
+<a href=#425 id=425 data-nosnippet>425</a>            grids,
+<a href=#426 id=426 data-nosnippet>426</a>            keep: Vec::with_capacity(largest_segment),
+<a href=#427 id=427 data-nosnippet>427</a>            block_rows: <span class="number">0</span>,
+<a href=#428 id=428 data-nosnippet>428</a>            workers: <span class="number">0</span>,
+<a href=#429 id=429 data-nosnippet>429</a>            block: NativeBlock::default(),
+<a href=#430 id=430 data-nosnippet>430</a>            fill_time: std::time::Duration::ZERO,
+<a href=#431 id=431 data-nosnippet>431</a>            noise_terms: Vec::new(),
+<a href=#432 id=432 data-nosnippet>432</a>            noise_rows: Vec::new(),
+<a href=#433 id=433 data-nosnippet>433</a>            noise_row_offset: session.noise_row_offset(),
+<a href=#434 id=434 data-nosnippet>434</a>            most_terms,
+<a href=#435 id=435 data-nosnippet>435</a>            projections: Vec::new(),
+<a href=#436 id=436 data-nosnippet>436</a>            predictor: <span class="prelude-val">None</span>,
+<a href=#437 id=437 data-nosnippet>437</a>            channel_indices: (<span class="number">0</span>..channels <span class="kw">as </span>u32).collect(),
+<a href=#438 id=438 data-nosnippet>438</a>            correlation_indices: (<span class="number">0</span>..correlations <span class="kw">as </span>u32).collect(),
+<a href=#439 id=439 data-nosnippet>439</a>        }))
+<a href=#440 id=440 data-nosnippet>440</a>    }
+<a href=#441 id=441 data-nosnippet>441</a>
+<a href=#442 id=442 data-nosnippet>442</a>    <span class="doccomment">/// The backend the stage predicts on.
+<a href=#443 id=443 data-nosnippet>443</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>backend(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BackendChoice {
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="self">self</span>.backend
+<a href=#445 id=445 data-nosnippet>445</a>    }
+<a href=#446 id=446 data-nosnippet>446</a>
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="doccomment">/// Time spent filling blocks of native rows, which the producer does
+<a href=#448 id=448 data-nosnippet>448</a>    /// alone before the team predicts them.
+<a href=#449 id=449 data-nosnippet>449</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fill_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::time::Duration {
+<a href=#450 id=450 data-nosnippet>450</a>        <span class="self">self</span>.fill_time
+<a href=#451 id=451 data-nosnippet>451</a>    }
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a>    <span class="doccomment">/// Per-field sets of grids prepared so far, and the time preparing
+<a href=#454 id=454 data-nosnippet>454</a>    /// them took, part of the prediction's.
+<a href=#455 id=455 data-nosnippet>455</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>grid_preparations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (usize, Duration) {
+<a href=#456 id=456 data-nosnippet>456</a>        <span class="self">self</span>.grids.preparations()
+<a href=#457 id=457 data-nosnippet>457</a>    }
+<a href=#458 id=458 data-nosnippet>458</a>
+<a href=#459 id=459 data-nosnippet>459</a>    <span class="doccomment">/// Whether a step predicts scan `scan`'s rows.
+<a href=#460 id=460 data-nosnippet>460</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>predicts(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize) -&gt; bool {
+<a href=#461 id=461 data-nosnippet>461</a>        <span class="self">self</span>.segment_for_scan(scan).is_some()
+<a href=#462 id=462 data-nosnippet>462</a>    }
+<a href=#463 id=463 data-nosnippet>463</a>
+<a href=#464 id=464 data-nosnippet>464</a>    <span class="kw">fn </span>segment_for_scan(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#465 id=465 data-nosnippet>465</a>        <span class="self">self</span>.scan_segments
+<a href=#466 id=466 data-nosnippet>466</a>            .get(scan.checked_sub(<span class="self">self</span>.scan_offset)<span class="question-mark">?</span>)
+<a href=#467 id=467 data-nosnippet>467</a>            .copied()
+<a href=#468 id=468 data-nosnippet>468</a>            .flatten()
+<a href=#469 id=469 data-nosnippet>469</a>    }
+<a href=#470 id=470 data-nosnippet>470</a>
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="doccomment">/// The most domains a segment sums.
+<a href=#472 id=472 data-nosnippet>472</a>    </span><span class="kw">fn </span>largest_domains(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="self">self</span>.segments
+<a href=#474 id=474 data-nosnippet>474</a>            .iter()
+<a href=#475 id=475 data-nosnippet>475</a>            .map(|segment| segment.steps.len())
+<a href=#476 id=476 data-nosnippet>476</a>            .max()
+<a href=#477 id=477 data-nosnippet>477</a>            .unwrap_or(<span class="number">0</span>)
+<a href=#478 id=478 data-nosnippet>478</a>    }
+<a href=#479 id=479 data-nosnippet>479</a>
+<a href=#480 id=480 data-nosnippet>480</a>    <span class="doccomment">/// Bytes of the per-field grids the segment that needs most holds at
+<a href=#481 id=481 data-nosnippet>481</a>    /// once: the least the cache is admitted with.
+<a href=#482 id=482 data-nosnippet>482</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>minimum_grid_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="self">self</span>.segments
+<a href=#484 id=484 data-nosnippet>484</a>            .iter()
+<a href=#485 id=485 data-nosnippet>485</a>            .map(|segment| {
+<a href=#486 id=486 data-nosnippet>486</a>                segment
+<a href=#487 id=487 data-nosnippet>487</a>                    .steps
+<a href=#488 id=488 data-nosnippet>488</a>                    .iter()
+<a href=#489 id=489 data-nosnippet>489</a>                    .map(|<span class="kw-2">&amp;</span>step| <span class="self">self</span>.grids.cost((step, segment.field)))
+<a href=#490 id=490 data-nosnippet>490</a>                    .sum::&lt;u64&gt;()
+<a href=#491 id=491 data-nosnippet>491</a>            })
+<a href=#492 id=492 data-nosnippet>492</a>            .max()
+<a href=#493 id=493 data-nosnippet>493</a>            .unwrap_or(<span class="number">0</span>)
 <a href=#494 id=494 data-nosnippet>494</a>    }
 <a href=#495 id=495 data-nosnippet>495</a>
-<a href=#496 id=496 data-nosnippet>496</a>    <span class="doccomment">/// Bytes the stage holds while `close` predicts blocks of `rows` rows
-<a href=#497 id=497 data-nosnippet>497</a>    /// with `workers` workers: the predictor of the segment that needs most
-<a href=#498 id=498 data-nosnippet>498</a>    /// ([`BlockPredictor::bytes_for`]), one block of native rows sharing
-<a href=#499 id=499 data-nosnippet>499</a>    /// their samples ([`BlockShape::shared_bytes`]) and each row's
-<a href=#500 id=500 data-nosnippet>500</a>    /// projections; the per-field grids of the segment that needs most,
-<a href=#501 id=501 data-nosnippet>501</a>    /// and a set's preparation ([`Self::extra_grid_bytes`] are admitted
-<a href=#502 id=502 data-nosnippet>502</a>    /// apart); on Metal the device copy of every model grid `predict`
-<a href=#503 id=503 data-nosnippet>503</a>    /// prepared
-<a href=#504 id=504 data-nosnippet>504</a>    /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]) and a
-<a href=#505 id=505 data-nosnippet>505</a>    /// block's noise rows and the most noise terms of a scan, here and in
-<a href=#506 id=506 data-nosnippet>506</a>    /// the predictor ([`BlockPredictor::noise_bytes`]); and what it keeps
-<a href=#507 id=507 data-nosnippet>507</a>    /// across blocks ([`Self::state_bytes`]).
-<a href=#508 id=508 data-nosnippet>508</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: usize, workers: usize) -&gt; u64 {
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">let </span>predictor = <span class="self">self
-<a href=#510 id=510 data-nosnippet>510</a>            </span>.segments
+<a href=#496 id=496 data-nosnippet>496</a>    <span class="doccomment">/// Bytes of the per-field grids `close` may hold beyond the least it is
+<a href=#497 id=497 data-nosnippet>497</a>    /// admitted with ([`Self::bytes`]): enough to prepare each set once.
+<a href=#498 id=498 data-nosnippet>498</a>    /// `close` admits as much of them as its budget leaves free, after its
+<a href=#499 id=499 data-nosnippet>499</a>    /// workers ([`Self::start`]).
+<a href=#500 id=500 data-nosnippet>500</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>extra_grid_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="self">self</span>.grids
+<a href=#502 id=502 data-nosnippet>502</a>            .all_bytes()
+<a href=#503 id=503 data-nosnippet>503</a>            .saturating_sub(<span class="self">self</span>.minimum_grid_bytes())
+<a href=#504 id=504 data-nosnippet>504</a>    }
+<a href=#505 id=505 data-nosnippet>505</a>
+<a href=#506 id=506 data-nosnippet>506</a>    <span class="doccomment">/// Bytes preparing a per-field set holds beside it with `workers`
+<a href=#507 id=507 data-nosnippet>507</a>    /// workers, for the step that needs most; one set is prepared at a
+<a href=#508 id=508 data-nosnippet>508</a>    /// time.
+<a href=#509 id=509 data-nosnippet>509</a>    </span><span class="kw">fn </span>preparation_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, workers: usize) -&gt; u64 {
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="self">self</span>.predictions
 <a href=#511 id=511 data-nosnippet>511</a>            .iter()
-<a href=#512 id=512 data-nosnippet>512</a>            .map(|segment| {
-<a href=#513 id=513 data-nosnippet>513</a>                BlockPredictor::bytes_for(
-<a href=#514 id=514 data-nosnippet>514</a>                    segment.steps.iter().map(|<span class="kw-2">&amp;</span>step| {
-<a href=#515 id=515 data-nosnippet>515</a>                        <span class="kw">let </span>model = <span class="kw-2">&amp;</span><span class="self">self</span>.predictions[step].model;
-<a href=#516 id=516 data-nosnippet>516</a>                        (<span class="kw-2">&amp;</span>model.operator, <span class="kw-2">&amp;</span>model.resampler)
-<a href=#517 id=517 data-nosnippet>517</a>                    }),
-<a href=#518 id=518 data-nosnippet>518</a>                    <span class="self">self</span>.backend,
-<a href=#519 id=519 data-nosnippet>519</a>                    <span class="self">self</span>.block_shape(rows, segment.steps.len()),
-<a href=#520 id=520 data-nosnippet>520</a>                    workers,
-<a href=#521 id=521 data-nosnippet>521</a>                )
-<a href=#522 id=522 data-nosnippet>522</a>            })
-<a href=#523 id=523 data-nosnippet>523</a>            .max()
-<a href=#524 id=524 data-nosnippet>524</a>            .unwrap_or(<span class="number">0</span>);
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>grids = <span class="self">self</span>.minimum_grid_bytes() + <span class="self">self</span>.preparation_bytes(workers);
-<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">let </span>domains = <span class="self">self</span>.largest_domains();
-<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">let </span>shape = <span class="self">self</span>.block_shape(rows, domains);
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="kw">let </span>projections = (domains * size_of::&lt;DomainProjection&gt;()) <span class="kw">as </span>u64;
-<a href=#529 id=529 data-nosnippet>529</a>        <span class="kw">let </span>terms = <span class="self">self</span>.most_terms;
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">let </span>device = <span class="kw">match </span><span class="self">self</span>.backend {
-<a href=#531 id=531 data-nosnippet>531</a>            BackendChoice::Cpu =&gt; <span class="number">0</span>,
-<a href=#532 id=532 data-nosnippet>532</a>            BackendChoice::Metal =&gt; {
-<a href=#533 id=533 data-nosnippet>533</a>                <span class="comment">// The noise's rows and terms here, and the predictor's copy.
-<a href=#534 id=534 data-nosnippet>534</a>                </span><span class="kw">let </span>noise = rows * size_of::&lt;MetalNoiseRow&gt;() + terms * size_of::&lt;MetalNoiseTerm&gt;();
-<a href=#535 id=535 data-nosnippet>535</a>                <span class="self">self</span>.prepared_bytes
-<a href=#536 id=536 data-nosnippet>536</a>                    + noise <span class="kw">as </span>u64
-<a href=#537 id=537 data-nosnippet>537</a>                    + BlockPredictor::noise_bytes(<span class="self">self</span>.backend, shape, terms)
-<a href=#538 id=538 data-nosnippet>538</a>            }
-<a href=#539 id=539 data-nosnippet>539</a>        };
-<a href=#540 id=540 data-nosnippet>540</a>        predictor + shape.shared_bytes() + projections + grids + device + <span class="self">self</span>.state_bytes()
-<a href=#541 id=541 data-nosnippet>541</a>    }
-<a href=#542 id=542 data-nosnippet>542</a>
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="doccomment">/// Bytes the stage keeps across blocks: the predict steps, each scan's
-<a href=#544 id=544 data-nosnippet>544</a>    /// segment, of which an opened MeasurementSet may have one a row (#886
-<a href=#545 id=545 data-nosnippet>545</a>    /// review), each segment's steps, the windows' channel frequencies, the
-<a href=#546 id=546 data-nosnippet>546</a>    /// antennas' dish classes, the per-field grids' bookkeeping and a
-<a href=#547 id=547 data-nosnippet>547</a>    /// selection's domains and keys, each as allocated.
-<a href=#548 id=548 data-nosnippet>548</a>    </span><span class="kw">fn </span>state_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">let </span>segments: usize = <span class="self">self
-<a href=#550 id=550 data-nosnippet>550</a>            </span>.segments
-<a href=#551 id=551 data-nosnippet>551</a>            .iter()
-<a href=#552 id=552 data-nosnippet>552</a>            .map(|segment| {
-<a href=#553 id=553 data-nosnippet>553</a>                segment.steps.capacity() * size_of::&lt;usize&gt;()
-<a href=#554 id=554 data-nosnippet>554</a>                    + segment.projections.capacity() * size_of::&lt;GridFtProjection&gt;()
-<a href=#555 id=555 data-nosnippet>555</a>                    + segment.pointing_offsets.capacity() * size_of::&lt;[f64; <span class="number">2</span>]&gt;()
-<a href=#556 id=556 data-nosnippet>556</a>            })
-<a href=#557 id=557 data-nosnippet>557</a>            .sum();
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>frequencies: usize = <span class="self">self
-<a href=#559 id=559 data-nosnippet>559</a>            </span>.frequencies
-<a href=#560 id=560 data-nosnippet>560</a>            .iter()
-<a href=#561 id=561 data-nosnippet>561</a>            .map(|window| window.capacity() * size_of::&lt;f64&gt;())
-<a href=#562 id=562 data-nosnippet>562</a>            .sum();
-<a href=#563 id=563 data-nosnippet>563</a>        <span class="kw">let </span>selection =
-<a href=#564 id=564 data-nosnippet>564</a>            <span class="self">self</span>.largest_domains() * (size_of::&lt;PredictionDomain&lt;<span class="lifetime">'_</span>&gt;&gt;() + size_of::&lt;GridKey&gt;());
-<a href=#565 id=565 data-nosnippet>565</a>        (<span class="self">self</span>.predictions.capacity() * size_of::&lt;<span class="kw-2">&amp;</span>Prediction&gt;()
-<a href=#566 id=566 data-nosnippet>566</a>            + <span class="self">self</span>.scan_segments.capacity() * size_of::&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt;()
-<a href=#567 id=567 data-nosnippet>567</a>            + <span class="self">self</span>.segments.capacity() * size_of::&lt;Segment&gt;()
-<a href=#568 id=568 data-nosnippet>568</a>            + segments
-<a href=#569 id=569 data-nosnippet>569</a>            + <span class="self">self</span>.frequencies.capacity() * size_of::&lt;Vec&lt;f64&gt;&gt;()
-<a href=#570 id=570 data-nosnippet>570</a>            + frequencies
-<a href=#571 id=571 data-nosnippet>571</a>            + <span class="self">self</span>.antenna_types.capacity()
-<a href=#572 id=572 data-nosnippet>572</a>            + selection) <span class="kw">as </span>u64
-<a href=#573 id=573 data-nosnippet>573</a>            + <span class="self">self</span>.grids.state_bytes()
-<a href=#574 id=574 data-nosnippet>574</a>    }
-<a href=#575 id=575 data-nosnippet>575</a>
-<a href=#576 id=576 data-nosnippet>576</a>    <span class="doccomment">/// Allocate the block of `rows` rows, predicted with `workers` workers,
-<a href=#577 id=577 data-nosnippet>577</a>    /// as [`Self::bytes`] charged it, and give the per-field grids
-<a href=#578 id=578 data-nosnippet>578</a>    /// `grid_bytes`, at least the [`Self::bytes`] charged them and at most
-<a href=#579 id=579 data-nosnippet>579</a>    /// [`Self::extra_grid_bytes`] more.
-<a href=#580 id=580 data-nosnippet>580</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(<span class="kw-2">&amp;mut </span><span class="self">self</span>, rows: usize, workers: usize, grid_bytes: u64) {
-<a href=#581 id=581 data-nosnippet>581</a>        <span class="self">self</span>.grids.set_capacity(grid_bytes);
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="self">self</span>.block_rows = rows.max(<span class="number">1</span>);
-<a href=#583 id=583 data-nosnippet>583</a>        <span class="self">self</span>.workers = workers.max(<span class="number">1</span>);
-<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">let </span>domains = <span class="self">self</span>.largest_domains();
-<a href=#585 id=585 data-nosnippet>585</a>        <span class="self">self</span>.block = NativeBlock::shared_with_capacity(<span class="self">self</span>.block_shape(<span class="self">self</span>.block_rows, domains));
-<a href=#586 id=586 data-nosnippet>586</a>        <span class="self">self</span>.projections = Vec::with_capacity(domains);
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">if </span><span class="self">self</span>.backend == BackendChoice::Metal {
-<a href=#588 id=588 data-nosnippet>588</a>            <span class="self">self</span>.noise_rows = Vec::with_capacity(<span class="self">self</span>.block_rows);
-<a href=#589 id=589 data-nosnippet>589</a>            <span class="self">self</span>.noise_terms = Vec::with_capacity(<span class="self">self</span>.most_terms);
-<a href=#590 id=590 data-nosnippet>590</a>        }
-<a href=#591 id=591 data-nosnippet>591</a>    }
-<a href=#592 id=592 data-nosnippet>592</a>
-<a href=#593 id=593 data-nosnippet>593</a>    <span class="doccomment">/// Whether the stage adds `noise`, a predicted run's, itself, on the
-<a href=#594 id=594 data-nosnippet>594</a>    /// device, as it predicts the run ([`Self::predict`]). That happens on
-<a href=#595 id=595 data-nosnippet>595</a>    /// Metal, where the model is formed in device memory, when every term
-<a href=#596 id=596 data-nosnippet>596</a>    /// has one σ for every row (`simplenoise`) and draws there exactly as on
-<a href=#597 id=597 data-nosnippet>597</a>    /// the host ([`casa_numerics::cell_noise::metal_draws_exactly`]);
-<a href=#598 id=598 data-nosnippet>598</a>    /// otherwise the host adds it after. A Tsys term, whose σ varies by row
-<a href=#599 id=599 data-nosnippet>599</a>    /// (and for `tsys-atm` by channel), is the host's: the device's terms
-<a href=#600 id=600 data-nosnippet>600</a>    /// hold one σ each.
-<a href=#601 id=601 data-nosnippet>601</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>noises_on_device(<span class="kw-2">&amp;</span><span class="self">self</span>, noise: <span class="kw-2">&amp;</span>[NoiseApplication]) -&gt; bool {
-<a href=#602 id=602 data-nosnippet>602</a>        <span class="self">self</span>.backend == BackendChoice::Metal
-<a href=#603 id=603 data-nosnippet>603</a>            &amp;&amp; noise.iter().all(|application| {
-<a href=#604 id=604 data-nosnippet>604</a>                application
-<a href=#605 id=605 data-nosnippet>605</a>                    .uniform()
-<a href=#606 id=606 data-nosnippet>606</a>                    .is_some_and(|noise| metal_draws_exactly(noise.sigma()))
-<a href=#607 id=607 data-nosnippet>607</a>            })
-<a href=#608 id=608 data-nosnippet>608</a>    }
-<a href=#609 id=609 data-nosnippet>609</a>
-<a href=#610 id=610 data-nosnippet>610</a>    <span class="doccomment">/// Whether the stage added `noise`, the [`device_noise`] it was given
-<a href=#611 id=611 data-nosnippet>611</a>    /// for a run of scan `scan`, as it predicted the run: the host then
-<a href=#612 id=612 data-nosnippet>612</a>    /// adds none.
-<a href=#613 id=613 data-nosnippet>613</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>noised(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize, noise: <span class="kw-2">&amp;</span>[NoiseApplication]) -&gt; bool {
-<a href=#614 id=614 data-nosnippet>614</a>        !noise.is_empty() &amp;&amp; <span class="self">self</span>.predicts(scan) &amp;&amp; <span class="self">self</span>.noises_on_device(noise)
-<a href=#615 id=615 data-nosnippet>615</a>    }
-<a href=#616 id=616 data-nosnippet>616</a>
-<a href=#617 id=617 data-nosnippet>617</a>    <span class="doccomment">/// Predict each run of `runs`, (scan, first row, rows) of `rows`, into
-<a href=#618 id=618 data-nosnippet>618</a>    /// `data` (`correlations × channels` samples a row, the rows of `rows`
-<a href=#619 id=619 data-nosnippet>619</a>    /// from the first); the batch's first row is MAIN row `first_row`. Runs
-<a href=#620 id=620 data-nosnippet>620</a>    /// of scans no step covers are left as they are. When the stage
-<a href=#621 id=621 data-nosnippet>621</a>    /// [`Self::noises_on_device`], a predicted run also gets its scan's
-<a href=#622 id=622 data-nosnippet>622</a>    /// [`device_noise`], `noise(scan)`, on the device before it is copied
-<a href=#623 id=623 data-nosnippet>623</a>    /// out.
-<a href=#624 id=624 data-nosnippet>624</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>predict&lt;<span class="lifetime">'n</span>&gt;(
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#626 id=626 data-nosnippet>626</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#627 id=627 data-nosnippet>627</a>        (scans, rows): (<span class="kw-2">&amp;</span>[Scan], <span class="kw-2">&amp;</span>[RowGeometry]),
-<a href=#628 id=628 data-nosnippet>628</a>        runs: <span class="kw-2">&amp;</span>[(usize, usize, usize)],
-<a href=#629 id=629 data-nosnippet>629</a>        first_row: u64,
-<a href=#630 id=630 data-nosnippet>630</a>        data: <span class="kw-2">&amp;mut </span>[Complex32],
-<a href=#631 id=631 data-nosnippet>631</a>        noise: <span class="kw">impl </span>Fn(usize) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'n </span>[NoiseApplication],
-<a href=#632 id=632 data-nosnippet>632</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>samples = <span class="self">self</span>.correlations * <span class="self">self</span>.channels;
-<a href=#634 id=634 data-nosnippet>634</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
-<a href=#635 id=635 data-nosnippet>635</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(segment) = <span class="self">self</span>.scan_segments[scan] <span class="kw">else </span>{
-<a href=#636 id=636 data-nosnippet>636</a>                <span class="kw">continue</span>;
-<a href=#637 id=637 data-nosnippet>637</a>            };
-<a href=#638 id=638 data-nosnippet>638</a>            <span class="self">self</span>.select(segment, scan, team)<span class="question-mark">?</span>;
-<a href=#639 id=639 data-nosnippet>639</a>            <span class="self">self</span>.noise_terms.clear();
-<a href=#640 id=640 data-nosnippet>640</a>            <span class="kw">if </span><span class="self">self</span>.noises_on_device(noise(scan)) {
-<a href=#641 id=641 data-nosnippet>641</a>                <span class="comment">// A term of σ = 0 adds nothing on either side.
-<a href=#642 id=642 data-nosnippet>642</a>                </span><span class="self">self</span>.noise_terms.extend(
-<a href=#643 id=643 data-nosnippet>643</a>                    noise(scan)
-<a href=#644 id=644 data-nosnippet>644</a>                        .iter()
-<a href=#645 id=645 data-nosnippet>645</a>                        .filter_map(NoiseApplication::uniform)
-<a href=#646 id=646 data-nosnippet>646</a>                        .filter(|noise| noise.sigma() != <span class="number">0.0</span>)
-<a href=#647 id=647 data-nosnippet>647</a>                        .map(|noise| MetalNoiseTerm {
-<a href=#648 id=648 data-nosnippet>648</a>                            key: noise.key(),
-<a href=#649 id=649 data-nosnippet>649</a>                            sigma: noise.sigma(),
-<a href=#650 id=650 data-nosnippet>650</a>                        }),
-<a href=#651 id=651 data-nosnippet>651</a>                );
-<a href=#652 id=652 data-nosnippet>652</a>            }
-<a href=#653 id=653 data-nosnippet>653</a>            <span class="kw">let </span>scan = <span class="kw-2">&amp;</span>scans[scan];
-<a href=#654 id=654 data-nosnippet>654</a>            <span class="kw">let </span>end = start + count;
-<a href=#655 id=655 data-nosnippet>655</a>            <span class="kw">let </span><span class="kw-2">mut </span>block_start = start;
-<a href=#656 id=656 data-nosnippet>656</a>            <span class="kw">while </span>block_start &lt; end {
-<a href=#657 id=657 data-nosnippet>657</a>                <span class="kw">let </span>block_end = (block_start + <span class="self">self</span>.block_rows).min(end);
-<a href=#658 id=658 data-nosnippet>658</a>                <span class="kw">let </span>started = std::time::Instant::now();
-<a href=#659 id=659 data-nosnippet>659</a>                <span class="self">self</span>.fill_block(
-<a href=#660 id=660 data-nosnippet>660</a>                    segment,
-<a href=#661 id=661 data-nosnippet>661</a>                    scan,
-<a href=#662 id=662 data-nosnippet>662</a>                    <span class="kw-2">&amp;</span>rows[block_start..block_end],
-<a href=#663 id=663 data-nosnippet>663</a>                    <span class="self">self</span>.noise_row_offset + first_row + block_start <span class="kw">as </span>u64,
-<a href=#664 id=664 data-nosnippet>664</a>                );
-<a href=#665 id=665 data-nosnippet>665</a>                <span class="self">self</span>.fill_time += started.elapsed();
-<a href=#666 id=666 data-nosnippet>666</a>                <span class="kw">let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, predictor)) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.predictor <span class="kw">else </span>{
-<a href=#667 id=667 data-nosnippet>667</a>                    <span class="macro">unreachable!</span>(<span class="string">"selected above"</span>);
-<a href=#668 id=668 data-nosnippet>668</a>                };
-<a href=#669 id=669 data-nosnippet>669</a>                <span class="kw">let </span>out = <span class="kw-2">&amp;mut </span>data[block_start * samples..block_end * samples];
-<a href=#670 id=670 data-nosnippet>670</a>                <span class="kw">let </span>predicted = <span class="kw">if </span><span class="self">self</span>.noise_terms.is_empty() {
-<a href=#671 id=671 data-nosnippet>671</a>                    predictor.predict_into(<span class="kw-2">&amp;</span><span class="self">self</span>.block, team, out)
-<a href=#672 id=672 data-nosnippet>672</a>                } <span class="kw">else </span>{
-<a href=#673 id=673 data-nosnippet>673</a>                    <span class="self">self</span>.noise_rows.clear();
-<a href=#674 id=674 data-nosnippet>674</a>                    <span class="self">self</span>.noise_rows.extend(
-<a href=#675 id=675 data-nosnippet>675</a>                        rows[block_start..block_end]
-<a href=#676 id=676 data-nosnippet>676</a>                            .iter()
-<a href=#677 id=677 data-nosnippet>677</a>                            .zip(<span class="self">self</span>.noise_row_offset + first_row + block_start <span class="kw">as </span>u64..)
-<a href=#678 id=678 data-nosnippet>678</a>                            .map(|(row, number)| MetalNoiseRow {
-<a href=#679 id=679 data-nosnippet>679</a>                                row: [number <span class="kw">as </span>u32, (number &gt;&gt; <span class="number">32</span>) <span class="kw">as </span>u32],
-<a href=#680 id=680 data-nosnippet>680</a>                                autocorrelation: u32::from(row.antenna1 == row.antenna2),
-<a href=#681 id=681 data-nosnippet>681</a>                            }),
-<a href=#682 id=682 data-nosnippet>682</a>                    );
-<a href=#683 id=683 data-nosnippet>683</a>                    <span class="kw">let </span>noise = DeviceNoise {
-<a href=#684 id=684 data-nosnippet>684</a>                        rows: <span class="kw-2">&amp;</span><span class="self">self</span>.noise_rows,
-<a href=#685 id=685 data-nosnippet>685</a>                        terms: <span class="kw-2">&amp;</span><span class="self">self</span>.noise_terms,
-<a href=#686 id=686 data-nosnippet>686</a>                    };
-<a href=#687 id=687 data-nosnippet>687</a>                    predictor.predict_into_with_noise(<span class="kw-2">&amp;</span><span class="self">self</span>.block, team, out, noise)
-<a href=#688 id=688 data-nosnippet>688</a>                };
-<a href=#689 id=689 data-nosnippet>689</a>                predicted.map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"predict: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#690 id=690 data-nosnippet>690</a>                block_start = block_end;
-<a href=#691 id=691 data-nosnippet>691</a>            }
-<a href=#692 id=692 data-nosnippet>692</a>        }
-<a href=#693 id=693 data-nosnippet>693</a>        <span class="prelude-val">Ok</span>(())
-<a href=#694 id=694 data-nosnippet>694</a>    }
-<a href=#695 id=695 data-nosnippet>695</a>
-<a href=#696 id=696 data-nosnippet>696</a>    <span class="doccomment">/// Make the predictor `segment`'s, unless it is, for the visit at scan
-<a href=#697 id=697 data-nosnippet>697</a>    /// `scan`: its per-field grids found or prepared on `team`
-<a href=#698 id=698 data-nosnippet>698</a>    /// ([`FieldGridCache::grids`]).
-<a href=#699 id=699 data-nosnippet>699</a>    </span><span class="kw">fn </span>select(<span class="kw-2">&amp;mut </span><span class="self">self</span>, segment: usize, scan: usize, team: <span class="kw-2">&amp;</span>WorkerTeam) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">if </span><span class="self">self
-<a href=#701 id=701 data-nosnippet>701</a>            </span>.predictor
-<a href=#702 id=702 data-nosnippet>702</a>            .as_ref()
-<a href=#703 id=703 data-nosnippet>703</a>            .is_some_and(|(current, <span class="kw">_</span>)| <span class="kw-2">*</span>current == segment)
-<a href=#704 id=704 data-nosnippet>704</a>        {
-<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#706 id=706 data-nosnippet>706</a>        }
-<a href=#707 id=707 data-nosnippet>707</a>        <span class="comment">// The previous predictor is dropped first, so at most one is held,
-<a href=#708 id=708 data-nosnippet>708</a>        // and the grids it kept can be evicted.
-<a href=#709 id=709 data-nosnippet>709</a>        </span><span class="self">self</span>.predictor = <span class="prelude-val">None</span>;
-<a href=#710 id=710 data-nosnippet>710</a>        <span class="kw">let </span>Segment {
-<a href=#711 id=711 data-nosnippet>711</a>            steps, source_scan, ..
-<a href=#712 id=712 data-nosnippet>712</a>        } = <span class="kw-2">&amp;</span><span class="self">self</span>.segments[segment];
-<a href=#713 id=713 data-nosnippet>713</a>        <span class="kw">let </span>source = <span class="kw-2">&amp;</span><span class="self">self</span>.scans[<span class="kw-2">*</span>source_scan];
-<a href=#714 id=714 data-nosnippet>714</a>        <span class="self">self</span>.keep.clear();
-<a href=#715 id=715 data-nosnippet>715</a>        <span class="self">self</span>.keep.extend(
-<a href=#716 id=716 data-nosnippet>716</a>            steps
-<a href=#717 id=717 data-nosnippet>717</a>                .iter()
-<a href=#718 id=718 data-nosnippet>718</a>                .map(|<span class="kw-2">&amp;</span>step| (step, <span class="self">self</span>.predictions[step].grid_id(source))),
-<a href=#719 id=719 data-nosnippet>719</a>        );
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span><span class="kw-2">mut </span>domains = Vec::with_capacity(steps.len());
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>step <span class="kw">in </span>steps {
-<a href=#722 id=722 data-nosnippet>722</a>            <span class="kw">let </span>prediction = <span class="self">self</span>.predictions[step];
-<a href=#723 id=723 data-nosnippet>723</a>            <span class="kw">let </span>field = prediction.grid_id(source);
-<a href=#724 id=724 data-nosnippet>724</a>            <span class="kw">let </span>model = <span class="kw">match </span>prediction.grids_for(field) {
-<a href=#725 id=725 data-nosnippet>725</a>                <span class="prelude-val">Some</span>(FieldGrids::Prepared(grids)) =&gt; DomainModel::Borrowed(grids),
-<a href=#726 id=726 data-nosnippet>726</a>                <span class="prelude-val">Some</span>(FieldGrids::PerField) =&gt; DomainModel::Shared(<span class="self">self</span>.grids.grids(
-<a href=#727 id=727 data-nosnippet>727</a>                    (step, field),
-<a href=#728 id=728 data-nosnippet>728</a>                    (scan, <span class="kw-2">&amp;</span><span class="self">self</span>.keep),
-<a href=#729 id=729 data-nosnippet>729</a>                    || prediction.prepare_field(field, team),
-<a href=#730 id=730 data-nosnippet>730</a>                )<span class="question-mark">?</span>),
-<a href=#731 id=731 data-nosnippet>731</a>                <span class="comment">// `segment_of` found every step's.
-<a href=#732 id=732 data-nosnippet>732</a>                </span><span class="prelude-val">None </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"a segment's steps have its field's grids"</span>),
-<a href=#733 id=733 data-nosnippet>733</a>            };
-<a href=#734 id=734 data-nosnippet>734</a>            domains.push(PredictionDomain {
-<a href=#735 id=735 data-nosnippet>735</a>                operator: <span class="kw-2">&amp;</span>prediction.model.operator,
-<a href=#736 id=736 data-nosnippet>736</a>                resampler: <span class="kw-2">&amp;</span>prediction.model.resampler,
-<a href=#737 id=737 data-nosnippet>737</a>                model,
-<a href=#738 id=738 data-nosnippet>738</a>            });
-<a href=#739 id=739 data-nosnippet>739</a>        }
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>predictor = BlockPredictor::new(
-<a href=#741 id=741 data-nosnippet>741</a>            <span class="kw-2">&amp;</span>domains,
-<a href=#742 id=742 data-nosnippet>742</a>            <span class="self">self</span>.backend,
-<a href=#743 id=743 data-nosnippet>743</a>            <span class="self">self</span>.block_shape(<span class="self">self</span>.block_rows, domains.len()),
-<a href=#744 id=744 data-nosnippet>744</a>            <span class="self">self</span>.workers,
-<a href=#745 id=745 data-nosnippet>745</a>            <span class="macro">tracing::enabled!</span>(target: METAL_STAGE_TIMING, tracing::Level::INFO),
-<a href=#746 id=746 data-nosnippet>746</a>        )
-<a href=#747 id=747 data-nosnippet>747</a>        .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"the predictor: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#748 id=748 data-nosnippet>748</a>        <span class="comment">// The predictor keeps its own domains, and with them the grids.
-<a href=#749 id=749 data-nosnippet>749</a>        </span>drop(domains);
-<a href=#750 id=750 data-nosnippet>750</a>        <span class="self">self</span>.predictor = <span class="prelude-val">Some</span>((segment, predictor));
-<a href=#751 id=751 data-nosnippet>751</a>        <span class="prelude-val">Ok</span>(())
-<a href=#752 id=752 data-nosnippet>752</a>    }
-<a href=#753 id=753 data-nosnippet>753</a>
-<a href=#754 id=754 data-nosnippet>754</a>    <span class="doccomment">/// Fill the block with `rows` of `scan`, the first MAIN row
-<a href=#755 id=755 data-nosnippet>755</a>    /// `first_row`, projected on `segment`'s domains.
-<a href=#756 id=756 data-nosnippet>756</a>    </span><span class="kw">fn </span>fill_block(<span class="kw-2">&amp;mut </span><span class="self">self</span>, segment: usize, scan: <span class="kw-2">&amp;</span>Scan, rows: <span class="kw-2">&amp;</span>[RowGeometry], first_row: u64) {
-<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>segment = <span class="kw-2">&amp;</span><span class="self">self</span>.segments[segment];
-<a href=#758 id=758 data-nosnippet>758</a>        <span class="comment">// Every row of the scan has its window's frequencies, and unit
-<a href=#759 id=759 data-nosnippet>759</a>        // weights and no sample flags, so the block keeps them once.
-<a href=#760 id=760 data-nosnippet>760</a>        </span><span class="self">self</span>.block.reset_shared(
-<a href=#761 id=761 data-nosnippet>761</a>            segment.steps.len(),
-<a href=#762 id=762 data-nosnippet>762</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.channel_indices,
-<a href=#763 id=763 data-nosnippet>763</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.correlation_indices,
-<a href=#764 id=764 data-nosnippet>764</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.frequencies[scan.spectral_window_id],
-<a href=#765 id=765 data-nosnippet>765</a>        );
-<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">let </span>antenna_type = |antenna: usize| {
-<a href=#767 id=767 data-nosnippet>767</a>            <span class="comment">// A mosaic step classed every antenna of the scans it covers.
-<a href=#768 id=768 data-nosnippet>768</a>            </span><span class="macro">debug_assert!</span>(
-<a href=#769 id=769 data-nosnippet>769</a>                <span class="self">self</span>.antenna_types.is_empty() || antenna &lt; <span class="self">self</span>.antenna_types.len(),
-<a href=#770 id=770 data-nosnippet>770</a>                <span class="string">"antenna {antenna} has no dish class"
-<a href=#771 id=771 data-nosnippet>771</a>            </span>);
-<a href=#772 id=772 data-nosnippet>772</a>            <span class="self">self</span>.antenna_types.get(antenna).copied().unwrap_or(<span class="number">0</span>)
-<a href=#773 id=773 data-nosnippet>773</a>        };
-<a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">for </span>(offset, row) <span class="kw">in </span>rows.iter().enumerate() {
-<a href=#775 id=775 data-nosnippet>775</a>            <span class="self">self</span>.projections.clear();
-<a href=#776 id=776 data-nosnippet>776</a>            <span class="self">self</span>.projections.extend(
-<a href=#777 id=777 data-nosnippet>777</a>                segment
-<a href=#778 id=778 data-nosnippet>778</a>                    .projections
-<a href=#779 id=779 data-nosnippet>779</a>                    .iter()
-<a href=#780 id=780 data-nosnippet>780</a>                    .zip(<span class="kw-2">&amp;</span>segment.pointing_offsets)
-<a href=#781 id=781 data-nosnippet>781</a>                    .zip(<span class="kw-2">&amp;</span>segment.steps)
-<a href=#782 id=782 data-nosnippet>782</a>                    .map(|((projection, pointing_offset_rad), <span class="kw-2">&amp;</span>step)| {
-<a href=#783 id=783 data-nosnippet>783</a>                        <span class="kw">let </span>prediction = <span class="self">self</span>.predictions[step];
-<a href=#784 id=784 data-nosnippet>784</a>                        <span class="kw">let </span>(<span class="kw-2">mut </span>uvw_m, <span class="kw-2">mut </span>phase_shift_m) = projection.apply(row.uvw_m);
-<a href=#785 id=785 data-nosnippet>785</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>(focus) = <span class="kw-2">&amp;</span>prediction.focus {
-<a href=#786 id=786 data-nosnippet>786</a>                            (uvw_m, phase_shift_m) = <span class="kw">crate</span>::session::focus::apply(
-<a href=#787 id=787 data-nosnippet>787</a>                                focus,
-<a href=#788 id=788 data-nosnippet>788</a>                                first_row + offset <span class="kw">as </span>u64,
-<a href=#789 id=789 data-nosnippet>789</a>                                row,
-<a href=#790 id=790 data-nosnippet>790</a>                                projection,
-<a href=#791 id=791 data-nosnippet>791</a>                                prediction.distance_m,
-<a href=#792 id=792 data-nosnippet>792</a>                                uvw_m,
-<a href=#793 id=793 data-nosnippet>793</a>                                phase_shift_m,
-<a href=#794 id=794 data-nosnippet>794</a>                            );
-<a href=#795 id=795 data-nosnippet>795</a>                        }
-<a href=#796 id=796 data-nosnippet>796</a>                        DomainProjection {
-<a href=#797 id=797 data-nosnippet>797</a>                            uvw_m,
-<a href=#798 id=798 data-nosnippet>798</a>                            phase_shift_m,
-<a href=#799 id=799 data-nosnippet>799</a>                            pointing_offset_rad: <span class="kw-2">*</span>pointing_offset_rad,
-<a href=#800 id=800 data-nosnippet>800</a>                        }
-<a href=#801 id=801 data-nosnippet>801</a>                    }),
-<a href=#802 id=802 data-nosnippet>802</a>            );
-<a href=#803 id=803 data-nosnippet>803</a>            <span class="kw">let </span>header = NativeRowHeader {
-<a href=#804 id=804 data-nosnippet>804</a>                row_flag: row.flagged,
-<a href=#805 id=805 data-nosnippet>805</a>                context: RowContext {
-<a href=#806 id=806 data-nosnippet>806</a>                    native_frequency_ratio: <span class="number">1.0</span>,
-<a href=#807 id=807 data-nosnippet>807</a>                    original_uvw_m: <span class="prelude-val">Some</span>(row.uvw_m),
-<a href=#808 id=808 data-nosnippet>808</a>                    time_s: <span class="number">0.0</span>,
-<a href=#809 id=809 data-nosnippet>809</a>                    antennas: [row.antenna1 <span class="kw">as </span>u32, row.antenna2 <span class="kw">as </span>u32],
-<a href=#810 id=810 data-nosnippet>810</a>                    antenna_types: [antenna_type(row.antenna1), antenna_type(row.antenna2)],
-<a href=#811 id=811 data-nosnippet>811</a>                    parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#812 id=812 data-nosnippet>812</a>                    field: scan.field_id <span class="kw">as </span>u32,
-<a href=#813 id=813 data-nosnippet>813</a>                    spectral_window: scan.spectral_window_id <span class="kw">as </span>u32,
-<a href=#814 id=814 data-nosnippet>814</a>                },
-<a href=#815 id=815 data-nosnippet>815</a>                address: RowAddress {
-<a href=#816 id=816 data-nosnippet>816</a>                    physical_row: first_row + offset <span class="kw">as </span>u64,
-<a href=#817 id=817 data-nosnippet>817</a>                    data_description: scan.data_description_id <span class="kw">as </span>i32,
-<a href=#818 id=818 data-nosnippet>818</a>                },
-<a href=#819 id=819 data-nosnippet>819</a>            };
-<a href=#820 id=820 data-nosnippet>820</a>            <span class="self">self</span>.block.push_shared_row(header, <span class="kw-2">&amp;</span><span class="self">self</span>.projections);
-<a href=#821 id=821 data-nosnippet>821</a>        }
-<a href=#822 id=822 data-nosnippet>822</a>    }
-<a href=#823 id=823 data-nosnippet>823</a>}
+<a href=#512 id=512 data-nosnippet>512</a>            .map(|prediction| prediction.preparation_bytes(workers))
+<a href=#513 id=513 data-nosnippet>513</a>            .max()
+<a href=#514 id=514 data-nosnippet>514</a>            .unwrap_or(<span class="number">0</span>)
+<a href=#515 id=515 data-nosnippet>515</a>    }
+<a href=#516 id=516 data-nosnippet>516</a>
+<a href=#517 id=517 data-nosnippet>517</a>    <span class="doccomment">/// The block of `rows` rows projected on `domains` domains.
+<a href=#518 id=518 data-nosnippet>518</a>    </span><span class="kw">fn </span>block_shape(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: usize, domains: usize) -&gt; BlockShape {
+<a href=#519 id=519 data-nosnippet>519</a>        BlockShape {
+<a href=#520 id=520 data-nosnippet>520</a>            rows,
+<a href=#521 id=521 data-nosnippet>521</a>            spectrum: RowSpectrum::evenly_spaced(<span class="self">self</span>.channels),
+<a href=#522 id=522 data-nosnippet>522</a>            correlations: <span class="self">self</span>.correlations,
+<a href=#523 id=523 data-nosnippet>523</a>            domains,
+<a href=#524 id=524 data-nosnippet>524</a>        }
+<a href=#525 id=525 data-nosnippet>525</a>    }
+<a href=#526 id=526 data-nosnippet>526</a>
+<a href=#527 id=527 data-nosnippet>527</a>    <span class="doccomment">/// Rows of a small block for write batches of `batch_rows` rows: as
+<a href=#528 id=528 data-nosnippet>528</a>    /// many as [`SMALL_BLOCK_BYTES`] holds of native rows with all their
+<a href=#529 id=529 data-nosnippet>529</a>    /// samples, at most a batch and at least one. The block itself shares
+<a href=#530 id=530 data-nosnippet>530</a>    /// its rows' samples ([`NativeBlock::reset_shared`]), but what the
+<a href=#531 id=531 data-nosnippet>531</a>    /// predictor holds per row (its model cells and their output) is of
+<a href=#532 id=532 data-nosnippet>532</a>    /// that size.
+<a href=#533 id=533 data-nosnippet>533</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>small_block_rows(<span class="kw-2">&amp;</span><span class="self">self</span>, batch_rows: usize) -&gt; usize {
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="kw">let </span>row = <span class="self">self</span>.block_shape(<span class="number">1</span>, <span class="self">self</span>.largest_domains()).bytes().max(<span class="number">1</span>);
+<a href=#535 id=535 data-nosnippet>535</a>        usize::try_from(SMALL_BLOCK_BYTES / row)
+<a href=#536 id=536 data-nosnippet>536</a>            .unwrap_or(usize::MAX)
+<a href=#537 id=537 data-nosnippet>537</a>            .clamp(<span class="number">1</span>, batch_rows.max(<span class="number">1</span>))
+<a href=#538 id=538 data-nosnippet>538</a>    }
+<a href=#539 id=539 data-nosnippet>539</a>
+<a href=#540 id=540 data-nosnippet>540</a>    <span class="doccomment">/// Bytes the stage holds while `close` predicts blocks of `rows` rows
+<a href=#541 id=541 data-nosnippet>541</a>    /// with `workers` workers: the predictor of the segment that needs most
+<a href=#542 id=542 data-nosnippet>542</a>    /// ([`BlockPredictor::bytes_for`]), one block of native rows sharing
+<a href=#543 id=543 data-nosnippet>543</a>    /// their samples ([`BlockShape::shared_bytes`]) and each row's
+<a href=#544 id=544 data-nosnippet>544</a>    /// projections; the per-field grids of the segment that needs most,
+<a href=#545 id=545 data-nosnippet>545</a>    /// and a set's preparation ([`Self::extra_grid_bytes`] are admitted
+<a href=#546 id=546 data-nosnippet>546</a>    /// apart); on Metal the device copy of every model grid `predict`
+<a href=#547 id=547 data-nosnippet>547</a>    /// prepared
+<a href=#548 id=548 data-nosnippet>548</a>    /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]) and a
+<a href=#549 id=549 data-nosnippet>549</a>    /// block's noise rows and the most noise terms of a scan, here and in
+<a href=#550 id=550 data-nosnippet>550</a>    /// the predictor ([`BlockPredictor::noise_bytes`]); and what it keeps
+<a href=#551 id=551 data-nosnippet>551</a>    /// across blocks ([`Self::state_bytes`]).
+<a href=#552 id=552 data-nosnippet>552</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: usize, workers: usize) -&gt; u64 {
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span>predictor = <span class="self">self
+<a href=#554 id=554 data-nosnippet>554</a>            </span>.segments
+<a href=#555 id=555 data-nosnippet>555</a>            .iter()
+<a href=#556 id=556 data-nosnippet>556</a>            .map(|segment| {
+<a href=#557 id=557 data-nosnippet>557</a>                BlockPredictor::bytes_for(
+<a href=#558 id=558 data-nosnippet>558</a>                    segment.steps.iter().map(|<span class="kw-2">&amp;</span>step| {
+<a href=#559 id=559 data-nosnippet>559</a>                        <span class="kw">let </span>model = <span class="kw-2">&amp;</span><span class="self">self</span>.predictions[step].model;
+<a href=#560 id=560 data-nosnippet>560</a>                        (<span class="kw-2">&amp;</span>model.operator, <span class="kw-2">&amp;</span>model.resampler)
+<a href=#561 id=561 data-nosnippet>561</a>                    }),
+<a href=#562 id=562 data-nosnippet>562</a>                    <span class="self">self</span>.backend,
+<a href=#563 id=563 data-nosnippet>563</a>                    <span class="self">self</span>.block_shape(rows, segment.steps.len()),
+<a href=#564 id=564 data-nosnippet>564</a>                    workers,
+<a href=#565 id=565 data-nosnippet>565</a>                )
+<a href=#566 id=566 data-nosnippet>566</a>            })
+<a href=#567 id=567 data-nosnippet>567</a>            .max()
+<a href=#568 id=568 data-nosnippet>568</a>            .unwrap_or(<span class="number">0</span>);
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">let </span>grids = <span class="self">self</span>.minimum_grid_bytes() + <span class="self">self</span>.preparation_bytes(workers);
+<a href=#570 id=570 data-nosnippet>570</a>        <span class="kw">let </span>domains = <span class="self">self</span>.largest_domains();
+<a href=#571 id=571 data-nosnippet>571</a>        <span class="kw">let </span>shape = <span class="self">self</span>.block_shape(rows, domains);
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="kw">let </span>projections = (domains * size_of::&lt;DomainProjection&gt;()) <span class="kw">as </span>u64;
+<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">let </span>terms = <span class="self">self</span>.most_terms;
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">let </span>device = <span class="kw">match </span><span class="self">self</span>.backend {
+<a href=#575 id=575 data-nosnippet>575</a>            BackendChoice::Cpu =&gt; <span class="number">0</span>,
+<a href=#576 id=576 data-nosnippet>576</a>            BackendChoice::Metal =&gt; {
+<a href=#577 id=577 data-nosnippet>577</a>                <span class="comment">// The noise's rows and terms here, and the predictor's copy.
+<a href=#578 id=578 data-nosnippet>578</a>                </span><span class="kw">let </span>noise = rows * size_of::&lt;MetalNoiseRow&gt;() + terms * size_of::&lt;MetalNoiseTerm&gt;();
+<a href=#579 id=579 data-nosnippet>579</a>                <span class="self">self</span>.prepared_bytes
+<a href=#580 id=580 data-nosnippet>580</a>                    + noise <span class="kw">as </span>u64
+<a href=#581 id=581 data-nosnippet>581</a>                    + BlockPredictor::noise_bytes(<span class="self">self</span>.backend, shape, terms)
+<a href=#582 id=582 data-nosnippet>582</a>            }
+<a href=#583 id=583 data-nosnippet>583</a>        };
+<a href=#584 id=584 data-nosnippet>584</a>        predictor + shape.shared_bytes() + projections + grids + device + <span class="self">self</span>.state_bytes()
+<a href=#585 id=585 data-nosnippet>585</a>    }
+<a href=#586 id=586 data-nosnippet>586</a>
+<a href=#587 id=587 data-nosnippet>587</a>    <span class="doccomment">/// Bytes the stage keeps across blocks: the predict steps, each scan's
+<a href=#588 id=588 data-nosnippet>588</a>    /// segment, of which an opened MeasurementSet may have one a row (#886
+<a href=#589 id=589 data-nosnippet>589</a>    /// review), each segment's steps, the windows' channel frequencies, the
+<a href=#590 id=590 data-nosnippet>590</a>    /// antennas' dish classes, the per-field grids' bookkeeping and a
+<a href=#591 id=591 data-nosnippet>591</a>    /// selection's domains and keys, each as allocated.
+<a href=#592 id=592 data-nosnippet>592</a>    </span><span class="kw">fn </span>state_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw">let </span>segments: usize = <span class="self">self
+<a href=#594 id=594 data-nosnippet>594</a>            </span>.segments
+<a href=#595 id=595 data-nosnippet>595</a>            .iter()
+<a href=#596 id=596 data-nosnippet>596</a>            .map(|segment| {
+<a href=#597 id=597 data-nosnippet>597</a>                segment.steps.capacity() * size_of::&lt;usize&gt;()
+<a href=#598 id=598 data-nosnippet>598</a>                    + segment.projections.capacity() * size_of::&lt;GridFtProjection&gt;()
+<a href=#599 id=599 data-nosnippet>599</a>                    + segment.pointing_offsets.capacity() * size_of::&lt;[f64; <span class="number">2</span>]&gt;()
+<a href=#600 id=600 data-nosnippet>600</a>            })
+<a href=#601 id=601 data-nosnippet>601</a>            .sum();
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">let </span>frequencies: usize = <span class="self">self
+<a href=#603 id=603 data-nosnippet>603</a>            </span>.frequencies
+<a href=#604 id=604 data-nosnippet>604</a>            .iter()
+<a href=#605 id=605 data-nosnippet>605</a>            .map(|window| window.capacity() * size_of::&lt;f64&gt;())
+<a href=#606 id=606 data-nosnippet>606</a>            .sum();
+<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">let </span>selection =
+<a href=#608 id=608 data-nosnippet>608</a>            <span class="self">self</span>.largest_domains() * (size_of::&lt;PredictionDomain&lt;<span class="lifetime">'_</span>&gt;&gt;() + size_of::&lt;GridKey&gt;());
+<a href=#609 id=609 data-nosnippet>609</a>        (<span class="self">self</span>.predictions.capacity() * size_of::&lt;<span class="kw-2">&amp;</span>Prediction&gt;()
+<a href=#610 id=610 data-nosnippet>610</a>            + <span class="self">self</span>.scan_segments.capacity() * size_of::&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt;()
+<a href=#611 id=611 data-nosnippet>611</a>            + <span class="self">self</span>.segments.capacity() * size_of::&lt;Segment&gt;()
+<a href=#612 id=612 data-nosnippet>612</a>            + segments
+<a href=#613 id=613 data-nosnippet>613</a>            + <span class="self">self</span>.frequencies.capacity() * size_of::&lt;Vec&lt;f64&gt;&gt;()
+<a href=#614 id=614 data-nosnippet>614</a>            + frequencies
+<a href=#615 id=615 data-nosnippet>615</a>            + <span class="self">self</span>.antenna_types.capacity()
+<a href=#616 id=616 data-nosnippet>616</a>            + selection) <span class="kw">as </span>u64
+<a href=#617 id=617 data-nosnippet>617</a>            + <span class="self">self</span>.grids.state_bytes()
+<a href=#618 id=618 data-nosnippet>618</a>    }
+<a href=#619 id=619 data-nosnippet>619</a>
+<a href=#620 id=620 data-nosnippet>620</a>    <span class="doccomment">/// Allocate the block of `rows` rows, predicted with `workers` workers,
+<a href=#621 id=621 data-nosnippet>621</a>    /// as [`Self::bytes`] charged it, and give the per-field grids
+<a href=#622 id=622 data-nosnippet>622</a>    /// `grid_bytes`, at least the [`Self::bytes`] charged them and at most
+<a href=#623 id=623 data-nosnippet>623</a>    /// [`Self::extra_grid_bytes`] more.
+<a href=#624 id=624 data-nosnippet>624</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(<span class="kw-2">&amp;mut </span><span class="self">self</span>, rows: usize, workers: usize, grid_bytes: u64) {
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="self">self</span>.grids.set_capacity(grid_bytes);
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="self">self</span>.block_rows = rows.max(<span class="number">1</span>);
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="self">self</span>.workers = workers.max(<span class="number">1</span>);
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">let </span>domains = <span class="self">self</span>.largest_domains();
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="self">self</span>.block = NativeBlock::shared_with_capacity(<span class="self">self</span>.block_shape(<span class="self">self</span>.block_rows, domains));
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="self">self</span>.projections = Vec::with_capacity(domains);
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">if </span><span class="self">self</span>.backend == BackendChoice::Metal {
+<a href=#632 id=632 data-nosnippet>632</a>            <span class="self">self</span>.noise_rows = Vec::with_capacity(<span class="self">self</span>.block_rows);
+<a href=#633 id=633 data-nosnippet>633</a>            <span class="self">self</span>.noise_terms = Vec::with_capacity(<span class="self">self</span>.most_terms);
+<a href=#634 id=634 data-nosnippet>634</a>        }
+<a href=#635 id=635 data-nosnippet>635</a>    }
+<a href=#636 id=636 data-nosnippet>636</a>
+<a href=#637 id=637 data-nosnippet>637</a>    <span class="doccomment">/// Whether the stage adds `noise`, a predicted run's, itself, on the
+<a href=#638 id=638 data-nosnippet>638</a>    /// device, as it predicts the run ([`Self::predict`]). That happens on
+<a href=#639 id=639 data-nosnippet>639</a>    /// Metal, where the model is formed in device memory, when every term
+<a href=#640 id=640 data-nosnippet>640</a>    /// has one σ for every row (`simplenoise`) and draws there exactly as on
+<a href=#641 id=641 data-nosnippet>641</a>    /// the host ([`casa_numerics::cell_noise::metal_draws_exactly`]);
+<a href=#642 id=642 data-nosnippet>642</a>    /// otherwise the host adds it after. A Tsys term, whose σ varies by row
+<a href=#643 id=643 data-nosnippet>643</a>    /// (and for `tsys-atm` by channel), is the host's: the device's terms
+<a href=#644 id=644 data-nosnippet>644</a>    /// hold one σ each.
+<a href=#645 id=645 data-nosnippet>645</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>noises_on_device(<span class="kw-2">&amp;</span><span class="self">self</span>, noise: <span class="kw-2">&amp;</span>[NoiseApplication]) -&gt; bool {
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="self">self</span>.backend == BackendChoice::Metal
+<a href=#647 id=647 data-nosnippet>647</a>            &amp;&amp; noise.iter().all(|application| {
+<a href=#648 id=648 data-nosnippet>648</a>                application
+<a href=#649 id=649 data-nosnippet>649</a>                    .uniform()
+<a href=#650 id=650 data-nosnippet>650</a>                    .is_some_and(|noise| metal_draws_exactly(noise.sigma()))
+<a href=#651 id=651 data-nosnippet>651</a>            })
+<a href=#652 id=652 data-nosnippet>652</a>    }
+<a href=#653 id=653 data-nosnippet>653</a>
+<a href=#654 id=654 data-nosnippet>654</a>    <span class="doccomment">/// Whether the stage added `noise`, the [`device_noise`] it was given
+<a href=#655 id=655 data-nosnippet>655</a>    /// for a run of scan `scan`, as it predicted the run: the host then
+<a href=#656 id=656 data-nosnippet>656</a>    /// adds none.
+<a href=#657 id=657 data-nosnippet>657</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>noised(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize, noise: <span class="kw-2">&amp;</span>[NoiseApplication]) -&gt; bool {
+<a href=#658 id=658 data-nosnippet>658</a>        !noise.is_empty() &amp;&amp; <span class="self">self</span>.predicts(scan) &amp;&amp; <span class="self">self</span>.noises_on_device(noise)
+<a href=#659 id=659 data-nosnippet>659</a>    }
+<a href=#660 id=660 data-nosnippet>660</a>
+<a href=#661 id=661 data-nosnippet>661</a>    <span class="doccomment">/// Predict each run of `runs`, (scan, first row, rows) of `rows`, into
+<a href=#662 id=662 data-nosnippet>662</a>    /// `data` (`correlations × channels` samples a row, the rows of `rows`
+<a href=#663 id=663 data-nosnippet>663</a>    /// from the first); the batch's first row is MAIN row `first_row`. Runs
+<a href=#664 id=664 data-nosnippet>664</a>    /// of scans no step covers are left as they are. When the stage
+<a href=#665 id=665 data-nosnippet>665</a>    /// [`Self::noises_on_device`], a predicted run also gets its scan's
+<a href=#666 id=666 data-nosnippet>666</a>    /// [`device_noise`], `noise(scan)`, on the device before it is copied
+<a href=#667 id=667 data-nosnippet>667</a>    /// out.
+<a href=#668 id=668 data-nosnippet>668</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>predict&lt;<span class="lifetime">'n</span>&gt;(
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#670 id=670 data-nosnippet>670</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#671 id=671 data-nosnippet>671</a>        (scans, rows): (<span class="kw-2">&amp;</span>[Scan], <span class="kw-2">&amp;</span>[RowGeometry]),
+<a href=#672 id=672 data-nosnippet>672</a>        runs: <span class="kw-2">&amp;</span>[(usize, usize, usize)],
+<a href=#673 id=673 data-nosnippet>673</a>        first_row: u64,
+<a href=#674 id=674 data-nosnippet>674</a>        data: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#675 id=675 data-nosnippet>675</a>        noise: <span class="kw">impl </span>Fn(usize) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'n </span>[NoiseApplication],
+<a href=#676 id=676 data-nosnippet>676</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">let </span>samples = <span class="self">self</span>.correlations * <span class="self">self</span>.channels;
+<a href=#678 id=678 data-nosnippet>678</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
+<a href=#679 id=679 data-nosnippet>679</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(segment) = <span class="self">self</span>.segment_for_scan(scan) <span class="kw">else </span>{
+<a href=#680 id=680 data-nosnippet>680</a>                <span class="kw">continue</span>;
+<a href=#681 id=681 data-nosnippet>681</a>            };
+<a href=#682 id=682 data-nosnippet>682</a>            <span class="self">self</span>.select(segment, scan, team)<span class="question-mark">?</span>;
+<a href=#683 id=683 data-nosnippet>683</a>            <span class="self">self</span>.noise_terms.clear();
+<a href=#684 id=684 data-nosnippet>684</a>            <span class="kw">if </span><span class="self">self</span>.noises_on_device(noise(scan)) {
+<a href=#685 id=685 data-nosnippet>685</a>                <span class="comment">// A term of σ = 0 adds nothing on either side.
+<a href=#686 id=686 data-nosnippet>686</a>                </span><span class="self">self</span>.noise_terms.extend(
+<a href=#687 id=687 data-nosnippet>687</a>                    noise(scan)
+<a href=#688 id=688 data-nosnippet>688</a>                        .iter()
+<a href=#689 id=689 data-nosnippet>689</a>                        .filter_map(NoiseApplication::uniform)
+<a href=#690 id=690 data-nosnippet>690</a>                        .filter(|noise| noise.sigma() != <span class="number">0.0</span>)
+<a href=#691 id=691 data-nosnippet>691</a>                        .map(|noise| MetalNoiseTerm {
+<a href=#692 id=692 data-nosnippet>692</a>                            key: noise.key(),
+<a href=#693 id=693 data-nosnippet>693</a>                            sigma: noise.sigma(),
+<a href=#694 id=694 data-nosnippet>694</a>                        }),
+<a href=#695 id=695 data-nosnippet>695</a>                );
+<a href=#696 id=696 data-nosnippet>696</a>            }
+<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">let </span>scan = <span class="kw-2">&amp;</span>scans[scan];
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">let </span>end = start + count;
+<a href=#699 id=699 data-nosnippet>699</a>            <span class="kw">let </span><span class="kw-2">mut </span>block_start = start;
+<a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">while </span>block_start &lt; end {
+<a href=#701 id=701 data-nosnippet>701</a>                <span class="kw">let </span>block_end = (block_start + <span class="self">self</span>.block_rows).min(end);
+<a href=#702 id=702 data-nosnippet>702</a>                <span class="kw">let </span>started = std::time::Instant::now();
+<a href=#703 id=703 data-nosnippet>703</a>                <span class="self">self</span>.fill_block(
+<a href=#704 id=704 data-nosnippet>704</a>                    segment,
+<a href=#705 id=705 data-nosnippet>705</a>                    scan,
+<a href=#706 id=706 data-nosnippet>706</a>                    <span class="kw-2">&amp;</span>rows[block_start..block_end],
+<a href=#707 id=707 data-nosnippet>707</a>                    <span class="self">self</span>.noise_row_offset + first_row + block_start <span class="kw">as </span>u64,
+<a href=#708 id=708 data-nosnippet>708</a>                );
+<a href=#709 id=709 data-nosnippet>709</a>                <span class="self">self</span>.fill_time += started.elapsed();
+<a href=#710 id=710 data-nosnippet>710</a>                <span class="kw">let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, predictor)) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.predictor <span class="kw">else </span>{
+<a href=#711 id=711 data-nosnippet>711</a>                    <span class="macro">unreachable!</span>(<span class="string">"selected above"</span>);
+<a href=#712 id=712 data-nosnippet>712</a>                };
+<a href=#713 id=713 data-nosnippet>713</a>                <span class="kw">let </span>out = <span class="kw-2">&amp;mut </span>data[block_start * samples..block_end * samples];
+<a href=#714 id=714 data-nosnippet>714</a>                <span class="kw">let </span>predicted = <span class="kw">if </span><span class="self">self</span>.noise_terms.is_empty() {
+<a href=#715 id=715 data-nosnippet>715</a>                    predictor.predict_into(<span class="kw-2">&amp;</span><span class="self">self</span>.block, team, out)
+<a href=#716 id=716 data-nosnippet>716</a>                } <span class="kw">else </span>{
+<a href=#717 id=717 data-nosnippet>717</a>                    <span class="self">self</span>.noise_rows.clear();
+<a href=#718 id=718 data-nosnippet>718</a>                    <span class="self">self</span>.noise_rows.extend(
+<a href=#719 id=719 data-nosnippet>719</a>                        rows[block_start..block_end]
+<a href=#720 id=720 data-nosnippet>720</a>                            .iter()
+<a href=#721 id=721 data-nosnippet>721</a>                            .zip(<span class="self">self</span>.noise_row_offset + first_row + block_start <span class="kw">as </span>u64..)
+<a href=#722 id=722 data-nosnippet>722</a>                            .map(|(row, number)| MetalNoiseRow {
+<a href=#723 id=723 data-nosnippet>723</a>                                row: [number <span class="kw">as </span>u32, (number &gt;&gt; <span class="number">32</span>) <span class="kw">as </span>u32],
+<a href=#724 id=724 data-nosnippet>724</a>                                autocorrelation: u32::from(row.antenna1 == row.antenna2),
+<a href=#725 id=725 data-nosnippet>725</a>                            }),
+<a href=#726 id=726 data-nosnippet>726</a>                    );
+<a href=#727 id=727 data-nosnippet>727</a>                    <span class="kw">let </span>noise = DeviceNoise {
+<a href=#728 id=728 data-nosnippet>728</a>                        rows: <span class="kw-2">&amp;</span><span class="self">self</span>.noise_rows,
+<a href=#729 id=729 data-nosnippet>729</a>                        terms: <span class="kw-2">&amp;</span><span class="self">self</span>.noise_terms,
+<a href=#730 id=730 data-nosnippet>730</a>                    };
+<a href=#731 id=731 data-nosnippet>731</a>                    predictor.predict_into_with_noise(<span class="kw-2">&amp;</span><span class="self">self</span>.block, team, out, noise)
+<a href=#732 id=732 data-nosnippet>732</a>                };
+<a href=#733 id=733 data-nosnippet>733</a>                predicted.map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"predict: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#734 id=734 data-nosnippet>734</a>                block_start = block_end;
+<a href=#735 id=735 data-nosnippet>735</a>            }
+<a href=#736 id=736 data-nosnippet>736</a>        }
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="prelude-val">Ok</span>(())
+<a href=#738 id=738 data-nosnippet>738</a>    }
+<a href=#739 id=739 data-nosnippet>739</a>
+<a href=#740 id=740 data-nosnippet>740</a>    <span class="doccomment">/// Make the predictor `segment`'s, unless it is, for the visit at scan
+<a href=#741 id=741 data-nosnippet>741</a>    /// `scan`: its per-field grids found or prepared on `team`
+<a href=#742 id=742 data-nosnippet>742</a>    /// ([`FieldGridCache::grids`]).
+<a href=#743 id=743 data-nosnippet>743</a>    </span><span class="kw">fn </span>select(<span class="kw-2">&amp;mut </span><span class="self">self</span>, segment: usize, scan: usize, team: <span class="kw-2">&amp;</span>WorkerTeam) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">if </span><span class="self">self
+<a href=#745 id=745 data-nosnippet>745</a>            </span>.predictor
+<a href=#746 id=746 data-nosnippet>746</a>            .as_ref()
+<a href=#747 id=747 data-nosnippet>747</a>            .is_some_and(|(current, <span class="kw">_</span>)| <span class="kw-2">*</span>current == segment)
+<a href=#748 id=748 data-nosnippet>748</a>        {
+<a href=#749 id=749 data-nosnippet>749</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#750 id=750 data-nosnippet>750</a>        }
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="comment">// The previous predictor is dropped first, so at most one is held,
+<a href=#752 id=752 data-nosnippet>752</a>        // and the grids it kept can be evicted.
+<a href=#753 id=753 data-nosnippet>753</a>        </span><span class="self">self</span>.predictor = <span class="prelude-val">None</span>;
+<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>Segment {
+<a href=#755 id=755 data-nosnippet>755</a>            steps, source_scan, ..
+<a href=#756 id=756 data-nosnippet>756</a>        } = <span class="kw-2">&amp;</span><span class="self">self</span>.segments[segment];
+<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>source = <span class="kw-2">&amp;</span><span class="self">self</span>.scans[<span class="kw-2">*</span>source_scan];
+<a href=#758 id=758 data-nosnippet>758</a>        <span class="self">self</span>.keep.clear();
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="self">self</span>.keep.extend(
+<a href=#760 id=760 data-nosnippet>760</a>            steps
+<a href=#761 id=761 data-nosnippet>761</a>                .iter()
+<a href=#762 id=762 data-nosnippet>762</a>                .map(|<span class="kw-2">&amp;</span>step| (step, <span class="self">self</span>.predictions[step].grid_id(source))),
+<a href=#763 id=763 data-nosnippet>763</a>        );
+<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span><span class="kw-2">mut </span>domains = Vec::with_capacity(steps.len());
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>step <span class="kw">in </span>steps {
+<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">let </span>prediction = <span class="self">self</span>.predictions[step];
+<a href=#767 id=767 data-nosnippet>767</a>            <span class="kw">let </span>field = prediction.grid_id(source);
+<a href=#768 id=768 data-nosnippet>768</a>            <span class="kw">let </span>model = <span class="kw">match </span>prediction.grids_for(field) {
+<a href=#769 id=769 data-nosnippet>769</a>                <span class="prelude-val">Some</span>(FieldGrids::Prepared(grids)) =&gt; DomainModel::Borrowed(grids),
+<a href=#770 id=770 data-nosnippet>770</a>                <span class="prelude-val">Some</span>(FieldGrids::PerField) =&gt; DomainModel::Shared(<span class="self">self</span>.grids.grids(
+<a href=#771 id=771 data-nosnippet>771</a>                    (step, field),
+<a href=#772 id=772 data-nosnippet>772</a>                    (scan, <span class="kw-2">&amp;</span><span class="self">self</span>.keep),
+<a href=#773 id=773 data-nosnippet>773</a>                    || prediction.prepare_field(field, team),
+<a href=#774 id=774 data-nosnippet>774</a>                )<span class="question-mark">?</span>),
+<a href=#775 id=775 data-nosnippet>775</a>                <span class="comment">// `segment_of` found every step's.
+<a href=#776 id=776 data-nosnippet>776</a>                </span><span class="prelude-val">None </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"a segment's steps have its field's grids"</span>),
+<a href=#777 id=777 data-nosnippet>777</a>            };
+<a href=#778 id=778 data-nosnippet>778</a>            domains.push(PredictionDomain {
+<a href=#779 id=779 data-nosnippet>779</a>                operator: <span class="kw-2">&amp;</span>prediction.model.operator,
+<a href=#780 id=780 data-nosnippet>780</a>                resampler: <span class="kw-2">&amp;</span>prediction.model.resampler,
+<a href=#781 id=781 data-nosnippet>781</a>                model,
+<a href=#782 id=782 data-nosnippet>782</a>            });
+<a href=#783 id=783 data-nosnippet>783</a>        }
+<a href=#784 id=784 data-nosnippet>784</a>        <span class="kw">let </span>predictor = BlockPredictor::new(
+<a href=#785 id=785 data-nosnippet>785</a>            <span class="kw-2">&amp;</span>domains,
+<a href=#786 id=786 data-nosnippet>786</a>            <span class="self">self</span>.backend,
+<a href=#787 id=787 data-nosnippet>787</a>            <span class="self">self</span>.block_shape(<span class="self">self</span>.block_rows, domains.len()),
+<a href=#788 id=788 data-nosnippet>788</a>            <span class="self">self</span>.workers,
+<a href=#789 id=789 data-nosnippet>789</a>            <span class="macro">tracing::enabled!</span>(target: METAL_STAGE_TIMING, tracing::Level::INFO),
+<a href=#790 id=790 data-nosnippet>790</a>        )
+<a href=#791 id=791 data-nosnippet>791</a>        .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"the predictor: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#792 id=792 data-nosnippet>792</a>        <span class="comment">// The predictor keeps its own domains, and with them the grids.
+<a href=#793 id=793 data-nosnippet>793</a>        </span>drop(domains);
+<a href=#794 id=794 data-nosnippet>794</a>        <span class="self">self</span>.predictor = <span class="prelude-val">Some</span>((segment, predictor));
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="prelude-val">Ok</span>(())
+<a href=#796 id=796 data-nosnippet>796</a>    }
+<a href=#797 id=797 data-nosnippet>797</a>
+<a href=#798 id=798 data-nosnippet>798</a>    <span class="doccomment">/// Fill the block with `rows` of `scan`, the first MAIN row
+<a href=#799 id=799 data-nosnippet>799</a>    /// `first_row`, projected on `segment`'s domains.
+<a href=#800 id=800 data-nosnippet>800</a>    </span><span class="kw">fn </span>fill_block(<span class="kw-2">&amp;mut </span><span class="self">self</span>, segment: usize, scan: <span class="kw-2">&amp;</span>Scan, rows: <span class="kw-2">&amp;</span>[RowGeometry], first_row: u64) {
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>segment = <span class="kw-2">&amp;</span><span class="self">self</span>.segments[segment];
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="comment">// Every row of the scan has its window's frequencies, and unit
+<a href=#803 id=803 data-nosnippet>803</a>        // weights and no sample flags, so the block keeps them once.
+<a href=#804 id=804 data-nosnippet>804</a>        </span><span class="self">self</span>.block.reset_shared(
+<a href=#805 id=805 data-nosnippet>805</a>            segment.steps.len(),
+<a href=#806 id=806 data-nosnippet>806</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.channel_indices,
+<a href=#807 id=807 data-nosnippet>807</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.correlation_indices,
+<a href=#808 id=808 data-nosnippet>808</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.frequencies[scan.spectral_window_id],
+<a href=#809 id=809 data-nosnippet>809</a>        );
+<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">let </span>antenna_type = |antenna: usize| {
+<a href=#811 id=811 data-nosnippet>811</a>            <span class="comment">// A mosaic step classed every antenna of the scans it covers.
+<a href=#812 id=812 data-nosnippet>812</a>            </span><span class="macro">debug_assert!</span>(
+<a href=#813 id=813 data-nosnippet>813</a>                <span class="self">self</span>.antenna_types.is_empty() || antenna &lt; <span class="self">self</span>.antenna_types.len(),
+<a href=#814 id=814 data-nosnippet>814</a>                <span class="string">"antenna {antenna} has no dish class"
+<a href=#815 id=815 data-nosnippet>815</a>            </span>);
+<a href=#816 id=816 data-nosnippet>816</a>            <span class="self">self</span>.antenna_types.get(antenna).copied().unwrap_or(<span class="number">0</span>)
+<a href=#817 id=817 data-nosnippet>817</a>        };
+<a href=#818 id=818 data-nosnippet>818</a>        <span class="kw">for </span>(offset, row) <span class="kw">in </span>rows.iter().enumerate() {
+<a href=#819 id=819 data-nosnippet>819</a>            <span class="self">self</span>.projections.clear();
+<a href=#820 id=820 data-nosnippet>820</a>            <span class="self">self</span>.projections.extend(
+<a href=#821 id=821 data-nosnippet>821</a>                segment
+<a href=#822 id=822 data-nosnippet>822</a>                    .projections
+<a href=#823 id=823 data-nosnippet>823</a>                    .iter()
+<a href=#824 id=824 data-nosnippet>824</a>                    .zip(<span class="kw-2">&amp;</span>segment.pointing_offsets)
+<a href=#825 id=825 data-nosnippet>825</a>                    .zip(<span class="kw-2">&amp;</span>segment.steps)
+<a href=#826 id=826 data-nosnippet>826</a>                    .map(|((projection, pointing_offset_rad), <span class="kw-2">&amp;</span>step)| {
+<a href=#827 id=827 data-nosnippet>827</a>                        <span class="kw">let </span>prediction = <span class="self">self</span>.predictions[step];
+<a href=#828 id=828 data-nosnippet>828</a>                        <span class="kw">let </span>(<span class="kw-2">mut </span>uvw_m, <span class="kw-2">mut </span>phase_shift_m) = projection.apply(row.uvw_m);
+<a href=#829 id=829 data-nosnippet>829</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>(focus) = <span class="kw-2">&amp;</span>prediction.focus {
+<a href=#830 id=830 data-nosnippet>830</a>                            (uvw_m, phase_shift_m) = <span class="kw">crate</span>::session::focus::apply(
+<a href=#831 id=831 data-nosnippet>831</a>                                focus,
+<a href=#832 id=832 data-nosnippet>832</a>                                first_row + offset <span class="kw">as </span>u64,
+<a href=#833 id=833 data-nosnippet>833</a>                                row,
+<a href=#834 id=834 data-nosnippet>834</a>                                projection,
+<a href=#835 id=835 data-nosnippet>835</a>                                prediction.distance_m,
+<a href=#836 id=836 data-nosnippet>836</a>                                uvw_m,
+<a href=#837 id=837 data-nosnippet>837</a>                                phase_shift_m,
+<a href=#838 id=838 data-nosnippet>838</a>                            );
+<a href=#839 id=839 data-nosnippet>839</a>                        }
+<a href=#840 id=840 data-nosnippet>840</a>                        DomainProjection {
+<a href=#841 id=841 data-nosnippet>841</a>                            uvw_m,
+<a href=#842 id=842 data-nosnippet>842</a>                            phase_shift_m,
+<a href=#843 id=843 data-nosnippet>843</a>                            pointing_offset_rad: <span class="kw-2">*</span>pointing_offset_rad,
+<a href=#844 id=844 data-nosnippet>844</a>                        }
+<a href=#845 id=845 data-nosnippet>845</a>                    }),
+<a href=#846 id=846 data-nosnippet>846</a>            );
+<a href=#847 id=847 data-nosnippet>847</a>            <span class="kw">let </span>header = NativeRowHeader {
+<a href=#848 id=848 data-nosnippet>848</a>                row_flag: row.flagged,
+<a href=#849 id=849 data-nosnippet>849</a>                context: RowContext {
+<a href=#850 id=850 data-nosnippet>850</a>                    native_frequency_ratio: <span class="number">1.0</span>,
+<a href=#851 id=851 data-nosnippet>851</a>                    original_uvw_m: <span class="prelude-val">Some</span>(row.uvw_m),
+<a href=#852 id=852 data-nosnippet>852</a>                    time_s: <span class="number">0.0</span>,
+<a href=#853 id=853 data-nosnippet>853</a>                    antennas: [row.antenna1 <span class="kw">as </span>u32, row.antenna2 <span class="kw">as </span>u32],
+<a href=#854 id=854 data-nosnippet>854</a>                    antenna_types: [antenna_type(row.antenna1), antenna_type(row.antenna2)],
+<a href=#855 id=855 data-nosnippet>855</a>                    parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#856 id=856 data-nosnippet>856</a>                    field: scan.field_id <span class="kw">as </span>u32,
+<a href=#857 id=857 data-nosnippet>857</a>                    spectral_window: scan.spectral_window_id <span class="kw">as </span>u32,
+<a href=#858 id=858 data-nosnippet>858</a>                },
+<a href=#859 id=859 data-nosnippet>859</a>                address: RowAddress {
+<a href=#860 id=860 data-nosnippet>860</a>                    physical_row: first_row + offset <span class="kw">as </span>u64,
+<a href=#861 id=861 data-nosnippet>861</a>                    data_description: scan.data_description_id <span class="kw">as </span>i32,
+<a href=#862 id=862 data-nosnippet>862</a>                },
+<a href=#863 id=863 data-nosnippet>863</a>            };
+<a href=#864 id=864 data-nosnippet>864</a>            <span class="self">self</span>.block.push_shared_row(header, <span class="kw-2">&amp;</span><span class="self">self</span>.projections);
+<a href=#865 id=865 data-nosnippet>865</a>        }
+<a href=#866 id=866 data-nosnippet>866</a>    }
+<a href=#867 id=867 data-nosnippet>867</a>}
 </code></pre></div></section></main></body></html>
