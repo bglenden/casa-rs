@@ -18,6 +18,7 @@
 //!
 //! A session `openfromms` opened is patched in place instead ([`patch`]).
 
+pub(crate) mod append;
 mod components;
 mod data;
 mod geometry;

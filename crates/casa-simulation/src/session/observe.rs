@@ -476,7 +476,7 @@ impl super::Simulator {
         });
         self.scans
             .iter()
-            .filter_map(|scan| scan.planned().map(|rows| rows.observation_id))
+            .map(|scan| scan.observation_id)
             .max()
             .map_or(0, |largest| largest + 1)
     }

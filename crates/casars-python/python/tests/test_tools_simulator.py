@@ -663,10 +663,16 @@ def test_openfromms_corrupts_the_measurement_set_closed_before(tmp_path: Path) -
     assert sm.setseed(5) is True
     assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
     assert sm.corrupt() is True
-    with pytest.raises(NotImplementedError, match="observe after openfromms"):
-        sm.observe("F", "L", starttime="300s", stoptime="310s")
     sm.close()
     assert np.array_equal(np.asarray(Table.open(path).get_column("DATA")), expected)
+    assert sm.openfromms(str(path)) is True
+    assert sm.settimes(integrationtime="10s", usehourangle=False, referencetime=REFERENCE)
+    assert sm.observe("F", "L", starttime="300s", stoptime="310s")
+    sm.close()
+    extended = np.asarray(Table.open(path).get_column("DATA"))
+    assert extended.shape == (310, 2, 4)
+    assert np.array_equal(extended[:300], expected)
+    assert np.count_nonzero(extended[300:]) == 0
     with pytest.raises(RuntimeError):
         sm.openfromms(str(tmp_path / "missing.ms"))
 

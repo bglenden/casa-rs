@@ -184,6 +184,7 @@ pub(super) struct PredictionStage<'s> {
     /// ([`Self::start`]).
     noise_terms: Vec<MetalNoiseTerm>,
     noise_rows: Vec<MetalNoiseRow>,
+    noise_row_offset: u64,
     /// The most noise applications of one scan: the terms the device holds
     /// at most.
     most_terms: usize,
@@ -234,7 +235,7 @@ impl<'s> PredictionStage<'s> {
         // run of scans of one segment.
         let mut visits: HashMap<GridKey, Vec<usize>> = HashMap::new();
         for (index, scan) in session.scans().iter().enumerate() {
-            if !plan.selection.contains_scan(scan) {
+            if scan.row_count() == 0 || !plan.selection.contains_scan(scan) {
                 scan_segments.push(None);
                 continue;
             }
@@ -335,6 +336,7 @@ impl<'s> PredictionStage<'s> {
             fill_time: std::time::Duration::ZERO,
             noise_terms: Vec::new(),
             noise_rows: Vec::new(),
+            noise_row_offset: session.noise_row_offset(),
             most_terms,
             projections: Vec::new(),
             predictor: None,
@@ -601,7 +603,7 @@ impl<'s> PredictionStage<'s> {
                     segment,
                     scan,
                     &rows[block_start..block_end],
-                    first_row + block_start as u64,
+                    self.noise_row_offset + first_row + block_start as u64,
                 );
                 self.fill_time += started.elapsed();
                 let Some((_, predictor)) = &mut self.predictor else {
@@ -615,7 +617,7 @@ impl<'s> PredictionStage<'s> {
                     self.noise_rows.extend(
                         rows[block_start..block_end]
                             .iter()
-                            .zip(first_row + block_start as u64..)
+                            .zip(self.noise_row_offset + first_row + block_start as u64..)
                             .map(|(row, number)| MetalNoiseRow {
                                 row: [number as u32, (number >> 32) as u32],
                                 autocorrelation: u32::from(row.antenna1 == row.antenna2),
