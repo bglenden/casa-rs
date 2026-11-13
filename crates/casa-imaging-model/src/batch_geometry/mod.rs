@@ -204,6 +204,7 @@ pub struct GeometryPlan {
     /// Factor between the interpolation frequency coordinate and LSRK.
     grid_in_lsrk: f64,
     parallactic: bool,
+    aw_pa: bool,
     responses: Responses,
     aw: Option<AwPointingGrouping>,
 }
@@ -321,6 +322,7 @@ pub struct BatchGeometry {
     projections: Vec<ChartProjection>,
     pointing: Vec<SelectedPointingDirections>,
     parallactic: Vec<[f64; 2]>,
+    aw_pa: Vec<f32>,
     aw_pixels: Vec<[f64; 2]>,
     chart_pointing: Vec<SkyDirection>,
     responses: Vec<Option<SelectedAntennaResponses>>,
@@ -345,6 +347,13 @@ impl BatchGeometry {
     #[must_use]
     pub fn parallactic_angles(&self, sample: usize) -> Option<[f64; 2]> {
         self.parallactic.get(sample).copied()
+    }
+
+    /// The physical parallactic angle of antenna 0 at `time`, before adding
+    /// its feed-0 receptor angle (`getPA`, `VisBufferImpl2::feedPa`).
+    #[must_use]
+    pub fn aw_parallactic_angle(&self, time: usize) -> Option<f32> {
+        self.aw_pa.get(time).copied()
     }
 
     /// Sample `sample`'s AW pointing pixel on chart `chart`, on an AW run
@@ -390,6 +399,7 @@ impl BatchGeometry {
         self.projections.capacity() * size_of::<ChartProjection>()
             + self.pointing.capacity() * size_of::<SelectedPointingDirections>()
             + self.parallactic.capacity() * size_of::<[f64; 2]>()
+            + self.aw_pa.capacity() * size_of::<f32>()
             + self.aw_pixels.capacity() * size_of::<[f64; 2]>()
             + self.chart_pointing.capacity() * size_of::<SkyDirection>()
             + self.responses.capacity() * size_of::<Option<SelectedAntennaResponses>>()
@@ -463,7 +473,12 @@ impl GeometryPlan {
                     .iter()
                     .any(|chart| chart.centre.frame() != DirectionFrame::J2000));
         let responses = match problem.science().instrument_model() {
-            None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
+            None
+            | Some(
+                InstrumentModel::CasaEvlaWidebandAwV1
+                | InstrumentModel::CasaVlaAwplpg
+                | InstrumentModel::CasaVlaAwplpgSquint,
+            ) => Responses::None,
             Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
                 Responses::Uniform(AntennaResponseClass::CasaAca7m)
             }
@@ -497,6 +512,16 @@ impl GeometryPlan {
             chart_pointing,
             output_frame: spectral.output_frame().frequency_ref(),
             parallactic: problem.requires_parallactic_angles(),
+            aw_pa: problem
+                .science()
+                .measurement_equation()
+                .aw_projection()
+                .is_some()
+                || (problem.requires_parallactic_angles()
+                    && matches!(
+                        problem.science().instrument_model(),
+                        Some(InstrumentModel::CasaVlaAwplpg | InstrumentModel::CasaVlaAwplpgSquint)
+                    )),
             responses,
             aw: AwPointingGrouping::new(problem)?,
         })
@@ -581,7 +606,9 @@ impl GeometryPlan {
         if !matches!(self.responses, Responses::None) {
             per_sample += size_of::<Option<SelectedAntennaResponses>>();
         }
-        samples * per_sample + times * channels * size_of::<f64>()
+        samples * per_sample
+            + times * channels * size_of::<f64>()
+            + usize::from(self.aw_pa) * times * size_of::<f32>()
     }
 
     /// CASA's aperture classes of the observation's antennas under the
@@ -763,6 +790,11 @@ impl GeometryPlan {
         );
         let parallactic = if self.parallactic { samples } else { 0 };
         refill(&mut out.parallactic, parallactic, [f64::NAN; 2]);
+        refill(
+            &mut out.aw_pa,
+            usize::from(self.aw_pa) * batch.times(),
+            f32::NAN,
+        );
         let aw = if self.aw.is_some() {
             samples * out.charts
         } else {
@@ -841,12 +873,20 @@ impl GeometryPlan {
     ) -> Result<(), BatchGeometryError> {
         let per_time = context.batch.samples_per_time();
         let angles = if self.parallactic {
-            Some(self.frames.parallactic_angles(
+            let mut antennas = context.row_antennas();
+            if self.aw_pa && antennas.first() != Some(&AntennaId(0)) {
+                antennas.push(AntennaId(0));
+            }
+            let angles = self.frames.parallactic_angles(
                 (context.time_mjd_s, context.batch.time.reference()),
                 context.field,
                 field,
-                &context.row_antennas(),
-            )?)
+                &antennas,
+            )?;
+            if self.aw_pa {
+                out.aw_pa[context.time] = angles[0] as f32;
+            }
+            Some(angles)
         } else {
             None
         };

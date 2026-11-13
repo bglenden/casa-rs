@@ -117,6 +117,11 @@ impl ImagingRequest {
         request
             .validate_mem_scope()
             .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
+        crate::request::execution::validate_awp2_scope(&request)
+            .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
+        request
+            .validate_psf_phase_centre()
+            .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
         Ok(request)
     }
 }
@@ -142,7 +147,7 @@ fn read(
     };
     let modes = tclean.modes()?;
     tclean.selection()?;
-    tclean.geometry()?;
+    tclean.geometry(&modes)?;
     tclean.spectral(&modes)?;
     tclean.gridding(&modes)?;
     tclean.weighting(&modes)?;
@@ -156,10 +161,9 @@ fn read(
 /// The modes that decide which parameters the request reads.
 struct Modes {
     cube: bool,
+    mvc: bool,
     gridder: &'static str,
-    /// Whether CASA weighs density by field, as it does for the gridder
-    /// named `mosaic` alone: it sets `mosweight=False` for `mosaicft` and
-    /// `ftmosaic` (`task_tclean.py`).
+    /// Whether CASA keeps `mosweight` for the selected gridder name.
     per_field_density: bool,
     deconvolver: String,
     weighting: String,
@@ -339,6 +343,7 @@ impl<'a> Tclean<'a> {
             },
             "mosaic" | "mosaicft" | "ftmosaic" => "mosaic",
             "awproject" => "awproject",
+            "awp2" => "awp2",
             "awprojectft" => {
                 return Err(TcleanRefusal::not_yet(
                     "gridder",
@@ -348,9 +353,9 @@ impl<'a> Tclean<'a> {
                 ));
             }
             other => {
-                // awp2, awphpg and imagemosaic are #1071's.
+                // Other direction-dependent gridders remain tracked.
                 let issue = match other {
-                    "awp2" | "awphpg" | "imagemosaic" => 1071,
+                    "awphpg" | "imagemosaic" => 1071,
                     _ => 980,
                 };
                 return Err(TcleanRefusal::not_yet(
@@ -442,8 +447,9 @@ impl<'a> Tclean<'a> {
         self.set("usemask", usemask);
         Ok(Modes {
             cube: specmode != "mfs",
+            mvc,
             gridder,
-            per_field_density: gridder_name == "mosaic",
+            per_field_density: matches!(gridder_name, "mosaic" | "awp2"),
             deconvolver: deconvolver.to_string(),
             weighting: weighting.to_string(),
             user_mask: usemask == "user",
@@ -537,7 +543,7 @@ impl<'a> Tclean<'a> {
         Ok(())
     }
 
-    fn geometry(&mut self) -> Result<(), TcleanRefusal> {
+    fn geometry(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.copy(&["imsize", "stokes", "startmodel", "outlierfile"])?;
         let cell = self.value("cell")?;
         if cell.as_array().is_some_and(Vec::is_empty) {
@@ -560,8 +566,17 @@ impl<'a> Tclean<'a> {
             },
         );
         self.set("phasecenter_field", if field { centre } else { "none" });
+        let psf = self.text("psfphasecenter")?;
+        self.set(
+            "psfphasecenter",
+            if modes.gridder == "mosaic" && !psf.is_empty() {
+                psf
+            } else {
+                "none"
+            },
+        );
         self.projection()?;
-        self.ignore(&["psfphasecenter", "vptable"])
+        self.ignore(&["vptable"])
     }
 
     /// CASA's `projection` (`SynthesisParamsImage::fromRecord`): `NCP`, which
@@ -703,7 +718,17 @@ impl<'a> Tclean<'a> {
 
     fn gridding(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         self.copy(&["pblimit"])?;
-        self.ignore(&["computepastep", "rotatepastep"])?;
+        if modes.gridder == "awp2" {
+            self.awp2_controls(modes.mvc)?;
+        }
+        if modes.gridder == "awproject" {
+            self.copy(&["computepastep", "rotatepastep"])?;
+        } else {
+            self.ignore(&["rotatepastep"])?;
+            if modes.gridder != "awp2" {
+                self.ignore(&["computepastep"])?;
+            }
+        }
         let usepointing = self.flag("usepointing")?;
         if matches!(modes.gridder, "mosaic" | "awproject") {
             self.set("usepointing", usepointing);
@@ -734,17 +759,23 @@ impl<'a> Tclean<'a> {
                 ));
             }
             "awproject" if facets != 1 => {
-                return Err(TcleanRefusal::not_yet(
+                return Err(TcleanRefusal::new(
                     "facets",
-                    format!("{facets} with gridder='{}'", modes.gridder),
-                    1070,
+                    "AW projection requires facets=1. CASA uses wprojplanes>1 to include the W term.",
                 ));
             }
             _ => {}
         }
         match (modes.gridder, planes) {
             ("wproject" | "awproject", -1) => self.set("wprojplanes", "none"),
-            ("wproject" | "awproject", n) if n >= 1 => self.set("wprojplanes", n),
+            ("wproject" | "awproject" | "awp2", n) if n >= 1 => self.set("wprojplanes", n),
+            ("awp2", n) => {
+                return Err(TcleanRefusal::not_yet(
+                    "wprojplanes",
+                    format!("with AWP2 and {n} planes"),
+                    1071,
+                ));
+            }
             ("wproject" | "awproject", n) => {
                 return Err(TcleanRefusal::new(
                     "wprojplanes",
@@ -754,16 +785,13 @@ impl<'a> Tclean<'a> {
             _ => {}
         }
         let normtype = self.text("normtype")?;
-        if matches!(modes.gridder, "mosaic" | "awproject") {
+        if matches!(modes.gridder, "mosaic" | "awproject" | "awp2") {
             self.set("normtype", normtype);
         }
-        // CASA weighs density by field only for the gridder named mosaic
-        // (`task_tclean.py`), and over all fields for mosaicft and
-        // ftmosaic: a continuum density per field (`VisImagingWeight`'s
-        // `multiField`) or a cube's per-channel density per field
-        // (`BriggsCubeWeightor`'s).
+        // task_tclean.py keeps mosweight for mosaic and awp2. Its
+        // mosaicft and ftmosaic aliases use the density over all fields.
         let mosweight = self.flag("mosweight")?;
-        if modes.gridder == "mosaic" {
+        if matches!(modes.gridder, "mosaic" | "awp2") {
             self.set("mosweight", mosweight && modes.per_field_density);
         }
         self.aw_terms(modes)?;
@@ -790,6 +818,9 @@ impl<'a> Tclean<'a> {
                 self.set("cfcache", cfcache);
             }
         }
+        if modes.gridder == "awp2" && !self.values.contains_key("evla_surface") {
+            self.set("evla_surface", "none");
+        }
         self.copy_present(&[
             "aw_cf_source",
             "cf_resident_mb",
@@ -801,6 +832,37 @@ impl<'a> Tclean<'a> {
             "native_cf_cache_bytes",
             "native_cf_maximum_cells",
         ])
+    }
+
+    /// AWPLPG selects W planes and squint independently of AWProjectFT.
+    fn awp2_controls(&mut self, mvc: bool) -> Result<(), TcleanRefusal> {
+        let pa_step = self
+            .value("computepastep")?
+            .as_f64()
+            .map(|step| step as f32)
+            .filter(|step| step.is_finite() && *step > 0.0);
+        let squint_supported = self.integer("wprojplanes")? > 1
+            && (self.text("stokes")? == "IV" || (mvc && self.text("stokes")? == "I"));
+        let controls = [
+            (
+                "computepastep",
+                pa_step.is_some_and(|step| step >= 180.0 || squint_supported),
+            ),
+            ("facets", self.integer("facets")? == 1),
+            ("usepointing", !self.flag("usepointing")?),
+            ("parallel", !self.flag("parallel")?),
+        ];
+        for (parameter, supported) in controls {
+            if !supported {
+                return Err(TcleanRefusal::not_yet(
+                    parameter,
+                    "with this AWP2 configuration",
+                    1071,
+                ));
+            }
+        }
+        self.set("computepastep", pa_step.expect("checked PA step"));
+        Ok(())
     }
 
     /// The AW projection reads `aterm`, `psterm`, `wbawp` and `conjbeams`

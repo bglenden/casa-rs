@@ -8,7 +8,7 @@ use num_complex::Complex32;
 
 use super::geometry::RowGeometry;
 use crate::session::observe::Scan;
-use crate::session::plan::DataPlan;
+use crate::session::plan::DataPhase as DataPlan;
 
 /// Add the total-power predictions `plan` holds to `data`, the batch's DATA
 /// of `rows` (`samples` cells a row), for each run of `runs` (scan, first

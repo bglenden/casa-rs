@@ -51,9 +51,14 @@ use crate::compile::StartModel;
 mod clean;
 mod continuation;
 mod prediction;
+mod separate_psf;
+pub(crate) use separate_psf::form as form_separate_psf;
 mod seeding;
 use crate::restart::ExistingProducts;
-use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason, PlaneRows};
+use crate::{
+    AwCatalogDeployment, Awp2Deployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
+    PlaneRows,
+};
 pub(crate) use continuation::Forms;
 
 /// What one native imaging run needs besides the compiled problem.
@@ -65,6 +70,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) mask_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     /// The observation's batches the passes read.
     pub(crate) source: &'a BatchRoute,
+    pub(crate) separate_psf: Option<Admitted<Vec<f32>>>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     /// The main domain's start model, which the initial pass seeds the
     /// model from.
@@ -93,9 +99,11 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) spill_directory: &'a Path,
     /// The AW catalog of an A-projection run.
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
+    pub(crate) awp2: Option<Awp2Deployment>,
     pub(crate) backend: BackendChoice,
     /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
+    pub(crate) ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     pub(crate) diagnostics: Diagnostics,
 }
 
@@ -142,6 +150,7 @@ struct Run<'a> {
     /// The image domains' images from their charts.
     stitch: ChartStitch,
     source: Box<dyn BoundedSource + 'a>,
+    separate_psf: Option<Admitted<Vec<f32>>>,
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
     _weights: Reservation,
@@ -257,9 +266,15 @@ pub(crate) fn run(
     let reconstruction = mvc.map_or(problem, |view| view.taylor_problem);
     let controls = reconstruction.reconstruction().controls();
     let cleaning = controls.max_minor_iterations() > 0;
+    // MVC's cube-to-Taylor reduction has already applied the beam response.
+    let minor_response = if mvc.is_some() {
+        None
+    } else {
+        inputs.image_response
+    };
     let setup = minor_setup(
         reconstruction,
-        (inputs.image_response, inputs.primary_beam),
+        (minor_response, inputs.primary_beam),
         &inputs.masks,
         inputs.psf_cutoff,
         inputs.psf_beams.clone(),
@@ -289,7 +304,7 @@ pub(crate) fn run(
     // setup that then fails still reports it.
     let mut chosen = None;
     let opened = run_phase("setup", &cancel, diagnostics, summary, || {
-        Run::open(inputs, (&minor, refresh), &mut chosen)
+        Run::open(inputs, (&minor, refresh), &mut chosen, false)
     });
     if let Some(workers) = chosen {
         summary.workers = workers.cores.workers;
@@ -521,6 +536,7 @@ impl<'a> Run<'a> {
         inputs: ImagingInputs<'a>,
         (minor, refresh): (&dyn Fn(usize) -> u64, Option<RefreshDemand>),
         chosen: &mut Option<WorkerChoice>,
+        psf_only: bool,
     ) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
         let backend = inputs.backend;
@@ -547,13 +563,14 @@ impl<'a> Run<'a> {
                     &correlations,
                     backend,
                     inputs.grid_precision,
-                    inputs.aw_catalog.as_ref(),
+                    inputs.ft_padding,
+                    (inputs.aw_catalog.as_ref(), inputs.awp2.as_ref()),
                     &keys,
                     admission,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let weight_image = domains.iter().any(|domain| domain.weight_image);
+        let weight_image = !psf_only && domains.iter().any(|domain| domain.weight_image);
         if inputs.visibility_write.is_some() && problem.geometry().domains().len() > 1 {
             return Err(ImagingError::Unsupported {
                 reason: "visibilities are written back for one image domain",
@@ -580,7 +597,11 @@ impl<'a> Run<'a> {
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
             .unwrap_or(0);
-        let initial = initial_modes(weight_image);
+        let initial = ModeSet {
+            data: !psf_only,
+            psf: true,
+            weight: weight_image,
+        };
         let reseed = seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response);
         let demand = SetupDemand {
             problem,
@@ -697,6 +718,7 @@ impl<'a> Run<'a> {
             stitch,
             charts,
             source,
+            separate_psf: inputs.separate_psf,
             weighting,
             _weights: weights,
             teams,
@@ -1158,6 +1180,13 @@ impl<'a> Run<'a> {
                     .map_err(|error| PassError::Images(error.into()))?;
                 match images {
                     Some(mut images) => {
+                        // Keep the main view's sensitivity and sums. Only the
+                        // unnormalised PSF samples come from the separate view.
+                        let mut psf_resident = Reservation::none();
+                        if initial && let Some(separate) = self.separate_psf.take() {
+                            images.psf = Some(separate.value);
+                            psf_resident = separate.reservation;
+                        }
                         // A pass of the PSF alone takes the residual it does
                         // not form ([`continuation`]).
                         if !modes.data {
@@ -1168,9 +1197,11 @@ impl<'a> Run<'a> {
                             )
                             .map_err(|error| PassError::Images(Box::new(error)))?;
                         }
-                        state
+                        let appended = state
                             .append(images)
-                            .map_err(|error| PassError::Images(Box::new(error)))
+                            .map_err(|error| PassError::Images(Box::new(error)));
+                        drop(psf_resident);
+                        appended
                     }
                     None => Ok(()),
                 }

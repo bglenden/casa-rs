@@ -8,7 +8,9 @@
 
 use std::path::PathBuf;
 
+use casa_coordinates::CoordinateSystem;
 use casa_images::RegridTemplate;
+use casa_imaging_products::CasaImageWriter;
 use casa_imaging_runtime::{Demand, Reservation, admit};
 
 use super::domains::{DomainMask, PreparedImageDomain};
@@ -20,10 +22,39 @@ use crate::{ImagingRequest, RunContext, UseMask};
 pub(crate) struct Continuation {
     /// The earlier model, on the image's own grid.
     pub(crate) start_model: Option<StartModel>,
-    /// Charges for a reused CLEAN mask and saved beams, held through publication.
+    /// Existing mosaic PSF coordinates when CASA grids into that image.
+    pub(crate) psf_coordinates: Option<CoordinateSystem>,
+    /// Charges for reused mask and image metadata, held through publication.
     pub(crate) mask_resident: Reservation,
     /// Earlier products or their metadata, including images read in place of a pass.
     pub(crate) existing: Option<ExistingProducts>,
+}
+
+/// Bind the coordinates of a re-formed PSF and the model for the first pass.
+pub(super) fn prepare(
+    request: &ImagingRequest,
+    main: &mut PreparedImageDomain,
+    (channels, reconstruction_planes): (usize, usize),
+    context: &RunContext,
+    writer: &mut CasaImageWriter,
+) -> Result<Continuation, PrepareError> {
+    let mut continuation = read(request, main, channels, context)?;
+    if let Some(coordinates) = continuation.psf_coordinates.take() {
+        writer.set_main_psf_coordinates(coordinates);
+    }
+    if request.has_start_model() {
+        let terms = match request.deconvolver {
+            crate::Deconvolver::Mtmfs => request.nterms,
+            _ => 1,
+        };
+        continuation.start_model = Some(StartModel::prepare(
+            &request.startmodel,
+            main,
+            request.stokes.len(),
+            (reconstruction_planes, terms),
+        )?);
+    }
+    Ok(continuation)
 }
 
 /// Check every product at the main domain's prefix on its grid, and take
@@ -32,7 +63,7 @@ pub(crate) struct Continuation {
 /// that `calcpsf=False` and `calcres=False` read. `channels` are the
 /// image's output channels. A request that does not continue
 /// (`tclean_restart` unset, lower-level execution) reads nothing.
-pub(super) fn prepare(
+fn read(
     request: &ImagingRequest,
     main: &mut PreparedImageDomain,
     channels: usize,
@@ -40,6 +71,7 @@ pub(super) fn prepare(
 ) -> Result<Continuation, PrepareError> {
     let mut continuation = Continuation {
         start_model: None,
+        psf_coordinates: None,
         mask_resident: Reservation::none(),
         existing: None,
     };
@@ -58,9 +90,31 @@ pub(super) fn prepare(
         coordinates: main.coordinates.clone(),
         shape: vec![nx, ny, polarizations, planes],
     };
+    let saved_mosaic_psf = request.supports_separate_psf().then_some(main.direction);
     for path in restart::products(&request.imagename)? {
         let suffix = restart::suffix(&request.imagename, &path);
-        restart::check_grid(&path, &suffix, &template)?;
+        let psf_coordinates = restart::check_grid(&path, &suffix, &template, saved_mosaic_psf)?;
+        if request.calcpsf
+            && !request.uses_separate_psf()
+            && let Some(coordinates) = psf_coordinates
+        {
+            // Without a separate PSF request CASA makes new samples in
+            // the existing image store, keeping its coordinates and beam.
+            let bytes = coordinates
+                .to_record()
+                .retained_heap_bytes()
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .unwrap_or(u64::MAX);
+            continuation.mask_resident.join(admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "saved mosaic PSF coordinates",
+                    memory: bytes,
+                },
+            )?);
+            continuation.psf_coordinates = Some(coordinates);
+        }
         // CASA's setupMask reuses an existing mask only when no mask is
         // given; `restart::check` refused the other cleaning cases.
         if suffix == "mask"
@@ -122,6 +176,7 @@ pub(super) fn prepare(
     // CubeMajorCycleAlgorithm forms a temporary PSF without the old image
     // metadata, whereas MFS makes its PSF in the existing image store.
     let psf_beam = (!request.calcpsf || request.specmode == crate::SpecMode::Mfs)
+        && !(request.calcpsf && request.uses_separate_psf())
         && restart::product_path(&request.imagename, &psf_name).exists();
     let mask_beam = request.usemask == UseMask::AutoMultithresh
         && request.niter > 0
@@ -132,6 +187,7 @@ pub(super) fn prepare(
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
+            restart::reuses_direction_dependent_psf(request),
         )?;
         if psf_beam {
             let mut charge = admit(

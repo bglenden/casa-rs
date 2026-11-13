@@ -44,12 +44,30 @@ impl EvlaApertureModel {
         grid: EvlaApertureGrid,
         planes: &mut [Complex32],
     ) -> Result<(), NativeAwGenerationError> {
+        self.fill_aperture_with_feed(grid, planes, false)
+    }
+
+    /// Legacy VLA L-band feed used by `EVLAAperture::applyAvgSkyJones` in AWPLPG.
+    pub(super) fn fill_vla_l_aperture(
+        &self,
+        grid: EvlaApertureGrid,
+        planes: &mut [Complex32],
+    ) -> Result<(), NativeAwGenerationError> {
+        self.fill_aperture_with_feed(grid, planes, true)
+    }
+
+    fn fill_aperture_with_feed(
+        &self,
+        grid: EvlaApertureGrid,
+        planes: &mut [Complex32],
+        legacy_vla: bool,
+    ) -> Result<(), NativeAwGenerationError> {
         let plane_length = grid.size * grid.size;
         if planes.len() != 4 * plane_length {
             return Err(NativeAwGenerationError::WorkspaceMismatch);
         }
         planes.fill(Complex32::default());
-        let antenna = Antenna::new(self, grid.frequency_hz)?;
+        let antenna = Antenna::new(self, grid.frequency_hz, legacy_vla)?;
         let reference_path = antenna
             .trace(0.0, 0.00001)
             .ok_or(NativeAwGenerationError::InvalidNumerics)?
@@ -202,12 +220,22 @@ impl<'a> Antenna<'a> {
     fn new(
         model: &'a EvlaApertureModel,
         frequency_hz: f64,
+        legacy_vla: bool,
     ) -> Result<Self, NativeAwGenerationError> {
         // Receiver selection uses the requested frequency; BeamCalc receives the
         // float-rounded frequency from VLACalcIlluminationConvFunc.
         let frequency_ghz = f64::from(frequency_hz as f32) / 1e9;
         let (feed, reference, taper, hole_radius) = if (0.9e9..=2e9).contains(&frequency_hz) {
-            ([0.10026, 0.97019, 1.67640], 1.5, [10.0, 2.0, 0.0], 2.0)
+            if legacy_vla {
+                (
+                    [-0.68968367, 0.68968367, 1.67640],
+                    1.5,
+                    [10.0, 0.0, 0.0],
+                    2.0,
+                )
+            } else {
+                ([0.10026, 0.97019, 1.67640], 1.5, [10.0, 2.0, 0.0], 2.0)
+            }
         } else if (2e9..=4e9).contains(&frequency_hz) {
             (
                 [-0.196123, -0.955439, 1.67640],

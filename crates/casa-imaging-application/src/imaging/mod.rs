@@ -13,15 +13,15 @@ mod setup;
 mod trace;
 mod visibility_write;
 
-pub(crate) use cycle::{Forms, ImagingInputs, MvcCycleSpec, plane_bounds, run};
+pub(crate) use cycle::{Forms, ImagingInputs, MvcCycleSpec, form_separate_psf, plane_bounds, run};
 pub(crate) use images::prepare_model;
 pub(crate) use measurement::{
     KernelAdmission, domain_operator, image_extent, metal_kernel_set, multi_store_kernel_set,
     reference_frequency_hz, row_samples, selected_correlations, standard_kernel_set,
 };
 pub(crate) use observation_source::{
-    BatchRoute, ObservationSource, PartitionSelection, RouteStore, SelectedPartition, StoreBatches,
-    StoreKeys, StoreRoute, WriteBack, admit_batches, pointing_direction,
+    BatchRoute, Batching, ObservationSource, PartitionSelection, RouteStore, SelectedPartition,
+    StoreBatches, StoreKeys, StoreRoute, WriteBack, admit_batches, pointing_direction,
 };
 pub(crate) use visibility_write::VisibilityWriteTarget;
 

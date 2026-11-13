@@ -34,6 +34,3 @@ pub enum CalibrationTaskResult {
     /// `gencal`, or `calibrate` in `gencal` mode.
     Gencal(GencalReport),
 }
-
-/// Backward-compatible alias for the launcher-managed calibration output type.
-pub type ManagedCalibrationOutput = CalibrationTaskResult;

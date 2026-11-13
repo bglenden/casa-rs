@@ -42,6 +42,7 @@ use casa_imaging_runtime::pass::{
 };
 use casa_numerics::cell_noise::metal_draws_exactly;
 use casa_types::Complex32;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 
 use super::geometry::RowGeometry;
 use super::grids::{FieldGridCache, GridKey};
@@ -50,7 +51,7 @@ use crate::predict::FtMachine;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
-use crate::session::plan::DataPlan;
+use crate::session::plan::DataPhase as DataPlan;
 use crate::session::prediction::{FieldGrids, Prediction};
 
 /// The noise of scan `scan` in `plan` that a stage predicting the scan may
@@ -68,8 +69,19 @@ use crate::session::prediction::{FieldGrids, Prediction};
 /// adding them after the noise rounds each sample once, independently, and
 /// the device's noise saves the host's pass (#886 follow-up: 0.34 s of a
 /// 2.1 s Metal `close`).
-pub(super) fn device_noise(plan: &DataPlan, scan: usize, from_disk: bool) -> &[NoiseApplication] {
-    if from_disk || plan.has_jones_for_scan(scan) {
+pub(super) fn device_noise(
+    plan: &DataPlan,
+    scan: usize,
+    window: usize,
+    from_disk: bool,
+) -> &[NoiseApplication] {
+    if from_disk
+        || plan.needs_corruption_steps(scan, window)
+        || plan
+            .noise_for_scan(scan)
+            .iter()
+            .any(|noise| noise.fixed().is_some())
+    {
         &[]
     } else {
         plan.noise_for_scan(scan)
@@ -94,6 +106,8 @@ const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 /// predictions), the field, each row's rotation to each domain's tangent
 /// point, and the pointing offset each domain's kernels ramp by.
 struct Segment {
+    /// Representative scan for comparing every fused prediction's epoch.
+    source_scan: usize,
     steps: Vec<usize>,
     field: usize,
     projections: Vec<GridFtProjection>,
@@ -111,12 +125,23 @@ fn segment_of(
     predictions: &[&Prediction],
     steps: std::ops::Range<usize>,
     scan: &Scan,
+    scan_index: usize,
+    correlations: &[i32],
 ) -> SimulatorResult<Segment> {
+    // Header predicates can reject every row of a chunk without excluding
+    // its field/window. Those steps have neither science nor a captured
+    // frame there; omit their domains instead of inventing an epoch.
+    let mut selected_steps = Vec::with_capacity(steps.len());
+    selected_steps.extend(steps.filter(|&step| {
+        predictions[step].has_selected_chunk(scan)
+            && predictions[step].matches_correlations(correlations)
+    }));
+    let steps = selected_steps;
     let mut projections = Vec::with_capacity(steps.len());
     let mut pointing_offsets = Vec::with_capacity(steps.len());
-    for step in steps.clone() {
+    for &step in &steps {
         let prediction = predictions[step];
-        if prediction.grids_for(scan.field_id).is_none() {
+        if prediction.grids_for(prediction.grid_id(scan)).is_none() {
             return Err(SimulatorError::raised(format!(
                 "predict prepared no grids for field {}",
                 scan.field_id
@@ -124,25 +149,61 @@ fn segment_of(
         }
         // `MosaicFT` reprojects through `girarUVW`, the others through
         // `rotateUVW`.
-        let project = match prediction.model.machine() {
-            FtMachine::Mosaic => GridFtProjection::mosaic_between_j2000_directions,
+        let phase = prediction.phase_centre(scan);
+        let projection = match prediction.model.machine() {
+            FtMachine::Mosaic => {
+                GridFtProjection::mosaic_between_j2000_directions(phase, prediction.tangent_rad)
+            }
             FtMachine::Grid(_) | FtMachine::WProject(_) => {
-                GridFtProjection::between_j2000_directions
+                let source = MDirection::from_angles(phase[0], phase[1], DirectionRef::J2000);
+                GridFtProjection::between_directions_with_frame(
+                    &source,
+                    &prediction.tangent,
+                    &prediction.frame(scan)?,
+                )
+                .map_err(|error| {
+                    SimulatorError::raised(format!("simulator image-frame projection: {error}"))
+                })?
             }
         };
-        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
+        projections.push(projection);
         pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
     }
     Ok(Segment {
-        steps: steps.collect(),
+        source_scan: scan_index,
+        steps,
         field: scan.field_id,
         projections,
         pointing_offsets,
     })
 }
 
+impl Segment {
+    fn matches(
+        &self,
+        predictions: &[&Prediction],
+        scans: &[Scan],
+        scan: &Scan,
+        steps: std::ops::Range<usize>,
+        correlations: &[i32],
+    ) -> bool {
+        let original = &scans[self.source_scan];
+        self.field == scan.field_id
+            && self.steps.iter().copied().eq(steps.clone().filter(|&step| {
+                predictions[step].has_selected_chunk(scan)
+                    && predictions[step].matches_correlations(correlations)
+            }))
+            && original.pointing_rad.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
+            && steps.into_iter().all(|step| {
+                predictions[step].phase_centre(original).map(f64::to_bits)
+                    == predictions[step].phase_centre(scan).map(f64::to_bits)
+            })
+    }
+}
+
 /// The prediction stage's state across batches.
 pub(super) struct PredictionStage<'s> {
+    scans: &'s [Scan],
     backend: BackendChoice,
     correlations: usize,
     channels: usize,
@@ -151,6 +212,7 @@ pub(super) struct PredictionStage<'s> {
     segments: Vec<Segment>,
     /// Each scan's segment; `None` for a scan no step covers.
     scan_segments: Vec<Option<usize>>,
+    scan_offset: usize,
     /// Each spectral window's channel frequencies.
     frequencies: Vec<Vec<f64>>,
     /// Each antenna's dish class, which keys the mosaic machine's kernels
@@ -173,6 +235,7 @@ pub(super) struct PredictionStage<'s> {
     /// ([`Self::start`]).
     noise_terms: Vec<MetalNoiseTerm>,
     noise_rows: Vec<MetalNoiseRow>,
+    noise_row_offset: u64,
     /// The most noise applications of one scan: the terms the device holds
     /// at most.
     most_terms: usize,
@@ -196,8 +259,9 @@ impl<'s> PredictionStage<'s> {
         session: &'s Simulator,
         (correlations, channels): (usize, usize),
         backend: BackendChoice,
+        plan: &'s DataPlan,
+        scan_scope: std::ops::Range<usize>,
     ) -> SimulatorResult<Option<Self>> {
-        let plan = session.data_plan();
         let predictions: Vec<&'s Prediction> = plan
             .predictions()
             .map(|(prediction, _)| prediction)
@@ -217,12 +281,19 @@ impl<'s> PredictionStage<'s> {
             BackendChoice::Cpu
         };
         let mut keys = HashMap::new();
-        let mut segments = Vec::new();
-        let mut scan_segments = Vec::with_capacity(session.scans().len());
+        let mut segments: Vec<Segment> = Vec::new();
+        let mut scan_segments = Vec::with_capacity(scan_scope.len());
         // Each per-field set's visits, by their first scans: a visit is a
         // run of scans of one segment.
         let mut visits: HashMap<GridKey, Vec<usize>> = HashMap::new();
-        for (index, scan) in session.scans().iter().enumerate() {
+        let mut prepared_scans = 0usize;
+        for (relative, scan) in session.scans()[scan_scope.clone()].iter().enumerate() {
+            let index = scan_scope.start + relative;
+            prepared_scans += 1;
+            if scan.row_count() == 0 || !plan.selection.contains_scan(scan) {
+                scan_segments.push(None);
+                continue;
+            }
             let steps = plan.predictions_for_scan(index);
             if steps.is_empty() {
                 scan_segments.push(None);
@@ -230,33 +301,69 @@ impl<'s> PredictionStage<'s> {
             }
             // Rows are phased on their field (#884); the mosaic machine's
             // kernels ramp to where the antennas point.
+            let phase_centre = predictions[steps.start].phase_centre(scan);
             let key = (
                 steps,
                 scan.field_id,
-                [scan.phase_center_rad, scan.pointing_rad]
-                    .map(|direction| direction.map(f64::to_bits)),
+                [phase_centre, scan.pointing_rad].map(|direction| direction.map(f64::to_bits)),
             );
-            let segment = match keys.get(&key) {
-                Some(segment) => *segment,
+            // The first centre is a cheap lookup key. A later fused image
+            // can carry a different epoch after append, so compare them all.
+            let cached = keys.get(&key).copied().and_then(|candidate: usize| {
+                if segments[candidate].matches(
+                    &predictions,
+                    session.scans(),
+                    scan,
+                    key.0.clone(),
+                    session.correlations_for_scan(scan),
+                ) {
+                    Some(candidate)
+                } else {
+                    segments.iter().position(|segment| {
+                        segment.matches(
+                            &predictions,
+                            session.scans(),
+                            scan,
+                            key.0.clone(),
+                            session.correlations_for_scan(scan),
+                        )
+                    })
+                }
+            });
+            let segment = match cached {
+                Some(segment) => segment,
                 None => {
-                    segments.push(segment_of(&predictions, key.0.clone(), scan)?);
+                    segments.push(segment_of(
+                        &predictions,
+                        key.0.clone(),
+                        scan,
+                        index,
+                        session.correlations_for_scan(scan),
+                    )?);
                     keys.insert(key, segments.len() - 1);
                     segments.len() - 1
                 }
             };
             if scan_segments.last() != Some(&Some(segment)) {
-                let Segment { steps, field, .. } = &segments[segment];
+                let Segment { steps, .. } = &segments[segment];
                 for &step in steps {
                     if matches!(
-                        predictions[step].grids_for(*field),
+                        predictions[step].grids_for(predictions[step].grid_id(scan)),
                         Some(FieldGrids::PerField)
                     ) {
-                        visits.entry((step, *field)).or_default().push(index);
+                        visits
+                            .entry((step, predictions[step].grid_id(scan)))
+                            .or_default()
+                            .push(index);
                     }
                 }
             }
             scan_segments.push(Some(segment));
         }
+        tracing::trace!(
+            simulation_prepared_scans = prepared_scans as u64,
+            "prepared simulator prediction scans"
+        );
         // An opened MeasurementSet may have a segment a row, gathered with
         // room to spare.
         segments.shrink_to_fit();
@@ -298,17 +405,20 @@ impl<'s> PredictionStage<'s> {
             .max_by_key(|types| types.len())
             .unwrap_or_default()
             .to_vec();
-        let most_terms = (0..session.scans().len())
+        let most_terms = scan_scope
+            .clone()
             .map(|scan| plan.noise_for_scan(scan).len())
             .max()
             .unwrap_or(0);
         Ok(Some(Self {
+            scans: session.scans(),
             backend,
             correlations,
             channels,
             predictions,
             segments,
             scan_segments,
+            scan_offset: scan_scope.start,
             frequencies,
             antenna_types,
             prepared_bytes,
@@ -320,6 +430,7 @@ impl<'s> PredictionStage<'s> {
             fill_time: std::time::Duration::ZERO,
             noise_terms: Vec::new(),
             noise_rows: Vec::new(),
+            noise_row_offset: session.noise_row_offset(),
             most_terms,
             projections: Vec::new(),
             predictor: None,
@@ -347,7 +458,14 @@ impl<'s> PredictionStage<'s> {
 
     /// Whether a step predicts scan `scan`'s rows.
     pub(super) fn predicts(&self, scan: usize) -> bool {
-        self.scan_segments[scan].is_some()
+        self.segment_for_scan(scan).is_some()
+    }
+
+    fn segment_for_scan(&self, scan: usize) -> Option<usize> {
+        self.scan_segments
+            .get(scan.checked_sub(self.scan_offset)?)
+            .copied()
+            .flatten()
     }
 
     /// The most domains a segment sums.
@@ -558,7 +676,7 @@ impl<'s> PredictionStage<'s> {
     ) -> SimulatorResult<()> {
         let samples = self.correlations * self.channels;
         for &(scan, start, count) in runs {
-            let Some(segment) = self.scan_segments[scan] else {
+            let Some(segment) = self.segment_for_scan(scan) else {
                 continue;
             };
             self.select(segment, scan, team)?;
@@ -586,7 +704,7 @@ impl<'s> PredictionStage<'s> {
                     segment,
                     scan,
                     &rows[block_start..block_end],
-                    first_row + block_start as u64,
+                    self.noise_row_offset + first_row + block_start as u64,
                 );
                 self.fill_time += started.elapsed();
                 let Some((_, predictor)) = &mut self.predictor else {
@@ -600,7 +718,7 @@ impl<'s> PredictionStage<'s> {
                     self.noise_rows.extend(
                         rows[block_start..block_end]
                             .iter()
-                            .zip(first_row + block_start as u64..)
+                            .zip(self.noise_row_offset + first_row + block_start as u64..)
                             .map(|(row, number)| MetalNoiseRow {
                                 row: [number as u32, (number >> 32) as u32],
                                 autocorrelation: u32::from(row.antenna1 == row.antenna2),
@@ -633,13 +751,20 @@ impl<'s> PredictionStage<'s> {
         // The previous predictor is dropped first, so at most one is held,
         // and the grids it kept can be evicted.
         self.predictor = None;
-        let Segment { steps, field, .. } = &self.segments[segment];
-        let field = *field;
+        let Segment {
+            steps, source_scan, ..
+        } = &self.segments[segment];
+        let source = &self.scans[*source_scan];
         self.keep.clear();
-        self.keep.extend(steps.iter().map(|&step| (step, field)));
+        self.keep.extend(
+            steps
+                .iter()
+                .map(|&step| (step, self.predictions[step].grid_id(source))),
+        );
         let mut domains = Vec::with_capacity(steps.len());
         for &step in steps {
             let prediction = self.predictions[step];
+            let field = prediction.grid_id(source);
             let model = match prediction.grids_for(field) {
                 Some(FieldGrids::Prepared(grids)) => DomainModel::Borrowed(grids),
                 Some(FieldGrids::PerField) => DomainModel::Shared(self.grids.grids(
@@ -697,8 +822,21 @@ impl<'s> PredictionStage<'s> {
                     .projections
                     .iter()
                     .zip(&segment.pointing_offsets)
-                    .map(|(projection, pointing_offset_rad)| {
-                        let (uvw_m, phase_shift_m) = projection.apply(row.uvw_m);
+                    .zip(&segment.steps)
+                    .map(|((projection, pointing_offset_rad), &step)| {
+                        let prediction = self.predictions[step];
+                        let (mut uvw_m, mut phase_shift_m) = projection.apply(row.uvw_m);
+                        if let Some(focus) = &prediction.focus {
+                            (uvw_m, phase_shift_m) = crate::session::focus::apply(
+                                focus,
+                                first_row + offset as u64,
+                                row,
+                                projection,
+                                prediction.distance_m,
+                                uvw_m,
+                                phase_shift_m,
+                            );
+                        }
                         DomainProjection {
                             uvw_m,
                             phase_shift_m,
@@ -720,7 +858,7 @@ impl<'s> PredictionStage<'s> {
                 },
                 address: RowAddress {
                     physical_row: first_row + offset as u64,
-                    data_description: scan.spectral_window_id as i32,
+                    data_description: scan.data_description_id as i32,
                 },
             };
             self.block.push_shared_row(header, &self.projections);

@@ -7,14 +7,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, LinearCoordinate, SpectralCoordinate, StokesCoordinate,
-    StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, LinearCoordinate, SpectralCoordinate,
+    StokesCoordinate, StokesType,
 };
-use casa_images::PagedImage;
+use casa_images::{PagedImage, regrid::regrid_complex_plane};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use num_complex::{Complex32, Complex64};
 
+use super::rotation::pixel_rotation;
 use super::{
     AwCatalogError, CellFiles, CellHeader, Group, Loaded, MUELLER_ELEMENTS, NativeAwPlane,
     STAGING_PREFIX, cache_error,
@@ -113,6 +114,14 @@ pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
     let working_field = sky_increment_rad
         .zip(working_size)
         .map(|(increment, size)| increment * size as f64);
+    let rotatable = matches!(
+        coordinates.coordinate(0),
+        CoordinateModel::Linear(linear) if linear.pc_matrix().shape() == [2, 2]
+            && linear.pc_matrix()[[0, 0]] == 1.0
+            && linear.pc_matrix()[[0, 1]] == 0.0
+            && linear.pc_matrix()[[1, 0]] == 0.0
+            && linear.pc_matrix()[[1, 1]] == 1.0
+    );
     Ok(CellHeader {
         path: path.to_path_buf(),
         shape: [shape[0], shape[1]],
@@ -124,6 +133,7 @@ pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
         pa_deg,
         frequency_hz,
         working_field_rad: working_field,
+        rotatable,
     })
 }
 
@@ -215,7 +225,9 @@ pub(super) fn load_group(
     cells: &[CellFiles],
     group: &Group,
     sampling: u16,
+    rotation_rad: f64,
 ) -> Result<Loaded, AwCatalogError> {
+    let rotation = (rotation_rad != 0.0).then(|| pixel_rotation(rotation_rad));
     let build = |select: fn(&CellFiles) -> &CellHeader,
                  half: [u16; 2]|
      -> Result<Arc<DenseCell>, AwCatalogError> {
@@ -230,6 +242,9 @@ pub(super) fn load_group(
             let scale = Complex32::new((1.0 / area).re as f32, (1.0 / area).im as f32);
             for value in &mut plane {
                 *value *= scale;
+            }
+            if let Some(matrix) = rotation {
+                plane = regrid_complex_plane(&plane, header.shape, matrix);
             }
             planes.push((plane, header.shape, header.support));
         }

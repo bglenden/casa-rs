@@ -24,10 +24,12 @@ use casa_observation::FieldEphemeris;
 use casa_types::measures::MeasuresProvider;
 
 use crate::compile::{OpenedStore, resolve_partitions};
+
+mod psf;
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
-    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome,
+    ApplicationRuntime, AwCatalogDeployment, Awp2Deployment, ImagingOutcome,
 };
 
 /// The observation compile opened, and what its geometry evaluates with.
@@ -48,6 +50,7 @@ pub(crate) struct OpenedObservation {
 pub(crate) struct NativeInput {
     /// Prepared MVC Taylor view for this cube run, when requested.
     pub(crate) mvc_taylor: Option<crate::compile::TaylorView>,
+    pub(crate) psf_view: Option<CompiledProblem>,
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     /// Whether the model column's final write is CASA's `predictModel`, over
@@ -140,9 +143,11 @@ impl From<std::io::Error> for NativeError {
 /// cycles and products need. Its setup chooses and forms its worker teams.
 pub(crate) struct NativeRun {
     mvc_taylor: Option<crate::compile::CompiledTaylorView>,
+    psf_view: Option<psf::PsfRoute>,
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
+    awp2: Option<Awp2Deployment>,
     /// The observation's batches the passes read, and through whose update
     /// session a model or corrected column is written.
     route: Box<imaging::BatchRoute>,
@@ -222,8 +227,9 @@ pub(crate) fn batch_route(
         (&runtime.host, &runtime.resource_policy),
     )?;
     opening.join(reservation);
-    let write_back = (model_data || corrected_data)
-        .then(|| imaging::WriteBack::new(model_data, corrected_data, !predicts_final_model));
+    let write_back = (model_data || corrected_data).then(|| {
+        imaging::WriteBack::new(problem, model_data, corrected_data, !predicts_final_model)
+    });
     let stores = routes
         .into_iter()
         .map(|(opened, selection, plan, pointing_budget)| {
@@ -269,11 +275,23 @@ pub(crate) fn prepare(
         .map_err(|error| NativeError::Other(Box::new(error)))?;
     let ApplicationNative {
         runtime,
-        publication,
+        mut publication,
         aw_catalog,
+        awp2,
     } = native;
+    if let Some(existing) = &input.existing
+        && let Some(beam) = existing.mosaic_beam()
+    {
+        publication.controls = publication
+            .controls
+            .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
+    }
     publication.controls.validate_for_problem(problem)?;
     let products = products_floor(problem, &publication)?;
+    let measures = input
+        .psf_view
+        .as_ref()
+        .map(|_| Arc::clone(&input.observation.measures));
     let Admitted {
         value: route,
         reservation: source,
@@ -287,11 +305,18 @@ pub(crate) fn prepare(
         ),
         &runtime,
     )?;
+    let psf_view = input
+        .psf_view
+        .zip(measures)
+        .map(|(view, measures)| psf::PsfRoute::new(view, measures, &route, &runtime))
+        .transpose()?;
     Ok(NativeRun {
         mvc_taylor,
+        psf_view,
         runtime,
         publication,
         aw_catalog,
+        awp2,
         route: Box::new(route),
         source,
         products,
@@ -315,10 +340,12 @@ pub(crate) fn run(
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, NativeError> {
     let NativeRun {
         mvc_taylor,
+        psf_view,
         runtime,
         publication,
         aw_catalog,
-        route,
+        awp2,
+        mut route,
         source,
         products,
         masks,
@@ -328,6 +355,10 @@ pub(crate) fn run(
         image_response,
         virtual_model,
     } = run;
+    let saved_mosaic_beam = existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::mosaic_beam)
+        .cloned();
     let saved_psf_beams = existing
         .as_ref()
         .and_then(crate::restart::ExistingProducts::psf_beams);
@@ -344,32 +375,16 @@ pub(crate) fn run(
         && psf_beams.is_none()
         && problem.reconstruction().controls().max_minor_iterations() > 0
     {
-        let model = publication.controls.primary_beam_model();
-        let mut controls = casa_imaging_products::ContinuumProductControls::new(
-            casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF,
-        )?;
-        if let Some(model) = model {
-            controls = controls.with_primary_beam_model(model);
-        }
-        publication.controls = controls;
+        publication.controls = publication
+            .controls
+            .with_psf_cutoff(casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF)?;
     }
     if !forms.psf {
         publication.controls = publication.controls.with_reused_single_psf();
     }
-    // CASA selects the cube's VLA aperture through its LSRK conversion layer,
-    // but evaluates it at each output plane's own frequency.
-    let vla_selection_hz = publication.vla_selection_store.map(|reference| {
-        let factor = route.stores[reference]
-            .plan
-            .output_lsrk_factor()
-            .expect("a tracked cube has an LSRK conversion layer");
-        problem
-            .geometry()
-            .spectral()
-            .channel_centre_hz(0)
-            .expect("a cube has a first channel")
-            * factor
-    });
+    let vla_selection_hz = publication
+        .vla_selection_store
+        .map(|store| vla_selection_frequency(problem, &route, store));
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {
@@ -382,6 +397,9 @@ pub(crate) fn run(
         }
         None => None,
     };
+    let separate_psf = psf_view
+        .map(|view| view.form(&mut route, &runtime, summary))
+        .transpose()?;
     // The run's source borrows the batch route, which is released with the
     // source's charge once the run has finished with it.
     let visibility_write = route
@@ -412,6 +430,7 @@ pub(crate) fn run(
             psf_beams,
             mask_beams,
             source: &route,
+            separate_psf,
             masks,
             start_model,
             existing,
@@ -426,8 +445,10 @@ pub(crate) fn run(
             cancel: runtime.cancel.clone(),
             spill_directory: &runtime.spill_directory,
             aw_catalog,
+            awp2,
             backend: runtime.backend,
             grid_precision: runtime.grid_precision,
+            ft_padding: runtime.ft_padding,
             diagnostics: runtime.diagnostics,
         },
         summary,
@@ -459,7 +480,9 @@ pub(crate) fn run(
                         mem_alpha: outcome.mem_alpha,
                         saved_psf_beams,
                         vla_selection_hz,
-                        mvc_beam: None,
+                        primary_beam: saved_mosaic_beam
+                            .as_ref()
+                            .map(ProductPrimaryBeam::SavedMosaic),
                     },
                     taylor_view: mvc_taylor,
                     taylor_completion: outcome.mvc_taylor,
@@ -516,6 +539,25 @@ pub(crate) fn run(
         mvc_run,
         _retained: retained,
     })
+}
+
+/// CASA selects the cube's VLA aperture through its LSRK conversion layer,
+/// but evaluates it at each output plane's own frequency.
+fn vla_selection_frequency(
+    problem: &CompiledProblem,
+    route: &imaging::BatchRoute,
+    store: usize,
+) -> f64 {
+    let factor = route.stores[store]
+        .plan
+        .output_lsrk_factor()
+        .expect("a tracked cube has an LSRK conversion layer");
+    problem
+        .geometry()
+        .spectral()
+        .channel_centre_hz(0)
+        .expect("a cube has a first channel")
+        * factor
 }
 
 /// One run's cube or continuum products and, for MVC, its Taylor view.
@@ -614,9 +656,10 @@ struct Products {
 /// What the products are formed from: the final completion, its
 /// reconstruction masks and the faceted domains' facets' own sums of
 /// weights.
-enum MvcProductBeam<'a> {
-    Cube(&'a [f32]),
-    Taylor(&'a [f32]),
+enum ProductPrimaryBeam<'a> {
+    MvcCube(&'a [f32]),
+    MvcTaylor(&'a [f32]),
+    SavedMosaic(&'a casa_imaging_products::SavedMosaicBeam),
 }
 
 struct ProductSource<'a> {
@@ -626,8 +669,8 @@ struct ProductSource<'a> {
     mem_alpha: Option<f32>,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     vla_selection_hz: Option<f64>,
-    /// A separately admitted common PB, borrowed until the family is staged.
-    mvc_beam: Option<MvcProductBeam<'a>>,
+    /// A separately admitted PB, borrowed until the family is staged.
+    primary_beam: Option<ProductPrimaryBeam<'a>>,
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -744,7 +787,7 @@ fn publish_mvc_products(
         mem_alpha: _,
         saved_psf_beams,
         vla_selection_hz,
-        mvc_beam: _,
+        primary_beam: _,
     } = cube;
     let taylor_publication = ApplicationPublication {
         controls: publication.controls,
@@ -761,7 +804,7 @@ fn publish_mvc_products(
             mem_alpha: None,
             saved_psf_beams,
             vla_selection_hz,
-            mvc_beam: Some(MvcProductBeam::Cube(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcCube(&primary_beam)),
         },
         runtime,
         &publication,
@@ -778,7 +821,7 @@ fn publish_mvc_products(
             mem_alpha: None,
             saved_psf_beams: None,
             vla_selection_hz: None,
-            mvc_beam: Some(MvcProductBeam::Taylor(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcTaylor(&primary_beam)),
         },
         runtime,
         &taylor_publication,
@@ -845,15 +888,16 @@ fn stage_products(
         mem_alpha: _,
         saved_psf_beams,
         vla_selection_hz,
-        mvc_beam,
+        primary_beam,
     } = source;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
-    if let Some(beam) = mvc_beam {
+    if let Some(beam) = primary_beam {
         inputs = match beam {
-            MvcProductBeam::Cube(beam) => inputs.with_cube_taylor_primary_beam(beam)?,
-            MvcProductBeam::Taylor(beam) => inputs
+            ProductPrimaryBeam::MvcCube(beam) => inputs.with_cube_taylor_primary_beam(beam)?,
+            ProductPrimaryBeam::MvcTaylor(beam) => inputs
                 .with_taylor_primary_beam(beam)?
                 .with_taylor_residual_sum_weight(1.0)?,
+            ProductPrimaryBeam::SavedMosaic(beam) => inputs.with_saved_mosaic_beam(beam)?,
         };
     }
     if let Some(frequency) = vla_selection_hz {

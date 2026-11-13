@@ -49,7 +49,7 @@ impl ObservationPointingLaw {
     /// The direction at `time_s` from `samples`: the covering sample, else
     /// the bracketing pair (nearest, or interpolated on the shorter great
     /// circle), else the nearest endpoint if the law holds it, else
-    /// `fallback` (the phase-tracking centre) if the law allows it.
+    /// `fallback` (the field's phase direction) if the law allows it.
     ///
     /// # Errors
     ///
@@ -85,7 +85,7 @@ impl ObservationPointingLaw {
                 endpoint.direction_rad
             }
             (Some(_), None) | (None, Some(_)) => return Err(PointingLawError::OutsideCoverage),
-            (None, None) if self.missing() == MissingPointingPolicy::UsePhaseTrackingCentre => {
+            (None, None) if self.missing() == MissingPointingPolicy::UseFieldPhaseCentre => {
                 return Ok(fallback);
             }
             (None, None) => return Err(PointingLawError::Missing),
@@ -239,7 +239,7 @@ mod tests {
         let hold = law(
             PointingInterpolation::Nearest,
             PointingExtrapolation::HoldNearest,
-            MissingPointingPolicy::UsePhaseTrackingCentre,
+            MissingPointingPolicy::UseFieldPhaseCentre,
         );
         assert_eq!(
             hold.resolve(after_only, 5.0, FALLBACK)

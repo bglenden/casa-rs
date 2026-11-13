@@ -86,7 +86,14 @@ impl Solver for Multiscale {
         let mut cross = Vec::with_capacity(scales * (scales + 1) / 2);
         for low in 0..scales {
             for high in low..scales {
-                cross.push(bank.convolve(&psf_spectrum, &[low, high])?);
+                // A point scale is a delta. Keep its autocorrelation
+                // kernel equal to the input PSF without an FFT round trip.
+                let plane = if self.scales[low] == 0.0 && self.scales[high] == 0.0 {
+                    view.psf[0].clone()
+                } else {
+                    bank.convolve(&psf_spectrum, &[low, high])?
+                };
+                cross.push(plane);
             }
         }
         let full = Support::full(shape);
@@ -98,7 +105,13 @@ impl Solver for Multiscale {
         }
         let residual_spectrum = bank.fft.forward(&residual[0])?;
         let dirty = (0..scales)
-            .map(|scale| bank.convolve(&residual_spectrum, &[scale]))
+            .map(|scale| {
+                if self.scales[scale] == 0.0 {
+                    Ok(residual[0].clone())
+                } else {
+                    bank.convolve(&residual_spectrum, &[scale])
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let masks = bank.masks(view.support, SCALE_MASK_THRESHOLD, false)?;
         Ok(MultiscaleState {
@@ -255,5 +268,43 @@ impl Solver for Multiscale {
     /// The largest scale's support.
     fn component_cells(&self, shape: PlaneShape) -> usize {
         ScaleBank::support_cells(&self.scales, shape)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PsfSummary;
+
+    #[test]
+    fn the_point_scale_preserves_the_psf_and_residual() {
+        let shape = PlaneShape::new(13, 9);
+        let mut psf: Vec<_> = (0..shape.len())
+            .map(|index| (index as f64 * 0.13).sin() * 0.1)
+            .collect();
+        psf[shape.index(6, 4)] = 1.0;
+        let summary = PsfSummary::new(&psf, shape).unwrap();
+        let residual = vec![
+            (0..shape.len())
+                .map(|index| (index as f64 * 0.27).cos())
+                .collect(),
+        ];
+        let psf = vec![psf];
+        let support = Support::full(shape);
+        let view = MinorCycleView {
+            shape,
+            residual: &residual,
+            psf: &psf,
+            summary: &summary,
+            support: &support,
+        };
+        for threads in [1, 4] {
+            let state = Multiscale::new(vec![0.0, 3.0], 0.6)
+                .with_fft_threads(threads)
+                .initialize(&view, &residual, 0.0)
+                .unwrap();
+            assert_eq!(state.dirty[0], residual[0], "point residual");
+            assert_eq!(state.cross[0], psf[0], "point PSF");
+        }
     }
 }

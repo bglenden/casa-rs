@@ -207,6 +207,11 @@ pub(crate) struct Prediction {
     pub(crate) model: ModelOperator,
     /// The model's tangent point (pixel `(nx/2, ny/2)`), J2000 radians.
     pub(crate) tangent_rad: [f64; 2],
+    pub(crate) tangent: casa_types::measures::direction::MDirection,
+    frame_measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+    phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
+    pub(crate) focus: Option<super::focus::Positions>,
+    pub(crate) distance_m: f64,
     /// The grids, or what `close` prepares each field's from.
     grids: StepGrids,
     /// The mosaic machine's pointing offsets, from the model's pixel
@@ -241,7 +246,7 @@ enum StepGrids {
 struct FieldModel {
     model: SkyModel,
     pattern: BeamPattern,
-    centres: Vec<(usize, [f64; 2])>,
+    centres: Vec<([u64; 2], [f64; 2])>,
 }
 
 /// Where the grids of a field come from: a set prepared at `predict`, or
@@ -255,9 +260,12 @@ impl std::fmt::Debug for Prediction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fields: Vec<Option<usize>> = match &self.grids {
             StepGrids::Prepared(field, _) => vec![*field],
-            StepGrids::PerField(held) => {
-                held.centres.iter().map(|(field, _)| Some(*field)).collect()
-            }
+            StepGrids::PerField(held) => held
+                .centres
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Some(index))
+                .collect(),
         };
         formatter
             .debug_struct("Prediction")
@@ -269,6 +277,51 @@ impl std::fmt::Debug for Prediction {
 }
 
 impl Prediction {
+    pub(crate) fn matches_correlations(&self, codes: &[i32]) -> bool {
+        self.model
+            .operator
+            .polarization()
+            .correlations()
+            .iter()
+            .map(|correlation| correlation.casacore_code())
+            .eq(codes.iter().copied())
+    }
+    pub(crate) fn has_selected_chunk(&self, scan: &super::observe::Scan) -> bool {
+        self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000
+            || super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan).is_some()
+    }
+
+    pub(crate) fn frame(
+        &self,
+        scan: &super::observe::Scan,
+    ) -> SimulatorResult<casa_types::measures::MeasFrame> {
+        use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
+        let frame = MeasFrame::new().with_measures(self.frame_measures.clone());
+        if self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000 {
+            return Ok(frame);
+        }
+        let time = super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan)
+            .ok_or_else(|| SimulatorError::raised("missing selected image-frame epoch"))?;
+        Ok(frame.with_epoch(MEpoch::from_mjd(time / 86400., EpochRef::UTC)))
+    }
+
+    pub(crate) fn phase_centre(&self, scan: &super::observe::Scan) -> [f64; 2] {
+        super::from_ms::polynomial::centre(self.phase_centres.as_ref(), scan)
+    }
+
+    /// Index the grids by antenna beam direction, independently of FIELD.
+    pub(crate) fn grid_id(&self, scan: &super::observe::Scan) -> usize {
+        match &self.grids {
+            StepGrids::Prepared(..) => 0,
+            StepGrids::PerField(held) => held
+                .centres
+                .binary_search_by_key(&scan.pointing_rad.map(f64::to_bits), |(direction, _)| {
+                    *direction
+                })
+                .expect("prepared pointing"),
+        }
+    }
+
     /// Where the grids rows of `field` are predicted from come from; `None`
     /// for a field the step did not observe.
     pub(crate) fn grids_for(&self, field: usize) -> Option<FieldGrids<'_>> {
@@ -276,11 +329,7 @@ impl Prediction {
             StepGrids::Prepared(grid_field, grids) => grid_field
                 .is_none_or(|grid_field| grid_field == field)
                 .then_some(FieldGrids::Prepared(grids)),
-            StepGrids::PerField(held) => held
-                .centres
-                .iter()
-                .any(|(observed, _)| *observed == field)
-                .then_some(FieldGrids::PerField),
+            StepGrids::PerField(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
         }
     }
 
@@ -341,8 +390,7 @@ impl Prediction {
         };
         let centre = held
             .centres
-            .iter()
-            .find(|(observed, _)| *observed == field)
+            .get(field)
             .map(|(_, centre)| *centre)
             .ok_or_else(|| {
                 SimulatorError::raised(format!("predict did not observe field {field}"))
@@ -513,12 +561,12 @@ impl Simulator {
     /// - Raised, as casatools' binding raises before predicting: a named
     ///   image that does not exist or does not open
     ///   ([`PredictSpec::check_images`]).
-    /// - Not yet implemented: more than one image, a model layout CASA reads
-    ///   and casa-rs does not (other than Stokes I, J2000,
+    /// - Not yet implemented: a model layout CASA reads
+    ///   and casa-rs does not (other than Stokes I/Q/U/V, J2000,
     ///   direction–Stokes–spectral axes), a component casa-rs does not
     ///   predict (a direction not in J2000, or a flux, spectrum or shape
-    ///   casa-components does not evaluate), a near-field distance on the
-    ///   last field, scans whose windows differ in correlations, or
+    ///   casa-components does not evaluate), scans whose windows differ in
+    ///   correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
     ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
     ///   for pointings `observemany` moved off their fields.
@@ -543,34 +591,10 @@ impl Simulator {
         } else {
             tracing::info!("The data column will be replaced");
         }
-        if images.len() > 1 {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict from {} model images is not yet implemented in casa-rs (#1053); one \
-                 image is",
-                images.len()
-            )));
-        }
-        // The plan corrupts by gains and leakage after every prediction
-        // (`session::plan`).
-        if spec.incremental && self.data_plan.corrupts_by_jones() {
-            return Err(SimulatorError::not_yet_implemented(
-                "an incremental predict after a corrupt with setgain or setleakage terms is not \
-                 yet implemented in casa-rs (#1053)",
-            ));
-        }
         if images.is_empty() && lists.is_empty() {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: No model images found",
             ));
-        }
-        if let Some(field) = self.fields.last()
-            && field.distance_m != 0.0
-        {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict refocused to the distance {} m of field {} is not yet implemented in \
-                 casa-rs (#1053)",
-                field.distance_m, field.name
-            )));
         }
         // `createSkyEquation` reads the component list before the images.
         let list = read_component_lists(&lists, &self.options.resources)?;
@@ -578,6 +602,20 @@ impl Simulator {
             .first()
             .map(|path| SkyModel::open(path).map_err(model_error))
             .transpose()?;
+        let mut frame_epoch = model.as_ref().is_some_and(|model| {
+            model.tangent_direction().refer()
+                != casa_types::measures::direction::DirectionRef::J2000
+        });
+        // Validate every header before changing the DATA plan. Later
+        // images are reopened for preparation, one at a time, so the
+        // input count does not keep that many open images or tile caches.
+        for path in images.iter().skip(1) {
+            frame_epoch |= SkyModel::open(path)
+                .map_err(model_error)?
+                .tangent_direction()
+                .refer()
+                != casa_types::measures::direction::DirectionRef::J2000;
+        }
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: Caught exception: MSIter::construct - Input \
@@ -585,17 +623,18 @@ impl Simulator {
             ));
         }
         let correlations = self.predicted_correlations()?;
+        if self.single_dish.is_some()
+            && self.scans.iter().any(|scan| {
+                self.correlations_for_scan(scan) != self.correlations_for_scan(&self.scans[0])
+            })
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "total-power prediction over different correlation setups is not yet implemented in casa-rs (#1299)",
+            ));
+        }
         let beam = self.voltage_pattern_beam()?;
-        // Each of these points a scan at its phase centre, which on an
-        // opened MeasurementSet POINTING must agree with.
-        if self.mosaic && model.is_some() {
-            self.require_pointings_at_phase_centres("setoptions(ftmachine='mosaic')")?;
-        }
-        if beam.is_some() {
-            self.require_pointings_at_phase_centres("setvp(dovp=True)")?;
-        }
-        if self.single_dish.is_some() {
-            self.require_pointings_at_phase_centres("setoptions(ftmachine='sd')")?;
+        if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
+            self.load_pointings()?;
         }
         // A primary beam, over a model image, a component list or total
         // power, and the mosaic machine's kernels are centred on each
@@ -610,30 +649,75 @@ impl Simulator {
         if let Some(kernel) = self.single_dish {
             // Total power samples a model image; `SDGrid` with a component
             // list is not yet here.
-            let Some(model) = model.filter(|_| list.is_none()) else {
+            if model.is_none() || list.is_some() {
                 return Err(SimulatorError::not_yet_implemented(
                     "predict(complist=…) after setoptions(ftmachine='sd') is not yet \
                      implemented in casa-rs (#1053); a model image is",
                 ));
-            };
-            return self.predict_single_dish(model, kernel, beam, spec.incremental);
+            }
+            let predictions = opened_models(model, &images)
+                .map(|model| self.prepare_single_dish(model?, kernel, beam))
+                .collect::<SimulatorResult<Vec<_>>>()?;
+            self.data_plan.begin_prediction(spec.incremental);
+            for prediction in predictions {
+                self.data_plan
+                    .predict_single_dish(Arc::new(prediction), self.scans.len());
+            }
+            return Ok(());
         }
+        let phase_centres = if list.is_some() {
+            super::from_ms::polynomial::selected_centres(self, false, false)?
+        } else {
+            None
+        };
         let components = list
-            .map(|(label, list, held)| self.prepare_components(&label, (list, held), beam))
+            .map(|(label, list, held)| {
+                self.prepare_components(&label, (list, held), beam, phase_centres.as_ref())
+            })
             .transpose()?;
-        let prediction = model
-            .map(|model| self.prepare_image(model, &correlations, beam))
-            .transpose()?;
-        if !spec.incremental {
-            // Every step so far covers a prefix of the scans this one covers.
-            self.data_plan.clear();
+        let image_centres = if model.is_some() {
+            super::from_ms::polynomial::selected_centres(self, true, frame_epoch)?
+        } else {
+            None
+        };
+        let mut predictions = Vec::with_capacity(images.len() * correlations.len());
+        let mut first_model = model;
+        for (group, correlations) in correlations.iter().enumerate() {
+            let first = if group == 0 {
+                first_model.take()
+            } else {
+                images
+                    .first()
+                    .map(|path| SkyModel::open(path).map_err(model_error))
+                    .transpose()?
+            };
+            for model in opened_models(first, &images) {
+                predictions.push(self.prepare_image(
+                    model?,
+                    correlations,
+                    beam,
+                    image_centres.clone(),
+                )?);
+            }
         }
+        if predictions
+            .iter()
+            .any(|prediction| prediction.distance_m != 0.)
+        {
+            let focus = super::focus::capture(self)?;
+            for prediction in &mut predictions {
+                if prediction.distance_m != 0. {
+                    prediction.focus = Some(focus.clone());
+                }
+            }
+        }
+        self.data_plan.begin_prediction(spec.incremental);
         let scans = self.scans.len();
         if let Some(components) = components {
             self.data_plan
                 .predict_components(Arc::new(components), scans);
         }
-        if let Some(prediction) = prediction {
+        for prediction in predictions {
             self.data_plan.predict(Arc::new(prediction), scans);
         }
         Ok(())
@@ -650,7 +734,15 @@ impl Simulator {
         model: SkyModel,
         correlations: &[Correlation],
         beam: Option<PrimaryBeam>,
+        phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
+        if model.tangent_direction().refer() != casa_types::measures::direction::DirectionRef::J2000
+            && (beam.is_some() || self.mosaic)
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "image direction-frame conversion with beams or mosaic prediction is not yet implemented in casa-rs (#1295)",
+            ));
+        }
         let machine = self.ft_machine()?;
         let mut mosaic_state = None;
         let (beams, antenna_types, pointings) = match machine {
@@ -703,7 +795,14 @@ impl Simulator {
             kernel_reservation.join(reservation);
         }
         let image_beam = beam.filter(|_| machine != FtMachine::Mosaic);
+        let distance_m = self
+            .fields
+            .last()
+            .filter(|field| field.distance_m != 0.)
+            .map_or(model.distance_m, |field| field.distance_m);
         let mut prediction = self.prepare(model, operator, image_beam, kernel_reservation)?;
+        prediction.distance_m = distance_m;
+        prediction.phase_centres = phase_centres;
         prediction.pointings = pointings;
         prediction.antenna_types = antenna_types;
         Ok(prediction)
@@ -719,6 +818,7 @@ impl Simulator {
         label: &str,
         (list, held_list): (ComponentList, Reservation),
         beam: Option<PrimaryBeam>,
+        phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<ComponentPrediction> {
         // CASA squints the VLA's and EVLA's beams for a component list (RR
         // and LL beams apart); casa-rs's patterns are unsquinted.
@@ -741,14 +841,31 @@ impl Simulator {
                  Primary beam will be applied by telescope name."
             );
         }
+        let resources = &self.options.resources;
+        let _target_memory = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: COMPONENTS_PHASE,
+                memory: (self.scans.len() as u64)
+                    .saturating_mul(128)
+                    .saturating_add((self.data_descriptions.len() as u64).saturating_mul(256))
+                    .saturating_add(128 << 10),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
         let windows: Vec<ComponentWindow> = self
-            .spectral_windows
+            .data_descriptions
             .iter()
-            .map(|window| ComponentWindow {
-                first_hz: window.start_frequency_hz,
-                step_hz: window.channel_width_hz,
-                channels: window.channel_count,
-                correlations: window.correlations.clone(),
+            .map(|description| {
+                let window = &self.spectral_windows[description.window];
+                ComponentWindow {
+                    stored_frequencies: window.stored_frequencies.clone(),
+                    first_hz: window.start_frequency_hz,
+                    step_hz: window.channel_width_hz,
+                    channels: window.channel_count,
+                    correlations: self.polarizations[description.polarization].clone(),
+                }
             })
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
@@ -756,17 +873,21 @@ impl Simulator {
         // `VisBuffer` phases it, and the beam centred there: a beam on a
         // pointing `observemany` moved was refused above (#884). Scans at
         // one centre share a pointing.
-        let mut pointings: Vec<(usize, [f64; 2])> = Vec::new();
+        let mut pointings: Vec<(usize, [f64; 2], [f64; 2])> = Vec::new();
         let pointing_of_scan: Vec<usize> = self
             .scans
             .iter()
             .map(|scan| {
-                let centre = scan.phase_center_rad.map(f64::to_bits);
+                let direction = super::from_ms::polynomial::centre(phase_centres, scan);
+                let centre = direction.map(f64::to_bits);
                 pointings
                     .iter()
-                    .position(|(_, known)| known.map(f64::to_bits) == centre)
+                    .position(|(_, known, beam)| {
+                        known.map(f64::to_bits) == centre
+                            && beam.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
+                    })
                     .unwrap_or_else(|| {
-                        pointings.push((pointings.len(), scan.phase_center_rad));
+                        pointings.push((pointings.len(), direction, scan.pointing_rad));
                         pointings.len() - 1
                     })
             })
@@ -809,31 +930,28 @@ impl Simulator {
 
     /// The correlations of the scans observed so far, which one operator
     /// predicts.
-    fn predicted_correlations(&self) -> SimulatorResult<Vec<Correlation>> {
+    fn predicted_correlations(&self) -> SimulatorResult<Vec<Vec<Correlation>>> {
         self.check_visibility_correlations("predicted")?;
-        let window = |scan: &super::observe::Scan| &self.spectral_windows[scan.spectral_window_id];
-        let first = &window(&self.scans[0]).correlations;
-        if self
-            .scans
-            .iter()
-            .any(|scan| window(scan).correlations != *first)
-        {
-            return Err(SimulatorError::not_yet_implemented(
-                "predicting scans whose spectral windows have different correlations is not yet \
-                 implemented in casa-rs (#1053)",
-            ));
+        let mut groups = Vec::<Vec<Correlation>>::new();
+        for scan in &self.scans {
+            if !self.data_plan.selection().contains_scan(scan) {
+                continue;
+            }
+            let codes = self.correlations_for_scan(scan);
+            if groups.iter().any(|group| {
+                group
+                    .iter()
+                    .map(|c| c.casacore_code())
+                    .eq(codes.iter().copied())
+            }) {
+                continue;
+            }
+            let group = codes.iter().map(|&code|Correlation::from_casacore_code(code).ok_or_else(|| {
+                SimulatorError::not_yet_implemented(format!("predicting correlation code {code} is not yet implemented in casa-rs (#1295)"))
+            })).collect::<SimulatorResult<Vec<_>>>()?;
+            groups.push(group);
         }
-        first
-            .iter()
-            .map(|&code| {
-                Correlation::from_casacore_code(code).ok_or_else(|| {
-                    SimulatorError::not_yet_implemented(format!(
-                        "predicting correlation code {code} is not yet implemented in casa-rs \
-                         (#1053)"
-                    ))
-                })
-            })
-            .collect()
+        Ok(groups)
     }
 
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION
@@ -879,10 +997,10 @@ impl Simulator {
     /// `BeamSkyJones` keeps for the field's other rows (#884, `docs/CASA
     /// (C++) bugs.md`); casa-rs does not follow it yet.
     fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
-        let moved = self
-            .scans
-            .iter()
-            .find(|scan| scan.pointing_rad != scan.phase_center_rad);
+        let moved = self.scans.iter().find(|scan| {
+            !matches!(scan.rows, super::observe::ScanRows::OnDisk(_))
+                && scan.pointing_rad != scan.phase_center_rad
+        });
         match moved {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "predict with {what} for scan {} pointed away from its field {} is not yet \
@@ -892,18 +1010,6 @@ impl Simulator {
             ))),
             None => Ok(()),
         }
-    }
-
-    /// The fields of the scans observed so far, each once, in the order
-    /// first observed.
-    pub(super) fn observed_fields(&self) -> Vec<usize> {
-        let mut fields = Vec::new();
-        for scan in &self.scans {
-            if !fields.contains(&scan.field_id) {
-                fields.push(scan.field_id);
-            }
-        }
-        fields
     }
 
     /// Build `layout`'s kernels, admitted as they are built, as imaging
@@ -996,15 +1102,38 @@ impl Simulator {
         let resources = &self.options.resources;
         let (host, policy) = (resources.host(), resources.policy());
         charge_process_caches(host, policy).map_err(SimulatorError::admission)?;
-        let fields = self.observed_fields();
+        let point_memory = admit(
+            host,
+            policy,
+            &Demand {
+                phase: PREPARATION_PHASE,
+                memory: if beam.is_some() {
+                    (self.scans.len() as u64)
+                        .saturating_mul(64)
+                        .saturating_add(256)
+                } else {
+                    0
+                },
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let mut pointings: Vec<_> = if beam.is_some() {
+            self.scans.iter().map(|scan| scan.pointing_rad).collect()
+        } else {
+            Vec::new()
+        };
+        pointings.sort_unstable_by_key(|direction| direction.map(f64::to_bits));
+        pointings.dedup_by_key(|direction| direction.map(f64::to_bits));
+        let _ = &point_memory;
         let pattern = beam.map(PrimaryBeam::pattern);
         let tangent_rad = model.centre_rad();
+        let tangent = model.tangent_direction().clone();
         let (grids, reservation) = match pattern {
-            Some(pattern) if fields.len() > 1 => {
-                self.hold_for_fields(model, &operator, pattern, &fields)?
+            Some(pattern) if pointings.len() > 1 => {
+                self.hold_for_fields(model, &operator, pattern, &pointings)?
             }
             pattern => {
-                let field = pattern.as_ref().map(|_| fields[0]);
+                let field = None;
                 let reservation = admit(
                     host,
                     policy,
@@ -1032,13 +1161,15 @@ impl Simulator {
                 .map_err(SimulatorError::admission)?;
                 let team = WorkerTeam::new(workers)
                     .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
-                let centre = match (&pattern, field) {
-                    (Some(pattern), Some(field)) => {
-                        let pointing = self.fields[field].direction_rad;
-                        Some((pattern, model.pixel_of(pointing).map_err(model_error)?))
-                    }
-                    _ => None,
-                };
+                let centre = pattern
+                    .as_ref()
+                    .map(|pattern| {
+                        model
+                            .pixel_of(pointings[0])
+                            .map(|pixel| (pattern, pixel))
+                            .map_err(model_error)
+                    })
+                    .transpose()?;
                 let prepared = operator
                     .prepare(&model, centre, Some(&team))
                     .map_err(model_error)?;
@@ -1058,6 +1189,11 @@ impl Simulator {
         Ok(Prediction {
             model: operator,
             tangent_rad,
+            tangent,
+            frame_measures: self.options.measures.clone(),
+            phase_centres: None,
+            focus: None,
+            distance_m: 0.,
             grids,
             pointings: Vec::new(),
             antenna_types: Vec::new(),
@@ -1079,23 +1215,25 @@ impl Simulator {
         model: SkyModel,
         operator: &ModelOperator,
         pattern: BeamPattern,
-        fields: &[usize],
+        pointings: &[[f64; 2]],
     ) -> SimulatorResult<(StepGrids, Reservation)> {
         let resources = &self.options.resources;
         let (host, policy) = (resources.host(), resources.policy());
         let admitted = |phase, memory| {
             admit(host, policy, &Demand { phase, memory }).map_err(SimulatorError::admission)
         };
-        let centres = fields
+        let centres = pointings
             .iter()
-            .map(|&field| {
-                let pointing = self.fields[field].direction_rad;
-                Ok((field, model.pixel_of(pointing).map_err(model_error)?))
+            .map(|&pointing| {
+                Ok((
+                    pointing.map(f64::to_bits),
+                    model.pixel_of(pointing).map_err(model_error)?,
+                ))
             })
             .collect::<SimulatorResult<Vec<_>>>()?;
         let kept = model.held_bytes()
             + BeamPattern::BYTES
-            + (size_of::<FieldModel>() + centres.capacity() * size_of::<(usize, [f64; 2])>())
+            + (size_of::<FieldModel>() + centres.capacity() * size_of::<([u64; 2], [f64; 2])>())
                 as u64;
         let reservation = admitted(MODEL_PHASE, kept)?;
         drop(admitted(
@@ -1108,7 +1246,7 @@ impl Simulator {
         drop(reading);
         tracing::info!(
             planes = held.planes(),
-            fields = fields.len(),
+            pointings = pointings.len(),
             bytes = held.held_bytes(),
             grid_bytes = operator.grid_bytes(),
             "held the model {} for each field's grids",
@@ -1123,6 +1261,20 @@ impl Simulator {
             reservation,
         ))
     }
+}
+
+/// The first image's already open header, then each later image reopened
+/// only when it is prepared. No DATA step is recorded until they all fit.
+fn opened_models<'a>(
+    first: Option<SkyModel>,
+    paths: &'a [&'a Path],
+) -> impl Iterator<Item = SimulatorResult<SkyModel>> + 'a {
+    first.into_iter().map(Ok).chain(
+        paths
+            .iter()
+            .skip(1)
+            .map(|path| SkyModel::open(path).map_err(model_error)),
+    )
 }
 
 /// The names in `paths` that are not empty.
@@ -1205,6 +1357,9 @@ fn read_component_list(
 /// raised.
 fn model_error(error: PredictError) -> SimulatorError {
     match error {
+        PredictError::InvalidModel(reason) => {
+            SimulatorError::refused(format!("Caught exception: {reason}"))
+        }
         PredictError::UnsupportedModel(reason) => SimulatorError::not_yet_implemented(format!(
             "predict from this model is not yet implemented in casa-rs (#1053): {reason}"
         )),

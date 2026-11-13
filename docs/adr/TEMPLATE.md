@@ -1,45 +1,9 @@
-# ADR-XXXX: <decision title>
+# ADR-NNNN: Decision title
 
-Status: proposed | accepted | superseded | retired
+Status: proposed
 Date: YYYY-MM-DD
 Truth class: normative
-Supersedes:
-Superseded by:
 
-## Context
-
-<what forces require a decision?>
-
-## Decision
-
-<what is being decided?>
-
-## Consequences
-
-Positive:
-- ...
-
-Negative:
-- ...
-
-Neutral / tradeoffs:
-- ...
-
-## Alternatives considered
-
-1. ...
-2. ...
-
-## Enforcement
-
-This decision is enforced by:
-- tests:
-- lint/import/dependency rules:
-- CI checks:
-- review trigger:
-- none / guidance only:
-
-## Drift detection
-
-Suspect drift if:
-- ...
+Describe the concrete problem, the decision, and any tradeoff the next
+maintainer needs to know. Link an existing test or architecture reference
+when it helps. Name any superseded decision.

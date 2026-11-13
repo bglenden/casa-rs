@@ -43,9 +43,10 @@
 
 use casa_components::{ComponentList, Polarisation, ShapeTransform, SkyComponent};
 use casa_imaging_model::GridFtProjection;
-use casa_imaging_runtime::Reservation;
+use casa_imaging_runtime::{Admitted, Reservation};
 use casa_types::measures::direction::DirectionRef;
 use num_complex::{Complex32, Complex64};
+use std::sync::Arc;
 
 use super::BeamPattern;
 
@@ -56,9 +57,10 @@ const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 /// into them.
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentWindow {
+    pub(crate) stored_frequencies: Option<Arc<Admitted<Vec<f64>>>>,
     /// The first channel's frequency, Hz.
     pub(crate) first_hz: f64,
-    /// The channel spacing, Hz: a window's channels are evenly spaced.
+    /// The channel spacing, Hz, for the generated linear axis.
     pub(crate) step_hz: f64,
     pub(crate) channels: usize,
     /// casacore `Stokes::StokesTypes` codes, one per correlation.
@@ -67,7 +69,10 @@ pub(crate) struct ComponentWindow {
 
 impl ComponentWindow {
     fn frequency_hz(&self, channel: usize) -> f64 {
-        self.first_hz + channel as f64 * self.step_hz
+        self.stored_frequencies.as_ref().map_or_else(
+            || self.first_hz + channel as f64 * self.step_hz,
+            |frequencies| frequencies.value[channel],
+        )
     }
 }
 
@@ -79,15 +84,15 @@ pub(crate) enum ComponentRefusal {
 }
 
 /// What a component list is predicted into: the session's windows, the
-/// distinct pointings of its scans (`(pointing, J2000 phase centre rad)`),
-/// each scan's pointing, and the primary beam with `setvp(dovp=True)`. A
-/// scan is phased, and the beam centred, on its field's phase centre; the
-/// session refuses a beam on a pointing `observemany` moved off the field
-/// (#884).
+/// distinct pairs of visibility phase centre and antenna beam centre,
+/// each scan's pair, and the primary beam with `setvp(dovp=True)`.
+/// FIELD determines phase; stored POINTING independently determines beam
+/// attenuation in a resumed simulation.
 #[derive(Clone, Copy)]
 pub(crate) struct ComponentTargets<'a> {
     pub(crate) windows: &'a [ComponentWindow],
-    pub(crate) pointings: &'a [(usize, [f64; 2])],
+    /// Slot, visibility phase centre, and antenna beam centre, J2000 rad.
+    pub(crate) pointings: &'a [(usize, [f64; 2], [f64; 2])],
     /// `[scan]`: the scan's pointing.
     pub(crate) pointing_of_scan: &'a [usize],
     pub(crate) beam: Option<&'a BeamPattern>,
@@ -106,7 +111,7 @@ impl ComponentTargets<'_> {
         let field_slots = self
             .pointings
             .iter()
-            .map(|(id, _)| id + 1)
+            .map(|(id, _, _)| id + 1)
             .max()
             .unwrap_or(0);
         let per_field = components * size_of::<GridFtProjection>()
@@ -145,6 +150,7 @@ pub(crate) struct ComponentPrediction {
 
 #[derive(Debug)]
 struct PreparedWindow {
+    stored_frequencies: Option<Arc<Admitted<Vec<f64>>>>,
     first_hz: f64,
     step_hz: f64,
     channels: usize,
@@ -207,11 +213,11 @@ impl ComponentPrediction {
         let slots = targets
             .pointings
             .iter()
-            .map(|(id, _)| id + 1)
+            .map(|(id, _, _)| id + 1)
             .max()
             .unwrap_or(0);
         let mut fields: Vec<Option<FieldTerms>> = (0..slots).map(|_| None).collect();
-        for &(field, direction) in targets.pointings {
+        for &(field, direction, beam_centre) in targets.pointings {
             let projections = directions_rad
                 .iter()
                 .map(|component| GridFtProjection::between_j2000_directions(direction, *component))
@@ -223,7 +229,7 @@ impl ComponentPrediction {
                     .map(|window| {
                         let mut powers = Vec::with_capacity(directions_rad.len() * window.channels);
                         for component in &directions_rad {
-                            let separation = separation_rad(*component, direction);
+                            let separation = separation_rad(*component, beam_centre);
                             powers.extend((0..window.channels).map(|channel| {
                                 pattern.power_at(separation, window.frequency_hz(channel))
                             }));
@@ -282,12 +288,13 @@ impl ComponentPrediction {
     }
 
     /// Add to `out` the visibilities of `rows` (each row's raw uvw in
-    /// metres) of scan `scan` in window `window`, at the scan's pointing.
+    /// metres) of scan `scan` with DATA_DESCRIPTION `description`, at the
+    /// scan's pointing. A description supplies both frequencies and products.
     /// `out` holds the rows' samples back to back,
     /// `[row][channel][correlation]`.
     pub(crate) fn add_rows(
         &self,
-        (scan, window): (usize, usize),
+        (scan, description): (usize, usize),
         rows: impl Iterator<Item = [f64; 3]>,
         out: &mut [Complex32],
     ) {
@@ -302,12 +309,12 @@ impl ComponentPrediction {
             debug_assert!(false, "scan {scan} was not observed before the prediction");
             return;
         };
-        let prepared = &self.windows[window];
+        let prepared = &self.windows[description];
         let (channels, correlations) = (prepared.channels, prepared.correlations);
         let powers = terms
             .powers
             .as_ref()
-            .map(|powers| powers[window].as_slice());
+            .map(|powers| powers[description].as_slice());
         for (row, uvw_m) in rows.enumerate() {
             let samples = &mut out[row * channels * correlations..][..channels * correlations];
             for (component, (transform, projection)) in
@@ -324,12 +331,20 @@ impl ComponentPrediction {
                     [..channels * correlations];
                 let powers = powers.map(|powers| &powers[component * channels..][..channels]);
                 for channel in 0..channels {
-                    let frequency_hz = prepared.first_hz + channel as f64 * prepared.step_hz;
+                    let frequency_hz = prepared.stored_frequencies.as_ref().map_or_else(
+                        || prepared.first_hz + channel as f64 * prepared.step_hz,
+                        |frequencies| frequencies.value[channel],
+                    );
+                    let channel_phasor = if prepared.stored_frequencies.is_some() {
+                        Complex64::from_polar(1.0, radians_per_hz * frequency_hz)
+                    } else {
+                        phasor
+                    };
                     let mut scale = baseline.at_frequency(frequency_hz);
                     if let Some(powers) = powers {
                         scale *= f64::from(powers[channel]);
                     }
-                    let value = phasor * scale;
+                    let value = channel_phasor * scale;
                     let cells = channel * correlations..(channel + 1) * correlations;
                     for (cell, flux) in samples[cells.clone()].iter_mut().zip(&fluxes[cells]) {
                         let sample = flux * value;
@@ -380,6 +395,7 @@ fn prepare_window(
         }
     }
     Ok(PreparedWindow {
+        stored_frequencies: window.stored_frequencies.clone(),
         first_hz: window.first_hz,
         step_hz: window.step_hz,
         channels: window.channels,

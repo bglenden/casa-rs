@@ -592,15 +592,37 @@ impl<'a> SolvedFamily<'a> {
             None => vec![vec![0.0; cells]; terms],
         };
 
-        let pb0 = principal_primary_beam(
-            inputs,
-            domain_role,
-            primary_beam_model,
-            directional,
-            &family.weight[0],
-        )?;
-        let (primary_beam_validity, pb_corrected) =
-            primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
+        let saved_beam = inputs.saved_mosaic_beam();
+        let (pb0, primary_beam_validity, pb_corrected) = if let Some(beam) =
+            saved_beam.filter(|_| {
+                publishes(inputs, |role| {
+                    matches!(role, ProductRole::PbCorrectedImage(_))
+                })
+            }) {
+            // SIImageStore::pbcor divides by positive saved PB values and
+            // copies the saved pixel mask independently of pblimit.
+            let pb = beam.read_values(0, polarization)?;
+            let mask = beam.read_mask(0, polarization)?;
+            let corrected = restored
+                .iter()
+                .map(|image| crate::plane::correct_primary_beam(image, &pb, 0.0))
+                .collect::<Result<_, _>>()?;
+            (pb, mask, corrected)
+        } else {
+            let pb = principal_primary_beam(
+                inputs,
+                domain_role,
+                primary_beam_model,
+                directional,
+                &family.weight[0],
+            )?;
+            let (mut mask, corrected) =
+                primary_beam_corrected(inputs.problem().products().validity(), &pb, &restored)?;
+            if let Some(beam) = saved_beam {
+                mask = beam.read_mask(0, polarization)?;
+            }
+            (pb, mask, corrected)
+        };
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0;
 
@@ -779,6 +801,33 @@ impl TaylorPlane {
             .ok_or(ProductsError::UnsupportedProblem)
     }
 
+    /// CASA's `SIImageStoreMultiTerm::calculateAlphaBeta` spectral curvature.
+    /// Use the same support as alpha and form the payload only when publishing.
+    fn spectral_curvature(&self) -> Option<Vec<f32>> {
+        let spectral_index = self.spectral_index.as_ref()?;
+        let taylor0 = self.restored.first()?;
+        let taylor2 = self.restored.get(2)?;
+        Some(
+            taylor0
+                .iter()
+                .zip(taylor2)
+                .zip(
+                    spectral_index
+                        .alpha
+                        .iter()
+                        .zip(&spectral_index.alpha_validity),
+                )
+                .map(|((&image0, &image2), (&alpha, &valid))| {
+                    if valid {
+                        image2 / image0 - 0.5 * alpha * (alpha - 1.0)
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        )
+    }
+
     fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
@@ -800,6 +849,11 @@ impl TaylorPlane {
             ProductRole::PrimaryBeam(value) => self.primary_beam.get(term(value)?),
             ProductRole::PbCorrectedImage(value) => self.pb_corrected.get(term(value)?),
             ProductRole::SpectralIndex => self.spectral_index.as_ref().map(|index| &index.alpha),
+            ProductRole::SpectralCurvature => {
+                return self
+                    .spectral_curvature()
+                    .ok_or(ProductsError::UnsupportedProductRole { role });
+            }
             ProductRole::PbCorrectedSpectralIndex => {
                 self.spectral_index.as_ref().map(|index| &index.alpha_pbcor)
             }

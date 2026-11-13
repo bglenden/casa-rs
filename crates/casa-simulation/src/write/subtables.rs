@@ -5,15 +5,16 @@
 //! Each row gives every scalar and fixed-shape column a value; a
 //! variable-shape array CASA does not write (OBSERVATION's LOG and SCHEDULE,
 //! SOURCE's POSITION) is left undefined. POINTING, which grows with the
-//! integrations, is generated as the MeasurementSet is saved instead.
+//! integrations, and DATA_DESCRIPTION are generated as the MeasurementSet
+//! is saved instead.
 
 mod pointing;
 
 use casa_ms::column_def::{ColumnDef, ColumnKind, column_schema};
 use casa_ms::schema::{self, SubtableId};
 use casa_ms::{MeasurementSet, SubtableColumnOverrides};
-use casa_tables::ColumnSchema;
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+use casa_tables::{ColumnOverrides, ColumnSchema, GeneratedScalarColumn};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
@@ -223,7 +224,18 @@ fn write_feeds(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult<
                 vec![
                     ("ANTENNA_ID", scalar_i32(feed.antenna_id)),
                     ("BEAM_ID", scalar_i32(-1)),
-                    ("BEAM_OFFSET", f64_array(&[2, 2], vec![0.0; 4])),
+                    (
+                        "BEAM_OFFSET",
+                        f64_array(
+                            &[2, 2],
+                            vec![
+                                feed.offset_rad[0],
+                                feed.offset_rad[0],
+                                feed.offset_rad[1],
+                                feed.offset_rad[1],
+                            ],
+                        ),
+                    ),
                     ("FEED_ID", scalar_i32(feed.feed_id)),
                     ("INTERVAL", scalar_f64(1e30)),
                     ("NUM_RECEPTORS", scalar_i32(2)),
@@ -243,8 +255,7 @@ fn write_feeds(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult<
 fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult<()> {
     let mut spws = Vec::new();
     let mut polarizations = Vec::new();
-    let mut descriptions = Vec::new();
-    for (index, window) in session.spectral_windows().iter().enumerate() {
+    for window in session.spectral_windows() {
         let channels = window.channel_count;
         let widths = vec![window.channel_width_hz; channels];
         spws.push(row(
@@ -269,8 +280,10 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
                 ("TOTAL_BANDWIDTH", scalar_f64(window.total_bandwidth_hz)),
             ],
         ));
-        let correlations = window.correlations.len();
-        let products = window.correlation_products();
+    }
+    for codes in session.polarizations() {
+        let correlations = codes.len();
+        let products = crate::session::spectral::correlation_products(codes);
         let mut product_cells = vec![0; 2 * correlations];
         for (correlation, pair) in products.iter().enumerate() {
             product_cells[correlation] = pair[0];
@@ -280,26 +293,14 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
             SubtableId::Polarization,
             vec![
                 ("CORR_PRODUCT", i32_array(&[2, correlations], product_cells)),
-                (
-                    "CORR_TYPE",
-                    i32_array(&[correlations], window.correlations.clone()),
-                ),
+                ("CORR_TYPE", i32_array(&[correlations], codes.clone())),
                 ("FLAG_ROW", scalar_bool(false)),
                 ("NUM_CORR", scalar_i32(correlations as i32)),
-            ],
-        ));
-        descriptions.push(row(
-            SubtableId::DataDescription,
-            vec![
-                ("FLAG_ROW", scalar_bool(false)),
-                ("POLARIZATION_ID", scalar_i32(index as i32)),
-                ("SPECTRAL_WINDOW_ID", scalar_i32(index as i32)),
             ],
         ));
     }
     add_rows(ms, SubtableId::SpectralWindow, spws)?;
     add_rows(ms, SubtableId::Polarization, polarizations)?;
-    add_rows(ms, SubtableId::DataDescription, descriptions)?;
     // Each window's frequencies are in its MEAS_FREQ_REF frame. casacore's
     // table of codes ends with Undefined (64).
     let (mut types, mut codes): (Vec<String>, Vec<i32>) = FrequencyRef::ALL
@@ -454,9 +455,10 @@ fn write_states(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult
 }
 
 /// The subtables the MeasurementSet's save writes from generated columns:
-/// POINTING, one row per antenna per integration, which is not held as rows
-/// (see [`pointing`]).
+/// POINTING, one row per antenna per integration (see [`pointing`]), and
+/// DATA_DESCRIPTION, generated from the shared mapping without record rows.
 pub(crate) fn subtable_overrides(
+    session: &Simulator,
     planned: &[PlannedScan<'_>],
 ) -> SimulatorResult<SubtableColumnOverrides> {
     let scans = planned
@@ -467,6 +469,29 @@ pub(crate) fn subtable_overrides(
         .map_err(|error| SimulatorError::raised(format!("POINTING columns: {error}")))?;
     let mut overrides = SubtableColumnOverrides::new();
     overrides.insert(SubtableId::Pointing, pointing);
+    // Reuse the admitted mapping; never materialize one RecordValue per DD.
+    let mappings = session.shared_descriptions();
+    let rows = mappings.len();
+    let mut descriptions = ColumnOverrides::for_row_count(rows);
+    for name in ["SPECTRAL_WINDOW_ID", "POLARIZATION_ID"] {
+        let mappings = std::sync::Arc::clone(&mappings);
+        descriptions.insert_generated_scalar(
+            name,
+            GeneratedScalarColumn::new(rows, move |row| {
+                let description = mappings.get(row)?;
+                Some(ScalarValue::Int32(if name == "SPECTRAL_WINDOW_ID" {
+                    description.window
+                } else {
+                    description.polarization
+                } as i32))
+            }),
+        );
+    }
+    descriptions.insert_generated_scalar(
+        "FLAG_ROW",
+        GeneratedScalarColumn::constant(rows, Some(ScalarValue::Bool(false))),
+    );
+    overrides.insert(SubtableId::DataDescription, descriptions);
     Ok(overrides)
 }
 

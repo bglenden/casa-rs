@@ -61,7 +61,7 @@ pub(crate) struct Session {
 /// CASA's `simulator` tool.
 ///
 /// `simulator(*, memory_budget=None, backend='auto', workers=None)` takes
-/// only casa-rs's controls, keyword-only (ADR-0019 item 3):
+/// only casa-rs's controls, keyword-only (ADR-0017):
 /// - `memory_budget` caps, in bytes, what a session holds at once while
 ///   `close` writes: the MeasurementSet writer gets half of it and the
 ///   geometry and noise the rest. `None` takes three quarters of the
@@ -104,7 +104,7 @@ impl PySimulator {
     /// The method has converted its Python arguments to Rust values (the
     /// signature's `Variant`s and lists) before it calls this; `work` turns
     /// them into the session's types, which can need the session's measures,
-    /// and does the session's work, all without the GIL (ADR-0019 §4). An
+    /// and does the session's work, all without the GIL (ADR-0017). An
     /// error it returns is created lazily and raised once the GIL is back.
     fn on_session<T: Send>(
         &self,
@@ -510,9 +510,10 @@ impl PySimulator {
     }
 
     /// Select the rows the next `predict` and `corrupt` act on, until the
-    /// next `observe`. casa-rs takes a selection that keeps every row
-    /// observed so far (`simobserve`'s); one that keeps fewer, or a TaQL
-    /// `msselect`, raises `NotImplementedError`.
+    /// next `observe`. Supports field/window subsets and TaQL predicates on
+    /// ANTENNA1, ANTENNA2, TIME, FIELD_ID, DATA_DESC_ID and SCAN_NUMBER.
+    /// Other columns and unsupported query forms raise `NotImplementedError`.
+    /// Invalid predicates return False after installing the field/window selection.
     #[pyo3(
         signature = (spwid = IntList::of(&[0]), fieldid = IntList::of(&[0]), msselect = ""),
         text_signature = "($self, spwid=[0], fieldid=[0], msselect='')"
@@ -535,10 +536,10 @@ impl PySimulator {
 
     /// Predict the model image and the component list into the rows observed
     /// so far, replacing their DATA or, with `incremental`, adding to it;
-    /// written at `close`. One CASA image (Stokes I, J2000) and a CASA
-    /// component list of J2000 points, Gaussians and disks are implemented;
-    /// several images, a limb-darkened disk or another frame raise
-    /// `NotImplementedError`.
+    /// written at `close`. Supports multiple CASA images (Stokes I, J2000)
+    /// and J2000 point, Gaussian and disk component lists, including an
+    /// increment after corruption. Limb-darkened disks and other component
+    /// frames raise `NotImplementedError`.
     #[pyo3(
         signature = (imagename = StringList::of(&[]), complist = "", incremental = false),
         text_signature = "($self, imagename=[], complist='', incremental=False)"
@@ -706,11 +707,13 @@ impl PySimulator {
         stubs::disabled_in_casa(self, py)
     }
 
-    /// Corrupt by the calibration table `table` (a `G` or `D` table) at
+    /// Corrupt by the calibration table `table` (a `G`, `D` or scalar `T` table) at
     /// each later `corrupt`, its solutions taken at each integration
     /// observed by then and interpolated in time by `interp` (`linear`,
     /// amplitude and phase apart, or `nearest`); `spwmap` maps each data
-    /// window to the table's. `field` is not read, as in CASA.
+    /// window to the table's. `field` is not read, as in CASA. G/D/T corruption
+    /// preserves weights for either `calwt` setting; `t` and `opacity` leave
+    /// these tables' per-row interpolation unchanged, as in CASA.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (

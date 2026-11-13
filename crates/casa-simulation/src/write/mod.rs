@@ -18,10 +18,13 @@
 //!
 //! A session `openfromms` opened is patched in place instead ([`patch`]).
 
+pub(crate) mod append;
 mod components;
-mod geometry;
+mod data;
+pub(crate) mod geometry;
 mod grids;
 mod patch;
+mod patch_ranges;
 mod pipeline;
 mod prediction;
 mod resources;
@@ -47,10 +50,11 @@ use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::PlannedScan;
 use crate::session::plan::DataPlan;
-use geometry::{ArrayGeometry, RowGeometry};
+use data::DataStage;
+pub(crate) use geometry::ArrayGeometry;
+use geometry::RowGeometry;
 pub(crate) use patch::patch_measurement_set;
 use pipeline::{NoiseContext, Pipeline};
-use prediction::PredictionStage;
 use resources::{MainAdmission, MainShape, NoiseScales};
 
 /// The readme CASA's simulator gives MAIN.
@@ -73,7 +77,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let shape = cell.map(|cell| main_shape(session, &planned, cell));
     let resources = &session.options().resources;
     let prediction = match cell {
-        Some(cell) => PredictionStage::new(session, cell, resources.prediction_backend())?,
+        Some(cell) => DataStage::new(session, cell, resources.prediction_backend())?,
         None => None,
     };
     // Admitted before anything is written, so a refusal leaves nothing.
@@ -101,7 +105,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         readme: MAIN_README.iter().map(|line| (*line).to_string()).collect(),
     });
     subtables::write_subtables(&mut ms, session)?;
-    let generated = subtables::subtable_overrides(&planned)?;
+    let generated = subtables::subtable_overrides(session, &planned)?;
     match shape.zip(admission) {
         Some((shape, admission)) => {
             let main = MainTarget {
@@ -118,7 +122,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             )?;
         }
         None => ms
-            .save()
+            .save_with_column_overrides(&ColumnOverrides::for_row_count(0), &generated)
             .map_err(|error| SimulatorError::raised(format!("save the MeasurementSet: {error}")))?,
     }
     target
@@ -131,7 +135,10 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     let mut shape = None;
     for scan in session.scans() {
         let window = &session.spectral_windows()[scan.spectral_window_id];
-        let this = (window.correlations.len(), window.channel_count);
+        let this = (
+            session.correlations_for_scan(scan).len(),
+            window.channel_count,
+        );
         match shape {
             None => shape = Some(this),
             Some(first) if first != this => {
@@ -146,20 +153,49 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     Ok(shape)
 }
 
-/// `[window]`: the receptors of each correlation of the session's spectral
-/// windows (`Stokes::receptor1`, `receptor2`), which gains and leakage take.
-pub(super) fn window_receptors(session: &Simulator) -> Vec<Vec<[usize; 2]>> {
-    session
-        .spectral_windows()
+/// Each polarization setup's receptors, admitted before their expansion.
+pub(super) type Receptors = std::sync::Arc<casa_imaging_runtime::Admitted<Vec<Vec<[usize; 2]>>>>;
+
+fn polarization_receptors(session: &Simulator) -> SimulatorResult<Receptors> {
+    use casa_imaging_runtime::{Demand, admit};
+    let polarizations = session.polarizations();
+    let bytes = polarizations.len() * size_of::<Vec<[usize; 2]>>()
+        + polarizations
+            .iter()
+            .map(|codes| codes.len() * (size_of::<[usize; 2]>() + size_of::<[i32; 2]>()))
+            .sum::<usize>()
+        + 256;
+    let resources = &session.options().resources;
+    let mut reservation = admit(
+        resources.host(),
+        resources.policy(),
+        &Demand {
+            phase: "the simulator's polarization receptor products",
+            memory: bytes as u64,
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let value: Vec<Vec<[usize; 2]>> = polarizations
         .iter()
-        .map(|window| {
-            window
-                .correlation_products()
-                .iter()
+        .map(|codes| {
+            crate::session::spectral::correlation_products(codes)
+                .into_iter()
                 .map(|pair| pair.map(|receptor| usize::try_from(receptor).unwrap_or(0)))
                 .collect()
         })
-        .collect()
+        .collect();
+    reservation.retain(
+        (value.capacity() * size_of::<Vec<[usize; 2]>>()
+            + value
+                .iter()
+                .map(|p| p.capacity() * size_of::<[usize; 2]>())
+                .sum::<usize>()
+            + 64) as u64,
+    );
+    Ok(std::sync::Arc::new(casa_imaging_runtime::Admitted {
+        value,
+        reservation,
+    }))
 }
 
 /// MAIN as the session's planned scans make it, with cells of
@@ -220,7 +256,7 @@ fn write_main<'s>(
     (session, planned): (&'s Simulator, &[PlannedScan<'_>]),
     target: &MainTarget<'_>,
     shape: &MainShape<'_>,
-    (admission, mut prediction): (MainAdmission, Option<PredictionStage<'s>>),
+    (admission, mut prediction): (MainAdmission, Option<DataStage<'s>>),
 ) -> SimulatorResult<()> {
     let started = Instant::now();
     let batch_rows = admission.plan.batch_rows().max(1);
@@ -229,11 +265,12 @@ fn write_main<'s>(
             admission.block_rows,
             admission.cores.streaming_workers,
             admission.grid_bytes,
+            batch_rows,
         );
     }
     let backend = prediction.as_ref().map_or_else(
         || session.options().resources.resolved_backend(false),
-        PredictionStage::backend,
+        DataStage::backend,
     );
     let mut writer = MainWriter::start(target.staging, admission.plan.clone())?;
     let geometry = ArrayGeometry::new(
@@ -244,6 +281,7 @@ fn write_main<'s>(
     .with_airmass(noise_varies_by_row(session.data_plan()));
     let team = WorkerTeam::new(admission.cores.streaming_workers)
         .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
+    let receptors = prediction.as_ref().map(DataStage::shared_receptors);
     let mut pipeline = Pipeline::new(
         (session.scans(), planned),
         &geometry,
@@ -254,11 +292,7 @@ fn write_main<'s>(
             NoiseContext::of(session),
             shape.noise_scales,
         ),
-        (
-            shape.correlations,
-            shape.channels,
-            window_receptors(session),
-        ),
+        (shape.correlations, shape.channels, receptors),
     );
     let integrations = planned
         .iter()
@@ -310,8 +344,9 @@ fn write_main<'s>(
 /// modes), whose rows then need their antennas' airmasses and exposure.
 /// Every `corrupt` covers scan 0, so its noise is all the plan's.
 fn noise_varies_by_row(plan: &DataPlan) -> bool {
-    plan.noise_for_scan(0)
+    plan.phases()
         .iter()
+        .flat_map(|phase| phase.noise_for_scan(0))
         .any(crate::corrupt::NoiseApplication::varies_by_row)
 }
 
@@ -419,13 +454,15 @@ impl MainWriter {
         }
         for (column, name) in columns.constants {
             let value = match name {
-                "DATA_DESC_ID" => ScalarValue::Int32(scan.spectral_window_id as i32),
+                "ARRAY_ID" => ScalarValue::Int32(planned.array_id),
+                "DATA_DESC_ID" => ScalarValue::Int32(scan.data_description_id as i32),
                 "EXPOSURE" | "INTERVAL" => ScalarValue::Float64(planned.integration_s),
                 "FIELD_ID" => ScalarValue::Int32(scan.field_id as i32),
                 "OBSERVATION_ID" => ScalarValue::Int32(planned.observation_id),
                 "SCAN_NUMBER" => ScalarValue::Int32(scan.scan_number),
                 "STATE_ID" => ScalarValue::Int32(planned.state_id as i32),
-                // ARRAY_ID, FEED1, FEED2 and PROCESSOR_ID.
+                "FEED1" | "FEED2" => ScalarValue::Int32(planned.feed_id),
+                // PROCESSOR_ID.
                 _ => ScalarValue::Int32(0),
             };
             session

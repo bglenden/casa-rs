@@ -31,7 +31,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
 use ndarray::{ArrayD, IxDyn};
 
-use super::prediction::PredictionStage;
+use super::data::DataStage;
 use super::resources::{MainShape, admit_main_write, writer_plan};
 use super::{cell_shape, main_shape};
 use crate::session::observe::PlannedScan;
@@ -344,7 +344,7 @@ fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
         );
         let cell = cell_shape(&probe).expect("one shape").expect("scans");
         let shape = main_shape(&probe, &planned(&probe), cell);
-        let stage = PredictionStage::new(&probe, cell, BackendChoice::Cpu)
+        let stage = DataStage::new(&probe, cell, BackendChoice::Cpu)
             .expect("stage")
             .expect("the session predicts");
         let fits = |budget: u64| {
@@ -404,11 +404,19 @@ fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
 fn a_close_refused_admission_writes_nothing() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("refused.ms");
-    let error = session(&path, resources(1, 1 << 20), true)
-        .close()
-        .expect_err("a megabyte does not hold the writer");
+    let sm = session(&path, resources(1, 1 << 20), true);
+    // close admits receptor metadata before asking for writer memory.
+    // Measure the policy with that metadata held, alongside the original
+    // noise-window reservation, so the refusal's exact free-byte count
+    // describes the writer phase rather than the earlier session state.
+    let policy = &sm.options().resources;
+    let available = {
+        let _receptors = super::polarization_receptors(&sm).expect("receptor metadata");
+        casa_imaging_runtime::free_memory(policy.host(), policy.policy())
+    };
+    let error = sm.close().expect_err("a megabyte does not hold the writer");
     let refusal = error.admission_refused().expect("an admission refusal");
-    assert_eq!(refusal.available, 1 << 20);
+    assert_eq!(refusal.available, available);
     assert!(refusal.required > 1 << 20);
     assert!(
         std::fs::read_dir(directory.path())

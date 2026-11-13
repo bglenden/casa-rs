@@ -265,6 +265,45 @@ fn aw_projection_reads_its_planes_and_terms() {
         "native_cf_cache_bytes, native_cf_maximum_cells"
     );
     request(native(16, 16)).validate().expect("16 planes");
+    let mut native = native(16, 16);
+    native["computepastep"] = json!(5.0);
+    request(native)
+        .validate()
+        .expect("native PA generation is resolved against the observation");
+    assert_eq!(
+        refusal(aw(json!({ "computepastep": 0.0 }))),
+        "computepastep"
+    );
+}
+
+#[test]
+fn aw_pa_tolerance_rounds_the_requested_degrees_before_radians() {
+    let Gridder::Awproject(aw) = request(json!({
+        "gridder": "awproject",
+        "cfcache": "cf",
+        "wprojplanes": 32,
+        "computepastep": 5.0000001,
+    }))
+    .gridder
+    else {
+        panic!("an AW request");
+    };
+    // SynthesisParamsImage's Float rounds 5.0000001 to 5 degrees.
+    assert_eq!(aw.pa_tolerance_rad(), 5.0_f32.to_radians());
+}
+
+#[test]
+fn aw_projection_refuses_multiple_facets_at_any_w_plane_count() {
+    for planes in [1, 16] {
+        let mut values = json!({
+            "gridder": "awproject", "cfcache": "cf", "wprojplanes": planes, "facets": 2,
+        });
+        let refusal = read(values.clone()).expect_err("CASA refuses AW facets");
+        assert_eq!(refusal.parameter, "facets");
+        assert!(refusal.message.contains("facets=1") && refusal.message.contains("wprojplanes>1"));
+        values["facets"] = json!(1);
+        request(values).validate().expect("one AW facet");
+    }
 }
 
 /// A blank optional parameter is unset, as CASA's empty text is.

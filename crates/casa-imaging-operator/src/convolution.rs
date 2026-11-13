@@ -6,14 +6,14 @@ use std::sync::Arc;
 
 use num_complex::{Complex32, Complex64};
 
-use crate::geometry::CellLocation;
+use crate::error::OperatorError;
+use crate::geometry::{CellLocation, GridGeometry};
 use crate::sample::CfKey;
 
 /// Taps of one convolution-function cell in the layout the kernels read.
 ///
 /// Fine-offset rows are indexed by [`CellLocation`]'s
-/// `ox`/`oy`, which run over `0..=oversampling`, so every layout holds
-/// `oversampling + 1` rows per axis and `oversampling` must be even.
+/// `ox`/`oy`, which run over `0..CellLocation::fine_rows(oversampling)`.
 #[derive(Clone, Copy, Debug)]
 pub enum TapLayout<'a> {
     /// Separable real kernel (standard spheroidal). `rows[o * support + i]`
@@ -21,11 +21,11 @@ pub enum TapLayout<'a> {
     /// offset row `o`; one fractional offset is one contiguous row
     /// (oversampling-major, Obit `ConvFunc`).
     SeparableReal {
-        /// `(oversampling + 1) × support` tap values.
+        /// `fine_rows × support` tap values.
         rows: &'a [f32],
         /// Taps per axis (odd).
         support: u16,
-        /// Fine offsets per cell (even).
+        /// Fine sampling intervals per cell.
         oversampling: u16,
     },
     /// Dense complex kernel (W, AW, mosaic) ordered
@@ -33,16 +33,16 @@ pub enum TapLayout<'a> {
     /// `mueller × sy × sx` tile per fractional offset. Tap `(ix, iy)` sits
     /// at grid offset `(ix − sx/2, iy − sy/2)` from the anchor.
     Dense {
-        /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
+        /// `fine_rows² × mueller_planes × sy × sx` tap values.
         data: &'a [Complex32],
-        /// Each tile's tap sum in `f64`, `(oversampling + 1)² ×
+        /// Each tile's tap sum in `f64`, `fine_rows² ×
         /// mueller_planes` of them in the tiles' order
         /// ([`DenseCell::new`]), from which [`TapLayout::norm`] reads a
         /// sample's norm rather than summing its tile.
         norms: &'a [Complex64],
         /// Taps per axis `[sx, sy]` (odd).
         support: [u16; 2],
-        /// Fine offsets per cell (even).
+        /// Fine sampling intervals per cell.
         oversampling: u16,
         /// Mueller planes per tile; 1 for a scalar kernel.
         mueller_planes: u8,
@@ -92,7 +92,7 @@ impl TapLayout<'_> {
     /// `(ox, oy)`).
     #[must_use]
     pub fn norm_bytes(&self) -> u64 {
-        let rows = u64::from(self.oversampling()) + 1;
+        let rows = CellLocation::fine_rows(self.oversampling()) as u64;
         rows * rows * u64::from(self.mueller_planes()) * size_of::<Complex64>() as u64
     }
 
@@ -163,13 +163,13 @@ fn dense_norms(data: &[Complex32], support: [u16; 2]) -> Box<[Complex64]> {
 /// accessors (#770 review).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DenseCell {
-    /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
+    /// `fine_rows² × mueller_planes × sy × sx` tap values.
     data: Box<[Complex32]>,
     /// Each tile's tap sum, in the tiles' order.
     norms: Box<[Complex64]>,
     /// Taps per axis `[sx, sy]` (odd).
     support: [u16; 2],
-    /// Fine offsets per cell (even).
+    /// Fine sampling intervals per cell.
     oversampling: u16,
     /// Mueller planes per tile.
     mueller_planes: u8,
@@ -214,14 +214,14 @@ impl DenseCell {
         std::mem::size_of_val(self.data.as_ref()) + std::mem::size_of_val(self.norms.as_ref())
     }
 
-    /// The tap values, `(oversampling + 1)² × mueller_planes × sy × sx` of
+    /// The tap values, `fine_rows² × mueller_planes × sy × sx` of
     /// them in the [`TapLayout::Dense`] order.
     #[must_use]
     pub fn data(&self) -> &[Complex32] {
         &self.data
     }
 
-    /// Each tile's tap sum, `(oversampling + 1)² × mueller_planes` of them
+    /// Each tile's tap sum, `fine_rows² × mueller_planes` of them
     /// in the tiles' order.
     #[must_use]
     pub fn norms(&self) -> &[Complex64] {
@@ -234,7 +234,7 @@ impl DenseCell {
         self.support
     }
 
-    /// Fine offsets per cell (even).
+    /// Fine sampling intervals per cell.
     #[must_use]
     pub const fn oversampling(&self) -> u16 {
         self.oversampling
@@ -459,8 +459,9 @@ pub struct RowContext {
     /// antenna classes (CASA `HetArrayConvFunc` dish classes, AW baseline
     /// types); 0 for a homogeneous array.
     pub antenna_types: [u8; 2],
-    /// CASA's visibility polarization operator angle of each antenna in
-    /// radians: the negative of the physical parallactic angle.
+    /// Negated physical angles for kernel selection. AW rows carry antenna
+    /// 0's angle in both entries before the catalog adds its feed-0 angle.
+    /// Other rows carry the selected antennas' angles.
     pub parallactic_angle_rad: [f64; 2],
     /// Field (pointing) identifier.
     pub field: u32,
@@ -510,6 +511,29 @@ impl ImageCorrection {
             model_x: model_x.into_boxed_slice(),
             model_y: model_y.into_boxed_slice(),
         }
+    }
+
+    /// MosaicFT's sampling sinc: multiply the model and divide the dirty
+    /// image and PSF, leaving the weight image to the kernel set's rule.
+    pub(crate) fn mosaic_sinc([nx, ny]: [usize; 2], oversampling: u16) -> Self {
+        let sinc = |len: usize| {
+            (0..len)
+                .map(|index| {
+                    let x = std::f32::consts::PI * (index as f32 - (len / 2) as f32)
+                        / (len as f32 * f32::from(oversampling));
+                    if index == len / 2 {
+                        1.0
+                    } else {
+                        f64::from(x.sin() / x)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let model_x = sinc(nx);
+        let model_y = sinc(ny);
+        let image_x = model_x.iter().map(|value| 1.0 / value).collect();
+        let image_y = model_y.iter().map(|value| 1.0 / value).collect();
+        Self::split(image_x, image_y, model_x, model_y)
     }
 
     /// Bytes the four correction vectors of a grid of `grid` hold.
@@ -562,6 +586,16 @@ impl ImageCorrection {
     }
 }
 
+/// `HetArrayConvFunc::checkPBOfField`: discard a pointing outside the
+/// image after truncating the coordinates to integers.
+pub(crate) fn mosaic_pointing_on_image(geometry: &GridGeometry, offset_rad: [f64; 2]) -> bool {
+    let image = geometry.image();
+    offset_rad.into_iter().enumerate().all(|(axis, offset)| {
+        let pixel = image.reference_pixel[axis] as f64 + offset / image.increment_rad[axis];
+        (0.0..image.shape[axis] as f64).contains(&pixel.trunc())
+    })
+}
+
 /// A kernel set: pure cell selection plus the taps, routing and correction
 /// the kernels read. Implementations: the standard spheroidal set, W-planes,
 /// the AW catalog and the mosaic primary beam.
@@ -570,6 +604,16 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// rounding rules for w-planes, frequency and parallactic-angle cells
     /// live here.
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
+
+    /// Check that a selected row can be keyed before any of its samples
+    /// enter the grid or prediction. Imported AW caches require PA coverage.
+    ///
+    /// # Errors
+    ///
+    /// The cache does not have a suitable buffer for this row.
+    fn validate_row_context(&self, _row: &RowContext) -> Result<(), OperatorError> {
+        Ok(())
+    }
 
     /// The one cell every sample keys, when the set's cell depends on
     /// nothing (`GridFT`'s spheroidal). Such a set must also admit every w
@@ -642,6 +686,23 @@ pub trait ConvolutionFunctionSet: Send + Sync {
         w_lambda
     }
 
+    /// Whether the CPU adjoint conjugates its selected cell before applying
+    /// the pointing phase. AWPLPG's signed row map also depends on the mode.
+    fn adjoint_conjugates(
+        &self,
+        _key: CfKey,
+        _mode: crate::accumulator::Mode,
+        w_positive: bool,
+    ) -> bool {
+        w_positive
+    }
+
+    /// Whether the CPU forward transform conjugates the selected cell
+    /// before applying the pointing phase and taking the tap's adjoint.
+    fn prediction_conjugates(&self, _key: CfKey, w_positive: bool) -> bool {
+        w_positive
+    }
+
     /// The paired image-domain correction.
     fn image_correction(&self) -> &ImageCorrection;
 
@@ -652,6 +713,13 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// (`Placement::gradient`): the kernels encode a pointing offset from
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
+
+    /// Whether this pointing supplies a convolution function on the image.
+    /// Called for sets that apply a pointing ramp. A rejected pointing
+    /// contributes neither a gridded sample nor a model prediction.
+    fn admits_pointing(&self, _geometry: &GridGeometry, _offset_rad: [f64; 2]) -> bool {
+        true
+    }
 
     /// Whether CASA's pointing-gradient origin is one fine pixel after the
     /// array centre for this cell. Weight includes PSF and sensitivity

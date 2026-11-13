@@ -1,4 +1,4 @@
-"""Shared checks of the `casars` CASA classes against CASA's (ADR-0019, #841).
+"""Shared checks of the `casars` CASA classes against CASA's (ADR-0017, #841).
 
 `tools/simulation/dump_casa_tool_signatures.py` records each installed CASA
 class's signatures in `data/casa_<tool>_signatures.json`; these helpers

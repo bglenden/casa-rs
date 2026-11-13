@@ -172,12 +172,9 @@ fn inverse_aberration_shift(
     phase_center: &MDirection,
     frame: &MeasFrame,
 ) -> Result<[f64; 3], MeasureError> {
-    const C_AU_PER_DAY: f64 = 173.144_632_674_240_34;
-
-    let tt = epoch_jd_pair(frame, EpochRef::TT)?;
-    let (_, earth_bary) =
-        sofars::eph::epv00(tt.0, tt.1).ok_or_else(|| ephemeris_error("aberration"))?;
-    let velocity = scale_vector(earth_bary[1], 1.0 / C_AU_PER_DAY);
+    // MeasMath::deapplyAberration uses Aberration::STANDARD at TDB, as the
+    // phase-centre direction conversion does. Reuse its cached velocity.
+    let velocity = super::direction::casacore_aberration_beta(frame)?;
     let beta_inv = (1.0 - dot(velocity, velocity)).sqrt();
     let source = phase_center.cosines();
     let mut solution = subtract_vectors(source, velocity);
@@ -193,15 +190,16 @@ fn inverse_aberration_shift(
         );
         trial = normalize(trial);
         let residual = subtract_vectors(trial, source);
-        if vector_norm(residual) <= 1.0e-10 {
-            break;
-        }
         for idx in 0..3 {
             let component = velocity[idx];
             solution[idx] -= residual[idx]
                 / (((beta_inv + component * component / (1.0 + beta_inv))
                     - component * trial[idx])
                     / (1.0 + dot_sv));
+        }
+        // Casacore applies this Newton correction before checking convergence.
+        if vector_norm(residual) <= 1.0e-10 {
+            break;
         }
     }
 
@@ -256,21 +254,11 @@ fn inverse_solar_deflection_shift(
 /// A frame without an epoch or a position, or an epoch it cannot convert to
 /// UT1.
 pub fn local_apparent_sidereal_time(frame: &MeasFrame) -> Result<f64, MeasureError> {
-    let (ut1_a, ut1_b) = epoch_jd_pair(frame, EpochRef::UT1)?;
-    let ut1_mjd = epoch_mjd(frame, EpochRef::UT1)?;
-    let centuries = (ut1_mjd - 51_544.5) / 36_525.0;
-    let gmst0_seconds =
-        24_110.548_41 + 8_640_184.812_866 * centuries + 0.093_104 * centuries * centuries
-            - 6.2e-6 * centuries * centuries * centuries;
-    let gmst0_turns = (ut1_mjd + gmst0_seconds / 86_400.0 + 6_713.0).fract();
-    let equation_of_equinoxes =
-        sofars::vm::anpm(sofars::erst::gst94(ut1_a, ut1_b) - sofars::erst::gmst82(ut1_a, ut1_b));
-    // Matches casacore's legacy `Nutation::STANDARD` equation of equinoxes
-    // used by `MCEpoch::UT1_GAST`; SOFA `gst94` differs by about 0.1 ms.
-    const CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD: f64 = 7.719e-9;
-    let gast = gmst0_turns * std::f64::consts::TAU
-        + equation_of_equinoxes
-        + CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD;
+    let epoch = frame
+        .epoch()
+        .ok_or(MeasureError::MissingFrameData { what: "epoch" })?;
+    let ut1 = epoch.convert_to(EpochRef::UT1, frame)?;
+    let gast = super::casacore_sidereal::gast_rad(ut1.value());
     let position = frame
         .position()
         .ok_or(MeasureError::MissingFrameData { what: "position" })?;
@@ -462,4 +450,45 @@ fn subtract_vectors(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
 
 fn scale_vector(vector: [f64; 3], scale: f64) -> [f64; 3] {
     [vector[0] * scale, vector[1] * scale, vector[2] * scale]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annual_aberration_matches_casa_baseline_rotations() {
+        // Independent MCBaseline matrix quotient, with no IERS tables involved.
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/data/casa_baseline_aberration.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture["casa_version"], "6.7.6.14");
+        let cases = fixture["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 6);
+        let mut maximum_error = 0.0_f64;
+        for case in cases {
+            let epoch = case["epoch_tdb_mjd"].as_f64().unwrap();
+            let angles: [f64; 2] =
+                serde_json::from_value(case["phase_center_rad"].clone()).unwrap();
+            let expected: [[f64; 3]; 3] =
+                serde_json::from_value(case["inverse_aberration_rotation"].clone()).unwrap();
+            let phase_center = MDirection::from_angles(angles[0], angles[1], DirectionRef::J2000);
+            let frame = MeasFrame::new()
+                .with_epoch(MEpoch::from_mjd(epoch, EpochRef::TDB))
+                .with_direction(phase_center.clone());
+            let actual = rotate_shift_matrix(
+                inverse_aberration_shift(&phase_center, &frame).unwrap(),
+                phase_center.cosines(),
+            );
+            for (actual_row, expected_row) in actual.iter().zip(expected) {
+                for (actual, expected) in actual_row.iter().zip(expected_row) {
+                    assert!(actual.is_finite() && expected.is_finite());
+                    maximum_error = maximum_error.max((actual - expected).abs());
+                }
+            }
+        }
+        println!("CASA baseline annual-aberration maximum matrix error: {maximum_error:e}");
+        assert!(maximum_error <= 2.0e-12, "matrix error {maximum_error:e}");
+    }
 }

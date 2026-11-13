@@ -497,16 +497,16 @@ fn dense_tile_index(
     mueller: u8,
 ) -> usize {
     debug_assert!(mueller < mueller_planes, "Mueller plane outside the cell");
-    let rows = usize::from(oversampling) + 1;
+    let rows = CellLocation::fine_rows(oversampling);
     (usize::from(location.oy) * rows + usize::from(location.ox)) * usize::from(mueller_planes)
         + usize::from(mueller)
 }
 
-/// The ramp's fine fraction `(off − s/2 − origin_shift)/s` per axis.
+/// The ramp's fine fraction `(off − ceil(s/2) − origin_shift)/s` per axis.
 /// CASA reads the ramp at `ix·sampling + off` relative to its array
 /// centre; the odd AW gradient array starts one fine pixel later.
 fn fine_fraction(location: CellLocation, oversampling: u16, origin_shift: u8) -> [f64; 2] {
-    let half = f64::from(oversampling) / 2.0;
+    let half = f64::from(CellLocation::fine_centre(oversampling));
     let fraction = |offset: u16| {
         (f64::from(offset) - half - f64::from(origin_shift)) / f64::from(oversampling)
     };
@@ -934,7 +934,7 @@ mod tests {
     fn a_stored_dense_norm_is_the_sum_of_its_tile() {
         let (oversampling, mueller_planes, support) = (4_u16, 2_u8, [3_u16, 5]);
         let taps = usize::from(support[0]) * usize::from(support[1]);
-        let rows = usize::from(oversampling) + 1;
+        let rows = CellLocation::fine_rows(oversampling);
         let data = (0..rows * rows * usize::from(mueller_planes) * taps)
             .map(|i| Complex32::new(noise(5 * i) as f32, noise(5 * i + 2) as f32))
             .collect::<Vec<_>>();

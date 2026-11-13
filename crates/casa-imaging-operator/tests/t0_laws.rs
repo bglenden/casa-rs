@@ -7,8 +7,8 @@ mod common;
 
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    Basis, CpuBackend, GridBackend, GridPrecision, Mode, ModeSet, ModelImages, ModelPlane,
-    ModelPrescale, NormalImages, PlaneRange, Tile, Work,
+    Basis, CpuBackend, GridBackend, GridPrecision, GridStorage, Mode, ModeSet, ModelImages,
+    ModelPlane, ModelPrescale, NormalImages, Placement, PlaneRange, Tile, Work,
 };
 use casa_types::Correlation;
 use common::{
@@ -450,6 +450,61 @@ fn f32_and_f64_grids_agree() {
             worst <= 1.0e-4 * peak,
             "precisions differ by {worst} of {peak}"
         );
+    }
+}
+
+/// A standard kernel that fits the Fourier grid contributes every tap and
+/// its full weight. CASA's sector off-by-one drops the last cell (#1069).
+#[test]
+fn standard_grid_keeps_taps_at_the_last_column_and_row() {
+    let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
+    let [nx, ny] = operator.geometry().grid_shape();
+    let [sx, sy] = operator.geometry().scale();
+    let mut backend = CpuBackend::new();
+    for (axis, last) in [(0, nx - 1), (1, ny - 1)] {
+        let mut sample = Placement {
+            u: 0.0,
+            v: 0.0,
+            w: 0.0,
+            prediction_w_positive: false,
+            phase: 0.0,
+            plane: 0,
+            spectral: 0.0,
+            cf: Default::default(),
+            gradient: [0.0; 2],
+        };
+        let extent = [nx, ny][axis];
+        let inside = last as f64 - 3.0 + 0.25 - (extent / 2) as f64;
+        if axis == 0 {
+            sample.u = inside / sx;
+        } else {
+            sample.v = inside / sy;
+        }
+        let placements = [sample];
+        let samples = buffer(&placements, &[Complex64::new(1.0, 0.0); 2], &[1.0; 2], 2);
+        let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::PSF);
+        backend
+            .apply(
+                &samples.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Psf,
+                    acc: &mut acc,
+                },
+            )
+            .expect("grid a support reaching the last cell");
+        let (_, storage, _) = acc.backend_parts();
+        let GridStorage::F64(cells) = storage else {
+            panic!("f64 grid")
+        };
+        let cell = if axis == 0 {
+            (ny / 2) * nx + last
+        } else {
+            last * nx + nx / 2
+        };
+        assert!(cells[cell].re > 0.0, "missing edge tap on axis {axis}");
+        assert!((cells.iter().map(|cell| cell.re).sum::<f64>() - 2.0).abs() < 1e-6);
+        assert_eq!(acc.sumwt_at(0, 0, 0), 2.0);
     }
 }
 
