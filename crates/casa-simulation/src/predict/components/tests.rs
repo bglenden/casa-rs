@@ -70,11 +70,13 @@ fn a_point_at_the_phase_centre_adds_its_flux_in_the_windows_basis() {
     // XX and YY of a linear window: I ± Q.
     let prediction = prepare(&components, &[window(vec![9, 12])], None).expect("prepared");
     let mut out = vec![Complex32::new(0.5, 0.0); 2 * 2 * 2];
-    prediction.add_rows(
-        (0, 0),
-        [[120.0, -40.0, 3.0], [0.0, 0.0, 0.0]].into_iter(),
-        &mut out,
-    );
+    prediction
+        .add_rows(
+            (0, 0),
+            [[120.0, -40.0, 3.0], [0.0, 0.0, 0.0]].into_iter(),
+            &mut out,
+        )
+        .unwrap();
     for (sample, value) in out.iter().enumerate() {
         let expected = if sample % 2 == 0 { 1.6 } else { 1.4 };
         assert!(
@@ -97,7 +99,9 @@ fn the_beam_scales_each_component_by_its_power_at_its_separation() {
         prepare(&components, &[window(vec![9, 12])], Some(&pattern)).expect("prepared");
     let mut out = vec![Complex32::new(0.0, 0.0); 2 * 2];
     // The zero spacing: the flux times the beam, whatever the phase.
-    prediction.add_rows((0, 0), [[0.0, 0.0, 0.0]].into_iter(), &mut out);
+    prediction
+        .add_rows((0, 0), [[0.0, 0.0, 0.0]].into_iter(), &mut out)
+        .unwrap();
     let separation = separation_rad(offset, CENTRE);
     assert!((separation - 1.0e-4 * CENTRE[1].cos()).abs() < 1.0e-12);
     let expected = pattern.power_at(separation, 230.0e9);
@@ -209,7 +213,9 @@ fn a_rows_channels_predict_as_each_components_visibility_one_channel_at_a_time()
     ];
     let samples = window.channels * 4;
     let mut out = vec![Complex32::new(0.0, 0.0); rows.len() * samples];
-    prediction.add_rows((0, 0), rows.into_iter(), &mut out);
+    prediction
+        .add_rows((0, 0), rows.into_iter(), &mut out)
+        .unwrap();
     for (row, uvw_m) in rows.into_iter().enumerate() {
         let expected = direct(
             &components,

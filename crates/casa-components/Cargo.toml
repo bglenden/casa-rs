@@ -17,6 +17,9 @@ workspace = true
 [dependencies]
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
+# Maintained AMOS 644 implementation, MIT/Apache-2.0: real-order J for
+# limb disks, without a native GSL dependency or per-evaluation allocation.
+complex-bessel = { version = "0.4", default-features = false }
 libm = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true

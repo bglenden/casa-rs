@@ -200,7 +200,6 @@ impl ComponentPrediction {
             directions_rad.push([ra, dec]);
             transforms.push(
                 component
-                    .shape()
                     .transform()
                     .map_err(|error| refused(format!("component {index}: {error}")))?,
             );
@@ -297,7 +296,7 @@ impl ComponentPrediction {
         (scan, description): (usize, usize),
         rows: impl Iterator<Item = [f64; 3]>,
         out: &mut [Complex32],
-    ) {
+    ) -> Result<(), casa_components::ComponentError> {
         let Some(terms) = self
             .of_scan
             .get(scan)
@@ -307,7 +306,7 @@ impl ComponentPrediction {
             // A prediction covers the scans observed before it, whose
             // pointings it prepared.
             debug_assert!(false, "scan {scan} was not observed before the prediction");
-            return;
+            return Ok(());
         };
         let prepared = &self.windows[description];
         let (channels, correlations) = (prepared.channels, prepared.correlations);
@@ -340,7 +339,7 @@ impl ComponentPrediction {
                     } else {
                         phasor
                     };
-                    let mut scale = baseline.at_frequency(frequency_hz);
+                    let mut scale = baseline.at_frequency(frequency_hz)?;
                     if let Some(powers) = powers {
                         scale *= f64::from(powers[channel]);
                     }
@@ -354,6 +353,7 @@ impl ComponentPrediction {
                 }
             }
         }
+        Ok(())
     }
 }
 

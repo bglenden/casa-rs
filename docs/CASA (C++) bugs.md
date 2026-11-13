@@ -5090,3 +5090,22 @@ ordinary CASA references. These controls agree with native prediction at
 5.4e-7 NRMS in the J2000 case, without changing the 1e-3 threshold. Reproduce
 a frequency control with `sm_image_layouts_oracle.py --case
 frame_j2000_mosaic --constant-frequency 210000000000 --out OUT --fixture FILE`.
+
+## Simulator component-list copies lose the limb-darkening exponent
+
+CASA 6.7.6.14 accepts a limb-darkened disk through a component record/table.
+`ComponentList::readTable` applies `Optional_Parameters` to its shape, but
+`SimpleComponentFTMachine::get` then copies each partition through a record.
+`SkyCompRep::fromRecord` saves `optionalParameters` without applying them to the
+shape. Prediction therefore uses the default exponent 0.05 even when the table
+requests 0, 1, 2.5 or 8. This contradicts the persisted component model.
+
+casa-rs retains the requested exponent, rounded to the shape's stored float32,
+and evaluates `Γ(η+1) (2/r)^η Jη(r)`, with `η=1+n/2`. The simulation oracle
+retains raw CASA DATA. Its corrected reference combines actual CASA point-source
+DATA with the requested shape evaluated by CASA's bundled GSL, using independent
+Cartesian tangent-plane geometry. That same GSL/geometry control first agrees
+with the actual default-exponent CASA prediction at 3.7e-7 NRMS. Native CPU
+W1/W3 predictions agree with these controls below 1e-6 NRMS, including polarized
+spectra, selected replacement/increments and unchanged scratch/quality cells.
+The uniform-disk and projected-sphere analytic limits are checked separately.
