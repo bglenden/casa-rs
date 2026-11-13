@@ -31,15 +31,13 @@ pub enum Token {
     #[token("WHERE", ignore(ascii_case))]
     Where,
     /// The `ORDER` keyword.
-    #[token("ORDER", ignore(ascii_case))]
-    #[token("ORDERBY", ignore(ascii_case))]
+    #[regex("ORDER(BY)?", ignore(ascii_case))]
     Order,
     /// The `BY` keyword.
     #[token("BY", ignore(ascii_case))]
     By,
     /// The `GROUP` keyword.
-    #[token("GROUP", ignore(ascii_case))]
-    #[token("GROUPBY", ignore(ascii_case))]
+    #[regex("GROUP(BY)?", ignore(ascii_case))]
     Group,
     /// The `HAVING` keyword.
     #[token("HAVING", ignore(ascii_case))]
