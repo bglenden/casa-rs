@@ -204,7 +204,7 @@
 <a href=#204 id=204 data-nosnippet>204</a>            ScalarValue::Int64(header.antennas[<span class="number">1</span>] <span class="kw">as </span>i64),
 <a href=#205 id=205 data-nosnippet>205</a>            ScalarValue::Float64(header.time_s),
 <a href=#206 id=206 data-nosnippet>206</a>            ScalarValue::Int64(scan.field_id <span class="kw">as </span>i64),
-<a href=#207 id=207 data-nosnippet>207</a>            ScalarValue::Int64(scan.spectral_window_id <span class="kw">as </span>i64),
+<a href=#207 id=207 data-nosnippet>207</a>            ScalarValue::Int64(scan.data_description_id <span class="kw">as </span>i64),
 <a href=#208 id=208 data-nosnippet>208</a>            ScalarValue::Int64(i64::from(scan.scan_number)),
 <a href=#209 id=209 data-nosnippet>209</a>        ];
 <a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">for </span>(field, value) <span class="kw">in </span><span class="self">self</span>.row.fields_mut().iter_mut().zip(values) {

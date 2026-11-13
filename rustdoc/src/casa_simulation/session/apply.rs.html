@@ -880,162 +880,161 @@
 <a href=#880 id=880 data-nosnippet>880</a>                                    <span class="kw-2">&amp;</span>solution,
 <a href=#881 id=881 data-nosnippet>881</a>                                    antenna,
 <a href=#882 id=882 data-nosnippet>882</a>                                    output_hz[channel],
-<a href=#883 id=883 data-nosnippet>883</a>                                    <span class="self">self</span>.spectral_windows[scan.spectral_window_id]
-<a href=#884 id=884 data-nosnippet>884</a>                                        .correlations
-<a href=#885 id=885 data-nosnippet>885</a>                                        .first()
-<a href=#886 id=886 data-nosnippet>886</a>                                        .is_some_and(|c| (<span class="number">5</span>..=<span class="number">8</span>).contains(c)),
-<a href=#887 id=887 data-nosnippet>887</a>                                )
-<a href=#888 id=888 data-nosnippet>888</a>                            } <span class="kw">else </span>{
-<a href=#889 id=889 data-nosnippet>889</a>                                matrix::parameters(kind, <span class="kw-2">&amp;</span>solution, channel)
-<a href=#890 id=890 data-nosnippet>890</a>                            });
-<a href=#891 id=891 data-nosnippet>891</a>                            <span class="kw">continue</span>;
-<a href=#892 id=892 data-nosnippet>892</a>                        }
-<a href=#893 id=893 data-nosnippet>893</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>(pair) = geometry.values(
-<a href=#894 id=894 data-nosnippet>894</a>                            kind,
-<a href=#895 id=895 data-nosnippet>895</a>                            <span class="kw-2">&amp;</span>solution,
-<a href=#896 id=896 data-nosnippet>896</a>                            antenna,
-<a href=#897 id=897 data-nosnippet>897</a>                            (channel, output_hz.get(channel).copied().unwrap_or(<span class="number">0.</span>)),
-<a href=#898 id=898 data-nosnippet>898</a>                            reference,
-<a href=#899 id=899 data-nosnippet>899</a>                        ) {
-<a href=#900 id=900 data-nosnippet>900</a>                            values.push(pair);
-<a href=#901 id=901 data-nosnippet>901</a>                            <span class="kw">continue</span>;
-<a href=#902 id=902 data-nosnippet>902</a>                        }
-<a href=#903 id=903 data-nosnippet>903</a>                        <span class="kw">let </span>invalid_leakage = kind == AppliedKind::Leakage
-<a href=#904 id=904 data-nosnippet>904</a>                            &amp;&amp; (<span class="number">0</span>..solution.receptors)
-<a href=#905 id=905 data-nosnippet>905</a>                                .any(|receptor| solution.flags[receptor * channels + channel]);
-<a href=#906 id=906 data-nosnippet>906</a>                        values.push(std::array::from_fn(|receptor| {
-<a href=#907 id=907 data-nosnippet>907</a>                            <span class="kw">let </span>receptor = <span class="kw">if </span>kind == AppliedKind::Scalar {
-<a href=#908 id=908 data-nosnippet>908</a>                                <span class="number">0
-<a href=#909 id=909 data-nosnippet>909</a>                            </span>} <span class="kw">else </span>{
-<a href=#910 id=910 data-nosnippet>910</a>                                receptor
-<a href=#911 id=911 data-nosnippet>911</a>                            };
-<a href=#912 id=912 data-nosnippet>912</a>                            <span class="kw">if </span>invalid_leakage || solution.flags[receptor * channels + channel] {
-<a href=#913 id=913 data-nosnippet>913</a>                                neutral
-<a href=#914 id=914 data-nosnippet>914</a>                            } <span class="kw">else </span>{
-<a href=#915 id=915 data-nosnippet>915</a>                                solution.value(receptor, channel)
-<a href=#916 id=916 data-nosnippet>916</a>                            }
-<a href=#917 id=917 data-nosnippet>917</a>                        }));
-<a href=#918 id=918 data-nosnippet>918</a>                    }
-<a href=#919 id=919 data-nosnippet>919</a>                }
-<a href=#920 id=920 data-nosnippet>920</a>            }
-<a href=#921 id=921 data-nosnippet>921</a>        }
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">if </span>table.channel_dependent() || kind.matrix() {
-<a href=#923 id=923 data-nosnippet>923</a>            offsets.push(<span class="kw">if </span>kind.matrix() {
-<a href=#924 id=924 data-nosnippet>924</a>                matrices.len()
-<a href=#925 id=925 data-nosnippet>925</a>            } <span class="kw">else </span>{
-<a href=#926 id=926 data-nosnippet>926</a>                values.len()
-<a href=#927 id=927 data-nosnippet>927</a>            });
-<a href=#928 id=928 data-nosnippet>928</a>        }
-<a href=#929 id=929 data-nosnippet>929</a>        <span class="prelude-val">Ok</span>(AppliedSolutions {
-<a href=#930 id=930 data-nosnippet>930</a>            chunks: chunks.sorted(),
-<a href=#931 id=931 data-nosnippet>931</a>            values,
-<a href=#932 id=932 data-nosnippet>932</a>            offsets,
-<a href=#933 id=933 data-nosnippet>933</a>            matrices,
-<a href=#934 id=934 data-nosnippet>934</a>        })
-<a href=#935 id=935 data-nosnippet>935</a>    }
-<a href=#936 id=936 data-nosnippet>936</a>}
-<a href=#937 id=937 data-nosnippet>937</a>
-<a href=#938 id=938 data-nosnippet>938</a><span class="doccomment">/// The simulator's time interpolation, refusing deprecated and unknown modes
-<a href=#939 id=939 data-nosnippet>939</a>/// as CASA does; unsupported modifiers remain explicit refusals (#1053).
-<a href=#940 id=940 data-nosnippet>940</a></span><span class="kw">fn </span>apply_interpolation(interp: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;TimeInterpolationOptions&gt; {
-<a href=#941 id=941 data-nosnippet>941</a>    <span class="kw">if </span>interp.contains(<span class="string">"aips"</span>) {
-<a href=#942 id=942 data-nosnippet>942</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#943 id=943 data-nosnippet>943</a>            <span class="string">"The (peculiar) 'aipslin' interpolation type was deprecated in CASA v3.4; use \
-<a href=#944 id=944 data-nosnippet>944</a>             'linear'."</span>,
-<a href=#945 id=945 data-nosnippet>945</a>        ));
-<a href=#946 id=946 data-nosnippet>946</a>    }
-<a href=#947 id=947 data-nosnippet>947</a>    <span class="kw">let </span>requested = interp.split(<span class="string">','</span>).next().unwrap_or(<span class="string">""</span>).trim();
-<a href=#948 id=948 data-nosnippet>948</a>    <span class="kw">let </span>mode = <span class="kw">if </span>requested.contains(<span class="string">"nearest"</span>) {
-<a href=#949 id=949 data-nosnippet>949</a>        TimeInterpolation::Nearest
-<a href=#950 id=950 data-nosnippet>950</a>    } <span class="kw">else if </span>requested.is_empty() || requested.contains(<span class="string">"linear"</span>) {
-<a href=#951 id=951 data-nosnippet>951</a>        TimeInterpolation::Linear
-<a href=#952 id=952 data-nosnippet>952</a>    } <span class="kw">else if </span>requested.contains(<span class="string">"cubic"</span>) {
-<a href=#953 id=953 data-nosnippet>953</a>        TimeInterpolation::Cubic
-<a href=#954 id=954 data-nosnippet>954</a>    } <span class="kw">else if </span>requested.contains(<span class="string">"spline"</span>) {
-<a href=#955 id=955 data-nosnippet>955</a>        TimeInterpolation::Spline
-<a href=#956 id=956 data-nosnippet>956</a>    } <span class="kw">else </span>{
-<a href=#957 id=957 data-nosnippet>957</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#958 id=958 data-nosnippet>958</a>            <span class="string">"Unrecognized time interpolation type '{requested}'"
-<a href=#959 id=959 data-nosnippet>959</a>        </span>)));
-<a href=#960 id=960 data-nosnippet>960</a>    };
-<a href=#961 id=961 data-nosnippet>961</a>    <span class="prelude-val">Ok</span>(TimeInterpolationOptions {
-<a href=#962 id=962 data-nosnippet>962</a>        mode,
-<a href=#963 id=963 data-nosnippet>963</a>        phase_delay: requested.contains(<span class="string">"PD"</span>),
-<a href=#964 id=964 data-nosnippet>964</a>        per_observation: requested.contains(<span class="string">"perobs"</span>),
-<a href=#965 id=965 data-nosnippet>965</a>        per_scan: requested.contains(<span class="string">"perscan"</span>),
-<a href=#966 id=966 data-nosnippet>966</a>        observation_count: <span class="number">1</span>,
-<a href=#967 id=967 data-nosnippet>967</a>    })
-<a href=#968 id=968 data-nosnippet>968</a>}
-<a href=#969 id=969 data-nosnippet>969</a>
-<a href=#970 id=970 data-nosnippet>970</a><span class="doccomment">/// CASA defaults frequency interpolation to linear for frequency-dependent parameters.
-<a href=#971 id=971 data-nosnippet>971</a></span><span class="kw">fn </span>frequency_interpolation(interp: <span class="kw-2">&amp;</span>str) -&gt; FrequencyInterpolation {
-<a href=#972 id=972 data-nosnippet>972</a>    <span class="kw">let </span>mode = interp.split(<span class="string">','</span>).nth(<span class="number">1</span>).unwrap_or(<span class="string">"linear"</span>);
-<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">let </span>retain_flags = mode.contains(<span class="string">"flag"</span>);
-<a href=#974 id=974 data-nosnippet>974</a>    <span class="kw">if </span>mode.contains(<span class="string">"nearest"</span>) {
-<a href=#975 id=975 data-nosnippet>975</a>        <span class="kw">if </span>retain_flags {
-<a href=#976 id=976 data-nosnippet>976</a>            FrequencyInterpolation::NearestFlag
-<a href=#977 id=977 data-nosnippet>977</a>        } <span class="kw">else </span>{
-<a href=#978 id=978 data-nosnippet>978</a>            FrequencyInterpolation::Nearest
-<a href=#979 id=979 data-nosnippet>979</a>        }
-<a href=#980 id=980 data-nosnippet>980</a>    } <span class="kw">else if </span>mode.contains(<span class="string">"cubic"</span>) {
-<a href=#981 id=981 data-nosnippet>981</a>        <span class="kw">if </span>retain_flags {
-<a href=#982 id=982 data-nosnippet>982</a>            FrequencyInterpolation::CubicFlag
-<a href=#983 id=983 data-nosnippet>983</a>        } <span class="kw">else </span>{
-<a href=#984 id=984 data-nosnippet>984</a>            FrequencyInterpolation::Cubic
-<a href=#985 id=985 data-nosnippet>985</a>        }
-<a href=#986 id=986 data-nosnippet>986</a>    } <span class="kw">else if </span>mode.contains(<span class="string">"spline"</span>) {
-<a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">if </span>retain_flags {
-<a href=#988 id=988 data-nosnippet>988</a>            FrequencyInterpolation::SplineFlag
-<a href=#989 id=989 data-nosnippet>989</a>        } <span class="kw">else </span>{
-<a href=#990 id=990 data-nosnippet>990</a>            FrequencyInterpolation::Spline
-<a href=#991 id=991 data-nosnippet>991</a>        }
-<a href=#992 id=992 data-nosnippet>992</a>    } <span class="kw">else if </span>retain_flags {
-<a href=#993 id=993 data-nosnippet>993</a>        FrequencyInterpolation::LinearFlag
-<a href=#994 id=994 data-nosnippet>994</a>    } <span class="kw">else </span>{
-<a href=#995 id=995 data-nosnippet>995</a>        FrequencyInterpolation::Linear
-<a href=#996 id=996 data-nosnippet>996</a>    }
-<a href=#997 id=997 data-nosnippet>997</a>}
-<a href=#998 id=998 data-nosnippet>998</a>
-<a href=#999 id=999 data-nosnippet>999</a><span class="doccomment">/// CTPatchedInterp::setSpwMap: identity, single-window broadcast, explicit
-<a href=#1000 id=1000 data-nosnippet>1000</a>/// prefix, or the first available solution window (-999).
-<a href=#1001 id=1001 data-nosnippet>1001</a></span><span class="kw">fn </span>mapped_windows(
-<a href=#1002 id=1002 data-nosnippet>1002</a>    spec: <span class="kw-2">&amp;</span>[i64],
-<a href=#1003 id=1003 data-nosnippet>1003</a>    lookup: <span class="kw-2">&amp;</span>HeldLookup,
-<a href=#1004 id=1004 data-nosnippet>1004</a>    windows: usize,
-<a href=#1005 id=1005 data-nosnippet>1005</a>) -&gt; SimulatorResult&lt;Vec&lt;usize&gt;&gt; {
-<a href=#1006 id=1006 data-nosnippet>1006</a>    <span class="kw">if </span>spec.is_empty() || spec == [-<span class="number">1</span>] {
-<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="number">0</span>..windows).collect());
-<a href=#1008 id=1008 data-nosnippet>1008</a>    }
-<a href=#1009 id=1009 data-nosnippet>1009</a>    <span class="kw">if </span>spec.len() &gt; windows {
-<a href=#1010 id=1010 data-nosnippet>1010</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#1011 id=1011 data-nosnippet>1011</a>            <span class="string">"Specified spwmap has more elements ({}) than the number of spectral windows in the MS ({windows})."</span>,
-<a href=#1012 id=1012 data-nosnippet>1012</a>            spec.len()
-<a href=#1013 id=1013 data-nosnippet>1013</a>        )));
-<a href=#1014 id=1014 data-nosnippet>1014</a>    }
-<a href=#1015 id=1015 data-nosnippet>1015</a>    <span class="kw">if </span>spec[<span class="number">0</span>] == -<span class="number">999 </span>{
-<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">let </span>first = lookup.lookup.first_spectral_window().ok_or_else(|| {
-<a href=#1017 id=1017 data-nosnippet>1017</a>            raised(<span class="string">"No calibration spectral window is available for automatic fanout"</span>)
-<a href=#1018 id=1018 data-nosnippet>1018</a>        })<span class="question-mark">?</span>;
-<a href=#1019 id=1019 data-nosnippet>1019</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[first <span class="kw">as </span>usize; windows]);
-<a href=#1020 id=1020 data-nosnippet>1020</a>    }
-<a href=#1021 id=1021 data-nosnippet>1021</a>    <span class="kw">if </span>spec.iter().any(|<span class="kw-2">&amp;</span>window| window &lt; <span class="number">0</span>) {
-<a href=#1022 id=1022 data-nosnippet>1022</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Please specify positive indices in spwmap."</span>));
-<a href=#1023 id=1023 data-nosnippet>1023</a>    }
-<a href=#1024 id=1024 data-nosnippet>1024</a>    <span class="kw">if </span>spec
-<a href=#1025 id=1025 data-nosnippet>1025</a>        .iter()
-<a href=#1026 id=1026 data-nosnippet>1026</a>        .any(|<span class="kw-2">&amp;</span>window| window <span class="kw">as </span>u64 &gt;= lookup.windows <span class="kw">as </span>u64)
-<a href=#1027 id=1027 data-nosnippet>1027</a>    {
-<a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#1029 id=1029 data-nosnippet>1029</a>            <span class="string">"Please specify spw indices &lt;= maximum available ({})"</span>,
-<a href=#1030 id=1030 data-nosnippet>1030</a>            lookup.windows.saturating_sub(<span class="number">1</span>)
-<a href=#1031 id=1031 data-nosnippet>1031</a>        )));
-<a href=#1032 id=1032 data-nosnippet>1032</a>    }
-<a href=#1033 id=1033 data-nosnippet>1033</a>    <span class="prelude-val">Ok</span>((<span class="number">0</span>..windows)
-<a href=#1034 id=1034 data-nosnippet>1034</a>        .map(|window| {
-<a href=#1035 id=1035 data-nosnippet>1035</a>            spec.get(<span class="kw">if </span>spec.len() == <span class="number">1 </span>{ <span class="number">0 </span>} <span class="kw">else </span>{ window })
-<a href=#1036 id=1036 data-nosnippet>1036</a>                .map(|<span class="kw-2">&amp;</span>window| window <span class="kw">as </span>usize)
-<a href=#1037 id=1037 data-nosnippet>1037</a>                .unwrap_or(window)
-<a href=#1038 id=1038 data-nosnippet>1038</a>        })
-<a href=#1039 id=1039 data-nosnippet>1039</a>        .collect())
-<a href=#1040 id=1040 data-nosnippet>1040</a>}
+<a href=#883 id=883 data-nosnippet>883</a>                                    <span class="self">self</span>.correlations_for_scan(scan)
+<a href=#884 id=884 data-nosnippet>884</a>                                        .first()
+<a href=#885 id=885 data-nosnippet>885</a>                                        .is_some_and(|c| (<span class="number">5</span>..=<span class="number">8</span>).contains(c)),
+<a href=#886 id=886 data-nosnippet>886</a>                                )
+<a href=#887 id=887 data-nosnippet>887</a>                            } <span class="kw">else </span>{
+<a href=#888 id=888 data-nosnippet>888</a>                                matrix::parameters(kind, <span class="kw-2">&amp;</span>solution, channel)
+<a href=#889 id=889 data-nosnippet>889</a>                            });
+<a href=#890 id=890 data-nosnippet>890</a>                            <span class="kw">continue</span>;
+<a href=#891 id=891 data-nosnippet>891</a>                        }
+<a href=#892 id=892 data-nosnippet>892</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>(pair) = geometry.values(
+<a href=#893 id=893 data-nosnippet>893</a>                            kind,
+<a href=#894 id=894 data-nosnippet>894</a>                            <span class="kw-2">&amp;</span>solution,
+<a href=#895 id=895 data-nosnippet>895</a>                            antenna,
+<a href=#896 id=896 data-nosnippet>896</a>                            (channel, output_hz.get(channel).copied().unwrap_or(<span class="number">0.</span>)),
+<a href=#897 id=897 data-nosnippet>897</a>                            reference,
+<a href=#898 id=898 data-nosnippet>898</a>                        ) {
+<a href=#899 id=899 data-nosnippet>899</a>                            values.push(pair);
+<a href=#900 id=900 data-nosnippet>900</a>                            <span class="kw">continue</span>;
+<a href=#901 id=901 data-nosnippet>901</a>                        }
+<a href=#902 id=902 data-nosnippet>902</a>                        <span class="kw">let </span>invalid_leakage = kind == AppliedKind::Leakage
+<a href=#903 id=903 data-nosnippet>903</a>                            &amp;&amp; (<span class="number">0</span>..solution.receptors)
+<a href=#904 id=904 data-nosnippet>904</a>                                .any(|receptor| solution.flags[receptor * channels + channel]);
+<a href=#905 id=905 data-nosnippet>905</a>                        values.push(std::array::from_fn(|receptor| {
+<a href=#906 id=906 data-nosnippet>906</a>                            <span class="kw">let </span>receptor = <span class="kw">if </span>kind == AppliedKind::Scalar {
+<a href=#907 id=907 data-nosnippet>907</a>                                <span class="number">0
+<a href=#908 id=908 data-nosnippet>908</a>                            </span>} <span class="kw">else </span>{
+<a href=#909 id=909 data-nosnippet>909</a>                                receptor
+<a href=#910 id=910 data-nosnippet>910</a>                            };
+<a href=#911 id=911 data-nosnippet>911</a>                            <span class="kw">if </span>invalid_leakage || solution.flags[receptor * channels + channel] {
+<a href=#912 id=912 data-nosnippet>912</a>                                neutral
+<a href=#913 id=913 data-nosnippet>913</a>                            } <span class="kw">else </span>{
+<a href=#914 id=914 data-nosnippet>914</a>                                solution.value(receptor, channel)
+<a href=#915 id=915 data-nosnippet>915</a>                            }
+<a href=#916 id=916 data-nosnippet>916</a>                        }));
+<a href=#917 id=917 data-nosnippet>917</a>                    }
+<a href=#918 id=918 data-nosnippet>918</a>                }
+<a href=#919 id=919 data-nosnippet>919</a>            }
+<a href=#920 id=920 data-nosnippet>920</a>        }
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">if </span>table.channel_dependent() || kind.matrix() {
+<a href=#922 id=922 data-nosnippet>922</a>            offsets.push(<span class="kw">if </span>kind.matrix() {
+<a href=#923 id=923 data-nosnippet>923</a>                matrices.len()
+<a href=#924 id=924 data-nosnippet>924</a>            } <span class="kw">else </span>{
+<a href=#925 id=925 data-nosnippet>925</a>                values.len()
+<a href=#926 id=926 data-nosnippet>926</a>            });
+<a href=#927 id=927 data-nosnippet>927</a>        }
+<a href=#928 id=928 data-nosnippet>928</a>        <span class="prelude-val">Ok</span>(AppliedSolutions {
+<a href=#929 id=929 data-nosnippet>929</a>            chunks: chunks.sorted(),
+<a href=#930 id=930 data-nosnippet>930</a>            values,
+<a href=#931 id=931 data-nosnippet>931</a>            offsets,
+<a href=#932 id=932 data-nosnippet>932</a>            matrices,
+<a href=#933 id=933 data-nosnippet>933</a>        })
+<a href=#934 id=934 data-nosnippet>934</a>    }
+<a href=#935 id=935 data-nosnippet>935</a>}
+<a href=#936 id=936 data-nosnippet>936</a>
+<a href=#937 id=937 data-nosnippet>937</a><span class="doccomment">/// The simulator's time interpolation, refusing deprecated and unknown modes
+<a href=#938 id=938 data-nosnippet>938</a>/// as CASA does; unsupported modifiers remain explicit refusals (#1053).
+<a href=#939 id=939 data-nosnippet>939</a></span><span class="kw">fn </span>apply_interpolation(interp: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;TimeInterpolationOptions&gt; {
+<a href=#940 id=940 data-nosnippet>940</a>    <span class="kw">if </span>interp.contains(<span class="string">"aips"</span>) {
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#942 id=942 data-nosnippet>942</a>            <span class="string">"The (peculiar) 'aipslin' interpolation type was deprecated in CASA v3.4; use \
+<a href=#943 id=943 data-nosnippet>943</a>             'linear'."</span>,
+<a href=#944 id=944 data-nosnippet>944</a>        ));
+<a href=#945 id=945 data-nosnippet>945</a>    }
+<a href=#946 id=946 data-nosnippet>946</a>    <span class="kw">let </span>requested = interp.split(<span class="string">','</span>).next().unwrap_or(<span class="string">""</span>).trim();
+<a href=#947 id=947 data-nosnippet>947</a>    <span class="kw">let </span>mode = <span class="kw">if </span>requested.contains(<span class="string">"nearest"</span>) {
+<a href=#948 id=948 data-nosnippet>948</a>        TimeInterpolation::Nearest
+<a href=#949 id=949 data-nosnippet>949</a>    } <span class="kw">else if </span>requested.is_empty() || requested.contains(<span class="string">"linear"</span>) {
+<a href=#950 id=950 data-nosnippet>950</a>        TimeInterpolation::Linear
+<a href=#951 id=951 data-nosnippet>951</a>    } <span class="kw">else if </span>requested.contains(<span class="string">"cubic"</span>) {
+<a href=#952 id=952 data-nosnippet>952</a>        TimeInterpolation::Cubic
+<a href=#953 id=953 data-nosnippet>953</a>    } <span class="kw">else if </span>requested.contains(<span class="string">"spline"</span>) {
+<a href=#954 id=954 data-nosnippet>954</a>        TimeInterpolation::Spline
+<a href=#955 id=955 data-nosnippet>955</a>    } <span class="kw">else </span>{
+<a href=#956 id=956 data-nosnippet>956</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#957 id=957 data-nosnippet>957</a>            <span class="string">"Unrecognized time interpolation type '{requested}'"
+<a href=#958 id=958 data-nosnippet>958</a>        </span>)));
+<a href=#959 id=959 data-nosnippet>959</a>    };
+<a href=#960 id=960 data-nosnippet>960</a>    <span class="prelude-val">Ok</span>(TimeInterpolationOptions {
+<a href=#961 id=961 data-nosnippet>961</a>        mode,
+<a href=#962 id=962 data-nosnippet>962</a>        phase_delay: requested.contains(<span class="string">"PD"</span>),
+<a href=#963 id=963 data-nosnippet>963</a>        per_observation: requested.contains(<span class="string">"perobs"</span>),
+<a href=#964 id=964 data-nosnippet>964</a>        per_scan: requested.contains(<span class="string">"perscan"</span>),
+<a href=#965 id=965 data-nosnippet>965</a>        observation_count: <span class="number">1</span>,
+<a href=#966 id=966 data-nosnippet>966</a>    })
+<a href=#967 id=967 data-nosnippet>967</a>}
+<a href=#968 id=968 data-nosnippet>968</a>
+<a href=#969 id=969 data-nosnippet>969</a><span class="doccomment">/// CASA defaults frequency interpolation to linear for frequency-dependent parameters.
+<a href=#970 id=970 data-nosnippet>970</a></span><span class="kw">fn </span>frequency_interpolation(interp: <span class="kw-2">&amp;</span>str) -&gt; FrequencyInterpolation {
+<a href=#971 id=971 data-nosnippet>971</a>    <span class="kw">let </span>mode = interp.split(<span class="string">','</span>).nth(<span class="number">1</span>).unwrap_or(<span class="string">"linear"</span>);
+<a href=#972 id=972 data-nosnippet>972</a>    <span class="kw">let </span>retain_flags = mode.contains(<span class="string">"flag"</span>);
+<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">if </span>mode.contains(<span class="string">"nearest"</span>) {
+<a href=#974 id=974 data-nosnippet>974</a>        <span class="kw">if </span>retain_flags {
+<a href=#975 id=975 data-nosnippet>975</a>            FrequencyInterpolation::NearestFlag
+<a href=#976 id=976 data-nosnippet>976</a>        } <span class="kw">else </span>{
+<a href=#977 id=977 data-nosnippet>977</a>            FrequencyInterpolation::Nearest
+<a href=#978 id=978 data-nosnippet>978</a>        }
+<a href=#979 id=979 data-nosnippet>979</a>    } <span class="kw">else if </span>mode.contains(<span class="string">"cubic"</span>) {
+<a href=#980 id=980 data-nosnippet>980</a>        <span class="kw">if </span>retain_flags {
+<a href=#981 id=981 data-nosnippet>981</a>            FrequencyInterpolation::CubicFlag
+<a href=#982 id=982 data-nosnippet>982</a>        } <span class="kw">else </span>{
+<a href=#983 id=983 data-nosnippet>983</a>            FrequencyInterpolation::Cubic
+<a href=#984 id=984 data-nosnippet>984</a>        }
+<a href=#985 id=985 data-nosnippet>985</a>    } <span class="kw">else if </span>mode.contains(<span class="string">"spline"</span>) {
+<a href=#986 id=986 data-nosnippet>986</a>        <span class="kw">if </span>retain_flags {
+<a href=#987 id=987 data-nosnippet>987</a>            FrequencyInterpolation::SplineFlag
+<a href=#988 id=988 data-nosnippet>988</a>        } <span class="kw">else </span>{
+<a href=#989 id=989 data-nosnippet>989</a>            FrequencyInterpolation::Spline
+<a href=#990 id=990 data-nosnippet>990</a>        }
+<a href=#991 id=991 data-nosnippet>991</a>    } <span class="kw">else if </span>retain_flags {
+<a href=#992 id=992 data-nosnippet>992</a>        FrequencyInterpolation::LinearFlag
+<a href=#993 id=993 data-nosnippet>993</a>    } <span class="kw">else </span>{
+<a href=#994 id=994 data-nosnippet>994</a>        FrequencyInterpolation::Linear
+<a href=#995 id=995 data-nosnippet>995</a>    }
+<a href=#996 id=996 data-nosnippet>996</a>}
+<a href=#997 id=997 data-nosnippet>997</a>
+<a href=#998 id=998 data-nosnippet>998</a><span class="doccomment">/// CTPatchedInterp::setSpwMap: identity, single-window broadcast, explicit
+<a href=#999 id=999 data-nosnippet>999</a>/// prefix, or the first available solution window (-999).
+<a href=#1000 id=1000 data-nosnippet>1000</a></span><span class="kw">fn </span>mapped_windows(
+<a href=#1001 id=1001 data-nosnippet>1001</a>    spec: <span class="kw-2">&amp;</span>[i64],
+<a href=#1002 id=1002 data-nosnippet>1002</a>    lookup: <span class="kw-2">&amp;</span>HeldLookup,
+<a href=#1003 id=1003 data-nosnippet>1003</a>    windows: usize,
+<a href=#1004 id=1004 data-nosnippet>1004</a>) -&gt; SimulatorResult&lt;Vec&lt;usize&gt;&gt; {
+<a href=#1005 id=1005 data-nosnippet>1005</a>    <span class="kw">if </span>spec.is_empty() || spec == [-<span class="number">1</span>] {
+<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="number">0</span>..windows).collect());
+<a href=#1007 id=1007 data-nosnippet>1007</a>    }
+<a href=#1008 id=1008 data-nosnippet>1008</a>    <span class="kw">if </span>spec.len() &gt; windows {
+<a href=#1009 id=1009 data-nosnippet>1009</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#1010 id=1010 data-nosnippet>1010</a>            <span class="string">"Specified spwmap has more elements ({}) than the number of spectral windows in the MS ({windows})."</span>,
+<a href=#1011 id=1011 data-nosnippet>1011</a>            spec.len()
+<a href=#1012 id=1012 data-nosnippet>1012</a>        )));
+<a href=#1013 id=1013 data-nosnippet>1013</a>    }
+<a href=#1014 id=1014 data-nosnippet>1014</a>    <span class="kw">if </span>spec[<span class="number">0</span>] == -<span class="number">999 </span>{
+<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">let </span>first = lookup.lookup.first_spectral_window().ok_or_else(|| {
+<a href=#1016 id=1016 data-nosnippet>1016</a>            raised(<span class="string">"No calibration spectral window is available for automatic fanout"</span>)
+<a href=#1017 id=1017 data-nosnippet>1017</a>        })<span class="question-mark">?</span>;
+<a href=#1018 id=1018 data-nosnippet>1018</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[first <span class="kw">as </span>usize; windows]);
+<a href=#1019 id=1019 data-nosnippet>1019</a>    }
+<a href=#1020 id=1020 data-nosnippet>1020</a>    <span class="kw">if </span>spec.iter().any(|<span class="kw-2">&amp;</span>window| window &lt; <span class="number">0</span>) {
+<a href=#1021 id=1021 data-nosnippet>1021</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Please specify positive indices in spwmap."</span>));
+<a href=#1022 id=1022 data-nosnippet>1022</a>    }
+<a href=#1023 id=1023 data-nosnippet>1023</a>    <span class="kw">if </span>spec
+<a href=#1024 id=1024 data-nosnippet>1024</a>        .iter()
+<a href=#1025 id=1025 data-nosnippet>1025</a>        .any(|<span class="kw-2">&amp;</span>window| window <span class="kw">as </span>u64 &gt;= lookup.windows <span class="kw">as </span>u64)
+<a href=#1026 id=1026 data-nosnippet>1026</a>    {
+<a href=#1027 id=1027 data-nosnippet>1027</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#1028 id=1028 data-nosnippet>1028</a>            <span class="string">"Please specify spw indices &lt;= maximum available ({})"</span>,
+<a href=#1029 id=1029 data-nosnippet>1029</a>            lookup.windows.saturating_sub(<span class="number">1</span>)
+<a href=#1030 id=1030 data-nosnippet>1030</a>        )));
+<a href=#1031 id=1031 data-nosnippet>1031</a>    }
+<a href=#1032 id=1032 data-nosnippet>1032</a>    <span class="prelude-val">Ok</span>((<span class="number">0</span>..windows)
+<a href=#1033 id=1033 data-nosnippet>1033</a>        .map(|window| {
+<a href=#1034 id=1034 data-nosnippet>1034</a>            spec.get(<span class="kw">if </span>spec.len() == <span class="number">1 </span>{ <span class="number">0 </span>} <span class="kw">else </span>{ window })
+<a href=#1035 id=1035 data-nosnippet>1035</a>                .map(|<span class="kw-2">&amp;</span>window| window <span class="kw">as </span>usize)
+<a href=#1036 id=1036 data-nosnippet>1036</a>                .unwrap_or(window)
+<a href=#1037 id=1037 data-nosnippet>1037</a>        })
+<a href=#1038 id=1038 data-nosnippet>1038</a>        .collect())
+<a href=#1039 id=1039 data-nosnippet>1039</a>}
 </code></pre></div></section></main></body></html>

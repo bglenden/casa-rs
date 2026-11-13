@@ -78,642 +78,651 @@
 <a href=#78 id=78 data-nosnippet>78</a>    row_offset: u64,
 <a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">pub</span>(<span class="kw">super</span>) scans: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Scan],
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">pub</span>(<span class="kw">super</span>) windows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[SpectralWindow],
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">pub</span>(<span class="kw">super</span>) antennas: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Antenna],
-<a href=#82 id=82 data-nosnippet>82</a>}
-<a href=#83 id=83 data-nosnippet>83</a>
-<a href=#84 id=84 data-nosnippet>84</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; NoiseContext&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// `session`'s scans, windows and antennas.
-<a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>of(session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Simulator) -&gt; <span class="self">Self </span>{
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="self">Self </span>{
-<a href=#88 id=88 data-nosnippet>88</a>            row_offset: session.noise_row_offset(),
-<a href=#89 id=89 data-nosnippet>89</a>            scans: session.scans(),
-<a href=#90 id=90 data-nosnippet>90</a>            windows: session.spectral_windows(),
-<a href=#91 id=91 data-nosnippet>91</a>            antennas: session.antennas(),
-<a href=#92 id=92 data-nosnippet>92</a>        }
-<a href=#93 id=93 data-nosnippet>93</a>    }
-<a href=#94 id=94 data-nosnippet>94</a>
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// What scan `scan`'s window gives its noise.
-<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">fn </span>window(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize) -&gt; WindowNoise {
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span>window = <span class="self">self</span>.scans[scan].spectral_window_id;
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="self">self</span>.windows[window].noise(window)
-<a href=#99 id=99 data-nosnippet>99</a>    }
-<a href=#100 id=100 data-nosnippet>100</a>}
-<a href=#101 id=101 data-nosnippet>101</a>
-<a href=#102 id=102 data-nosnippet>102</a><span class="doccomment">/// One integration a batch computes the geometry of.
-<a href=#103 id=103 data-nosnippet>103</a></span><span class="attr">#[derive(Debug, Clone, Copy)]
-<a href=#104 id=104 data-nosnippet>104</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Integration {
-<a href=#105 id=105 data-nosnippet>105</a>    scan: usize,
-<a href=#106 id=106 data-nosnippet>106</a>    time_s: f64,
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// Its first row in the pipeline's geometry.
-<a href=#108 id=108 data-nosnippet>108</a>    </span>first: usize,
-<a href=#109 id=109 data-nosnippet>109</a>}
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a><span class="doccomment">/// Where `close`'s time went, for the pass's summary.
-<a href=#112 id=112 data-nosnippet>112</a></span><span class="attr">#[derive(Debug, Default)]
-<a href=#113 id=113 data-nosnippet>113</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>StageTimes {
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="kw">pub</span>(<span class="kw">super</span>) geometry: Duration,
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Zeroing DATA.
-<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) zero: Duration,
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Predicting the model into DATA.
-<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) predict: Duration,
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// Noise, the per-row columns and the scalar columns.
-<a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) cells: Duration,
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Waiting for the writer to take a batch.
-<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) send: Duration,
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">pub</span>(<span class="kw">super</span>) batches: usize,
-<a href=#124 id=124 data-nosnippet>124</a>}
-<a href=#125 id=125 data-nosnippet>125</a>
-<a href=#126 id=126 data-nosnippet>126</a><span class="doccomment">/// The rows of the batch in hand and what fills their cells and columns.
-<a href=#127 id=127 data-nosnippet>127</a></span><span class="kw">struct </span>Rows&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// The same scans with the rows `observe` planned for them.
-<a href=#129 id=129 data-nosnippet>129</a>    </span>planned: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[PlannedScan&lt;<span class="lifetime">'s</span>&gt;],
-<a href=#130 id=130 data-nosnippet>130</a>    geometry: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>ArrayGeometry&lt;<span class="lifetime">'s</span>&gt;,
-<a href=#131 id=131 data-nosnippet>131</a>    team: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>WorkerTeam,
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="doccomment">/// What the noise reads beside the plan.
-<a href=#133 id=133 data-nosnippet>133</a>    </span>noise: NoiseContext&lt;<span class="lifetime">'s</span>&gt;,
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// The room a batch's `tsys-atm` antenna scales are admitted.
-<a href=#135 id=135 data-nosnippet>135</a>    </span>scales: NoiseScales,
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// `[window]`: each correlation's receptors, which gains and leakage
-<a href=#137 id=137 data-nosnippet>137</a>    /// take.
-<a href=#138 id=138 data-nosnippet>138</a>    </span>receptors: Vec&lt;Vec&lt;[usize; <span class="number">2</span>]&gt;&gt;,
-<a href=#139 id=139 data-nosnippet>139</a>    correlations: usize,
-<a href=#140 id=140 data-nosnippet>140</a>    samples: usize,
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// Rows of the integrations in hand: those the last batch left
-<a href=#142 id=142 data-nosnippet>142</a>    /// unwritten first, then those computed for this one.
-<a href=#143 id=143 data-nosnippet>143</a>    </span>rows: Vec&lt;RowGeometry&gt;,
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// The scan of the rows the last batch left.
-<a href=#145 id=145 data-nosnippet>145</a>    </span>carried_scan: usize,
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// The integrations computed for this batch.
-<a href=#147 id=147 data-nosnippet>147</a>    </span>integrations: Vec&lt;Integration&gt;,
-<a href=#148 id=148 data-nosnippet>148</a>}
-<a href=#149 id=149 data-nosnippet>149</a>
-<a href=#150 id=150 data-nosnippet>150</a><span class="doccomment">/// The pipeline's state across batches.
-<a href=#151 id=151 data-nosnippet>151</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Pipeline&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#152 id=152 data-nosnippet>152</a>    rows: Rows&lt;<span class="lifetime">'s</span>&gt;,
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="doccomment">/// The model's prediction, when a `predict` covers any scan.
-<a href=#154 id=154 data-nosnippet>154</a>    </span>prediction: <span class="prelude-ty">Option</span>&lt;DataStage&lt;<span class="lifetime">'s</span>&gt;&gt;,
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">pub</span>(<span class="kw">super</span>) times: StageTimes,
-<a href=#156 id=156 data-nosnippet>156</a>}
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a><span class="kw">impl</span>&lt;<span class="lifetime">'s</span>&gt; Pipeline&lt;<span class="lifetime">'s</span>&gt; {
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// The pipeline for `scans`, whose planned rows are `planned`,
-<a href=#160 id=160 data-nosnippet>160</a>    /// predicting with `prediction` and corrupting by `plan` (reading
-<a href=#161 id=161 data-nosnippet>161</a>    /// `noise`, with a batch's antenna scales admitted `scales`), on cells
-<a href=#162 id=162 data-nosnippet>162</a>    /// of `(correlations, channels)` whose correlations have the receptors
-<a href=#163 id=163 data-nosnippet>163</a>    /// `receptors` (`[window]`).
-<a href=#164 id=164 data-nosnippet>164</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
-<a href=#165 id=165 data-nosnippet>165</a>        (_scans, planned): (<span class="kw-2">&amp;</span><span class="lifetime">'s </span>[Scan], <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[PlannedScan&lt;<span class="lifetime">'s</span>&gt;]),
-<a href=#166 id=166 data-nosnippet>166</a>        geometry: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>ArrayGeometry&lt;<span class="lifetime">'s</span>&gt;,
-<a href=#167 id=167 data-nosnippet>167</a>        team: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>WorkerTeam,
-<a href=#168 id=168 data-nosnippet>168</a>        (prediction, _plan, noise, scales): (
-<a href=#169 id=169 data-nosnippet>169</a>            <span class="prelude-ty">Option</span>&lt;DataStage&lt;<span class="lifetime">'s</span>&gt;&gt;,
-<a href=#170 id=170 data-nosnippet>170</a>            <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw">crate</span>::session::plan::DataPlan,
-<a href=#171 id=171 data-nosnippet>171</a>            NoiseContext&lt;<span class="lifetime">'s</span>&gt;,
-<a href=#172 id=172 data-nosnippet>172</a>            NoiseScales,
-<a href=#173 id=173 data-nosnippet>173</a>        ),
-<a href=#174 id=174 data-nosnippet>174</a>        (correlations, channels, receptors): (usize, usize, Vec&lt;Vec&lt;[usize; <span class="number">2</span>]&gt;&gt;),
-<a href=#175 id=175 data-nosnippet>175</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="self">Self </span>{
-<a href=#177 id=177 data-nosnippet>177</a>            rows: Rows {
-<a href=#178 id=178 data-nosnippet>178</a>                planned,
-<a href=#179 id=179 data-nosnippet>179</a>                geometry,
-<a href=#180 id=180 data-nosnippet>180</a>                team,
-<a href=#181 id=181 data-nosnippet>181</a>                noise,
-<a href=#182 id=182 data-nosnippet>182</a>                scales,
-<a href=#183 id=183 data-nosnippet>183</a>                receptors,
-<a href=#184 id=184 data-nosnippet>184</a>                correlations,
-<a href=#185 id=185 data-nosnippet>185</a>                samples: correlations * channels,
-<a href=#186 id=186 data-nosnippet>186</a>                rows: Vec::new(),
-<a href=#187 id=187 data-nosnippet>187</a>                carried_scan: <span class="number">0</span>,
-<a href=#188 id=188 data-nosnippet>188</a>                integrations: Vec::new(),
-<a href=#189 id=189 data-nosnippet>189</a>            },
-<a href=#190 id=190 data-nosnippet>190</a>            prediction,
-<a href=#191 id=191 data-nosnippet>191</a>            times: StageTimes::default(),
-<a href=#192 id=192 data-nosnippet>192</a>        }
-<a href=#193 id=193 data-nosnippet>193</a>    }
-<a href=#194 id=194 data-nosnippet>194</a>
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="doccomment">/// Time the prediction spent filling blocks of native rows.
-<a href=#196 id=196 data-nosnippet>196</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>block_fill_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Duration {
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="self">self</span>.prediction
-<a href=#198 id=198 data-nosnippet>198</a>            .as_ref()
-<a href=#199 id=199 data-nosnippet>199</a>            .map_or(Duration::ZERO, DataStage::fill_time)
-<a href=#200 id=200 data-nosnippet>200</a>    }
-<a href=#201 id=201 data-nosnippet>201</a>
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="doccomment">/// Per-field sets of grids the prediction prepared, and the time that
-<a href=#203 id=203 data-nosnippet>203</a>    /// took ([`DataStage::grid_preparations`]).
-<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>grid_preparations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (usize, Duration) {
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="self">self</span>.prediction
-<a href=#206 id=206 data-nosnippet>206</a>            .as_ref()
-<a href=#207 id=207 data-nosnippet>207</a>            .map_or((<span class="number">0</span>, Duration::ZERO), DataStage::grid_preparations)
-<a href=#208 id=208 data-nosnippet>208</a>    }
-<a href=#209 id=209 data-nosnippet>209</a>
-<a href=#210 id=210 data-nosnippet>210</a>    <span class="doccomment">/// Write every row of the scans: `next` yields each integration with
-<a href=#211 id=211 data-nosnippet>211</a>    /// rows, as (scan, stored TIME), in MAIN order.
-<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_rows(
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#214 id=214 data-nosnippet>214</a>        writer: <span class="kw-2">&amp;mut </span>MainWriter,
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw-2">mut </span>next: <span class="kw">impl </span>Iterator&lt;Item = (usize, f64)&gt;,
-<a href=#216 id=216 data-nosnippet>216</a>        row_count: usize,
-<a href=#217 id=217 data-nosnippet>217</a>        batch_rows: usize,
-<a href=#218 id=218 data-nosnippet>218</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span><span class="kw-2">mut </span>first_row = <span class="number">0</span>;
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">while </span>first_row &lt; row_count {
-<a href=#221 id=221 data-nosnippet>221</a>            <span class="kw">let </span>rows = batch_rows.min(row_count - first_row);
-<a href=#222 id=222 data-nosnippet>222</a>            <span class="kw">let </span>started = Instant::now();
-<a href=#223 id=223 data-nosnippet>223</a>            <span class="self">self</span>.rows.compute_geometry(<span class="kw-2">&amp;mut </span>next, rows)<span class="question-mark">?</span>;
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="self">self</span>.times.geometry += started.elapsed();
-<a href=#225 id=225 data-nosnippet>225</a>            <span class="kw">let </span>started = Instant::now();
-<a href=#226 id=226 data-nosnippet>226</a>            <span class="comment">// The batch's buffers are taken in a span of their own, so a
-<a href=#227 id=227 data-nosnippet>227</a>            // counting heap can tell the writer's batches, however many its
-<a href=#228 id=228 data-nosnippet>228</a>            // pace leaves live, from what the stages hold (#1009).
-<a href=#229 id=229 data-nosnippet>229</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>batch = <span class="macro">tracing::trace_span!</span>(<span class="string">"visibility_batch"</span>).in_scope(|| {
-<a href=#230 id=230 data-nosnippet>230</a>                <span class="kw">let </span><span class="kw-2">mut </span>batch = writer.visibility_columns();
-<a href=#231 id=231 data-nosnippet>231</a>                batch
-<a href=#232 id=232 data-nosnippet>232</a>                    .data
-<a href=#233 id=233 data-nosnippet>233</a>                    .resize(rows * <span class="self">self</span>.rows.samples, Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
-<a href=#234 id=234 data-nosnippet>234</a>                batch
-<a href=#235 id=235 data-nosnippet>235</a>            });
-<a href=#236 id=236 data-nosnippet>236</a>            <span class="self">self</span>.times.zero += started.elapsed();
-<a href=#237 id=237 data-nosnippet>237</a>            <span class="kw">let </span>runs = <span class="self">self</span>.rows.segments(rows);
-<a href=#238 id=238 data-nosnippet>238</a>            <span class="kw">let </span>first = first_row <span class="kw">as </span>u64;
-<a href=#239 id=239 data-nosnippet>239</a>            <span class="kw">let </span>started = Instant::now();
-<a href=#240 id=240 data-nosnippet>240</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(stage) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.prediction {
-<a href=#241 id=241 data-nosnippet>241</a>                stage.apply(
-<a href=#242 id=242 data-nosnippet>242</a>                    <span class="self">self</span>.rows.team,
-<a href=#243 id=243 data-nosnippet>243</a>                    DataBatch {
-<a href=#244 id=244 data-nosnippet>244</a>                        rows: <span class="kw-2">&amp;</span><span class="self">self</span>.rows.rows[..rows],
-<a href=#245 id=245 data-nosnippet>245</a>                        runs: <span class="kw-2">&amp;</span>runs,
-<a href=#246 id=246 data-nosnippet>246</a>                        first_row: first,
-<a href=#247 id=247 data-nosnippet>247</a>                        flags: <span class="prelude-val">None</span>,
-<a href=#248 id=248 data-nosnippet>248</a>                        stored: <span class="prelude-val">None</span>,
-<a href=#249 id=249 data-nosnippet>249</a>                    },
-<a href=#250 id=250 data-nosnippet>250</a>                    <span class="kw-2">&amp;mut </span>batch.data,
-<a href=#251 id=251 data-nosnippet>251</a>                    <span class="kw-2">&amp;</span><span class="self">self</span>.rows.scales,
-<a href=#252 id=252 data-nosnippet>252</a>                    <span class="bool-val">true</span>,
-<a href=#253 id=253 data-nosnippet>253</a>                )<span class="question-mark">?</span>;
-<a href=#254 id=254 data-nosnippet>254</a>            }
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="self">self</span>.times.predict += started.elapsed();
-<a href=#256 id=256 data-nosnippet>256</a>            <span class="kw">let </span>started = Instant::now();
-<a href=#257 id=257 data-nosnippet>257</a>            <span class="kw">let </span>pending = <span class="self">self
-<a href=#258 id=258 data-nosnippet>258</a>                </span>.prediction
-<a href=#259 id=259 data-nosnippet>259</a>                .as_ref()
-<a href=#260 id=260 data-nosnippet>260</a>                .map(|stage| stage.pending_noise(<span class="kw-2">&amp;</span>runs));
-<a href=#261 id=261 data-nosnippet>261</a>            <span class="self">self</span>.rows.fill(writer, <span class="kw-2">&amp;mut </span>batch, (first, rows), pending)<span class="question-mark">?</span>;
-<a href=#262 id=262 data-nosnippet>262</a>            <span class="self">self</span>.times.cells += started.elapsed();
-<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">let </span>started = Instant::now();
-<a href=#264 id=264 data-nosnippet>264</a>            writer.send(batch)<span class="question-mark">?</span>;
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="self">self</span>.times.send += started.elapsed();
-<a href=#266 id=266 data-nosnippet>266</a>            <span class="self">self</span>.times.batches += <span class="number">1</span>;
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="self">self</span>.rows.carry(rows);
-<a href=#268 id=268 data-nosnippet>268</a>            first_row += rows;
-<a href=#269 id=269 data-nosnippet>269</a>        }
-<a href=#270 id=270 data-nosnippet>270</a>        <span class="prelude-val">Ok</span>(())
-<a href=#271 id=271 data-nosnippet>271</a>    }
-<a href=#272 id=272 data-nosnippet>272</a>}
-<a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a><span class="kw">impl </span>Rows&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// Compute the integrations the next `rows` rows reach beyond those
-<a href=#276 id=276 data-nosnippet>276</a>    /// carried.
-<a href=#277 id=277 data-nosnippet>277</a>    </span><span class="kw">fn </span>compute_geometry(
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#279 id=279 data-nosnippet>279</a>        next: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>Iterator&lt;Item = (usize, f64)&gt;,
-<a href=#280 id=280 data-nosnippet>280</a>        rows: usize,
-<a href=#281 id=281 data-nosnippet>281</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#282 id=282 data-nosnippet>282</a>        <span class="self">self</span>.integrations.clear();
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">let </span><span class="kw-2">mut </span>covered = <span class="self">self</span>.rows.len();
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">while </span>covered &lt; rows {
-<a href=#285 id=285 data-nosnippet>285</a>            <span class="kw">let </span>(scan, time_s) = next
-<a href=#286 id=286 data-nosnippet>286</a>                .next()
-<a href=#287 id=287 data-nosnippet>287</a>                .ok_or_else(|| SimulatorError::raised(<span class="string">"the scans have fewer rows than planned"</span>))<span class="question-mark">?</span>;
-<a href=#288 id=288 data-nosnippet>288</a>            <span class="self">self</span>.integrations.push(Integration {
-<a href=#289 id=289 data-nosnippet>289</a>                scan,
-<a href=#290 id=290 data-nosnippet>290</a>                time_s,
-<a href=#291 id=291 data-nosnippet>291</a>                first: covered,
-<a href=#292 id=292 data-nosnippet>292</a>            });
-<a href=#293 id=293 data-nosnippet>293</a>            covered += <span class="self">self</span>.planned[scan].rows.baseline_count();
-<a href=#294 id=294 data-nosnippet>294</a>        }
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>carried = <span class="self">self</span>.rows.len();
-<a href=#296 id=296 data-nosnippet>296</a>        <span class="self">self</span>.rows.resize(covered, RowGeometry::default());
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span><span class="kw-2">mut </span>jobs = Vec::with_capacity(<span class="self">self</span>.integrations.len());
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span><span class="kw-2">mut </span>rest = <span class="kw-2">&amp;mut </span><span class="self">self</span>.rows[carried..];
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">for </span>integration <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.integrations {
-<a href=#300 id=300 data-nosnippet>300</a>            <span class="kw">let </span>(rows, after) =
-<a href=#301 id=301 data-nosnippet>301</a>                rest.split_at_mut(<span class="self">self</span>.planned[integration.scan].rows.baseline_count());
-<a href=#302 id=302 data-nosnippet>302</a>            jobs.push((<span class="kw-2">*</span>integration, rows));
-<a href=#303 id=303 data-nosnippet>303</a>            rest = after;
-<a href=#304 id=304 data-nosnippet>304</a>        }
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>(planned, geometry) = (<span class="self">self</span>.planned, <span class="self">self</span>.geometry);
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="self">self</span>.team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, |<span class="kw">_</span>, (integration, rows)| {
-<a href=#307 id=307 data-nosnippet>307</a>            geometry.integration_rows(planned[integration.scan], integration.time_s, rows)
-<a href=#308 id=308 data-nosnippet>308</a>        })
-<a href=#309 id=309 data-nosnippet>309</a>    }
-<a href=#310 id=310 data-nosnippet>310</a>
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="doccomment">/// Fill the batch's `rows` rows, the first of which is MAIN row
-<a href=#312 id=312 data-nosnippet>312</a>    /// `first_row`: the noise of DATA but for the scans `noised` already
-<a href=#313 id=313 data-nosnippet>313</a>    /// has, the per-row columns, and the scalar columns of the integrations
-<a href=#314 id=314 data-nosnippet>314</a>    /// computed for the batch.
-<a href=#315 id=315 data-nosnippet>315</a>    </span><span class="kw">fn </span>fill(
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#317 id=317 data-nosnippet>317</a>        writer: <span class="kw-2">&amp;mut </span>MainWriter,
-<a href=#318 id=318 data-nosnippet>318</a>        batch: <span class="kw-2">&amp;mut </span>VisibilityColumns,
-<a href=#319 id=319 data-nosnippet>319</a>        (first_row, rows): (u64, usize),
-<a href=#320 id=320 data-nosnippet>320</a>        pending: <span class="prelude-ty">Option</span>&lt;PendingNoise&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt;&gt;,
-<a href=#321 id=321 data-nosnippet>321</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>VisibilityColumns {
-<a href=#323 id=323 data-nosnippet>323</a>            data,
-<a href=#324 id=324 data-nosnippet>324</a>            flag_row,
-<a href=#325 id=325 data-nosnippet>325</a>            uvw,
-<a href=#326 id=326 data-nosnippet>326</a>            weight,
-<a href=#327 id=327 data-nosnippet>327</a>            sigma,
-<a href=#328 id=328 data-nosnippet>328</a>        } = batch;
-<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>noised = |scan| pending.as_ref().is_some_and(|pending| pending.noised(scan));
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">let </span>scales = <span class="kw">if let </span><span class="prelude-val">Some</span>(pending) = <span class="kw-2">&amp;</span>pending {
-<a href=#331 id=331 data-nosnippet>331</a>            batch_scales(
-<a href=#332 id=332 data-nosnippet>332</a>                (pending.plan, <span class="self">self</span>.noise, <span class="self">self</span>.team),
-<a href=#333 id=333 data-nosnippet>333</a>                (<span class="kw-2">&amp;</span><span class="self">self</span>.rows, pending.runs),
-<a href=#334 id=334 data-nosnippet>334</a>                <span class="kw-2">&amp;</span>noised,
-<a href=#335 id=335 data-nosnippet>335</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.scales,
-<a href=#336 id=336 data-nosnippet>336</a>            )<span class="question-mark">?
-<a href=#337 id=337 data-nosnippet>337</a>        </span>} <span class="kw">else </span>{
-<a href=#338 id=338 data-nosnippet>338</a>            BatchScales::default()
-<a href=#339 id=339 data-nosnippet>339</a>        };
-<a href=#340 id=340 data-nosnippet>340</a>        <span class="kw">let </span><span class="kw-2">mut </span>jobs = <span class="macro">vec!</span>[BatchJob::Columns(ColumnsJob {
-<a href=#341 id=341 data-nosnippet>341</a>            writer,
-<a href=#342 id=342 data-nosnippet>342</a>            flag_row,
-<a href=#343 id=343 data-nosnippet>343</a>            uvw,
-<a href=#344 id=344 data-nosnippet>344</a>            weight,
-<a href=#345 id=345 data-nosnippet>345</a>            sigma,
-<a href=#346 id=346 data-nosnippet>346</a>        })];
-<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(pending) = <span class="kw-2">&amp;</span>pending {
-<a href=#348 id=348 data-nosnippet>348</a>            jobs.extend(
-<a href=#349 id=349 data-nosnippet>349</a>                noise_jobs(
-<a href=#350 id=350 data-nosnippet>350</a>                    (pending.plan, <span class="self">self</span>.noise, <span class="self">self</span>.team),
-<a href=#351 id=351 data-nosnippet>351</a>                    <span class="kw-2">&amp;</span><span class="self">self</span>.receptors,
-<a href=#352 id=352 data-nosnippet>352</a>                    (<span class="kw-2">&amp;</span><span class="self">self</span>.rows, pending.runs),
-<a href=#353 id=353 data-nosnippet>353</a>                    (first_row, data),
-<a href=#354 id=354 data-nosnippet>354</a>                    (<span class="self">self</span>.samples, <span class="kw-2">&amp;</span>scales),
-<a href=#355 id=355 data-nosnippet>355</a>                    <span class="kw-2">&amp;</span>noised,
-<a href=#356 id=356 data-nosnippet>356</a>                )
-<a href=#357 id=357 data-nosnippet>357</a>                .into_iter()
-<a href=#358 id=358 data-nosnippet>358</a>                .map(BatchJob::Noise),
-<a href=#359 id=359 data-nosnippet>359</a>            );
-<a href=#360 id=360 data-nosnippet>360</a>        }
-<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">let </span>(scans, integrations, geometry) = (<span class="self">self</span>.planned, <span class="kw-2">&amp;</span><span class="self">self</span>.integrations, <span class="kw-2">&amp;</span><span class="self">self</span>.rows);
-<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span>(correlations, samples) = (<span class="self">self</span>.correlations, <span class="self">self</span>.samples);
-<a href=#363 id=363 data-nosnippet>363</a>        <span class="self">self</span>.team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, |<span class="kw">_</span>, job| <span class="kw">match </span>job {
-<a href=#364 id=364 data-nosnippet>364</a>            BatchJob::Columns(job) =&gt; job.run(<span class="kw-2">&amp;</span>geometry[..rows], scans, integrations, geometry),
-<a href=#365 id=365 data-nosnippet>365</a>            BatchJob::Noise(job) =&gt; {
-<a href=#366 id=366 data-nosnippet>366</a>                job.run(correlations, samples);
-<a href=#367 id=367 data-nosnippet>367</a>                <span class="prelude-val">Ok</span>(())
-<a href=#368 id=368 data-nosnippet>368</a>            }
-<a href=#369 id=369 data-nosnippet>369</a>        })
-<a href=#370 id=370 data-nosnippet>370</a>    }
-<a href=#371 id=371 data-nosnippet>371</a>
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// The batch's first `rows` rows as runs of one scan: (scan, first row,
-<a href=#373 id=373 data-nosnippet>373</a>    /// rows).
-<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">fn </span>segments(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: usize) -&gt; Vec&lt;(usize, usize, usize)&gt; {
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">let </span>carried = <span class="self">self
-<a href=#376 id=376 data-nosnippet>376</a>            </span>.integrations
-<a href=#377 id=377 data-nosnippet>377</a>            .first()
-<a href=#378 id=378 data-nosnippet>378</a>            .map_or(<span class="self">self</span>.rows.len(), |integration| integration.first);
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span><span class="kw-2">mut </span>segments: Vec&lt;(usize, usize, usize)&gt; = Vec::new();
-<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span><span class="kw-2">mut </span>push = |scan: usize, start: usize, end: usize| {
-<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">let </span>end = end.min(rows);
-<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">if </span>start &gt;= end {
-<a href=#383 id=383 data-nosnippet>383</a>                <span class="kw">return</span>;
-<a href=#384 id=384 data-nosnippet>384</a>            }
-<a href=#385 id=385 data-nosnippet>385</a>            <span class="kw">match </span>segments.last_mut() {
-<a href=#386 id=386 data-nosnippet>386</a>                <span class="prelude-val">Some</span>((last, <span class="kw">_</span>, count)) <span class="kw">if </span><span class="kw-2">*</span>last == scan =&gt; <span class="kw-2">*</span>count += end - start,
-<a href=#387 id=387 data-nosnippet>387</a>                <span class="kw">_ </span>=&gt; segments.push((scan, start, end - start)),
-<a href=#388 id=388 data-nosnippet>388</a>            }
-<a href=#389 id=389 data-nosnippet>389</a>        };
-<a href=#390 id=390 data-nosnippet>390</a>        push(<span class="self">self</span>.carried_scan, <span class="number">0</span>, carried);
-<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">for </span>integration <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.integrations {
-<a href=#392 id=392 data-nosnippet>392</a>            <span class="kw">let </span>end = integration.first + <span class="self">self</span>.planned[integration.scan].rows.baseline_count();
-<a href=#393 id=393 data-nosnippet>393</a>            push(integration.scan, integration.first, end);
-<a href=#394 id=394 data-nosnippet>394</a>        }
-<a href=#395 id=395 data-nosnippet>395</a>        segments
-<a href=#396 id=396 data-nosnippet>396</a>    }
-<a href=#397 id=397 data-nosnippet>397</a>
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="doccomment">/// Keep the rows after the batch's first `rows` for the next batch.
-<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">fn </span>carry(<span class="kw-2">&amp;mut </span><span class="self">self</span>, rows: usize) {
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(last) = <span class="self">self</span>.integrations.last() {
-<a href=#401 id=401 data-nosnippet>401</a>            <span class="self">self</span>.carried_scan = last.scan;
-<a href=#402 id=402 data-nosnippet>402</a>        }
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="self">self</span>.rows.drain(..rows);
-<a href=#404 id=404 data-nosnippet>404</a>    }
-<a href=#405 id=405 data-nosnippet>405</a>}
-<a href=#406 id=406 data-nosnippet>406</a>
-<a href=#407 id=407 data-nosnippet>407</a><span class="doccomment">/// A job of a batch's fill.
-<a href=#408 id=408 data-nosnippet>408</a></span><span class="kw">enum </span>BatchJob&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#409 id=409 data-nosnippet>409</a>    Columns(ColumnsJob&lt;<span class="lifetime">'a</span>&gt;),
-<a href=#410 id=410 data-nosnippet>410</a>    Noise(NoiseJob&lt;<span class="lifetime">'a</span>&gt;),
+<a href=#81 id=81 data-nosnippet>81</a>    descriptions: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw">crate</span>::session::spectral::DataDescription],
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">pub</span>(<span class="kw">super</span>) antennas: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Antenna],
+<a href=#83 id=83 data-nosnippet>83</a>}
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; NoiseContext&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// `session`'s scans, windows and antennas.
+<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>of(session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Simulator) -&gt; <span class="self">Self </span>{
+<a href=#88 id=88 data-nosnippet>88</a>        <span class="self">Self </span>{
+<a href=#89 id=89 data-nosnippet>89</a>            row_offset: session.noise_row_offset(),
+<a href=#90 id=90 data-nosnippet>90</a>            scans: session.scans(),
+<a href=#91 id=91 data-nosnippet>91</a>            windows: session.spectral_windows(),
+<a href=#92 id=92 data-nosnippet>92</a>            descriptions: session.data_descriptions(),
+<a href=#93 id=93 data-nosnippet>93</a>            antennas: session.antennas(),
+<a href=#94 id=94 data-nosnippet>94</a>        }
+<a href=#95 id=95 data-nosnippet>95</a>    }
+<a href=#96 id=96 data-nosnippet>96</a>
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// What scan `scan`'s window gives its noise.
+<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">fn </span>window(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize) -&gt; WindowNoise {
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>window = <span class="self">self</span>.scans[scan].spectral_window_id;
+<a href=#100 id=100 data-nosnippet>100</a>        <span class="self">self</span>.windows[window].noise(window)
+<a href=#101 id=101 data-nosnippet>101</a>    }
+<a href=#102 id=102 data-nosnippet>102</a>}
+<a href=#103 id=103 data-nosnippet>103</a>
+<a href=#104 id=104 data-nosnippet>104</a><span class="doccomment">/// One integration a batch computes the geometry of.
+<a href=#105 id=105 data-nosnippet>105</a></span><span class="attr">#[derive(Debug, Clone, Copy)]
+<a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Integration {
+<a href=#107 id=107 data-nosnippet>107</a>    scan: usize,
+<a href=#108 id=108 data-nosnippet>108</a>    time_s: f64,
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// Its first row in the pipeline's geometry.
+<a href=#110 id=110 data-nosnippet>110</a>    </span>first: usize,
+<a href=#111 id=111 data-nosnippet>111</a>}
+<a href=#112 id=112 data-nosnippet>112</a>
+<a href=#113 id=113 data-nosnippet>113</a><span class="doccomment">/// Where `close`'s time went, for the pass's summary.
+<a href=#114 id=114 data-nosnippet>114</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>StageTimes {
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">pub</span>(<span class="kw">super</span>) geometry: Duration,
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Zeroing DATA.
+<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) zero: Duration,
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// Predicting the model into DATA.
+<a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) predict: Duration,
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Noise, the per-row columns and the scalar columns.
+<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) cells: Duration,
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Waiting for the writer to take a batch.
+<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) send: Duration,
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">pub</span>(<span class="kw">super</span>) batches: usize,
+<a href=#126 id=126 data-nosnippet>126</a>}
+<a href=#127 id=127 data-nosnippet>127</a>
+<a href=#128 id=128 data-nosnippet>128</a><span class="doccomment">/// The rows of the batch in hand and what fills their cells and columns.
+<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">struct </span>Rows&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// The same scans with the rows `observe` planned for them.
+<a href=#131 id=131 data-nosnippet>131</a>    </span>planned: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[PlannedScan&lt;<span class="lifetime">'s</span>&gt;],
+<a href=#132 id=132 data-nosnippet>132</a>    geometry: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>ArrayGeometry&lt;<span class="lifetime">'s</span>&gt;,
+<a href=#133 id=133 data-nosnippet>133</a>    team: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>WorkerTeam,
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// What the noise reads beside the plan.
+<a href=#135 id=135 data-nosnippet>135</a>    </span>noise: NoiseContext&lt;<span class="lifetime">'s</span>&gt;,
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// The room a batch's `tsys-atm` antenna scales are admitted.
+<a href=#137 id=137 data-nosnippet>137</a>    </span>scales: NoiseScales,
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// `[polarization]`: each correlation's receptors, which gains and leakage
+<a href=#139 id=139 data-nosnippet>139</a>    /// take.
+<a href=#140 id=140 data-nosnippet>140</a>    </span>receptors: <span class="prelude-ty">Option</span>&lt;<span class="kw">super</span>::Receptors&gt;,
+<a href=#141 id=141 data-nosnippet>141</a>    correlations: usize,
+<a href=#142 id=142 data-nosnippet>142</a>    samples: usize,
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="doccomment">/// Rows of the integrations in hand: those the last batch left
+<a href=#144 id=144 data-nosnippet>144</a>    /// unwritten first, then those computed for this one.
+<a href=#145 id=145 data-nosnippet>145</a>    </span>rows: Vec&lt;RowGeometry&gt;,
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// The scan of the rows the last batch left.
+<a href=#147 id=147 data-nosnippet>147</a>    </span>carried_scan: usize,
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// The integrations computed for this batch.
+<a href=#149 id=149 data-nosnippet>149</a>    </span>integrations: Vec&lt;Integration&gt;,
+<a href=#150 id=150 data-nosnippet>150</a>}
+<a href=#151 id=151 data-nosnippet>151</a>
+<a href=#152 id=152 data-nosnippet>152</a><span class="doccomment">/// The pipeline's state across batches.
+<a href=#153 id=153 data-nosnippet>153</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Pipeline&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#154 id=154 data-nosnippet>154</a>    rows: Rows&lt;<span class="lifetime">'s</span>&gt;,
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="doccomment">/// The model's prediction, when a `predict` covers any scan.
+<a href=#156 id=156 data-nosnippet>156</a>    </span>prediction: <span class="prelude-ty">Option</span>&lt;DataStage&lt;<span class="lifetime">'s</span>&gt;&gt;,
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">pub</span>(<span class="kw">super</span>) times: StageTimes,
+<a href=#158 id=158 data-nosnippet>158</a>}
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a><span class="kw">impl</span>&lt;<span class="lifetime">'s</span>&gt; Pipeline&lt;<span class="lifetime">'s</span>&gt; {
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="doccomment">/// The pipeline for `scans`, whose planned rows are `planned`,
+<a href=#162 id=162 data-nosnippet>162</a>    /// predicting with `prediction` and corrupting by `plan` (reading
+<a href=#163 id=163 data-nosnippet>163</a>    /// `noise`, with a batch's antenna scales admitted `scales`), on cells
+<a href=#164 id=164 data-nosnippet>164</a>    /// of `(correlations, channels)` whose correlations have the receptors
+<a href=#165 id=165 data-nosnippet>165</a>    /// `receptors` (`[polarization]`).
+<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+<a href=#167 id=167 data-nosnippet>167</a>        (_scans, planned): (<span class="kw-2">&amp;</span><span class="lifetime">'s </span>[Scan], <span class="kw-2">&amp;</span><span class="lifetime">'s </span>[PlannedScan&lt;<span class="lifetime">'s</span>&gt;]),
+<a href=#168 id=168 data-nosnippet>168</a>        geometry: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>ArrayGeometry&lt;<span class="lifetime">'s</span>&gt;,
+<a href=#169 id=169 data-nosnippet>169</a>        team: <span class="kw-2">&amp;</span><span class="lifetime">'s </span>WorkerTeam,
+<a href=#170 id=170 data-nosnippet>170</a>        (prediction, _plan, noise, scales): (
+<a href=#171 id=171 data-nosnippet>171</a>            <span class="prelude-ty">Option</span>&lt;DataStage&lt;<span class="lifetime">'s</span>&gt;&gt;,
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw">crate</span>::session::plan::DataPlan,
+<a href=#173 id=173 data-nosnippet>173</a>            NoiseContext&lt;<span class="lifetime">'s</span>&gt;,
+<a href=#174 id=174 data-nosnippet>174</a>            NoiseScales,
+<a href=#175 id=175 data-nosnippet>175</a>        ),
+<a href=#176 id=176 data-nosnippet>176</a>        (correlations, channels, receptors): (usize, usize, <span class="prelude-ty">Option</span>&lt;<span class="kw">super</span>::Receptors&gt;),
+<a href=#177 id=177 data-nosnippet>177</a>    ) -&gt; <span class="self">Self </span>{
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="self">Self </span>{
+<a href=#179 id=179 data-nosnippet>179</a>            rows: Rows {
+<a href=#180 id=180 data-nosnippet>180</a>                planned,
+<a href=#181 id=181 data-nosnippet>181</a>                geometry,
+<a href=#182 id=182 data-nosnippet>182</a>                team,
+<a href=#183 id=183 data-nosnippet>183</a>                noise,
+<a href=#184 id=184 data-nosnippet>184</a>                scales,
+<a href=#185 id=185 data-nosnippet>185</a>                receptors,
+<a href=#186 id=186 data-nosnippet>186</a>                correlations,
+<a href=#187 id=187 data-nosnippet>187</a>                samples: correlations * channels,
+<a href=#188 id=188 data-nosnippet>188</a>                rows: Vec::new(),
+<a href=#189 id=189 data-nosnippet>189</a>                carried_scan: <span class="number">0</span>,
+<a href=#190 id=190 data-nosnippet>190</a>                integrations: Vec::new(),
+<a href=#191 id=191 data-nosnippet>191</a>            },
+<a href=#192 id=192 data-nosnippet>192</a>            prediction,
+<a href=#193 id=193 data-nosnippet>193</a>            times: StageTimes::default(),
+<a href=#194 id=194 data-nosnippet>194</a>        }
+<a href=#195 id=195 data-nosnippet>195</a>    }
+<a href=#196 id=196 data-nosnippet>196</a>
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="doccomment">/// Time the prediction spent filling blocks of native rows.
+<a href=#198 id=198 data-nosnippet>198</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>block_fill_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Duration {
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="self">self</span>.prediction
+<a href=#200 id=200 data-nosnippet>200</a>            .as_ref()
+<a href=#201 id=201 data-nosnippet>201</a>            .map_or(Duration::ZERO, DataStage::fill_time)
+<a href=#202 id=202 data-nosnippet>202</a>    }
+<a href=#203 id=203 data-nosnippet>203</a>
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="doccomment">/// Per-field sets of grids the prediction prepared, and the time that
+<a href=#205 id=205 data-nosnippet>205</a>    /// took ([`DataStage::grid_preparations`]).
+<a href=#206 id=206 data-nosnippet>206</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>grid_preparations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (usize, Duration) {
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="self">self</span>.prediction
+<a href=#208 id=208 data-nosnippet>208</a>            .as_ref()
+<a href=#209 id=209 data-nosnippet>209</a>            .map_or((<span class="number">0</span>, Duration::ZERO), DataStage::grid_preparations)
+<a href=#210 id=210 data-nosnippet>210</a>    }
+<a href=#211 id=211 data-nosnippet>211</a>
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// Write every row of the scans: `next` yields each integration with
+<a href=#213 id=213 data-nosnippet>213</a>    /// rows, as (scan, stored TIME), in MAIN order.
+<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_rows(
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#216 id=216 data-nosnippet>216</a>        writer: <span class="kw-2">&amp;mut </span>MainWriter,
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw-2">mut </span>next: <span class="kw">impl </span>Iterator&lt;Item = (usize, f64)&gt;,
+<a href=#218 id=218 data-nosnippet>218</a>        row_count: usize,
+<a href=#219 id=219 data-nosnippet>219</a>        batch_rows: usize,
+<a href=#220 id=220 data-nosnippet>220</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span><span class="kw-2">mut </span>first_row = <span class="number">0</span>;
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">while </span>first_row &lt; row_count {
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">let </span>rows = batch_rows.min(row_count - first_row);
+<a href=#224 id=224 data-nosnippet>224</a>            <span class="kw">let </span>started = Instant::now();
+<a href=#225 id=225 data-nosnippet>225</a>            <span class="self">self</span>.rows.compute_geometry(<span class="kw-2">&amp;mut </span>next, rows)<span class="question-mark">?</span>;
+<a href=#226 id=226 data-nosnippet>226</a>            <span class="self">self</span>.times.geometry += started.elapsed();
+<a href=#227 id=227 data-nosnippet>227</a>            <span class="kw">let </span>started = Instant::now();
+<a href=#228 id=228 data-nosnippet>228</a>            <span class="comment">// The batch's buffers are taken in a span of their own, so a
+<a href=#229 id=229 data-nosnippet>229</a>            // counting heap can tell the writer's batches, however many its
+<a href=#230 id=230 data-nosnippet>230</a>            // pace leaves live, from what the stages hold (#1009).
+<a href=#231 id=231 data-nosnippet>231</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>batch = <span class="macro">tracing::trace_span!</span>(<span class="string">"visibility_batch"</span>).in_scope(|| {
+<a href=#232 id=232 data-nosnippet>232</a>                <span class="kw">let </span><span class="kw-2">mut </span>batch = writer.visibility_columns();
+<a href=#233 id=233 data-nosnippet>233</a>                batch
+<a href=#234 id=234 data-nosnippet>234</a>                    .data
+<a href=#235 id=235 data-nosnippet>235</a>                    .resize(rows * <span class="self">self</span>.rows.samples, Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>));
+<a href=#236 id=236 data-nosnippet>236</a>                batch
+<a href=#237 id=237 data-nosnippet>237</a>            });
+<a href=#238 id=238 data-nosnippet>238</a>            <span class="self">self</span>.times.zero += started.elapsed();
+<a href=#239 id=239 data-nosnippet>239</a>            <span class="kw">let </span>runs = <span class="self">self</span>.rows.segments(rows);
+<a href=#240 id=240 data-nosnippet>240</a>            <span class="kw">let </span>first = first_row <span class="kw">as </span>u64;
+<a href=#241 id=241 data-nosnippet>241</a>            <span class="kw">let </span>started = Instant::now();
+<a href=#242 id=242 data-nosnippet>242</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(stage) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.prediction {
+<a href=#243 id=243 data-nosnippet>243</a>                stage.apply(
+<a href=#244 id=244 data-nosnippet>244</a>                    <span class="self">self</span>.rows.team,
+<a href=#245 id=245 data-nosnippet>245</a>                    DataBatch {
+<a href=#246 id=246 data-nosnippet>246</a>                        rows: <span class="kw-2">&amp;</span><span class="self">self</span>.rows.rows[..rows],
+<a href=#247 id=247 data-nosnippet>247</a>                        runs: <span class="kw-2">&amp;</span>runs,
+<a href=#248 id=248 data-nosnippet>248</a>                        first_row: first,
+<a href=#249 id=249 data-nosnippet>249</a>                        flags: <span class="prelude-val">None</span>,
+<a href=#250 id=250 data-nosnippet>250</a>                        stored: <span class="prelude-val">None</span>,
+<a href=#251 id=251 data-nosnippet>251</a>                    },
+<a href=#252 id=252 data-nosnippet>252</a>                    <span class="kw-2">&amp;mut </span>batch.data,
+<a href=#253 id=253 data-nosnippet>253</a>                    <span class="kw-2">&amp;</span><span class="self">self</span>.rows.scales,
+<a href=#254 id=254 data-nosnippet>254</a>                    <span class="bool-val">true</span>,
+<a href=#255 id=255 data-nosnippet>255</a>                )<span class="question-mark">?</span>;
+<a href=#256 id=256 data-nosnippet>256</a>            }
+<a href=#257 id=257 data-nosnippet>257</a>            <span class="self">self</span>.times.predict += started.elapsed();
+<a href=#258 id=258 data-nosnippet>258</a>            <span class="kw">let </span>started = Instant::now();
+<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">let </span>pending = <span class="self">self
+<a href=#260 id=260 data-nosnippet>260</a>                </span>.prediction
+<a href=#261 id=261 data-nosnippet>261</a>                .as_ref()
+<a href=#262 id=262 data-nosnippet>262</a>                .map(|stage| stage.pending_noise(<span class="kw-2">&amp;</span>runs));
+<a href=#263 id=263 data-nosnippet>263</a>            <span class="self">self</span>.rows.fill(writer, <span class="kw-2">&amp;mut </span>batch, (first, rows), pending)<span class="question-mark">?</span>;
+<a href=#264 id=264 data-nosnippet>264</a>            <span class="self">self</span>.times.cells += started.elapsed();
+<a href=#265 id=265 data-nosnippet>265</a>            <span class="kw">let </span>started = Instant::now();
+<a href=#266 id=266 data-nosnippet>266</a>            writer.send(batch)<span class="question-mark">?</span>;
+<a href=#267 id=267 data-nosnippet>267</a>            <span class="self">self</span>.times.send += started.elapsed();
+<a href=#268 id=268 data-nosnippet>268</a>            <span class="self">self</span>.times.batches += <span class="number">1</span>;
+<a href=#269 id=269 data-nosnippet>269</a>            <span class="self">self</span>.rows.carry(rows);
+<a href=#270 id=270 data-nosnippet>270</a>            first_row += rows;
+<a href=#271 id=271 data-nosnippet>271</a>        }
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="prelude-val">Ok</span>(())
+<a href=#273 id=273 data-nosnippet>273</a>    }
+<a href=#274 id=274 data-nosnippet>274</a>}
+<a href=#275 id=275 data-nosnippet>275</a>
+<a href=#276 id=276 data-nosnippet>276</a><span class="kw">impl </span>Rows&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// Compute the integrations the next `rows` rows reach beyond those
+<a href=#278 id=278 data-nosnippet>278</a>    /// carried.
+<a href=#279 id=279 data-nosnippet>279</a>    </span><span class="kw">fn </span>compute_geometry(
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#281 id=281 data-nosnippet>281</a>        next: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>Iterator&lt;Item = (usize, f64)&gt;,
+<a href=#282 id=282 data-nosnippet>282</a>        rows: usize,
+<a href=#283 id=283 data-nosnippet>283</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="self">self</span>.integrations.clear();
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">let </span><span class="kw-2">mut </span>covered = <span class="self">self</span>.rows.len();
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">while </span>covered &lt; rows {
+<a href=#287 id=287 data-nosnippet>287</a>            <span class="kw">let </span>(scan, time_s) = next
+<a href=#288 id=288 data-nosnippet>288</a>                .next()
+<a href=#289 id=289 data-nosnippet>289</a>                .ok_or_else(|| SimulatorError::raised(<span class="string">"the scans have fewer rows than planned"</span>))<span class="question-mark">?</span>;
+<a href=#290 id=290 data-nosnippet>290</a>            <span class="self">self</span>.integrations.push(Integration {
+<a href=#291 id=291 data-nosnippet>291</a>                scan,
+<a href=#292 id=292 data-nosnippet>292</a>                time_s,
+<a href=#293 id=293 data-nosnippet>293</a>                first: covered,
+<a href=#294 id=294 data-nosnippet>294</a>            });
+<a href=#295 id=295 data-nosnippet>295</a>            covered += <span class="self">self</span>.planned[scan].rows.baseline_count();
+<a href=#296 id=296 data-nosnippet>296</a>        }
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>carried = <span class="self">self</span>.rows.len();
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="self">self</span>.rows.resize(covered, RowGeometry::default());
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span><span class="kw-2">mut </span>jobs = Vec::with_capacity(<span class="self">self</span>.integrations.len());
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span><span class="kw-2">mut </span>rest = <span class="kw-2">&amp;mut </span><span class="self">self</span>.rows[carried..];
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">for </span>integration <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.integrations {
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="kw">let </span>(rows, after) =
+<a href=#303 id=303 data-nosnippet>303</a>                rest.split_at_mut(<span class="self">self</span>.planned[integration.scan].rows.baseline_count());
+<a href=#304 id=304 data-nosnippet>304</a>            jobs.push((<span class="kw-2">*</span>integration, rows));
+<a href=#305 id=305 data-nosnippet>305</a>            rest = after;
+<a href=#306 id=306 data-nosnippet>306</a>        }
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>(planned, geometry) = (<span class="self">self</span>.planned, <span class="self">self</span>.geometry);
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="self">self</span>.team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, |<span class="kw">_</span>, (integration, rows)| {
+<a href=#309 id=309 data-nosnippet>309</a>            geometry.integration_rows(planned[integration.scan], integration.time_s, rows)
+<a href=#310 id=310 data-nosnippet>310</a>        })
+<a href=#311 id=311 data-nosnippet>311</a>    }
+<a href=#312 id=312 data-nosnippet>312</a>
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="doccomment">/// Fill the batch's `rows` rows, the first of which is MAIN row
+<a href=#314 id=314 data-nosnippet>314</a>    /// `first_row`: the noise of DATA but for the scans `noised` already
+<a href=#315 id=315 data-nosnippet>315</a>    /// has, the per-row columns, and the scalar columns of the integrations
+<a href=#316 id=316 data-nosnippet>316</a>    /// computed for the batch.
+<a href=#317 id=317 data-nosnippet>317</a>    </span><span class="kw">fn </span>fill(
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#319 id=319 data-nosnippet>319</a>        writer: <span class="kw-2">&amp;mut </span>MainWriter,
+<a href=#320 id=320 data-nosnippet>320</a>        batch: <span class="kw-2">&amp;mut </span>VisibilityColumns,
+<a href=#321 id=321 data-nosnippet>321</a>        (first_row, rows): (u64, usize),
+<a href=#322 id=322 data-nosnippet>322</a>        pending: <span class="prelude-ty">Option</span>&lt;PendingNoise&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt;&gt;,
+<a href=#323 id=323 data-nosnippet>323</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>VisibilityColumns {
+<a href=#325 id=325 data-nosnippet>325</a>            data,
+<a href=#326 id=326 data-nosnippet>326</a>            flag_row,
+<a href=#327 id=327 data-nosnippet>327</a>            uvw,
+<a href=#328 id=328 data-nosnippet>328</a>            weight,
+<a href=#329 id=329 data-nosnippet>329</a>            sigma,
+<a href=#330 id=330 data-nosnippet>330</a>        } = batch;
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>noised = |scan| pending.as_ref().is_some_and(|pending| pending.noised(scan));
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>scales = <span class="kw">if let </span><span class="prelude-val">Some</span>(pending) = <span class="kw-2">&amp;</span>pending {
+<a href=#333 id=333 data-nosnippet>333</a>            batch_scales(
+<a href=#334 id=334 data-nosnippet>334</a>                (pending.plan, <span class="self">self</span>.noise, <span class="self">self</span>.team),
+<a href=#335 id=335 data-nosnippet>335</a>                (<span class="kw-2">&amp;</span><span class="self">self</span>.rows, pending.runs),
+<a href=#336 id=336 data-nosnippet>336</a>                <span class="kw-2">&amp;</span>noised,
+<a href=#337 id=337 data-nosnippet>337</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.scales,
+<a href=#338 id=338 data-nosnippet>338</a>            )<span class="question-mark">?
+<a href=#339 id=339 data-nosnippet>339</a>        </span>} <span class="kw">else </span>{
+<a href=#340 id=340 data-nosnippet>340</a>            BatchScales::default()
+<a href=#341 id=341 data-nosnippet>341</a>        };
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span><span class="kw-2">mut </span>jobs = <span class="macro">vec!</span>[BatchJob::Columns(ColumnsJob {
+<a href=#343 id=343 data-nosnippet>343</a>            writer,
+<a href=#344 id=344 data-nosnippet>344</a>            flag_row,
+<a href=#345 id=345 data-nosnippet>345</a>            uvw,
+<a href=#346 id=346 data-nosnippet>346</a>            weight,
+<a href=#347 id=347 data-nosnippet>347</a>            sigma,
+<a href=#348 id=348 data-nosnippet>348</a>        })];
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(pending) = <span class="kw-2">&amp;</span>pending {
+<a href=#350 id=350 data-nosnippet>350</a>            jobs.extend(
+<a href=#351 id=351 data-nosnippet>351</a>                noise_jobs(
+<a href=#352 id=352 data-nosnippet>352</a>                    (pending.plan, <span class="self">self</span>.noise, <span class="self">self</span>.team),
+<a href=#353 id=353 data-nosnippet>353</a>                    <span class="kw-2">&amp;</span><span class="self">self
+<a href=#354 id=354 data-nosnippet>354</a>                        </span>.receptors
+<a href=#355 id=355 data-nosnippet>355</a>                        .as_ref()
+<a href=#356 id=356 data-nosnippet>356</a>                        .expect(<span class="string">"noise has DATA-stage receptors"</span>)
+<a href=#357 id=357 data-nosnippet>357</a>                        .value,
+<a href=#358 id=358 data-nosnippet>358</a>                    (<span class="kw-2">&amp;</span><span class="self">self</span>.rows, pending.runs),
+<a href=#359 id=359 data-nosnippet>359</a>                    (first_row, data),
+<a href=#360 id=360 data-nosnippet>360</a>                    (<span class="self">self</span>.samples, <span class="kw-2">&amp;</span>scales),
+<a href=#361 id=361 data-nosnippet>361</a>                    <span class="kw-2">&amp;</span>noised,
+<a href=#362 id=362 data-nosnippet>362</a>                )
+<a href=#363 id=363 data-nosnippet>363</a>                .into_iter()
+<a href=#364 id=364 data-nosnippet>364</a>                .map(BatchJob::Noise),
+<a href=#365 id=365 data-nosnippet>365</a>            );
+<a href=#366 id=366 data-nosnippet>366</a>        }
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">let </span>(scans, integrations, geometry) = (<span class="self">self</span>.planned, <span class="kw-2">&amp;</span><span class="self">self</span>.integrations, <span class="kw-2">&amp;</span><span class="self">self</span>.rows);
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">let </span>(correlations, samples) = (<span class="self">self</span>.correlations, <span class="self">self</span>.samples);
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="self">self</span>.team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, |<span class="kw">_</span>, job| <span class="kw">match </span>job {
+<a href=#370 id=370 data-nosnippet>370</a>            BatchJob::Columns(job) =&gt; job.run(<span class="kw-2">&amp;</span>geometry[..rows], scans, integrations, geometry),
+<a href=#371 id=371 data-nosnippet>371</a>            BatchJob::Noise(job) =&gt; {
+<a href=#372 id=372 data-nosnippet>372</a>                job.run(correlations, samples);
+<a href=#373 id=373 data-nosnippet>373</a>                <span class="prelude-val">Ok</span>(())
+<a href=#374 id=374 data-nosnippet>374</a>            }
+<a href=#375 id=375 data-nosnippet>375</a>        })
+<a href=#376 id=376 data-nosnippet>376</a>    }
+<a href=#377 id=377 data-nosnippet>377</a>
+<a href=#378 id=378 data-nosnippet>378</a>    <span class="doccomment">/// The batch's first `rows` rows as runs of one scan: (scan, first row,
+<a href=#379 id=379 data-nosnippet>379</a>    /// rows).
+<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">fn </span>segments(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: usize) -&gt; Vec&lt;(usize, usize, usize)&gt; {
+<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">let </span>carried = <span class="self">self
+<a href=#382 id=382 data-nosnippet>382</a>            </span>.integrations
+<a href=#383 id=383 data-nosnippet>383</a>            .first()
+<a href=#384 id=384 data-nosnippet>384</a>            .map_or(<span class="self">self</span>.rows.len(), |integration| integration.first);
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">let </span><span class="kw-2">mut </span>segments: Vec&lt;(usize, usize, usize)&gt; = Vec::new();
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span><span class="kw-2">mut </span>push = |scan: usize, start: usize, end: usize| {
+<a href=#387 id=387 data-nosnippet>387</a>            <span class="kw">let </span>end = end.min(rows);
+<a href=#388 id=388 data-nosnippet>388</a>            <span class="kw">if </span>start &gt;= end {
+<a href=#389 id=389 data-nosnippet>389</a>                <span class="kw">return</span>;
+<a href=#390 id=390 data-nosnippet>390</a>            }
+<a href=#391 id=391 data-nosnippet>391</a>            <span class="kw">match </span>segments.last_mut() {
+<a href=#392 id=392 data-nosnippet>392</a>                <span class="prelude-val">Some</span>((last, <span class="kw">_</span>, count)) <span class="kw">if </span><span class="kw-2">*</span>last == scan =&gt; <span class="kw-2">*</span>count += end - start,
+<a href=#393 id=393 data-nosnippet>393</a>                <span class="kw">_ </span>=&gt; segments.push((scan, start, end - start)),
+<a href=#394 id=394 data-nosnippet>394</a>            }
+<a href=#395 id=395 data-nosnippet>395</a>        };
+<a href=#396 id=396 data-nosnippet>396</a>        push(<span class="self">self</span>.carried_scan, <span class="number">0</span>, carried);
+<a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">for </span>integration <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.integrations {
+<a href=#398 id=398 data-nosnippet>398</a>            <span class="kw">let </span>end = integration.first + <span class="self">self</span>.planned[integration.scan].rows.baseline_count();
+<a href=#399 id=399 data-nosnippet>399</a>            push(integration.scan, integration.first, end);
+<a href=#400 id=400 data-nosnippet>400</a>        }
+<a href=#401 id=401 data-nosnippet>401</a>        segments
+<a href=#402 id=402 data-nosnippet>402</a>    }
+<a href=#403 id=403 data-nosnippet>403</a>
+<a href=#404 id=404 data-nosnippet>404</a>    <span class="doccomment">/// Keep the rows after the batch's first `rows` for the next batch.
+<a href=#405 id=405 data-nosnippet>405</a>    </span><span class="kw">fn </span>carry(<span class="kw-2">&amp;mut </span><span class="self">self</span>, rows: usize) {
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(last) = <span class="self">self</span>.integrations.last() {
+<a href=#407 id=407 data-nosnippet>407</a>            <span class="self">self</span>.carried_scan = last.scan;
+<a href=#408 id=408 data-nosnippet>408</a>        }
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="self">self</span>.rows.drain(..rows);
+<a href=#410 id=410 data-nosnippet>410</a>    }
 <a href=#411 id=411 data-nosnippet>411</a>}
 <a href=#412 id=412 data-nosnippet>412</a>
-<a href=#413 id=413 data-nosnippet>413</a><span class="doccomment">/// The batch's per-row columns and the scalar columns of its integrations.
-<a href=#414 id=414 data-nosnippet>414</a></span><span class="kw">struct </span>ColumnsJob&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#415 id=415 data-nosnippet>415</a>    writer: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>MainWriter,
-<a href=#416 id=416 data-nosnippet>416</a>    flag_row: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;bool&gt;,
-<a href=#417 id=417 data-nosnippet>417</a>    uvw: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;[f64; <span class="number">3</span>]&gt;,
-<a href=#418 id=418 data-nosnippet>418</a>    weight: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;f32&gt;,
-<a href=#419 id=419 data-nosnippet>419</a>    sigma: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;f32&gt;,
-<a href=#420 id=420 data-nosnippet>420</a>}
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a><span class="kw">impl </span>ColumnsJob&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="doccomment">/// Copy the columns of `rows`, the batch's, and push the scalar columns
-<a href=#424 id=424 data-nosnippet>424</a>    /// of `integrations`, whose rows are in `geometry`.
-<a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">fn </span>run(
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#427 id=427 data-nosnippet>427</a>        rows: <span class="kw-2">&amp;</span>[RowGeometry],
-<a href=#428 id=428 data-nosnippet>428</a>        scans: <span class="kw-2">&amp;</span>[PlannedScan&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#429 id=429 data-nosnippet>429</a>        integrations: <span class="kw-2">&amp;</span>[Integration],
-<a href=#430 id=430 data-nosnippet>430</a>        geometry: <span class="kw-2">&amp;</span>[RowGeometry],
-<a href=#431 id=431 data-nosnippet>431</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
-<a href=#433 id=433 data-nosnippet>433</a>            <span class="self">self</span>.flag_row.push(row.flagged);
-<a href=#434 id=434 data-nosnippet>434</a>            <span class="self">self</span>.uvw.push(row.uvw_m);
-<a href=#435 id=435 data-nosnippet>435</a>            <span class="self">self</span>.weight.push(row.weight);
-<a href=#436 id=436 data-nosnippet>436</a>            <span class="self">self</span>.sigma.push(row.sigma);
-<a href=#437 id=437 data-nosnippet>437</a>        }
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">for </span>integration <span class="kw">in </span>integrations {
-<a href=#439 id=439 data-nosnippet>439</a>            <span class="kw">let </span>scan = scans[integration.scan];
-<a href=#440 id=440 data-nosnippet>440</a>            <span class="kw">let </span>rows = <span class="kw-2">&amp;</span>geometry[integration.first..integration.first + scan.rows.baseline_count()];
-<a href=#441 id=441 data-nosnippet>441</a>            <span class="self">self</span>.writer.push_scalars(scan, integration.time_s, rows)<span class="question-mark">?</span>;
-<a href=#442 id=442 data-nosnippet>442</a>        }
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="prelude-val">Ok</span>(())
-<a href=#444 id=444 data-nosnippet>444</a>    }
-<a href=#445 id=445 data-nosnippet>445</a>}
-<a href=#446 id=446 data-nosnippet>446</a>
-<a href=#447 id=447 data-nosnippet>447</a><span class="doccomment">/// The noise jobs of a batch whose first row is MAIN row `first_row`: its
-<a href=#448 id=448 data-nosnippet>448</a>/// `runs`, (scan, first row, rows) of `rows` covering it in order, split
-<a href=#449 id=449 data-nosnippet>449</a>/// into jobs of about [`NOISE_JOBS_PER_WORKER`] a worker of `team`, each
-<a href=#450 id=450 data-nosnippet>450</a>/// adding its scan's noise in `plan` to its rows of `data` (`samples` a
-<a href=#451 id=451 data-nosnippet>451</a>/// row), reading `context`, but for the scans `noised` already has. A scan
-<a href=#452 id=452 data-nosnippet>452</a>/// with gains or leakage has each of its corruptions applied in order
-<a href=#453 id=453 data-nosnippet>453</a>/// instead ([`Corruption`]), its windows' correlations having the
-<a href=#454 id=454 data-nosnippet>454</a>/// receptors `receptors` (`[window]`).
-<a href=#455 id=455 data-nosnippet>455</a>///
-<a href=#456 id=456 data-nosnippet>456</a>/// A `tsys-atm` application's σ comes from `scales`, the batch's antenna
-<a href=#457 id=457 data-nosnippet>457</a>/// scales ([`batch_scales`]).
-<a href=#458 id=458 data-nosnippet>458</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>noise_jobs&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#459 id=459 data-nosnippet>459</a>    (plan, context, team): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>DataPlan, NoiseContext&lt;<span class="lifetime">'a</span>&gt;, <span class="kw-2">&amp;</span>WorkerTeam),
-<a href=#460 id=460 data-nosnippet>460</a>    receptors: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Vec&lt;[usize; <span class="number">2</span>]&gt;],
-<a href=#461 id=461 data-nosnippet>461</a>    (rows, runs): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[RowGeometry], <span class="kw-2">&amp;</span>[(usize, usize, usize)]),
-<a href=#462 id=462 data-nosnippet>462</a>    (first_row, data): (u64, <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[Complex32]),
-<a href=#463 id=463 data-nosnippet>463</a>    (samples, scales): (usize, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>BatchScales),
-<a href=#464 id=464 data-nosnippet>464</a>    noised: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(usize) -&gt; bool,
-<a href=#465 id=465 data-nosnippet>465</a>) -&gt; Vec&lt;NoiseJob&lt;<span class="lifetime">'a</span>&gt;&gt; {
-<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>batch_rows: usize = runs.iter().map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, count)| count).sum();
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span>job_rows = batch_rows
-<a href=#468 id=468 data-nosnippet>468</a>        .div_ceil(team.workers() * NOISE_JOBS_PER_WORKER)
-<a href=#469 id=469 data-nosnippet>469</a>        .max(MINIMUM_NOISE_JOB_ROWS);
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="comment">// As many jobs as there are, at most a run's plus one every
-<a href=#471 id=471 data-nosnippet>471</a>    // `MINIMUM_NOISE_JOB_ROWS` rows (the patch's admission).
-<a href=#472 id=472 data-nosnippet>472</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>jobs = Vec::with_capacity(
-<a href=#473 id=473 data-nosnippet>473</a>        runs.iter()
-<a href=#474 id=474 data-nosnippet>474</a>            .filter(|&amp;&amp;(scan, <span class="kw">_</span>, <span class="kw">_</span>)| {
-<a href=#475 id=475 data-nosnippet>475</a>                noised_here(plan, scan, context.scans[scan].spectral_window_id, noised)
-<a href=#476 id=476 data-nosnippet>476</a>            })
-<a href=#477 id=477 data-nosnippet>477</a>            .map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, count)| count.div_ceil(job_rows))
-<a href=#478 id=478 data-nosnippet>478</a>            .sum(),
-<a href=#479 id=479 data-nosnippet>479</a>    );
-<a href=#480 id=480 data-nosnippet>480</a>    <span class="kw">let </span><span class="kw-2">mut </span>rest = data;
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="kw">let </span><span class="kw-2">mut </span>position = <span class="number">0</span>;
-<a href=#482 id=482 data-nosnippet>482</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
-<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span>(<span class="kw">_</span>, tail) = std::mem::take(<span class="kw-2">&amp;mut </span>rest).split_at_mut((start - position) * samples);
-<a href=#484 id=484 data-nosnippet>484</a>        rest = tail;
-<a href=#485 id=485 data-nosnippet>485</a>        position = start + count;
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span>(segment, after) = std::mem::take(<span class="kw-2">&amp;mut </span>rest).split_at_mut(count * samples);
-<a href=#487 id=487 data-nosnippet>487</a>        rest = after;
-<a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">if </span>!noised_here(plan, scan, context.scans[scan].spectral_window_id, noised) {
-<a href=#489 id=489 data-nosnippet>489</a>            <span class="kw">continue</span>;
-<a href=#490 id=490 data-nosnippet>490</a>        }
-<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">let </span>noise = plan.noise_for_scan(scan);
-<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>window = context.window(scan);
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>corruption = plan
-<a href=#494 id=494 data-nosnippet>494</a>            .needs_corruption_steps(scan, context.scans[scan].spectral_window_id)
-<a href=#495 id=495 data-nosnippet>495</a>            .then(|| {
-<a href=#496 id=496 data-nosnippet>496</a>                <span class="kw">let </span>window = context.scans[scan].spectral_window_id;
-<a href=#497 id=497 data-nosnippet>497</a>                Corruption {
-<a href=#498 id=498 data-nosnippet>498</a>                    plan,
-<a href=#499 id=499 data-nosnippet>499</a>                    scan,
-<a href=#500 id=500 data-nosnippet>500</a>                    window,
-<a href=#501 id=501 data-nosnippet>501</a>                    receptors: <span class="kw-2">&amp;</span>receptors[window],
-<a href=#502 id=502 data-nosnippet>502</a>                }
-<a href=#503 id=503 data-nosnippet>503</a>            });
-<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">for </span>(index, cells) <span class="kw">in </span>segment.chunks_mut(job_rows * samples).enumerate() {
-<a href=#505 id=505 data-nosnippet>505</a>            <span class="kw">let </span>start = start + index * job_rows;
-<a href=#506 id=506 data-nosnippet>506</a>            jobs.push(NoiseJob {
-<a href=#507 id=507 data-nosnippet>507</a>                scan,
-<a href=#508 id=508 data-nosnippet>508</a>                first_row: context.row_offset + first_row + start <span class="kw">as </span>u64,
-<a href=#509 id=509 data-nosnippet>509</a>                cells,
-<a href=#510 id=510 data-nosnippet>510</a>                rows: <span class="kw-2">&amp;</span>rows[start..],
-<a href=#511 id=511 data-nosnippet>511</a>                noise,
-<a href=#512 id=512 data-nosnippet>512</a>                window,
-<a href=#513 id=513 data-nosnippet>513</a>                receptors: <span class="kw-2">&amp;</span>receptors[window.spectral_window_id],
-<a href=#514 id=514 data-nosnippet>514</a>                antennas: context.antennas,
-<a href=#515 id=515 data-nosnippet>515</a>                scales,
-<a href=#516 id=516 data-nosnippet>516</a>                corruption,
-<a href=#517 id=517 data-nosnippet>517</a>            });
-<a href=#518 id=518 data-nosnippet>518</a>        }
-<a href=#519 id=519 data-nosnippet>519</a>    }
-<a href=#520 id=520 data-nosnippet>520</a>    jobs
-<a href=#521 id=521 data-nosnippet>521</a>}
-<a href=#522 id=522 data-nosnippet>522</a>
-<a href=#523 id=523 data-nosnippet>523</a><span class="doccomment">/// Whether a batch's noise jobs take scan `scan`: it has gains or leakage,
-<a href=#524 id=524 data-nosnippet>524</a>/// or noise in `plan` that `noised` does not already have.
-<a href=#525 id=525 data-nosnippet>525</a></span><span class="kw">fn </span>noised_here(
-<a href=#526 id=526 data-nosnippet>526</a>    plan: <span class="kw-2">&amp;</span>DataPlan,
-<a href=#527 id=527 data-nosnippet>527</a>    scan: usize,
-<a href=#528 id=528 data-nosnippet>528</a>    window: usize,
-<a href=#529 id=529 data-nosnippet>529</a>    noised: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(usize) -&gt; bool,
-<a href=#530 id=530 data-nosnippet>530</a>) -&gt; bool {
-<a href=#531 id=531 data-nosnippet>531</a>    plan.needs_corruption_steps(scan, window)
-<a href=#532 id=532 data-nosnippet>532</a>        || (!plan.noise_for_scan(scan).is_empty() &amp;&amp; !noised(scan))
-<a href=#533 id=533 data-nosnippet>533</a>}
-<a href=#534 id=534 data-nosnippet>534</a>
-<a href=#535 id=535 data-nosnippet>535</a><span class="doccomment">/// The antenna scales the `tsys-atm` noise of a batch's jobs reads
-<a href=#536 id=536 data-nosnippet>536</a>/// ([`noise_jobs`], with the same arguments): for each run they take, those
-<a href=#537 id=537 data-nosnippet>537</a>/// its rows need for each `tsys-atm` application of its scan, worked out
-<a href=#538 id=538 data-nosnippet>538</a>/// on `team` before the jobs run, in a table with the room `bound` admits
-<a href=#539 id=539 data-nosnippet>539</a>/// for the batch's rows. Empty when no run needs any.
-<a href=#540 id=540 data-nosnippet>540</a>///
-<a href=#541 id=541 data-nosnippet>541</a>/// # Errors
-<a href=#542 id=542 data-nosnippet>542</a>///
-<a href=#543 id=543 data-nosnippet>543</a>/// A worker's failure.
-<a href=#544 id=544 data-nosnippet>544</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>batch_scales&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#545 id=545 data-nosnippet>545</a>    (plan, context, team): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>DataPlan, NoiseContext&lt;<span class="lifetime">'_</span>&gt;, <span class="kw-2">&amp;</span>WorkerTeam),
-<a href=#546 id=546 data-nosnippet>546</a>    (rows, runs): (<span class="kw-2">&amp;</span>[RowGeometry], <span class="kw-2">&amp;</span>[(usize, usize, usize)]),
-<a href=#547 id=547 data-nosnippet>547</a>    noised: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(usize) -&gt; bool,
-<a href=#548 id=548 data-nosnippet>548</a>    bound: <span class="kw-2">&amp;</span>NoiseScales,
-<a href=#549 id=549 data-nosnippet>549</a>) -&gt; SimulatorResult&lt;BatchScales&gt; {
-<a href=#550 id=550 data-nosnippet>550</a>    <span class="kw">let </span>batch_rows = runs.iter().map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, count)| count).sum();
-<a href=#551 id=551 data-nosnippet>551</a>    <span class="kw">let </span><span class="kw-2">mut </span>scales = BatchScalesBuilder::with_capacity(bound.entries(batch_rows));
-<a href=#552 id=552 data-nosnippet>552</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">if </span>!noised_here(plan, scan, context.scans[scan].spectral_window_id, noised) {
-<a href=#554 id=554 data-nosnippet>554</a>            <span class="kw">continue</span>;
-<a href=#555 id=555 data-nosnippet>555</a>        }
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>window = context.window(scan);
-<a href=#557 id=557 data-nosnippet>557</a>        <span class="kw">let </span>window_id = context.scans[scan].spectral_window_id;
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>add_noise_scales =
-<a href=#559 id=559 data-nosnippet>559</a>            |applications: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[NoiseApplication], scales: <span class="kw-2">&amp;mut </span>BatchScalesBuilder&lt;<span class="lifetime">'a</span>&gt;| {
-<a href=#560 id=560 data-nosnippet>560</a>                <span class="kw">for </span>application <span class="kw">in </span>applications {
-<a href=#561 id=561 data-nosnippet>561</a>                    <span class="kw">let </span>rows = rows[start..start + count]
-<a href=#562 id=562 data-nosnippet>562</a>                        .iter()
-<a href=#563 id=563 data-nosnippet>563</a>                        .map(|row| row.noise(context.antennas));
-<a href=#564 id=564 data-nosnippet>564</a>                    application.add_scales(<span class="kw-2">&amp;</span>window, rows, scales);
-<a href=#565 id=565 data-nosnippet>565</a>                }
-<a href=#566 id=566 data-nosnippet>566</a>            };
-<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">if </span>plan.needs_corruption_steps(scan, context.scans[scan].spectral_window_id) {
-<a href=#568 id=568 data-nosnippet>568</a>            <span class="kw">for </span>(noise, jones) <span class="kw">in </span>plan.corruptions_for_window(scan, window_id) {
-<a href=#569 id=569 data-nosnippet>569</a>                add_noise_scales(noise, <span class="kw-2">&amp;mut </span>scales);
-<a href=#570 id=570 data-nosnippet>570</a>                <span class="kw">for </span>term <span class="kw">in </span>jones {
-<a href=#571 id=571 data-nosnippet>571</a>                    <span class="kw">let </span>rows = rows[start..start + count]
-<a href=#572 id=572 data-nosnippet>572</a>                        .iter()
-<a href=#573 id=573 data-nosnippet>573</a>                        .map(|row| (row.time_s, row.antenna1, row.antenna2));
-<a href=#574 id=574 data-nosnippet>574</a>                    scales.add_phase_rows((term, window_id), rows);
-<a href=#575 id=575 data-nosnippet>575</a>                }
-<a href=#576 id=576 data-nosnippet>576</a>            }
-<a href=#577 id=577 data-nosnippet>577</a>        } <span class="kw">else </span>{
-<a href=#578 id=578 data-nosnippet>578</a>            add_noise_scales(plan.noise_for_scan(scan), <span class="kw-2">&amp;mut </span>scales);
-<a href=#579 id=579 data-nosnippet>579</a>        }
-<a href=#580 id=580 data-nosnippet>580</a>    }
-<a href=#581 id=581 data-nosnippet>581</a>    <span class="kw">if </span>scales.is_empty() {
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(BatchScales::default());
-<a href=#583 id=583 data-nosnippet>583</a>    }
-<a href=#584 id=584 data-nosnippet>584</a>    scales.build(team.workers() * NOISE_JOBS_PER_WORKER, |jobs| {
-<a href=#585 id=585 data-nosnippet>585</a>        team.for_each_mut(jobs, |<span class="kw">_</span>, job| {
-<a href=#586 id=586 data-nosnippet>586</a>            job.run();
-<a href=#587 id=587 data-nosnippet>587</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, SimulatorError&gt;(())
-<a href=#588 id=588 data-nosnippet>588</a>        })
-<a href=#589 id=589 data-nosnippet>589</a>    })
-<a href=#590 id=590 data-nosnippet>590</a>}
-<a href=#591 id=591 data-nosnippet>591</a>
-<a href=#592 id=592 data-nosnippet>592</a><span class="doccomment">/// One noise job: consecutive rows of one scan.
-<a href=#593 id=593 data-nosnippet>593</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NoiseJob&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#594 id=594 data-nosnippet>594</a>    scan: usize,
-<a href=#595 id=595 data-nosnippet>595</a>    <span class="doccomment">/// The MAIN row of the first cell.
-<a href=#596 id=596 data-nosnippet>596</a>    </span>first_row: u64,
-<a href=#597 id=597 data-nosnippet>597</a>    cells: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[Complex32],
-<a href=#598 id=598 data-nosnippet>598</a>    <span class="doccomment">/// The geometry of the rows, from the first.
-<a href=#599 id=599 data-nosnippet>599</a>    </span>rows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[RowGeometry],
-<a href=#600 id=600 data-nosnippet>600</a>    noise: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[NoiseApplication],
-<a href=#601 id=601 data-nosnippet>601</a>    <span class="doccomment">/// What the scan's spectral window gives the noise.
-<a href=#602 id=602 data-nosnippet>602</a>    </span>window: WindowNoise,
-<a href=#603 id=603 data-nosnippet>603</a>    receptors: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[[usize; <span class="number">2</span>]],
-<a href=#604 id=604 data-nosnippet>604</a>    <span class="doccomment">/// The antennas, whose dishes the Tsys modes' σ takes.
-<a href=#605 id=605 data-nosnippet>605</a>    </span>antennas: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Antenna],
-<a href=#606 id=606 data-nosnippet>606</a>    <span class="doccomment">/// The batch's `tsys-atm` antenna scales.
-<a href=#607 id=607 data-nosnippet>607</a>    </span>scales: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>BatchScales,
-<a href=#608 id=608 data-nosnippet>608</a>    <span class="doccomment">/// With gains or leakage, the scan's corruptions, applied in order in
-<a href=#609 id=609 data-nosnippet>609</a>    /// place of `noise`.
-<a href=#610 id=610 data-nosnippet>610</a>    </span>corruption: <span class="prelude-ty">Option</span>&lt;Corruption&lt;<span class="lifetime">'a</span>&gt;&gt;,
-<a href=#611 id=611 data-nosnippet>611</a>}
-<a href=#612 id=612 data-nosnippet>612</a>
-<a href=#613 id=613 data-nosnippet>613</a><span class="doccomment">/// The corruptions of a scan with gains or leakage: each corrupts DATA by
-<a href=#614 id=614 data-nosnippet>614</a>/// its antenna-based terms and then adds its noise (`session::plan`).
-<a href=#615 id=615 data-nosnippet>615</a></span><span class="attr">#[derive(Clone, Copy)]
-<a href=#616 id=616 data-nosnippet>616</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Corruption&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#617 id=617 data-nosnippet>617</a>    plan: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>DataPlan,
-<a href=#618 id=618 data-nosnippet>618</a>    scan: usize,
-<a href=#619 id=619 data-nosnippet>619</a>    window: usize,
-<a href=#620 id=620 data-nosnippet>620</a>    <span class="doccomment">/// Each correlation's receptors.
-<a href=#621 id=621 data-nosnippet>621</a>    </span>receptors: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[[usize; <span class="number">2</span>]],
-<a href=#622 id=622 data-nosnippet>622</a>}
-<a href=#623 id=623 data-nosnippet>623</a>
-<a href=#624 id=624 data-nosnippet>624</a><span class="kw">impl </span>NoiseJob&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#625 id=625 data-nosnippet>625</a>    <span class="doccomment">/// Add the noise to every cell of `samples` samples of `correlations`
-<a href=#626 id=626 data-nosnippet>626</a>    /// correlations, or apply the scan's corruptions in order: each one's
-<a href=#627 id=627 data-nosnippet>627</a>    /// antenna-based terms, then its noise.
-<a href=#628 id=628 data-nosnippet>628</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, correlations: usize, samples: usize) {
-<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(corruption) = <span class="self">self</span>.corruption <span class="kw">else </span>{
-<a href=#630 id=630 data-nosnippet>630</a>            <span class="kw">let </span>noise = <span class="self">self</span>.noise;
-<a href=#631 id=631 data-nosnippet>631</a>            <span class="self">self</span>.add_noise(noise, correlations, samples);
-<a href=#632 id=632 data-nosnippet>632</a>            <span class="kw">return</span>;
-<a href=#633 id=633 data-nosnippet>633</a>        };
-<a href=#634 id=634 data-nosnippet>634</a>        <span class="kw">for </span>(noise, jones) <span class="kw">in </span>corruption
-<a href=#635 id=635 data-nosnippet>635</a>            .plan
-<a href=#636 id=636 data-nosnippet>636</a>            .corruptions_for_window(corruption.scan, corruption.window)
-<a href=#637 id=637 data-nosnippet>637</a>        {
-<a href=#638 id=638 data-nosnippet>638</a>            <span class="kw">for </span>term <span class="kw">in </span>jones {
-<a href=#639 id=639 data-nosnippet>639</a>                <span class="kw">for </span>(cell, row) <span class="kw">in </span><span class="self">self</span>.cells.chunks_exact_mut(samples).zip(<span class="self">self</span>.rows) {
-<a href=#640 id=640 data-nosnippet>640</a>                    term.apply(
-<a href=#641 id=641 data-nosnippet>641</a>                        (corruption.window, row.time_s, corruption.scan),
-<a href=#642 id=642 data-nosnippet>642</a>                        (row.antenna1, row.antenna2),
-<a href=#643 id=643 data-nosnippet>643</a>                        (corruption.receptors, <span class="self">self</span>.scales),
-<a href=#644 id=644 data-nosnippet>644</a>                        cell,
-<a href=#645 id=645 data-nosnippet>645</a>                    );
-<a href=#646 id=646 data-nosnippet>646</a>                }
-<a href=#647 id=647 data-nosnippet>647</a>            }
-<a href=#648 id=648 data-nosnippet>648</a>            <span class="self">self</span>.add_noise(noise, correlations, samples);
-<a href=#649 id=649 data-nosnippet>649</a>        }
-<a href=#650 id=650 data-nosnippet>650</a>    }
-<a href=#651 id=651 data-nosnippet>651</a>
-<a href=#652 id=652 data-nosnippet>652</a>    <span class="doccomment">/// Add `noise` to every cell. Each application is prepared for the
-<a href=#653 id=653 data-nosnippet>653</a>    /// scan's window once, then added to every row; every sample still gets
-<a href=#654 id=654 data-nosnippet>654</a>    /// the applications in their order.
-<a href=#655 id=655 data-nosnippet>655</a>    </span><span class="kw">fn </span>add_noise(<span class="kw-2">&amp;mut </span><span class="self">self</span>, noise: <span class="kw-2">&amp;</span>[NoiseApplication], correlations: usize, samples: usize) {
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span><span class="kw-2">mut </span>scratch = NoiseScratch::new(<span class="self">self</span>.scales);
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">let </span><span class="kw-2">mut </span>additive = <span class="kw">if </span>noise
-<a href=#658 id=658 data-nosnippet>658</a>            .iter()
-<a href=#659 id=659 data-nosnippet>659</a>            .any(|application| !application.baseline.is_empty())
-<a href=#660 id=660 data-nosnippet>660</a>        {
-<a href=#661 id=661 data-nosnippet>661</a>            <span class="macro">vec!</span>[Complex32::new(<span class="number">0.</span>, <span class="number">0.</span>); samples]
-<a href=#662 id=662 data-nosnippet>662</a>        } <span class="kw">else </span>{
-<a href=#663 id=663 data-nosnippet>663</a>            Vec::new()
-<a href=#664 id=664 data-nosnippet>664</a>        };
-<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">for </span>application <span class="kw">in </span>noise {
-<a href=#666 id=666 data-nosnippet>666</a>            <span class="kw">let </span>fixed = application.fixed();
-<a href=#667 id=667 data-nosnippet>667</a>            <span class="kw">let </span>scale = application.fixed_scale(<span class="kw-2">&amp;</span><span class="self">self</span>.window);
-<a href=#668 id=668 data-nosnippet>668</a>            <span class="kw">let </span>drawn = fixed
-<a href=#669 id=669 data-nosnippet>669</a>                .is_none()
-<a href=#670 id=670 data-nosnippet>670</a>                .then(|| application.for_window(<span class="kw-2">&amp;</span><span class="self">self</span>.window));
-<a href=#671 id=671 data-nosnippet>671</a>            <span class="kw">for </span>(offset, (cell, row)) <span class="kw">in </span><span class="self">self
-<a href=#672 id=672 data-nosnippet>672</a>                </span>.cells
-<a href=#673 id=673 data-nosnippet>673</a>                .chunks_exact_mut(samples)
-<a href=#674 id=674 data-nosnippet>674</a>                .zip(<span class="self">self</span>.rows)
-<a href=#675 id=675 data-nosnippet>675</a>                .enumerate()
-<a href=#676 id=676 data-nosnippet>676</a>            {
-<a href=#677 id=677 data-nosnippet>677</a>                <span class="kw">let </span>corrected = !application.baseline.is_empty();
-<a href=#678 id=678 data-nosnippet>678</a>                <span class="kw">let </span>output = <span class="kw">if </span>corrected {
-<a href=#679 id=679 data-nosnippet>679</a>                    additive.fill(Complex32::new(<span class="number">0.</span>, <span class="number">0.</span>));
-<a href=#680 id=680 data-nosnippet>680</a>                    <span class="kw-2">&amp;mut </span>additive[..]
-<a href=#681 id=681 data-nosnippet>681</a>                } <span class="kw">else </span>{
-<a href=#682 id=682 data-nosnippet>682</a>                    <span class="kw-2">&amp;mut *</span>cell
-<a href=#683 id=683 data-nosnippet>683</a>                };
-<a href=#684 id=684 data-nosnippet>684</a>                <span class="kw">let </span>query = (<span class="self">self</span>.window.spectral_window_id, row.time_s, <span class="self">self</span>.scan);
-<a href=#685 id=685 data-nosnippet>685</a>                <span class="kw">let </span>antennas = (row.antenna1, row.antenna2);
-<a href=#686 id=686 data-nosnippet>686</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(fixed) = fixed {
-<a href=#687 id=687 data-nosnippet>687</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(scale) = <span class="kw-2">&amp;</span>scale {
-<a href=#688 id=688 data-nosnippet>688</a>                        <span class="kw">let </span>sigma = scale.fixed_sigma(<span class="kw-2">&amp;</span>row.noise(<span class="self">self</span>.antennas), <span class="kw-2">&amp;mut </span>scratch);
-<a href=#689 id=689 data-nosnippet>689</a>                        fixed.add_scaled_to_cell(
-<a href=#690 id=690 data-nosnippet>690</a>                            query,
-<a href=#691 id=691 data-nosnippet>691</a>                            antennas,
-<a href=#692 id=692 data-nosnippet>692</a>                            <span class="self">self</span>.receptors,
-<a href=#693 id=693 data-nosnippet>693</a>                            output,
-<a href=#694 id=694 data-nosnippet>694</a>                            |channel| sigma.at(channel),
-<a href=#695 id=695 data-nosnippet>695</a>                        );
-<a href=#696 id=696 data-nosnippet>696</a>                    } <span class="kw">else </span>{
-<a href=#697 id=697 data-nosnippet>697</a>                        fixed.add_to_cell(query, antennas, <span class="self">self</span>.receptors, output);
-<a href=#698 id=698 data-nosnippet>698</a>                    }
-<a href=#699 id=699 data-nosnippet>699</a>                } <span class="kw">else </span>{
-<a href=#700 id=700 data-nosnippet>700</a>                    drawn.as_ref().expect(<span class="string">"drawn noise"</span>).add_to_row(
-<a href=#701 id=701 data-nosnippet>701</a>                        (<span class="self">self</span>.first_row + offset <span class="kw">as </span>u64, <span class="kw-2">&amp;</span>row.noise(<span class="self">self</span>.antennas)),
-<a href=#702 id=702 data-nosnippet>702</a>                        (row.antenna1 == row.antenna2, correlations),
-<a href=#703 id=703 data-nosnippet>703</a>                        output,
-<a href=#704 id=704 data-nosnippet>704</a>                        <span class="kw-2">&amp;mut </span>scratch,
-<a href=#705 id=705 data-nosnippet>705</a>                    );
-<a href=#706 id=706 data-nosnippet>706</a>                }
-<a href=#707 id=707 data-nosnippet>707</a>                <span class="kw">for </span>baseline <span class="kw">in </span><span class="kw-2">&amp;</span>application.baseline {
-<a href=#708 id=708 data-nosnippet>708</a>                    baseline.multiply_cell(query, antennas, <span class="self">self</span>.receptors, output);
-<a href=#709 id=709 data-nosnippet>709</a>                }
-<a href=#710 id=710 data-nosnippet>710</a>                <span class="kw">if </span>corrected {
-<a href=#711 id=711 data-nosnippet>711</a>                    <span class="kw">for </span>(value, noise) <span class="kw">in </span>cell.iter_mut().zip(additive.iter()) {
-<a href=#712 id=712 data-nosnippet>712</a>                        <span class="kw-2">*</span>value += noise;
-<a href=#713 id=713 data-nosnippet>713</a>                    }
-<a href=#714 id=714 data-nosnippet>714</a>                }
-<a href=#715 id=715 data-nosnippet>715</a>            }
-<a href=#716 id=716 data-nosnippet>716</a>        }
-<a href=#717 id=717 data-nosnippet>717</a>    }
-<a href=#718 id=718 data-nosnippet>718</a>}
+<a href=#413 id=413 data-nosnippet>413</a><span class="doccomment">/// A job of a batch's fill.
+<a href=#414 id=414 data-nosnippet>414</a></span><span class="kw">enum </span>BatchJob&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#415 id=415 data-nosnippet>415</a>    Columns(ColumnsJob&lt;<span class="lifetime">'a</span>&gt;),
+<a href=#416 id=416 data-nosnippet>416</a>    Noise(NoiseJob&lt;<span class="lifetime">'a</span>&gt;),
+<a href=#417 id=417 data-nosnippet>417</a>}
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a><span class="doccomment">/// The batch's per-row columns and the scalar columns of its integrations.
+<a href=#420 id=420 data-nosnippet>420</a></span><span class="kw">struct </span>ColumnsJob&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#421 id=421 data-nosnippet>421</a>    writer: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>MainWriter,
+<a href=#422 id=422 data-nosnippet>422</a>    flag_row: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;bool&gt;,
+<a href=#423 id=423 data-nosnippet>423</a>    uvw: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;[f64; <span class="number">3</span>]&gt;,
+<a href=#424 id=424 data-nosnippet>424</a>    weight: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;f32&gt;,
+<a href=#425 id=425 data-nosnippet>425</a>    sigma: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;f32&gt;,
+<a href=#426 id=426 data-nosnippet>426</a>}
+<a href=#427 id=427 data-nosnippet>427</a>
+<a href=#428 id=428 data-nosnippet>428</a><span class="kw">impl </span>ColumnsJob&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#429 id=429 data-nosnippet>429</a>    <span class="doccomment">/// Copy the columns of `rows`, the batch's, and push the scalar columns
+<a href=#430 id=430 data-nosnippet>430</a>    /// of `integrations`, whose rows are in `geometry`.
+<a href=#431 id=431 data-nosnippet>431</a>    </span><span class="kw">fn </span>run(
+<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#433 id=433 data-nosnippet>433</a>        rows: <span class="kw-2">&amp;</span>[RowGeometry],
+<a href=#434 id=434 data-nosnippet>434</a>        scans: <span class="kw-2">&amp;</span>[PlannedScan&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#435 id=435 data-nosnippet>435</a>        integrations: <span class="kw-2">&amp;</span>[Integration],
+<a href=#436 id=436 data-nosnippet>436</a>        geometry: <span class="kw-2">&amp;</span>[RowGeometry],
+<a href=#437 id=437 data-nosnippet>437</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#439 id=439 data-nosnippet>439</a>            <span class="self">self</span>.flag_row.push(row.flagged);
+<a href=#440 id=440 data-nosnippet>440</a>            <span class="self">self</span>.uvw.push(row.uvw_m);
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="self">self</span>.weight.push(row.weight);
+<a href=#442 id=442 data-nosnippet>442</a>            <span class="self">self</span>.sigma.push(row.sigma);
+<a href=#443 id=443 data-nosnippet>443</a>        }
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">for </span>integration <span class="kw">in </span>integrations {
+<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">let </span>scan = scans[integration.scan];
+<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">let </span>rows = <span class="kw-2">&amp;</span>geometry[integration.first..integration.first + scan.rows.baseline_count()];
+<a href=#447 id=447 data-nosnippet>447</a>            <span class="self">self</span>.writer.push_scalars(scan, integration.time_s, rows)<span class="question-mark">?</span>;
+<a href=#448 id=448 data-nosnippet>448</a>        }
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="prelude-val">Ok</span>(())
+<a href=#450 id=450 data-nosnippet>450</a>    }
+<a href=#451 id=451 data-nosnippet>451</a>}
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a><span class="doccomment">/// The noise jobs of a batch whose first row is MAIN row `first_row`: its
+<a href=#454 id=454 data-nosnippet>454</a>/// `runs`, (scan, first row, rows) of `rows` covering it in order, split
+<a href=#455 id=455 data-nosnippet>455</a>/// into jobs of about [`NOISE_JOBS_PER_WORKER`] a worker of `team`, each
+<a href=#456 id=456 data-nosnippet>456</a>/// adding its scan's noise in `plan` to its rows of `data` (`samples` a
+<a href=#457 id=457 data-nosnippet>457</a>/// row), reading `context`, but for the scans `noised` already has. A scan
+<a href=#458 id=458 data-nosnippet>458</a>/// with gains or leakage has each of its corruptions applied in order
+<a href=#459 id=459 data-nosnippet>459</a>/// instead ([`Corruption`]), its windows' correlations having the
+<a href=#460 id=460 data-nosnippet>460</a>/// receptors `receptors` (`[polarization]`).
+<a href=#461 id=461 data-nosnippet>461</a>///
+<a href=#462 id=462 data-nosnippet>462</a>/// A `tsys-atm` application's σ comes from `scales`, the batch's antenna
+<a href=#463 id=463 data-nosnippet>463</a>/// scales ([`batch_scales`]).
+<a href=#464 id=464 data-nosnippet>464</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>noise_jobs&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#465 id=465 data-nosnippet>465</a>    (plan, context, team): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>DataPlan, NoiseContext&lt;<span class="lifetime">'a</span>&gt;, <span class="kw-2">&amp;</span>WorkerTeam),
+<a href=#466 id=466 data-nosnippet>466</a>    receptors: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Vec&lt;[usize; <span class="number">2</span>]&gt;],
+<a href=#467 id=467 data-nosnippet>467</a>    (rows, runs): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[RowGeometry], <span class="kw-2">&amp;</span>[(usize, usize, usize)]),
+<a href=#468 id=468 data-nosnippet>468</a>    (first_row, data): (u64, <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[Complex32]),
+<a href=#469 id=469 data-nosnippet>469</a>    (samples, scales): (usize, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>BatchScales),
+<a href=#470 id=470 data-nosnippet>470</a>    noised: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(usize) -&gt; bool,
+<a href=#471 id=471 data-nosnippet>471</a>) -&gt; Vec&lt;NoiseJob&lt;<span class="lifetime">'a</span>&gt;&gt; {
+<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">let </span>batch_rows: usize = runs.iter().map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, count)| count).sum();
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">let </span>job_rows = batch_rows
+<a href=#474 id=474 data-nosnippet>474</a>        .div_ceil(team.workers() * NOISE_JOBS_PER_WORKER)
+<a href=#475 id=475 data-nosnippet>475</a>        .max(MINIMUM_NOISE_JOB_ROWS);
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="comment">// As many jobs as there are, at most a run's plus one every
+<a href=#477 id=477 data-nosnippet>477</a>    // `MINIMUM_NOISE_JOB_ROWS` rows (the patch's admission).
+<a href=#478 id=478 data-nosnippet>478</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>jobs = Vec::with_capacity(
+<a href=#479 id=479 data-nosnippet>479</a>        runs.iter()
+<a href=#480 id=480 data-nosnippet>480</a>            .filter(|&amp;&amp;(scan, <span class="kw">_</span>, <span class="kw">_</span>)| {
+<a href=#481 id=481 data-nosnippet>481</a>                noised_here(plan, scan, context.scans[scan].spectral_window_id, noised)
+<a href=#482 id=482 data-nosnippet>482</a>            })
+<a href=#483 id=483 data-nosnippet>483</a>            .map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, count)| count.div_ceil(job_rows))
+<a href=#484 id=484 data-nosnippet>484</a>            .sum(),
+<a href=#485 id=485 data-nosnippet>485</a>    );
+<a href=#486 id=486 data-nosnippet>486</a>    <span class="kw">let </span><span class="kw-2">mut </span>rest = data;
+<a href=#487 id=487 data-nosnippet>487</a>    <span class="kw">let </span><span class="kw-2">mut </span>position = <span class="number">0</span>;
+<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
+<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>(<span class="kw">_</span>, tail) = std::mem::take(<span class="kw-2">&amp;mut </span>rest).split_at_mut((start - position) * samples);
+<a href=#490 id=490 data-nosnippet>490</a>        rest = tail;
+<a href=#491 id=491 data-nosnippet>491</a>        position = start + count;
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>(segment, after) = std::mem::take(<span class="kw-2">&amp;mut </span>rest).split_at_mut(count * samples);
+<a href=#493 id=493 data-nosnippet>493</a>        rest = after;
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">if </span>!noised_here(plan, scan, context.scans[scan].spectral_window_id, noised) {
+<a href=#495 id=495 data-nosnippet>495</a>            <span class="kw">continue</span>;
+<a href=#496 id=496 data-nosnippet>496</a>        }
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>noise = plan.noise_for_scan(scan);
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">let </span>window = context.window(scan);
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">let </span>corruption = plan
+<a href=#500 id=500 data-nosnippet>500</a>            .needs_corruption_steps(scan, context.scans[scan].spectral_window_id)
+<a href=#501 id=501 data-nosnippet>501</a>            .then(|| {
+<a href=#502 id=502 data-nosnippet>502</a>                <span class="kw">let </span>window = context.scans[scan].spectral_window_id;
+<a href=#503 id=503 data-nosnippet>503</a>                Corruption {
+<a href=#504 id=504 data-nosnippet>504</a>                    plan,
+<a href=#505 id=505 data-nosnippet>505</a>                    scan,
+<a href=#506 id=506 data-nosnippet>506</a>                    window,
+<a href=#507 id=507 data-nosnippet>507</a>                    receptors: <span class="kw-2">&amp;</span>receptors[context.descriptions
+<a href=#508 id=508 data-nosnippet>508</a>                        [context.scans[scan].data_description_id]
+<a href=#509 id=509 data-nosnippet>509</a>                        .polarization],
+<a href=#510 id=510 data-nosnippet>510</a>                }
+<a href=#511 id=511 data-nosnippet>511</a>            });
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">for </span>(index, cells) <span class="kw">in </span>segment.chunks_mut(job_rows * samples).enumerate() {
+<a href=#513 id=513 data-nosnippet>513</a>            <span class="kw">let </span>start = start + index * job_rows;
+<a href=#514 id=514 data-nosnippet>514</a>            jobs.push(NoiseJob {
+<a href=#515 id=515 data-nosnippet>515</a>                scan,
+<a href=#516 id=516 data-nosnippet>516</a>                first_row: context.row_offset + first_row + start <span class="kw">as </span>u64,
+<a href=#517 id=517 data-nosnippet>517</a>                cells,
+<a href=#518 id=518 data-nosnippet>518</a>                rows: <span class="kw-2">&amp;</span>rows[start..],
+<a href=#519 id=519 data-nosnippet>519</a>                noise,
+<a href=#520 id=520 data-nosnippet>520</a>                window,
+<a href=#521 id=521 data-nosnippet>521</a>                receptors: <span class="kw-2">&amp;</span>receptors
+<a href=#522 id=522 data-nosnippet>522</a>                    [context.descriptions[context.scans[scan].data_description_id].polarization],
+<a href=#523 id=523 data-nosnippet>523</a>                antennas: context.antennas,
+<a href=#524 id=524 data-nosnippet>524</a>                scales,
+<a href=#525 id=525 data-nosnippet>525</a>                corruption,
+<a href=#526 id=526 data-nosnippet>526</a>            });
+<a href=#527 id=527 data-nosnippet>527</a>        }
+<a href=#528 id=528 data-nosnippet>528</a>    }
+<a href=#529 id=529 data-nosnippet>529</a>    jobs
+<a href=#530 id=530 data-nosnippet>530</a>}
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a><span class="doccomment">/// Whether a batch's noise jobs take scan `scan`: it has gains or leakage,
+<a href=#533 id=533 data-nosnippet>533</a>/// or noise in `plan` that `noised` does not already have.
+<a href=#534 id=534 data-nosnippet>534</a></span><span class="kw">fn </span>noised_here(
+<a href=#535 id=535 data-nosnippet>535</a>    plan: <span class="kw-2">&amp;</span>DataPlan,
+<a href=#536 id=536 data-nosnippet>536</a>    scan: usize,
+<a href=#537 id=537 data-nosnippet>537</a>    window: usize,
+<a href=#538 id=538 data-nosnippet>538</a>    noised: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(usize) -&gt; bool,
+<a href=#539 id=539 data-nosnippet>539</a>) -&gt; bool {
+<a href=#540 id=540 data-nosnippet>540</a>    plan.needs_corruption_steps(scan, window)
+<a href=#541 id=541 data-nosnippet>541</a>        || (!plan.noise_for_scan(scan).is_empty() &amp;&amp; !noised(scan))
+<a href=#542 id=542 data-nosnippet>542</a>}
+<a href=#543 id=543 data-nosnippet>543</a>
+<a href=#544 id=544 data-nosnippet>544</a><span class="doccomment">/// The antenna scales the `tsys-atm` noise of a batch's jobs reads
+<a href=#545 id=545 data-nosnippet>545</a>/// ([`noise_jobs`], with the same arguments): for each run they take, those
+<a href=#546 id=546 data-nosnippet>546</a>/// its rows need for each `tsys-atm` application of its scan, worked out
+<a href=#547 id=547 data-nosnippet>547</a>/// on `team` before the jobs run, in a table with the room `bound` admits
+<a href=#548 id=548 data-nosnippet>548</a>/// for the batch's rows. Empty when no run needs any.
+<a href=#549 id=549 data-nosnippet>549</a>///
+<a href=#550 id=550 data-nosnippet>550</a>/// # Errors
+<a href=#551 id=551 data-nosnippet>551</a>///
+<a href=#552 id=552 data-nosnippet>552</a>/// A worker's failure.
+<a href=#553 id=553 data-nosnippet>553</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>batch_scales&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#554 id=554 data-nosnippet>554</a>    (plan, context, team): (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>DataPlan, NoiseContext&lt;<span class="lifetime">'_</span>&gt;, <span class="kw-2">&amp;</span>WorkerTeam),
+<a href=#555 id=555 data-nosnippet>555</a>    (rows, runs): (<span class="kw-2">&amp;</span>[RowGeometry], <span class="kw-2">&amp;</span>[(usize, usize, usize)]),
+<a href=#556 id=556 data-nosnippet>556</a>    noised: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(usize) -&gt; bool,
+<a href=#557 id=557 data-nosnippet>557</a>    bound: <span class="kw-2">&amp;</span>NoiseScales,
+<a href=#558 id=558 data-nosnippet>558</a>) -&gt; SimulatorResult&lt;BatchScales&gt; {
+<a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">let </span>batch_rows = runs.iter().map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, count)| count).sum();
+<a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">let </span><span class="kw-2">mut </span>scales = BatchScalesBuilder::with_capacity(bound.entries(batch_rows));
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>(scan, start, count) <span class="kw">in </span>runs {
+<a href=#562 id=562 data-nosnippet>562</a>        <span class="kw">if </span>!noised_here(plan, scan, context.scans[scan].spectral_window_id, noised) {
+<a href=#563 id=563 data-nosnippet>563</a>            <span class="kw">continue</span>;
+<a href=#564 id=564 data-nosnippet>564</a>        }
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">let </span>window = context.window(scan);
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>window_id = context.scans[scan].spectral_window_id;
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">let </span>add_noise_scales =
+<a href=#568 id=568 data-nosnippet>568</a>            |applications: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[NoiseApplication], scales: <span class="kw-2">&amp;mut </span>BatchScalesBuilder&lt;<span class="lifetime">'a</span>&gt;| {
+<a href=#569 id=569 data-nosnippet>569</a>                <span class="kw">for </span>application <span class="kw">in </span>applications {
+<a href=#570 id=570 data-nosnippet>570</a>                    <span class="kw">let </span>rows = rows[start..start + count]
+<a href=#571 id=571 data-nosnippet>571</a>                        .iter()
+<a href=#572 id=572 data-nosnippet>572</a>                        .map(|row| row.noise(context.antennas));
+<a href=#573 id=573 data-nosnippet>573</a>                    application.add_scales(<span class="kw-2">&amp;</span>window, rows, scales);
+<a href=#574 id=574 data-nosnippet>574</a>                }
+<a href=#575 id=575 data-nosnippet>575</a>            };
+<a href=#576 id=576 data-nosnippet>576</a>        <span class="kw">if </span>plan.needs_corruption_steps(scan, context.scans[scan].spectral_window_id) {
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="kw">for </span>(noise, jones) <span class="kw">in </span>plan.corruptions_for_window(scan, window_id) {
+<a href=#578 id=578 data-nosnippet>578</a>                add_noise_scales(noise, <span class="kw-2">&amp;mut </span>scales);
+<a href=#579 id=579 data-nosnippet>579</a>                <span class="kw">for </span>term <span class="kw">in </span>jones {
+<a href=#580 id=580 data-nosnippet>580</a>                    <span class="kw">let </span>rows = rows[start..start + count]
+<a href=#581 id=581 data-nosnippet>581</a>                        .iter()
+<a href=#582 id=582 data-nosnippet>582</a>                        .map(|row| (row.time_s, row.antenna1, row.antenna2));
+<a href=#583 id=583 data-nosnippet>583</a>                    scales.add_phase_rows((term, window_id), rows);
+<a href=#584 id=584 data-nosnippet>584</a>                }
+<a href=#585 id=585 data-nosnippet>585</a>            }
+<a href=#586 id=586 data-nosnippet>586</a>        } <span class="kw">else </span>{
+<a href=#587 id=587 data-nosnippet>587</a>            add_noise_scales(plan.noise_for_scan(scan), <span class="kw-2">&amp;mut </span>scales);
+<a href=#588 id=588 data-nosnippet>588</a>        }
+<a href=#589 id=589 data-nosnippet>589</a>    }
+<a href=#590 id=590 data-nosnippet>590</a>    <span class="kw">if </span>scales.is_empty() {
+<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(BatchScales::default());
+<a href=#592 id=592 data-nosnippet>592</a>    }
+<a href=#593 id=593 data-nosnippet>593</a>    scales.build(team.workers() * NOISE_JOBS_PER_WORKER, |jobs| {
+<a href=#594 id=594 data-nosnippet>594</a>        team.for_each_mut(jobs, |<span class="kw">_</span>, job| {
+<a href=#595 id=595 data-nosnippet>595</a>            job.run();
+<a href=#596 id=596 data-nosnippet>596</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, SimulatorError&gt;(())
+<a href=#597 id=597 data-nosnippet>597</a>        })
+<a href=#598 id=598 data-nosnippet>598</a>    })
+<a href=#599 id=599 data-nosnippet>599</a>}
+<a href=#600 id=600 data-nosnippet>600</a>
+<a href=#601 id=601 data-nosnippet>601</a><span class="doccomment">/// One noise job: consecutive rows of one scan.
+<a href=#602 id=602 data-nosnippet>602</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NoiseJob&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#603 id=603 data-nosnippet>603</a>    scan: usize,
+<a href=#604 id=604 data-nosnippet>604</a>    <span class="doccomment">/// The MAIN row of the first cell.
+<a href=#605 id=605 data-nosnippet>605</a>    </span>first_row: u64,
+<a href=#606 id=606 data-nosnippet>606</a>    cells: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[Complex32],
+<a href=#607 id=607 data-nosnippet>607</a>    <span class="doccomment">/// The geometry of the rows, from the first.
+<a href=#608 id=608 data-nosnippet>608</a>    </span>rows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[RowGeometry],
+<a href=#609 id=609 data-nosnippet>609</a>    noise: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[NoiseApplication],
+<a href=#610 id=610 data-nosnippet>610</a>    <span class="doccomment">/// What the scan's spectral window gives the noise.
+<a href=#611 id=611 data-nosnippet>611</a>    </span>window: WindowNoise,
+<a href=#612 id=612 data-nosnippet>612</a>    receptors: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[[usize; <span class="number">2</span>]],
+<a href=#613 id=613 data-nosnippet>613</a>    <span class="doccomment">/// The antennas, whose dishes the Tsys modes' σ takes.
+<a href=#614 id=614 data-nosnippet>614</a>    </span>antennas: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[Antenna],
+<a href=#615 id=615 data-nosnippet>615</a>    <span class="doccomment">/// The batch's `tsys-atm` antenna scales.
+<a href=#616 id=616 data-nosnippet>616</a>    </span>scales: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>BatchScales,
+<a href=#617 id=617 data-nosnippet>617</a>    <span class="doccomment">/// With gains or leakage, the scan's corruptions, applied in order in
+<a href=#618 id=618 data-nosnippet>618</a>    /// place of `noise`.
+<a href=#619 id=619 data-nosnippet>619</a>    </span>corruption: <span class="prelude-ty">Option</span>&lt;Corruption&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#620 id=620 data-nosnippet>620</a>}
+<a href=#621 id=621 data-nosnippet>621</a>
+<a href=#622 id=622 data-nosnippet>622</a><span class="doccomment">/// The corruptions of a scan with gains or leakage: each corrupts DATA by
+<a href=#623 id=623 data-nosnippet>623</a>/// its antenna-based terms and then adds its noise (`session::plan`).
+<a href=#624 id=624 data-nosnippet>624</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#625 id=625 data-nosnippet>625</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Corruption&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#626 id=626 data-nosnippet>626</a>    plan: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>DataPlan,
+<a href=#627 id=627 data-nosnippet>627</a>    scan: usize,
+<a href=#628 id=628 data-nosnippet>628</a>    window: usize,
+<a href=#629 id=629 data-nosnippet>629</a>    <span class="doccomment">/// Each correlation's receptors.
+<a href=#630 id=630 data-nosnippet>630</a>    </span>receptors: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[[usize; <span class="number">2</span>]],
+<a href=#631 id=631 data-nosnippet>631</a>}
+<a href=#632 id=632 data-nosnippet>632</a>
+<a href=#633 id=633 data-nosnippet>633</a><span class="kw">impl </span>NoiseJob&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#634 id=634 data-nosnippet>634</a>    <span class="doccomment">/// Add the noise to every cell of `samples` samples of `correlations`
+<a href=#635 id=635 data-nosnippet>635</a>    /// correlations, or apply the scan's corruptions in order: each one's
+<a href=#636 id=636 data-nosnippet>636</a>    /// antenna-based terms, then its noise.
+<a href=#637 id=637 data-nosnippet>637</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, correlations: usize, samples: usize) {
+<a href=#638 id=638 data-nosnippet>638</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(corruption) = <span class="self">self</span>.corruption <span class="kw">else </span>{
+<a href=#639 id=639 data-nosnippet>639</a>            <span class="kw">let </span>noise = <span class="self">self</span>.noise;
+<a href=#640 id=640 data-nosnippet>640</a>            <span class="self">self</span>.add_noise(noise, correlations, samples);
+<a href=#641 id=641 data-nosnippet>641</a>            <span class="kw">return</span>;
+<a href=#642 id=642 data-nosnippet>642</a>        };
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="kw">for </span>(noise, jones) <span class="kw">in </span>corruption
+<a href=#644 id=644 data-nosnippet>644</a>            .plan
+<a href=#645 id=645 data-nosnippet>645</a>            .corruptions_for_window(corruption.scan, corruption.window)
+<a href=#646 id=646 data-nosnippet>646</a>        {
+<a href=#647 id=647 data-nosnippet>647</a>            <span class="kw">for </span>term <span class="kw">in </span>jones {
+<a href=#648 id=648 data-nosnippet>648</a>                <span class="kw">for </span>(cell, row) <span class="kw">in </span><span class="self">self</span>.cells.chunks_exact_mut(samples).zip(<span class="self">self</span>.rows) {
+<a href=#649 id=649 data-nosnippet>649</a>                    term.apply(
+<a href=#650 id=650 data-nosnippet>650</a>                        (corruption.window, row.time_s, corruption.scan),
+<a href=#651 id=651 data-nosnippet>651</a>                        (row.antenna1, row.antenna2),
+<a href=#652 id=652 data-nosnippet>652</a>                        (corruption.receptors, <span class="self">self</span>.scales),
+<a href=#653 id=653 data-nosnippet>653</a>                        cell,
+<a href=#654 id=654 data-nosnippet>654</a>                    );
+<a href=#655 id=655 data-nosnippet>655</a>                }
+<a href=#656 id=656 data-nosnippet>656</a>            }
+<a href=#657 id=657 data-nosnippet>657</a>            <span class="self">self</span>.add_noise(noise, correlations, samples);
+<a href=#658 id=658 data-nosnippet>658</a>        }
+<a href=#659 id=659 data-nosnippet>659</a>    }
+<a href=#660 id=660 data-nosnippet>660</a>
+<a href=#661 id=661 data-nosnippet>661</a>    <span class="doccomment">/// Add `noise` to every cell. Each application is prepared for the
+<a href=#662 id=662 data-nosnippet>662</a>    /// scan's window once, then added to every row; every sample still gets
+<a href=#663 id=663 data-nosnippet>663</a>    /// the applications in their order.
+<a href=#664 id=664 data-nosnippet>664</a>    </span><span class="kw">fn </span>add_noise(<span class="kw-2">&amp;mut </span><span class="self">self</span>, noise: <span class="kw-2">&amp;</span>[NoiseApplication], correlations: usize, samples: usize) {
+<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span><span class="kw-2">mut </span>scratch = NoiseScratch::new(<span class="self">self</span>.scales);
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span><span class="kw-2">mut </span>additive = <span class="kw">if </span>noise
+<a href=#667 id=667 data-nosnippet>667</a>            .iter()
+<a href=#668 id=668 data-nosnippet>668</a>            .any(|application| !application.baseline.is_empty())
+<a href=#669 id=669 data-nosnippet>669</a>        {
+<a href=#670 id=670 data-nosnippet>670</a>            <span class="macro">vec!</span>[Complex32::new(<span class="number">0.</span>, <span class="number">0.</span>); samples]
+<a href=#671 id=671 data-nosnippet>671</a>        } <span class="kw">else </span>{
+<a href=#672 id=672 data-nosnippet>672</a>            Vec::new()
+<a href=#673 id=673 data-nosnippet>673</a>        };
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">for </span>application <span class="kw">in </span>noise {
+<a href=#675 id=675 data-nosnippet>675</a>            <span class="kw">let </span>fixed = application.fixed();
+<a href=#676 id=676 data-nosnippet>676</a>            <span class="kw">let </span>scale = application.fixed_scale(<span class="kw-2">&amp;</span><span class="self">self</span>.window);
+<a href=#677 id=677 data-nosnippet>677</a>            <span class="kw">let </span>drawn = fixed
+<a href=#678 id=678 data-nosnippet>678</a>                .is_none()
+<a href=#679 id=679 data-nosnippet>679</a>                .then(|| application.for_window(<span class="kw-2">&amp;</span><span class="self">self</span>.window));
+<a href=#680 id=680 data-nosnippet>680</a>            <span class="kw">for </span>(offset, (cell, row)) <span class="kw">in </span><span class="self">self
+<a href=#681 id=681 data-nosnippet>681</a>                </span>.cells
+<a href=#682 id=682 data-nosnippet>682</a>                .chunks_exact_mut(samples)
+<a href=#683 id=683 data-nosnippet>683</a>                .zip(<span class="self">self</span>.rows)
+<a href=#684 id=684 data-nosnippet>684</a>                .enumerate()
+<a href=#685 id=685 data-nosnippet>685</a>            {
+<a href=#686 id=686 data-nosnippet>686</a>                <span class="kw">let </span>corrected = !application.baseline.is_empty();
+<a href=#687 id=687 data-nosnippet>687</a>                <span class="kw">let </span>output = <span class="kw">if </span>corrected {
+<a href=#688 id=688 data-nosnippet>688</a>                    additive.fill(Complex32::new(<span class="number">0.</span>, <span class="number">0.</span>));
+<a href=#689 id=689 data-nosnippet>689</a>                    <span class="kw-2">&amp;mut </span>additive[..]
+<a href=#690 id=690 data-nosnippet>690</a>                } <span class="kw">else </span>{
+<a href=#691 id=691 data-nosnippet>691</a>                    <span class="kw-2">&amp;mut *</span>cell
+<a href=#692 id=692 data-nosnippet>692</a>                };
+<a href=#693 id=693 data-nosnippet>693</a>                <span class="kw">let </span>query = (<span class="self">self</span>.window.spectral_window_id, row.time_s, <span class="self">self</span>.scan);
+<a href=#694 id=694 data-nosnippet>694</a>                <span class="kw">let </span>antennas = (row.antenna1, row.antenna2);
+<a href=#695 id=695 data-nosnippet>695</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(fixed) = fixed {
+<a href=#696 id=696 data-nosnippet>696</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(scale) = <span class="kw-2">&amp;</span>scale {
+<a href=#697 id=697 data-nosnippet>697</a>                        <span class="kw">let </span>sigma = scale.fixed_sigma(<span class="kw-2">&amp;</span>row.noise(<span class="self">self</span>.antennas), <span class="kw-2">&amp;mut </span>scratch);
+<a href=#698 id=698 data-nosnippet>698</a>                        fixed.add_scaled_to_cell(
+<a href=#699 id=699 data-nosnippet>699</a>                            query,
+<a href=#700 id=700 data-nosnippet>700</a>                            antennas,
+<a href=#701 id=701 data-nosnippet>701</a>                            <span class="self">self</span>.receptors,
+<a href=#702 id=702 data-nosnippet>702</a>                            output,
+<a href=#703 id=703 data-nosnippet>703</a>                            |channel| sigma.at(channel),
+<a href=#704 id=704 data-nosnippet>704</a>                        );
+<a href=#705 id=705 data-nosnippet>705</a>                    } <span class="kw">else </span>{
+<a href=#706 id=706 data-nosnippet>706</a>                        fixed.add_to_cell(query, antennas, <span class="self">self</span>.receptors, output);
+<a href=#707 id=707 data-nosnippet>707</a>                    }
+<a href=#708 id=708 data-nosnippet>708</a>                } <span class="kw">else </span>{
+<a href=#709 id=709 data-nosnippet>709</a>                    drawn.as_ref().expect(<span class="string">"drawn noise"</span>).add_to_row(
+<a href=#710 id=710 data-nosnippet>710</a>                        (<span class="self">self</span>.first_row + offset <span class="kw">as </span>u64, <span class="kw-2">&amp;</span>row.noise(<span class="self">self</span>.antennas)),
+<a href=#711 id=711 data-nosnippet>711</a>                        (row.antenna1 == row.antenna2, correlations),
+<a href=#712 id=712 data-nosnippet>712</a>                        output,
+<a href=#713 id=713 data-nosnippet>713</a>                        <span class="kw-2">&amp;mut </span>scratch,
+<a href=#714 id=714 data-nosnippet>714</a>                    );
+<a href=#715 id=715 data-nosnippet>715</a>                }
+<a href=#716 id=716 data-nosnippet>716</a>                <span class="kw">for </span>baseline <span class="kw">in </span><span class="kw-2">&amp;</span>application.baseline {
+<a href=#717 id=717 data-nosnippet>717</a>                    baseline.multiply_cell(query, antennas, <span class="self">self</span>.receptors, output);
+<a href=#718 id=718 data-nosnippet>718</a>                }
+<a href=#719 id=719 data-nosnippet>719</a>                <span class="kw">if </span>corrected {
+<a href=#720 id=720 data-nosnippet>720</a>                    <span class="kw">for </span>(value, noise) <span class="kw">in </span>cell.iter_mut().zip(additive.iter()) {
+<a href=#721 id=721 data-nosnippet>721</a>                        <span class="kw-2">*</span>value += noise;
+<a href=#722 id=722 data-nosnippet>722</a>                    }
+<a href=#723 id=723 data-nosnippet>723</a>                }
+<a href=#724 id=724 data-nosnippet>724</a>            }
+<a href=#725 id=725 data-nosnippet>725</a>        }
+<a href=#726 id=726 data-nosnippet>726</a>    }
+<a href=#727 id=727 data-nosnippet>727</a>}
 </code></pre></div></section></main></body></html>
