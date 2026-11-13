@@ -405,9 +405,15 @@ fn a_close_refused_admission_writes_nothing() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("refused.ms");
     let sm = session(&path, resources(1, 1 << 20), true);
-    // The original noise-window metadata now holds a live reservation.
+    // close admits receptor metadata before asking for writer memory.
+    // Measure the policy with that metadata held, alongside the original
+    // noise-window reservation, so the refusal's exact free-byte count
+    // describes the writer phase rather than the earlier session state.
     let policy = &sm.options().resources;
-    let available = casa_imaging_runtime::free_memory(policy.host(), policy.policy());
+    let available = {
+        let _receptors = super::polarization_receptors(&sm).expect("receptor metadata");
+        casa_imaging_runtime::free_memory(policy.host(), policy.policy())
+    };
     let error = sm.close().expect_err("a megabyte does not hold the writer");
     let refusal = error.admission_refused().expect("an admission refusal");
     assert_eq!(refusal.available, available);
