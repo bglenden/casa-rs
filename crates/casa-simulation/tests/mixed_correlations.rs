@@ -12,10 +12,16 @@ use std::path::Path;
 
 #[test]
 fn mixed_window_correlations_match_casa() {
-    let fixture: Value = serde_json::from_reader(GzDecoder::new(
-        &include_bytes!("data/sm_mixed_correlations_casa.json.gz")[..],
-    ))
-    .unwrap();
+    run(include_bytes!("data/sm_mixed_correlations_casa.json.gz"));
+}
+
+#[test]
+fn mixed_polarization_aliases_match_casa() {
+    run(include_bytes!("data/sm_mixed_aliases_casa.json.gz"));
+}
+
+fn run(bytes: &[u8]) {
+    let fixture: Value = serde_json::from_reader(GzDecoder::new(bytes)).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let inputs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_mixed_correlations");
     let image = inputs.with_file_name("sm_image_layouts").join("iquv.image");
@@ -46,6 +52,18 @@ fn mixed_window_correlations_match_casa() {
                 &inputs.join(format!("{}.ms", case["layout"].as_str().unwrap())),
                 &path,
             );
+            if case["spec"]["aliases"] == true {
+                use casa_tables::{Table, TableOptions};
+                use casa_types::{ScalarValue, Value};
+                let target = path.join("DATA_DESCRIPTION");
+                let mut table = Table::open(TableOptions::new(&target)).unwrap();
+                table
+                    .cell_accessor_mut(1, "SPECTRAL_WINDOW_ID")
+                    .unwrap()
+                    .set(Value::Scalar(ScalarValue::Int32(0)))
+                    .unwrap();
+                table.save(TableOptions::new(&target)).unwrap();
+            }
             let mut sm = Simulator::open_from_ms(
                 &path,
                 SimulatorOptions {
@@ -56,7 +74,11 @@ fn mixed_window_correlations_match_casa() {
             )
             .unwrap();
             if case["spec"]["selected"] == true {
-                sm.set_data(&[1], &[], "").unwrap();
+                if case["spec"]["aliases"] == true {
+                    sm.set_data(&[], &[], "DATA_DESC_ID == 1").unwrap();
+                } else {
+                    sm.set_data(&[1], &[], "").unwrap();
+                }
             }
             let mut component_lists = Vec::new();
             if case["spec"]["components"] == true {

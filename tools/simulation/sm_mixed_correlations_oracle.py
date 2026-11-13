@@ -18,6 +18,9 @@ CASES = {
     "full_circular": {"stokes": "RR RL LR LL"},
     "selected_full": {"stokes": "XX XY YX YY", "selected": True},
     "components": {"stokes": "XX XY YX YY", "components": True},
+    "alias_reversed": {"stokes": "YY XX", "components": True, "aliases": True},
+    "alias_full": {"stokes": "XX XY YX YY", "components": True, "aliases": True},
+    "alias_selected": {"stokes": "XX XY YX YY", "components": True, "aliases": True, "selected": True},
 }
 
 def single_window_control(root, spec, kind="joint"):
@@ -28,16 +31,21 @@ def single_window_control(root, spec, kind="joint"):
     if spec.get("components") and kind!="image":arguments["complist"]=str(root/"point.cl")
     for window in ([1] if spec.get("selected") else [0,1]):
         sm=simulator();assert sm.openfromms(str(path))
-        assert sm.setdata(spwid=[window],fieldid=[])
+        if spec.get("aliases"):
+            assert sm.setdata(spwid=[],fieldid=[],msselect=f"DATA_DESC_ID == {window}")
+        else:
+            assert sm.setdata(spwid=[window],fieldid=[])
         assert sm.predict(**arguments)
         sm.close()
     return snapshot(path)["rows"]
 
-def add_science(images, components):
+def add_science(images, components, selected=None):
     """The already-documented flagged-component defect is corrected by I+C."""
     import copy
     rows=copy.deepcopy(images)
     for row,image,component in zip(rows,images,components):
+        if selected is not None and row["data_desc_id"] != selected:
+            continue
         for name in ("data","corrected_data"):
             def complex32(values):
                 a=np.asarray(values,dtype=np.float32)
@@ -62,6 +70,10 @@ def main():
     assert sm.observe(sourcename="target",spwname="mixed",starttime="3s",stoptime="23s")
     assert sm.observe(sourcename="offset",spwname="mixed",starttime="23s",stoptime="43s")
     sm.close()
+    if spec.get("aliases"):
+        tb=table();tb.open(str(path/"DATA_DESCRIPTION"),nomodify=False)
+        tb.putcell("SPECTRAL_WINDOW_ID",1,0)
+        tb.close()
     tb=table();tb.open(str(path),nomodify=False)
     for row in range(tb.nrows()):
         shape=tb.getcell("DATA",row).shape
@@ -80,7 +92,10 @@ def main():
     source=Path(__file__).resolve().parents[2]/"crates/casa-simulation/tests/data/sm_image_layouts/iquv.image"
     shutil.copytree(source,model,ignore=shutil.ignore_patterns("table.lock"))
     if spec.get("selected"):
-        assert sm.setdata(spwid=[1],fieldid=[])
+        if spec.get("aliases"):
+            assert sm.setdata(spwid=[],fieldid=[],msselect="DATA_DESC_ID == 1")
+        else:
+            assert sm.setdata(spwid=[1],fieldid=[])
     arguments=dict(imagename=str(model))
     if spec.get("components"):
         cl=componentlist()
@@ -88,14 +103,16 @@ def main():
         component=root/"point.cl";cl.rename(str(component));cl.done()
         arguments["complist"]=str(component)
     returned=bool(sm.predict(**arguments))
-    case=dict(name=args.case,returned=returned,spec=spec,before=before,after=snapshot(path))
+    case=dict(name=args.case,returned=returned,spec=spec,all_fields_selected=True,
+        before=before,after=snapshot(path))
     sm.close()
     case["polarization_map_corrected_rows"]=single_window_control(root,spec)
     if spec.get("components"):
         case["single_window_joint_rows"]=case["polarization_map_corrected_rows"]
         case["image_only_rows"]=single_window_control(root,spec,"image")
         case["component_only_rows"]=single_window_control(root,spec,"components")
-        case["polarization_map_corrected_rows"]=add_science(case["image_only_rows"],case["component_only_rows"])
+        case["polarization_map_corrected_rows"]=add_science(case["image_only_rows"],case["component_only_rows"],
+            1 if spec.get("selected") else None)
     write(args.fixture,dict(casa_version=version_string(),cases=[case]))
     print(args.case,"returned",returned,flush=True)
 

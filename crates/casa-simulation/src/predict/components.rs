@@ -288,12 +288,13 @@ impl ComponentPrediction {
     }
 
     /// Add to `out` the visibilities of `rows` (each row's raw uvw in
-    /// metres) of scan `scan` in window `window`, at the scan's pointing.
+    /// metres) of scan `scan` with DATA_DESCRIPTION `description`, at the
+    /// scan's pointing. A description supplies both frequencies and products.
     /// `out` holds the rows' samples back to back,
     /// `[row][channel][correlation]`.
     pub(crate) fn add_rows(
         &self,
-        (scan, window): (usize, usize),
+        (scan, description): (usize, usize),
         rows: impl Iterator<Item = [f64; 3]>,
         out: &mut [Complex32],
     ) {
@@ -308,12 +309,12 @@ impl ComponentPrediction {
             debug_assert!(false, "scan {scan} was not observed before the prediction");
             return;
         };
-        let prepared = &self.windows[window];
+        let prepared = &self.windows[description];
         let (channels, correlations) = (prepared.channels, prepared.correlations);
         let powers = terms
             .powers
             .as_ref()
-            .map(|powers| powers[window].as_slice());
+            .map(|powers| powers[description].as_slice());
         for (row, uvw_m) in rows.enumerate() {
             let samples = &mut out[row * channels * correlations..][..channels * correlations];
             for (component, (transform, projection)) in
