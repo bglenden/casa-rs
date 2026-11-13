@@ -595,13 +595,21 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     })
     .expect("setvp");
     vla.predict(&spec(&[&model])).expect("no beam: predicted");
-    // A voltage-pattern table, other FTMachines and grid functions.
-    let (outcome, _) = refusal(vla.set_vp(&VoltagePatternSpec {
+    // setvp records a table path; predict opens it, as in CASA.
+    vla.set_vp(&VoltagePatternSpec {
         use_default_vp: false,
-        vp_table: "vp.tab".to_string(),
+        vp_table: directory
+            .path()
+            .join("missing.vp")
+            .to_string_lossy()
+            .into_owned(),
         ..VoltagePatternSpec::default()
-    }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    })
+    .expect("setvp records the path");
+    let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
+    assert_eq!(outcome, CasaOutcome::Raises);
+    assert!(message.contains("voltage-pattern table"), "{message}");
+    // Other FTMachines and grid functions.
     let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
         ftmachine: "both".to_string(),
         ..PredictionOptions::default()

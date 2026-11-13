@@ -536,16 +536,10 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// Not yet implemented: a voltage-pattern table (`vptable` without
-    /// `usedefaultvp`). Nothing is recorded then.
+    /// Admission fails before retaining the optional voltage-pattern path.
+    /// Like CASA, the table itself is read by `predict`.
     pub fn set_vp(&mut self, spec: &VoltagePatternSpec) -> SimulatorResult<()> {
-        if !spec.use_default_vp && !spec.vp_table.is_empty() {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setvp(vptable='{}') is not yet implemented in casa-rs (#1053); the default \
-                 voltage patterns are",
-                spec.vp_table
-            )));
-        }
+        let table = super::voltage_patterns::capture_path(self, spec)?;
         tracing::info!("Setting voltage pattern parameters");
         if spec.use_default_vp {
             tracing::info!("Using system default voltage patterns for each telescope");
@@ -558,6 +552,7 @@ impl Simulator {
             );
         }
         self.voltage_pattern = spec.dovp;
+        self.voltage_pattern_table = table;
         self.squint = spec.do_squint;
         Ok(())
     }
@@ -1020,6 +1015,9 @@ impl Simulator {
     fn voltage_pattern_beam(&self) -> SimulatorResult<Option<PrimaryBeam>> {
         if !self.voltage_pattern {
             return Ok(None);
+        }
+        if let Some(path) = &self.voltage_pattern_table {
+            return super::voltage_patterns::read(self, Path::new(&path.value)).map(Some);
         }
         let telescope = self.observing_telescope();
         let beam = PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz())

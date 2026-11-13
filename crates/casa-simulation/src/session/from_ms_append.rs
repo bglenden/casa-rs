@@ -319,6 +319,7 @@ impl Simulator {
             mosaic,
             single_dish,
             voltage_pattern,
+            voltage_pattern_table,
             squint,
             data_plan
         );

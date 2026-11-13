@@ -10,6 +10,9 @@
 
 use crate::{AnnularApertureVoltageTable, EvlaPowerPattern, VlaBand};
 
+mod gaussian;
+use gaussian::GaussianVoltageTable;
+
 /// A primary-beam voltage pattern of CASA's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PrimaryBeam {
@@ -29,6 +32,16 @@ pub enum PrimaryBeam {
     /// frequency taking the fit CASA picks for it ([`EvlaPowerPattern::at`]),
     /// tabulated to 58′ at 1 GHz.
     Evla,
+    /// CASA `PBMath1DGauss`, with the stored HWHM and support normalized
+    /// to arcmin at 1 GHz. A power pattern is square-rooted before storage.
+    Gaussian {
+        /// Stored HWHM times the reference frequency in GHz, arcmin GHz.
+        half_width_arcmin_ghz: f64,
+        /// Radius beyond which the pattern is zero, arcmin GHz.
+        maximum_radius_arcmin_ghz: f64,
+        /// Whether the stored Gaussian specifies voltage rather than power.
+        is_voltage: bool,
+    },
 }
 
 impl PrimaryBeam {
@@ -117,6 +130,10 @@ impl PrimaryBeam {
                 ..
             } => maximum_radius_arcmin_ghz,
             Self::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
+            Self::Gaussian {
+                maximum_radius_arcmin_ghz,
+                ..
+            } => maximum_radius_arcmin_ghz,
         }
     }
 
@@ -147,6 +164,15 @@ impl PrimaryBeam {
                 maximum_radius_arcmin_ghz,
             )),
             Self::Evla => Lookup::Evla,
+            Self::Gaussian {
+                half_width_arcmin_ghz,
+                maximum_radius_arcmin_ghz,
+                is_voltage,
+            } => Lookup::Gaussian(GaussianVoltageTable::new(
+                half_width_arcmin_ghz,
+                maximum_radius_arcmin_ghz,
+                is_voltage,
+            )),
         })
     }
 }
@@ -161,6 +187,7 @@ enum Lookup {
     Airy(AnnularApertureVoltageTable),
     /// The EVLA's fits, picked per frequency.
     Evla,
+    Gaussian(GaussianVoltageTable),
 }
 
 impl BeamPattern {
@@ -174,6 +201,7 @@ impl BeamPattern {
         FrequencyPattern(match &self.0 {
             Lookup::Airy(table) => FrequencyLookup::Airy(table),
             Lookup::Evla => FrequencyLookup::Evla(EvlaPowerPattern::at(frequency_hz)),
+            Lookup::Gaussian(table) => FrequencyLookup::Gaussian(table),
         })
     }
 
@@ -209,6 +237,7 @@ impl BeamPattern {
         let maximum_arcmin_ghz = match &self.0 {
             Lookup::Airy(table) => table.maximum_radius(),
             Lookup::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
+            Lookup::Gaussian(table) => table.maximum_radius(),
         };
         support_pixels(maximum_arcmin_ghz, increment_x_rad, frequency_hz)
     }
@@ -228,6 +257,7 @@ pub struct FrequencyPattern<'a>(FrequencyLookup<'a>);
 enum FrequencyLookup<'a> {
     Airy(&'a AnnularApertureVoltageTable),
     Evla(EvlaPowerPattern),
+    Gaussian(&'a GaussianVoltageTable),
 }
 
 impl FrequencyPattern<'_> {
@@ -249,6 +279,7 @@ impl FrequencyPattern<'_> {
         match &self.0 {
             FrequencyLookup::Airy(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Evla(fit) => fit.voltage(radius_arcmin_ghz),
+            FrequencyLookup::Gaussian(table) => table.evaluate(radius_arcmin_ghz),
         }
     }
 }

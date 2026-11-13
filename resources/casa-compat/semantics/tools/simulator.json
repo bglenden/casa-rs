@@ -221,14 +221,14 @@
   },
   "setvp": {
    "status": "Partial",
-   "scope": "Default voltage patterns of ALMA, ACA, the VLA and the EVLA, with squint. Refused: a voltage-pattern table, and dovp=True for other telescopes.",
+   "scope": "Records default voltage patterns of ALMA, ACA, VLA and EVLA and saved Gaussian/Airy VPManager tables. predict reads VPLIST_DEFAULTS and the selected beam record; usedefaultvp overrides a supplied table. Other saved pattern forms, remaining telescope defaults and squinted component beams remain unfinished on #1297. Image beams keep their existing squint behavior.",
    "evidence": [
     "signature",
     "binding-tests",
     "predict-image-20261103",
     "refusals"
    ],
-   "issue": 1053
+   "issue": 1297
   },
   "corrupt": {
    "status": "Partial",

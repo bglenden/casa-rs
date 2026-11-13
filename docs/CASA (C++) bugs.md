@@ -1276,6 +1276,18 @@ negative flux comes out positive. Probed with CASA 6.7.6: a −0.4 Jy point
 +0.4 Jy times the beam with it. casa-rs keeps the sign;
 `sm_components_scenarios.json` keeps negative components away from the beam.
 
+The same defect doubles the phase of complex correlations. In a linear
+window, a component with nonzero Stokes U and V has XY = U+iV. The beam path
+multiplies each channel's sampled XY by the original XY/abs(XY), rotating it
+again; YX acquires the conjugate rotation. In the SIM-10 VP-table controls,
+both points have the same original Stokes flux [1, 0.1, 0.02, 0.03] Jy.
+CASA's auto-baseline crosshands show exactly this extra unit-phase factor,
+while I and Q agree. casa-rs preserves the requested correlation phase.
+`sm_voltage_patterns_oracle.py` retains raw CASA rows and supplies corrected
+rows by dividing selected correlations by that original unit-phase factor.
+No scientific tolerance changes; the remaining documented LSRK-label error
+is below the existing 1e-3 threshold in these controls.
+
 ## A single spectral index is read past its end
 
 - Date noted: 2026-10-23
