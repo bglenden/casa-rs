@@ -39,15 +39,14 @@ pub(super) fn literal(values: &[Expr], ctx: &EvalContext<'_>) -> Result<ExprValu
         for value in &mut data {
             *value = ExprValue::Float(value.to_float()?);
         }
-    } else if let Some(first) = data.first() {
-        if data
+    } else if let Some(first) = data.first()
+        && data
             .iter()
             .any(|value| std::mem::discriminant(value) != std::mem::discriminant(first))
-        {
-            return Err(TaqlError::TypeError {
-                message: "incompatible vector element types".into(),
-            });
-        }
+    {
+        return Err(TaqlError::TypeError {
+            message: "incompatible vector element types".into(),
+        });
     }
     Ok(ExprValue::Array(ArrayValue {
         shape: vec![data.len()],
