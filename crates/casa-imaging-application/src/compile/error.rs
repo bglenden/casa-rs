@@ -41,6 +41,11 @@ pub enum PrepareError {
         "AWP2 currently requires fixed VLA or EVLA fields and one L-band TOPO spectral window in one MeasurementSet (#1071)"
     )]
     Awp2Selection,
+    /// AWPLPG would evaluate a buffer with no valid cross-row at MJD zero.
+    #[error(
+        "AWP2 squint with an integration that has no unflagged cross-correlation uses an MJD-zero PA in CASA and is unsupported (#1071)"
+    )]
+    Awp2FlaggedPaEpoch,
     /// The required physical dish surface could not be located.
     #[error(
         "AWP2 needs the VLA dish surface: supply evla_surface or install VLA.surface under ~/.casa/data/nrao/VLA/"

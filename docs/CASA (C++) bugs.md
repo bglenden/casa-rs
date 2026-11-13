@@ -4777,3 +4777,36 @@ control's science while retaining the raw case's metadata and quality
 checks. Evidence: `frame_conversion_b1950` in
 `tools/simulation/sm_image_layouts_oracle.py` and
 `crates/casa-simulation/tests/image_layouts.rs`.
+
+## AWP2 includes an MJD-zero angle for a fully flagged integration
+
+`AWPLPG::init` surveys every selected visibility buffer before the major
+cycle checks row validity. `Utils::getCurrentTimeStamp` returns zero when a
+buffer contains no unflagged cross-correlation. CASA then computes a feed
+angle at MJD zero and uses it when sizing the parallactic-angle lattice.
+This can change the kernels used to grid the unflagged data.
+
+On CASA 6.7.6-14, a three-integration field-1 selection from
+`vla_wideband_2ptg_w_squint.ms` gives a maximum PA of 1.11158 rad. Setting
+`FLAG_ROW` on the first integration's 351 rows changes that maximum to
+1.60999 rad. The native Measures model rejects the MJD-zero conversion.
+casa-rs refuses this combination with a diagnostic before allocating its
+convolution kernels. [Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
+
+## AWP2 can shift a PA plane when the convolution holder grows
+
+`AWConvFuncHolder::appendConvFuncs` saves the old holder shape in
+`newshp`. When a new PA needs more support, it grows and centres the
+old data but copies the incoming PA using that old shape. This can
+place the new plane away from the centre used by gridding and
+degridding.
+
+On the three-integration unflagged field-1 selection described above,
+the holder grows from 306 to 360 fine pixels. The second PA's W=0 tap
+peak stays at (153, 153) instead of the grid origin (180, 180). Before
+the repair the raw CASA and casa-rs residual images differ by 0.99856
+NRMS. An independent CASA control that grows the holder before
+`appendConvFuncs` takes its working shape places the peak at (180,
+180). All eight products then agree with casa-rs within 2.50e-7 NRMS,
+with exact masks and sum of weights. casa-rs always centres the PA
+planes. [Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).

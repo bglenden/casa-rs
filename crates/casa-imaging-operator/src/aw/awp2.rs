@@ -573,11 +573,9 @@ impl Awp2Screens {
             let a_side = group.plane_side;
             let resampled_side = resampled_side(a_side, factor);
             let mut axis = lanczos_axis(a_side, resampled_side, fine_side, &sinc_table);
-            // AWConvFuncHolder centre-crops to the support reached so far
-            // before a subsequent PA can grow the holder.
-            let first = (fine_side / 2).saturating_sub(holder_radius);
-            axis[..first].fill_with(|| None);
-            axis[fine_side - first..].fill_with(|| None);
+            // Crop each PA to the holder extent reached so far. Keep the
+            // crop centred when a later PA grows the extent (CASA bug #1071).
+            crop_lanczos_axis(&mut axis, holder_radius);
             let scale = (a_side * a_side * usize::from(oversampling).pow(2)) as f32
                 / (resampled_side * resampled_side) as f32;
             let mut pack = |load: &mut dyn FnMut(usize, &mut [Complex32])| {
@@ -684,6 +682,13 @@ fn lanczos_axis(
             Some(LanczosTaps { first, weights })
         })
         .collect()
+}
+
+fn crop_lanczos_axis(axis: &mut [Option<LanczosTaps>], radius: usize) {
+    let end = axis.len();
+    let first = (end / 2).saturating_sub(radius);
+    axis[..first].fill_with(|| None);
+    axis[end - first..].fill_with(|| None);
 }
 
 fn resample(
@@ -881,6 +886,26 @@ fn invalid(reason: &'static str) -> OperatorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn awp2_pa_growth_keeps_the_crop_centred() {
+        // In the narrow CASA comparison the holder grows from 306 to
+        // 360 fine pixels. Its resized PA plane must keep its phase origin.
+        let mut axis: Vec<_> = (0..360)
+            .map(|pixel| {
+                Some(LanczosTaps {
+                    first: pixel,
+                    weights: [[0.0; 2]; 6],
+                })
+            })
+            .collect();
+        crop_lanczos_axis(&mut axis, 153);
+        assert!(axis[..27].iter().all(Option::is_none));
+        assert!(axis[333..].iter().all(Option::is_none));
+        assert_eq!(axis[180].as_ref().unwrap().first, 180);
+        assert_eq!(axis[27].as_ref().unwrap().first, 27);
+        assert_eq!(axis[332].as_ref().unwrap().first, 332);
+    }
 
     #[test]
     fn awp2_squint_uses_the_casa_compact_aperture() {

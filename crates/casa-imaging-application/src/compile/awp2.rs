@@ -147,15 +147,18 @@ fn squint_centres(
         native_aw::receptor_zero_angle(surveyed.catalogue, surveyed.msv2, spw_id as u32)? as f32;
     let mut limits = [f64::INFINITY, f64::NEG_INFINITY];
     for epoch in surveyed.survey.window_epochs(spw_id) {
-        if epoch.has_unflagged_cross {
-            let pa = f64::from(native_aw::feed_pa(
-                surveyed,
-                epoch.time_mjd_seconds,
-                epoch.field_id,
-                feed_rad,
-            )?);
-            limits = [limits[0].min(pa), limits[1].max(pa)];
+        // AWPLPG::init surveys even an all-flagged buffer.
+        // Its MJD-zero feed angle lies outside the native Measures range.
+        if !epoch.has_unflagged_cross {
+            return Err(PrepareError::Awp2FlaggedPaEpoch);
         }
+        let pa = f64::from(native_aw::feed_pa(
+            surveyed,
+            epoch.time_mjd_seconds,
+            epoch.field_id,
+            feed_rad,
+        )?);
+        limits = [limits[0].min(pa), limits[1].max(pa)];
     }
     let [minimum, maximum] = limits;
     // The all-identical-angle special case in AWPLPG does not establish

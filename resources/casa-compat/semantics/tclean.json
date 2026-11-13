@@ -344,7 +344,7 @@
     },
     "gridder": {
       "status": "Partial",
-      "scope": "Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural- or uniform-weighted Stokes I Högbom MFS with fixed VLA or EVLA L-band fields, one TOPO window, square Lanczos-resampled images within the beam grid, and positive W-plane counts. Stokes IV with beam squint also runs for a single field, RR and LL data, and multiple W planes (#1071).",
+      "scope": "Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural- or uniform-weighted Stokes I Högbom MFS with fixed VLA or EVLA L-band fields, one TOPO window, square Lanczos-resampled images within the beam grid, and positive W-plane counts. Stokes IV with beam squint also runs for a single field, RR and LL data, multiple W planes, and an unflagged cross-correlation in every selected integration (#1071).",
       "evidence": [
         "signature",
         "reader",
