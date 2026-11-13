@@ -207,6 +207,8 @@ pub(crate) struct Prediction {
     pub(crate) model: ModelOperator,
     /// The model's tangent point (pixel `(nx/2, ny/2)`), J2000 radians.
     pub(crate) tangent_rad: [f64; 2],
+    pub(crate) tangent: casa_types::measures::direction::MDirection,
+    frame_measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
     phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     /// The grids, or what `close` prepares each field's from.
     grids: StepGrids,
@@ -273,6 +275,25 @@ impl std::fmt::Debug for Prediction {
 }
 
 impl Prediction {
+    pub(crate) fn has_selected_chunk(&self, scan: &super::observe::Scan) -> bool {
+        self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000
+            || super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan).is_some()
+    }
+
+    pub(crate) fn frame(
+        &self,
+        scan: &super::observe::Scan,
+    ) -> SimulatorResult<casa_types::measures::MeasFrame> {
+        use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
+        let frame = MeasFrame::new().with_measures(self.frame_measures.clone());
+        if self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000 {
+            return Ok(frame);
+        }
+        let time = super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan)
+            .ok_or_else(|| SimulatorError::raised("missing selected image-frame epoch"))?;
+        Ok(frame.with_epoch(MEpoch::from_mjd(time / 86400., EpochRef::UTC)))
+    }
+
     pub(crate) fn phase_centre(&self, scan: &super::observe::Scan) -> [f64; 2] {
         super::from_ms::polynomial::centre(self.phase_centres.as_ref(), scan)
     }
@@ -579,11 +600,19 @@ impl Simulator {
             .first()
             .map(|path| SkyModel::open(path).map_err(model_error))
             .transpose()?;
+        let mut frame_epoch = model.as_ref().is_some_and(|model| {
+            model.tangent_direction().refer()
+                != casa_types::measures::direction::DirectionRef::J2000
+        });
         // Validate every header before changing the DATA plan. Later
         // images are reopened for preparation, one at a time, so the
         // input count does not keep that many open images or tile caches.
         for path in images.iter().skip(1) {
-            SkyModel::open(path).map_err(model_error)?;
+            frame_epoch |= SkyModel::open(path)
+                .map_err(model_error)?
+                .tangent_direction()
+                .refer()
+                != casa_types::measures::direction::DirectionRef::J2000;
         }
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
@@ -626,7 +655,7 @@ impl Simulator {
             return Ok(());
         }
         let phase_centres = if list.is_some() {
-            super::from_ms::polynomial::selected_centres(self, false)?
+            super::from_ms::polynomial::selected_centres(self, false, false)?
         } else {
             None
         };
@@ -636,7 +665,7 @@ impl Simulator {
             })
             .transpose()?;
         let image_centres = if model.is_some() {
-            super::from_ms::polynomial::selected_centres(self, true)?
+            super::from_ms::polynomial::selected_centres(self, true, frame_epoch)?
         } else {
             None
         };
@@ -668,6 +697,13 @@ impl Simulator {
         beam: Option<PrimaryBeam>,
         phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
+        if model.tangent_direction().refer() != casa_types::measures::direction::DirectionRef::J2000
+            && (beam.is_some() || self.mosaic)
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "image direction-frame conversion with beams or mosaic prediction is not yet implemented in casa-rs (#1295)",
+            ));
+        }
         let machine = self.ft_machine()?;
         let mut mosaic_state = None;
         let (beams, antenna_types, pointings) = match machine {
@@ -1045,6 +1081,7 @@ impl Simulator {
         let _ = &point_memory;
         let pattern = beam.map(PrimaryBeam::pattern);
         let tangent_rad = model.centre_rad();
+        let tangent = model.tangent_direction().clone();
         let (grids, reservation) = match pattern {
             Some(pattern) if pointings.len() > 1 => {
                 self.hold_for_fields(model, &operator, pattern, &pointings)?
@@ -1106,6 +1143,8 @@ impl Simulator {
         Ok(Prediction {
             model: operator,
             tangent_rad,
+            tangent,
+            frame_measures: self.options.measures.clone(),
             phase_centres: None,
             grids,
             pointings: Vec::new(),

@@ -9,6 +9,7 @@ use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::{MeasFrame, direction::MDirection};
 use casa_types::quanta::{Quantity, Unit};
 use ndarray::{Array2, IxDyn};
 
@@ -44,6 +45,8 @@ pub struct SkyModel {
     pub(super) increment_rad: [f64; 2],
     /// J2000 direction of pixel `(nx/2, ny/2)`, CASA's tangent point.
     centre_rad: [f64; 2],
+    /// The tangent in the direction coordinate's native reference.
+    tangent: MDirection,
     /// Frequency of plane 0 in Hz.
     pub(super) first_frequency_hz: f64,
     /// Frequency step between planes in Hz.
@@ -95,7 +98,7 @@ impl SkyModel {
     /// # Errors
     ///
     /// An unreadable image, one whose axes are not those above, a direction
-    /// coordinate other than J2000, or a spectral axis that is not in
+    /// coordinate outside J2000/B1950/GALACTIC/ICRS, or a spectral axis not in
     /// frequency units.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PredictError> {
         let path = path.as_ref();
@@ -107,7 +110,7 @@ impl SkyModel {
                 }
             })?;
         let shape = image.shape().to_vec();
-        let coordinates = image.coordinates().clone();
+        let mut coordinates = image.coordinates().clone();
         let unsupported = |reason: String| Err(PredictError::UnsupportedModel(reason));
         if shape.len() != 4
             || coordinates.find_coordinate(CoordinateType::Direction) != Some(0)
@@ -137,17 +140,33 @@ impl SkyModel {
                 })
             })
             .collect::<Result<Vec<_>, PredictError>>()?;
-        // Rows and pointings are J2000; other frames need a conversion this
-        // predictor does not make yet.
+        // Stored UVW is J2000. The projection carries it into these image
+        // frames; epoch-dependent FK4 conversion uses the selected MS epoch.
+        let fixed = |reference| {
+            matches!(
+                reference,
+                DirectionRef::J2000
+                    | DirectionRef::B1950
+                    | DirectionRef::GALACTIC
+                    | DirectionRef::ICRS
+            )
+        };
         if let CoordinateModel::Direction(direction) = coordinates.coordinate(0)
-            && (direction.direction_ref() != DirectionRef::J2000
-                || direction.conversion_direction_ref() != DirectionRef::J2000)
+            && (!fixed(direction.direction_ref()) || !fixed(direction.conversion_direction_ref()))
         {
             return unsupported(format!(
-                "the native and conversion direction frames must both be J2000 (got {:?} and {:?})",
+                "the native and conversion frames must be fixed J2000/B1950/GALACTIC/ICRS (got {:?} and {:?})",
                 direction.direction_ref(),
                 direction.conversion_direction_ref()
             ));
+        }
+        // A conversion layer changes displayed world coordinates, not the
+        // physical pixel grid. DirectionCoordinate's MDirection overload in
+        // CASA incorrectly relabels converted values with the native type.
+        if let CoordinateModel::Direction(direction) = coordinates.coordinate(0) {
+            let native = direction.direction_ref();
+            coordinates
+                .replace_coordinate(0, direction.clone().with_conversion_direction_ref(native));
         }
         let spectral_unit = coordinates.coordinate(2).axis_units()[0].clone();
         let Some(hz_per_unit) = hz_per_unit(&spectral_unit) else {
@@ -166,6 +185,21 @@ impl SkyModel {
         let cache_bytes = cache_bound(&shape, image.tile_shape());
         let increment = coordinates.coordinate(0).increment();
         let centre = coordinates.to_world(&[(nx / 2) as f64, (ny / 2) as f64, 0.0, 0.0])?;
+        let CoordinateModel::Direction(direction) = coordinates.coordinate(0) else {
+            unreachable!()
+        };
+        let tangent =
+            MDirection::from_angles(centre[0], centre[1], direction.conversion_direction_ref());
+        let physical = if tangent.refer() == DirectionRef::J2000 {
+            (centre[0], centre[1])
+        } else {
+            tangent
+                .convert_to(DirectionRef::J2000, &MeasFrame::new())
+                .map_err(|error| {
+                    casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
+                })?
+                .as_angles()
+        };
         Ok(Self {
             path: path.to_path_buf(),
             pixels: Pixels::Image(Box::new(Mutex::new(image))),
@@ -173,7 +207,8 @@ impl SkyModel {
             planes,
             polarizations,
             increment_rad: [increment[0], increment[1]],
-            centre_rad: [centre[0], centre[1]],
+            centre_rad: [physical.0, physical.1],
+            tangent,
             first_frequency_hz: centre[3] * hz_per_unit,
             frequency_increment_hz: coordinates.coordinate(2).increment()[0] * hz_per_unit,
             coordinates,
@@ -208,6 +243,13 @@ impl SkyModel {
         self.centre_rad
     }
 
+    /// The centre pixel's direction in the image's native reference.
+    /// Use it with `GridFtProjection` to rotate stored J2000 UVW into the
+    /// image's tangent basis before predicting a row.
+    pub fn tangent_direction(&self) -> &MDirection {
+        &self.tangent
+    }
+
     /// Number of model planes.
     #[must_use]
     pub fn planes(&self) -> usize {
@@ -229,9 +271,19 @@ impl SkyModel {
 
     /// Fractional pixel `[x, y]` of a J2000 direction.
     pub(crate) fn pixel_of(&self, direction_rad: [f64; 2]) -> Result<[f64; 2], PredictError> {
+        let direction = if self.tangent.refer() == DirectionRef::J2000 {
+            (direction_rad[0], direction_rad[1])
+        } else {
+            MDirection::from_angles(direction_rad[0], direction_rad[1], DirectionRef::J2000)
+                .convert_to(self.tangent.refer(), &MeasFrame::new())
+                .map_err(|error| {
+                    casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
+                })?
+                .as_angles()
+        };
         let pixel = self.coordinates.to_pixel(&[
-            direction_rad[0],
-            direction_rad[1],
+            direction.0,
+            direction.1,
             self.coordinates.coordinate(1).to_world(&[0.])?[0],
             self.first_spectral_world,
         ])?;
@@ -358,6 +410,7 @@ impl SkyModel {
             polarizations: self.polarizations.clone(),
             increment_rad: self.increment_rad,
             centre_rad: self.centre_rad,
+            tangent: self.tangent.clone(),
             first_frequency_hz: self.first_frequency_hz,
             frequency_increment_hz: self.frequency_increment_hz,
             coordinates: self.coordinates.clone(),

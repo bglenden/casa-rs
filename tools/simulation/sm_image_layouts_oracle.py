@@ -7,7 +7,7 @@ import shutil
 
 import numpy as np
 from casatasks import version_string
-from casatools import coordsys, image, regionmanager, simulator
+from casatools import coordsys, image, measures, regionmanager, simulator
 
 from sm_apply_time_oracle import write
 from sm_existing_append_oracle import snapshot
@@ -20,6 +20,14 @@ def make_model(path, kind):
     cs.setunits(["rad", "rad", "", "Hz"])
     cs.setreferencecode("J2000", type="direction")
     cs.setreferencevalue(CENTRE, type="direction")
+    frame = {"frame_b1950": "B1950", "frame_galactic": "GALACTIC", "frame_icrs": "ICRS"}.get(kind)
+    if frame:
+        me = measures()
+        direction = me.measure(me.direction("J2000", f"{CENTRE[0]}rad", f"{CENTRE[1]}rad"), frame)
+        cs.setreferencecode(frame, type="direction", adjust=False)
+        cs.setreferencevalue([direction["m0"]["value"], direction["m1"]["value"]], type="direction")
+    if kind == "frame_conversion_b1950":
+        cs.setconversiontype(direction="B1950")
     cs.setincrement([-2e-6, 2e-6], type="direction")
     cs.setreferencepixel([32, 32, 0, 0])
     cs.setreferencecode("LSRK", type="spectral")
@@ -32,6 +40,8 @@ def make_model(path, kind):
             pixels[32, 32, 1:, channel] = [.2 * (channel + 1.), -.1 * (channel + 1.), .05 * (channel + 1.)]
         if kind == "iquv_beam":
             pixels[35, 30, :, channel] = np.asarray([.4, .1, -.02, .03]) * (channel + 1.)
+        if kind.startswith("frame_"):
+            pixels[35, 30, 0, channel] = .4 * (channel + 1.)
     ia = image()
     raw = path.with_name("canonical.image")
     ia.fromarray(outfile=str(raw), pixels=pixels, csys=cs.torecord())
@@ -58,7 +68,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
-    parser.add_argument("--case", required=True, choices=("canonical", "spectral_before_stokes", "direction_last", "no_stokes", "direction_only", "iquv", "iquv_beam"))
+    parser.add_argument("--case", required=True, choices=("canonical", "spectral_before_stokes", "direction_last", "no_stokes", "direction_only", "iquv", "iquv_beam", "frame_j2000", "frame_b1950", "frame_galactic", "frame_icrs", "frame_conversion_b1950"))
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()
@@ -81,6 +91,24 @@ def main():
     returned = bool(sm.predict(imagename=str(run_model)))
     sm.close()
     case = dict(name=args.case, operation="image", returned=returned, beam=args.case == "iquv_beam", before=before, after=snapshot(path))
+    if args.case == "frame_conversion_b1950":
+        control_ms, control_image = root / "physical-control.ms", root / "physical-control.image"
+        shutil.copytree(inputs / "base.ms", control_ms, ignore=shutil.ignore_patterns("table.lock"))
+        shutil.copytree(model, control_image, ignore=shutil.ignore_patterns("table.lock"))
+        ia = image()
+        ia.open(str(control_image))
+        cs = ia.coordsys()
+        assert cs.setconversiontype(direction="J2000")
+        assert ia.setcoordsys(cs.torecord())
+        cs.done()
+        ia.done()
+        control = simulator()
+        assert control.openfromms(str(control_ms))
+        assert control.setdata(fieldid=[0])
+        assert control.predict(imagename=str(control_image))
+        control.close()
+        case["direction_frame_corrected_rows"] = snapshot(control_ms)["rows"]
+        case["casa_defect"] = "DirectionCoordinate::toWorld(MDirection) labels converted values with the native type; a display conversion must preserve physical pixel directions."
     write(args.fixture, dict(casa_version=version_string(), cases=[case]))
     print(args.case, "returned", returned, flush=True)
 
