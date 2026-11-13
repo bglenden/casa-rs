@@ -35,6 +35,8 @@ pub(crate) fn cube_request(
     cube.start = Some(format!("{lower}Hz"));
     cube.width = Some(format!("{}Hz", (upper - lower) / channels as f64));
     cube.interpolation = CubeInterpolation::Nearest;
+    // CASA's MVC cube uses usecubebriggs=False and reuses the continuum density.
+    cube.perchanweightdensity = false;
     cube.restoration = false;
     cube.write_pb = true;
     Ok(casa_imaging_runtime::Admitted {
@@ -152,8 +154,8 @@ pub(super) struct TaylorInputs<'a> {
 }
 
 /// Build the Taylor image view without opening or surveying the observation
-/// again. CASA keeps its Taylor image WCS at the band centre while the
-/// supplied `reffreq` governs its cube-to-Taylor expansion.
+/// again. The published Taylor axis spans the cube channels. The expansion
+/// uses `reffreq` or the midpoint of the surveyed band.
 pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, super::PrepareError> {
     use casa_imaging_model::{ModelBounds, ModelLifecycleRequirements, NumericPrecision};
     let TaylorInputs {
@@ -169,7 +171,7 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
         has_primary_beam,
     } = inputs;
     // This initial MVC implementation owns exactly one fixed-centre image
-    // domain and one Stokes-I, two-term standard-gridder problem. In
+    // domain and one Stokes-I, two-term problem. In
     // particular, an outlier file or facets would make the small metadata
     // envelope below scale with data it does not yet account for.
     check_view_scope(parent, surveyed.stores.len(), centre.ephemeris.is_some())?;
@@ -191,11 +193,14 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
         None,
         None,
     )?;
-    // CASA's `cube2tt` copies the cube image coordinates and changes only
-    // the spectral reference pixel, value and increment. The rest-frequency
-    // label therefore comes from the cube, not the independently prepared
-    // continuum axis (`PyMtmfsViaCubeSynthesisImager::copy_image`).
-    spectral.image.rest_frequency_hz = surveyed.spectral.image.rest_frequency_hz;
+    // CASA's `PyMtmfsViaCubeSynthesisImager::copy_image` gives the Taylor
+    // plane the cube's end-channel midpoint, full width and rest label.
+    let cube = surveyed.spectral;
+    let first_hz = cube.image.reference_frequency_hz;
+    let last_hz = first_hz + (cube.output_channels - 1) as f64 * cube.image.increment_hz;
+    spectral.image.reference_frequency_hz = (first_hz + last_hz) / 2.0;
+    spectral.image.increment_hz = cube.output_channels as f64 * cube.image.increment_hz;
+    spectral.image.rest_frequency_hz = cube.image.rest_frequency_hz;
     let taylor_surveyed = super::Surveyed {
         stores: surveyed.stores,
         reference: surveyed.reference,
@@ -240,17 +245,25 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     })
 }
 
-/// The first native MVC slice forms a fresh cube and its two-term Taylor
-/// products. Cleaning currently needs a negative pblimit, no nsigma, and
-/// spatial-only user boxes; restart and side effects remain refused (#1069).
+/// MVC forms a fresh cube and its two-term Taylor products. Cleaning uses
+/// nsigma=0 and spatial-only user boxes. Restart and side effects are
+/// outside this execution scope (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
 ) -> Result<(), super::PrepareError> {
     use casa_imaging_model::RestoringBeamPolicy;
     use casa_types::measures::frequency::FrequencyRef;
+    let field_limit = if matches!(
+        request.gridder,
+        crate::Gridder::Awp2 { computepastep, .. } if computepastep < 180.0
+    ) {
+        2
+    } else {
+        1
+    };
     if request.vis.len() != 1
-        || selected_fields != 1
+        || !(1..=field_limit).contains(&selected_fields)
         || (request.niter != 0
             && (request.nsigma != 0.0
                 || request.mask_box.iter().any(|region| region.range.is_some())))
@@ -261,7 +274,6 @@ pub(super) fn check_execution_scope(
         || request.savemodel != crate::SaveModel::None
         || request.outlierfile.is_some()
         || request.fitspw.is_some()
-        || request.pbcor
         || request.usemask != crate::UseMask::User
         || request.mask_image.is_some()
         || request.pbmask != 0.0
@@ -285,10 +297,13 @@ fn check_view_scope(
     if store_count != 1
         || parent.outlierfile.is_some()
         || moving_centre
-        || !matches!(parent.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
+        || !(matches!(parent.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
+            || matches!(parent.gridder, crate::Gridder::Awp2 { .. }))
         || parent.stokes != [casa_imaging_model::PolarizationCoordinate::StokesI]
         || parent.nterms != 2
-        || parent.weighting != crate::Weighting::Natural
+        || (parent.weighting != crate::Weighting::Natural
+            && !matches!(parent.gridder, crate::Gridder::Awp2 { computepastep, .. }
+                if computepastep < 180.0 && parent.weighting == crate::Weighting::Uniform))
     {
         return Err(super::PrepareError::MvcViewUnsupported);
     }
@@ -364,7 +379,8 @@ mod tests {
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.niter = 1;
-        assert!(check_execution_scope(&other, 1).is_err());
+        other.pblimit = 0.8;
+        assert!(check_execution_scope(&other, 1).is_ok());
         other.pblimit = -0.1;
         assert!(check_execution_scope(&other, 1).is_ok());
         other.nsigma = 1.0;
@@ -397,9 +413,6 @@ mod tests {
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.fitspw = Some("0".into());
-        assert!(check_execution_scope(&other, 1).is_err());
-        let mut other = parent.clone();
-        other.pbcor = true;
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.usemask = crate::UseMask::Pb;
@@ -448,6 +461,17 @@ mod tests {
         let mut other = parent;
         other.weighting = crate::Weighting::Uniform;
         assert!(check_view_scope(&other, 1, false).is_err());
+    }
+
+    #[test]
+    fn awp2_mvc_taylor_view_keeps_the_one_domain_envelope() {
+        let parent = request(json!({
+            "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs",
+            "nterms": 2, "nchan": 3,
+        }));
+        assert!(check_view_scope(&parent, 1, false).is_ok());
+        assert!(check_view_scope(&parent, 2, false).is_err());
+        assert!(check_view_scope(&parent, 1, true).is_err());
     }
 
     #[test]

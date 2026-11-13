@@ -17,8 +17,8 @@
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
-    FixedRestoringBeam, HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization,
-    Projection, RestoringBeamPolicy, UvTaper,
+    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, Projection,
+    RestoringBeamPolicy, UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
@@ -28,6 +28,8 @@ use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 
+use beam::restoring_beam;
+use execution::{grid_precision, hogbom_iteration_mode, major_cycle_limit, normalization};
 use uv_taper::uv_taper;
 
 /// One imaging run's parameters, as the catalog resolved them.
@@ -96,6 +98,9 @@ pub struct ImagingRequest {
     /// ephemeris name or table.
     #[serde(deserialize_with = "optional")]
     pub phasecenter: Option<String>,
+    /// Fixed direction for a mosaic PSF formed separately from the main image.
+    #[serde(default, deserialize_with = "optional")]
+    pub psfphasecenter: Option<String>,
     /// First selected channel when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_start: Option<usize>,
@@ -291,6 +296,10 @@ pub struct ImagingRequest {
     /// Grid arithmetic; `None` (`auto`) is `f64` on the CPU, `f32` on Metal.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
+    /// Legacy quick-PSF padding: only 1.0 in a CPU/f64 PSF-only run is valid.
+    /// Ordinary tclean uses 1.2; this is outside the CASA parameter surface.
+    #[serde(skip)]
+    pub ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     /// The optional diagnostic output: `stage_timing`,
     /// `metal_stage_timing` and `science_trace`.
     #[serde(flatten)]
@@ -520,43 +529,6 @@ impl Weighting {
     }
 }
 
-/// Convolution-function set (`gridder`) and the parameters only it reads.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(tag = "gridder", rename_all = "lowercase")]
-pub enum Gridder {
-    /// The prolate-spheroidal kernel.
-    Standard {
-        /// Facets along each axis of the main image (CASA's `facets`): each
-        /// is gridded about its own centre.
-        facets: NonZeroUsize,
-    },
-    /// W-projection.
-    Wproject {
-        /// Facets along each image axis, each with its own W kernel set.
-        facets: NonZeroUsize,
-        /// W planes; `None` derives the count from the selected W range.
-        #[serde(deserialize_with = "optional")]
-        wprojplanes: Option<NonZeroUsize>,
-    },
-    /// The heterogeneous-array mosaic beams.
-    Mosaic {
-        /// Point each field's beam along the `POINTING` table.
-        usepointing: bool,
-        /// Flat-noise or flat-sky products.
-        #[serde(deserialize_with = "normalization")]
-        normtype: ProductNormalization,
-        /// Grid with each beam at its conjugate frequency about the image
-        /// frequency, on an image of one plane (tclean `conjbeams`).
-        conjbeams: bool,
-        /// Weigh each field by its own visibility density (tclean
-        /// `mosweight`, which `task_tclean.py` keeps only for the gridder
-        /// named `mosaic`); density weighting only.
-        mosweight: bool,
-    },
-    /// EVLA A-projection with W-projection.
-    Awproject(AwProjection),
-}
-
 /// The parameters of `gridder = awproject`.
 ///
 /// The four terms are tclean's, as `AWProjectFT::makeCFObject` reads them.
@@ -582,6 +554,10 @@ pub struct AwProjection {
     /// `√(2f₀² − f²)` about the image frequency `f₀`, and weigh it with the
     /// beam there (tclean `conjbeams`).
     pub conjbeams: bool,
+    /// The maximum PA distance of an imported buffer, in degrees.
+    pub computepastep: f64,
+    /// The PA change that triggers rotation of an imported buffer, degrees.
+    pub rotatepastep: f64,
     /// Sample each row's pointing from the `POINTING` table.
     pub usepointing: bool,
     /// Flat-noise or flat-sky products.
@@ -722,6 +698,9 @@ impl ImagingRequest {
     /// Check the relations between parameters that no single parameter's
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {
+        execution::validate_ft_padding(self)?;
+        self.validate_psf_phase_centre()?;
+        execution::validate_awp2_scope(self)?;
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         if self.phasecenter.is_some() && self.phasecenter_field.is_some() {
             return invalid(
@@ -863,6 +842,29 @@ impl ImagingRequest {
         Ok(())
     }
 
+    /// CASA forms a separate PSF only for the mosaic gridder.
+    pub(crate) fn uses_separate_psf(&self) -> bool {
+        self.psfphasecenter.is_some() && matches!(self.gridder, Gridder::Mosaic { .. })
+    }
+
+    pub(crate) fn supports_separate_psf(&self) -> bool {
+        matches!(self.gridder, Gridder::Mosaic { .. })
+            && self.specmode == SpecMode::Mfs
+            && self.deconvolver != Deconvolver::Mtmfs
+            && self.outlierfile.is_none()
+    }
+
+    /// A separately formed mosaic PSF uses the single-term MFS route.
+    pub(crate) fn validate_psf_phase_centre(&self) -> Result<(), InvalidRequest> {
+        if self.calcpsf && self.uses_separate_psf() && !self.supports_separate_psf() {
+            return Err(InvalidRequest {
+                parameters: "psfphasecenter",
+                reason: "a separate PSF centre is supported for a single-term MFS mosaic without outliers (#1062)",
+            });
+        }
+        Ok(())
+    }
+
     /// Guard the tested MEM subset at both the CASA reader and typed request.
     pub(crate) fn validate_mem_scope(&self) -> Result<(), InvalidRequest> {
         if self.deconvolver == Deconvolver::Mem
@@ -994,6 +996,12 @@ impl AwProjection {
         self.wbawp && self.aterm
     }
 
+    /// The imported-buffer tolerance. CASA stores the image parameter in
+    /// Float degrees before converting the Quantity to Float radians.
+    pub(crate) fn pa_tolerance_rad(&self) -> f32 {
+        f64::from(self.computepastep as f32).to_radians() as f32
+    }
+
     fn validate(&self) -> Result<(), InvalidRequest> {
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         let Some(planes) = self.wprojplanes else {
@@ -1003,6 +1011,16 @@ impl AwProjection {
                  implemented by casa-rs yet (#980)",
             );
         };
+        let pa_step_rad = self.pa_tolerance_rad();
+        if !pa_step_rad.is_finite() || pa_step_rad <= 0.0 {
+            return invalid("computepastep", "the PA step must be finite and positive");
+        }
+        if !(self.rotatepastep as f32).is_finite() || self.rotatepastep as f32 <= 0.0 {
+            return invalid(
+                "rotatepastep",
+                "the rotation step must be finite and positive",
+            );
+        }
         // `AWConvFunc`'s constructor: a cell needs one of the two.
         if !self.aterm && !self.psterm {
             return invalid(
@@ -1025,6 +1043,12 @@ impl AwProjection {
             ..
         } = &self.cf_source
         {
+            if self.rotatepastep != 360.0 {
+                return invalid(
+                    "rotatepastep",
+                    "runtime rotation is supported for imported caches (#1070)",
+                );
+            }
             let size = *native_cf_working_size;
             if size < 8
                 || !size.is_multiple_of(2)
@@ -1420,111 +1444,12 @@ fn rest_frequencies_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec
     Ok(frequencies)
 }
 
-/// `none` (each plane's fitted beam), `common`, or a beam's
-/// `[major, minor, angle]`, read as `SynthesisParamsDeconv::fromRecord`
-/// reads `restoringbeam`'s quantities: each with casacore's quantity
-/// reader, as casacore's `GaussianBeam::setMajorMinor` and `setPA` accept
-/// them (angular units, axes neither negative nor inverted). A zero axis is
-/// casacore's null beam, which restores each plane with its fitted beam.
-fn restoring_beam<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<RestoringBeamPolicy, D::Error> {
-    match Value::deserialize(deserializer)? {
-        Value::String(text) if unset(&text) => Ok(RestoringBeamPolicy::PerPlane),
-        Value::String(text) if text == "common" => Ok(RestoringBeamPolicy::Common),
-        Value::Array(items) => {
-            let texts = items
-                .iter()
-                .map(|item| item.as_str().ok_or_else(|| unexpected(item, "text")))
-                .collect::<Result<Vec<_>, D::Error>>()?;
-            let [major, minor, angle] = texts.as_slice() else {
-                return Err(D::Error::custom(format!(
-                    "restoringbeam {texts:?}: expected its major and minor axes and angle"
-                )));
-            };
-            given_restoring_beam([major, minor, angle]).map_err(|_| {
-                D::Error::custom(format!(
-                    "Cannot construct a restoringbeam from supplied parameters {texts:?}: give \
-                     angular axes, the major axis at least the minor, and an angular position \
-                     angle, as CASA's tclean requires"
-                ))
-            })
-        }
-        value => Err(unexpected(
-            &value,
-            "none, common or a beam's axes and angle",
-        )),
-    }
-}
+pub(crate) mod execution;
+mod gridder;
 
-/// A beam's `[major, minor, angle]` quantities, or the fitted beams for
-/// casacore's null beam.
-fn given_restoring_beam(texts: [&str; 3]) -> Result<RestoringBeamPolicy, ()> {
-    let radians = Unit::from_str("rad").expect("a casacore unit");
-    let [major, minor, angle] = texts.map(|text| {
-        Quantity::read(text)
-            .ok()
-            .and_then(|quantity| quantity.get_value_in(&radians).ok())
-            .filter(|value| value.is_finite())
-            .ok_or(())
-    });
-    let [major, minor, angle] = [major?, minor?, angle?];
-    if major < 0.0 || minor < 0.0 || major < minor {
-        return Err(());
-    }
-    if major == 0.0 || minor == 0.0 {
-        return Ok(RestoringBeamPolicy::PerPlane);
-    }
-    FixedRestoringBeam::new(major, minor, angle)
-        .map(RestoringBeamPolicy::Fixed)
-        .map_err(|_| ())
-}
+pub use gridder::Gridder;
 
-fn major_cycle_limit<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<usize>, D::Error> {
-    let value = Value::deserialize(deserializer)?;
-    match value.as_i64() {
-        Some(-1) => Ok(None),
-        Some(limit) => usize::try_from(limit)
-            .map(Some)
-            .map_err(|_| unexpected(&value, "-1 or a major-cycle count")),
-        None => Err(unexpected(&value, "-1 or a major-cycle count")),
-    }
-}
-
-fn hogbom_iteration_mode<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<HogbomIterationAccounting, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "strict" => Ok(HogbomIterationAccounting::Strict),
-        "casa-inclusive" => Ok(HogbomIterationAccounting::CasaInclusive),
-        other => Err(D::Error::custom(format!("hogbom_iteration_mode {other:?}"))),
-    }
-}
-
-fn normalization<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<ProductNormalization, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "flatnoise" => Ok(ProductNormalization::FlatNoise),
-        "flatsky" => Ok(ProductNormalization::FlatSky),
-        "pbsquare" => Ok(ProductNormalization::PbSquare),
-        other => Err(D::Error::custom(format!("normtype {other:?}"))),
-    }
-}
-
-fn grid_precision<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<GridPrecision>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "auto" => Ok(None),
-        "f32" => Ok(Some(GridPrecision::F32)),
-        "f64" => Ok(Some(GridPrecision::F64)),
-        other => Err(D::Error::custom(format!("gridprecision {other:?}"))),
-    }
-}
-
+mod beam;
 mod uv_taper;
 
 #[cfg(test)]

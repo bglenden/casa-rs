@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-import warnings
 
 import pytest
 
@@ -123,13 +122,14 @@ def test_task_parameters_mutate_reset_save_reload_and_track_origins(
 
 
 def test_load_infers_surface_with_the_authoritative_toml_parser(tmp_path: Path) -> None:
+    version = parameters.definition("flagmanager")["contract_version"]
     profile = tmp_path / "single-quoted.toml"
     profile.write_text(
-        """[casars]
+        f"""[casars]
 format = 1
 surface = 'flagmanager'
 kind = 'task'
-contract = 1
+contract = {version}
 
 [parameters]
 vis = ['target.ms']
@@ -145,10 +145,10 @@ comment = 'parsed by Rust'
     assert loaded["comment"] == "parsed by Rust"
 
     profile.write_text(
-        """[casars]
+        f"""[casars]
 format = 1
 kind = 'task'
-contract = 1
+contract = {version}
 
 [parameters]
 vis = ['target.ms']
@@ -254,20 +254,20 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
 
 
 @pytest.mark.parametrize("slot", ["file", "last", "last_successful"])
-def test_explicit_migration_warnings_survive_load_reload_and_mapping(
+def test_stale_profile_is_rejected_without_rewriting_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slot: str
 ) -> None:
     monkeypatch.delenv("CASA_RS_STATE_DIR", raising=False)
-    source = '''[casars]
+    current = parameters.definition("tclean")["contract_version"]
+    source = f'''[casars]
 format = 1
-surface = "imager"
+surface = "tclean"
 kind = "task"
-contract = 28
+contract = {current - 1}
 [parameters]
 vis = ["unused.ms"]
 imagename = "unused"
 cell = "1arcsec"
-datacolumn = "none"
 '''
     if slot == "file":
         path = tmp_path / "legacy.toml"
@@ -278,27 +278,6 @@ datacolumn = "none"
         load = lambda: getattr(parameters, slot)("tclean", workspace=tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(source, encoding="utf-8")
-    with warnings.catch_warnings(record=True) as notices:
-        warnings.simplefilter("always")
-        values = load()
-        assert len(notices) == 1
-        message = str(notices[0].message)
-        assert '"datacolumn"' in message and '"none"' in message
-        assert '"corrected"' in message and "stored legacy representation" in message
-        # Managed sparse profiles may omit a converted value equal to the default.
-        assert dict(values).get("datacolumn", "corrected") == "corrected"
-        assert values["datacolumn"] == "corrected"
-        values["niter"] = 1
-        values.reset("niter")
-        values.revert()
-        assert len(notices) == 1
-        values.reload()
-        assert len(notices) == 2
-        assert str(notices[1].message) == message
-        assert values["datacolumn"] == "corrected"
-        current = values.save(tmp_path / "current.toml")
+    with pytest.raises(ValueError, match="too old.*recreate the profile"):
+        load()
     assert path.read_text(encoding="utf-8") == source
-    with warnings.catch_warnings(record=True) as notices:
-        warnings.simplefilter("always")
-        parameters.load("tclean", current, workspace=tmp_path)
-        assert not notices

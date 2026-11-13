@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `table` tool (tb) over [`casa_tables::Table`]: every method of CASA
-//! 6.7.6.14's binding, with its signature (ADR-0019, #1025). A method
+//! 6.7.6.14's binding, with its signature (ADR-0017, #1025). A method
 //! casa-rs does not implement yet raises `NotImplementedError` naming #1028
 //! (`stubs.rs`).
 //!
@@ -13,7 +13,7 @@
 //! as `float64`, complex numbers as `complex128`, a column's rows last.
 //!
 //! The class is `frozen` and keeps the open table behind a `Mutex`, and
-//! every call runs with the GIL released (ADR-0019 item 4). What CASA logs
+//! every call runs with the GIL released (ADR-0017). What CASA logs
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
@@ -130,7 +130,7 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 }
 
 /// The tool keeps its table behind a `Mutex` and releases the GIL around
-/// Rust work (ADR-0019 item 4), which needs the table to be `Send`.
+/// Rust work (ADR-0017), which needs the table to be `Send`.
 const _: fn() = || {
     fn is_send<T: Send>() {}
     is_send::<State>();

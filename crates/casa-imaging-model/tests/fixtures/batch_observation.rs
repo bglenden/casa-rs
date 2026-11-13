@@ -216,7 +216,7 @@ pub fn problem_in(
 ) -> CompiledProblem {
     let frames = [FrequencyFrame::Topocentric; 2];
     compile(ProblemInput::new(
-        specification(polarization),
+        specification(polarization, None),
         geometry(phase, facets, psf, frames, false).build(),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
@@ -233,7 +233,7 @@ pub fn problem_framed(
     output: FrequencyFrame,
 ) -> CompiledProblem {
     compile(ProblemInput::new(
-        specification(vec![PolarizationCoordinate::StokesI]),
+        specification(vec![PolarizationCoordinate::StokesI], None),
         geometry(
             phase,
             FacetLayout::Single,
@@ -264,7 +264,7 @@ pub fn problem_mosaic(phase: PhaseCentreLaw, frame: DirectionFrame) -> CompiledP
     geometry.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
     geometry.pointing = PointingCentreLaw::FieldCentre;
     compile(ProblemInput::new(
-        specification(vec![PolarizationCoordinate::StokesI]),
+        specification(vec![PolarizationCoordinate::StokesI], None),
         geometry.build(),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
@@ -376,7 +376,40 @@ impl Geometry {
     }
 }
 
-fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecification {
+pub fn aw_problem() -> CompiledProblem {
+    let aw = casa_imaging_model::AwProjectionContract::new(
+        500.0,
+        std::num::NonZeroUsize::MIN,
+        true,
+        false,
+        true,
+        false,
+        false,
+        [0.0; 2],
+        5.0,
+        360.0,
+    )
+    .expect("an AW projection");
+    compile(ProblemInput::new(
+        specification(vec![PolarizationCoordinate::StokesI], Some(aw)),
+        geometry(
+            PhaseCentreLaw::Observation,
+            FacetLayout::Single,
+            PsfPhaseCentreLaw::ImageDomainReference,
+            [FrequencyFrame::Topocentric; 2],
+            false,
+        )
+        .build(),
+        super::common::observation_snapshot(0),
+        super::model_lifecycle_fixture::model_lifecycle(),
+    ))
+    .expect("an AW problem")
+}
+
+fn specification(
+    polarization: Vec<PolarizationCoordinate>,
+    aw: Option<casa_imaging_model::AwProjectionContract>,
+) -> ProblemSpecification {
     // CASA forms a spectral index of a Stokes I image alone.
     let mut products = vec![
         ProductKind::Psf,
@@ -384,7 +417,11 @@ fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecificat
         ProductKind::Model,
         ProductKind::RestoredImage,
         ProductKind::SumWeights,
-        ProductKind::Sensitivity,
+        if aw.is_some() {
+            ProductKind::Weight
+        } else {
+            ProductKind::Sensitivity
+        },
         ProductKind::TaylorTerms,
     ];
     if polarization == [PolarizationCoordinate::StokesI] {
@@ -394,17 +431,26 @@ fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecificat
         .into_iter()
         .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
         .collect();
-    ProblemSpecification::new(
-        ScientificContract::new(
-            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-            MeasurementEquationContract::new(
-                InstrumentResponse::Scalar,
-                DeclaredInnerProducts::new(
-                    ModelInnerProduct::HermitianEuclidean,
-                    VisibilityInnerProduct::HermitianEuclidean,
-                ),
-            ),
+    let equation = MeasurementEquationContract::new(
+        if aw.is_some() {
+            InstrumentResponse::PrimaryBeam
+        } else {
+            InstrumentResponse::Scalar
+        },
+        DeclaredInnerProducts::new(
+            ModelInnerProduct::HermitianEuclidean,
+            VisibilityInnerProduct::HermitianEuclidean,
         ),
+    );
+    let spectral =
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent);
+    let science = match aw {
+        Some(aw) => ScientificContract::new(spectral, equation.with_aw_projection(aw))
+            .with_instrument_model(casa_imaging_model::InstrumentModel::CasaEvlaWidebandAwV1),
+        None => ScientificContract::new(spectral, equation),
+    };
+    ProblemSpecification::new(
+        science,
         ReconstructionContract::new(
             ReconstructionBasis::Taylor { terms: 2 },
             ReconstructionAlgorithm::Mtmfs {

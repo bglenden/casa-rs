@@ -1086,47 +1086,6 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
-    /// Creates a new temporary image backed by an in-memory table.
-    ///
-    /// Prefer [`TempImage::new()`](crate::TempImage::new) which avoids table
-    /// overhead entirely.
-    #[deprecated(note = "Use TempImage::new() instead")]
-    pub fn create_temp(shape: Vec<usize>, coords: CoordinateSystem) -> Result<Self, ImageError> {
-        let tile_shape = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
-            .tile_shape()
-            .to_vec();
-        let mut table = Self::build_table(&shape, true)?;
-        Self::initialize_keywords(&mut table, &coords);
-        table.set_info(TableInfo {
-            table_type: "Image".into(),
-            sub_type: "PAGEDIMAGE".into(),
-            readme: Vec::new(),
-        });
-        table.add_row(RecordValue::new(vec![RecordField::new(
-            MAP_COLUMN,
-            Value::Array(to_array_value(&ArrayD::from_elem(
-                IxDyn(&shape),
-                T::default_value(),
-            ))),
-        )]))?;
-
-        Ok(Self {
-            table,
-            shape,
-            tile_shape,
-            coords,
-            path: None,
-            units: String::new(),
-            misc_info: RecordValue::default(),
-            temp_masks: BTreeMap::new(),
-            persistent_masks: RefCell::new(BTreeMap::new()),
-            temp_history: Vec::new(),
-            tiled_io: None,
-            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
-            _pixel: PhantomData,
-        })
-    }
-
     /// Opens an existing image from disk as the requested typed image.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
@@ -2075,6 +2034,28 @@ impl<T: ImagePixel> PagedImage<T> {
         <Self as ImageInterface<T>>::get_mask_slice(self, start, shape, stride)
     }
 
+    /// The cache and two tile buffers a default-mask slice may hold, or two
+    /// full copies for a legacy inline mask. Excludes the returned slice.
+    ///
+    /// # Errors
+    /// The mask metadata is invalid or the paged mask cannot be opened.
+    pub fn mask_slice_working_bytes(&self) -> Result<u64, ImageError> {
+        let Some(name) = self.default_mask_name() else {
+            return Ok(0);
+        };
+        let Some(Value::Record(masks)) = self.table.keywords().get(MASKS_KEYWORD) else {
+            return Err(ImageError::MaskNotFound(name));
+        };
+        match masks.get(&name) {
+            Some(Value::Array(ArrayValue::Bool(mask))) => Ok(2 * mask.len() as u64),
+            Some(Value::Record(record)) => self.with_persistent_mask(&name, record, |mask| {
+                let tile = mask.tile_shape().iter().product::<usize>() as u64;
+                Ok(self.cache_bytes() as u64 + 2 * tile)
+            }),
+            _ => Err(ImageError::MaskNotFound(name)),
+        }
+    }
+
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
         if let Some(mask) = self.temp_masks.get(name) {
@@ -2310,20 +2291,6 @@ impl<T: ImagePixel> PagedImage<T> {
     /// image's tiled I/O path instead of materializing the `"map"` cell.
     pub fn table(&self) -> &Table {
         &self.table
-    }
-
-    fn build_table(shape: &[usize], memory: bool) -> Result<Table, ImageError> {
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-            MAP_COLUMN,
-            T::PRIMITIVE_TYPE,
-            shape.to_vec(),
-        )])
-        .map_err(|e| ImageError::Table(e.to_string()))?;
-        Ok(if memory {
-            Table::with_schema_memory(schema)
-        } else {
-            Table::with_schema(schema)
-        })
     }
 
     fn initialize_keywords(table: &mut Table, coords: &CoordinateSystem) {
@@ -4186,27 +4153,8 @@ mod tests {
     }
 
     #[test]
-    fn temp_and_any_image_wrappers_cover_remaining_public_variants() {
-        #[allow(deprecated)]
-        let mut temp = PagedImage::<f32>::create_temp(vec![2, 3], make_coords()).unwrap();
-        assert_eq!(temp.shape(), &[2, 3]);
-        assert_eq!(temp.ndim(), 2);
-        assert_eq!(temp.nelements(), 6);
-        assert!(!temp.is_persistent());
-        assert!(!temp.is_paged());
-        assert!(temp.is_writable());
-        assert_eq!(temp.image_type_name(), "TempImage");
-        assert_eq!(temp.name(), None);
-        temp.add_history("temp-entry").unwrap();
-        assert_eq!(temp.history().unwrap(), vec!["temp-entry".to_string()]);
-
+    fn any_paged_image_opens_supported_pixel_types() {
         let dir = tempfile::tempdir().unwrap();
-        let save_as_path = dir.path().join("save_as.image");
-        temp.save_as(&save_as_path).unwrap();
-        assert!(temp.is_persistent());
-        assert_eq!(temp.name(), Some(save_as_path.as_path()));
-        assert_eq!(temp.image_type_name(), "PagedImage");
-
         let variants = [
             (dir.path().join("any_f32.image"), ImagePixelType::Float32),
             (dir.path().join("any_f64.image"), ImagePixelType::Float64),

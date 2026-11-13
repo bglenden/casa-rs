@@ -94,6 +94,21 @@ fn single_window_mosaic(geometry: &GridGeometry) -> MosaicPb {
     )
 }
 
+#[test]
+fn mosaic_pointing_admission_truncates_pixels_before_checking_the_image() {
+    let geometry = geometry();
+    let set = single_window_mosaic(&geometry);
+    let middle = (IMAGE / 2) as f64;
+    for pixel in [-0.75, 0.0, IMAGE as f64 - 0.25] {
+        assert!(set.admits_pointing(&geometry, [(middle - pixel) * CELL_RAD, 0.0]));
+        assert!(set.admits_pointing(&geometry, [0.0, (pixel - middle) * CELL_RAD]));
+    }
+    for pixel in [-1.25, IMAGE as f64 + 0.25] {
+        assert!(!set.admits_pointing(&geometry, [(middle - pixel) * CELL_RAD, 0.0]));
+        assert!(!set.admits_pointing(&geometry, [0.0, (pixel - middle) * CELL_RAD]));
+    }
+}
+
 fn operator_with(cf: Box<dyn ConvolutionFunctionSet>) -> MeasurementOperator {
     MeasurementOperator::new(
         geometry(),

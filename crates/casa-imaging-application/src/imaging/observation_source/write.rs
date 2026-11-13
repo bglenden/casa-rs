@@ -39,7 +39,9 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 
-use casa_imaging_model::SequentialContinuumTransform;
+use casa_imaging_model::{
+    CompiledProblem, InstrumentResponse, ReconstructionBasis, SequentialContinuumTransform,
+};
 use casa_imaging_runtime::pass::{NativeBlock, STREAM_SLOTS, SourceError};
 use casa_ms::observation_io::UpdateSession;
 use casa_observation::{
@@ -101,6 +103,9 @@ pub(crate) struct WriteBack {
     corrected: bool,
     /// Whether a time's frequency bands limit the channels written.
     by_band: bool,
+    /// Whether CASA's standard continuum GridFT suppresses every model
+    /// correlation of a partly flagged native channel.
+    collapse_model_flags: bool,
     queue: Mutex<Queue>,
 }
 
@@ -108,11 +113,31 @@ impl WriteBack {
     /// The write-back of a run writing the model when `model` and the
     /// corrected data when `corrected`, limited at each time to the
     /// channels its frequency bands select when `by_band`.
-    pub(crate) fn new(model: bool, corrected: bool, by_band: bool) -> Self {
+    pub(crate) fn new(
+        problem: &CompiledProblem,
+        model: bool,
+        corrected: bool,
+        by_band: bool,
+    ) -> Self {
+        let equation = problem.science().measurement_equation();
+        // GridFT::get uses FTMachine::getInterpolateArrays. Its direct
+        // continuum path calls setSpectralFlag, which ORs correlations
+        // for the non-pseudo-I imaging modes supported here. MultiTermFTNew
+        // invokes the same GridFT for each Taylor term.
+        let collapse_model_flags = model
+            && problem.visibility_transform().is_none()
+            && matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. }
+            )
+            && equation.instrument_response() == InstrumentResponse::Scalar
+            && equation.w_projection().is_none()
+            && equation.aw_projection().is_none();
         Self {
             model,
             corrected,
             by_band,
+            collapse_model_flags,
             queue: Mutex::default(),
         }
     }
@@ -425,17 +450,26 @@ impl<'a> BatchWriter<'a> {
                 transform.rule(context.field as i32, context.spectral_window)
             });
             let values = block.row(0, row).values;
+            let model_flags = (model && self.write_back.collapse_model_flags)
+                .then(|| block.prediction_row(0, row).flags);
             for (k, channel) in channel_of.iter().enumerate() {
                 let read = in_band.is_empty()
                     || in_band[*sample as usize / per_time * block.channels() + k];
                 if !read || !writes_channel(rule, block.channel_indices()[k]) {
                     continue;
                 }
+                let first_cell = k * block.correlations();
+                let write_prediction = model
+                    && model_flags.is_none_or(|flags| {
+                        !flags[first_cell..first_cell + block.correlations()].contains(&true)
+                    });
+                // CASA starts its model buffer at zero and writes the
+                // suppressed channels too, replacing any previous model.
                 for (j, product) in product_of.iter().enumerate() {
                     let at = (*sample as usize * channels + channel) * products + product;
-                    let cell = k * block.correlations() + j;
+                    let cell = first_cell + j;
                     self.written[at] = true;
-                    if model {
+                    if write_prediction {
                         self.model[at] = predictions[row * cells + cell];
                     }
                     if corrected {

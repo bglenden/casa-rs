@@ -1,4 +1,4 @@
-"""`casars.tools.quanta`: CASA's `qa` tool (ADR-0019, #841).
+"""`casars.tools.quanta`: CASA's `qa` tool (ADR-0017, #841).
 
 Signatures are compared with CASA 6.7.6's installed binding
 (`data/casa_quanta_signatures.json`, and a live CASA when importable) and

@@ -177,6 +177,8 @@ pub(crate) struct WindowNoise {
 /// its integration time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RowNoise {
+    pub(crate) time_s: f64,
+    pub(crate) antennas: [usize; 2],
     /// DISH_DIAMETER of ANTENNA1 and ANTENNA2, metres.
     pub(crate) diameters_m: [f64; 2],
     /// Their airmasses ([`airmass`]).
@@ -311,14 +313,26 @@ pub(crate) struct WindowTsys {
 }
 
 impl WindowTsys {
+    /// The scalar T Jones parameter, before bad-parameter neutralization.
+    pub(crate) fn antenna_gain(&self, diameter_m: f64, airmass: f32, exposure_s: f64) -> f32 {
+        self.gain(self.factor(exposure_s), diameter_m, airmass)
+    }
+
+    fn factor(&self, exposure_s: f64) -> f64 {
+        (f64::from(self.model.jansky_per_kelvin) / (self.channel_bandwidth_hz * exposure_s).sqrt())
+            .sqrt()
+    }
+
+    fn gain(&self, factor: f64, diameter_m: f64, airmass: f32) -> f32 {
+        let tsys = self.model.tsys(&self.band, airmass);
+        (diameter_m / factor / f64::from(tsys.sqrt())) as f32
+    }
+
     /// σ of each real and imaginary draw of `row`, Jy: s_i s_j.
     pub(crate) fn sigma(&self, row: &RowNoise) -> f32 {
-        let factor = (f64::from(self.model.jansky_per_kelvin)
-            / (self.channel_bandwidth_hz * row.exposure_s).sqrt())
-        .sqrt();
+        let factor = self.factor(row.exposure_s);
         let scale = |diameter_m: f64, airmass: f32| {
-            let tsys = self.model.tsys(&self.band, airmass);
-            let jones = (diameter_m / factor / f64::from(tsys.sqrt())) as f32;
+            let jones = self.gain(factor, diameter_m, airmass);
             // A zero or NaN `T` is bad, and a bad `T` applies as 1.
             if jones.is_nan() || jones == 0.0 {
                 1.0
@@ -336,6 +350,8 @@ mod tests {
 
     fn row(diameters_m: [f64; 2], airmass: [f32; 2], exposure_s: f64) -> RowNoise {
         RowNoise {
+            time_s: 0.,
+            antennas: [0, 1],
             diameters_m,
             airmass,
             exposure_s,

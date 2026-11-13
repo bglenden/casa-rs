@@ -327,6 +327,7 @@ impl CpuBackend {
             return;
         }
         let w_positive = placement.prediction_w_positive;
+        let conjugate = cf.prediction_conjugates(placement.cf, w_positive);
         let origin_shift = u8::from(
             placement.gradient != [0.0; 2] && cf.pointing_origin_shift(placement.cf, false),
         );
@@ -349,7 +350,7 @@ impl CpuBackend {
                     // for w ≤ 0 and sums that same tap into its norm: the
                     // forward norm carries the opposite conjugation from
                     // the adjoint's (`w_positive`), as the gather does.
-                    norms[vpol] += kernel::norm(&taps, location, mueller, !w_positive);
+                    norms[vpol] += kernel::norm(&taps, location, mueller, !conjugate);
                 }
                 let sum = if let Some((_, sum)) = gathered.iter().find(|(m, _)| *m == mueller) {
                     *sum
@@ -364,7 +365,7 @@ impl CpuBackend {
                             location,
                             &taps,
                             mueller,
-                            w_positive,
+                            conjugate,
                             (placement.gradient, origin_shift),
                         ) * *power;
                     }
@@ -531,6 +532,7 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
     mut clip: Option<Clip<'_, T>>,
 ) {
     let w_positive = placement.w > 0.0;
+    let conjugate = cf.adjoint_conjugates(placement.cf, mode, w_positive);
     let origin_shift = u8::from(
         placement.gradient != [0.0; 2]
             && cf.pointing_origin_shift(placement.cf, mode != Mode::Data),
@@ -544,8 +546,8 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
         _ => None,
     };
     let kernel_sum = |mueller: u8| match kept {
-        Some(cells) => kernel::clipped_norm(taps, location, cells, mueller, w_positive),
-        None => kernel::norm(taps, location, mueller, w_positive),
+        Some(cells) => kernel::clipped_norm(taps, location, cells, mueller, conjugate),
+        None => kernel::norm(taps, location, mueller, conjugate),
     };
     for (gpol, row) in table.iter().enumerate() {
         // One value per Mueller plane this grid polarization takes.
@@ -605,7 +607,7 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
                         location,
                         taps,
                         mueller,
-                        w_positive,
+                        conjugate,
                         placement.gradient,
                         origin_shift,
                         value,
@@ -616,7 +618,7 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
                         (layout.tile(), *cells),
                         location,
                         taps,
-                        (mueller, w_positive, placement.gradient, origin_shift),
+                        (mueller, conjugate, placement.gradient, origin_shift),
                         value,
                         scratch,
                     ),

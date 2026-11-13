@@ -996,7 +996,7 @@ fn data_schema_bundle_json() -> PyResult<String> {
 }
 
 /// The extension module: the `casars.data` image and table objects, the
-/// CASA tools of `casars.tools` (ADR-0019), and the parameter, plot and task
+/// CASA tools of `casars.tools` (ADR-0017), and the parameter, plot and task
 /// functions that `casars.parameters`, `casars.data` and `casars.tasks` call.
 #[pymodule]
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {

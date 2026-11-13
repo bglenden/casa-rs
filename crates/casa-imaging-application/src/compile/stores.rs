@@ -205,6 +205,7 @@ pub(super) fn reference(
             survey,
             &channels,
             frame,
+            None,
         )?
         .edges_hz();
         if (lower_hz..=upper_hz).contains(&start_hz) {
@@ -285,14 +286,24 @@ pub(super) fn continuum_band(
             })
             .collect::<Result<WindowChannels, PrepareError>>()?;
         let observed = (store.catalogue(), &store.engine);
+        // MVC's determineFreqRange passes the first selected field to
+        // advisechansel. Its cube still images every selected field.
+        let mvc_field = (request.mvc_output_channels.is_some() || request.mvc_auto_channels)
+            .then(|| survey.fields.first().copied())
+            .flatten();
         // CASA grids an MFS image's samples at their LSRK frequencies
         // (`FTMachine::matchChannel`) whatever frame its header records.
-        let gridded =
-            envelope::continuum_envelope(observed, survey, &selected, FrequencyRef::LSRK)?;
+        let gridded = envelope::continuum_envelope(
+            observed,
+            survey,
+            &selected,
+            FrequencyRef::LSRK,
+            mvc_field,
+        )?;
         let recorded = if request.outframe == FrequencyRef::LSRK {
             gridded
         } else {
-            envelope::continuum_envelope(observed, survey, &selected, request.outframe)?
+            envelope::continuum_envelope(observed, survey, &selected, request.outframe, mvc_field)?
         };
         band = Some(match band {
             None => (gridded, recorded),

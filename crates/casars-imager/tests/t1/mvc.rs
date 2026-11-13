@@ -593,6 +593,47 @@ fn mvc_clean_with_positive_pblimit_uses_casa_taylor_support() {
     }
 }
 
+/// MVC corrects both restored Taylor terms with the shared weighted PB.
+/// CASA copies its mask even when a negative pblimit leaves the restored
+/// Taylor images unmasked. `pbcor` also touches a zero, unmasked `.pb.tt1`.
+#[test]
+fn mvc_corrects_both_taylor_images_with_the_shared_primary_beam() {
+    let observation = weighted_observation();
+    for (name, pblimit) in [("negative", -0.8), ("positive", 0.8)] {
+        let (summary, products) = observation.image(
+            &format!("mvc-pbcor-{name}"),
+            json!({
+                "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+                "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+                "niter": 1, "cycleniter": 1, "pbcor": true, "pblimit": pblimit,
+            }),
+        );
+        assert_eq!(summary.actual_minor_iterations, 1);
+        assert_eq!(summary.major_cycles, 2);
+        let beam = products.get(".pb.tt0");
+        let mask = beam.mask().expect("Taylor PB mask");
+        assert_eq!(mask.iter().filter(|value| **value).count(), 10_437);
+        for term in 0..2 {
+            let restored = products.get(&format!(".image.tt{term}"));
+            let corrected = products.get(&format!(".image.tt{term}.pbcor"));
+            assert_eq!(corrected.mask().as_ref(), Some(&mask));
+            assert_eq!(restored.mask().as_ref(), (pblimit > 0.0).then_some(&mask));
+            for (index, &pb) in beam.pixels.indexed_iter() {
+                if mask[[index.0, index.1, 0, 0]] {
+                    let expected = restored.pixels[index] / pb;
+                    let actual = corrected.pixels[index];
+                    assert!((actual - expected).abs() <= 1e-6 * expected.abs());
+                }
+            }
+        }
+        let pb1 = products.get(".pb.tt1");
+        assert!(pb1.pixels.iter().all(|value| *value == 0.0));
+        assert!(pb1.mask().is_none());
+        assert!(!products.suffixes().contains(".image.pbcor"));
+        assert!(!products.suffixes().contains(".alpha.pbcor"));
+    }
+}
+
 /// CASA does not create a cube model when the initial threshold check
 /// stops before any minor cycle, but does publish the Taylor models (#1069).
 #[test]

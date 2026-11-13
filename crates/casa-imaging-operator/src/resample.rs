@@ -611,19 +611,28 @@ struct RowPlacing {
 }
 
 impl RowPlacing {
-    fn new(cf: &dyn ConvolutionFunctionSet, geometry: &GridGeometry, row: &NativeRow<'_>) -> Self {
-        Self {
+    fn new(
+        cf: &dyn ConvolutionFunctionSet,
+        geometry: &GridGeometry,
+        row: &NativeRow<'_>,
+    ) -> Result<Option<Self>, OperatorError> {
+        cf.validate_row_context(&row.context)?;
+        let gradient = if cf.pointing_ramp() {
+            if !cf.admits_pointing(geometry, row.pointing_offset_rad) {
+                return Ok(None);
+            }
+            geometry.pointing_gradient(row.pointing_offset_rad)
+        } else {
+            [0.0, 0.0]
+        };
+        Ok(Some(Self {
             hold: CellHold::new(),
-            gradient: if cf.pointing_ramp() {
-                geometry.pointing_gradient(row.pointing_offset_rad)
-            } else {
-                [0.0, 0.0]
-            },
+            gradient,
             uniform: cf.uniform_key(),
             key: None,
             oversampling: 0,
             half_support: [0, 0],
-        }
+        }))
     }
 }
 
@@ -1008,7 +1017,7 @@ impl SpectralResampler {
     ) -> Result<(), OperatorError> {
         let npol = operator.polarization().correlations().len();
         self.validate_row(operator, row, npol)?;
-        if is_autocorrelation(row) {
+        if row.row_flag || is_autocorrelation(row) {
             return Ok(());
         }
         let cf = operator.cf();
@@ -1022,7 +1031,9 @@ impl SpectralResampler {
         let mut values = [Complex32::default(); 4];
         let mut weights = [0.0_f32; 4];
         let (values, weights) = (&mut values[..npol], &mut weights[..npol]);
-        let mut placing = RowPlacing::new(cf, geometry, row);
+        let Some(mut placing) = RowPlacing::new(cf, geometry, row)? else {
+            return Ok(());
+        };
         // A directly sampled row's slot per native channel; other samplings
         // weigh every pass.
         let slots = slots.filter(|_| self.sampling == Sampling::Direct);
@@ -1141,10 +1152,11 @@ impl SpectralResampler {
         }
         // `mosweight` grids each field's samples on its own planes alone; a
         // field without planes grids nothing.
-        if shape.density_plane(0, row.context.field).is_none() {
+        if row.row_flag || shape.density_plane(0, row.context.field).is_none() {
             return Ok(());
         }
         let cf = operator.cf();
+        cf.validate_row_context(&row.context)?;
         let mut visit = |plane: u32, frequency_hz: f64, source: Source| {
             let Some(plane) = shape.density_plane(plane, row.context.field) else {
                 return;

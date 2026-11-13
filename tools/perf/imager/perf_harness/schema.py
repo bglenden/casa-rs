@@ -33,7 +33,6 @@ from .tolerances import (
 
 
 WORKLOAD_SCHEMA_VERSION = 1
-LEGACY_RUN_RESULT_SCHEMA_VERSION = 2
 RUN_RESULT_SCHEMA_VERSION = 3
 LEGACY_COMPARISON_SCHEMA_VERSIONS = {3}
 LIVE_UNVERSIONED_COMPARISON_VARIANT = "live_unversioned"
@@ -200,36 +199,33 @@ REVIEW_FIELDS = {
     "required_reviewer",
     "requires_human_acceptance_before_done",
 }
-LEGACY_RUN_RESULT_FIELDS = frozenset(
-    {
-        "schema_version",
-        "kind",
-        "status",
-        "run_id",
-        "created_at",
-        "started_at",
-        "completed_at",
-        "manifest_path",
-        "workload",
-        "dataset",
-        "mode",
-        "run",
-        "comparison",
-        "review",
-        "run_support",
-        "environment",
-        "command",
-        "artifacts",
-        "products",
-        "logs",
-        "exit_code",
-        "results",
-        "benchmark_features",
-        "human_review",
-        "wave4_acceleration",
-    }
-)
-RUN_RESULT_FIELDS = set(LEGACY_RUN_RESULT_FIELDS)
+RUN_RESULT_FIELDS = {
+    "schema_version",
+    "kind",
+    "status",
+    "run_id",
+    "created_at",
+    "started_at",
+    "completed_at",
+    "manifest_path",
+    "workload",
+    "dataset",
+    "mode",
+    "run",
+    "comparison",
+    "review",
+    "run_support",
+    "environment",
+    "command",
+    "artifacts",
+    "products",
+    "logs",
+    "exit_code",
+    "results",
+    "benchmark_features",
+    "human_review",
+    "wave4_acceleration",
+}
 RUN_STATUSES = {
     "completed",
     "dry_run",
@@ -239,17 +235,6 @@ RUN_STATUSES = {
     "out_of_tolerance",
     "unavailable",
 }
-LEGACY_RUN_STATUSES = frozenset(
-    {
-        "completed",
-        "dry_run",
-        "failed_execution",
-        "failed_comparison",
-        "out_of_tolerance",
-        "unavailable",
-    }
-)
-
 ALTERNATING_GATES = frozenset({"slowdown", "blocking"})
 ALTERNATING_GATE_VERDICT_STATUSES = frozenset(
     {"pass", "fail", "inconclusive", "not_evaluated"}
@@ -1034,99 +1019,15 @@ def load_run_result(
 
 
 def validate_run_result(value: dict[str, Any], *, source: str = "result") -> None:
-    _validate_run_result_version(
-        value,
-        source=source,
-        expected_version=RUN_RESULT_SCHEMA_VERSION,
-        fields=RUN_RESULT_FIELDS,
-        statuses=RUN_STATUSES,
-        allow_publication_recovery=True,
-    )
-
-
-def validate_legacy_run_result_v2(
-    value: dict[str, Any], *, source: str = "legacy result"
-) -> None:
-    """Validate schema-v2 evidence only for the explicit v2-to-v3 migrator."""
-
-    _validate_run_result_version(
-        value,
-        source=source,
-        expected_version=LEGACY_RUN_RESULT_SCHEMA_VERSION,
-        fields=LEGACY_RUN_RESULT_FIELDS,
-        statuses=LEGACY_RUN_STATUSES,
-        allow_publication_recovery=False,
-    )
-
-
-def _validate_run_result_version(
-    value: dict[str, Any],
-    *,
-    source: str,
-    expected_version: int,
-    fields: set[str] | frozenset[str],
-    statuses: set[str] | frozenset[str],
-    allow_publication_recovery: bool,
-) -> None:
-    _schema_version(value, expected_version, source)
-    unknown = sorted(set(value) - fields)
+    _schema_version(value, RUN_RESULT_SCHEMA_VERSION, source)
+    unknown = sorted(set(value) - RUN_RESULT_FIELDS)
     if unknown:
         raise ContractError(f"{source}: unknown result field(s): {', '.join(unknown)}")
-    status = value.get("status")
-    if status not in statuses:
+    if value.get("status") not in RUN_STATUSES:
         raise ContractError(
-            f"{source}: status must be one of {', '.join(sorted(statuses))}"
+            f"{source}: status must be one of {', '.join(sorted(RUN_STATUSES))}"
         )
-    if expected_version == RUN_RESULT_SCHEMA_VERSION:
-        _validate_strict_run_result_v3(value, source=source)
-        return
-
-    # Schema v2 is an input format for the one-time migrator, not the durable
-    # evidence contract. Keep its historical shallow validation unchanged so
-    # malformed old records can be repaired by the explicit migration code.
-    _nonempty_string(value, "kind", source)
-    _nonempty_string(value, "run_id", source)
-    _nonempty_string(value, "created_at", source)
-    _object(value, "environment", source)
-    _object(value, "artifacts", source)
-    results = _object(value, "results", source)
-    failure_statuses = statuses - {"completed", "dry_run", "recovered_publication"}
-    if status in failure_statuses:
-        failure = results.get("failure")
-        if not isinstance(failure, dict):
-            raise ContractError(f"{source}: {status} requires results.failure")
-        _nonempty_string(failure, "kind", f"{source}: results.failure")
-        _nonempty_string(failure, "reason", f"{source}: results.failure")
-    if allow_publication_recovery and status == "recovered_publication":
-        recovery = _object(results, "publication_recovery", f"{source}: results")
-        expected = {
-            "kind": "cold_cf_cache_publication",
-            "status": "completed",
-            "protocol_status": "recovered_publication",
-            "benchmark_eligible": False,
-            "timing_accepted": False,
-            "tclean_reinvoked": False,
-        }
-        for key, expected_value in expected.items():
-            if recovery.get(key) != expected_value:
-                raise ContractError(
-                    f"{source}: results.publication_recovery.{key} "
-                    f"must be {expected_value!r}"
-                )
-        casa = _object(results, "casa", f"{source}: results")
-        timings = _object(casa, "timings_seconds", f"{source}: results.casa")
-        if timings.get("runs") != [] or timings.get("median") is not None:
-            raise ContractError(
-                f"{source}: publication recovery cannot contain accepted CASA timings"
-            )
-        bundle = value.get("artifacts", {}).get("bundle")
-        if isinstance(bundle, dict) and bundle.get("state") == "complete":
-            raise ContractError(
-                f"{source}: publication recovery cannot be a complete evidence bundle"
-            )
-    for key in ("workload", "mode", "run"):
-        if key in value:
-            _object(value, key, source)
+    _validate_strict_run_result_v3(value, source=source)
 
 
 def _validate_strict_run_result_v3(value: dict[str, Any], *, source: str) -> None:

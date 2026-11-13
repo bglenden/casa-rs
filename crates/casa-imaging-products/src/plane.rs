@@ -118,12 +118,23 @@ pub(crate) fn produce_plane_member(
             // `SIImageStore::pbcor` leaves a plane zero only where the PB's
             // peak is: a blank plane's restored start model is corrected.
             let restored = restored_plane(request, valid)?;
+            if let Some(beam) = inputs.saved_mosaic_beam() {
+                // `SIImageStore::pbcor` uses the saved PB values, testing
+                // positivity rather than the new residual's pblimit.
+                let values = beam.read_values(plane.output_channel(), request.polarization)?;
+                return correct_primary_beam(&restored, &values, 0.0);
+            }
             let primary_beam =
                 primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
             correct_primary_beam(
                 &restored,
                 &primary_beam,
-                inputs.problem().products().validity().primary_beam(),
+                inputs
+                    .problem()
+                    .products()
+                    .validity()
+                    .primary_beam()
+                    .cutoff(),
             )
         }
         role => Err(ProductsError::UnsupportedProductRole { role }),
@@ -354,7 +365,7 @@ pub(crate) fn product_plane_validity(
     plane: &FinalNormalPlaneReader<'_>,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     inputs: &ContinuumProductInputs<'_>,
-    domain_role: &ImageDomainRole,
+    (domain_role, polarization): (&ImageDomainRole, usize),
 ) -> Result<Vec<bool>, ProductsError> {
     let shape = plane.shape();
     match rule {
@@ -366,6 +377,9 @@ pub(crate) fn product_plane_validity(
             Ok(vec![valid; shape[0] * shape[1]])
         }
         ProductValidityRule::PrimaryBeam(policy) => {
+            if let Some(beam) = inputs.saved_mosaic_beam() {
+                return beam.read_mask(plane.output_channel(), polarization);
+            }
             Ok(
                 primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?
                     .into_iter()
@@ -409,26 +423,24 @@ pub(crate) fn primary_beam_plane(
     )
 }
 
-fn correct_primary_beam(
+pub(crate) fn correct_primary_beam(
     values: &[f32],
     primary_beam: &[f32],
-    policy: casa_imaging_model::PrimaryBeamValidityPolicy,
+    cutoff: f32,
 ) -> Result<Vec<f32>, ProductsError> {
     values
         .iter()
         .zip(primary_beam)
         .map(|(value, beam)| {
-            let valid = match policy.comparison() {
-                ProductSupportComparison::StrictlyGreater => *beam > policy.cutoff(),
-            };
-            if !valid {
-                return Ok(0.0);
+            if *beam > cutoff {
+                let corrected = *value / *beam;
+                corrected
+                    .is_finite()
+                    .then_some(corrected)
+                    .ok_or(ProductsError::GeneratedNonfinite)
+            } else {
+                Ok(0.0)
             }
-            let corrected = *value / *beam;
-            corrected
-                .is_finite()
-                .then_some(corrected)
-                .ok_or(ProductsError::GeneratedNonfinite)
         })
         .collect()
 }

@@ -90,19 +90,51 @@
 
 #[path = "session_memory/apply.rs"]
 mod apply;
+#[path = "session_memory/apply_frequency.rs"]
+mod apply_frequency;
+#[path = "session_memory/captured_selection.rs"]
+mod captured_selection;
+#[path = "session_memory/coverage.rs"]
+mod coverage;
+#[path = "session_memory/data_descriptions.rs"]
+mod data_descriptions;
+#[path = "session_memory/existing_append.rs"]
+mod existing_append;
+#[path = "session_memory/feeds.rs"]
+mod feeds;
 #[path = "session_memory/field_grids.rs"]
 mod field_grids;
+#[path = "session_memory/focus.rs"]
+mod focus;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
 #[path = "session_memory/heap.rs"]
 mod heap;
+#[path = "session_memory/image_stokes.rs"]
+mod image_stokes;
+#[path = "session_memory/irregular_channels.rs"]
+mod irregular_channels;
 #[path = "session_memory/jones.rs"]
 mod jones;
+#[path = "session_memory/mixed_correlations.rs"]
+mod mixed_correlations;
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
+#[path = "session_memory/noise_tables.rs"]
+mod noise_tables;
+#[path = "session_memory/offline_noise.rs"]
+mod offline_noise;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;
+#[path = "session_memory/pointings.rs"]
+mod pointings;
+#[path = "session_memory/polynomial_fields.rs"]
+mod polynomial_fields;
+#[path = "session_memory/selection.rs"]
+mod selection;
+#[path = "selection/input.rs"]
+mod selection_input;
 #[path = "session_memory/troposphere.rs"]
 mod troposphere;
 #[path = "session_memory/tsys.rs"]
@@ -434,6 +466,17 @@ fn configured_with_dishes(
     channels: usize,
     dishes: &[f64],
 ) -> Simulator {
+    configured_with_products(ms, measures, budget, channels, dishes, "XX YY")
+}
+
+fn configured_with_products(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
+    stokes: &str,
+) -> Simulator {
     let mut sm = Simulator::open(
         ms,
         SimulatorOptions {
@@ -469,7 +512,7 @@ fn configured_with_dishes(
         resolution_hz: CHANNEL_HZ,
         frame: FrequencyRef::TOPO,
         channel_count: channels,
-        stokes: "XX YY".to_string(),
+        stokes: stokes.to_string(),
     })
     .expect("setspwindow");
     sm.set_field(

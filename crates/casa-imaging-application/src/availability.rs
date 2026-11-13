@@ -393,6 +393,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
                     | ProductKind::TaylorTerms
                     | ProductKind::SpectralIndex
                     | ProductKind::SpectralIndexError
+                    | ProductKind::SpectralCurvature
             )
     )
 }

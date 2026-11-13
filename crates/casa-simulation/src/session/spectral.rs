@@ -4,7 +4,18 @@
 //! `NewMSSimulator::initSpWindows` adds one SPECTRAL_WINDOW, one
 //! POLARIZATION and one DATA_DESCRIPTION row per call, all at the same index.
 
+use casa_imaging_runtime::Admitted;
 use casa_types::measures::frequency::FrequencyRef;
+use std::sync::Arc;
+
+pub(crate) type StoredFrequencies = Arc<Admitted<Vec<f64>>>;
+
+/// A DATA_DESCRIPTION row resolves a physical window and a polarization setup.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DataDescription {
+    pub(crate) window: usize,
+    pub(crate) polarization: usize,
+}
 
 use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::WindowNoise;
@@ -29,8 +40,10 @@ pub struct SpectralWindowSpec {
 }
 
 /// One spectral window with its polarization setup.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct SpectralWindow {
+    /// Explicit CHAN_FREQ when an opened axis differs from the generated grid.
+    pub(crate) stored_frequencies: Option<StoredFrequencies>,
     pub(crate) name: String,
     pub(crate) channel_count: usize,
     pub(crate) start_frequency_hz: f64,
@@ -56,6 +69,7 @@ impl SpectralWindow {
             return Err(SimulatorError::refused("must provide nchannels"));
         }
         Ok(Self {
+            stored_frequencies: None,
             name: spec.name.clone(),
             channel_count: spec.channel_count,
             start_frequency_hz: spec.start_frequency_hz,
@@ -67,11 +81,25 @@ impl SpectralWindow {
         })
     }
 
-    /// CHAN_FREQ: the start plus a whole number of channel widths.
+    /// CHAN_FREQ, preserving an opened MS's explicit channel frequencies.
     pub(crate) fn channel_frequencies_hz(&self) -> Vec<f64> {
+        if let Some(frequencies) = &self.stored_frequencies {
+            return frequencies.value.clone();
+        }
         (0..self.channel_count)
             .map(|channel| self.start_frequency_hz + channel as f64 * self.channel_width_hz)
             .collect()
+    }
+
+    /// The mean observed frequency used by spline/delay table application.
+    pub(crate) fn centroid_hz(&self) -> f64 {
+        self.stored_frequencies.as_ref().map_or_else(
+            || {
+                self.start_frequency_hz
+                    + (self.channel_count - 1) as f64 * self.channel_width_hz / 2.
+            },
+            |frequencies| frequencies.value.iter().sum::<f64>() / frequencies.value.len() as f64,
+        )
     }
 
     /// What the window gives its rows' noise: REF_FREQUENCY, and
@@ -84,15 +112,13 @@ impl SpectralWindow {
             channel_bandwidth_hz: self.total_bandwidth_hz.abs() / self.channel_count.max(1) as f64,
         }
     }
+}
 
-    /// CORR_PRODUCT: for each correlation, the receptor pair
-    /// (`Stokes::receptor1`, `Stokes::receptor2`).
-    pub(crate) fn correlation_products(&self) -> Vec<[i32; 2]> {
-        self.correlations
-            .iter()
-            .map(|&code| receptor_pair(code))
-            .collect()
-    }
+pub(crate) fn correlation_products(correlations: &[i32]) -> Vec<[i32; 2]> {
+    correlations
+        .iter()
+        .map(|&code| receptor_pair(code))
+        .collect()
 }
 
 /// casacore's `Stokes::StokesTypes` names, indexed by code from 1.

@@ -12,7 +12,7 @@ use num_complex::Complex32;
 use super::geometry::RowGeometry;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
-use crate::session::plan::DataPlan;
+use crate::session::plan::DataPhase as DataPlan;
 
 /// Rows of one job.
 pub(super) const JOB_ROWS: usize = 256;
@@ -73,7 +73,7 @@ pub(super) fn add_components(
     team.for_each_mut(&mut jobs, |_, job| {
         for components in plan.components_for_scan(job.index) {
             components.add_rows(
-                (job.index, job.scan.spectral_window_id),
+                (job.index, job.scan.data_description_id),
                 job.rows.iter().map(|row| row.uvw_m),
                 job.cells,
             );

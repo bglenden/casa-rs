@@ -49,7 +49,7 @@ fn simple_noise(sigma_jy: f64) -> NoiseSpec {
 }
 
 #[test]
-fn openfromms_refuses_distinct_channel_and_reference_frequency_frames() {
+fn openfromms_accepts_distinct_channel_and_reference_frequency_frames() {
     use casa_ms::{MeasurementSet, SubtableId};
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 
@@ -64,16 +64,10 @@ fn openfromms_refuses_distinct_channel_and_reference_frequency_frames() {
         .unwrap();
     ms.save().unwrap();
     drop(ms);
-    let error = Simulator::open_from_ms(&path, options())
-        .err()
-        .expect("mixed frames refused");
-    assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(
-        error
-            .message()
-            .contains("different channel and reference frequency frames")
-    );
-    assert!(error.message().contains("#1053"));
+    Simulator::open_from_ms(&path, options())
+        .unwrap()
+        .close()
+        .unwrap();
     assert_eq!(bits(&data(&read_main(&path).0)), bits(&data(&before)));
 }
 
@@ -278,24 +272,15 @@ fn wproject_and_the_mosaic_predict_after_openfromms_as_before() {
     assert_eq!(bits(&data(&one)), bits(&data(&two)));
 }
 
-/// What adds to the MeasurementSet is not yet implemented after
-/// `openfromms`, and a session with no DATA step leaves it as it was.
+/// A session with no DATA step or appended observation leaves the MS as it was.
 #[test]
-fn openfromms_refuses_additions_and_writes_nothing_without_a_step() {
+fn openfromms_writes_nothing_without_a_step() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("observed.ms");
     observed(&path).close().expect("close");
     let before = read_main(&path).0;
-    let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
+    let sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
     assert_eq!(sm.scan_count(), 2, "one scan per field");
-    let refused = sm
-        .observe(&scan("target", 120.0, 180.0))
-        .expect_err("observe");
-    assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(
-        refused.message().contains("observe after openfromms"),
-        "{refused}"
-    );
     sm.close().expect("close");
     assert_eq!(bits(&data(&read_main(&path).0)), bits(&data(&before)));
     let missing = Simulator::open_from_ms(directory.path().join("missing.ms"), options())
@@ -358,9 +343,9 @@ fn set_cell(table: &mut Table, row: usize, column: &str, value: Value) {
 /// `MSPointingColumns::pointingIndex` takes it as valid for (#886 review):
 /// within half its INTERVAL of its TIME; with INTERVAL 0, within half the
 /// gap to its antenna's next row at another TIME, or at every time when
-/// there is none; with a negative INTERVAL, at every time. A beam is refused
-/// when a row pointing away from the field is valid during the scan, which
-/// has two integrations, at `t1` and 10 s later.
+/// there is none; with a negative INTERVAL, at every time. The beam uses an
+/// offset only when it covers the integration; conflicting overlaps remain
+/// explicitly refused. The scan has integrations at `t1` and 10 s later.
 #[test]
 fn pointing_rows_apply_for_the_times_casacore_takes_them_as_valid() {
     use casa_simulation::{PredictSpec, VoltagePatternSpec};
@@ -407,21 +392,25 @@ fn pointing_rows_apply_for_the_times_casacore_takes_them_as_valid() {
         });
         let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        match sm.predict(&PredictSpec {
+        let predicted = sm.predict(&PredictSpec {
             images: Vec::new(),
             component_lists: vec![point.clone()],
             incremental: false,
-        }) {
-            Ok(()) => false,
-            Err(refused) => {
-                assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
-                assert!(
-                    refused.message().contains("POINTING points scan"),
-                    "{refused}"
-                );
-                true
-            }
+        });
+        if name == "negative.ms" {
+            let error =
+                predicted.expect_err("overlapping different pointings remain explicitly refused");
+            assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
+            assert!(error.message().contains("POINTING changes"));
+            return true;
         }
+        predicted.expect("consume a valid stored pointing");
+        sm.close().unwrap();
+        let rows = read_main(&path).0;
+        // The model is at FIELD's phase centre; an offset beam changes its
+        // amplitude while its visibility phase remains zero.
+        assert!(rows[0].data[0].im.abs() < 1e-6);
+        rows[0].data[0].re < 0.999
     };
     // Valid from t1 − 6 s to t1 + 4 s, and to t1 − 1 s.
     assert!(refused("covering.ms", -1.0, 10.0, false));
@@ -556,8 +545,8 @@ fn components_under_the_beam_and_total_power_predict_after_openfromms_as_before(
 /// session that observed it and after `openfromms` (#884): a source at the
 /// field's direction predicts zero phase in both pointings, as it does in
 /// CASA 6.7.6 (measured), although the moved pointing's UVW were computed
-/// at the moved direction. A primary beam after `openfromms`, centred on
-/// POINTING's direction, is refused.
+/// at the moved direction. A primary beam after `openfromms` is centred on
+/// POINTING while the visibility phase remains on FIELD.
 #[test]
 fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
     use casa_simulation::{ObserveManySpec, Pointing, PredictSpec, VoltagePatternSpec};
@@ -616,12 +605,23 @@ fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
     let mut sm =
         Simulator::open_from_ms(directory.path().join("two.ms"), options()).expect("openfromms");
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-    let refused = predict(&mut sm).expect_err("the beam needs POINTING at the phase centres");
-    assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(
-        refused.message().contains("POINTING points scan"),
-        "{refused}"
-    );
+    predict(&mut sm).expect("the beam consumes moved POINTING independently of FIELD phase");
+    sm.close().unwrap();
+    let beamed = read_main(&directory.path().join("two.ms")).0;
+    let midway = beamed.len() / 2;
+    for (index, row) in beamed.into_iter().enumerate() {
+        for value in row.data {
+            assert!(
+                value.im.abs() < 1e-6,
+                "FIELD remains the visibility phase centre"
+            );
+            if index >= midway {
+                assert!(value.re < 0.999);
+            } else {
+                assert!((value.re - 1.).abs() < 1e-6);
+            }
+        }
+    }
 }
 
 /// Install MODEL_DATA and CORRECTED_DATA in `path`'s MAIN as copies of
@@ -751,70 +751,4 @@ fn the_scratch_columns_follow_data_and_none_is_created() {
     let ms = casa_ms::MeasurementSet::open(&path).expect("open");
     let schema = ms.main_table().schema().expect("schema");
     assert!(!schema.contains_column("MODEL_DATA") && !schema.contains_column("CORRECTED_DATA"));
-}
-
-/// A row with a flagged sample but no FLAG_ROW is refused before anything
-/// is written: the MeasurementSet is left as it was.
-#[test]
-fn a_partly_flagged_row_is_refused_before_anything_is_written() {
-    use casa_ms::{
-        MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
-        MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
-        MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
-        MeasurementSetWriteResources, MeasurementSetWriteSession,
-    };
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let model = &extended_model(directory.path(), "model.image");
-    let path = directory.path().join("flagged.ms");
-    let mut sm = observed(&path);
-    sm.predict(&predict_spec(model, false)).expect("predict");
-    sm.close().expect("close");
-    // Flag one sample of row 3, not the row.
-    let mut ms = MeasurementSet::open(&path).expect("open");
-    let plan = MeasurementSetWritePlan::selected_row_mutation(
-        vec![3],
-        vec![MeasurementSetWriteColumnPlan {
-            name: "FLAG".to_string(),
-            bytes_per_row: 2 * CHANNELS,
-            mode: MeasurementSetColumnWriteMode::Replace,
-            storage_manager: MeasurementSetColumnStorage::Persisted,
-            tile_shape: None,
-            create_source_column: None,
-        }],
-        MeasurementSetWriteResources {
-            available_bytes: 1024,
-            maximum_live_batches: 1,
-            tiled_column_buffer_bytes: 0,
-        },
-    )
-    .expect("plan");
-    let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation(&mut ms, plan).expect("start");
-    let mut flags = vec![false; 2 * CHANNELS];
-    flags[1] = true;
-    session
-        .write_mutation_batch(
-            &mut ms,
-            MeasurementSetMutationBatch {
-                row_indices: vec![3],
-                columns: vec![MeasurementSetMutationColumnBatch {
-                    name: "FLAG".to_string(),
-                    values: MeasurementSetMutationColumnValues::Arrays(vec![ArrayValue::Bool(
-                        ArrayD::from_shape_vec(IxDyn(&[2, CHANNELS]).f(), flags)
-                            .expect("FLAG cell"),
-                    )]),
-                }],
-            },
-        )
-        .expect("flag a sample");
-    session.finish_mutation().expect("finish");
-    drop(ms);
-
-    let before = read_column(&path, "DATA");
-    let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
-    corrupt(&mut sm).expect("corrupt");
-    let refused = sm.close().expect_err("refused at close");
-    assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(refused.message().contains("MAIN row 3"), "{refused}");
-    assert_eq!(bits(&read_column(&path, "DATA")), bits(&before));
 }

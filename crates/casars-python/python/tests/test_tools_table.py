@@ -1,4 +1,4 @@
-"""`casars.tools.table`: CASA's `tb` tool (ADR-0019, #1025's table part, #1028).
+"""`casars.tools.table`: CASA's `tb` tool (ADR-0017, #1025's table part, #1028).
 
 Behaviour is compared with what CASA 6.7.6.14 returned for the scripted calls
 in `data/casa_table_tool.json`, written by
@@ -241,7 +241,7 @@ def test_the_tool_answers_as_casa_does(
 
 
 def test_every_call_releases_the_gil(fixtures: dict[str, Path], tmp_path: Path) -> None:
-    """A long read does not freeze other Python threads (ADR-0019 item 4)."""
+    """A long read does not freeze other Python threads (ADR-0017)."""
     import threading
     import time
 

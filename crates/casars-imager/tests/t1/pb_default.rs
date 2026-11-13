@@ -98,6 +98,56 @@ fn alma_labelled_seven_metre_dishes_write_the_aca_primary_beam_by_default() {
     assert!(worst <= 1e-6, "ALMA/ACA 7 m PB difference {worst:e}");
 }
 
+/// In a single-field ALMA selection, an unused 7 m or 12 m dish cannot
+/// set the primary beam. A selected mixed baseline still has no one
+/// analytic dish model (#1274).
+#[test]
+fn an_unused_alma_dish_does_not_choose_the_standard_primary_beam() {
+    let point = Component {
+        offset_px: [0, 0],
+        flux_jy: 1.0,
+        fwhm_px: None,
+        spectral_index: 0.0,
+    };
+    for (selected_diameter, unused_diameter) in [(12.0, 7.0), (7.0, 12.0)] {
+        let mut setup = Setup::vla_q_band(2);
+        setup.telescope = "ALMA".to_string();
+        for antenna in &mut setup.antennas {
+            antenna.dish_diameter_m = selected_diameter;
+        }
+        let antenna = format!("1~{}&", setup.antennas.len() - 1);
+        let observation = Observation::synthesise_setup(setup, &[("point", point)]);
+        let controls = json!({"antenna": antenna, "niter": 0, "write_pb": true});
+        let (_, reference) = observation.image("homogeneous", controls.clone());
+        let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+        ms.antenna_mut()
+            .unwrap()
+            .put_dish_diameter(0, unused_diameter)
+            .unwrap();
+        ms.save().unwrap();
+        drop(ms);
+
+        let (_, selected) = observation.image("selected", controls);
+        let reference_pb = reference.get(".pb").plane(0);
+        let selected_pb = selected.get(".pb").plane(0);
+        assert!(
+            reference_pb
+                .iter()
+                .zip(&selected_pb)
+                .all(|(a, b)| (a - b).abs() < 1.0e-6),
+            "the selected {selected_diameter} m dishes choose their own PB"
+        );
+        let error = observation
+            .try_image("mixed", json!({"niter": 0, "write_pb": true}))
+            .err()
+            .expect("a cross-correlation of the two dish classes is refused");
+        assert!(
+            error.contains("requires one homogeneous dish class"),
+            "{error}"
+        );
+    }
+}
+
 /// CASA selects the VLA beam using the first cube plane in LSRK, then
 /// evaluates that beam at each output plane's BARY frequency. The LSRK
 /// frequency is 999.99 MHz while BARY is 1000.030 MHz, on opposite sides

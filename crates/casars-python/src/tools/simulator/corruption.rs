@@ -56,7 +56,7 @@ pub(super) struct NoiseRequest<'a> {
 /// `senscoeff` and `rxtype` both Tsys modes'; the ground pressure,
 /// humidity, altitude and water scale height `tsys-atm`'s. With `OTF=True`
 /// CASA writes no table for `simplenoise`; for the Tsys modes it writes the
-/// `T` term's, which casa-rs refuses as not yet implemented.
+/// `T` term's, which casa-rs writes at close from the model snapshot.
 pub(super) fn setnoise(
     tool: &PySimulator,
     py: Python<'_>,

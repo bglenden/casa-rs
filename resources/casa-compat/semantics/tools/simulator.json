@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "simulator",
  "casa_version": "6.7.6.14",
- "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "audit_revision": "30517424209d7531ce6f4c93e1e8ef94a5e4e66b",
  "methods": {
   "open": {
    "status": "Implemented",
@@ -16,14 +16,19 @@
   },
   "openfromms": {
    "status": "Partial",
-   "scope": "Opens an existing MeasurementSet for predict and corrupt. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, POINTING away from PHASE_DIR, and rows flagged without FLAG_ROW.",
+   "scope": "Opens an existing MeasurementSet for selected prediction/corruption and appended observe/observemany, preserving unselected DATA and existing scratch cells and respecting image sample flags while components and corruption also operate on flagged samples. Resolves swapped, sparse and aliased data descriptions through their physical window and polarization IDs, and consumes simulator-generated multiple-feed layouts. Polynomial FIELD component/image prediction follows CASA's selected chunk and FTMachine frame epochs, frozen per operation. Appending to a polynomial field returns False as in CASA and changes no input files. Stored simulator POINTING supplies beam, mosaic and total-power directions independently of FIELD phase, including changes between integrations. Incomplete or disagreeing antenna pointings, conflicting overlaps, POINTING polynomials and other POINTING frames remain explicitly refused. Stored irregular channel frequencies feed component/image predictions and supplied-table corruption. Channel and reference-frequency columns resolve their own fixed or mapped frame descriptors. Mapped-description and multiple-feed comparisons: [PR #1342](https://github.com/bglenden/casa-rs/pull/1342). Polynomial checks: [PR #1343](https://github.com/bglenden/casa-rs/pull/1343).",
    "evidence": [
     "signature",
     "binding-tests",
     "openfromms-20261103",
-    "refusals"
+    "refusals",
+    "flagged-samples-20261112",
+    "selection-ordered-data-20261112",
+    "existing-append-20261113",
+    "irregular-channels-20261113",
+    "frequency-frames-20261113"
    ],
-   "issue": 1053
+   "issue": 1294
   },
   "close": {
    "status": "Implemented",
@@ -31,7 +36,8 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe-20261103"
+    "observe-20261103",
+    "predict-multiple-models-20261111"
    ]
   },
   "done": {
@@ -39,7 +45,8 @@
    "scope": "As close, and frees the tool.",
    "evidence": [
     "signature",
-    "binding-tests"
+    "binding-tests",
+    "predict-multiple-models-20261111"
    ]
   },
   "name": {
@@ -77,27 +84,31 @@
    ]
   },
   "observe": {
-   "status": "Partial",
-   "scope": "Adds a scan's rows as CASA does, with shadowing and elevation limits (decisions). Refused after openfromms.",
+   "status": "Implemented",
+   "scope": "Adds a scan's rows, including after openfromms, with shadowing/elevation limits, preserved existing cells and atomic append publication. Time labeling remains a recorded decision.",
    "evidence": [
     "signature",
     "binding-tests",
     "observe-20261103",
     "scripts",
-    "refusals"
-   ],
-   "issue": 1053
+    "refusals",
+    "uvw-sidereal-20261112",
+    "uvw-long-baselines-20261112",
+    "existing-append-20261113"
+   ]
   },
   "observemany": {
-   "status": "Partial",
-   "scope": "Adds several pointings' rows. Refused after openfromms. CASA's padding and row-order defects are decisions.",
+   "status": "Implemented",
+   "scope": "Adds several pointings' rows, including after openfromms, preserving existing cells and appended observation/state/pointing metadata. CASA's padding and row-order defects remain recorded decisions.",
    "evidence": [
     "signature",
     "binding-tests",
     "observe-20261103",
-    "refusals"
-   ],
-   "issue": 1053
+    "refusals",
+    "uvw-sidereal-20261112",
+    "uvw-long-baselines-20261112",
+    "existing-append-20261113"
+   ]
   },
   "setlimits": {
    "status": "Implemented",
@@ -168,26 +179,30 @@
   },
   "setdata": {
    "status": "Partial",
-   "scope": "Selects spectral windows and all fields. Refused: a selection keeping fewer than all scans observed so far, and a TaQL msselect.",
+   "scope": "Field/window intersections and row predicates; header metadata streams, while stored scalar/numeric/Boolean cells and array indexing, numeric/string expressions, complex/vector literals, rownumber/rowid, ORDERBY, GROUPBY with scalar HAVING, LIMIT and OFFSET capture immutable physical-row selections. Empty TaQL retains the base; invalid predicates return False after installing the base. Pending DATA/scratch selections use a private rendering through the existing writer; this costs an additional DATA pass and, for an opened MS, a copy of its bytes. Tests cover selections after prediction and append. Aggregates, joins, GIVING and stored string columns remain explicitly refused; this is simulator selection rather than general TaQL completeness.",
    "evidence": [
     "signature",
     "binding-tests",
     "observe-20261103",
-    "refusals"
+    "refusals",
+    "selection-ordered-data-20261112"
    ],
    "issue": 1053
   },
   "predict": {
    "status": "Partial",
-   "scope": "Predicts image models (one Stokes I, J2000 image) and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Refused: several model images, model layouts casa-rs cannot read, refocusing to a field's distance, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, scans whose windows have different correlations, and an incremental predict after a corrupt with setgain or setleakage terms.",
+   "scope": "Predicts one or more Stokes I/Q/U/V image models and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Prepares all models before committing selected replacement or incremental DATA, including increments after Jones corruption; each image has its own geometry (mosaic cache correction). Nonstandard direction/Stokes/spectral axis layouts return False as demonstrated in CASA. Explicitly unimplemented: other direction frames, polarized total-power image prediction, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, polarization aliases with different correlation setups within one physical spectral window when component lists are supplied. Polarized direct-image controls, CPU/Metal agreement and allocation checks: [PR #1346](https://github.com/bglenden/casa-rs/pull/1346). Direct GridFT/W prediction consumes J2000, B1950, GALACTIC and ICRS native image coordinates, with the selected field\u2019s first MS epoch frozen per operation for FK4 conversion. Display-only direction conversion layers preserve physical pixel directions, correcting CASA\u2019s mislabeled-direction defect. Non-J2000 image beams/mosaics and time-dependent image frames remain explicitly unimplemented. GridFT, WProjectFT and mosaic image prediction apply FTMachine finite-distance focus using the last configured field’s nonzero distance, or the image’s distance metadata. Selected-buffer antenna positions and focus distance are frozen per prediction; component prediction stays separate. Direct images use each selected window’s correlation order and linear/circular products, including existing MeasurementSets with two/four-correlation cell shapes. Each shape run reuses the admitted mutation pipeline under one MAIN write lock; prediction preparation visits only that run’s scans. Independent per-window CASA controls correct CASA’s cached polarization map; joint image/component controls retain the documented flagged-component correction. Mixed-correlation total-power inputs remain explicitly unimplemented.",
    "evidence": [
     "signature",
     "binding-tests",
     "predict-image-20261103",
+    "predict-multiple-models-20261111",
     "predict-components-20261103",
     "predict-sd-20261103",
     "openfromms-20261103",
-    "refusals"
+    "refusals",
+    "flagged-samples-20261112",
+    "selection-ordered-data-20261112"
    ],
    "issue": 1053
   },
@@ -199,7 +214,8 @@
     "binding-tests",
     "predict-image-20261103",
     "predict-sd-20261103",
-    "refusals"
+    "refusals",
+    "predict-multiple-models-20261111"
    ],
    "issue": 1053
   },
@@ -216,14 +232,18 @@
   },
   "corrupt": {
    "status": "Partial",
-   "scope": "Applies the noise, gain, leakage, tropospheric and applied-table terms. Refused: a spectral window observed after setgain, setleakage or settrop terms were set, or defined after a tsys-atm setnoise.",
+   "scope": "Applies the selected noise, gain, leakage, tropospheric and applied-table terms. Each corruption step skips a spectral window any Jones term has no solution for, including its noise and corrected-data updates; predictions and later covered steps persist. Later scans reuse the original noise solutions and original window coverage; supplied-table families outside setapply scope remain unfinished.",
    "evidence": [
     "signature",
     "binding-tests",
     "noise-20261103",
     "corruptions-20261103",
     "troposphere-20261103",
-    "refusals"
+    "refusals",
+    "flagged-samples-20261112",
+    "selection-ordered-data-20261112",
+    "corruption-window-coverage-20261112",
+    "noise-troposphere-completion"
    ],
    "issue": 1053
   },
@@ -244,15 +264,20 @@
    ]
   },
   "setapply": {
-   "status": "Partial",
-   "scope": "Applies G and D tables with linear or nearest interpolation. Refused: calwt, a nonzero t, a nonzero opacity, other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations.",
+   "status": "Implemented",
+   "scope": "Applies G/D/B/BPOLY/GSPLINE/Df, scalar T/Tf, full polarized J/Jf, general Dgen/Dfgen leakage and X/Xf/GlinXph/GlinXphf polarized phase gains, and supplied K/Kcross/KMBD/KAntPos/TOpac/TfOpac/EGainCurve/EPowerCurve/B TSYS, fringe, linear/circular ionosphere, switched-power, Accor and single-dish gain tables. Time interpolation supports nearest, linear, local cubic and corrected natural spline, with complex phase-delay and observation/scan modifiers. Real FPARAM values interpolate as signed parameters before physical gain evaluation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows skip the whole corruption step, including noise and corrected-data updates, as in CASA. Only covered windows allocate applied sample grids. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t does not change these solutions; supplied TOpac tables take precedence over the opacity argument. KAntPos accepts offsets but leaves simulated DATA unchanged, as CASA does below its B pivot. EGainCurve acts before leakage; Tsys uses CASA's reversed inversion sense and neutral invalid parameters. Invalid mappings, malformed parameter counts and cubic interior grids on physical axes of four or more channels with fewer than four valid samples raise; shorter physical axes use CASA linear fallback. Corrects the documented natural-spline first-knot defect. Cubic time interiors require four samples; exact/endpoint queries accept shorter axes. Corrects CASA spline-setup and unsynchronized per-scan crashes, retaining atomic failure. Supplied A Noise uses baseline/correlation parameters and the same time/frequency interpolation; supplied M/Mf tables apply inverse parallel-hand gains to the additive side, zero its cross hands, and leave the sky model unchanged below CASA's simulation B pivot. BPOLY uses the data frequency grid; GSPLINE uses legacy amplitude/phase B-splines, reference-frequency scaling and zero outside the fitted interval. Fringe phases advance by rate before time interpolation, then include delay and dispersion. Switched-power application requires the same SYSPOWER/CALDEVICE context as CASA. Factory-only calibration families are outside the demonstrated supplied-table simulation scope. Full polarized matrices use Jp V Jq^H, require all four correlations (circular-feed F is diagonal and also accepts partial products), and substitute identity for an invalid whole matrix; Dgen includes the second-order leakage term. Cross-hand phase and phase gains act upstream of leakage; multi-band delays use zero frequency as the phase reference.",
    "evidence": [
     "signature",
     "binding-tests",
     "corruptions-20261103",
-    "refusals"
-   ],
-   "issue": 1053
+    "refusals",
+    "apply-parameters-20261112",
+    "apply-flags-20261112",
+    "apply-scalar-20261112",
+    "apply-frequency-20261112",
+    "corruption-window-coverage-20261112",
+    "supplied-simulation-tables-20261113"
+   ]
   },
   "setgain": {
    "status": "Implemented",
@@ -264,15 +289,15 @@
    ]
   },
   "settrop": {
-   "status": "Partial",
-   "scope": "Individual and screen modes, with tables. Refused: mode='test', CASA's debugging ramp.",
+   "status": "Implemented",
+   "scope": "Individual and screen modes with tables; the source-defined test ramp with default integration sampling and custom positive simint, correcting CASA's documented initialization-order failure. Positive test intervals group integrations at CASA iterator boundaries and store the midpoint solution time. Existing ATM/troposphere corrections remain explicit.",
    "evidence": [
     "signature",
     "binding-tests",
     "troposphere-20261103",
-    "refusals"
-   ],
-   "issue": 1053
+    "refusals",
+    "noise-troposphere-completion"
+   ]
   },
   "setpointingerror": {
    "status": "Disabled in CASA",
@@ -300,15 +325,15 @@
    ]
   },
   "setnoise": {
-   "status": "Partial",
-   "scope": "simplenoise, tsys-manual and tsys-atm noise with the ATM model. Refused: OTF=False and a Tsys mode with table, which write the T table.",
+   "status": "Implemented",
+   "scope": "simplenoise, tsys-manual and tsys-atm noise with the ATM model; optional T/Tf noise-scale tables. OTF=False reuses the original additive A field and T/Tf solutions, including after adding observations; optional output saves A plus T/Tf tables. Noise terms preserve the original covered/uncovered-window behavior and nearest-time reuse. Corrects the documented CASA simple-OTF added-window crash by skipping uncovered windows.",
    "evidence": [
     "signature",
     "binding-tests",
     "noise-20261103",
-    "refusals"
-   ],
-   "issue": 1053
+    "refusals",
+    "noise-troposphere-completion"
+   ]
   },
   "setpa": {
    "status": "Disabled in CASA",
@@ -545,12 +570,13 @@
    "id": "sdgrid-total-power-nonpositive-uvw",
    "record": "`SDGrid` predicts total power into cross-correlations with no positive uvw",
    "inputs": "sm.predict after setoptions(ftmachine='sd') with cross-correlation rows whose u, v and w are all zero or negative.",
-   "casa": "SDGrid::get leaves out rows with max(uvw)>0, meant to keep cross-correlations at zero, but a cross-correlation with all components zero or negative passes and gets total power (read from source; a two-antenna probe saw only positive-component rows).",
+   "casa": "SDGrid::get leaves out rows with max(uvw)>0, meant to keep cross-correlations at zero. The eight-antenna CASA 6.7.6.14 oracle reproduces nonzero total power in 56 of 112 cross-correlation rows, alongside 32 autocorrelations; raw DATA is retained in the committed fixture.",
    "ours": "Predicts total power into autocorrelations only.",
    "rationale": "The test was meant to keep cross-correlations at zero.",
    "impact": "Cross-correlations of a single-dish prediction stay zero regardless of uvw sign.",
    "evidence": [
-    "bugs-record"
+    "bugs-record",
+    "predict-multiple-models-20261111"
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
@@ -573,12 +599,13 @@
    "id": "close-aborts-after-mosaic-predict",
    "record": "`sm.close()` aborts the process after a mosaic predict",
    "inputs": "setoptions(ftmachine='mosaic'), a successful predict, then sm.close() (simobserve's own sequence).",
-   "casa": "CASA 6.7.6 sm.close() kills the Python process with 'Pure virtual function called!' and SIGABRT (exit 134); DATA is already complete on disk.",
+   "casa": "CASA 6.7.6 sm.close() kills the Python process with 'Pure virtual function called!' and SIGABRT (exit 134); DATA is already complete on disk. The 14-case multi-image oracle reproduces the cleanup abort after sm.done(); a duplicate-model run also produced SIGBUS after preserving complete DATA.",
    "ours": "Close returns normally; the CASA oracle runs these scenarios in a child process and records close as aborted.",
    "rationale": "An abort at close is a defect, not behaviour to copy.",
    "impact": "Scripts do not die at close in casa-rs.",
    "evidence": [
-    "bugs-record"
+    "bugs-record",
+    "predict-multiple-models-20261111"
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
@@ -974,6 +1001,66 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "mosaic-multiple-models-cache-geometry",
+   "record": "Mosaic multi-image prediction depends on image order",
+   "inputs": "sm.predict with two differently sized Stokes I images through the mosaic machine, in both orders, compared with independent single-image predictions.",
+   "casa": "CASA 6.7.6.14 joint predictions differ from the independent sum by 0.00353/0.0326 NRMS, and swapping the images changes DATA by 0.0307. The public convolution-cache key omits image geometry; repeated identical images accumulate correctly.",
+   "ours": "Prepares every image with its own geometry and sums the predictions, matching the independent CASA single-image sum to 2.11e-6 NRMS.",
+   "rationale": "SkyEquation intends to add every model image. Reusing an earlier image geometry corrupts DATA according to model order.",
+   "impact": "Multi-image mosaic prediction is linear across models; raw defective CASA joint outputs remain recorded and tested separately.",
+   "evidence": [
+    "bugs-record",
+    "predict-multiple-models-20261111"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "flagged-component-duplication",
+   "record": "Mixed image/component prediction doubles components at flagged samples",
+   "inputs": "Existing MS with independent sample and row flags, predicted from an image and a 0.25 Jy component, replacing and incremental.",
+   "casa": "Retains the component in skipped flagged samples, then adds it again; joint flagged DATA contains two component contributions.",
+   "ours": "Adds the masked image prediction and each component once, using independent CASA image-only and component-only sums as the reference.",
+   "rationale": "The sky-model sum must not double components when an image is present; the upstream accumulator retains and adds the previous model at skipped samples.",
+   "impact": "Corrected flagged mixed-model DATA; the raw defective joint CASA DATA remains recorded and its excess is tested.",
+   "evidence": [
+    "bugs-record",
+    "flagged-samples-20261112"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "invalid-leakage-solutions",
+   "record": "Invalid leakage solutions become unit leakage",
+   "inputs": "D calibration table with either receptor flagged or an antenna missing; nearest/linear time interpolation.",
+   "casa": "Substitutes both leakage coefficients with one, adding parallel hands to cross hands;3+4j becomes9+12j on an autocorrelation. Data flags remain unchanged.",
+   "ours": "Uses the neutral zero leakage pair for that invalid antenna, preserving valid antenna/time solutions. G retains CASA per-receptor unit substitution.",
+   "rationale": "One is neutral for diagonal gain but fabricates leakage in the linear D operator.",
+   "impact": "Invalid calibration cannot manufacture large unflagged cross-hand signals. Raw defective CASA results remain recorded and C++ table consumption reproduces them independently.",
+   "evidence": [
+    "bugs-record",
+    "apply-flags-20261112"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "natural-spline-first-knot",
+   "record": "Natural-spline interpolation skips the first interior back-substitution",
+   "inputs": "Frequency-dependent complex table, natural-spline interpolation of amplitudes/phases; four-point Tf closed-form discriminator.",
+   "casa": "Leaves the first interior second derivative partly eliminated, producing a derivative discontinuity; the discriminator differs by NRMS0.0780.",
+   "ours": "Completes back-substitution at every interior knot. The exact half-knot amplitudes are independently checked and supplied through a separately sampled CASA table.",
+   "rationale": "Natural cubic splines require continuous first derivatives at every interior knot; skipping one contradicts the stated mathematical method.",
+   "impact": "Corrected frequency-interpolated values; raw CASA outputs and its consumption of native tables remain separately verified. Numerical tolerances are unchanged.",
+   "evidence": [
+    "bugs-record",
+    "apply-frequency-20261112"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
   }
  ],
  "evidence": {
@@ -985,7 +1072,8 @@
     "crates/casars-python/python/tests/data/casa_simulator_signatures.json",
     "crates/casars-python/python/tests/test_tools_simulator.py",
     "crates/casars-python/src/tools/simulator/surface.rs"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "refusals": {
    "kind": "Refusal records and tests",
@@ -994,7 +1082,8 @@
    "links": [
     "crates/casa-simulation/tests/refusals_name_an_issue.rs",
     "crates/casars-python/python/tests/test_tools_simulator.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "binding-tests": {
    "kind": "Python binding tests",
@@ -1002,7 +1091,8 @@
    "scope": "CASA's return values, logged errors, raised errors and state for each method, on CASA's messages.",
    "links": [
     "crates/casars-python/python/tests/test_tools_simulator.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "observe": {
    "kind": "CASA-paired MeasurementSets (PR-reported)",
@@ -1017,7 +1107,8 @@
     "tools/simulation/casa_sm_observe_oracle.py",
     "tools/simulation/compare_sm_ms.py"
    ],
-   "superseded_by": "observe-20261103"
+   "superseded_by": "observe-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "scripts": {
    "kind": "CASA sm scripts run unchanged (PR-reported)",
@@ -1027,7 +1118,8 @@
    "links": [
     "https://github.com/bglenden/casa-rs/pull/851",
     "tools/simulation/sm_scripts/run_sm_scripts.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-image": {
    "kind": "CASA-paired predictions (PR-reported)",
@@ -1045,7 +1137,8 @@
     "tools/simulation/casa_sm_predict_oracle.py",
     "tools/simulation/compare_sm_ms.py"
    ],
-   "superseded_by": "predict-image-20261103"
+   "superseded_by": "predict-image-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-components": {
    "kind": "CASA-paired component predictions (PR-reported)",
@@ -1056,7 +1149,8 @@
     "https://github.com/bglenden/casa-rs/pull/872",
     "tools/simulation/sm_components_scenarios.json"
    ],
-   "superseded_by": "predict-components-20261103"
+   "superseded_by": "predict-components-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-sd": {
    "kind": "CASA-paired total-power predictions (PR-reported)",
@@ -1067,7 +1161,8 @@
     "https://github.com/bglenden/casa-rs/pull/874",
     "tools/simulation/sm_sd_scenarios.json"
    ],
-   "superseded_by": "predict-sd-20261103"
+   "superseded_by": "predict-sd-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "openfromms": {
    "kind": "CASA-paired openfromms runs (PR-reported)",
@@ -1078,7 +1173,8 @@
     "https://github.com/bglenden/casa-rs/pull/886",
     "tools/simulation/sm_openfromms_scenarios.json"
    ],
-   "superseded_by": "openfromms-20261103"
+   "superseded_by": "openfromms-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "noise": {
    "kind": "CASA-paired noise statistics (PR-reported)",
@@ -1094,7 +1190,8 @@
     "tools/simulation/sm_atm_scenarios.json",
     "tools/simulation/corruption_stats.py"
    ],
-   "superseded_by": "noise-20261103"
+   "superseded_by": "noise-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "corruptions": {
    "kind": "CASA-paired corruption statistics and tables (PR-reported)",
@@ -1108,7 +1205,8 @@
     "tools/simulation/sm_corrupt_scenarios.json",
     "tools/simulation/corruption_stats.py"
    ],
-   "superseded_by": "corruptions-20261103"
+   "superseded_by": "corruptions-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "troposphere": {
    "kind": "CASA-paired tropospheric phase (PR-reported)",
@@ -1121,7 +1219,8 @@
     "tools/simulation/sm_trop_scenarios.json",
     "tools/simulation/troposphere_stats.py"
    ],
-   "superseded_by": "troposphere-20261103"
+   "superseded_by": "troposphere-20261103",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "bugs-record": {
    "kind": "Deviation record",
@@ -1129,7 +1228,8 @@
    "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
    "links": [
     "docs/CASA (C++) bugs.md"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "observe-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1144,7 +1244,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT observe (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-image-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1159,7 +1260,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT predict (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-components-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1174,7 +1276,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT components (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "predict-sd-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1189,7 +1292,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT sd (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "openfromms-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1204,7 +1308,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT openfromms (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "noise-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1220,7 +1325,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT noise atm (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "corruptions-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1235,7 +1341,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT corrupt (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "troposphere-20261103": {
    "kind": "CASA-paired scenarios",
@@ -1250,7 +1357,263 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT trop (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
-   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
+  },
+  "predict-multiple-models-20261111": {
+   "kind": "Independent CASA golden DATA and corrected-behavior laws",
+   "state": "passed",
+   "result": "14 cases pass with one and three CPU workers; 12 applicable cases also pass on the actual Metal device. DATA NRMS is at most 2.55e-6 (limit 1e-3); Metal/CPU maximum relative error is at most 3.16e-7 (limit 1e-4). Eleven cases use raw CASA, two mosaic cases use independent CASA image sums, and SD compares CASA autocorrelations plus exact zero cross-correlations. Later admission failure preserves the old plan and releases temporary reservations.",
+   "scope": "Multiple image sizes and spectral planes, duplicates, replacement, incremental, zero first image, components, setvp, GridFT, WProjectFT, mosaic and SDGrid. Raw CASA mosaic ordering and SDGrid cross-correlation defects are preserved; does not claim all image layouts or FT machines.",
+   "links": [
+    "tools/simulation/sm_multiple_models_oracle.py",
+    "crates/casa-simulation/tests/predict_multiple_models.rs",
+    "crates/casa-simulation/tests/data/sm_multiple_models_casa.json.gz"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "459122e01bb25fbb57c5002a1b09726e4e791389",
+   "command": "CASAPY tools/simulation/sm_multiple_models_oracle.py --out OUT --fixture FIXTURE; cargo test -p casa-simulation --test predict_multiple_models -- --nocapture (bg-mac-mini, CPU one and three workers, Metal three workers)",
+   "receipt": "resources/casa-compat/evidence/sm-multiple-models-20261111.json",
+   "source_revision": "459122e01bb25fbb57c5002a1b09726e4e791389"
+  },
+  "flagged-samples-20261112": {
+   "kind": "Independent CASA golden DATA, noise laws and C++ native readback",
+   "state": "passed",
+   "result": "17 cases pass CPU W1/W3 with identical worker results and ten actual Metal runs. All 44 native outputs pass CASA C++ readback, including flagged samples and preserved columns. Maximum numerical DATA NRMS 2.72e-6 (limit 1e-3); Metal/CPU maximum relative error 3.36e-7 (limit 1e-4). Full simulation suite: 301 passed, two parent-executed helper ignores.",
+   "scope": "Existing-MS sample flags independent of row flags for GridFT, WProjectFT, mosaic, SDGrid, multiple models, components, replacement, incremental and noise. Corrected mixed-model sums and standing SDGrid cross-correlation correction are checked separately from raw CASA. Remaining simulator restrictions and whole-task acceptance stay open.",
+   "links": [
+    "tools/simulation/sm_flagged_samples_oracle.py",
+    "crates/casa-simulation/tests/flagged_samples.rs",
+    "crates/casa-simulation/tests/data/sm_flagged_samples_casa.json.gz"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "cd842e0e3804730301a65e552392af83f67027b6",
+   "source_revision": "cd842e0e3804730301a65e552392af83f67027b6",
+   "command": "CASAPY tools/simulation/sm_flagged_samples_oracle.py --out OUT --fixture FIXTURE; CASA_RS_FLAGGED_SAMPLES_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test flagged_samples --test open_from_ms --test backends --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/sm_flagged_samples_oracle.py --verify-native EXPORT --fixture FIXTURE --out OUT",
+   "receipt": "resources/casa-compat/evidence/sm-flagged-samples-20261112.json"
+  },
+  "uvw-sidereal-20261112": {
+   "kind": "Independent CASA sidereal angles and paired full MeasurementSets",
+   "state": "passed",
+   "result": "All 17 scenario outcomes agree (16 successful, one expected refusal) at the stricter 1e-6 m UVW limit. Maximum UVW 9.228972431e-08 m; DATA NRMS 1.046009822e-06 under 1e-3. Five LAST residuals are <=1.70e-11 rad. Three-crate regression: 1514 passed, nine documented ignores; one shared-helper review has no findings.",
+   "scope": "Existing simobserve scheduling/model/frame/pointing scenarios and the shared simulation UVW sidereal calculation. Full metadata, pointings and numerical visibility checks retained. No all-mode or whole-task performance claim.",
+   "links": [
+    "crates/casa-types/src/measures/baseline.rs",
+    "crates/casa-types/tests/simulation_sidereal.rs",
+    "crates/casa-types/tests/data/casa_simulation_sidereal.json",
+    "tools/simulation/sidereal_oracle.py",
+    "tools/simulation/simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "68f863c1d280a9145b5fa507291e60cde4030e71",
+   "source_revision": "68f863c1d280a9145b5fa507291e60cde4030e71",
+   "command": "CASAPY tools/simulation/sidereal_oracle.py --out crates/casa-types/tests/data/casa_simulation_sidereal.json; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simulation-uvw-sidereal-20261112.json"
+  },
+  "uvw-long-baselines-20261112": {
+   "kind": "Independent CASA baseline rotation matrices and paired full MeasurementSets",
+   "state": "passed",
+   "result": "All 20 outcomes agree: 19 successful simulations and one expected refusal. Three extended-array cases require exactly equal stored TIME and UVW <=1e-6 m absolutely: VLA 2017 5.836e-7 m, VLA 2025 7.266e-7 m, ALMA 2017 1.978e-7 m. Maximum DATA NRMS across all nineteen successes is 1.0442e-6 under 1e-3. Six independent aberration matrix residuals are <=1.352e-13 (2e-12 limit).",
+   "scope": "Extended VLA/ALMA arrays and a fresh replay of seventeen compact scheduling/model/frame/pointing outcomes. All tables, images, pointing files and frequency metadata compared. One shared-helper review resolved two acceptance-gate findings with regressions; no re-review. Other modes remain open.",
+   "links": [
+    "crates/casa-types/src/measures/baseline.rs",
+    "crates/casa-types/tests/data/casa_baseline_aberration.json",
+    "tools/simulation/baseline_aberration_oracle.py",
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d7d5aa380ac1f7d0ec3ea87c623fff9ac7fbaa8b",
+   "source_revision": "d7d5aa380ac1f7d0ec3ea87c623fff9ac7fbaa8b",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --only uvw_long_vla_2017 uvw_long_vla_2025 uvw_long_alma_2017; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simulation-uvw-long-baselines-20261112.json"
+  },
+  "selection-ordered-data-20261112": {
+   "kind": "Independent CASA selected-row calculations, noise moments and C++ native readback",
+   "state": "passed",
+   "result": "51 cases:48 deterministic and3 selected-noise laws pass CPU W1/W3;48 applicable image cases execute on actual Metal. All153 native outputs pass C++ readback, with exact stored TIME and untouched cells. Maximum DATA NRMS3.13e-6 (limit1e-3), Metal/CPU maximum-relative3.54e-7 (limit1e-4). Post-review full touched tables/simulation/binding gates1419 passed/three parent-executed helper ignores; strict Clippy and57 installed-wheel simulator tests pass. Both review findings are reproduced and fixed; no re-review. Additional62 stored-column/expression/clause and pending-DATA controls pass W1/W3; C++ reads/reopens124 outputs with worst row science NRMS5.96e-8 under1e-3, exact quality and matching metadata. The three Astra findings have independent regressions: nested-array intermediates, signed-zero grouping and incompatible order keys. Counting laws20k/200k rows retain their masks;200k-channel nested expressions peak181.82MB against322.89MB admission, with pre-decode refusal under a tight budget. See PR1345 for the final revision and commands.",
+   "scope": "Field/window intersections, immutable selection across replacements/increments, multiple models/components, selected noise, nonidentity gains before increment, existing-MS preservation and observe resets. Additional simulator controls cover stored columns/arrays, numeric/string and row-number expressions, complex/vector literals, ORDERBY/GROUPBY/scalar HAVING/LIMIT/OFFSET, pending DATA/scratch and feed-major append. General TaQL aggregates/joins and non-generated MS layouts are outside this comparison.",
+   "links": [
+    "tools/simulation/sm_selection_oracle.py",
+    "tools/simulation/sm_selection_readback.py",
+    "crates/casa-simulation/tests/selection.rs",
+    "crates/casa-simulation/tests/session_memory/selection.rs",
+    "crates/casa-simulation/tests/data/sm_selection_casa.json.gz",
+    "tools/simulation/query_arithmetic_oracle.py",
+    "crates/casa-tables/tests/taql_simulation_arithmetic.rs",
+    "crates/casa-tables/tests/data/casa_simulation_query_arithmetic.json",
+    "https://github.com/bglenden/casa-rs/blob/main/crates/casa-simulation/tests/remaining_selection.rs",
+    "https://github.com/bglenden/casa-rs/blob/main/tools/simulation/sm_remaining_selection_oracle.py",
+    "https://github.com/bglenden/casa-rs/blob/main/crates/casa-simulation/tests/session_memory/captured_selection.rs",
+    "https://github.com/bglenden/casa-rs/pull/1345"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+   "revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+   "command": "CASAPY tools/simulation/sm_selection_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SELECTION_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test selection -- --nocapture; CASAPY tools/simulation/sm_selection_readback.py --root EXPORT --fixture FIXTURE --out REPORT; RUST_TEST_THREADS=1 cargo test -p casa-simulation",
+   "receipt": "resources/casa-compat/evidence/sm-selection-20261112.json"
+  },
+  "apply-parameters-20261112": {
+   "kind": "Independent CASA argument controls and native G/D table consumption through C++",
+   "state": "passed",
+   "result": "28 controls pass one/three CPU workers, maximum DATA NRMS7.64e-8 under1e-3; WEIGHT/SIGMA and stored TIME are exact. C++ reads all56 native MS/table outputs and actually applies28 native tables with zero DATA residual against the independent reference. Integrated simulation/binding gates366 passed/two parent-executed helper ignores;57 installed-wheel simulator tests and strict Clippy pass.",
+   "scope": "G/D, nearest/linear, nonidentity antenna/time-dependent receptor terms at two endpoints, calwt=True, positive/negative t, nonzero opacity and combined arguments. Native/C++ interoperability covers inputs and outputs. Other calibration constraints remain explicit. No new numerical or allocation path.",
+   "links": [
+    "tools/simulation/sm_apply_parameters_oracle.py",
+    "tools/simulation/sm_apply_parameters_readback.py",
+    "crates/casa-simulation/tests/apply_parameters.rs",
+    "crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "594f02d6cfae7e630bb0a5891a4684465eec9c97",
+   "revision": "594f02d6cfae7e630bb0a5891a4684465eec9c97",
+   "command": "CASAPY tools/simulation/sm_apply_parameters_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_parameters_readback.py --root EXPORT --fixture FIXTURE --out OUT; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
+   "receipt": "resources/casa-compat/evidence/sm-apply-parameters-20261112.json"
+  },
+  "apply-flags-20261112": {
+   "kind": "Independent invalid-solution CASA controls and C++ native-table consumption",
+   "state": "passed",
+   "result": "24 cases pass CPU W1/W3 (48 runs), maximum DATA NRMS7.53e-8 under1e-3. C++ reads48 native MS/table pairs and actually applies24 tables with zero residual against unmodified CASA outputs. Full simulation/binding367 passed/two parent-executed helper ignores; installed wheel61 passed/two documented skips; strict Clippy, fmt, architecture and docs pass.",
+   "scope": "G/D nearest/linear; endpoint and receptor flags, missing antenna; exact stored TIME and unchanged flags/weights/sigma/MODEL. D uses separately retained neutral-CASA controls under the documented invalid-unit-leakage correction. Shared numerical/memory path is unchanged.",
+   "links": [
+    "tools/simulation/sm_apply_flags_oracle.py",
+    "tools/simulation/sm_apply_flags_readback.py",
+    "crates/casa-simulation/tests/apply_flags.rs",
+    "crates/casa-simulation/tests/data/sm_apply_flags_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
+   "revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
+   "command": "CASAPY tools/simulation/sm_apply_flags_oracle.py --out OUT --fixture FIXTURE --controls crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz; CASA_RS_APPLY_FLAGS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_flags --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_flags_readback.py --root EXPORT --fixture FIXTURE --out OUT; cargo clippy -p casa-simulation -p casars-python --all-targets -- -D warnings; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
+   "receipt": "resources/casa-compat/evidence/sm-apply-flags-20261112.json"
+  },
+  "apply-scalar-20261112": {
+   "kind": "Independent scalar-T CASA controls, malformed-G refusals and native table consumption",
+   "state": "passed",
+   "result": "38 scalar successes pass CPU W1/W3 (76 runs), maximum DATA NRMS6.54e-8 under1e-3; two malformed-G cases raise correctly. C++ reads76 native MS/table pairs and applies38 native tables with zero residual. Full simulation/binding369 passed/two parent-executed helper ignores; installed wheel65 passed/two documented skips; actual Metal, strict Clippy, fmt, architecture and docs pass.",
+   "scope": "One/two/four correlations, nearest/linear, first/all endpoint flags, missing antenna, calwt/t/opacity and explicit type=T. Exact stored TIME and unchanged flags/weights/sigma/MODEL. Scalar values use the existing admitted gain operator; other table constraints remain explicit.",
+   "links": [
+    "tools/simulation/sm_apply_scalar_oracle.py",
+    "tools/simulation/sm_apply_scalar_readback.py",
+    "crates/casa-simulation/tests/apply_scalar.rs",
+    "crates/casa-simulation/tests/data/sm_apply_scalar_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
+   "revision": "1bca816840a3376d47f0a15f24446cfd79eda2e7",
+   "command": "CASAPY tools/simulation/sm_apply_scalar_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_SCALAR_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_scalar --test apply_flags --test apply_parameters -- --nocapture; CASAPY tools/simulation/sm_apply_scalar_readback.py --root EXPORT --fixture FIXTURE --out OUT; cargo clippy -p casa-simulation -p casars-python --all-targets -- -D warnings; RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
+   "receipt": "resources/casa-compat/evidence/sm-apply-scalar-20261112.json"
+  },
+  "apply-frequency-20261112": {
+   "kind": "Independent frequency-dependent CASA calculations, closed-form spline discriminator and bidirectional native-table consumption",
+   "state": "passed",
+   "result": "106 successful cases pass CPU W1/W3 (212 runs), including exact-channel flags, physical2/3-channel fallback and the corrected natural spline against an independently sampled CASA control (zero residual). Other cases agree under the unchanged1e-3 NRMS gate; maximum8.26e-4 is the documented raw CASA spline defect. All16 expected mapping/cubic refusals raise with DATA unchanged. CASA C++ reads212 native MS/table pairs and applies106 native tables with zero consumer residual. Both matrices also pass using actual CASA input tables. Full affected suites,36 memory laws, strict Clippy, final wheel71/2 and large-offset C++ checks pass; the ONE local review is resolved without re-review.",
+   "scope": "B/Tf/Df; nearest/linear/cubic/spline frequency interpolation, phase wraps, descending axes, exact half-channel ties, flags/gaps/all-invalid/one-valid samples, default fallback and spectral-window mapping. Exact stored TIME and preserved flags/weights/sigma/MODEL. Header-only metadata sizes wide calibration values before loading. The independent180-row later-window control records the next coverage outcome; at that recorded frequency revision, native new-window application remains an explicit #1053 refusal, with a panic regression check. Exact-frequency flag registration, short physical-axis fallback, active64-bit AipsIO offsets and the131073-channel spline allocation boundary are checked explicitly.",
+   "links": [
+    "tools/simulation/sm_apply_frequency_oracle.py",
+    "tools/simulation/sm_apply_frequency_readback.py",
+    "crates/casa-simulation/tests/apply_frequency.rs",
+    "crates/casa-simulation/tests/session_memory/apply_frequency.rs",
+    "crates/casa-simulation/tests/data/sm_apply_frequency_casa.json.gz",
+    "crates/casa-tables/tests/array_shape_metadata.rs",
+    "tools/simulation/array_shapes_oracle.py",
+    "tools/simulation/sm_apply_later_window_oracle.py",
+    "crates/casa-simulation/tests/data/sm_apply_later_window_casa.json.gz",
+    "tools/simulation/sm_apply_frequency_boundaries_oracle.py",
+    "crates/casa-simulation/tests/apply_frequency_boundaries.rs",
+    "crates/casa-simulation/tests/data/sm_apply_frequency_boundaries_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "revision": "1b7be87914b2b308cdec97e4caccd84ec3ca1d78",
+   "command": "CASAPY tools/simulation/sm_apply_frequency_oracle.py --out OUT --fixture FIXTURE; CASA_RS_APPLY_FREQUENCY_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_frequency -- --nocapture; CASA_RS_APPLY_CASA_TABLES=OUT cargo test -p casa-simulation --test apply_frequency frequency_tables_match_casa_with_phase_wraps_and_gaps -- --exact --nocapture; CASAPY tools/simulation/sm_apply_frequency_readback.py --root EXPORT --fixture FIXTURE --out READBACK; cargo clippy -p casa-tables -p casa-calibration -p casa-simulation -p casars-python --all-targets -- -D warnings",
+   "receipt": "resources/casa-compat/evidence/sm-apply-frequency-20261112.json"
+  },
+  "corruption-window-coverage-20261112": {
+   "kind": "Independent CASA whole-step spectral-window coverage, bounded grids and actual C++ consumption",
+   "state": "passed",
+   "result": "Six independent144/180-row cases pass CPU W1/W3, including defined-but-unobserved windows and simultaneous terms. Stored TIME, deterministic cells and preserved quality/scratch columns match exactly. Seeded worker DATA agree exactly; native/CASA noisy-cell variance ratio1.02344. C++ reads12 native MSs and applies8 native tables across6 scenarios (deterministic values exact, noise ratio1.0). Actual Metal max-relative2.37e-7 under1e-4. The former12.89GB two-term grid request becomes a4320-byte heap peak under unchanged256MiB/64KiB gates. Full native460 reported passes/2 helper ignores, installed wheel71/2 skips,38 memory laws and the ONE resolved review pass; no re-review.",
+   "scope": "Applied mapping snapshot, missing table windows, whole-step Jones/noise gating, selected fields, repeated steps, preserved corrected-data cells, nonzero fresh prediction and actual Metal. Existing unsupported calibration/time/layout/noise scopes remain open under #1053. Coverage intersection precedes term admission/evaluation; all defined window slots are represented even when unobserved.",
+   "links": [
+    "crates/casa-simulation/tests/corruption_coverage.rs",
+    "crates/casa-simulation/tests/session_memory/coverage.rs",
+    "crates/casa-simulation/tests/backends/coverage.rs",
+    "tools/simulation/sm_apply_later_window_oracle.py",
+    "tools/simulation/sm_corruption_coverage_readback.py",
+    "crates/casa-simulation/tests/data/sm_apply_later_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_later_window_noise_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_existing_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_selected_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_repeated_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_unobserved_window_casa.json.gz",
+    "crates/casa-simulation/tests/data/sm_apply_overlapping_terms_casa.json.gz"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "source_revision": "30517424209d7531ce6f4c93e1e8ef94a5e4e66b",
+   "revision": "30517424209d7531ce6f4c93e1e8ef94a5e4e66b",
+   "command": "RUST_TEST_THREADS=1 CASA_RS_COVERAGE_OUT=EXPORT cargo test -p casa-simulation --test corruption_coverage -- --nocapture; cargo test -p casa-simulation --test session_memory coverage:: -- --nocapture; cargo test -p casa-simulation --test backends coverage::actual_metal_prediction_preserves_whole_step_window_coverage -- --exact --nocapture; CASAPY tools/simulation/sm_corruption_coverage_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data --out CPP; cargo test -p casa-simulation -p casars-python",
+   "receipt": "resources/casa-compat/evidence/sm-corruption-window-coverage-20261112.json"
+  },
+  "noise-troposphere-completion": {
+   "kind": "Completed simulation noise/troposphere delivery",
+   "state": "recorded",
+   "scope": "OTF=False simple/manual/atmospheric noise, A/T/Tf output, later-observation coverage and reuse, default/custom test-ramp intervals. Existing individual/screen evidence remains valid.",
+   "result": "Issue #1292 is closed after #1316, #1322, #1324, #1326, #1329 and #1331 merged. Independent CASA6.7.6.14, statistical noise, documented source/ATM controls, C++ interoperability, CPU/Metal/workers and affected memory laws pass as recorded in those PRs. Final CI 43339695734 passed all required jobs.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1292"
+   ]
+  },
+  "supplied-simulation-tables-20261113": {
+   "kind": "Actual CASA 6.7.6.14 supplied calibration tables applied to simulated DATA",
+   "state": "passed",
+   "result": "19 independent reference cases pass under the unchanged 1e-3 DATA NRMS gate (largest 7.46e-7); successful baseline/physical cases agree for CPU W1/W3. Missing switched-power context raises with DATA and scratch/quality columns unchanged. CASA C++ reads 41 native outputs at maximum NRMS 7.46e-7. The narrow-input/wide-output law peaks at 11,731,954 bytes within 12,061,146 admitted, at most 24 bytes beyond reservation at an allocation; retained 11,010,961 within 11,011,897 charged. One Astra xhigh review is resolved. Final affected regression passes615 tests with0 failures and2 helper ignores, including memory and actual Metal cases. All required CI jobs pass in PR1338.",
+   "scope": "BPOLY including per-observation/per-scan fallback; GSPLINE inside/outside its fitted time range and at a second observing frequency; saved A Noise exact/interpolated times; M/Mf simulation pivot and combined A+M/Mf; single/interpolated fringe phases with rates/delays/dispersion; linear/circular F ionosphere; supplied switched-power, Accor and SDGAIN_OTFD. Earlier interpolation/context/mapping/matrix evidence remains applicable.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/1338"
+   ],
+   "casa_version": "6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_apply_polynomial_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_baseline_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_remaining_priors_oracle.py --out OUT --fixture FILE; cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors -- --nocapture; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT/parameters CASA_RS_POLYNOMIAL_OUT=EXPORT/polynomial cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors; CASAPY tools/simulation/sm_apply_supplied_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data; cargo test -p casa-simulation --test session_memory offline_noise::narrow_supplied_noise_admits_wide_output_interpolation -- --exact --nocapture",
+   "revision": "9747c2cb64eaf86f1650c749eb352be4802b2635",
+   "receipt": "https://github.com/bglenden/casa-rs/pull/1338"
+  },
+  "existing-append-20261113": {
+   "kind": "Actual CASA existing-MS append and call-order controls, C++ readback and allocation law",
+   "state": "passed",
+   "scope": "observe/observemany after openfromms on the accepted existing-MS layouts; original and appended DATA/quality/scratch, OBSERVATION/STATE/POINTING, physical noise rows and failure preservation. Remaining layouts and selection forms stay on SIM-05/06.",
+   "result": "Nine actual CASA6.7.6.14 cases pass CPU W1/W3. CASA C++ reads and reopens18 native MSs with zero DATA NRMS and matching quality/metadata. The original12,600/126,000-row copy cases peak at47,515,681bytes within48,579,988admitted; oversized numeric/string cells are additionally admitted. Atomic publication copies existing MS bytes (measured0.493s/4.310s append closes). One Astra xhigh review found three issues, addressed with call-order/ARRAY_ID controls and oversized-cell allocation checks.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/1339"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_existing_append_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_APPEND_EXPORT=EXPORT cargo test -p casa-simulation --test existing_append; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE; cargo test -p casa-simulation --test session_memory existing_append::existing_rows_are_copied_within_append_admission -- --exact --nocapture",
+   "revision": "28d0a0153a77593ae234775b8dc48c1094b147eb",
+   "receipt": "https://github.com/bglenden/casa-rs/pull/1339"
+  },
+  "irregular-channels-20261113": {
+   "kind": "Actual CASA calculations on stored irregular channel axes and retained-frequency allocation law",
+   "state": "passed",
+   "scope": "Ascending, descending and unordered CHAN_FREQ with unequal widths; displaced spectral-index components, four-plane images, B and GSPLINE table corruption. Other listed existing-MS layouts and selection forms remain on SIM-05/06.",
+   "result": "Twelve actual CASA6.7.6.14 cases pass CPU W1/W3 plus3 actualMetal image cases. CASA C++ reads and reopens27 nativeMSs, maximum rowDATA NRMS2.75e-7 under1e-3. Untouched DATA/quality/scratch/TIME and storedfrequencycells persist. The200k-channel ownership law peaks9,807,401bytes within12,800,256admitted and retains1,602,086within1,600,064plus existingallowance; smallbudgetrefuses beforepayloadread. 42 affected regressions and strictClippy pass. One Astra review finding fixed: explicitly select a spectral-index component and assert nonconstant CASA amplitudes.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_irregular_channels_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_IRREGULAR_EXPORT=EXPORT cargo test -p casa-simulation --test irregular_channels; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE; cargo test -p casa-simulation --test session_memory irregular_channels::stored_channel_axes_are_admitted_before_read_and_while_retained -- --exact --nocapture",
+   "revision": "0d316e310cc1b182ef33b8489c5e143e5eedd4ef",
+   "receipt": "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
+  },
+  "frequency-frames-20261113": {
+   "kind": "Actual CASA simulation with fixed/mapped distinct channel and reference-frequency frames",
+   "state": "passed",
+   "scope": "TOPO channel frequencies with BARY reference frequencies stored using fixed or custom integer-mapped descriptors; component/primary-beam/image prediction and B/GSPLINE corruption.",
+   "result": "Ten actual CASA6.7.6.14 cases pass CPU W1/W3 plus two actualMetal image cases. CASA C++ reads and reopens22 nativeMSs, maximum rowDATA NRMS1.014e-4 under1e-3. Untouched DATA/quality/scratch/TIME/frequency values and reference-frequency keywords persist. The old reader refuses the input; native existing-MS and irregular-grid regressions and strictClippy pass.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
+   ],
+   "casa_version": "casatools6.7.6-14, casatasks6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_frequency_frames_oracle.py --out OUT --fixture FIXTURE; CASA_RS_SIMULATION_FRAMES_EXPORT=EXPORT cargo test -p casa-simulation --test frequency_frames --test irregular_channels --test open_from_ms; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE",
+   "revision": "5c12261cbff5b158fff32daf61ba2af22accbf52",
+   "receipt": "https://github.com/bglenden/casa-rs/issues/1294#issuecomment-6843876482"
   }
  }
 }

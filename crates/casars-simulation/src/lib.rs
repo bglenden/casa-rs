@@ -14,7 +14,6 @@
 //! configurations, and the measures data. A run's reply carries its
 //! [`SimobserveRunTaskResult`]; simobserve returns None, as CASA's does.
 
-mod schema;
 mod task_contract;
 
 use std::path::{Path, PathBuf};
@@ -29,7 +28,6 @@ use casa_task_runtime::{
 };
 use serde_json::{Map, Value};
 
-pub use schema::command_schema;
 pub use task_contract::*;
 
 fn simobserve_surface() -> Result<SurfaceContractBundle, String> {
@@ -201,7 +199,11 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
         .to_string();
     let resource_kind = if kind == "ms" || kind.ends_with(".ms") {
         RunProductKind::MeasurementSet
-    } else if kind.ends_with("skymodel") || kind.ends_with(".flat") || kind == "newmodel" {
+    } else if kind.ends_with("skymodel")
+        || kind.ends_with(".flat")
+        || kind == "newmodel"
+        || kind == "quick.psf"
+    {
         RunProductKind::CasaImage
     } else if kind.ends_with(".txt") {
         RunProductKind::File
@@ -339,6 +341,7 @@ mod tests {
             "p.alma.out01.ms",
             "p.alma.out01.noisy.ms",
             "p.alma.out01.skymodel.flat",
+            "p.alma.out01.quick.psf",
             "p.alma.out01.ptg.txt",
             "p.alma.out01.fullpol.cal",
         ]
@@ -354,6 +357,7 @@ mod tests {
                 ("ms".to_string(), RunProductKind::MeasurementSet),
                 ("noisy.ms".to_string(), RunProductKind::MeasurementSet),
                 ("skymodel.flat".to_string(), RunProductKind::CasaImage),
+                ("quick.psf".to_string(), RunProductKind::CasaImage),
                 ("ptg.txt".to_string(), RunProductKind::File),
                 ("fullpol.cal".to_string(), RunProductKind::CasaTable),
             ]
