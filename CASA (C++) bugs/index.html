@@ -5266,6 +5266,14 @@ reproduces the standard products. CASA AW nearest on those samples and the
 original cache agrees with casa-rs AW linear on products and masks. Both
 clean runs report three iterations, four major cycles and stop code 1.
 The saved MODEL_DATA agrees within 7.6e-7 normalized RMS.</p>
+<p>For Briggs and uniform weighting on the same BARY-to-TOPO axis, the
+control also captures the density-weighted samples at CASA's weight
+interpolation call. The PSF and residual passes give identical weights.
+The materialized data reproduce the standard products within 1.64e-4
+normalized RMS. Natural-weighted CASA AW nearest on the materialized
+weights reproduces the weighted casa-rs AW products within 8.1e-7,
+with identical masks and iteration counts. The saved MODEL_DATA
+agrees within 7.6e-7 normalized RMS.</p>
 <p>The stale map also affects cubic AW cubes. On six buffers of
 <code>refim_point_withline.ms</code> using LSRK channel frequencies, the release
 AW gridder drops planes on aligned and half-channel-offset axes. With

@@ -420,9 +420,9 @@
 <a href=#420 id=420 data-nosnippet>420</a>        }
 <a href=#421 id=421 data-nosnippet>421</a>        SpectralKernel::Linear =&gt; <span class="kw">match </span>(source, output) {
 <a href=#422 id=422 data-nosnippet>422</a>            (Lsrk, Lsrk) =&gt; <span class="bool-val">true</span>,
-<a href=#423 id=423 data-nosnippet>423</a>            (Topocentric | Barycentric, Lsrk) | (Lsrk, Barycentric) =&gt; common_weighting,
-<a href=#424 id=424 data-nosnippet>424</a>            (Lsrk | Topocentric | Barycentric, Topocentric)
-<a href=#425 id=425 data-nosnippet>425</a>            | (Topocentric | Barycentric, Barycentric) =&gt; weighting == WeightingScheme::Natural,
+<a href=#423 id=423 data-nosnippet>423</a>            (Lsrk | Topocentric | Barycentric, Lsrk | Topocentric | Barycentric) =&gt; {
+<a href=#424 id=424 data-nosnippet>424</a>                common_weighting
+<a href=#425 id=425 data-nosnippet>425</a>            }
 <a href=#426 id=426 data-nosnippet>426</a>            <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
 <a href=#427 id=427 data-nosnippet>427</a>        },
 <a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
@@ -504,99 +504,92 @@
 <a href=#504 id=504 data-nosnippet>504</a>                <span class="kw">for </span>(source, expected) <span class="kw">in </span>[
 <a href=#505 id=505 data-nosnippet>505</a>                    (
 <a href=#506 id=506 data-nosnippet>506</a>                        lsrk,
-<a href=#507 id=507 data-nosnippet>507</a>                        frame == lsrk
-<a href=#508 id=508 data-nosnippet>508</a>                            || (frame == topo &amp;&amp; weighting == natural)
-<a href=#509 id=509 data-nosnippet>509</a>                            || (frame == bary &amp;&amp; converted),
-<a href=#510 id=510 data-nosnippet>510</a>                    ),
-<a href=#511 id=511 data-nosnippet>511</a>                    (
-<a href=#512 id=512 data-nosnippet>512</a>                        topo,
-<a href=#513 id=513 data-nosnippet>513</a>                        (frame == lsrk &amp;&amp; converted)
-<a href=#514 id=514 data-nosnippet>514</a>                            || (<span class="macro">matches!</span>(
-<a href=#515 id=515 data-nosnippet>515</a>                                frame,
-<a href=#516 id=516 data-nosnippet>516</a>                                FrequencyFrame::Topocentric | FrequencyFrame::Barycentric
-<a href=#517 id=517 data-nosnippet>517</a>                            ) &amp;&amp; weighting == natural),
-<a href=#518 id=518 data-nosnippet>518</a>                    ),
-<a href=#519 id=519 data-nosnippet>519</a>                    (
-<a href=#520 id=520 data-nosnippet>520</a>                        bary,
-<a href=#521 id=521 data-nosnippet>521</a>                        (frame == lsrk &amp;&amp; converted)
-<a href=#522 id=522 data-nosnippet>522</a>                            || ((frame == topo || frame == bary) &amp;&amp; weighting == natural),
-<a href=#523 id=523 data-nosnippet>523</a>                    ),
-<a href=#524 id=524 data-nosnippet>524</a>                    (FrequencyFrame::Rest, <span class="bool-val">false</span>),
-<a href=#525 id=525 data-nosnippet>525</a>                ] {
-<a href=#526 id=526 data-nosnippet>526</a>                    <span class="macro">assert_eq!</span>(
-<a href=#527 id=527 data-nosnippet>527</a>                        aw_multichannel_sampling_supported(
-<a href=#528 id=528 data-nosnippet>528</a>                            SpectralKernel::Linear,
-<a href=#529 id=529 data-nosnippet>529</a>                            source,
-<a href=#530 id=530 data-nosnippet>530</a>                            frame,
-<a href=#531 id=531 data-nosnippet>531</a>                            weighting
-<a href=#532 id=532 data-nosnippet>532</a>                        ),
-<a href=#533 id=533 data-nosnippet>533</a>                        expected,
-<a href=#534 id=534 data-nosnippet>534</a>                        <span class="string">"linear from {source:?} to {frame:?} with {weighting:?}"</span>,
-<a href=#535 id=535 data-nosnippet>535</a>                    );
-<a href=#536 id=536 data-nosnippet>536</a>                }
-<a href=#537 id=537 data-nosnippet>537</a>            }
-<a href=#538 id=538 data-nosnippet>538</a>            <span class="macro">assert!</span>(!aw_multichannel_sampling_supported(
-<a href=#539 id=539 data-nosnippet>539</a>                SpectralKernel::Identity,
-<a href=#540 id=540 data-nosnippet>540</a>                lsrk,
-<a href=#541 id=541 data-nosnippet>541</a>                frame,
-<a href=#542 id=542 data-nosnippet>542</a>                natural
-<a href=#543 id=543 data-nosnippet>543</a>            ));
-<a href=#544 id=544 data-nosnippet>544</a>        }
-<a href=#545 id=545 data-nosnippet>545</a>    }
-<a href=#546 id=546 data-nosnippet>546</a>
-<a href=#547 id=547 data-nosnippet>547</a>    <span class="attr">#[test]
-<a href=#548 id=548 data-nosnippet>548</a>    </span><span class="kw">fn </span>multi_channel_aw_cubic_requires_natural_native_lsrk() {
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">use </span>FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
-<a href=#550 id=550 data-nosnippet>550</a>
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">for </span>source <span class="kw">in </span>[Lsrk, Topocentric, Barycentric, Rest] {
-<a href=#552 id=552 data-nosnippet>552</a>            <span class="kw">for </span>output <span class="kw">in </span>[Lsrk, Topocentric, Barycentric, Rest] {
-<a href=#553 id=553 data-nosnippet>553</a>                <span class="kw">for </span>weighting <span class="kw">in </span>[
-<a href=#554 id=554 data-nosnippet>554</a>                    WeightingScheme::Natural,
-<a href=#555 id=555 data-nosnippet>555</a>                    WeightingScheme::Briggs { robust: <span class="number">0.5 </span>},
-<a href=#556 id=556 data-nosnippet>556</a>                    WeightingScheme::Uniform,
-<a href=#557 id=557 data-nosnippet>557</a>                ] {
-<a href=#558 id=558 data-nosnippet>558</a>                    <span class="macro">assert_eq!</span>(
-<a href=#559 id=559 data-nosnippet>559</a>                        aw_multichannel_sampling_supported(
-<a href=#560 id=560 data-nosnippet>560</a>                            SpectralKernel::Cubic,
-<a href=#561 id=561 data-nosnippet>561</a>                            source,
-<a href=#562 id=562 data-nosnippet>562</a>                            output,
-<a href=#563 id=563 data-nosnippet>563</a>                            weighting
-<a href=#564 id=564 data-nosnippet>564</a>                        ),
-<a href=#565 id=565 data-nosnippet>565</a>                        source == Lsrk &amp;&amp; output == Lsrk &amp;&amp; weighting == WeightingScheme::Natural,
-<a href=#566 id=566 data-nosnippet>566</a>                        <span class="string">"cubic from {source:?} to {output:?} with {weighting:?}"</span>,
-<a href=#567 id=567 data-nosnippet>567</a>                    );
-<a href=#568 id=568 data-nosnippet>568</a>                }
-<a href=#569 id=569 data-nosnippet>569</a>            }
-<a href=#570 id=570 data-nosnippet>570</a>        }
-<a href=#571 id=571 data-nosnippet>571</a>    }
-<a href=#572 id=572 data-nosnippet>572</a>
-<a href=#573 id=573 data-nosnippet>573</a>    <span class="attr">#[test]
-<a href=#574 id=574 data-nosnippet>574</a>    </span><span class="kw">fn </span>the_pass_runs_every_convolution_function_set_and_publication_beam() {
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
-<a href=#576 id=576 data-nosnippet>576</a>            RequiredCapability::WProjection,
-<a href=#577 id=577 data-nosnippet>577</a>            RequiredCapability::AwProjection,
-<a href=#578 id=578 data-nosnippet>578</a>            RequiredCapability::PrimaryBeamResponse,
-<a href=#579 id=579 data-nosnippet>579</a>            RequiredCapability::Product(ProductKind::Weight),
-<a href=#580 id=580 data-nosnippet>580</a>            RequiredCapability::Product(ProductKind::Sensitivity),
-<a href=#581 id=581 data-nosnippet>581</a>            RequiredCapability::Product(ProductKind::PrimaryBeam),
-<a href=#582 id=582 data-nosnippet>582</a>            RequiredCapability::Product(ProductKind::PbCorrectedImage),
-<a href=#583 id=583 data-nosnippet>583</a>            RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
-<a href=#584 id=584 data-nosnippet>584</a>            RequiredCapability::Polarization(PolarizationCoordinate::CircularRl),
-<a href=#585 id=585 data-nosnippet>585</a>            RequiredCapability::FacetedGeometry,
-<a href=#586 id=586 data-nosnippet>586</a>            RequiredCapability::UvTaper,
-<a href=#587 id=587 data-nosnippet>587</a>        ] {
-<a href=#588 id=588 data-nosnippet>588</a>            <span class="macro">assert!</span>(supports_capability(capability), <span class="string">"{capability:?}"</span>);
-<a href=#589 id=589 data-nosnippet>589</a>        }
-<a href=#590 id=590 data-nosnippet>590</a>    }
-<a href=#591 id=591 data-nosnippet>591</a>
-<a href=#592 id=592 data-nosnippet>592</a>    <span class="attr">#[test]
-<a href=#593 id=593 data-nosnippet>593</a>    </span><span class="kw">fn </span>full_mueller_and_the_corrected_spectral_index_wait() {
-<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
-<a href=#595 id=595 data-nosnippet>595</a>            RequiredCapability::FullMuellerResponse,
-<a href=#596 id=596 data-nosnippet>596</a>            RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
-<a href=#597 id=597 data-nosnippet>597</a>        ] {
-<a href=#598 id=598 data-nosnippet>598</a>            <span class="macro">assert!</span>(!supports_capability(capability), <span class="string">"{capability:?}"</span>);
-<a href=#599 id=599 data-nosnippet>599</a>        }
-<a href=#600 id=600 data-nosnippet>600</a>    }
-<a href=#601 id=601 data-nosnippet>601</a>}
+<a href=#507 id=507 data-nosnippet>507</a>                        frame == lsrk || ((frame == topo || frame == bary) &amp;&amp; converted),
+<a href=#508 id=508 data-nosnippet>508</a>                    ),
+<a href=#509 id=509 data-nosnippet>509</a>                    (
+<a href=#510 id=510 data-nosnippet>510</a>                        topo,
+<a href=#511 id=511 data-nosnippet>511</a>                        converted &amp;&amp; (frame == lsrk || frame == topo || frame == bary),
+<a href=#512 id=512 data-nosnippet>512</a>                    ),
+<a href=#513 id=513 data-nosnippet>513</a>                    (
+<a href=#514 id=514 data-nosnippet>514</a>                        bary,
+<a href=#515 id=515 data-nosnippet>515</a>                        converted &amp;&amp; (frame == lsrk || frame == topo || frame == bary),
+<a href=#516 id=516 data-nosnippet>516</a>                    ),
+<a href=#517 id=517 data-nosnippet>517</a>                    (FrequencyFrame::Rest, <span class="bool-val">false</span>),
+<a href=#518 id=518 data-nosnippet>518</a>                ] {
+<a href=#519 id=519 data-nosnippet>519</a>                    <span class="macro">assert_eq!</span>(
+<a href=#520 id=520 data-nosnippet>520</a>                        aw_multichannel_sampling_supported(
+<a href=#521 id=521 data-nosnippet>521</a>                            SpectralKernel::Linear,
+<a href=#522 id=522 data-nosnippet>522</a>                            source,
+<a href=#523 id=523 data-nosnippet>523</a>                            frame,
+<a href=#524 id=524 data-nosnippet>524</a>                            weighting
+<a href=#525 id=525 data-nosnippet>525</a>                        ),
+<a href=#526 id=526 data-nosnippet>526</a>                        expected,
+<a href=#527 id=527 data-nosnippet>527</a>                        <span class="string">"linear from {source:?} to {frame:?} with {weighting:?}"</span>,
+<a href=#528 id=528 data-nosnippet>528</a>                    );
+<a href=#529 id=529 data-nosnippet>529</a>                }
+<a href=#530 id=530 data-nosnippet>530</a>            }
+<a href=#531 id=531 data-nosnippet>531</a>            <span class="macro">assert!</span>(!aw_multichannel_sampling_supported(
+<a href=#532 id=532 data-nosnippet>532</a>                SpectralKernel::Identity,
+<a href=#533 id=533 data-nosnippet>533</a>                lsrk,
+<a href=#534 id=534 data-nosnippet>534</a>                frame,
+<a href=#535 id=535 data-nosnippet>535</a>                natural
+<a href=#536 id=536 data-nosnippet>536</a>            ));
+<a href=#537 id=537 data-nosnippet>537</a>        }
+<a href=#538 id=538 data-nosnippet>538</a>    }
+<a href=#539 id=539 data-nosnippet>539</a>
+<a href=#540 id=540 data-nosnippet>540</a>    <span class="attr">#[test]
+<a href=#541 id=541 data-nosnippet>541</a>    </span><span class="kw">fn </span>multi_channel_aw_cubic_requires_natural_native_lsrk() {
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="kw">use </span>FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
+<a href=#543 id=543 data-nosnippet>543</a>
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">for </span>source <span class="kw">in </span>[Lsrk, Topocentric, Barycentric, Rest] {
+<a href=#545 id=545 data-nosnippet>545</a>            <span class="kw">for </span>output <span class="kw">in </span>[Lsrk, Topocentric, Barycentric, Rest] {
+<a href=#546 id=546 data-nosnippet>546</a>                <span class="kw">for </span>weighting <span class="kw">in </span>[
+<a href=#547 id=547 data-nosnippet>547</a>                    WeightingScheme::Natural,
+<a href=#548 id=548 data-nosnippet>548</a>                    WeightingScheme::Briggs { robust: <span class="number">0.5 </span>},
+<a href=#549 id=549 data-nosnippet>549</a>                    WeightingScheme::Uniform,
+<a href=#550 id=550 data-nosnippet>550</a>                ] {
+<a href=#551 id=551 data-nosnippet>551</a>                    <span class="macro">assert_eq!</span>(
+<a href=#552 id=552 data-nosnippet>552</a>                        aw_multichannel_sampling_supported(
+<a href=#553 id=553 data-nosnippet>553</a>                            SpectralKernel::Cubic,
+<a href=#554 id=554 data-nosnippet>554</a>                            source,
+<a href=#555 id=555 data-nosnippet>555</a>                            output,
+<a href=#556 id=556 data-nosnippet>556</a>                            weighting
+<a href=#557 id=557 data-nosnippet>557</a>                        ),
+<a href=#558 id=558 data-nosnippet>558</a>                        source == Lsrk &amp;&amp; output == Lsrk &amp;&amp; weighting == WeightingScheme::Natural,
+<a href=#559 id=559 data-nosnippet>559</a>                        <span class="string">"cubic from {source:?} to {output:?} with {weighting:?}"</span>,
+<a href=#560 id=560 data-nosnippet>560</a>                    );
+<a href=#561 id=561 data-nosnippet>561</a>                }
+<a href=#562 id=562 data-nosnippet>562</a>            }
+<a href=#563 id=563 data-nosnippet>563</a>        }
+<a href=#564 id=564 data-nosnippet>564</a>    }
+<a href=#565 id=565 data-nosnippet>565</a>
+<a href=#566 id=566 data-nosnippet>566</a>    <span class="attr">#[test]
+<a href=#567 id=567 data-nosnippet>567</a>    </span><span class="kw">fn </span>the_pass_runs_every_convolution_function_set_and_publication_beam() {
+<a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
+<a href=#569 id=569 data-nosnippet>569</a>            RequiredCapability::WProjection,
+<a href=#570 id=570 data-nosnippet>570</a>            RequiredCapability::AwProjection,
+<a href=#571 id=571 data-nosnippet>571</a>            RequiredCapability::PrimaryBeamResponse,
+<a href=#572 id=572 data-nosnippet>572</a>            RequiredCapability::Product(ProductKind::Weight),
+<a href=#573 id=573 data-nosnippet>573</a>            RequiredCapability::Product(ProductKind::Sensitivity),
+<a href=#574 id=574 data-nosnippet>574</a>            RequiredCapability::Product(ProductKind::PrimaryBeam),
+<a href=#575 id=575 data-nosnippet>575</a>            RequiredCapability::Product(ProductKind::PbCorrectedImage),
+<a href=#576 id=576 data-nosnippet>576</a>            RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
+<a href=#577 id=577 data-nosnippet>577</a>            RequiredCapability::Polarization(PolarizationCoordinate::CircularRl),
+<a href=#578 id=578 data-nosnippet>578</a>            RequiredCapability::FacetedGeometry,
+<a href=#579 id=579 data-nosnippet>579</a>            RequiredCapability::UvTaper,
+<a href=#580 id=580 data-nosnippet>580</a>        ] {
+<a href=#581 id=581 data-nosnippet>581</a>            <span class="macro">assert!</span>(supports_capability(capability), <span class="string">"{capability:?}"</span>);
+<a href=#582 id=582 data-nosnippet>582</a>        }
+<a href=#583 id=583 data-nosnippet>583</a>    }
+<a href=#584 id=584 data-nosnippet>584</a>
+<a href=#585 id=585 data-nosnippet>585</a>    <span class="attr">#[test]
+<a href=#586 id=586 data-nosnippet>586</a>    </span><span class="kw">fn </span>full_mueller_and_the_corrected_spectral_index_wait() {
+<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
+<a href=#588 id=588 data-nosnippet>588</a>            RequiredCapability::FullMuellerResponse,
+<a href=#589 id=589 data-nosnippet>589</a>            RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
+<a href=#590 id=590 data-nosnippet>590</a>        ] {
+<a href=#591 id=591 data-nosnippet>591</a>            <span class="macro">assert!</span>(!supports_capability(capability), <span class="string">"{capability:?}"</span>);
+<a href=#592 id=592 data-nosnippet>592</a>        }
+<a href=#593 id=593 data-nosnippet>593</a>    }
+<a href=#594 id=594 data-nosnippet>594</a>}
 </code></pre></div></section></main></body></html>
