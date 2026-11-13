@@ -4421,6 +4421,26 @@ original cache agrees with casa-rs AW linear on products and masks. Both
 clean runs report three iterations, four major cycles and stop code 1.
 The saved MODEL_DATA agrees within 7.6e-7 normalized RMS.
 
+The stale map also affects cubic AW cubes. On six buffers of
+`refim_point_withline.ms` using LSRK channel frequencies, the release
+AW gridder drops planes on aligned and half-channel-offset axes. With
+eight selected channels on an aligned grid it can segfault. Capturing
+the standard CASA gridder's cubic samples reproduces its dirty
+products exactly when the samples are put on a nearest-neighbor grid.
+CASA AW nearest on those samples and the original cache reproduces
+the native AW dirty products and beam fits. For the offset clean,
+the control cubic-interpolates the CASA AW model back to the stored
+channels, subtracts it before standard CASA's cubic interpolation,
+grids the resulting samples with CASA AW nearest and restores with
+CASA. The dirty and final clean products agree within 9e-7 normalized
+RMS, the masks and controller counts agree exactly, and MODEL_DATA
+agrees within 1.03e-6 normalized RMS. The independent prediction
+uses the exact requested 1.275 GHz start and 50 MHz spacing to apply
+the strict halo bounds. The 1.65 GHz stored channel equals the lower
+bound of the upper halo and remains excluded. CASA's image coordinate
+evaluates that boundary one floating-point step lower, which can
+admit the equality case.
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed

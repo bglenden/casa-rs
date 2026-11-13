@@ -712,34 +712,46 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
     );
 }
 
-/// Cubic multi-channel AW cubes remain refused with their issue number.
-/// A one-channel selection runs (#1121).
+/// A native LSRK AW cube uses the four-point cubic stencil on an offset
+/// axis. The shorter edge stencil and strict support are shared with GridFT.
 #[test]
-fn a_multichannel_aw_cube_refuses_cubic_interpolation() {
+fn an_aw_cubic_cube_uses_the_cubic_stencil() {
     let setup = Setup {
         spectral_windows: vec![SyntheticSpectralSetup {
-            channel_count: 2,
-            ..lband_window("t1-lband-two", FREQUENCY_HZ)
+            channel_count: 6,
+            ..lband_window("t1-lband-cubic", FREQUENCY_HZ)
         }],
         ..setup()
     };
     let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
     let surface = observation.scratch("evla.surface");
     std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
-    let controls = |spw: &str| {
-        let mut controls = cached_clean(spw, &observation.scratch("two-cf"), &surface);
-        let fields = controls.as_object_mut().expect("controls");
-        fields.insert("niter".into(), json!(0));
-        fields.insert("specmode".into(), json!("cube"));
-        fields.insert("interpolation".into(), json!("cubic"));
-        controls
-    };
-    let refused = observation
-        .try_image("aw-two-channels", controls("0"))
-        .err()
-        .expect("a window of two channels");
-    assert!(refused.contains("#1121"), "{refused}");
-    observation.image("aw-one-channel", controls("0:0"));
+    let mut request = cached_clean("0", &observation.scratch("cubic-cf"), &surface);
+    request["niter"] = json!(0);
+    request["specmode"] = json!("cube");
+    request["outframe"] = json!("LSRK");
+    request["nchan"] = json!(5);
+    request["start"] = json!("1.504GHz");
+    request["width"] = json!("8MHz");
+    request["interpolation"] = json!("cubic");
+    let (_, cubic) = observation.image("aw-offset-cubic", request.clone());
+    let weights = cubic.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 5);
+    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
+
+    request["interpolation"] = json!("linear");
+    let (_, linear) = observation.image("aw-offset-linear-control", request);
+    let difference = cubic
+        .get(".residual")
+        .values()
+        .into_iter()
+        .zip(linear.get(".residual").values())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        difference > 1e-4,
+        "cubic and linear AW residual difference: {difference}"
+    );
 }
 
 /// A multi-channel AW window with nearest interpolation places both native
