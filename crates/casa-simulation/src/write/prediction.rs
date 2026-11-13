@@ -105,6 +105,8 @@ const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 /// predictions), the field, each row's rotation to each domain's tangent
 /// point, and the pointing offset each domain's kernels ramp by.
 struct Segment {
+    /// Representative scan for comparing every fused prediction's epoch.
+    source_scan: usize,
     steps: Vec<usize>,
     field: usize,
     projections: Vec<GridFtProjection>,
@@ -122,6 +124,7 @@ fn segment_of(
     predictions: &[&Prediction],
     steps: std::ops::Range<usize>,
     scan: &Scan,
+    scan_index: usize,
 ) -> SimulatorResult<Segment> {
     let mut projections = Vec::with_capacity(steps.len());
     let mut pointing_offsets = Vec::with_capacity(steps.len());
@@ -148,11 +151,31 @@ fn segment_of(
         pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
     }
     Ok(Segment {
+        source_scan: scan_index,
         steps: steps.collect(),
         field: scan.field_id,
         projections,
         pointing_offsets,
     })
+}
+
+impl Segment {
+    fn matches(
+        &self,
+        predictions: &[&Prediction],
+        scans: &[Scan],
+        scan: &Scan,
+        steps: std::ops::Range<usize>,
+    ) -> bool {
+        let original = &scans[self.source_scan];
+        self.field == scan.field_id
+            && self.steps.iter().copied().eq(steps.clone())
+            && original.pointing_rad.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
+            && steps.into_iter().all(|step| {
+                predictions[step].phase_centre(original).map(f64::to_bits)
+                    == predictions[step].phase_centre(scan).map(f64::to_bits)
+            })
+    }
 }
 
 /// The prediction stage's state across batches.
@@ -232,7 +255,7 @@ impl<'s> PredictionStage<'s> {
             BackendChoice::Cpu
         };
         let mut keys = HashMap::new();
-        let mut segments = Vec::new();
+        let mut segments: Vec<Segment> = Vec::new();
         let mut scan_segments = Vec::with_capacity(session.scans().len());
         // Each per-field set's visits, by their first scans: a visit is a
         // run of scans of one segment.
@@ -255,10 +278,21 @@ impl<'s> PredictionStage<'s> {
                 scan.field_id,
                 [phase_centre, scan.pointing_rad].map(|direction| direction.map(f64::to_bits)),
             );
-            let segment = match keys.get(&key) {
-                Some(segment) => *segment,
+            // The first centre is a cheap lookup key. A later fused image
+            // can carry a different epoch after append, so compare them all.
+            let cached = keys.get(&key).copied().and_then(|candidate: usize| {
+                if segments[candidate].matches(&predictions, session.scans(), scan, key.0.clone()) {
+                    Some(candidate)
+                } else {
+                    segments.iter().position(|segment| {
+                        segment.matches(&predictions, session.scans(), scan, key.0.clone())
+                    })
+                }
+            });
+            let segment = match cached {
+                Some(segment) => segment,
                 None => {
-                    segments.push(segment_of(&predictions, key.0.clone(), scan)?);
+                    segments.push(segment_of(&predictions, key.0.clone(), scan, index)?);
                     keys.insert(key, segments.len() - 1);
                     segments.len() - 1
                 }

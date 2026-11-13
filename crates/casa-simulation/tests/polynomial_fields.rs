@@ -48,13 +48,40 @@ fn file_bytes(path: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
     values
 }
 
+fn image(sm: &mut Simulator, inputs: &Path, incremental: bool) {
+    sm.predict(&PredictSpec {
+        images: vec![inputs.join("spectrum.image")],
+        component_lists: Vec::new(),
+        incremental,
+    })
+    .unwrap();
+}
+
 #[test]
 fn polynomial_fields_match_casa_prediction_and_append_refusal() {
+    run(None);
+}
+
+#[test]
+fn constant_field_append_uses_its_persisted_array_id() {
+    run(Some("append_array0_then_image"));
+}
+
+#[test]
+fn fused_images_keep_every_prediction_epoch() {
+    run(Some("fused_images_after_append"));
+}
+
+fn run(filter: Option<&str>) {
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
         &include_bytes!("data/sm_polynomial_fields_casa.json.gz")[..],
     ))
     .unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
+    let cases = fixture["cases"].as_array().unwrap();
+    if let Some(name) = filter {
+        assert!(cases.iter().any(|case| case["name"] == name));
+    }
     let inputs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_polynomial_fields");
     let host = casa_imaging_runtime::HostResources::detect().unwrap();
     let mut policies = vec![
@@ -76,13 +103,21 @@ fn polynomial_fields_match_casa_prediction_and_append_refusal() {
         ));
     }
     for (prefix, resources) in policies {
-        for case in fixture["cases"].as_array().unwrap() {
-            if prefix == "metal3" && !case["operation"].as_str().unwrap().starts_with("image") {
+        for case in cases {
+            if filter.map_or(case["mixed_append"] == true, |name| case["name"] != name) {
+                continue;
+            }
+            if prefix == "metal3" && !case["operation"].as_str().unwrap().contains("image") {
                 continue;
             }
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("polynomial.ms");
-            let input = inputs.join(format!("order{}.ms", case["order"].as_u64().unwrap()));
+            let input = inputs.join(
+                case["input"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("order{}.ms", case["order"].as_u64().unwrap())),
+            );
             copy(&input, &path);
             let mut sm = Simulator::open_from_ms(
                 &path,
@@ -94,7 +129,25 @@ fn polynomial_fields_match_casa_prediction_and_append_refusal() {
             )
             .unwrap();
             let operation = case["operation"].as_str().unwrap();
-            if operation == "append" {
+            if case["mixed_append"] == true {
+                let before = case["predict_before_append"] == true;
+                if before {
+                    image(&mut sm, &inputs, false);
+                }
+                sm.set_times(
+                    10.,
+                    false,
+                    MEpoch::from_mjd(predict_support::REFERENCE_MJD, EpochRef::UTC),
+                )
+                .unwrap();
+                let mut scan = predict_support::scan("offset", 40., 60.);
+                scan.add_observation = case["add_observation"] == true;
+                scan.project = "continued".into();
+                scan.observer = "CASA simulator".into();
+                sm.observe(&scan).unwrap();
+                assert_eq!(case["casa_observe_return"], true);
+                image(&mut sm, &inputs, before);
+            } else if operation == "append" {
                 sm.set_times(
                     10.,
                     false,

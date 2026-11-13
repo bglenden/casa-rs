@@ -119,17 +119,23 @@ pub(in crate::session) fn selected_centres(
         }
         let mut chunks: Vec<_> = first.into_iter().collect();
         chunks.sort_unstable_by_key(|v| v.0);
-        let mut previous_field = None;
-        let mut frame_direction = [0., 0.];
+        let mut field_frames = HashMap::new();
         let mut centres = Vec::with_capacity(chunks.len());
         for (chunk, time) in chunks {
-            // ComponentFT uses MSIter's current chunk. FTMachine::rotateUVW
-            // retains its frame while FIELD_ID/MS_ID stay unchanged, across
-            // ARRAY_ID and DD boundaries, in iterator chunk order.
-            if !image_frame || previous_field != Some(chunk.1) {
-                frame_direction = at(session, &ms, chunk.1, time)?;
-                previous_field = Some(chunk.1);
-            }
+            // ComponentFT uses MSIter's current chunk. Image prediction runs
+            // per FIELD; its FTMachine retains that field's first frame
+            // across ARRAY_ID and DD boundaries.
+            let frame_direction = if image_frame {
+                if let Some(&direction) = field_frames.get(&chunk.1) {
+                    direction
+                } else {
+                    let direction = at(session, &ms, chunk.1, time)?;
+                    field_frames.insert(chunk.1, direction);
+                    direction
+                }
+            } else {
+                at(session, &ms, chunk.1, time)?
+            };
             centres.push((chunk, frame_direction));
         }
         centres.sort_unstable_by_key(|v| v.0);

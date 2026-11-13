@@ -15,6 +15,51 @@ from sm_existing_append_oracle import snapshot
 from sm_multiple_models_oracle import CENTRE, make_session
 
 
+def append_controls(root, inputs):
+    cases = []
+    for poly_field in (0, 1):
+        name = "append_array0_then_image" if poly_field == 0 else "fused_images_after_append"
+        stored = inputs / f"{name}.ms"
+        tb = table()
+        tb.open(str(inputs / "order2.ms"))
+        selected = tb.query("FIELD_ID == 0")
+        selected.copy(str(stored), deep=True, valuecopy=True)
+        selected.close()
+        tb.close()
+        if poly_field == 1:
+            tb.open(str(stored / "FIELD"), nomodify=False)
+            rows = [{c: tb.getcell(c, r) for c in tb.colnames()} for r in (0, 1)]
+            for row in (0, 1):
+                for column, value in rows[1 - row].items():
+                    tb.putcell(column, row, value)
+            tb.close()
+            tb.open(str(stored), nomodify=False)
+            tb.putcol("FIELD_ID", np.ones(tb.nrows(), np.int32))
+            tb.close()
+        path = root / f"{name}.ms"
+        shutil.copytree(stored, path, ignore=shutil.ignore_patterns("table.lock"))
+        before = snapshot(path)
+        sm = simulator()
+        assert sm.openfromms(str(path))
+        if poly_field == 1:
+            assert sm.predict(imagename=str(inputs / "spectrum.image"))
+        assert sm.settimes(integrationtime="10s", usehourangle=False,
+                           referencetime="UTC 2024/06/01/00:00:00")
+        returned = bool(sm.observe(sourcename="offset", spwname="band6", starttime="3s",
+                                   stoptime="23s", add_observation=bool(poly_field), project="continued"))
+        assert returned, "CASA can append to the unused constant field"
+        assert sm.predict(imagename=str(inputs / "spectrum.image"), incremental=bool(poly_field))
+        sm.close()
+        after = snapshot(path)
+        cases.append(dict(name=name, input=f"{name}.ms", order=2, operation="mixed_append_image",
+                          mixed_append=True, predict_before_append=bool(poly_field),
+                          add_observation=bool(poly_field), all_fields_selected=True,
+                          casa_observe_return=returned, before=before, after=after))
+        print(name, "append", returned, "rows", len(after["rows"]),
+              "appended ARRAY_ID", sorted({r["array_id"] for r in after["rows"][len(before["rows"]):]}), flush=True)
+    return cases
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
@@ -78,6 +123,9 @@ def main():
             write(args.fixture, dict(casa_version=version_string(), cases=cases))
             print(name, "rows", len(after["rows"]), "metadata unchanged", before["metadata"] == after["metadata"], "baseline01 first channel",
                   [r["data"][:4] for r in after["rows"] if r["field"] == 0 and r["antennas"] == [0, 1]][:2], flush=True)
+
+    cases.extend(append_controls(root, inputs))
+    write(args.fixture, dict(casa_version=version_string(), cases=cases))
 
 
 if __name__ == "__main__":

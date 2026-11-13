@@ -414,7 +414,7 @@ impl super::Simulator {
                     integration_count(start_s, utc_s(pointing.stop_s), integration_s);
                 integrations += integration_count;
                 self.scans.push(Scan {
-                    array_id: self.existing_array_id,
+                    array_id,
                     scan_number,
                     observation_id,
                     field_id,
