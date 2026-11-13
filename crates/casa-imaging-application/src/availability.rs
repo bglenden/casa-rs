@@ -416,9 +416,8 @@ fn aw_multichannel_sampling_supported(
         SpectralKernel::Linear => match (source, output) {
             (Lsrk, Lsrk) => true,
             (Topocentric | Barycentric, Lsrk) | (Lsrk, Barycentric) => common_weighting,
-            (Lsrk | Topocentric, Topocentric) | (Topocentric | Barycentric, Barycentric) => {
-                weighting == WeightingScheme::Natural
-            }
+            (Lsrk | Topocentric | Barycentric, Topocentric)
+            | (Topocentric | Barycentric, Barycentric) => weighting == WeightingScheme::Natural,
             _ => false,
         },
         _ => false,
@@ -490,7 +489,8 @@ mod tests {
                     ),
                     (
                         bary,
-                        (frame == lsrk && converted) || (frame == bary && weighting == natural),
+                        (frame == lsrk && converted)
+                            || ((frame == topo || frame == bary) && weighting == natural),
                     ),
                     (FrequencyFrame::Rest, false),
                 ] {

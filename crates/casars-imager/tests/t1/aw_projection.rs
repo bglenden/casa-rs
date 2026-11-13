@@ -861,6 +861,7 @@ fn tracked_aw_linear_cubes_preserve_supported_planes() {
         (FrequencyRef::LSRK, FrequencyRef::TOPO),
         (FrequencyRef::LSRK, FrequencyRef::BARY),
         (FrequencyRef::BARY, FrequencyRef::LSRK),
+        (FrequencyRef::BARY, FrequencyRef::TOPO),
         (FrequencyRef::BARY, FrequencyRef::BARY),
     ] {
         let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
