@@ -867,12 +867,12 @@ struct CasaParams {
 }
 
 fn fit_gaussian_beam_casa(samples: &[FitSample], cell_size_rad: [f64; 2]) -> Option<RestoringBeam> {
-    // StokesImageUtil::FitGaussianPSF seeds the fit with a 2.5-pixel-wide
-    // Gaussian at axial ratio 0.5 and position angle zero.
+    // StokesImageUtil::FitGaussianPSF starts with a 2.5-pixel-wide
+    // Gaussian at axial ratio 0.5 and a position angle of one radian.
     let accepted_params = CasaParams {
         width_fwhm_rad: 2.5 * cell_size_rad[0].abs().max(cell_size_rad[1].abs()),
         axial_ratio: 0.5,
-        position_angle_rad: 0.0,
+        position_angle_rad: 1.0,
     };
     let mut accepted_params = accepted_params;
     let (mut accepted_normal, mut accepted_known) =
@@ -1123,6 +1123,36 @@ fn casa_wrap_beam_position_angle(mut angle: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sparse_aw_psf_fits_with_casas_initial_position_angle() {
+        const SIZE: usize = 51;
+        let mut psf = include_bytes!("../tests/fixtures/sparse_aw_psf.f32le")
+            .chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("Float sample")))
+            .collect::<Vec<_>>();
+        let adjacent = 26 * SIZE + 26;
+        let sample = psf[adjacent];
+        let cell = [10.0_f64.to_radians() / 3600.0; 2];
+        for value in [sample, sample.next_up(), sample.next_down()] {
+            psf[adjacent] = value;
+            let beam = fit_restoring_beam(&psf, [SIZE, SIZE], cell, 0.35).expect("sparse AW beam");
+            let major_arcsec = beam.major_fwhm_rad().to_degrees() * 3600.0;
+            let minor_arcsec = beam.minor_fwhm_rad().to_degrees() * 3600.0;
+            assert!(
+                (major_arcsec / 1619.6436767578125 - 1.0).abs() < 1e-3,
+                "{beam:?}"
+            );
+            assert!(
+                (minor_arcsec / 64.02716064453125 - 1.0).abs() < 1e-3,
+                "{beam:?}"
+            );
+            assert!(
+                (beam.position_angle_rad().to_degrees() - 69.26249694824219).abs() < 0.01,
+                "{beam:?}"
+            );
+        }
+    }
 
     /// A plane of `[20, 20]` with a unit point at `pixel`, x-major.
     fn point_at(pixel: [usize; 2]) -> Vec<f32> {
