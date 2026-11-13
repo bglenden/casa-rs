@@ -415,7 +415,9 @@ fn aw_multichannel_sampling_supported(
         SpectralKernel::Nearest => {
             output != Rest || (source == Topocentric && weighting == WeightingScheme::Natural)
         }
-        SpectralKernel::Cubic => source == Lsrk && output == Lsrk && common_weighting,
+        SpectralKernel::Cubic => {
+            matches!(source, Lsrk | Topocentric) && output == Lsrk && common_weighting
+        }
         SpectralKernel::Linear => match (source, output) {
             (Lsrk, Lsrk) => true,
             (Lsrk | Topocentric | Barycentric, Lsrk | Topocentric | Barycentric) => {
@@ -536,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_channel_aw_cubic_accepts_common_weighting_on_native_lsrk() {
+    fn multi_channel_aw_cubic_accepts_common_weighting_to_lsrk() {
         use FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
 
         for source in [Lsrk, Topocentric, Barycentric, Rest] {
@@ -554,7 +556,7 @@ mod tests {
                             output,
                             weighting
                         ),
-                        source == Lsrk && output == Lsrk && supported,
+                        (source == Lsrk || source == Topocentric) && output == Lsrk && supported,
                         "cubic from {source:?} to {output:?} with {weighting:?}",
                     );
                 }

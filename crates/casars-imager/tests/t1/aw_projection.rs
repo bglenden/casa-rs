@@ -760,7 +760,7 @@ fn an_aw_cubic_cube_uses_the_cubic_stencil() {
     }
 
     request["interpolation"] = json!("linear");
-    let (_, linear) = observation.image("aw-offset-linear-control", request);
+    let (_, linear) = observation.image("aw-offset-linear-control", request.clone());
     let difference = cubic
         .get(".residual")
         .values()
@@ -772,6 +772,27 @@ fn an_aw_cubic_cube_uses_the_cubic_stencil() {
         difference > 1e-4,
         "cubic and linear AW residual difference: {difference}"
     );
+
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .expect("tag the input frequency frame");
+    ms.save().expect("save the TOPO test MS");
+    drop(ms);
+    request["interpolation"] = json!("cubic");
+    request["native_cf_cache"] = json!(observation.scratch("topo-cubic-cf"));
+    // The TOPO-to-LSRK conversion shifts the final channel below this
+    // grid point, which is within the unconverted native axis.
+    request["start"] = json!("1.49996GHz");
+    request["nchan"] = json!(6);
+    let (_, converted) = observation.image("aw-offset-topo-cubic", request);
+    let sums = converted.get(".sumwt").channel_values();
+    assert_eq!(sums.len(), 6);
+    assert!(sums[..5].iter().all(|weight| *weight > 0.0), "{sums:?}");
+    assert_eq!(sums[5], 0.0, "{sums:?}");
 }
 
 /// A multi-channel AW window with nearest interpolation places both native
