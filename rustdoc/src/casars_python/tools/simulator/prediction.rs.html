@@ -70,19 +70,19 @@
 <a href=#70 id=70 data-nosnippet>70</a>    request: <span class="kw-2">&amp;</span>OptionsRequest&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#71 id=71 data-nosnippet>71</a>) -&gt; PyResult&lt;bool&gt; {
 <a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span>result = tool.on_session(py, |session, lines| {
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">if </span>measures::position(<span class="kw-2">&amp;</span>request.location, <span class="kw-2">&amp;</span>session.measures)<span class="question-mark">?</span>.is_none()
-<a href=#74 id=74 data-nosnippet>74</a>            &amp;&amp; !request.location.is_empty_sequence()
-<a href=#75 id=75 data-nosnippet>75</a>        {
-<a href=#76 id=76 data-nosnippet>76</a>            lines.push(LogLine::error(<span class="macro">format!</span>(
-<a href=#77 id=77 data-nosnippet>77</a>                <span class="string">"Could not convert location {} to a Position Measures"</span>,
-<a href=#78 id=78 data-nosnippet>78</a>                request.location.describe()
-<a href=#79 id=79 data-nosnippet>79</a>            )));
-<a href=#80 id=80 data-nosnippet>80</a>        }
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">let </span>options = PredictionOptions {
-<a href=#82 id=82 data-nosnippet>82</a>            ftmachine: request.ftmachine.to_string(),
-<a href=#83 id=83 data-nosnippet>83</a>            grid_function: request.grid_function.to_string(),
-<a href=#84 id=84 data-nosnippet>84</a>            padding: request.padding,
-<a href=#85 id=85 data-nosnippet>85</a>            w_planes: request.w_planes,
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span>location = measures::position(<span class="kw-2">&amp;</span>request.location, <span class="kw-2">&amp;</span>session.measures)<span class="question-mark">?</span>;
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">if </span>location.is_none() &amp;&amp; !request.location.is_empty_sequence() {
+<a href=#75 id=75 data-nosnippet>75</a>            lines.push(LogLine::error(<span class="macro">format!</span>(
+<a href=#76 id=76 data-nosnippet>76</a>                <span class="string">"Could not convert location {} to a Position Measures"</span>,
+<a href=#77 id=77 data-nosnippet>77</a>                request.location.describe()
+<a href=#78 id=78 data-nosnippet>78</a>            )));
+<a href=#79 id=79 data-nosnippet>79</a>        }
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>options = PredictionOptions {
+<a href=#81 id=81 data-nosnippet>81</a>            ftmachine: request.ftmachine.to_string(),
+<a href=#82 id=82 data-nosnippet>82</a>            grid_function: request.grid_function.to_string(),
+<a href=#83 id=83 data-nosnippet>83</a>            padding: request.padding,
+<a href=#84 id=84 data-nosnippet>84</a>            w_planes: request.w_planes,
+<a href=#85 id=85 data-nosnippet>85</a>            location_itrf_m: location.map_or([<span class="number">0.</span>; <span class="number">3</span>], |position| position.as_itrf()),
 <a href=#86 id=86 data-nosnippet>86</a>        };
 <a href=#87 id=87 data-nosnippet>87</a>        outcome(session.simulator.set_options(<span class="kw-2">&amp;</span>options), lines)
 <a href=#88 id=88 data-nosnippet>88</a>    })<span class="question-mark">?</span>;

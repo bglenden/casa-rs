@@ -5266,6 +5266,25 @@ reproduces the standard products. CASA AW nearest on those samples and the
 original cache agrees with casa-rs AW linear on products and masks. Both
 clean runs report three iterations, four major cycles and stop code 1.
 The saved MODEL_DATA agrees within 7.6e-7 normalized RMS.</p>
+<p>The stale map also affects cubic AW cubes. On six buffers of
+<code>refim_point_withline.ms</code> using LSRK channel frequencies, the release
+AW gridder drops planes on aligned and half-channel-offset axes. With
+eight selected channels on an aligned grid it can segfault. Capturing
+the standard CASA gridder's cubic samples reproduces its dirty
+products exactly when the samples are put on a nearest-neighbor grid.
+CASA AW nearest on those samples and the original cache reproduces
+the native AW dirty products and beam fits. For the offset clean,
+the control cubic-interpolates the CASA AW model back to the stored
+channels, subtracts it before standard CASA's cubic interpolation,
+grids the resulting samples with CASA AW nearest and restores with
+CASA. The dirty and final clean products agree within 9e-7 normalized
+RMS, the masks and controller counts agree exactly, and MODEL_DATA
+agrees within 1.03e-6 normalized RMS. The independent prediction
+uses the exact requested 1.275 GHz start and 50 MHz spacing to apply
+the strict halo bounds. The 1.65 GHz stored channel equals the lower
+bound of the upper halo and remains excluded. CASA's image coordinate
+evaluates that boundary one floating-point step lower, which can
+admit the equality case.</p>
 <h2 id="aw-pointing-can-read-an-uninitialized-frame-on-an-ephemeris-field">AW pointing can read an uninitialized frame on an ephemeris field<a class="headerlink" href="#aw-pointing-can-read-an-uninitialized-frame-on-an-ephemeris-field" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14's <code>PointingOffsets</code> owns a default-constructed
 <code>VisBufferUtil</code>. With <code>usepointing=False</code>, its first field direction
@@ -5778,6 +5797,67 @@ Seeded flags, quality and untouched-window cells still use their raw references.
 Combined image/component controls additionally reuse the independent image-only
 plus component-only correction for the flagged-component duplication documented
 above. No CASA tolerance is relaxed.</p>
+<h2 id="zero-observer-radius-creates-spurious-diurnal-aberration">Zero observer radius creates spurious diurnal aberration<a class="headerlink" href="#zero-observer-radius-creates-spurious-diurnal-aberration" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-13</li>
+<li>Status: CASA defect; casa-rs uses the zero-radius limit (#1295).</li>
+<li>Affected code: casacore <code>MeasMath::applyTOPOtoHADEC</code> and
+  <code>MVPosition::readjust</code>; CASA <code>FTMachine</code>'s default reference position.</li>
+</ul>
+<p>The simulator's unset reference position is the geocentre. Its diurnal
+aberration factor is zero, but <code>MVPosition::readjust(0)</code> scales the unit
+correction direction by <code>1e-6</code>. The resulting spurious aberration changes
+HADEC, horizon and terrestrial image prediction. The same C++ calculation at
+an ITRF radius of one micrometre has negligible physical aberration and
+removes the discontinuity. For the image-frame control's first baseline,
+C++ gives path delays of -14.597005554443669 m at exactly zero radius and
+-14.597027123114067 m at the one-micrometre limit. Direct C++ calls reproduce
+this without the Python position-record conversion.</p>
+<p>casa-rs retains zero aberration at zero radius. The horizon-frame oracle in
+<code>tools/simulation/sm_image_layouts_oracle.py</code> prepares and predicts images in
+the same limit frame; it records this correction in the fixture. Separate
+nonzero-delay C++ UVWMachine controls at two visibility epochs check both the
+rotation refresh and the retained construction-time phase centre. The
+end-to-end controls keep the existing 1e-3 tolerance.</p>
+<h2 id="gridfts-visibility-phase-uses-a-single-precision-pi-constant">GridFT's visibility phase uses a single-precision pi constant<a class="headerlink" href="#gridfts-visibility-phase-uses-a-single-precision-pi-constant" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-13</li>
+<li>Status: CASA defect; casa-rs retains double-precision phase arithmetic (#1295).</li>
+<li>Affected code: <code>synthesis/fortran/fgridft.f</code>, <code>locuvw</code>.</li>
+</ul>
+<p><code>locuvw</code> declares <code>pi</code> double precision but initializes it with the
+default-real literal <code>data pi/3.14159265358979323846/</code>. The literal is rounded
+to single precision before conversion. Calling the shipped CASA 6.7.6.14
+Fortran routine directly with a 100 m delay and 100 GHz frequency returns
+<code>(-0.8458330035, -0.5334478021)</code>; double-precision pi gives
+<code>(-0.8427074474, -0.5383717657)</code>. The returned phasor agrees with pi first
+rounded to float32. Large absolute delays can therefore exceed the usual
+DATA tolerance even when the C++ and Rust UVW and physical path delays agree.</p>
+<p>casa-rs keeps the double-precision constant. The image-frame DATA controls
+use matching observer frames and a small initial phase offset; an independent
+C++ projection control also checks a nonzero delay. This avoids assigning
+CASA's phase-constant error to the direction conversion.</p>
+<h2 id="the-simulator-mosaic-beam-axis-mislabels-irregular-frequencies">The simulator mosaic beam axis mislabels irregular frequencies<a class="headerlink" href="#the-simulator-mosaic-beam-axis-mislabels-irregular-frequencies" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-13</li>
+<li>Status: CASA defect; casa-rs evaluates beams at the actual frequencies (#1295).</li>
+<li>Affected code: <code>synthesis/TransformMachines/HetArrayConvFunc.cc</code>,
+  <code>findConvFunction</code>.</li>
+</ul>
+<p><code>findUsefulChannels</code> preserves an irregular selected frequency vector, but
+<code>findConvFunction</code> constructs the beam image's spectral coordinate with only
+its first frequency and first spacing. For <code>[100, 150, 210, 300]</code> GHz the
+beam planes are consequently evaluated at <code>[100, 150, 200, 250]</code> GHz. A
+four-plane image with a central source and an offset source reproduces the
+error even in J2000, independently of direction-frame conversion.</p>
+<p>casa-rs builds each beam at its actual frequency. The oracle retains CASA's
+raw DATA and obtains the 210 and 300 GHz DATA and CORRECTED_DATA columns from
+independent constant-frequency CASA predictions of the same sky. The first
+two channels, model column, unselected rows and quality columns retain their
+ordinary CASA references. These controls agree with native prediction at
+5.4e-7 NRMS in the J2000 case, without changing the 1e-3 threshold. Reproduce
+a frequency control with <code>sm_image_layouts_oracle.py --case
+frame_j2000_mosaic --constant-frequency 210000000000 --out OUT --fixture FILE</code>.</p>
 
 
 
