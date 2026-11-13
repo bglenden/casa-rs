@@ -165,7 +165,7 @@ impl ModelLayout {
     ///
     /// # Errors
     ///
-    /// A geometry the grid cannot hold, correlations the Stokes I model
+    /// A geometry the grid cannot hold, correlations the model’s Stokes planes
     /// cannot feed, or the mosaic machine without beams.
     pub(crate) fn new(
         model: &SkyModel,
@@ -450,7 +450,7 @@ impl ModelPredictor {
     ///
     /// # Errors
     ///
-    /// A geometry the grid cannot hold, correlations the Stokes I model
+    /// A geometry the grid cannot hold, correlations the model’s Stokes planes
     /// cannot feed, a pointing outside the model's coordinate system, or a
     /// plane that cannot be read.
     pub fn new(
