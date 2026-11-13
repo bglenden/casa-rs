@@ -10,9 +10,7 @@
 //! - OBSERVATION, whose first telescope picks the beams (`VPSkyJones`). The
 //!   session's own telescope stays `Unknown`, as `NewMSSimulator`'s does:
 //!   only `setconfig` sets it;
-//! - each data description's spectral window and correlations. casa-rs's
-//!   window `w` is data description `w`, so the data descriptions must name
-//!   the windows in order, as both simulators write them;
+//! - each data description's actual spectral-window and polarization IDs;
 //! - each field's name, code and PHASE_DIR, the phase centre CASA's
 //!   `VisBuffer` predicts at;
 //! - MAIN's rows as scans: each run of consecutive rows with one
@@ -27,8 +25,7 @@
 //!
 //! What casa-rs does not read yet is refused, here or by the step needing
 //! it, rather than predicted wrongly: a PHASE_DIR polynomial,
-//! several feeds per antenna, data
-//! descriptions out of the windows' order, and a primary beam, the mosaic
+//! and a primary beam, the mosaic
 //! machine or total-power sampling when POINTING does not point at the
 //! scans' phase centres. Adding to the MeasurementSet after `openfromms`
 //! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`)
@@ -48,13 +45,15 @@ use super::array::Antenna;
 use super::error::{SimulatorError, SimulatorResult};
 use super::fields::Field;
 use super::observe::{Observation, Scan, ScanRows};
-use super::spectral::SpectralWindow;
+use super::spectral::{DataDescription, SpectralWindow};
 use super::{Simulator, SimulatorOptions};
 
 #[path = "from_ms_append.rs"]
 mod append;
 #[path = "from_ms_channels.rs"]
 mod channels;
+#[path = "from_ms_descriptions.rs"]
+mod descriptions;
 
 /// MAIN rows read at a time while finding the scans.
 const SCAN_READ_ROWS: usize = 1 << 16;
@@ -111,8 +110,16 @@ impl Simulator {
         let mut session = Self::open(&path, options);
         session.antennas = read_antennas(&ms)?;
         session.observations = read_observations(&ms)?;
-        session.spectral_windows = read_windows(&ms, &session.options.resources)?;
-        refuse_several_feeds(&ms)?;
+        let mappings = descriptions::read(&ms, &session.options.resources)?;
+        session.polarizations = mappings.polarizations;
+        session.data_descriptions = mappings.descriptions;
+        session.description_memory = Some(mappings.memory);
+        session.spectral_windows = read_windows(
+            &ms,
+            &session.data_descriptions,
+            &session.polarizations,
+            &session.options.resources,
+        )?;
         // Append reads the feed rows when observe first needs them.
         session.feeds_set = true;
         session.fields = read_fields(&session, &ms)?;
@@ -120,7 +127,7 @@ impl Simulator {
             scans,
             times_s: scan_times_s,
             integrations,
-        } = read_scans(&ms, &session.fields, session.spectral_windows.len())?;
+        } = read_scans(&ms, &session.fields, &session.data_descriptions)?;
         session.scans = scans;
         let main = ms.main_table();
         let has = |column: &str| {
@@ -220,47 +227,24 @@ fn read_observations(ms: &MeasurementSet) -> SimulatorResult<Vec<Observation>> {
         .collect()
 }
 
-/// The windows, one per data description: casa-rs's window `w` is data
-/// description `w` and spectral window `w`, with data description `w`'s
-/// correlations.
+/// Physical spectral windows; each MAIN data description supplies its own
+/// polarization setup independently of this physical frequency index.
 fn read_windows(
     ms: &MeasurementSet,
+    descriptions: &[DataDescription],
+    polarizations: &[Vec<i32>],
     resources: &super::SessionResources,
 ) -> SimulatorResult<Vec<SpectralWindow>> {
-    let error = read_error("SPECTRAL_WINDOW");
-    let windows = ms.spectral_window().map_err(&error)?;
-    let descriptions = ms
-        .data_description()
-        .map_err(read_error("DATA_DESCRIPTION"))?;
-    let polarizations = ms.polarization().map_err(read_error("POLARIZATION"))?;
-    let in_order = descriptions.row_count() == windows.row_count()
-        && (0..descriptions.row_count())
-            .all(|row| descriptions.spectral_window_id(row).ok() == Some(row as i32));
-    if !in_order {
-        return Err(SimulatorError::not_yet_implemented(
-            "openfromms on a MeasurementSet whose data descriptions are not its spectral \
-             windows in order is not yet implemented in casa-rs (#1053)",
-        ));
-    }
+    let windows = ms
+        .spectral_window()
+        .map_err(read_error("SPECTRAL_WINDOW"))?;
     (0..windows.row_count())
         .map(|row| {
-            let polarization = descriptions
-                .polarization_id(row)
-                .map_err(read_error("DATA_DESCRIPTION"))?;
-            let correlations = usize::try_from(polarization)
-                .ok()
-                .filter(|&id| id < polarizations.row_count())
-                .ok_or_else(|| {
-                    SimulatorError::raised(format!(
-                        "openfromms: data description {row} names POLARIZATION row \
-                         {polarization}, which does not exist"
-                    ))
-                })
-                .and_then(|id| {
-                    polarizations
-                        .corr_type(id)
-                        .map_err(read_error("POLARIZATION"))
-                })?;
+            let correlations = descriptions
+                .iter()
+                .find(|d| d.window == row)
+                .map(|d| polarizations[d.polarization].clone())
+                .unwrap_or_default();
             read_window(
                 &windows,
                 ms.subtable(casa_ms::SubtableId::SpectralWindow)
@@ -324,22 +308,6 @@ fn read_window(
     Ok(window)
 }
 
-/// Refuse a FEED table with several feeds per antenna, which `setfeed`
-/// cannot write either.
-fn refuse_several_feeds(ms: &MeasurementSet) -> SimulatorResult<()> {
-    let error = read_error("FEED");
-    let feed = ms.feed().map_err(&error)?;
-    for row in 0..feed.row_count() {
-        if feed.i32(row, "FEED_ID").map_err(&error)? != 0 {
-            return Err(SimulatorError::not_yet_implemented(
-                "openfromms on a MeasurementSet with several feeds per antenna is not yet \
-                 implemented in casa-rs (#1053)",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<Field>> {
     let error = read_error("FIELD");
     let field = ms.field().map_err(&error)?;
@@ -374,7 +342,11 @@ fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<
 /// direction with zero phase there although the pointing's UVW were
 /// computed at the moved direction (measured on CASA 6.7.6;
 /// `docs/CASA (C++) bugs.md`).
-fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> SimulatorResult<ReadScans> {
+fn read_scans(
+    ms: &MeasurementSet,
+    fields: &[Field],
+    mappings: &[DataDescription],
+) -> SimulatorResult<ReadScans> {
     let main = ms.main_table();
     let rows = main.row_count();
     let mut scans: Vec<Scan> = Vec::new();
@@ -427,14 +399,20 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
         {
             let row = first + offset;
             let field_id = index(field, fields.len(), row, "FIELD_ID")?;
-            let window = index(description, windows, row, "DATA_DESC_ID")?;
+            let data_description_id = index(description, mappings.len(), row, "DATA_DESC_ID")?;
+            let window = mappings[data_description_id].window;
             if let Some(scan) = scans.last_mut()
                 && (
                     scan.scan_number,
                     scan.observation_id,
                     scan.field_id,
-                    scan.spectral_window_id,
-                ) == (number, observation_ids[offset], field_id, window)
+                    scan.data_description_id,
+                ) == (
+                    number,
+                    observation_ids[offset],
+                    field_id,
+                    data_description_id,
+                )
                 && let ScanRows::OnDisk(scan_rows) = &mut scan.rows
                 && let Some(span) = times_s.last_mut()
                 && let Some(times) = integrations.last_mut()
@@ -451,6 +429,7 @@ fn read_scans(ms: &MeasurementSet, fields: &[Field], windows: usize) -> Simulato
                 observation_id: observation_ids[offset],
                 field_id,
                 spectral_window_id: window,
+                data_description_id,
                 phase_center_rad: fields[field_id].direction_rad,
                 // POINTING, read when a step needs it, must point there
                 // (`require_pointings_at_phase_centres`).

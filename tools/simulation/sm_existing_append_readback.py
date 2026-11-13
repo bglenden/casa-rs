@@ -11,6 +11,7 @@ from casatasks import version_string
 from casatools import simulator, table
 
 from sm_existing_append_oracle import snapshot
+from sm_data_descriptions_oracle import description_metadata
 
 
 def main():
@@ -30,6 +31,14 @@ def main():
             path = args.native / f"{prefix}-{case['name']}.ms"
             actual = snapshot(path)
             expected = case["after"]
+            if "mapping" in case:
+                tb = table()
+                tb.open(str(path / "DATA_DESCRIPTION"))
+                mapping = tb.getcol("SPECTRAL_WINDOW_ID").tolist()
+                tb.close()
+                assert mapping == case["mapping"], path
+                assert description_metadata(path) == case["description_metadata"], path
+                before = len(case["before"]["rows"])
             if "frequencies_hz" in case:
                 tb = table()
                 tb.open(str(path / "SPECTRAL_WINDOW"))
@@ -39,6 +48,19 @@ def main():
             worst = 0.
             for row, (observed, reference) in enumerate(zip(actual["rows"], expected["rows"])):
                 for name, value in reference.items():
+                    if ("mapping" in case and case["operation"] == "append"
+                            and row >= before and name == "data_desc_id"):
+                        # CASA labels appended rows with the physical SPW ID,
+                        # even when it means another window or is out of range.
+                        # Check the corrected label against the input DD map.
+                        assert 0 <= observed[name] < len(mapping), (path, row)
+                        assert mapping[observed[name]] == case["requested_spw"], (path, row)
+                        value = case["native_append_description"]
+                    if (case.get("native_reversed_gain") and reference["data_desc_id"] == 2
+                            and reference["field"] == 0 and name in ("data", "corrected_data")):
+                        # Analytic diagonal Jones correction for reversed
+                        # CORR_PRODUCT: each channel's receptor pairs reverse.
+                        value = np.asarray(value).reshape(-1, 4, 2)[:, ::-1, :].reshape(-1, 2)
                     left, right = np.asarray(observed[name]), np.asarray(value)
                     assert left.shape == right.shape, (path, row, name)
                     if name in ("data", "model_data", "corrected_data"):

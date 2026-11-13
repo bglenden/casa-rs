@@ -79,7 +79,7 @@ use feeds::Feed;
 use fields::Field;
 use observe::{Observation, ObserveManySpec, ObserveSpec, Scan, StateSpec, Times};
 use plan::{DataPlan, NoiseTerm};
-use spectral::{SpectralWindow, SpectralWindowSpec};
+use spectral::{DataDescription, SpectralWindow, SpectralWindowSpec};
 
 /// Controls CASA's `sm` lacks: the session's measures data, its resources
 /// and the clock that stands for "now".
@@ -144,6 +144,9 @@ pub struct Simulator {
     /// Whether `setfeed` was called (CASA's `feedsHaveBeenSet`).
     feeds_set: bool,
     spectral_windows: Vec<SpectralWindow>,
+    polarizations: Arc<Vec<Vec<i32>>>,
+    data_descriptions: Arc<Vec<DataDescription>>,
+    description_memory: Option<Arc<casa_imaging_runtime::Reservation>>,
     fields: Vec<Field>,
     times: Times,
     elevation_limit_rad: f64,
@@ -210,6 +213,9 @@ impl Simulator {
             feeds: Vec::new(),
             feeds_set: false,
             spectral_windows: Vec::new(),
+            polarizations: Arc::default(),
+            data_descriptions: Arc::default(),
+            description_memory: None,
             fields: Vec::new(),
             times,
             elevation_limit_rad: 8.0_f64.to_radians(),
@@ -308,6 +314,11 @@ impl Simulator {
             window.name,
             self.spectral_windows.len() + 1
         );
+        Arc::make_mut(&mut self.data_descriptions).push(DataDescription {
+            window: self.spectral_windows.len(),
+            polarization: self.polarizations.len(),
+        });
+        Arc::make_mut(&mut self.polarizations).push(window.correlations.clone());
         self.spectral_windows.push(window);
         Ok(())
     }
@@ -514,7 +525,13 @@ impl Simulator {
     ) -> SimulatorResult<()> {
         tracing::info!("Selecting data");
         let windows: Vec<usize> = (0..self.spectral_windows.len())
-            .filter(|window| spectral_window_ids.contains(&(*window as i64)))
+            .filter(|window| {
+                spectral_window_ids.contains(&(*window as i64))
+                    && self
+                        .data_descriptions
+                        .iter()
+                        .any(|description| description.window == *window)
+            })
             .collect();
         let selected = |scan: &Scan| {
             (field_ids.is_empty() || field_ids.contains(&(scan.field_id as i64)))
@@ -618,6 +635,19 @@ impl Simulator {
 
     pub(crate) fn spectral_windows(&self) -> &[SpectralWindow] {
         &self.spectral_windows
+    }
+
+    pub(crate) fn polarizations(&self) -> &[Vec<i32>] {
+        &self.polarizations
+    }
+    pub(crate) fn data_descriptions(&self) -> &[DataDescription] {
+        &self.data_descriptions
+    }
+    pub(crate) fn shared_descriptions(&self) -> Arc<Vec<DataDescription>> {
+        Arc::clone(&self.data_descriptions)
+    }
+    pub(crate) fn correlations_for_scan(&self, scan: &Scan) -> &[i32] {
+        &self.polarizations[self.data_descriptions[scan.data_description_id].polarization]
     }
 
     pub(crate) fn fields(&self) -> &[Field] {

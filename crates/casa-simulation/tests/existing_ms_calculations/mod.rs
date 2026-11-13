@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA calculation comparisons shared by existing-MS spectral-layout cases.
+#![allow(
+    dead_code,
+    reason = "each layout test uses part of the shared comparison"
+)]
 #[path = "../predict_support/mod.rs"]
-mod predict_support;
+pub(super) mod predict_support;
 
 use casa_simulation::{ApplySpec, BackendRequest, PredictSpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
@@ -27,7 +31,7 @@ fn copy(source: &Path, output: &Path) {
     }
 }
 
-fn compare(path: &Path, case: &Value) -> f64 {
+pub fn compare(path: &Path, case: &Value) -> f64 {
     let table = Table::open(TableOptions::new(path)).unwrap();
     let expected = case["after"]["rows"].as_array().unwrap();
     assert_eq!(table.row_count(), expected.len());
@@ -42,7 +46,20 @@ fn compare(path: &Path, case: &Value) -> f64 {
             };
             let reference = expected[column.to_lowercase()].as_array().unwrap();
             assert_eq!(values.len(), reference.len());
-            for (index, reference) in reference.iter().enumerate() {
+            for index in 0..reference.len() {
+                // CASA's gain VisVector assumes canonical ordering even when
+                // an aliased description declares reversed CORR_PRODUCT.
+                // The corrected diagonal-Jones result reverses each channel's
+                // four reference products; input DATA is constant across them.
+                let corrected = case["native_reversed_gain"] == true
+                    && expected["data_desc_id"] == 2
+                    && expected["field"] == 0
+                    && column != "MODEL_DATA";
+                let reference = &reference[if corrected {
+                    index / 4 * 4 + 3 - index % 4
+                } else {
+                    index
+                }];
                 let actual = values[[index % 4, index / 4]];
                 let reference = [
                     reference[0].as_f64().unwrap(),
@@ -95,20 +112,19 @@ fn compare(path: &Path, case: &Value) -> f64 {
         };
         assert_eq!(*time, expected["time"].as_f64().unwrap());
     }
-    let spectral = Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW"))).unwrap();
-    let ArrayValue::Float64(frequencies) = spectral
-        .cell_accessor(0, "CHAN_FREQ")
-        .unwrap()
-        .array()
-        .unwrap()
-    else {
-        panic!("CHAN_FREQ")
-    };
-    for (actual, expected) in frequencies
-        .iter()
-        .zip(case["frequencies_hz"].as_array().unwrap())
-    {
-        assert_eq!(*actual, expected.as_f64().unwrap());
+    if let Some(expected_frequencies) = case["frequencies_hz"].as_array() {
+        let spectral = Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW"))).unwrap();
+        let ArrayValue::Float64(frequencies) = spectral
+            .cell_accessor(0, "CHAN_FREQ")
+            .unwrap()
+            .array()
+            .unwrap()
+        else {
+            panic!("CHAN_FREQ")
+        };
+        for (actual, expected) in frequencies.iter().zip(expected_frequencies) {
+            assert_eq!(*actual, expected.as_f64().unwrap());
+        }
     }
     (error / norm.max(1.)).sqrt()
 }

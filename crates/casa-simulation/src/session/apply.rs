@@ -880,8 +880,7 @@ impl Simulator {
                                     &solution,
                                     antenna,
                                     output_hz[channel],
-                                    self.spectral_windows[scan.spectral_window_id]
-                                        .correlations
+                                    self.correlations_for_scan(scan)
                                         .first()
                                         .is_some_and(|c| (5..=8).contains(c)),
                                 )

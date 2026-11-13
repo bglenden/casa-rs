@@ -94,6 +94,8 @@ mod apply;
 mod apply_frequency;
 #[path = "session_memory/coverage.rs"]
 mod coverage;
+#[path = "session_memory/data_descriptions.rs"]
+mod data_descriptions;
 #[path = "session_memory/existing_append.rs"]
 mod existing_append;
 #[path = "session_memory/feeds.rs"]

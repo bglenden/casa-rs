@@ -10,6 +10,13 @@ use std::sync::Arc;
 
 pub(crate) type StoredFrequencies = Arc<Admitted<Vec<f64>>>;
 
+/// A DATA_DESCRIPTION row resolves a physical window and a polarization setup.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DataDescription {
+    pub(crate) window: usize,
+    pub(crate) polarization: usize,
+}
+
 use super::error::{SimulatorError, SimulatorResult};
 use crate::corrupt::WindowNoise;
 
@@ -105,15 +112,13 @@ impl SpectralWindow {
             channel_bandwidth_hz: self.total_bandwidth_hz.abs() / self.channel_count.max(1) as f64,
         }
     }
+}
 
-    /// CORR_PRODUCT: for each correlation, the receptor pair
-    /// (`Stokes::receptor1`, `Stokes::receptor2`).
-    pub(crate) fn correlation_products(&self) -> Vec<[i32; 2]> {
-        self.correlations
-            .iter()
-            .map(|&code| receptor_pair(code))
-            .collect()
-    }
+pub(crate) fn correlation_products(correlations: &[i32]) -> Vec<[i32; 2]> {
+    correlations
+        .iter()
+        .map(|&code| receptor_pair(code))
+        .collect()
 }
 
 /// casacore's `Stokes::StokesTypes` names, indexed by code from 1.

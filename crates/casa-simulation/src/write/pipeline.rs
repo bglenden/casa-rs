@@ -78,6 +78,7 @@ pub(super) struct NoiseContext<'a> {
     row_offset: u64,
     pub(super) scans: &'a [Scan],
     pub(super) windows: &'a [SpectralWindow],
+    descriptions: &'a [crate::session::spectral::DataDescription],
     pub(super) antennas: &'a [Antenna],
 }
 
@@ -88,6 +89,7 @@ impl<'a> NoiseContext<'a> {
             row_offset: session.noise_row_offset(),
             scans: session.scans(),
             windows: session.spectral_windows(),
+            descriptions: session.data_descriptions(),
             antennas: session.antennas(),
         }
     }
@@ -133,9 +135,9 @@ struct Rows<'s> {
     noise: NoiseContext<'s>,
     /// The room a batch's `tsys-atm` antenna scales are admitted.
     scales: NoiseScales,
-    /// `[window]`: each correlation's receptors, which gains and leakage
+    /// `[polarization]`: each correlation's receptors, which gains and leakage
     /// take.
-    receptors: Vec<Vec<[usize; 2]>>,
+    receptors: Option<super::Receptors>,
     correlations: usize,
     samples: usize,
     /// Rows of the integrations in hand: those the last batch left
@@ -160,7 +162,7 @@ impl<'s> Pipeline<'s> {
     /// predicting with `prediction` and corrupting by `plan` (reading
     /// `noise`, with a batch's antenna scales admitted `scales`), on cells
     /// of `(correlations, channels)` whose correlations have the receptors
-    /// `receptors` (`[window]`).
+    /// `receptors` (`[polarization]`).
     pub(super) fn new(
         (_scans, planned): (&'s [Scan], &'s [PlannedScan<'s>]),
         geometry: &'s ArrayGeometry<'s>,
@@ -171,7 +173,7 @@ impl<'s> Pipeline<'s> {
             NoiseContext<'s>,
             NoiseScales,
         ),
-        (correlations, channels, receptors): (usize, usize, Vec<Vec<[usize; 2]>>),
+        (correlations, channels, receptors): (usize, usize, Option<super::Receptors>),
     ) -> Self {
         Self {
             rows: Rows {
@@ -348,7 +350,11 @@ impl Rows<'_> {
             jobs.extend(
                 noise_jobs(
                     (pending.plan, self.noise, self.team),
-                    &self.receptors,
+                    &self
+                        .receptors
+                        .as_ref()
+                        .expect("noise has DATA-stage receptors")
+                        .value,
                     (&self.rows, pending.runs),
                     (first_row, data),
                     (self.samples, &scales),
@@ -451,7 +457,7 @@ impl ColumnsJob<'_> {
 /// row), reading `context`, but for the scans `noised` already has. A scan
 /// with gains or leakage has each of its corruptions applied in order
 /// instead ([`Corruption`]), its windows' correlations having the
-/// receptors `receptors` (`[window]`).
+/// receptors `receptors` (`[polarization]`).
 ///
 /// A `tsys-atm` application's σ comes from `scales`, the batch's antenna
 /// scales ([`batch_scales`]).
@@ -498,7 +504,9 @@ pub(super) fn noise_jobs<'a>(
                     plan,
                     scan,
                     window,
-                    receptors: &receptors[window],
+                    receptors: &receptors[context.descriptions
+                        [context.scans[scan].data_description_id]
+                        .polarization],
                 }
             });
         for (index, cells) in segment.chunks_mut(job_rows * samples).enumerate() {
@@ -510,7 +518,8 @@ pub(super) fn noise_jobs<'a>(
                 rows: &rows[start..],
                 noise,
                 window,
-                receptors: &receptors[window.spectral_window_id],
+                receptors: &receptors
+                    [context.descriptions[context.scans[scan].data_description_id].polarization],
                 antennas: context.antennas,
                 scales,
                 corruption,

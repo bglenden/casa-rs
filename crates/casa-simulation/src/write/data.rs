@@ -66,7 +66,7 @@ pub(super) struct DataStage<'s> {
     scratch: Vec<Complex32>,
     selected_runs: Vec<Run>,
     last_host_noise: bool,
-    receptors: Vec<Vec<[usize; 2]>>,
+    receptors: super::Receptors,
     query: Option<QueryWorkspace>,
     track_rows: bool,
     touched: Vec<bool>,
@@ -108,12 +108,16 @@ impl<'s> DataStage<'s> {
             scratch: Vec::new(),
             selected_runs: Vec::new(),
             last_host_noise: false,
-            receptors: super::window_receptors(session),
+            receptors: super::polarization_receptors(session)?,
             query: session.data_plan().has_query().then(QueryWorkspace::new),
             track_rows: session.data_plan().has_partial_rows(session.scans()),
             touched: Vec::new(),
             predicted: Vec::new(),
         }))
+    }
+
+    pub(super) fn shared_receptors(&self) -> super::Receptors {
+        std::sync::Arc::clone(&self.receptors)
     }
 
     pub(super) fn backend(&self) -> BackendChoice {
@@ -183,12 +187,6 @@ impl<'s> DataStage<'s> {
         } else {
             0
         };
-        let receptors = self.receptors.capacity() * size_of::<Vec<[usize; 2]>>()
-            + self
-                .receptors
-                .iter()
-                .map(|window| window.capacity() * size_of::<[usize; 2]>())
-                .sum::<usize>();
         let query = self.query.as_ref().map_or(0, QueryWorkspace::bytes)
             + self
                 .session
@@ -210,11 +208,7 @@ impl<'s> DataStage<'s> {
             } else {
                 0
             }
-            + (scratch
-                + runs
-                + jobs
-                + receptors
-                + self.phases.capacity() * size_of::<PhaseStage<'_>>()) as u64
+            + (scratch + runs + jobs + self.phases.capacity() * size_of::<PhaseStage<'_>>()) as u64
     }
 
     pub(super) fn start(
@@ -369,7 +363,7 @@ impl<'s> DataStage<'s> {
                     self.session,
                     &batch,
                     data,
-                    (&self.receptors, scales),
+                    (&self.receptors.value, scales),
                     (self.correlations, self.samples),
                 )?;
             }

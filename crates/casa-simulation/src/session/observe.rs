@@ -175,6 +175,7 @@ pub(crate) struct Scan {
     pub(crate) observation_id: i32,
     pub(crate) field_id: usize,
     pub(crate) spectral_window_id: usize,
+    pub(crate) data_description_id: usize,
     /// The J2000 phase centre, radians: the field's PHASE_DIR, on which
     /// CASA's `VisBuffer` phases the DATA `predict` writes.
     pub(crate) phase_center_rad: [f64; 2],
@@ -378,6 +379,8 @@ impl super::Simulator {
         } else {
             0
         };
+        let data_description_id = self.data_descriptions.iter().position(|d| d.window == spectral_window_id)
+            .ok_or_else(|| SimulatorError::not_yet_implemented("observing a spectral window without an existing data description is not yet implemented (#1294)"))?;
         let observation_id = self.observation_for(spec, [start_s, stop_s]);
         let state_id = match self.states.iter().rposition(|state| *state == spec.state) {
             Some(existing) => existing,
@@ -409,6 +412,7 @@ impl super::Simulator {
                     observation_id,
                     field_id,
                     spectral_window_id,
+                    data_description_id,
                     phase_center_rad: self.fields[field_id].direction_rad,
                     pointing_rad,
                     rows: ScanRows::Planned(PlannedRows {
