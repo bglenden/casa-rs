@@ -3735,6 +3735,24 @@ The ordinary strict row bounds and flag rules still apply. The full TOPO
 image coordinate, primary-beam calculation and prediction basis retain
 all requested channels.
 
+A tracked BARY cube can lose the same physical endpoint through a different
+round trip. On the three-channel `refim_point_linRL.ms` TOPO input with
+`start=0, width=1`, CASA's TOPO and BARY image centres describe the same
+frequencies. The first LSRK row frequency is 999988784.6184165 Hz.
+CASA's TOPO grid evaluates the first centre one representable step above
+it, while its BARY grid evaluates that centre one step below. The following
+13 buffers are at least 83 Hz above the first image centre and legitimately
+exclude it. Both the standard and AW CASA gridders drop the whole first
+plane in the BARY request. The release AW comparison has 94,625 differing
+mask pixels on that plane and takes four clean iterations instead of three.
+
+casa-rs retains the first buffer's contribution in both coordinates. CASA's
+TOPO AW run on the same rows and cache supplies the reference for the
+BARY products. CASA Measures verifies the corresponding image centres
+in LSRK within 0.5 microhertz. The products, masks and clean counts agree
+against that reference. A separate explicit BARY start nearly 99 kHz below
+the first channel gives a blank first plane in both standard gridders.
+
 ## A cube's fine frequency grid lets rounding choose one or two samples per plane
 
 - Date noted: 2026-11-03

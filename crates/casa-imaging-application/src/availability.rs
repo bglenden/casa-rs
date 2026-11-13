@@ -48,8 +48,8 @@ pub enum Unsupported {
     FacetedKernelSet,
     /// W-facet modes outside the verified scalar continuum scope (#1063).
     FacetedWMode,
-    /// Multi-channel AW cubes use nearest sampling outside REST, and
-    /// linear sampling to LSRK from LSRK or the verified TOPO scope (#1121).
+    /// Multi-channel AW cubes use nearest outside REST or linear in the
+    /// verified frame and weighting combinations (#1121).
     MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
@@ -97,8 +97,8 @@ impl fmt::Display for Unsupported {
             ),
             Self::MultiChannelWindowAwCube => formatter.write_str(
                 "AW projection of a multi-channel window supports nearest outside the rest frame \
-                 and linear to LSRK from LSRK, or from TOPO with natural, Briggs or uniform \
-                 weighting; other cube modes wait for #1121",
+                 and linear in the frame and weighting combinations documented for tclean; \
+                 this combination is tracked in #1121",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -397,30 +397,30 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
     )
 }
 
-/// Nearest uses the native channels. Linear carries each interpolated
-/// sample's frequency and plane together through the shared resampler.
-/// Linear TOPO-to-LSRK uses the same resampler with the row's converted
-/// frequencies. The converted comparisons cover natural, Briggs and
-/// uniform weighting (#1121).
+/// Nearest uses native channels. Linear keeps the interpolated plane and
+/// frequency together through the shared resampler (#1121).
 fn aw_multichannel_sampling_supported(
     kernel: SpectralKernel,
     source: FrequencyFrame,
     output: FrequencyFrame,
     weighting: WeightingScheme,
 ) -> bool {
+    use FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
+
+    let common_weighting = matches!(
+        weighting,
+        WeightingScheme::Natural | WeightingScheme::Briggs { .. } | WeightingScheme::Uniform
+    );
     match kernel {
-        SpectralKernel::Nearest => output != FrequencyFrame::Rest,
-        SpectralKernel::Linear => {
-            output == FrequencyFrame::Lsrk
-                && (source == FrequencyFrame::Lsrk
-                    || (source == FrequencyFrame::Topocentric
-                        && matches!(
-                            weighting,
-                            WeightingScheme::Natural
-                                | WeightingScheme::Briggs { .. }
-                                | WeightingScheme::Uniform
-                        )))
-        }
+        SpectralKernel::Nearest => output != Rest,
+        SpectralKernel::Linear => match (source, output) {
+            (Lsrk, Lsrk) => true,
+            (Topocentric | Barycentric, Lsrk) | (Lsrk, Barycentric) => common_weighting,
+            (Lsrk | Topocentric, Topocentric) | (Topocentric | Barycentric, Barycentric) => {
+                weighting == WeightingScheme::Natural
+            }
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -430,9 +430,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn multi_channel_aw_accepts_linear_to_lsrk_from_lsrk_or_verified_topo() {
+    fn multi_channel_aw_accepts_verified_linear_frame_pairs() {
         let lsrk = FrequencyFrame::Lsrk;
         let topo = FrequencyFrame::Topocentric;
+        let bary = FrequencyFrame::Barycentric;
         let natural = WeightingScheme::Natural;
         for frame in [
             lsrk,
@@ -465,10 +466,34 @@ mod tests {
                         lsrk,
                         weighting
                     ),
-                    frame == lsrk || (frame == topo && converted),
+                    frame == lsrk
+                        || (matches!(
+                            frame,
+                            FrequencyFrame::Topocentric | FrequencyFrame::Barycentric
+                        ) && converted),
                     "linear from {frame:?} with {weighting:?}",
                 );
-                for source in [lsrk, topo] {
+                for (source, expected) in [
+                    (
+                        lsrk,
+                        frame == lsrk
+                            || (frame == topo && weighting == natural)
+                            || (frame == bary && converted),
+                    ),
+                    (
+                        topo,
+                        (frame == lsrk && converted)
+                            || (matches!(
+                                frame,
+                                FrequencyFrame::Topocentric | FrequencyFrame::Barycentric
+                            ) && weighting == natural),
+                    ),
+                    (
+                        bary,
+                        (frame == lsrk && converted) || (frame == bary && weighting == natural),
+                    ),
+                    (FrequencyFrame::Rest, false),
+                ] {
                     assert_eq!(
                         aw_multichannel_sampling_supported(
                             SpectralKernel::Linear,
@@ -476,7 +501,7 @@ mod tests {
                             frame,
                             weighting
                         ),
-                        frame == lsrk && (source == lsrk || converted),
+                        expected,
                         "linear from {source:?} to {frame:?} with {weighting:?}",
                     );
                 }

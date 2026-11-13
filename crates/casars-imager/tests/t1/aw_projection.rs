@@ -840,6 +840,61 @@ fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
     assert_eq!(weights[2], 0.0, "{weights:?}");
 }
 
+/// The BARY input case and tracked output cases use the AW linear resampler.
+/// The offset axis reaches two native intervals and leaves its last plane blank.
+#[test]
+fn tracked_aw_linear_cubes_preserve_supported_planes() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 3,
+            ..lband_window("t1-lband-tracked-linear", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    for (input, output) in [
+        (FrequencyRef::LSRK, FrequencyRef::TOPO),
+        (FrequencyRef::LSRK, FrequencyRef::BARY),
+        (FrequencyRef::BARY, FrequencyRef::LSRK),
+        (FrequencyRef::BARY, FrequencyRef::BARY),
+    ] {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+        ms.spectral_window_mut()
+            .expect("spectral window")
+            .set_i32(0, "MEAS_FREQ_REF", input.casacore_code())
+            .expect("tag the input frequency frame");
+        ms.save().expect("save the input frame");
+        drop(ms);
+
+        let name = format!("aw-linear-{input}-{output}");
+        let mut request = cached_clean("0", &observation.scratch(&format!("{name}-cf")), &surface);
+        request["niter"] = json!(0);
+        request["specmode"] = json!("cube");
+        request["outframe"] = json!(output.as_str());
+        request["interpolation"] = json!("linear");
+        request["start"] = json!("1.503GHz");
+        request["width"] = json!("8.1MHz");
+        request["nchan"] = json!(3);
+        let (_, products) = observation.image(&name, request);
+        let weights = products.get(".sumwt").channel_values();
+        assert_eq!(weights.len(), 3);
+        assert!(weights[0] > 0.0 && weights[1] > 0.0, "{name}: {weights:?}");
+        assert_eq!(weights[2], 0.0, "{name}: {weights:?}");
+        let spectral = products
+            .get(".image")
+            .image
+            .first_spectral_coordinate()
+            .expect("spectral metadata")
+            .expect("spectral coordinate");
+        assert_eq!(spectral.frequency_ref(), output);
+    }
+}
+
 /// A row off the grid still weighs in the sensitivity:
 /// `AWProjectWBFT::resampleCFToGrid` puts every weight cell at the uv origin,
 /// where `onGrid` holds, so the weight image's peak is the whole sample
