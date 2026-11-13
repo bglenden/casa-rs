@@ -788,7 +788,22 @@ fn an_aw_cubic_cube_uses_the_cubic_stencil() {
     // grid point, which is within the unconverted native axis.
     request["start"] = json!("1.49996GHz");
     request["nchan"] = json!(6);
-    let (_, converted) = observation.image("aw-offset-topo-cubic", request);
+    let (_, converted) = observation.image("aw-offset-topo-cubic", request.clone());
+    let sums = converted.get(".sumwt").channel_values();
+    assert_eq!(sums.len(), 6);
+    assert!(sums[..5].iter().all(|weight| *weight > 0.0), "{sums:?}");
+    assert_eq!(sums[5], 0.0, "{sums:?}");
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::BARY.casacore_code())
+        .expect("tag the input frequency frame");
+    ms.save().expect("save the BARY test MS");
+    drop(ms);
+    request["native_cf_cache"] = json!(observation.scratch("bary-cubic-cf"));
+    request["start"] = json!("1.5GHz");
+    let (_, converted) = observation.image("aw-offset-bary-cubic", request);
     let sums = converted.get(".sumwt").channel_values();
     assert_eq!(sums.len(), 6);
     assert!(sums[..5].iter().all(|weight| *weight > 0.0), "{sums:?}");
