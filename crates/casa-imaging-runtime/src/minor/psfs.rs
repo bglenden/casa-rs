@@ -2,10 +2,43 @@
 //! Per-plane PSF summaries and saved beam selection.
 
 use super::{
-    Arc, FinalNormalState, MinorCycleRunError, MinorCycleSetup, ModelGeneration, PlaneKey,
-    PlaneShape, PsfCache, PsfSummary, RestoringBeam, WorkerTeam, beams, holds_data, normalise,
-    plane_shape, psf_peak_value, read_psf,
+    Arc, FinalNormalState, MinorCycleRunError, MinorCycleSetup, ModelGeneration, PlaneData,
+    PlaneKey, PlaneShape, PsfCache, PsfSummary, RestoringBeam, WorkerTeam, beams, holds_data,
+    normalise, plane_shape, psf_peak_value, read_psf,
 };
+
+impl PsfCache {
+    /// Measure a reused single-term PSF in the saved image's units.
+    #[must_use]
+    pub fn for_reused_single_psf() -> Self {
+        Self {
+            reuses_single_psf: true,
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn summarize_loaded(
+        &self,
+        normal: &FinalNormalState,
+        base: &ModelGeneration,
+        setup: &MinorCycleSetup<'_>,
+        key: PlaneKey,
+        plane: &PlaneData<'_>,
+    ) -> Result<PsfSummary, MinorCycleRunError> {
+        match self.summaries.get(&key) {
+            Some(summary) => Ok(*summary),
+            None => summarize_psf(
+                normal,
+                base,
+                setup,
+                key,
+                &plane.psf[0],
+                plane.shape,
+                self.reuses_single_psf.then_some(plane.psf_peak),
+            ),
+        }
+    }
+}
 
 /// A saved grid is for the main domain, ordered by absolute channel and polarization.
 pub(super) fn saved_psf_beam(
@@ -38,6 +71,7 @@ pub(super) fn summarize_psf(
     key: PlaneKey,
     psf: &[f64],
     shape: PlaneShape,
+    image_peak: Option<f64>,
 ) -> Result<PsfSummary, MinorCycleRunError> {
     let increment = base
         .shape()
@@ -45,9 +79,13 @@ pub(super) fn summarize_psf(
         .expect("domain direction")
         .increment_rad();
     let cell = [1.0, (increment[1] / increment[0]).abs()];
-    Ok(match saved_psf_beam(normal, setup, key) {
-        Some(beam) => PsfSummary::with_saved_beam_and_cell(psf, shape, beam, cell)?,
-        None => PsfSummary::with_cutoff_and_cell(psf, shape, setup.psf_cutoff, cell)?,
+    let saved_beam = saved_psf_beam(normal, setup, key);
+    Ok(match (image_peak, saved_beam) {
+        (Some(peak), _) => {
+            PsfSummary::with_image_peak(psf, shape, setup.psf_cutoff, saved_beam, cell, peak)?
+        }
+        (None, Some(beam)) => PsfSummary::with_saved_beam_and_cell(psf, shape, beam, cell)?,
+        (None, None) => PsfSummary::with_cutoff_and_cell(psf, shape, setup.psf_cutoff, cell)?,
     })
 }
 
@@ -67,6 +105,7 @@ pub(super) fn measure_psfs(
         .filter(|key| !cache.summaries.contains_key(key) && holds_data(normal, taylor, **key))
         .map(|key| (*key, None))
         .collect::<Vec<_>>();
+    let reused = cache.reuses_single_psf;
     team.for_each_mut(&mut slots, |_, (key, summary)| {
         let shape = plane_shape(normal, *key);
         let psf = read_psf(normal, taylor, *key)?;
@@ -78,6 +117,7 @@ pub(super) fn measure_psfs(
             *key,
             &normalise(psf, peak),
             shape,
+            reused.then_some(peak),
         )?);
         Ok::<_, MinorCycleRunError>(())
     })?;
@@ -86,5 +126,5 @@ pub(super) fn measure_psfs(
             cache.summaries.insert(key, summary);
         }
     }
-    beams::settle_off_centre(normal, base, taylor, cache, setup.psf_beams.is_some())
+    beams::settle_refused_fits(normal, base, taylor, cache, setup.psf_beams.is_some(), None)
 }

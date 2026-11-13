@@ -325,11 +325,33 @@ fn tclean_all_weak_psfs_restore_with_the_tiny_beam() {
     }
 }
 
-fn restore_with_weak_psf(name: &str, all_weak: bool) -> [GaussianBeam; 2] {
-    use casa_images::{ImageBeamSet, PagedImage};
+/// The sidelobe is measured in the saved image's units after CASA assigns
+/// the tiny beam to this whole domain. The Gaussian's adjacent pixel is the
+/// largest one outside the tiny beam (#1140).
+#[test]
+fn tclean_weak_saved_psf_keeps_its_image_sidelobe() {
     use casa_provider_contracts::TaskReply;
 
     let observation = Observation::synthesise(&[("point", POINT)]);
+    let (directory, values) = seed_weak_psf_restart(&observation, "weak-psf-sidelobe", 5e-8, true);
+    let result = super::casa_return::json_run(&directory, values);
+    let TaskReply::Succeeded { value, .. } = result else {
+        panic!("{result:?}");
+    };
+    let actual = super::casa_return::scalar(&value, "maxpsfsidelobe");
+    let expected = f64::from(5e-8_f32 * (-1.0_f32 / 8.0).exp());
+    assert!((actual - expected).abs() < 1e-13, "{actual} != {expected}");
+}
+
+fn seed_weak_psf_restart(
+    observation: &Observation,
+    name: &str,
+    first_peak: f32,
+    gaussian: bool,
+) -> (std::path::PathBuf, Value) {
+    use casa_images::{ImageBeamSet, PagedImage};
+    use casa_provider_contracts::TaskReply;
+
     let directory = observation.scratch(name);
     std::fs::create_dir_all(&directory).unwrap();
     let mut values = json!({
@@ -351,16 +373,16 @@ fn restore_with_weak_psf(name: &str, all_weak: bool) -> [GaussianBeam; 2] {
         data.fill(0.0);
         match product {
             "psf" => {
-                if all_weak {
-                    data[[32, 32, 0, 0]] = 5e-8;
-                } else {
+                if gaussian {
                     for x in 0..64 {
                         for y in 0..64 {
                             let dx = x as f32 - 32.0;
                             let dy = y as f32 - 32.0;
-                            data[[x, y, 0, 0]] = (-(dx * dx + dy * dy) / 8.0).exp();
+                            data[[x, y, 0, 0]] = first_peak * (-(dx * dx + dy * dy) / 8.0).exp();
                         }
                     }
+                } else {
+                    data[[32, 32, 0, 0]] = first_peak;
                 }
                 data[[32, 32, 0, 1]] = 1e-8;
             }
@@ -376,13 +398,23 @@ fn restore_with_weak_psf(name: &str, all_weak: bool) -> [GaussianBeam; 2] {
     }
     values["calcpsf"] = json!(false);
     values["calcres"] = json!(false);
-    values["restoration"] = json!(true);
     values["niter"] = json!(1);
+    (directory, values)
+}
+
+fn restore_with_weak_psf(name: &str, all_weak: bool) -> [GaussianBeam; 2] {
+    use casa_images::PagedImage;
+    use casa_provider_contracts::TaskReply;
+
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let first_peak = if all_weak { 5e-8 } else { 1.0 };
+    let (directory, mut values) = seed_weak_psf_restart(&observation, name, first_peak, !all_weak);
+    values["restoration"] = json!(true);
     let result = super::casa_return::json_run(&directory, values);
     assert!(matches!(result, TaskReply::Succeeded { .. }), "{result:?}");
     let psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
     let saved = psf.get().unwrap();
-    assert_eq!(saved[[32, 32, 0, 0]], if all_weak { 5e-8 } else { 1.0 });
+    assert_eq!(saved[[32, 32, 0, 0]], first_peak);
     assert_eq!(saved[[32, 32, 0, 1]], 1e-8);
     let beams = PagedImage::<f32>::open(directory.join("image.image"))
         .unwrap()

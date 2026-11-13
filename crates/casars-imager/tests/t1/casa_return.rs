@@ -154,7 +154,7 @@ fn entry<'a>(value: &'a CasaValue, key: &str) -> &'a CasaValue {
         .value
 }
 
-fn scalar(value: &CasaValue, key: &str) -> f64 {
+pub(super) fn scalar(value: &CasaValue, key: &str) -> f64 {
     let CasaValue::Float { value } = entry(value, key) else {
         panic!("{key} is a float");
     };

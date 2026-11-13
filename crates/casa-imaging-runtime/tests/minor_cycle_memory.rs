@@ -51,6 +51,8 @@ static BASELINE: AtomicU64 = AtomicU64::new(0);
 static ADMITTED: AtomicU64 = AtomicU64::new(0);
 /// The largest `LIVE − BASELINE − admitted since`.
 static EXCESS: AtomicI64 = AtomicI64::new(i64::MIN);
+static PLANE_BYTES: AtomicU64 = AtomicU64::new(0);
+static PLANE_ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 
 // SAFETY: every method forwards to `System` with the caller's arguments and
 // only adds atomic bookkeeping, which allocates nothing.
@@ -59,6 +61,7 @@ unsafe impl GlobalAlloc for CountingHeap {
         // SAFETY: the caller's contract for `alloc`.
         let pointer = unsafe { System.alloc(layout) };
         if !pointer.is_null() {
+            count_plane(layout.size() as u64);
             grow(layout.size() as u64);
         }
         pointer
@@ -68,6 +71,7 @@ unsafe impl GlobalAlloc for CountingHeap {
         // SAFETY: the caller's contract for `alloc_zeroed`.
         let pointer = unsafe { System.alloc_zeroed(layout) };
         if !pointer.is_null() {
+            count_plane(layout.size() as u64);
             grow(layout.size() as u64);
         }
         pointer
@@ -84,6 +88,7 @@ unsafe impl GlobalAlloc for CountingHeap {
         // SAFETY: the caller's contract for `realloc`.
         let moved = unsafe { System.realloc(pointer, layout, new_size) };
         if !moved.is_null() {
+            count_plane(new);
             if moved != pointer {
                 // Old and new bytes were both held while the block moved.
                 observe(LIVE.load(Ordering::Relaxed) + new);
@@ -95,6 +100,12 @@ unsafe impl GlobalAlloc for CountingHeap {
             }
         }
         moved
+    }
+}
+
+fn count_plane(bytes: u64) {
+    if MEASURING.load(Ordering::Relaxed) && bytes == PLANE_BYTES.load(Ordering::Relaxed) {
+        PLANE_ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -957,18 +968,18 @@ fn measure_clark(
     );
 }
 
-/// Settling a fresh off-centre PSF rereads its plane and measures the
-/// largest fitted beam's Gaussian within the preparation and cache charges.
+/// Settlement stays within admission for a fresh off-centre PSF and for
+/// a reused weak PSF whose solver plane is retained by preparation.
 #[test]
-fn settling_an_off_centre_psf_holds_at_most_its_admission() {
+fn settling_a_refused_psf_fits_its_admission() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    for workers in [1, 4] {
-        let width = 128;
+    for (workers, weak) in [(1, false), (4, false), (1, true)] {
+        let (width, channels) = if weak { (256, 1) } else { (128, 2) };
         let problem = reconstruction_problem(
             31,
             width,
-            2,
-            ReconstructionBasis::ChannelLocal { channels: 2 },
+            channels,
+            ReconstructionBasis::ChannelLocal { channels },
             ReconstructionAlgorithm::Hogbom,
             ReconstructionControls::new(10, 0.1, 0.0),
         );
@@ -984,15 +995,21 @@ fn settling_an_off_centre_psf_holds_at_most_its_admission() {
         let mut images = scene.pass_images(model, true);
         let psf = images.psf.as_mut().expect("initial PSF");
         psf.fill(0.0);
-        for x in 0..width {
-            for y in 0..width {
-                let dx = x as f64 - 64.0;
-                let dy = y as f64 - 64.0;
-                psf[x * width + y] =
-                    (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 3600.0).exp() as f32;
+        if weak {
+            let centre = (width / 2) * (width + 1);
+            psf[centre] = 5e-8;
+            psf[centre + width] = 4e-8;
+        } else {
+            for x in 0..width {
+                for y in 0..width {
+                    let dx = x as f64 - 64.0;
+                    let dy = y as f64 - 64.0;
+                    psf[x * width + y] =
+                        (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 3600.0).exp() as f32;
+                }
             }
+            psf[width * width + 31 * width + 64] = 1.0;
         }
-        psf[width * width + 31 * width + 64] = 1.0;
         pass.append(images).expect("images");
         let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
         let setup = MinorCycleSetup {
@@ -1014,7 +1031,11 @@ fn settling_an_off_centre_psf_holds_at_most_its_admission() {
         }])
         .expect("full mask");
         let team = WorkerTeam::new(workers).expect("team");
-        let mut cache = PsfCache::default();
+        let mut cache = if weak {
+            PsfCache::for_reused_single_psf()
+        } else {
+            PsfCache::default()
+        };
         let charge = prepare_bytes(&completion, &plans, &setup, &cache, workers)
             + psf_cache_bytes(&completion);
         let preparing = admit(
@@ -1029,19 +1050,31 @@ fn settling_an_off_centre_psf_holds_at_most_its_admission() {
         ADMITTED.store(held() - charge, Ordering::Relaxed);
         EXCESS.store(i64::MIN, Ordering::Relaxed);
         BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        if weak {
+            PLANE_BYTES.store((width * width * size_of::<f64>()) as u64, Ordering::Relaxed);
+            PLANE_ALLOCATIONS.store(0, Ordering::Relaxed);
+        }
         MEASURING.store(true, Ordering::Relaxed);
         let prepared = prepare_minor_cycle(&completion, &plans, &setup, &mut cache, &team);
         MEASURING.store(false, Ordering::Relaxed);
+        PLANE_BYTES.store(0, Ordering::Relaxed);
         drop(preparing);
         prepared.expect("prepared");
         let excess = EXCESS.load(Ordering::Relaxed);
         assert!(
             excess <= 0,
-            "{workers} workers held {excess} bytes over admission"
+            "{channels} channels with {workers} workers held {excess} bytes over admission"
         );
-        let off = cache.summary(0, 1, 0).expect("off-centre summary");
-        assert!(off.off_centre() && !off.needs_domain_beam());
-        assert!(off.sidelobe() < 1.0, "{}", off.sidelobe());
+        let refused = cache.summary(0, channels - 1, 0).expect("settled PSF");
+        assert!(refused.fit_refused() && !refused.needs_domain_beam());
+        if weak {
+            // Preparation allocates the retained residual and PSF. Settlement
+            // should never allocate a second f64 PSF of the same size.
+            assert_eq!(PLANE_ALLOCATIONS.load(Ordering::Relaxed), 2);
+            assert_eq!(refused.sidelobe(), f64::from(4e-8_f32));
+        } else {
+            assert!(refused.sidelobe() < 1.0, "{}", refused.sidelobe());
+        }
     }
 }
 

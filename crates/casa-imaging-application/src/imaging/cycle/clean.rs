@@ -32,7 +32,14 @@ pub(super) fn run(
         diagnostics,
     } = inputs;
     let mut controller = Controller::new(&controls);
-    let mut cache = PsfCache::default();
+    let mut cache = if !run.forms.psf
+        && outcome.scientific.normal_state().basis()
+            != casa_imaging_deconvolution::NormalBasis::Taylor
+    {
+        PsfCache::for_reused_single_psf()
+    } else {
+        PsfCache::default()
+    };
     // What outlives each minor cycle: the masks it forms (the latest, and the
     // one an automatic mask evolves from, every holder sharing a
     // generation's support), the PSF summaries it measures and a Clark
