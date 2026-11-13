@@ -52,7 +52,8 @@ def main():
     cl.done()
     cases = []
     for name in ("one", "observation", "many", "array_id", "predict_then_append", "selected_corrupt_then_append",
-                 "append_then_selected_predict_corrupt", "append_then_selected_increment", "missing_source"):
+                 "append_then_selected_predict_corrupt", "append_then_selected_increment",
+                 "append_then_query_old", "append_then_query_new", "append_then_query_empty", "missing_source"):
         path = root / (name + ".ms")
         sm = make_session(path, stokes="XX XY YX YY")
         sm.close()
@@ -87,8 +88,13 @@ def main():
             outcome = sm.observe(sourcename="missing" if name == "missing_source" else "target",
                                  spwname="band6", starttime="3s", stoptime="23s",
                                  add_observation=name in ("observation", "array_id"), project="continued")
-        if name.startswith("append_then_selected"):
-            assert sm.setdata(fieldid=[0])
+        if name.startswith("append_then_"):
+            if "query" in name:
+                boundary = before["rows"][-1]["time"] + 5.
+                predicate = f"TIME < {boundary}" if name.endswith("old") else f"TIME >= {boundary}" if name.endswith("new") else "TIME < 0"
+                assert sm.setdata(fieldid=[0], msselect=predicate)
+            else:
+                assert sm.setdata(fieldid=[0])
             assert sm.predict(complist=str(component), incremental=name.endswith("increment"))
             if name.endswith("corrupt"):
                 assert sm.setapply(table=str(gain), interp="nearest", calwt=False)
@@ -96,7 +102,7 @@ def main():
         sm.close()
         me.done()
         after = snapshot(path)
-        if "selected" not in name and name != "predict_then_append":
+        if "selected" not in name and "query" not in name and name != "predict_then_append":
             assert after["rows"][:len(before["rows"])] == before["rows"]
         assert len(after["rows"]) == len(before["rows"]) + (144 if name == "many" else 0 if name == "missing_source" else 72)
         cases.append(dict(name=name, returned=bool(outcome), before=before, after=after))

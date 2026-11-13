@@ -259,7 +259,7 @@ impl Simulator {
                     continue;
                 }
                 let ScanRows::OnDisk(rows) = &scan.rows else {
-                    unreachable!("opened MS")
+                    continue;
                 };
                 for start in (rows.start..rows.end).step_by(READ_ROWS) {
                     indices.clear();
@@ -306,28 +306,28 @@ impl Simulator {
                     }
                 }
             }
-        } else {
-            for scan in &self.scans {
-                if !selection.contains_scan(scan) {
-                    continue;
-                }
-                let ScanRows::Planned(rows) = &scan.rows else {
-                    unreachable!("fresh session")
-                };
-                for time_s in rows.integration_times_s() {
-                    for first in 0..rows.antenna_count {
-                        let start = first + usize::from(rows.autocorrelation_weight <= 0.0);
-                        for second in start..rows.antenna_count {
-                            found |= selection.matches_row(
-                                scan,
-                                RowHeader {
-                                    antennas: [first, second],
-                                    time_s,
-                                },
-                                &mut workspace,
-                                &self.options.measures,
-                            )?;
-                        }
+        }
+        // Appended scans are still planned while the original rows stay on disk.
+        for scan in &self.scans {
+            if !selection.contains_scan(scan) {
+                continue;
+            }
+            let ScanRows::Planned(rows) = &scan.rows else {
+                continue;
+            };
+            for time_s in rows.integration_times_s() {
+                for first in 0..rows.antenna_count {
+                    let start = first + usize::from(rows.autocorrelation_weight <= 0.0);
+                    for second in start..rows.antenna_count {
+                        found |= selection.matches_row(
+                            scan,
+                            RowHeader {
+                                antennas: [first, second],
+                                time_s,
+                            },
+                            &mut workspace,
+                            &self.options.measures,
+                        )?;
                     }
                 }
             }
