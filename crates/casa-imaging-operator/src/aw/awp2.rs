@@ -304,7 +304,7 @@ impl Awp2Screens {
             .map(|i| sinc((i as f64 / 1000.0) as f32))
             .collect();
         let a_side = self.cells[0].a_side;
-        let resampled_side = ((a_side as f32 * factor) / 8.0).ceil() as usize * 8;
+        let resampled_side = resampled_side(a_side, factor);
         let axis = lanczos_axis(a_side, resampled_side, fine_side, &sinc_table);
         let scale = (a_side * a_side * usize::from(oversampling).pow(2)) as f32
             / (resampled_side * resampled_side) as f32;
@@ -336,6 +336,11 @@ impl Awp2Screens {
             correction: ImageCorrection::mosaic_sinc(geometry.grid_shape(), oversampling),
         }
     }
+}
+
+// MathUtils::resample receives the holder's Float factor as a Double.
+fn resampled_side(input_side: usize, factor: f32) -> usize {
+    (input_side as f64 * f64::from(factor) / 8.0).ceil() as usize * 8
 }
 
 fn sinc(value: f32) -> f32 {
@@ -523,6 +528,13 @@ mod tests {
             ),
             (624, 52, 100)
         );
+    }
+
+    #[test]
+    fn awp2_rounds_the_resample_size_after_promoting_its_factor() {
+        // A 56-square image at 8 arcsec has a 30-square cropped sky and
+        // 100x oversampling. The Float factor rounds above 5600 / 30.
+        assert_eq!(resampled_side(12, 5600.0_f32 / 30.0), 2248);
     }
 
     #[test]
