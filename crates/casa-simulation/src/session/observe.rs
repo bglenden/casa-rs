@@ -170,6 +170,7 @@ pub(crate) struct Observation {
 /// `openfromms` opened.
 #[derive(Debug, Clone)]
 pub(crate) struct Scan {
+    pub(crate) array_id: i32,
     pub(crate) scan_number: i32,
     /// Observation context needed by supplied per-observation calibration.
     pub(crate) observation_id: i32,
@@ -327,6 +328,11 @@ impl super::Simulator {
                 ))
             })?);
         }
+        if field_ids.iter().any(|&id| self.fields[id].polynomial) {
+            return Err(SimulatorError::refused(
+                "Caught exception: ArrayMeasColumn::get: Table array conformance error",
+            ));
+        }
         let directions = spec
             .pointings
             .iter()
@@ -408,6 +414,7 @@ impl super::Simulator {
                     integration_count(start_s, utc_s(pointing.stop_s), integration_s);
                 integrations += integration_count;
                 self.scans.push(Scan {
+                    array_id: self.existing_array_id,
                     scan_number,
                     observation_id,
                     field_id,

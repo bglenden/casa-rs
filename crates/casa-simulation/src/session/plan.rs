@@ -23,6 +23,9 @@ pub(crate) struct DataPlan {
 }
 
 impl DataPlan {
+    pub(crate) fn selection(&self) -> &DataSelection {
+        &self.selection
+    }
     pub(crate) fn phases(&self) -> &[DataPhase] {
         &self.phases
     }

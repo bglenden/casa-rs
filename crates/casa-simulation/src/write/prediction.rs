@@ -141,7 +141,10 @@ fn segment_of(
                 GridFtProjection::between_j2000_directions
             }
         };
-        projections.push(project(scan.phase_center_rad, prediction.tangent_rad));
+        projections.push(project(
+            prediction.phase_centre(scan),
+            prediction.tangent_rad,
+        ));
         pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
     }
     Ok(Segment {
@@ -246,11 +249,11 @@ impl<'s> PredictionStage<'s> {
             }
             // Rows are phased on their field (#884); the mosaic machine's
             // kernels ramp to where the antennas point.
+            let phase_centre = predictions[steps.start].phase_centre(scan);
             let key = (
                 steps,
                 scan.field_id,
-                [scan.phase_center_rad, scan.pointing_rad]
-                    .map(|direction| direction.map(f64::to_bits)),
+                [phase_centre, scan.pointing_rad].map(|direction| direction.map(f64::to_bits)),
             );
             let segment = match keys.get(&key) {
                 Some(segment) => *segment,

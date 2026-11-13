@@ -24,8 +24,7 @@
 //! copies the existing MS, so its I/O cost grows with the existing data.
 //!
 //! What casa-rs does not read yet is refused, here or by the step needing
-//! it, rather than predicted wrongly: a PHASE_DIR polynomial,
-//! and a primary beam, the mosaic
+//! it, rather than predicted wrongly: a primary beam, the mosaic
 //! machine or total-power sampling when POINTING does not point at the
 //! scans' phase centres. Adding to the MeasurementSet after `openfromms`
 //! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`)
@@ -54,6 +53,8 @@ mod append;
 mod channels;
 #[path = "from_ms_descriptions.rs"]
 mod descriptions;
+#[path = "from_ms_polynomial.rs"]
+pub(super) mod polynomial;
 
 /// MAIN rows read at a time while finding the scans.
 const SCAN_READ_ROWS: usize = 1 << 16;
@@ -106,6 +107,9 @@ impl Simulator {
         // The session holds the MeasurementSet it read: `close` and the
         // POINTING reads find it whatever the working directory is by then.
         let path = std::path::absolute(path.as_ref()).map_err(|error| raised(&error))?;
+        // Declare admission first so cached FIELD cells drop before its
+        // reservation on errors as well as on the successful return.
+        let phase_memory;
         let ms = MeasurementSet::open(&path).map_err(|error| raised(&error))?;
         let mut session = Self::open(&path, options);
         session.antennas = read_antennas(&ms)?;
@@ -122,12 +126,13 @@ impl Simulator {
         )?;
         // Append reads the feed rows when observe first needs them.
         session.feeds_set = true;
+        phase_memory = polynomial::admit_fields(&ms, &session.options.resources)?;
         session.fields = read_fields(&session, &ms)?;
         let ReadScans {
             scans,
             times_s: scan_times_s,
             integrations,
-        } = read_scans(&ms, &session.fields, &session.data_descriptions)?;
+        } = read_scans(&ms, &session)?;
         session.scans = scans;
         let main = ms.main_table();
         let has = |column: &str| {
@@ -149,6 +154,9 @@ impl Simulator {
             "Opened MeasurementSet {}",
             path.display()
         );
+        // Borrowed FIELD cells may remain cached in ms until it drops.
+        drop(ms);
+        drop(phase_memory);
         Ok(session)
     }
 
@@ -313,14 +321,9 @@ fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<
     let field = ms.field().map_err(&error)?;
     (0..field.row_count())
         .map(|row| {
-            if field.num_poly(row).map_err(&error)? != 0 {
-                return Err(SimulatorError::not_yet_implemented(format!(
-                    "openfromms on field {row}, whose PHASE_DIR is a polynomial, is not yet \
-                     implemented in casa-rs (#1053)"
-                )));
-            }
             let direction = raw_field_phase_direction(ms, row).map_err(&error)?;
             Ok(Field {
+                polynomial: field.num_poly(row).map_err(&error)? > 0,
                 name: field.name(row).map_err(&error)?,
                 code: field.code(row).map_err(&error)?,
                 direction_rad: session.j2000_rad(&direction, "the field's PHASE_DIR")?,
@@ -342,11 +345,9 @@ fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<
 /// direction with zero phase there although the pointing's UVW were
 /// computed at the moved direction (measured on CASA 6.7.6;
 /// `docs/CASA (C++) bugs.md`).
-fn read_scans(
-    ms: &MeasurementSet,
-    fields: &[Field],
-    mappings: &[DataDescription],
-) -> SimulatorResult<ReadScans> {
+fn read_scans(ms: &MeasurementSet, session: &Simulator) -> SimulatorResult<ReadScans> {
+    let fields = &session.fields;
+    let mappings = &session.data_descriptions;
     let main = ms.main_table();
     let rows = main.row_count();
     let mut scans: Vec<Scan> = Vec::new();
@@ -354,6 +355,7 @@ fn read_scans(
     let mut integrations: Vec<Vec<f64>> = Vec::new();
     let (mut numbers, mut field_ids, mut descriptions) = (Vec::new(), Vec::new(), Vec::new());
     let mut observation_ids = Vec::new();
+    let mut array_ids = Vec::new();
     let mut row_times = Vec::new();
     let mut indices = Vec::with_capacity(SCAN_READ_ROWS.min(rows));
     for first in (0..rows).step_by(SCAN_READ_ROWS) {
@@ -364,9 +366,14 @@ fn read_scans(
         }
         row_times.clear();
         observation_ids.clear();
+        array_ids.clear();
         main.required_scalar_columns_for_rows_into(
             &indices,
             &mut [
+                RequiredScalarColumnDestination::new(
+                    "ARRAY_ID",
+                    RequiredScalarColumnValuesMut::Int32(&mut array_ids),
+                ),
                 RequiredScalarColumnDestination::new(
                     "OBSERVATION_ID",
                     RequiredScalarColumnValuesMut::Int32(&mut observation_ids),
@@ -404,11 +411,13 @@ fn read_scans(
             if let Some(scan) = scans.last_mut()
                 && (
                     scan.scan_number,
+                    scan.array_id,
                     scan.observation_id,
                     scan.field_id,
                     scan.data_description_id,
                 ) == (
                     number,
+                    array_ids[offset],
                     observation_ids[offset],
                     field_id,
                     data_description_id,
@@ -425,6 +434,7 @@ fn read_scans(
                 continue;
             }
             scans.push(Scan {
+                array_id: array_ids[offset],
                 scan_number: number,
                 observation_id: observation_ids[offset],
                 field_id,
@@ -444,6 +454,7 @@ fn read_scans(
         times.sort_by(f64::total_cmp);
         times.dedup();
     }
+    polynomial::set_scan_centres(session, ms, &mut scans, &times_s)?;
     Ok(ReadScans {
         scans,
         times_s,

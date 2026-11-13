@@ -207,6 +207,7 @@ pub(crate) struct Prediction {
     pub(crate) model: ModelOperator,
     /// The model's tangent point (pixel `(nx/2, ny/2)`), J2000 radians.
     pub(crate) tangent_rad: [f64; 2],
+    phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     /// The grids, or what `close` prepares each field's from.
     grids: StepGrids,
     /// The mosaic machine's pointing offsets, from the model's pixel
@@ -269,6 +270,10 @@ impl std::fmt::Debug for Prediction {
 }
 
 impl Prediction {
+    pub(crate) fn phase_centre(&self, scan: &super::observe::Scan) -> [f64; 2] {
+        super::from_ms::polynomial::centre(self.phase_centres.as_ref(), scan)
+    }
+
     /// Where the grids rows of `field` are predicted from come from; `None`
     /// for a field the step did not observe.
     pub(crate) fn grids_for(&self, field: usize) -> Option<FieldGrids<'_>> {
@@ -617,11 +622,23 @@ impl Simulator {
             }
             return Ok(());
         }
+        let phase_centres = if list.is_some() {
+            super::from_ms::polynomial::selected_centres(self, false)?
+        } else {
+            None
+        };
         let components = list
-            .map(|(label, list, held)| self.prepare_components(&label, (list, held), beam))
+            .map(|(label, list, held)| {
+                self.prepare_components(&label, (list, held), beam, phase_centres.as_ref())
+            })
             .transpose()?;
+        let image_centres = if model.is_some() {
+            super::from_ms::polynomial::selected_centres(self, true)?
+        } else {
+            None
+        };
         let predictions = opened_models(model, &images)
-            .map(|model| self.prepare_image(model?, &correlations, beam))
+            .map(|model| self.prepare_image(model?, &correlations, beam, image_centres.clone()))
             .collect::<SimulatorResult<Vec<_>>>()?;
         self.data_plan.begin_prediction(spec.incremental);
         let scans = self.scans.len();
@@ -646,6 +663,7 @@ impl Simulator {
         model: SkyModel,
         correlations: &[Correlation],
         beam: Option<PrimaryBeam>,
+        phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
         let machine = self.ft_machine()?;
         let mut mosaic_state = None;
@@ -700,6 +718,7 @@ impl Simulator {
         }
         let image_beam = beam.filter(|_| machine != FtMachine::Mosaic);
         let mut prediction = self.prepare(model, operator, image_beam, kernel_reservation)?;
+        prediction.phase_centres = phase_centres;
         prediction.pointings = pointings;
         prediction.antenna_types = antenna_types;
         Ok(prediction)
@@ -715,6 +734,7 @@ impl Simulator {
         label: &str,
         (list, held_list): (ComponentList, Reservation),
         beam: Option<PrimaryBeam>,
+        phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<ComponentPrediction> {
         // CASA squints the VLA's and EVLA's beams for a component list (RR
         // and LL beams apart); casa-rs's patterns are unsquinted.
@@ -758,12 +778,13 @@ impl Simulator {
             .scans
             .iter()
             .map(|scan| {
-                let centre = scan.phase_center_rad.map(f64::to_bits);
+                let direction = super::from_ms::polynomial::centre(phase_centres, scan);
+                let centre = direction.map(f64::to_bits);
                 pointings
                     .iter()
                     .position(|(_, known)| known.map(f64::to_bits) == centre)
                     .unwrap_or_else(|| {
-                        pointings.push((pointings.len(), scan.phase_center_rad));
+                        pointings.push((pointings.len(), direction));
                         pointings.len() - 1
                     })
             })
@@ -1054,6 +1075,7 @@ impl Simulator {
         Ok(Prediction {
             model: operator,
             tangent_rad,
+            phase_centres: None,
             grids,
             pointings: Vec::new(),
             antenna_types: Vec::new(),

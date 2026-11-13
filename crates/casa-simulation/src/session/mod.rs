@@ -343,6 +343,7 @@ impl Simulator {
         }
         let direction_rad = self.j2000_rad(direction, "source direction")?;
         self.fields.push(Field {
+            polynomial: false,
             name: name.to_string(),
             code: calcode.to_string(),
             direction_rad,
