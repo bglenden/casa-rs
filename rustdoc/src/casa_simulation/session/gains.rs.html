@@ -252,123 +252,125 @@
 <a href=#252 id=252 data-nosnippet>252</a>                JonesKind::Leakage =&gt; SimulatedJones::Leakage,
 <a href=#253 id=253 data-nosnippet>253</a>                JonesKind::Troposphere =&gt; SimulatedJones::Troposphere,
 <a href=#254 id=254 data-nosnippet>254</a>                JonesKind::SkyGain =&gt; <span class="macro">unreachable!</span>(<span class="string">"only applied tables have sky gains"</span>),
-<a href=#255 id=255 data-nosnippet>255</a>                JonesKind::General =&gt; <span class="macro">unreachable!</span>(<span class="string">"only applied tables have full Jones matrices"</span>),
-<a href=#256 id=256 data-nosnippet>256</a>            };
-<a href=#257 id=257 data-nosnippet>257</a>            write_simulated_jones_table(<span class="kw-2">&amp;</span>ms, path, kind, term.table_solutions(), <span class="prelude-val">None</span>).map_err(
-<a href=#258 id=258 data-nosnippet>258</a>                |error| {
-<a href=#259 id=259 data-nosnippet>259</a>                    SimulatorError::raised(<span class="macro">format!</span>(
-<a href=#260 id=260 data-nosnippet>260</a>                        <span class="string">"write the calibration table {}: {error}"</span>,
-<a href=#261 id=261 data-nosnippet>261</a>                        path.display()
-<a href=#262 id=262 data-nosnippet>262</a>                    ))
-<a href=#263 id=263 data-nosnippet>263</a>                },
-<a href=#264 id=264 data-nosnippet>264</a>            )<span class="question-mark">?</span>;
-<a href=#265 id=265 data-nosnippet>265</a>        }
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="prelude-val">Ok</span>(())
-<a href=#267 id=267 data-nosnippet>267</a>    }
-<a href=#268 id=268 data-nosnippet>268</a>
-<a href=#269 id=269 data-nosnippet>269</a>    <span class="doccomment">/// `table` as the absolute path `close` writes it to, or `None` for
-<a href=#270 id=270 data-nosnippet>270</a>    /// none; refused when it is, lies inside or contains the session's
-<a href=#271 id=271 data-nosnippet>271</a>    /// MeasurementSet, which writing it would replace.
-<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>table_path(<span class="kw-2">&amp;</span><span class="self">self</span>, table: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;<span class="prelude-ty">Option</span>&lt;PathBuf&gt;&gt; {
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">if </span>table.is_empty() {
-<a href=#274 id=274 data-nosnippet>274</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#275 id=275 data-nosnippet>275</a>        }
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">let </span>path = std::path::absolute(table)
-<a href=#277 id=277 data-nosnippet>277</a>            .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"table {table}: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#278 id=278 data-nosnippet>278</a>        check_simulated_table_destination(<span class="self">self</span>.path(), <span class="kw-2">&amp;</span>path)
-<a href=#279 id=279 data-nosnippet>279</a>            .map_err(|error| SimulatorError::raised(error.to_string()))<span class="question-mark">?</span>;
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(path))
-<a href=#281 id=281 data-nosnippet>281</a>    }
-<a href=#282 id=282 data-nosnippet>282</a>
-<a href=#283 id=283 data-nosnippet>283</a>    <span class="doccomment">/// Scan `scan`'s integrations, their TIMEs in order: as planned, or as
-<a href=#284 id=284 data-nosnippet>284</a>    /// the opened MeasurementSet has them.
-<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_times_s(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize) -&gt; <span class="kw">impl </span>Iterator&lt;Item = f64&gt; + <span class="lifetime">'_ </span>{
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>planned = <span class="self">self</span>.scans[scan].planned();
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>opened: <span class="kw-2">&amp;</span>[f64] = <span class="kw">if </span>planned.is_some() {
-<a href=#288 id=288 data-nosnippet>288</a>            <span class="kw-2">&amp;</span>[]
-<a href=#289 id=289 data-nosnippet>289</a>        } <span class="kw">else </span>{
-<a href=#290 id=290 data-nosnippet>290</a>            <span class="self">self</span>.opened
-<a href=#291 id=291 data-nosnippet>291</a>                .as_ref()
-<a href=#292 id=292 data-nosnippet>292</a>                .and_then(|opened| opened.integration_times_s.get(scan))
-<a href=#293 id=293 data-nosnippet>293</a>                .map_or(<span class="kw-2">&amp;</span>[], Vec::as_slice)
-<a href=#294 id=294 data-nosnippet>294</a>        };
-<a href=#295 id=295 data-nosnippet>295</a>        planned
-<a href=#296 id=296 data-nosnippet>296</a>            .map(|planned| planned.integration_times_s())
-<a href=#297 id=297 data-nosnippet>297</a>            .into_iter()
-<a href=#298 id=298 data-nosnippet>298</a>            .flatten()
-<a href=#299 id=299 data-nosnippet>299</a>            .chain(opened.iter().copied())
-<a href=#300 id=300 data-nosnippet>300</a>    }
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a>    <span class="doccomment">/// The integrations of the scans observed so far in each spectral
-<a href=#303 id=303 data-nosnippet>303</a>    /// window, and the span of their times: what a gain term's chunks
-<a href=#304 id=304 data-nosnippet>304</a>    /// number, counted before they are formed.
-<a href=#305 id=305 data-nosnippet>305</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_counts(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (Vec&lt;usize&gt;, <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;) {
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="self">self</span>.integration_counts_before(<span class="self">self</span>.scans.len())
-<a href=#307 id=307 data-nosnippet>307</a>    }
-<a href=#308 id=308 data-nosnippet>308</a>
-<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_counts_before(<span class="kw-2">&amp;</span><span class="self">self</span>, scans: usize) -&gt; (Vec&lt;usize&gt;, <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;) {
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span><span class="kw-2">mut </span>per_window = Vec::new();
-<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span><span class="kw-2">mut </span>span: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt; = <span class="prelude-val">None</span>;
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().take(scans).enumerate() {
-<a href=#313 id=313 data-nosnippet>313</a>            <span class="kw">let </span>window = scan.spectral_window_id;
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="kw">if </span>per_window.len() &lt;= window {
-<a href=#315 id=315 data-nosnippet>315</a>                per_window.resize(window + <span class="number">1</span>, <span class="number">0</span>);
-<a href=#316 id=316 data-nosnippet>316</a>            }
-<a href=#317 id=317 data-nosnippet>317</a>            <span class="kw">for </span>time_s <span class="kw">in </span><span class="self">self</span>.integration_times_s(index) {
-<a href=#318 id=318 data-nosnippet>318</a>                per_window[window] += <span class="number">1</span>;
-<a href=#319 id=319 data-nosnippet>319</a>                span = <span class="prelude-val">Some</span>(span.map_or([time_s, time_s], |[low, high]| {
-<a href=#320 id=320 data-nosnippet>320</a>                    [low.min(time_s), high.max(time_s)]
-<a href=#321 id=321 data-nosnippet>321</a>                }));
-<a href=#322 id=322 data-nosnippet>322</a>            }
-<a href=#323 id=323 data-nosnippet>323</a>        }
-<a href=#324 id=324 data-nosnippet>324</a>        (per_window, span)
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="doccomment">/// The solution chunks of a gain term: one per integration of each scan
-<a href=#328 id=328 data-nosnippet>328</a>    /// observed so far, at its TIME, in its spectral window and field,
-<a href=#329 id=329 data-nosnippet>329</a>    /// counted `per_window` ([`Self::integration_counts`]).
-<a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_chunks(<span class="kw-2">&amp;</span><span class="self">self</span>, per_window: <span class="kw-2">&amp;</span>[usize]) -&gt; Chunks {
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span><span class="kw-2">mut </span>chunks = Chunks::with_capacity(per_window);
-<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().enumerate() {
-<a href=#333 id=333 data-nosnippet>333</a>            <span class="kw">for </span>time_s <span class="kw">in </span><span class="self">self</span>.integration_times_s(index) {
-<a href=#334 id=334 data-nosnippet>334</a>                chunks.push(scan.spectral_window_id, time_s, scan.field_id);
-<a href=#335 id=335 data-nosnippet>335</a>            }
-<a href=#336 id=336 data-nosnippet>336</a>        }
-<a href=#337 id=337 data-nosnippet>337</a>        chunks.sorted()
-<a href=#338 id=338 data-nosnippet>338</a>    }
-<a href=#339 id=339 data-nosnippet>339</a>
-<a href=#340 id=340 data-nosnippet>340</a>    <span class="doccomment">/// Each spectral window's earliest TIME among the scans observed so far
-<a href=#341 id=341 data-nosnippet>341</a>    /// and the field of that integration, if any. CASA's infinite leakage
-<a href=#342 id=342 data-nosnippet>342</a>    /// solution interval spans every scan and field of a window: its table
-<a href=#343 id=343 data-nosnippet>343</a>    /// has one solution per window and antenna.
-<a href=#344 id=344 data-nosnippet>344</a>    </span><span class="kw">fn </span>first_integrations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;<span class="prelude-ty">Option</span>&lt;(f64, usize)&gt;&gt; {
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span><span class="kw-2">mut </span>first: Vec&lt;<span class="prelude-ty">Option</span>&lt;(f64, usize)&gt;&gt; = Vec::new();
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().enumerate() {
-<a href=#347 id=347 data-nosnippet>347</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(time_s) = <span class="self">self</span>.integration_times_s(index).next() <span class="kw">else </span>{
-<a href=#348 id=348 data-nosnippet>348</a>                <span class="kw">continue</span>;
-<a href=#349 id=349 data-nosnippet>349</a>            };
-<a href=#350 id=350 data-nosnippet>350</a>            <span class="kw">let </span>window = scan.spectral_window_id;
-<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">if </span>first.len() &lt;= window {
-<a href=#352 id=352 data-nosnippet>352</a>                first.resize(window + <span class="number">1</span>, <span class="prelude-val">None</span>);
-<a href=#353 id=353 data-nosnippet>353</a>            }
-<a href=#354 id=354 data-nosnippet>354</a>            <span class="kw">if </span>first[window].is_none_or(|(earlier, <span class="kw">_</span>)| time_s &lt; earlier) {
-<a href=#355 id=355 data-nosnippet>355</a>                first[window] = <span class="prelude-val">Some</span>((time_s, scan.field_id));
-<a href=#356 id=356 data-nosnippet>356</a>            }
-<a href=#357 id=357 data-nosnippet>357</a>        }
-<a href=#358 id=358 data-nosnippet>358</a>        first
-<a href=#359 id=359 data-nosnippet>359</a>    }
-<a href=#360 id=360 data-nosnippet>360</a>}
-<a href=#361 id=361 data-nosnippet>361</a>
-<a href=#362 id=362 data-nosnippet>362</a><span class="doccomment">/// The solution chunks of a leakage term: one per spectral window observed
-<a href=#363 id=363 data-nosnippet>363</a>/// so far, at its earliest TIME and on that integration's field (`first`),
-<a href=#364 id=364 data-nosnippet>364</a>/// counted `per_window`.
-<a href=#365 id=365 data-nosnippet>365</a></span><span class="kw">fn </span>window_chunks(first: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;(f64, usize)&gt;], per_window: <span class="kw-2">&amp;</span>[usize]) -&gt; Chunks {
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = Chunks::with_capacity(per_window);
-<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">for </span>(window, first) <span class="kw">in </span>first.iter().enumerate() {
-<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((time_s, field)) = <span class="kw-2">*</span>first {
-<a href=#369 id=369 data-nosnippet>369</a>            chunks.push(window, time_s, field);
-<a href=#370 id=370 data-nosnippet>370</a>        }
-<a href=#371 id=371 data-nosnippet>371</a>    }
-<a href=#372 id=372 data-nosnippet>372</a>    chunks
-<a href=#373 id=373 data-nosnippet>373</a>}
+<a href=#255 id=255 data-nosnippet>255</a>                JonesKind::General | JonesKind::SkyGeneral =&gt; {
+<a href=#256 id=256 data-nosnippet>256</a>                    <span class="macro">unreachable!</span>(<span class="string">"only applied tables have full Jones matrices"</span>)
+<a href=#257 id=257 data-nosnippet>257</a>                }
+<a href=#258 id=258 data-nosnippet>258</a>            };
+<a href=#259 id=259 data-nosnippet>259</a>            write_simulated_jones_table(<span class="kw-2">&amp;</span>ms, path, kind, term.table_solutions(), <span class="prelude-val">None</span>).map_err(
+<a href=#260 id=260 data-nosnippet>260</a>                |error| {
+<a href=#261 id=261 data-nosnippet>261</a>                    SimulatorError::raised(<span class="macro">format!</span>(
+<a href=#262 id=262 data-nosnippet>262</a>                        <span class="string">"write the calibration table {}: {error}"</span>,
+<a href=#263 id=263 data-nosnippet>263</a>                        path.display()
+<a href=#264 id=264 data-nosnippet>264</a>                    ))
+<a href=#265 id=265 data-nosnippet>265</a>                },
+<a href=#266 id=266 data-nosnippet>266</a>            )<span class="question-mark">?</span>;
+<a href=#267 id=267 data-nosnippet>267</a>        }
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="prelude-val">Ok</span>(())
+<a href=#269 id=269 data-nosnippet>269</a>    }
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="doccomment">/// `table` as the absolute path `close` writes it to, or `None` for
+<a href=#272 id=272 data-nosnippet>272</a>    /// none; refused when it is, lies inside or contains the session's
+<a href=#273 id=273 data-nosnippet>273</a>    /// MeasurementSet, which writing it would replace.
+<a href=#274 id=274 data-nosnippet>274</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>table_path(<span class="kw-2">&amp;</span><span class="self">self</span>, table: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;<span class="prelude-ty">Option</span>&lt;PathBuf&gt;&gt; {
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">if </span>table.is_empty() {
+<a href=#276 id=276 data-nosnippet>276</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#277 id=277 data-nosnippet>277</a>        }
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>path = std::path::absolute(table)
+<a href=#279 id=279 data-nosnippet>279</a>            .map_err(|error| SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"table {table}: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#280 id=280 data-nosnippet>280</a>        check_simulated_table_destination(<span class="self">self</span>.path(), <span class="kw-2">&amp;</span>path)
+<a href=#281 id=281 data-nosnippet>281</a>            .map_err(|error| SimulatorError::raised(error.to_string()))<span class="question-mark">?</span>;
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(path))
+<a href=#283 id=283 data-nosnippet>283</a>    }
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Scan `scan`'s integrations, their TIMEs in order: as planned, or as
+<a href=#286 id=286 data-nosnippet>286</a>    /// the opened MeasurementSet has them.
+<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_times_s(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize) -&gt; <span class="kw">impl </span>Iterator&lt;Item = f64&gt; + <span class="lifetime">'_ </span>{
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>planned = <span class="self">self</span>.scans[scan].planned();
+<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>opened: <span class="kw-2">&amp;</span>[f64] = <span class="kw">if </span>planned.is_some() {
+<a href=#290 id=290 data-nosnippet>290</a>            <span class="kw-2">&amp;</span>[]
+<a href=#291 id=291 data-nosnippet>291</a>        } <span class="kw">else </span>{
+<a href=#292 id=292 data-nosnippet>292</a>            <span class="self">self</span>.opened
+<a href=#293 id=293 data-nosnippet>293</a>                .as_ref()
+<a href=#294 id=294 data-nosnippet>294</a>                .and_then(|opened| opened.integration_times_s.get(scan))
+<a href=#295 id=295 data-nosnippet>295</a>                .map_or(<span class="kw-2">&amp;</span>[], Vec::as_slice)
+<a href=#296 id=296 data-nosnippet>296</a>        };
+<a href=#297 id=297 data-nosnippet>297</a>        planned
+<a href=#298 id=298 data-nosnippet>298</a>            .map(|planned| planned.integration_times_s())
+<a href=#299 id=299 data-nosnippet>299</a>            .into_iter()
+<a href=#300 id=300 data-nosnippet>300</a>            .flatten()
+<a href=#301 id=301 data-nosnippet>301</a>            .chain(opened.iter().copied())
+<a href=#302 id=302 data-nosnippet>302</a>    }
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="doccomment">/// The integrations of the scans observed so far in each spectral
+<a href=#305 id=305 data-nosnippet>305</a>    /// window, and the span of their times: what a gain term's chunks
+<a href=#306 id=306 data-nosnippet>306</a>    /// number, counted before they are formed.
+<a href=#307 id=307 data-nosnippet>307</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_counts(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (Vec&lt;usize&gt;, <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;) {
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="self">self</span>.integration_counts_before(<span class="self">self</span>.scans.len())
+<a href=#309 id=309 data-nosnippet>309</a>    }
+<a href=#310 id=310 data-nosnippet>310</a>
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_counts_before(<span class="kw-2">&amp;</span><span class="self">self</span>, scans: usize) -&gt; (Vec&lt;usize&gt;, <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;) {
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span><span class="kw-2">mut </span>per_window = Vec::new();
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">let </span><span class="kw-2">mut </span>span: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt; = <span class="prelude-val">None</span>;
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().take(scans).enumerate() {
+<a href=#315 id=315 data-nosnippet>315</a>            <span class="kw">let </span>window = scan.spectral_window_id;
+<a href=#316 id=316 data-nosnippet>316</a>            <span class="kw">if </span>per_window.len() &lt;= window {
+<a href=#317 id=317 data-nosnippet>317</a>                per_window.resize(window + <span class="number">1</span>, <span class="number">0</span>);
+<a href=#318 id=318 data-nosnippet>318</a>            }
+<a href=#319 id=319 data-nosnippet>319</a>            <span class="kw">for </span>time_s <span class="kw">in </span><span class="self">self</span>.integration_times_s(index) {
+<a href=#320 id=320 data-nosnippet>320</a>                per_window[window] += <span class="number">1</span>;
+<a href=#321 id=321 data-nosnippet>321</a>                span = <span class="prelude-val">Some</span>(span.map_or([time_s, time_s], |[low, high]| {
+<a href=#322 id=322 data-nosnippet>322</a>                    [low.min(time_s), high.max(time_s)]
+<a href=#323 id=323 data-nosnippet>323</a>                }));
+<a href=#324 id=324 data-nosnippet>324</a>            }
+<a href=#325 id=325 data-nosnippet>325</a>        }
+<a href=#326 id=326 data-nosnippet>326</a>        (per_window, span)
+<a href=#327 id=327 data-nosnippet>327</a>    }
+<a href=#328 id=328 data-nosnippet>328</a>
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// The solution chunks of a gain term: one per integration of each scan
+<a href=#330 id=330 data-nosnippet>330</a>    /// observed so far, at its TIME, in its spectral window and field,
+<a href=#331 id=331 data-nosnippet>331</a>    /// counted `per_window` ([`Self::integration_counts`]).
+<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>integration_chunks(<span class="kw-2">&amp;</span><span class="self">self</span>, per_window: <span class="kw-2">&amp;</span>[usize]) -&gt; Chunks {
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span><span class="kw-2">mut </span>chunks = Chunks::with_capacity(per_window);
+<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().enumerate() {
+<a href=#335 id=335 data-nosnippet>335</a>            <span class="kw">for </span>time_s <span class="kw">in </span><span class="self">self</span>.integration_times_s(index) {
+<a href=#336 id=336 data-nosnippet>336</a>                chunks.push(scan.spectral_window_id, time_s, scan.field_id);
+<a href=#337 id=337 data-nosnippet>337</a>            }
+<a href=#338 id=338 data-nosnippet>338</a>        }
+<a href=#339 id=339 data-nosnippet>339</a>        chunks.sorted()
+<a href=#340 id=340 data-nosnippet>340</a>    }
+<a href=#341 id=341 data-nosnippet>341</a>
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// Each spectral window's earliest TIME among the scans observed so far
+<a href=#343 id=343 data-nosnippet>343</a>    /// and the field of that integration, if any. CASA's infinite leakage
+<a href=#344 id=344 data-nosnippet>344</a>    /// solution interval spans every scan and field of a window: its table
+<a href=#345 id=345 data-nosnippet>345</a>    /// has one solution per window and antenna.
+<a href=#346 id=346 data-nosnippet>346</a>    </span><span class="kw">fn </span>first_integrations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;<span class="prelude-ty">Option</span>&lt;(f64, usize)&gt;&gt; {
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span><span class="kw-2">mut </span>first: Vec&lt;<span class="prelude-ty">Option</span>&lt;(f64, usize)&gt;&gt; = Vec::new();
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">for </span>(index, scan) <span class="kw">in </span><span class="self">self</span>.scans.iter().enumerate() {
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(time_s) = <span class="self">self</span>.integration_times_s(index).next() <span class="kw">else </span>{
+<a href=#350 id=350 data-nosnippet>350</a>                <span class="kw">continue</span>;
+<a href=#351 id=351 data-nosnippet>351</a>            };
+<a href=#352 id=352 data-nosnippet>352</a>            <span class="kw">let </span>window = scan.spectral_window_id;
+<a href=#353 id=353 data-nosnippet>353</a>            <span class="kw">if </span>first.len() &lt;= window {
+<a href=#354 id=354 data-nosnippet>354</a>                first.resize(window + <span class="number">1</span>, <span class="prelude-val">None</span>);
+<a href=#355 id=355 data-nosnippet>355</a>            }
+<a href=#356 id=356 data-nosnippet>356</a>            <span class="kw">if </span>first[window].is_none_or(|(earlier, <span class="kw">_</span>)| time_s &lt; earlier) {
+<a href=#357 id=357 data-nosnippet>357</a>                first[window] = <span class="prelude-val">Some</span>((time_s, scan.field_id));
+<a href=#358 id=358 data-nosnippet>358</a>            }
+<a href=#359 id=359 data-nosnippet>359</a>        }
+<a href=#360 id=360 data-nosnippet>360</a>        first
+<a href=#361 id=361 data-nosnippet>361</a>    }
+<a href=#362 id=362 data-nosnippet>362</a>}
+<a href=#363 id=363 data-nosnippet>363</a>
+<a href=#364 id=364 data-nosnippet>364</a><span class="doccomment">/// The solution chunks of a leakage term: one per spectral window observed
+<a href=#365 id=365 data-nosnippet>365</a>/// so far, at its earliest TIME and on that integration's field (`first`),
+<a href=#366 id=366 data-nosnippet>366</a>/// counted `per_window`.
+<a href=#367 id=367 data-nosnippet>367</a></span><span class="kw">fn </span>window_chunks(first: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;(f64, usize)&gt;], per_window: <span class="kw-2">&amp;</span>[usize]) -&gt; Chunks {
+<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = Chunks::with_capacity(per_window);
+<a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">for </span>(window, first) <span class="kw">in </span>first.iter().enumerate() {
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((time_s, field)) = <span class="kw-2">*</span>first {
+<a href=#371 id=371 data-nosnippet>371</a>            chunks.push(window, time_s, field);
+<a href=#372 id=372 data-nosnippet>372</a>        }
+<a href=#373 id=373 data-nosnippet>373</a>    }
+<a href=#374 id=374 data-nosnippet>374</a>    chunks
+<a href=#375 id=375 data-nosnippet>375</a>}
 </code></pre></div></section></main></body></html>

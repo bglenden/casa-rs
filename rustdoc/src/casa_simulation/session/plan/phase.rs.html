@@ -408,40 +408,41 @@
 <a href=#408 id=408 data-nosnippet>408</a>            seed,
 <a href=#409 id=409 data-nosnippet>409</a>            level: NoiseLevel::Simple(<span class="number">0.5</span>),
 <a href=#410 id=410 data-nosnippet>410</a>            ordinal,
-<a href=#411 id=411 data-nosnippet>411</a>        }
-<a href=#412 id=412 data-nosnippet>412</a>    }
-<a href=#413 id=413 data-nosnippet>413</a>
-<a href=#414 id=414 data-nosnippet>414</a>    <span class="attr">#[test]
-<a href=#415 id=415 data-nosnippet>415</a>    </span><span class="kw">fn </span>a_step_covers_only_the_scans_observed_before_it() {
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span><span class="kw-2">mut </span>plan = DataPhase::default();
-<a href=#417 id=417 data-nosnippet>417</a>        plan.corrupt([noise(<span class="number">1</span>, <span class="number">0</span>)], [], <span class="number">1</span>);
-<a href=#418 id=418 data-nosnippet>418</a>        plan.corrupt([noise(<span class="number">1</span>, <span class="number">1</span>), noise(<span class="number">2</span>, <span class="number">0</span>)], [], <span class="number">3</span>);
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="macro">assert_eq!</span>(
-<a href=#420 id=420 data-nosnippet>420</a>            plan.noise_for_scan(<span class="number">0</span>),
-<a href=#421 id=421 data-nosnippet>421</a>            [noise(<span class="number">1</span>, <span class="number">0</span>), noise(<span class="number">1</span>, <span class="number">1</span>), noise(<span class="number">2</span>, <span class="number">0</span>)]
-<a href=#422 id=422 data-nosnippet>422</a>        );
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">2</span>), [noise(<span class="number">1</span>, <span class="number">1</span>), noise(<span class="number">2</span>, <span class="number">0</span>)]);
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">3</span>), []);
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="macro">assert_eq!</span>(plan.steps_for_scan(<span class="number">1</span>).len(), <span class="number">1</span>);
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="macro">assert!</span>(plan.predictions_for_scan(<span class="number">0</span>).is_empty());
-<a href=#427 id=427 data-nosnippet>427</a>        plan.clear();
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">0</span>), []);
-<a href=#429 id=429 data-nosnippet>429</a>    }
-<a href=#430 id=430 data-nosnippet>430</a>
-<a href=#431 id=431 data-nosnippet>431</a>    <span class="attr">#[test]
-<a href=#432 id=432 data-nosnippet>432</a>    </span><span class="kw">fn </span>interleaved_corruptions_share_their_applications() {
-<a href=#433 id=433 data-nosnippet>433</a>        <span class="kw">let </span><span class="kw-2">mut </span>plan = DataPhase::default();
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">for </span>scans <span class="kw">in </span><span class="number">1</span>..=<span class="number">4 </span>{
-<a href=#435 id=435 data-nosnippet>435</a>            plan.corrupt([noise(<span class="number">1</span>, scans <span class="kw">as </span>u32 - <span class="number">1</span>)], [], scans);
-<a href=#436 id=436 data-nosnippet>436</a>        }
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">for </span>scan <span class="kw">in </span><span class="number">0</span>..<span class="number">4 </span>{
-<a href=#438 id=438 data-nosnippet>438</a>            <span class="kw">let </span>expected = (scan <span class="kw">as </span>u32..<span class="number">4</span>).map(|ordinal| noise(<span class="number">1</span>, ordinal));
-<a href=#439 id=439 data-nosnippet>439</a>            <span class="macro">assert!</span>(plan.noise_for_scan(scan).iter().cloned().eq(expected));
-<a href=#440 id=440 data-nosnippet>440</a>        }
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="comment">// Each scan's noise is the end of the one list.
-<a href=#442 id=442 data-nosnippet>442</a>        </span><span class="kw">let </span>all = plan.noise_for_scan(<span class="number">0</span>).as_ptr_range();
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">3</span>).as_ptr_range().end, all.end);
-<a href=#444 id=444 data-nosnippet>444</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">4</span>), []);
-<a href=#445 id=445 data-nosnippet>445</a>    }
-<a href=#446 id=446 data-nosnippet>446</a>}
+<a href=#411 id=411 data-nosnippet>411</a>            baseline: Vec::new(),
+<a href=#412 id=412 data-nosnippet>412</a>        }
+<a href=#413 id=413 data-nosnippet>413</a>    }
+<a href=#414 id=414 data-nosnippet>414</a>
+<a href=#415 id=415 data-nosnippet>415</a>    <span class="attr">#[test]
+<a href=#416 id=416 data-nosnippet>416</a>    </span><span class="kw">fn </span>a_step_covers_only_the_scans_observed_before_it() {
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span><span class="kw-2">mut </span>plan = DataPhase::default();
+<a href=#418 id=418 data-nosnippet>418</a>        plan.corrupt([noise(<span class="number">1</span>, <span class="number">0</span>)], [], <span class="number">1</span>);
+<a href=#419 id=419 data-nosnippet>419</a>        plan.corrupt([noise(<span class="number">1</span>, <span class="number">1</span>), noise(<span class="number">2</span>, <span class="number">0</span>)], [], <span class="number">3</span>);
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="macro">assert_eq!</span>(
+<a href=#421 id=421 data-nosnippet>421</a>            plan.noise_for_scan(<span class="number">0</span>),
+<a href=#422 id=422 data-nosnippet>422</a>            [noise(<span class="number">1</span>, <span class="number">0</span>), noise(<span class="number">1</span>, <span class="number">1</span>), noise(<span class="number">2</span>, <span class="number">0</span>)]
+<a href=#423 id=423 data-nosnippet>423</a>        );
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">2</span>), [noise(<span class="number">1</span>, <span class="number">1</span>), noise(<span class="number">2</span>, <span class="number">0</span>)]);
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">3</span>), []);
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="macro">assert_eq!</span>(plan.steps_for_scan(<span class="number">1</span>).len(), <span class="number">1</span>);
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert!</span>(plan.predictions_for_scan(<span class="number">0</span>).is_empty());
+<a href=#428 id=428 data-nosnippet>428</a>        plan.clear();
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">0</span>), []);
+<a href=#430 id=430 data-nosnippet>430</a>    }
+<a href=#431 id=431 data-nosnippet>431</a>
+<a href=#432 id=432 data-nosnippet>432</a>    <span class="attr">#[test]
+<a href=#433 id=433 data-nosnippet>433</a>    </span><span class="kw">fn </span>interleaved_corruptions_share_their_applications() {
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">let </span><span class="kw-2">mut </span>plan = DataPhase::default();
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">for </span>scans <span class="kw">in </span><span class="number">1</span>..=<span class="number">4 </span>{
+<a href=#436 id=436 data-nosnippet>436</a>            plan.corrupt([noise(<span class="number">1</span>, scans <span class="kw">as </span>u32 - <span class="number">1</span>)], [], scans);
+<a href=#437 id=437 data-nosnippet>437</a>        }
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">for </span>scan <span class="kw">in </span><span class="number">0</span>..<span class="number">4 </span>{
+<a href=#439 id=439 data-nosnippet>439</a>            <span class="kw">let </span>expected = (scan <span class="kw">as </span>u32..<span class="number">4</span>).map(|ordinal| noise(<span class="number">1</span>, ordinal));
+<a href=#440 id=440 data-nosnippet>440</a>            <span class="macro">assert!</span>(plan.noise_for_scan(scan).iter().cloned().eq(expected));
+<a href=#441 id=441 data-nosnippet>441</a>        }
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="comment">// Each scan's noise is the end of the one list.
+<a href=#443 id=443 data-nosnippet>443</a>        </span><span class="kw">let </span>all = plan.noise_for_scan(<span class="number">0</span>).as_ptr_range();
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">3</span>).as_ptr_range().end, all.end);
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="macro">assert_eq!</span>(plan.noise_for_scan(<span class="number">4</span>), []);
+<a href=#446 id=446 data-nosnippet>446</a>    }
+<a href=#447 id=447 data-nosnippet>447</a>}
 </code></pre></div></section></main></body></html>

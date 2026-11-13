@@ -4154,6 +4154,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#supplied-simulation-tables-20261113" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        supplied-simulation-tables-20261113
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8554,6 +8565,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#supplied-simulation-tables-20261113" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        supplied-simulation-tables-20261113
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -11806,8 +11828,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">33</td>
 <td>yes</td>
-<td style="text-align: right;">20</td>
-<td style="text-align: right;">9</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">8</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">3</td>
 <td style="text-align: right;">1</td>
@@ -13862,7 +13884,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>30517424209d7531ce6f4c93e1e8ef94a5e4e66b</code>. Status counts: Implemented: 20, Partial: 9, Not implemented: 0, Disabled in CASA: 3, Deprecated in CASA: 1, Unassessed: 0.</p>
+<p>Audit baseline: <code>30517424209d7531ce6f4c93e1e8ef94a5e4e66b</code>. Status counts: Implemented: 21, Partial: 8, Not implemented: 0, Disabled in CASA: 3, Deprecated in CASA: 1, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -13954,9 +13976,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>setapply</code></td>
 <td><code>table='', type='', t=0.0, field=[], interp='linear', calwt=False, spwmap=[-1], opacity=0.0</code></td>
-<td>Partial (#1291)</td>
-<td>Applies G/D/B/Df, scalar T/Tf, full polarized J/Jf, general Dgen/Dfgen leakage and X/Xf/GlinXph/GlinXphf polarized phase gains, and supplied K/Kcross/KMBD/KAntPos/TOpac/TfOpac/EGainCurve/EPowerCurve/B TSYS tables. Time interpolation supports nearest, linear, local cubic and corrected natural spline, with complex phase-delay and observation/scan modifiers. Real FPARAM values interpolate as signed parameters before physical gain evaluation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows skip the whole corruption step, including noise and corrected-data updates, as in CASA. Only covered windows allocate applied sample grids. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t does not change these solutions; supplied TOpac tables take precedence over the opacity argument. KAntPos accepts offsets but leaves simulated DATA unchanged, as CASA does below its B pivot. EGainCurve acts before leakage; Tsys uses CASA's reversed inversion sense and neutral invalid parameters. Invalid mappings, malformed parameter counts and cubic interior grids on physical axes of four or more channels with fewer than four valid samples raise; shorter physical axes use CASA linear fallback. Corrects the documented natural-spline first-knot defect. Cubic time interiors require four samples; exact/endpoint queries accept shorter axes. Corrects CASA spline-setup and unsynchronized per-scan crashes, retaining atomic failure. Other table types remain explicit #1291 refusals. Full polarized matrices use Jp V Jq^H, require all four correlations, and substitute identity for an invalid whole matrix; Dgen includes the second-order leakage term. Cross-hand phase and phase gains act upstream of leakage; multi-band delays use zero frequency as the phase reference.</td>
-<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-corruptions-20261103">corruptions-20261103</a>, <a href="#simulator-evidence-refusals">refusals</a>, <a href="#simulator-evidence-apply-parameters-20261112">apply-parameters-20261112</a>, <a href="#simulator-evidence-apply-flags-20261112">apply-flags-20261112</a>, <a href="#simulator-evidence-apply-scalar-20261112">apply-scalar-20261112</a>, <a href="#simulator-evidence-apply-frequency-20261112">apply-frequency-20261112</a>, <a href="#simulator-evidence-corruption-window-coverage-20261112">corruption-window-coverage-20261112</a></td>
+<td>Implemented</td>
+<td>Applies G/D/B/BPOLY/GSPLINE/Df, scalar T/Tf, full polarized J/Jf, general Dgen/Dfgen leakage and X/Xf/GlinXph/GlinXphf polarized phase gains, and supplied K/Kcross/KMBD/KAntPos/TOpac/TfOpac/EGainCurve/EPowerCurve/B TSYS, fringe, linear/circular ionosphere, switched-power, Accor and single-dish gain tables. Time interpolation supports nearest, linear, local cubic and corrected natural spline, with complex phase-delay and observation/scan modifiers. Real FPARAM values interpolate as signed parameters before physical gain evaluation. B/Tf/Df frequency interpolation uses amplitude and unwrapped phase: nearest, linear, cubic, natural spline and flag-retaining forms. Supports identity, broadcast, explicit-prefix and first-available spectral-window mapping within the windows present at setapply. Newly configured windows observed afterward and unavailable table windows skip the whole corruption step, including noise and corrected-data updates, as in CASA. Only covered windows allocate applied sample grids. G/T/B/Tf invalid parameters use unit gain; invalid D/Df antennas use neutral zero leakage. WEIGHT/SIGMA and data flags persist for either calwt setting; t does not change these solutions; supplied TOpac tables take precedence over the opacity argument. KAntPos accepts offsets but leaves simulated DATA unchanged, as CASA does below its B pivot. EGainCurve acts before leakage; Tsys uses CASA's reversed inversion sense and neutral invalid parameters. Invalid mappings, malformed parameter counts and cubic interior grids on physical axes of four or more channels with fewer than four valid samples raise; shorter physical axes use CASA linear fallback. Corrects the documented natural-spline first-knot defect. Cubic time interiors require four samples; exact/endpoint queries accept shorter axes. Corrects CASA spline-setup and unsynchronized per-scan crashes, retaining atomic failure. Supplied A Noise uses baseline/correlation parameters and the same time/frequency interpolation; supplied M/Mf tables apply inverse parallel-hand gains to the additive side, zero its cross hands, and leave the sky model unchanged below CASA's simulation B pivot. BPOLY uses the data frequency grid; GSPLINE uses legacy amplitude/phase B-splines, reference-frequency scaling and zero outside the fitted interval. Fringe phases advance by rate before time interpolation, then include delay and dispersion. Switched-power application requires the same SYSPOWER/CALDEVICE context as CASA. Factory-only calibration families are outside the demonstrated supplied-table simulation scope. Full polarized matrices use Jp V Jq^H, require all four correlations (circular-feed F is diagonal and also accepts partial products), and substitute identity for an invalid whole matrix; Dgen includes the second-order leakage term. Cross-hand phase and phase gains act upstream of leakage; multi-band delays use zero frequency as the phase reference.</td>
+<td><a href="#simulator-evidence-signature">signature</a>, <a href="#simulator-evidence-binding-tests">binding-tests</a>, <a href="#simulator-evidence-corruptions-20261103">corruptions-20261103</a>, <a href="#simulator-evidence-refusals">refusals</a>, <a href="#simulator-evidence-apply-parameters-20261112">apply-parameters-20261112</a>, <a href="#simulator-evidence-apply-flags-20261112">apply-flags-20261112</a>, <a href="#simulator-evidence-apply-scalar-20261112">apply-scalar-20261112</a>, <a href="#simulator-evidence-apply-frequency-20261112">apply-frequency-20261112</a>, <a href="#simulator-evidence-corruption-window-coverage-20261112">corruption-window-coverage-20261112</a>, <a href="#simulator-evidence-supplied-simulation-tables-20261113">supplied-simulation-tables-20261113</a></td>
 </tr>
 <tr>
 <td><code>setauto</code></td>
@@ -15014,6 +15036,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><strong>Completed simulation noise/troposphere delivery — recorded.</strong> Issue #1292 is closed after #1316, #1322, #1324, #1326, #1329 and #1331 merged. Independent CASA6.7.6.14, statistical noise, documented source/ATM controls, C++ interoperability, CPU/Metal/workers and affected memory laws pass as recorded in those PRs. Final CI 43339695734 passed all required jobs. OTF=False simple/manual/atmospheric noise, A/T/Tf output, later-observation coverage and reuse, default/custom test-ramp intervals. Existing individual/screen evidence remains valid.</p>
 <ul>
 <li><a href="https://github.com/bglenden/casa-rs/issues/1292">https://github.com/bglenden/casa-rs/issues/1292</a></li>
+</ul>
+<p><a id="simulator-evidence-supplied-simulation-tables-20261113"></a></p>
+<h5 id="supplied-simulation-tables-20261113">supplied-simulation-tables-20261113<a class="headerlink" href="#supplied-simulation-tables-20261113" title="Permanent link">&para;</a></h5>
+<p><strong>Actual CASA 6.7.6.14 supplied calibration tables applied to simulated DATA — passed.</strong> 19 independent reference cases pass under the unchanged 1e-3 DATA NRMS gate (largest 7.46e-7); successful baseline/physical cases agree for CPU W1/W3. Missing switched-power context raises with DATA and scratch/quality columns unchanged. CASA C++ reads 41 native outputs at maximum NRMS 7.46e-7. The narrow-input/wide-output law peaks at 11,731,954 bytes within 12,061,146 admitted, at most 24 bytes beyond reservation at an allocation; retained 11,010,961 within 11,011,897 charged. One Astra xhigh review is resolved. Final affected regression passes615 tests with0 failures and2 helper ignores, including memory and actual Metal cases. All required CI jobs pass in PR1338. BPOLY including per-observation/per-scan fallback; GSPLINE inside/outside its fitted time range and at a second observing frequency; saved A Noise exact/interpolated times; M/Mf simulation pivot and combined A+M/Mf; single/interpolated fringe phases with rates/delays/dispersion; linear/circular F ionosphere; supplied switched-power, Accor and SDGAIN_OTFD. Earlier interpolation/context/mapping/matrix evidence remains applicable.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/pull/1338">https://github.com/bglenden/casa-rs/pull/1338</a></li>
+<li>Revision: <code>9747c2cb64eaf86f1650c749eb352be4802b2635</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>CASAPY tools/simulation/sm_apply_polynomial_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_baseline_oracle.py --out OUT --fixture FILE; CASAPY tools/simulation/sm_apply_remaining_priors_oracle.py --out OUT --fixture FILE; cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors -- --nocapture; CASA_RS_APPLY_PARAMETERS_OUT=EXPORT/parameters CASA_RS_POLYNOMIAL_OUT=EXPORT/polynomial cargo test -p casa-simulation --test apply_polynomial --test apply_baseline --test apply_remaining_priors; CASAPY tools/simulation/sm_apply_supplied_readback.py --root EXPORT --fixtures crates/casa-simulation/tests/data; cargo test -p casa-simulation --test session_memory offline_noise::narrow_supplied_noise_admits_wide_output_interpolation -- --exact --nocapture</code>.</li>
+<li>Receipt: <code>https://github.com/bglenden/casa-rs/pull/1338</code>.</li>
 </ul>
 <h3 id="simutil">simutil<a class="headerlink" href="#simutil" title="Permanent link">&para;</a></h3>
 <h4 id="simutil-method-implementation">simutil method implementation<a class="headerlink" href="#simutil-method-implementation" title="Permanent link">&para;</a></h4>
