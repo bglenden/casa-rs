@@ -97,7 +97,7 @@ fn write(path: &Path, shape: &[usize], value: impl Fn(&[usize]) -> f32) {
 }
 
 #[test]
-fn reading_an_earlier_runs_normal_state_fits_its_charge_and_inverts_normalization() {
+fn reading_an_earlier_runs_normal_state_fits_its_charge_and_keeps_the_psf() {
     let root = tempfile::tempdir().unwrap();
     let prefix = root.path().join("earlier");
     let cube = [SIDE, SIDE, 1, CHANNELS];
@@ -142,8 +142,8 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_inverts_normalizatio
         );
         assert!(held <= holding, "images held {held}, charged {holding}");
 
-        // A pass's images: the PSF and residual times each channel's sum of
-        // weights, which normalization divides out again.
+        // The PSF stays in image units. The residual is scaled by sumwt
+        // to recover the gridded units of the normal state.
         assert_eq!(images.channels, 2..2 + window);
         assert_eq!(images.weight.is_some(), mosaic);
         let cells = SIDE * SIDE;
@@ -156,8 +156,11 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_inverts_normalizatio
             for (x, y) in [(0, 0), (128, 128), (3, 250), (200, 17)] {
                 let index = plane + x * SIDE + y;
                 let at = [x, y, 0, absolute];
-                let psf_value = images.psf.as_ref().unwrap()[index] / weight as f32;
-                assert!((psf_value - psf(&at)).abs() <= 1e-6, "PSF at {at:?}");
+                assert_eq!(
+                    images.psf.as_ref().unwrap()[index],
+                    psf(&at),
+                    "PSF at {at:?}"
+                );
                 let residual_value = images.residual[index] / weight as f32;
                 assert!(
                     (residual_value - residual(&at)).abs() <= 1e-6 * residual(&at).abs().max(1.0),

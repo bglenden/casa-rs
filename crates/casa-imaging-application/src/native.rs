@@ -379,6 +379,9 @@ pub(crate) fn run(
             .controls
             .with_psf_cutoff(casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF)?;
     }
+    if !forms.psf {
+        publication.controls = publication.controls.with_reused_single_psf();
+    }
     let vla_selection_hz = publication
         .vla_selection_store
         .map(|store| vla_selection_frequency(problem, &route, store));

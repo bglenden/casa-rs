@@ -24,6 +24,7 @@ pub(crate) struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     pub(crate) plane: &'request FinalNormalPlaneReader<'plane>,
     pub(crate) domain_ordinal: usize,
     pub(crate) polarization: usize,
+    pub(crate) reuses_single_psf: bool,
     pub(crate) fitted_beam: Option<RestoringBeam>,
     pub(crate) restoring_beam: Option<RestoringBeam>,
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
@@ -55,6 +56,9 @@ pub(crate) fn produce_plane_member(
             // `sumwt`: a Stokes plane no correlation feeds keeps the PSF its
             // conversion gives it (Stokes I's).
             let mut values = psf_real_plane(plane)?;
+            if request.reuses_single_psf {
+                return Ok(values);
+            }
             let peak = psf_peak(values.iter().copied())?;
             if !psf_normalizes(peak) {
                 return Ok(vec![0.0; cells]);
@@ -224,6 +228,7 @@ fn restored_plane(
         restoring_beam,
         primary_beam_model,
         fft_threads,
+        ..
     } = *request;
     let unfitted = || {
         ProductsError::BeamFitFailed(

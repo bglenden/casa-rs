@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Normal-state primitives: the unnormalised dirty, PSF, sensitivity and
-//! sum-weight families a major-cycle pass produces for the minor cycle and
-//! products, with their spectral basis, channel slab and validity.
+//! Normal-state primitives for the minor cycle and products, with their
+//! spectral basis, channel slab and validity. Gridding supplies raw planes.
+//! A single-term restart can reuse a PSF in the saved image's units.
 
 mod pass_state;
 pub(crate) mod storage;
@@ -100,7 +100,7 @@ impl SpectralSlabPlan {
     }
 }
 
-/// A channel-local pass's planes as it gridded them, in `f32`.
+/// A channel-local pass's planes, in `f32`.
 #[derive(Debug)]
 pub(crate) struct CubeRealFields {
     pub(crate) dirty: Box<[f32]>,
@@ -112,7 +112,7 @@ pub(crate) struct CubeRealFields {
     pub(crate) sensitivity: Option<Box<[f32]>>,
 }
 
-/// One image domain's unnormalised residual, PSF moments, sensitivity and
+/// One image domain's residual, PSF moments, sensitivity and
 /// sum weights over a channel slab; products are formed from them.
 #[derive(Debug)]
 pub(crate) struct NormalPrimitives {
@@ -202,7 +202,7 @@ impl NormalPrimitives {
             })
     }
 
-    /// Return the unnormalized point-spread-function plane.
+    /// Return the gridded PSF planes or the saved single-term PSF planes.
     #[must_use]
     pub fn psf(&self) -> crate::NormalValues<'_> {
         self.cube_real

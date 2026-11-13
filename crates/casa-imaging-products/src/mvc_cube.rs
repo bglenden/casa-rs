@@ -172,6 +172,7 @@ fn raw_plane(
         plane,
         domain_ordinal: 0,
         polarization: 0,
+        reuses_single_psf: false,
         fitted_beam: None,
         restoring_beam: None,
         primary_beam_model: planned.primary_beam_model(),

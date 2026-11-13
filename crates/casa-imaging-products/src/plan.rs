@@ -38,6 +38,7 @@ pub enum AnalyticPrimaryBeamModel {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinuumProductControls {
     psf_cutoff: f32,
+    reuses_single_psf: bool,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     saved_mosaic_beam_read_bytes: Option<u64>,
     saved_higher_primary_beam: bool,
@@ -85,6 +86,14 @@ impl ContinuumProductControls {
     #[must_use]
     pub const fn psf_cutoff(self) -> f32 {
         self.psf_cutoff
+    }
+
+    /// Keep the pixels of a single-term PSF read from an earlier image.
+    /// The normal state then holds those pixels in the saved image's units.
+    #[must_use]
+    pub const fn with_reused_single_psf(mut self) -> Self {
+        self.reuses_single_psf = true;
+        self
     }
 
     /// Select the exact analytic primary-beam law used by requested PB products.
@@ -139,6 +148,7 @@ impl Default for ContinuumProductControls {
     fn default() -> Self {
         Self {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
+            reuses_single_psf: false,
             primary_beam_model: None,
             saved_mosaic_beam_read_bytes: None,
             saved_higher_primary_beam: false,
@@ -171,6 +181,7 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
 #[derive(Debug)]
 pub struct PlannedContinuumGeneration {
     pub(crate) psf_cutoff: f32,
+    pub(crate) reuses_single_psf: bool,
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     pub(crate) uses_weight_image: bool,
     pub(crate) saved_mosaic_beam_read_bytes: u64,
@@ -261,6 +272,11 @@ impl PlannedContinuumGeneration {
         }
         Ok(Self {
             psf_cutoff: controls.psf_cutoff(),
+            reuses_single_psf: controls.reuses_single_psf
+                && !matches!(
+                    problem.reconstruction().basis(),
+                    ReconstructionBasis::Taylor { .. }
+                ),
             primary_beam_model: controls.primary_beam_model(),
             saved_mosaic_beam_read_bytes: controls.saved_mosaic_beam_read_bytes.unwrap_or(0),
             uses_weight_image: list
