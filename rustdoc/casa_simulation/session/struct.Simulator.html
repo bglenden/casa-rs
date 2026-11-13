@@ -153,7 +153,7 @@ inside or contains the session’s MeasurementSet: raised.</li>
 <li>The term’s memory does not fit the session’s resource policy: an
 admission error, before anything is formed.</li>
 </ul>
-</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-Simulator-6" class="impl"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#200-695">Source</a><a href="#impl-Simulator-6" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Simulator.html" title="struct casa_simulation::session::Simulator">Simulator</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.open" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#203-246">Source</a><h4 class="code-header">pub fn <a href="#method.open" class="fn">open</a>(path: impl <a class="trait" href="https://doc.rust-lang.org/1.100.0/core/convert/trait.AsRef.html" title="trait core::convert::AsRef">AsRef</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.100.0/std/path/struct.Path.html" title="struct std::path::Path">Path</a>&gt;, options: <a class="struct" href="struct.SimulatorOptions.html" title="struct casa_simulation::session::SimulatorOptions">SimulatorOptions</a>) -&gt; Self</h4></section></summary><div class="docblock"><p><code>sm.open(ms)</code>: a session that will create <code>path</code>, replacing any table
+</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-Simulator-6" class="impl"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#200-708">Source</a><a href="#impl-Simulator-6" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Simulator.html" title="struct casa_simulation::session::Simulator">Simulator</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.open" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#203-246">Source</a><h4 class="code-header">pub fn <a href="#method.open" class="fn">open</a>(path: impl <a class="trait" href="https://doc.rust-lang.org/1.100.0/core/convert/trait.AsRef.html" title="trait core::convert::AsRef">AsRef</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.100.0/std/path/struct.Path.html" title="struct std::path::Path">Path</a>&gt;, options: <a class="struct" href="struct.SimulatorOptions.html" title="struct casa_simulation::session::SimulatorOptions">SimulatorOptions</a>) -&gt; Self</h4></section></summary><div class="docblock"><p><code>sm.open(ms)</code>: a session that will create <code>path</code>, replacing any table
 there, at <a href="struct.Simulator.html#method.close" title="method casa_simulation::session::Simulator::close"><code>close</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.name" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#251-253">Source</a><h4 class="code-header">pub fn <a href="#method.name" class="fn">name</a>(&amp;self) -&gt; &amp;<a class="struct" href="https://doc.rust-lang.org/1.100.0/std/path/struct.Path.html" title="struct std::path::Path">Path</a></h4></section></summary><div class="docblock"><p><code>sm.name()</code>: the MeasurementSet’s path, as given to <code>open</code>; after
 <code>openfromms</code>, the absolute path, as CASA’s <code>Table::tableName</code> gives
@@ -248,7 +248,7 @@ direction where given (<a href="observe/struct.Pointing.html" title="struct casa
 <p>As <a href="struct.Simulator.html#method.observe" title="method casa_simulation::session::Simulator::observe"><code>observe</code></a>, for any pointing’s field; no
 pointings; or a direction that cannot be converted to J2000 without
 an epoch and position.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_data" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#543-588">Source</a><h4 class="code-header">pub fn <a href="#method.set_data" class="fn">set_data</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_data" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#546-601">Source</a><h4 class="code-header">pub fn <a href="#method.set_data" class="fn">set_data</a>(
     &amp;mut self,
     spectral_window_ids: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.i64.html">i64</a>],
     field_ids: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.i64.html">i64</a>],
@@ -269,12 +269,15 @@ retains the field/window selection, with a warning.</li>
 <p>Each DATA operation retains the selection in force at that call;
 later selections leave earlier operations unchanged.</p>
 <h5 id="errors-18"><a class="doc-anchor" href="#errors-18">§</a>Errors</h5>
-<p>Metadata predicates support ANTENNA1, ANTENNA2, TIME, FIELD_ID,
-DATA_DESC_ID and SCAN_NUMBER, numeric operators and abs/near/nearabs.
-Other columns, row-number/random predicates and additional query
-clauses are not yet implemented. Invalid predicates return CASA’s
-<code>False</code> after installing the field/window selection.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.close" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#599-612">Source</a><h4 class="code-header">pub fn <a href="#method.close" class="fn">close</a>(self) -&gt; <a class="type" href="error/type.SimulatorResult.html" title="type casa_simulation::session::error::SimulatorResult">SimulatorResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p><code>sm.close()</code> / <code>sm.done()</code>: write the MeasurementSet, or, after
+<p>Header predicates stream through the existing row plan. Stored scalar
+and numeric/Boolean array cells, row-number functions, bounded numeric
+and string expressions, ORDERBY, GROUPBY, scalar HAVING, LIMIT and
+OFFSET are captured against the current logical MeasurementSet.
+Selecting pending DATA renders a private preview through the existing
+writer, including a copy of an opened MS. Aggregates, joins and stored
+string columns are not yet implemented. Invalid predicates return
+CASA’s <code>False</code> after installing the field/window selection.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.close" class="method"><a class="src rightside" href="../../src/casa_simulation/session/mod.rs.html#612-625">Source</a><h4 class="code-header">pub fn <a href="#method.close" class="fn">close</a>(self) -&gt; <a class="type" href="error/type.SimulatorResult.html" title="type casa_simulation::session::error::SimulatorResult">SimulatorResult</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p><code>sm.close()</code> / <code>sm.done()</code>: write the MeasurementSet, or, after
 <code>openfromms</code>, patch the selected DATA and append observations. Appending
 publishes a private copy atomically and currently copies the existing
 data as well as the new rows. Then write the requested calibration tables.</p>
