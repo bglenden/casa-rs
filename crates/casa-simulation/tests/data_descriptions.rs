@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Simulation selections/calculations/appends resolve actual DD-to-SPW mappings.
 mod existing_ms_calculations;
-use casa_simulation::{ApplySpec, PredictSpec, Simulator, SimulatorOptions};
+use casa_simulation::{ApplySpec, PredictSpec, PredictionOptions, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
 use casa_types::{
     ArrayValue, ScalarValue,
@@ -184,6 +184,10 @@ fn mapped_descriptions_match_casa_and_append_labels_remain_valid() {
                     &[0],
                     if operation == "query" {
                         "DATA_DESC_ID == 2"
+                    } else if operation == "single_dish" {
+                        // The existing SD cross-correlation deviation is
+                        // separate; compare supported total-power rows.
+                        "ANTENNA1 == ANTENNA2"
                     } else {
                         ""
                     },
@@ -193,6 +197,19 @@ fn mapped_descriptions_match_casa_and_append_labels_remain_valid() {
                     sm.predict(&PredictSpec {
                         images: Vec::new(),
                         component_lists: vec![inputs.join("spectrum.cl")],
+                        incremental: false,
+                    })
+                    .unwrap();
+                } else if operation == "single_dish" {
+                    sm.set_options(&PredictionOptions {
+                        ftmachine: "sd".into(),
+                        grid_function: "BOX".into(),
+                        ..PredictionOptions::default()
+                    })
+                    .unwrap();
+                    sm.predict(&PredictSpec {
+                        images: vec![inputs.join("spectrum.image")],
+                        component_lists: Vec::new(),
                         incremental: false,
                     })
                     .unwrap();
@@ -212,6 +229,13 @@ fn mapped_descriptions_match_casa_and_append_labels_remain_valid() {
             }
             sm.close().unwrap();
             compare_descriptions(&path, case);
+            if let Some(export) = std::env::var_os("CASA_RS_SIMULATION_DESCRIPTIONS_EXPORT") {
+                copy(
+                    &path,
+                    &Path::new(&export)
+                        .join(format!("w{workers}-{}.ms", case["name"].as_str().unwrap())),
+                );
+            }
             let error = existing_ms_calculations::compare(&path, case);
             assert!(error < 1e-3, "{} W{workers}: NRMS {error}", case["name"]);
             let table = Table::open(TableOptions::new(&path)).unwrap();
@@ -234,13 +258,6 @@ fn mapped_descriptions_match_casa_and_append_labels_remain_valid() {
                     panic!("DATA_DESC_ID")
                 };
                 assert_eq!(i64::from(*actual), expected);
-            }
-            if let Some(export) = std::env::var_os("CASA_RS_SIMULATION_DESCRIPTIONS_EXPORT") {
-                copy(
-                    &path,
-                    &Path::new(&export)
-                        .join(format!("w{workers}-{}.ms", case["name"].as_str().unwrap())),
-                );
             }
             println!(
                 "description {} W{workers}: DATA NRMS {error}, labels valid",

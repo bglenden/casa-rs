@@ -53,8 +53,8 @@ def layout(path, kind):
     ids = tb.getcol("DATA_DESC_ID")
     if kind == "swapped":
         ids = 1 - ids
-    elif kind == "sparse":
-        selected = tb.query("DATA_DESC_ID == 1")
+    elif kind in ("sparse", "used_alias"):
+        selected = tb.query("DATA_DESC_ID == 1" if kind == "sparse" else "DATA_DESC_ID == 0")
         temporary = path.with_name(path.name + ".selected")
         selected.copy(str(temporary), deep=True, valuecopy=True)
         selected.close()
@@ -62,7 +62,7 @@ def layout(path, kind):
         shutil.rmtree(path)
         temporary.rename(path)
         tb.open(str(path), nomodify=False)
-        ids = np.zeros(tb.nrows(), np.int32)
+        ids = np.full(tb.nrows(), 0 if kind == "sparse" else 2, np.int32)
     else:
         ids[(ids == 0) & (np.arange(ids.size) % 2 == 0)] = 2
     tb.putcol("DATA_DESC_ID", ids)
@@ -76,16 +76,16 @@ def layout(path, kind):
         tb.addrows(1)
         for name, value in (("SPECTRAL_WINDOW_ID", 0), ("POLARIZATION_ID", 0), ("FLAG_ROW", False)):
             tb.putcell(name, 2, value)
-    if kind == "alias_polarization":
+    if kind in ("alias_polarization", "used_alias"):
         tb.putcell("POLARIZATION_ID", 2, 2)
     ids = tb.getcol("SPECTRAL_WINDOW_ID").tolist()
     tb.close()
-    if kind == "alias_polarization":
+    if kind in ("alias_polarization", "used_alias"):
         tb.open(str(path / "POLARIZATION"), nomodify=False)
         tb.addrows(1)
         tb.putcell("NUM_CORR", 2, 4)
-        tb.putcell("CORR_TYPE", 2, np.asarray([12, 11, 10, 9], np.int32))
-        tb.putcell("CORR_PRODUCT", 2, np.asarray([[1, 1, 0, 0], [1, 0, 1, 0]], np.int32))
+        tb.putcell("CORR_TYPE", 2, np.asarray([10, 9, 12, 11] if kind == "used_alias" else [12, 11, 10, 9], np.int32))
+        tb.putcell("CORR_PRODUCT", 2, np.asarray([[0, 0, 1, 1], [1, 0, 1, 0]] if kind == "used_alias" else [[1, 1, 0, 0], [1, 0, 1, 0]], np.int32))
         tb.putcell("FLAG_ROW", 2, False)
         tb.close()
     return ids
@@ -102,6 +102,7 @@ def main():
     inputs.mkdir(parents=True)
     source = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_irregular_channels/spectrum.cl"
     shutil.copytree(source, inputs / "spectrum.cl", ignore=shutil.ignore_patterns("table.lock"))
+    shutil.copytree(source.with_name("spectrum.image"), inputs / "spectrum.image", ignore=shutil.ignore_patterns("table.lock"))
     original = root / "original.ms"
     base(original)
     gencal(vis=str(original), caltable=str(inputs / "gain.cal"), caltype="amp", parameter=[1.])
@@ -112,11 +113,13 @@ def main():
         tb.putcell("CPARAM", row, np.asarray([[2 + .1j], [3 - .2j]] if window == 0 else [[4 + .3j], [5 - .4j]], np.complex64))
     tb.close()
     cases = []
-    for kind in ("swapped", "sparse", "alias", "alias_polarization"):
+    for kind in ("swapped", "sparse", "alias", "alias_polarization", "used_alias"):
         stored = inputs / f"{kind}.ms"
         shutil.copytree(original, stored, ignore=shutil.ignore_patterns("table.lock"))
         mapping = layout(stored, kind)
         operations = ("gain",) if kind == "alias_polarization" else ("components0", "components1", "gain", "append")
+        if kind == "used_alias":
+            operations = ("components0", "single_dish")
         if kind == "alias":
             operations += ("query",)
         for operation in operations:
@@ -135,9 +138,13 @@ def main():
                                   project="continued")
             else:
                 windows = [int(operation[-1])] if operation.startswith("components") else []
-                assert sm.setdata(spwid=windows, fieldid=[0], msselect="DATA_DESC_ID == 2" if operation == "query" else "")
+                assert sm.setdata(spwid=windows, fieldid=[0], msselect=("DATA_DESC_ID == 2" if operation == "query" else
+                                      "ANTENNA1 == ANTENNA2" if operation == "single_dish" else ""))
                 if operation.startswith("components"):
                     assert sm.predict(complist=str(inputs / "spectrum.cl"))
+                elif operation == "single_dish":
+                    assert sm.setoptions(ftmachine="sd", gridfunction="BOX")
+                    assert sm.predict(imagename=str(inputs / "spectrum.image"))
                 else:
                     assert sm.setapply(table=str(inputs / "gain.cal"), interp="nearest", calwt=False)
                     assert sm.corrupt()

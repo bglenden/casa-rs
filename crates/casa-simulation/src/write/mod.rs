@@ -104,7 +104,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         readme: MAIN_README.iter().map(|line| (*line).to_string()).collect(),
     });
     subtables::write_subtables(&mut ms, session)?;
-    let generated = subtables::subtable_overrides(&planned)?;
+    let generated = subtables::subtable_overrides(session, &planned)?;
     match shape.zip(admission) {
         Some((shape, admission)) => {
             let main = MainTarget {
@@ -121,7 +121,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             )?;
         }
         None => ms
-            .save()
+            .save_with_column_overrides(&ColumnOverrides::for_row_count(0), &generated)
             .map_err(|error| SimulatorError::raised(format!("save the MeasurementSet: {error}")))?,
     }
     target
@@ -152,21 +152,46 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     Ok(shape)
 }
 
-/// `[window]`: the receptors of each correlation of the session's spectral
-/// windows (`Stokes::receptor1`, `receptor2`), which gains and leakage take.
-pub(super) fn window_receptors(session: &Simulator) -> Vec<Vec<[usize; 2]>> {
-    session
-        .data_descriptions()
+/// Each polarization setup's receptors, admitted before their expansion.
+pub(super) type Receptors = casa_imaging_runtime::Admitted<Vec<Vec<[usize; 2]>>>;
+
+fn polarization_receptors(session: &Simulator) -> SimulatorResult<Receptors> {
+    use casa_imaging_runtime::{Demand, admit};
+    let polarizations = session.polarizations();
+    let bytes = polarizations.len() * size_of::<Vec<[usize; 2]>>()
+        + polarizations
+            .iter()
+            .map(|codes| codes.len() * (size_of::<[usize; 2]>() + size_of::<[i32; 2]>()))
+            .sum::<usize>()
+        + 256;
+    let resources = &session.options().resources;
+    let mut reservation = admit(
+        resources.host(),
+        resources.policy(),
+        &Demand {
+            phase: "the simulator's polarization receptor products",
+            memory: bytes as u64,
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let value: Vec<Vec<[usize; 2]>> = polarizations
         .iter()
-        .map(|description| {
-            crate::session::spectral::correlation_products(
-                &session.polarizations()[description.polarization],
-            )
-            .into_iter()
-            .map(|pair| pair.map(|receptor| usize::try_from(receptor).unwrap_or(0)))
-            .collect()
+        .map(|codes| {
+            crate::session::spectral::correlation_products(codes)
+                .into_iter()
+                .map(|pair| pair.map(|receptor| usize::try_from(receptor).unwrap_or(0)))
+                .collect()
         })
-        .collect()
+        .collect();
+    reservation.retain(
+        (value.capacity() * size_of::<Vec<[usize; 2]>>()
+            + value
+                .iter()
+                .map(|p| p.capacity() * size_of::<[usize; 2]>())
+                .sum::<usize>()
+            + 64) as u64,
+    );
+    Ok(casa_imaging_runtime::Admitted { value, reservation })
 }
 
 /// MAIN as the session's planned scans make it, with cells of
@@ -265,7 +290,7 @@ fn write_main<'s>(
         (
             shape.correlations,
             shape.channels,
-            window_receptors(session),
+            polarization_receptors(session)?,
         ),
     );
     let integrations = planned

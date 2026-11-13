@@ -643,6 +643,9 @@ impl Simulator {
     pub(crate) fn data_descriptions(&self) -> &[DataDescription] {
         &self.data_descriptions
     }
+    pub(crate) fn shared_descriptions(&self) -> Arc<Vec<DataDescription>> {
+        Arc::clone(&self.data_descriptions)
+    }
     pub(crate) fn correlations_for_scan(&self, scan: &Scan) -> &[i32] {
         &self.polarizations[self.data_descriptions[scan.data_description_id].polarization]
     }

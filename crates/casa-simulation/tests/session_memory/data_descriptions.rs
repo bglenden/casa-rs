@@ -3,14 +3,29 @@
 use super::{
     ALLOWANCE_BYTES, EXCESS, EpochRef, LIVE, MEpoch, Ordering, PEAK, REFERENCE_MJD,
     ReservationWindow, Simulator, SimulatorOptions, alone, charge_process_caches, configured,
-    excess_now, reserved_memory, resources,
+    excess_now, measured_close, noise, reserved_memory, resources, scan, scan_from,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
 #[test]
-fn stored_description_mappings_are_admitted_while_retained() {
-    if !alone("data_descriptions::stored_description_mappings_are_admitted_while_retained") {
+fn mapped_patch_is_admitted_before_expansion() {
+    check(
+        false,
+        "data_descriptions::mapped_patch_is_admitted_before_expansion",
+    );
+}
+
+#[test]
+fn mapped_append_is_bounded_without_materializing_descriptions() {
+    check(
+        true,
+        "data_descriptions::mapped_append_is_bounded_without_materializing_descriptions",
+    );
+}
+
+fn check(append: bool, name: &str) {
+    if !alone(name) {
         return;
     }
     casa_tables::set_table_cache_budget_bytes(0);
@@ -22,8 +37,9 @@ fn stored_description_mappings_are_admitted_while_retained() {
         let path = directory
             .path()
             .join(format!("descriptions-{descriptions}.ms"));
-        // Empty MAIN isolates the mapping owner; CASA cases cover actual DATA.
-        let sm = configured(&path, &measures, 512 << 20, 4);
+        // A populated MS exercises read ownership and the patch/append consumers.
+        let mut sm = configured(&path, &measures, 512 << 20, 4);
+        sm.observe(&scan(1)).unwrap();
         sm.close().unwrap();
         let mut table = Table::open(TableOptions::new(path.join("DATA_DESCRIPTION"))).unwrap();
         for _ in 1..descriptions {
@@ -45,7 +61,7 @@ fn stored_description_mappings_are_admitted_while_retained() {
         let before = excess_now();
         EXCESS.store(before, Ordering::Relaxed);
         let window = ReservationWindow::open();
-        let opened = Simulator::open_from_ms(
+        let mut opened = Simulator::open_from_ms(
             &path,
             SimulatorOptions {
                 measures: measures.clone(),
@@ -66,7 +82,6 @@ fn stored_description_mappings_are_admitted_while_retained() {
         assert!(beyond <= ALLOWANCE_BYTES as i64);
         assert!(left <= kept + ALLOWANCE_BYTES);
         assert!(kept >= descriptions as u64 * 16);
-        drop(opened);
         let error = Simulator::open_from_ms(
             &path,
             SimulatorOptions {
@@ -78,5 +93,24 @@ fn stored_description_mappings_are_admitted_while_retained() {
         .err()
         .expect("small budget refuses before mapping payload read");
         assert!(error.admission_refused().is_some());
+        if append {
+            opened
+                .set_times(10., false, MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC))
+                .unwrap();
+            opened.observe(&scan_from(1, 1)).unwrap();
+        } else {
+            opened.set_noise(&noise()).unwrap();
+            opened.corrupt().unwrap();
+        }
+        let before_close = excess_now();
+        EXCESS.store(before_close, Ordering::Relaxed);
+        let (closed, _) = measured_close(opened, &path, false);
+        let beyond_close = EXCESS.load(Ordering::Relaxed) - before_close;
+        println!(
+            "{descriptions} DD append={append}: close heap {}, admitted {}, beyond {beyond_close}",
+            closed.heap, closed.admitted
+        );
+        assert!(closed.heap <= closed.admitted + ALLOWANCE_BYTES);
+        assert!(beyond_close <= ALLOWANCE_BYTES as i64);
     }
 }

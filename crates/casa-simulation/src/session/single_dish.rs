@@ -64,7 +64,7 @@ impl Simulator {
             .iter()
             .map(|window| SingleDishWindow {
                 frequencies_hz: window.channel_frequencies_hz(),
-                correlations: window.correlations.clone(),
+                correlations: self.correlations_for_scan(&self.scans[0]).to_vec(),
             })
             .collect();
         // Total power samples where the antennas point: the POINTING table

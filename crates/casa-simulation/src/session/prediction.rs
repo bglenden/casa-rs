@@ -745,7 +745,7 @@ impl Simulator {
                 first_hz: window.start_frequency_hz,
                 step_hz: window.channel_width_hz,
                 channels: window.channel_count,
-                correlations: window.correlations.clone(),
+                correlations: self.correlations_for_scan(&self.scans[0]).to_vec(),
             })
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
