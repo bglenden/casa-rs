@@ -513,7 +513,12 @@ impl GeometryPlan {
                 .science()
                 .measurement_equation()
                 .aw_projection()
-                .is_some(),
+                .is_some()
+                || (problem.requires_parallactic_angles()
+                    && matches!(
+                        problem.science().instrument_model(),
+                        Some(InstrumentModel::CasaVlaAwplpg)
+                    )),
             responses,
             aw: AwPointingGrouping::new(problem)?,
         })

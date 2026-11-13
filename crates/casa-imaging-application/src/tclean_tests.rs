@@ -22,6 +22,7 @@ fn modes() -> Vec<Value> {
         json!({ "gridder": "wproject" }),
         json!({ "gridder": "mosaic", "mosweight": false }),
         json!({ "gridder": "awp2" }),
+        json!({ "gridder": "awp2", "stokes": "IV", "computepastep": 15.0, "wprojplanes": 2 }),
         json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf", "wprojplanes": 32 }),
         json!({
             "gridder": "awproject",

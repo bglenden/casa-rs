@@ -476,7 +476,9 @@ fn survey_observation(
             && instrument::mixed_alma_dish_classes(catalogue),
         track_aw_pa_epochs: matches!(&request.gridder, Gridder::Awproject(aw)
             if aw.rotatepastep != 360.0 || (aw.computepastep != 360.0
-                && matches!(aw.cf_source, AwCfSource::NativeEvla { .. }))),
+                && matches!(aw.cf_source, AwCfSource::NativeEvla { .. })))
+            || matches!(request.gridder, Gridder::Awp2 { computepastep, .. }
+                if computepastep < 180.0),
         first_cross: matches!(
             &request.gridder,
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })

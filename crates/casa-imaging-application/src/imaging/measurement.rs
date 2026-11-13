@@ -490,16 +490,32 @@ fn kernel_set(
             let deployment = awp2.ok_or(ImagingError::Unsupported {
                 reason: "AWP2 requires a VLA dish surface and beam frequencies",
             })?;
-            let sampling = Awp2Sampling::new(geometry, deployment.single_field)?;
+            let sampling = if deployment.pa_centres.is_empty() {
+                Awp2Sampling::new(geometry, deployment.single_field)?
+            } else if [Correlation::RR, Correlation::LL]
+                .iter()
+                .all(|hand| polarization.correlations().contains(hand))
+            {
+                Awp2Sampling::squinted(geometry)?
+            } else {
+                return Err(ImagingError::Unsupported {
+                    reason: "AWP2 squint requires RR and LL data (#1071)",
+                });
+            };
             let screen_charge = admission.admit(
                 "AWP2 aperture screens",
-                sampling.screens_bytes(deployment.frequencies_hz.len(), deployment.w_planes.len()),
+                sampling.screens_bytes(
+                    deployment.frequencies_hz.len(),
+                    deployment.w_planes.len(),
+                    deployment.pa_centres.len(),
+                ),
             )?;
             let screens = sampling.screens(
                 &deployment.frequencies_hz,
                 deployment.surface.clone(),
                 deployment.legacy_vla,
                 &deployment.w_planes,
+                &deployment.pa_centres,
             )?;
             let mut kernels = admission.admit(PHASE, screens.kernel_bytes(geometry))?;
             let set = screens.finish(
@@ -508,6 +524,7 @@ fn kernel_set(
                 deployment.frequencies_hz.clone(),
                 deployment.w_planes.clone(),
                 deployment.row_frequency_hz,
+                (deployment.pa_centres.clone(), deployment.feed_angle_rad),
             );
             drop(screen_charge);
             kernels.retain(set.resident_bytes());

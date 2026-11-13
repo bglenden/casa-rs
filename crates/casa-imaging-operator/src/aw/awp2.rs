@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The unsquinted VLA and EVLA L-band branch of CASA AWPLPG.
+//! The VLA and EVLA L-band branch of CASA AWPLPG.
 //! It uses the existing BeamCalc aperture and mosaic gridding rules, with
 //! the A/AW support and sampling of AWConvFunc and AWConvFuncHolder.
 
 mod w_term;
 
 use casa_imaging_model::EvlaDishSurface;
+use casa_types::Correlation;
 use num_complex::Complex32;
 
 use super::{EvlaApertureGrid, EvlaApertureModel, native::sky_jones_normalization};
+use crate::accumulator::Mode;
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, GridEdge, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapFootprint, TapLayout, mosaic_pointing_on_image,
@@ -43,6 +45,19 @@ impl Awp2Sampling {
     /// cells. `single_field` selects the aperture extent and cropping in
     /// `AWConvFunc::makeAConvFunc`. This path implements Lanczos resampling.
     pub fn new(geometry: &GridGeometry, single_field: bool) -> Result<Self, OperatorError> {
+        Self::sampling(geometry, single_field, false)
+    }
+
+    /// The compact squinted aperture used with multiple W planes.
+    pub fn squinted(geometry: &GridGeometry) -> Result<Self, OperatorError> {
+        Self::sampling(geometry, false, true)
+    }
+
+    fn sampling(
+        geometry: &GridGeometry,
+        single_field: bool,
+        squint: bool,
+    ) -> Result<Self, OperatorError> {
         let extent = geometry.image();
         let [side, ny] = extent.shape;
         let [dx, dy] = extent.increment_rad.map(f64::abs);
@@ -58,8 +73,13 @@ impl Awp2Sampling {
                 "AWP2 requires a square image with square cells (#1071)",
             ));
         }
-        let (aperture_side, sky_side, beam_cell_rad) = if field_of_view > 0.125 * beam_field_of_view
-        {
+        let (aperture_side, sky_side, beam_cell_rad) = if squint {
+            (
+                L_BAND_BEAM_SIDE,
+                L_BAND_BEAM_SIDE,
+                L_BAND_BEAM_CELL_RAD / 2.0,
+            )
+        } else if field_of_view > 0.125 * beam_field_of_view {
             let side = if single_field || field_of_view < beam_field_of_view {
                 2 * L_BAND_BEAM_SIDE
             } else {
@@ -110,45 +130,56 @@ impl Awp2Sampling {
             / (self.beam_cell_rad / self.cell_rad) as f32
     }
 
-    /// Temporary Jones and sky FFT planes and their planning workspaces.
+    /// Bound the temporary FFTs and all retained aperture and A/W screens.
     #[must_use]
-    pub fn screens_bytes(&self, count: usize, w_count: usize) -> u64 {
+    pub fn screens_bytes(&self, count: usize, w_count: usize, pa_count: usize) -> u64 {
         let aperture_cells = self.aperture_side * self.aperture_side;
         let sky_cells = self.sky_side * self.sky_side;
+        let muellers = if pa_count == 0 { 1 } else { 2 };
+        let groups = pa_count.max(1);
         let beam = ((4 * aperture_cells + 2 * sky_cells) * size_of::<Complex32>()) as u64
             + casa_fft::planning_bytes::<f32>(aperture_cells)
-            + casa_fft::planning_bytes::<f32>(sky_cells)
-            + (count * (size_of::<ApertureCell>() + 2 * sky_cells * size_of::<Complex32>())) as u64;
+            + casa_fft::planning_bytes::<f32>(sky_cells);
+        // Until support is measured, a crop may fill the sky grid. Count
+        // every retained PA group and a temporary crop of one plane.
+        let group = size_of::<ApertureGroup>()
+            + count
+                * muellers
+                * (size_of::<ApertureCell>() + 2 * sky_cells * size_of::<Complex32>())
+            + w_count
+                * count
+                * (size_of::<AwPlane>() + muellers * sky_cells * size_of::<Complex32>());
         if w_count == 1 {
-            return beam + (count * size_of::<AwPlane>()) as u64;
+            return beam + (group * groups) as u64;
         }
-        // W and convolution planes, the second FFT plan, and the cropped
-        // A/W cells. Until support is measured, a crop may fill the sky grid.
-        beam + (4 * sky_cells * size_of::<Complex32>()) as u64
+        beam + (group * groups) as u64
+            + (4 * sky_cells * size_of::<Complex32>()) as u64
             + casa_fft::planning_bytes::<f32>(sky_cells)
-            + (w_count * count * (size_of::<AwPlane>() + sky_cells * size_of::<Complex32>())) as u64
             + (count * size_of::<AwSupport>()) as u64
     }
 
-    /// Calculate the A and A/W terms with the
-    /// supplied dish surface. `legacy_vla` selects the original VLA feed.
-    /// Scratch is charged before calling this method.
+    /// Calculate the A and A/W terms with the supplied dish surface.
+    /// `legacy_vla` selects the original VLA feed. An empty list of PA
+    /// centres selects CASA's polarization-averaged beam. Charge the
+    /// bound from [`Self::screens_bytes`] before calling this method.
     pub fn screens(
         self,
         frequencies_hz: &[f64],
         surface: EvlaDishSurface,
         legacy_vla: bool,
         w_planes: &[f64],
+        pa_centres: &[f64],
     ) -> Result<Awp2Screens, OperatorError> {
+        let limit = usize::from(u16::MAX) / pa_centres.len().max(1);
         if w_planes.first() != Some(&0.0)
-            || w_planes.len() > usize::from(u16::MAX)
+            || w_planes.len() > limit
             || w_planes.windows(2).any(|pair| pair[0] > pair[1])
             || w_planes.iter().any(|w| !w.is_finite())
         {
             return Err(invalid("AWP2 requires ordered W planes starting at zero"));
         }
         if frequencies_hz.is_empty()
-            || frequencies_hz.len() > usize::from(u16::MAX)
+            || frequencies_hz.len() > limit
             || frequencies_hz.windows(2).any(|f| f[0] >= f[1])
             || frequencies_hz.iter().any(|f| !(0.9e9..=2e9).contains(f))
         {
@@ -157,26 +188,77 @@ impl Awp2Sampling {
             ));
         }
         let model = EvlaApertureModel::new(surface);
+        let angles = if pa_centres.is_empty() {
+            &[0.0]
+        } else {
+            pa_centres
+        };
+        let muellers = if pa_centres.is_empty() { 1 } else { 2 };
+        let mut groups = Vec::with_capacity(angles.len());
+        for &pa in angles {
+            groups.push(self.aperture_group(
+                &model,
+                frequencies_hz,
+                w_planes,
+                legacy_vla,
+                pa,
+                muellers,
+            )?);
+        }
+        Ok(Awp2Screens {
+            sampling: self,
+            groups,
+            muellers,
+        })
+    }
+
+    fn aperture_group(
+        &self,
+        model: &EvlaApertureModel,
+        frequencies_hz: &[f64],
+        w_planes: &[f64],
+        legacy_vla: bool,
+        pa: f64,
+        muellers: usize,
+    ) -> Result<ApertureGroup, OperatorError> {
         let mut jones = vec![Complex32::default(); 4 * self.aperture_side * self.aperture_side];
         let mut aperture_fft = PlaneFft::new([self.aperture_side; 2], false)?;
         let mut sky_fft = PlaneFft::new([self.sky_side; 2], false)?;
-        let mut cells = Vec::with_capacity(frequencies_hz.len());
+        let mut cells = Vec::with_capacity(frequencies_hz.len() * muellers);
         // CASA crops every A plane to the support of the highest frequency.
-        let mut a_support = None;
+        let mut crop_support = None;
         for &frequency in frequencies_hz.iter().rev() {
-            let beam =
-                self.sky_beam(&model, frequency, legacy_vla, &mut aperture_fft, &mut jones)?;
-            let cell = ApertureCell::new(beam, self.sky_side, &mut sky_fft, a_support)?;
-            a_support.get_or_insert(cell.a_side / 2);
-            cells.push(cell);
+            let norm = self.sky_jones(
+                model,
+                frequency,
+                legacy_vla,
+                pa,
+                &mut aperture_fft,
+                &mut jones,
+            )?;
+            let first = self.sky_beam(&jones, norm, if muellers == 1 { None } else { Some(0) });
+            let rr = ApertureCell::new(first, self.sky_side, &mut sky_fft, crop_support, None)?;
+            crop_support.get_or_insert(rr.a_side / 2);
+            if muellers == 2 {
+                // The cutoff and extent are set by RR. Each hand is
+                // normalized by the sum under its own aperture plane.
+                let ll = self.sky_beam(&jones, norm, Some(3));
+                cells.push(ApertureCell::new(
+                    ll,
+                    self.sky_side,
+                    &mut sky_fft,
+                    crop_support,
+                    Some(rr.support),
+                )?);
+            }
+            cells.push(rr);
         }
         cells.reverse();
         drop(jones);
         drop(aperture_fft);
         drop(sky_fft);
-        let (aw_planes, plane_side) = self.combine_w(&mut cells, w_planes)?;
-        Ok(Awp2Screens {
-            sampling: self,
+        let (aw_planes, plane_side) = self.combine_w(&mut cells, w_planes, muellers)?;
+        Ok(ApertureGroup {
             cells,
             aw_planes,
             plane_side,
@@ -187,6 +269,7 @@ impl Awp2Sampling {
         &self,
         cells: &mut [ApertureCell],
         w_planes: &[f64],
+        muellers: usize,
     ) -> Result<(Vec<AwPlane>, usize), OperatorError> {
         let a_side = cells[0].a_side;
         if w_planes.len() == 1 {
@@ -197,7 +280,10 @@ impl Awp2Sampling {
                     let half = support.half_support(&cell.imaging, a_side, cell.support);
                     let mut values = std::mem::take(&mut cell.imaging);
                     support.normalize(&mut values);
-                    AwPlane { values, half }
+                    AwPlane {
+                        values: [values, Vec::new()],
+                        half,
+                    }
                 })
                 .collect();
             return Ok((planes, a_side));
@@ -206,48 +292,77 @@ impl Awp2Sampling {
         let w_side = w.convolution_side(*w_planes.last().unwrap())?;
         let conv_side = w_side.max(a_side);
         let mut fft = PlaneFft::new([conv_side; 2], false)?;
-        let mut normalization = Vec::with_capacity(cells.len());
-        let mut planes = Vec::with_capacity(w_planes.len() * cells.len());
+        let frequencies = cells.len() / muellers;
+        let mut normalization = Vec::with_capacity(frequencies);
+        let mut planes = Vec::with_capacity(w_planes.len() * frequencies);
         let mut largest = 0;
         for (index, &w_lambda) in w_planes.iter().enumerate() {
             let screen = w.prepare(w_lambda, w_side, conv_side, &mut fft)?;
-            for (frequency, cell) in cells.iter().enumerate() {
-                let plane = w.convolve(&cell.imaging, a_side, &screen, conv_side, &mut fft)?;
+            for (frequency, cells) in cells.chunks_exact(muellers).enumerate() {
+                let rr = &cells[0];
+                let plane = w.convolve(&rr.imaging, a_side, &screen, conv_side, &mut fft)?;
                 if index == 0 {
-                    normalization.push(AwSupport::new(plane, conv_side, cell.support));
+                    normalization.push(AwSupport::new(plane, conv_side, rr.support));
                 }
-                let norm = &normalization[frequency];
-                let half = norm.half_support(plane, conv_side, cell.support);
+                let half = normalization[frequency].half_support(plane, conv_side, rr.support);
                 largest = largest.max(half);
-                planes.push(AwPlane {
-                    values: plane.to_vec(),
-                    half,
-                });
+                let mut values = [plane.to_vec(), Vec::new()];
+                if let Some(ll) = cells.get(1) {
+                    values[1] = w
+                        .convolve(&ll.imaging, a_side, &screen, conv_side, &mut fft)?
+                        .to_vec();
+                }
+                planes.push(AwPlane { values, half });
             }
         }
         let side = (2 * largest).min(conv_side);
         for (index, plane) in planes.iter_mut().enumerate() {
-            let norm = &normalization[index % cells.len()];
-            if side < conv_side {
-                plane.values = crop(&plane.values, conv_side, side / 2, norm.inverse_sum());
-            } else {
-                norm.normalize(&mut plane.values);
+            let norm = &normalization[index % frequencies];
+            for values in &mut plane.values[..muellers] {
+                if side < conv_side {
+                    *values = crop(values, conv_side, side / 2, norm.inverse_sum());
+                } else {
+                    norm.normalize(values);
+                }
             }
         }
         Ok((planes, side))
     }
 
-    fn sky_beam(
+    fn sky_beam(&self, jones: &[Complex32], norm: f32, hand: Option<usize>) -> Vec<Complex32> {
+        let plane = self.aperture_side * self.aperture_side;
+        let mut beam = Vec::with_capacity(self.sky_side * self.sky_side);
+        let first = (self.aperture_side - self.sky_side) / 2;
+        for y in first..first + self.sky_side {
+            for x in first..first + self.sky_side {
+                let index = y * self.aperture_side + x;
+                let value = if let Some(hand) = hand {
+                    let jones = jones[hand * plane + index] / norm;
+                    jones * jones.conj()
+                } else {
+                    // applyAvgSkyJones uses real(RL) for all four correlations.
+                    let rr = jones[index] / norm;
+                    let ll = jones[3 * plane + index] / norm;
+                    Complex32::new((ll * rr.conj()).re, 0.0)
+                };
+                beam.push(value);
+            }
+        }
+        beam
+    }
+
+    fn sky_jones(
         &self,
         model: &EvlaApertureModel,
         frequency: f64,
         legacy_vla: bool,
+        pa_rad: f64,
         aperture_fft: &mut PlaneFft<f32>,
         jones: &mut [Complex32],
-    ) -> Result<Vec<Complex32>, OperatorError> {
+    ) -> Result<f32, OperatorError> {
         let wavelength = SPEED_OF_LIGHT_M_PER_S / f64::from(frequency as f32);
         let cell_m = wavelength / (self.aperture_side as f64 * self.beam_cell_rad);
-        let grid = EvlaApertureGrid::new(self.aperture_side, cell_m, 3, frequency, 0.0)
+        let grid = EvlaApertureGrid::new(self.aperture_side, cell_m, 3, frequency, pa_rad)
             .map_err(|_| invalid("invalid AWP2 aperture sampling"))?;
         if legacy_vla {
             model.fill_vla_l_aperture(grid, jones)
@@ -255,21 +370,8 @@ impl Awp2Sampling {
             model.fill_aperture(grid, jones)
         }
         .map_err(|_| invalid("AWP2 could not evaluate its aperture"))?;
-        let norm = sky_jones_normalization(self.aperture_side, aperture_fft, jones)
-            .map_err(|_| invalid("AWP2 could not normalize its aperture"))?;
-        let plane = self.aperture_side * self.aperture_side;
-        let mut beam = Vec::with_capacity(self.sky_side * self.sky_side);
-        let first = (self.aperture_side - self.sky_side) / 2;
-        for y in first..first + self.sky_side {
-            for x in first..first + self.sky_side {
-                let index = y * self.aperture_side + x;
-                // applyAvgSkyJones uses real(RL) for all four correlations.
-                let rr = jones[index] / norm;
-                let ll = jones[3 * plane + index] / norm;
-                beam.push(Complex32::new((ll * rr.conj()).re, 0.0));
-            }
-        }
-        Ok(beam)
+        sky_jones_normalization(self.aperture_side, aperture_fft, jones)
+            .map_err(|_| invalid("AWP2 could not normalize its aperture"))
     }
 }
 
@@ -286,11 +388,15 @@ impl ApertureCell {
         side: usize,
         fft: &mut PlaneFft<f32>,
         crop_support: Option<usize>,
+        shared_support: Option<usize>,
     ) -> Result<Self, OperatorError> {
         let mut weight: Vec<_> = imaging.iter().map(|value| value * value.conj()).collect();
         fft.transform(&mut imaging, false)?;
         fft.transform(&mut weight, false)?;
-        let support = a_support(&weight, side)?;
+        let support = match shared_support {
+            Some(support) => support,
+            None => a_support(&weight, side)?,
+        };
         for plane in [&mut imaging, &mut weight] {
             let sum = central_sum(plane, side, support, true);
             if !sum.is_finite() || sum <= 0.0 {
@@ -360,24 +466,35 @@ fn crop(plane: &[Complex32], side: usize, radius: usize, factor: f32) -> Vec<Com
 }
 
 struct AwPlane {
-    values: Vec<Complex32>,
+    values: [Vec<Complex32>; 2],
     half: usize,
 }
 
-/// A/W convolution planes before the oversampled resident cells are
-/// allocated. The cells use one Mueller plane and separate sensitivity taps.
-pub struct Awp2Screens {
-    sampling: Awp2Sampling,
+struct ApertureGroup {
     cells: Vec<ApertureCell>,
     aw_planes: Vec<AwPlane>,
     plane_side: usize,
 }
 
+/// A/W convolution planes before the oversampled resident cells are
+/// allocated. Squint uses independent RR and LL taps in each cell.
+pub struct Awp2Screens {
+    sampling: Awp2Sampling,
+    groups: Vec<ApertureGroup>,
+    muellers: usize,
+}
+
 impl Awp2Screens {
     fn half_support(&self) -> u16 {
-        // AWConvFuncHolder uses the highest-frequency support for each W.
-        self.aw_planes
-            .chunks_exact(self.cells.len())
+        // MosaicFT uses the maximum over every group's highest-frequency
+        // support. The holder's crop can be larger than this tap extent.
+        self.groups
+            .iter()
+            .flat_map(|group| {
+                group
+                    .aw_planes
+                    .chunks_exact(group.cells.len() / self.muellers)
+            })
             .map(|planes| planes.last().unwrap().half)
             .max()
             .expect("nonempty A/W planes") as u16
@@ -387,26 +504,39 @@ impl Awp2Screens {
         2 * (usize::from(self.half_support()) + 1) * usize::from(self.sampling.oversampling)
     }
 
-    /// Upper bound including the resident cells and one oversampled plane
-    /// and interpolation workspace used while constructing them.
+    /// Upper bound including the resident cells, per-hand oversampled
+    /// planes, and the interpolation workspace used while constructing them.
     #[must_use]
     pub fn kernel_bytes(&self, geometry: &GridGeometry) -> u64 {
         let fine_side = self.fine_side();
-        let count = self.cells.len();
-        let aw_count = self.aw_planes.len();
+        let groups = self.groups.len();
+        let count = self.groups[0].cells.len() / self.muellers;
+        let aw_count = self.groups[0].aw_planes.len();
         let w_count = aw_count / count;
-        ((count + w_count) * size_of::<f64>() + (aw_count + count) * size_of::<DenseCell>()) as u64
-            + (aw_count + count) as u64
-                * dense_cell_bytes(1, self.sampling.oversampling, [self.half_support(); 2])
-            + (fine_side * fine_side * size_of::<Complex32>()
-                + self.plane_side * self.plane_side * size_of::<Complex32>()
+        let raw_side = self
+            .groups
+            .iter()
+            .map(|group| group.plane_side)
+            .max()
+            .unwrap();
+        ((count + w_count + groups) * size_of::<f64>()
+            + groups * (aw_count + count) * size_of::<DenseCell>()) as u64
+            + (groups * (aw_count + count)) as u64
+                * dense_cell_bytes(
+                    self.muellers,
+                    self.sampling.oversampling,
+                    [self.half_support(); 2],
+                )
+            + ((self.muellers * fine_side * fine_side + raw_side * raw_side)
+                * size_of::<Complex32>()
+                + self.muellers * size_of::<Vec<Complex32>>()
                 + fine_side * size_of::<Option<LanczosTaps>>()
                 + 8000 * size_of::<f32>()) as u64
             + ImageCorrection::bytes(geometry.grid_shape())
             + MuellerRouting::MAXIMUM_BYTES
     }
 
-    /// Resample each A/W and sensitivity plane with AWConvFuncHolder's
+    /// Resample the A/W and sensitivity planes with AWConvFuncHolder's
     /// Lanczos rule and pack them in the shared gridding layout.
     pub fn finish(
         self,
@@ -415,57 +545,98 @@ impl Awp2Screens {
         frequencies_hz: Box<[f64]>,
         w_planes: Box<[f64]>,
         row_frequency_hz: f64,
+        (pa_centres, feed_angle_rad): (Box<[f64]>, f32),
     ) -> Awp2 {
-        assert_eq!(self.cells.len(), frequencies_hz.len());
-        assert_eq!(self.aw_planes.len(), self.cells.len() * w_planes.len());
+        assert_eq!(self.groups.len(), pa_centres.len().max(1));
         let half_support = self.half_support();
         let fine_side = self.fine_side();
         let oversampling = self.sampling.oversampling;
         let factor = self.sampling.factor();
-        let mut plane = vec![Complex32::default(); fine_side * fine_side];
+        let mut fine_planes: Vec<_> = (0..self.muellers)
+            .map(|_| vec![Complex32::default(); fine_side * fine_side])
+            .collect();
         let sinc_table: Vec<_> = (-4000..4000)
             .map(|i| sinc((i as f64 / 1000.0) as f32))
             .collect();
-        let a_side = self.plane_side;
-        let resampled_side = resampled_side(a_side, factor);
-        let axis = lanczos_axis(a_side, resampled_side, fine_side, &sinc_table);
-        let scale = (a_side * a_side * usize::from(oversampling).pow(2)) as f32
-            / (resampled_side * resampled_side) as f32;
-        let mut pack = |source: &[Complex32]| {
-            resample(source, a_side, &axis, scale, &mut plane);
-            dense_cell(
-                &[OversampledPlane {
-                    values: &plane,
+        let mut imaging =
+            Vec::with_capacity(self.groups.len() * frequencies_hz.len() * w_planes.len());
+        let mut weight = Vec::with_capacity(self.groups.len() * frequencies_hz.len());
+        let mut holder_radius = 0;
+        for group in self.groups {
+            let support = group
+                .aw_planes
+                .iter()
+                .map(|plane| plane.half)
+                .max()
+                .unwrap();
+            holder_radius = holder_radius.max((support + 1) * usize::from(oversampling));
+            let a_side = group.plane_side;
+            let resampled_side = resampled_side(a_side, factor);
+            let mut axis = lanczos_axis(a_side, resampled_side, fine_side, &sinc_table);
+            // AWConvFuncHolder centre-crops to the support reached so far
+            // before a subsequent PA can grow the holder.
+            let first = (fine_side / 2).saturating_sub(holder_radius);
+            axis[..first].fill_with(|| None);
+            axis[fine_side - first..].fill_with(|| None);
+            let scale = (a_side * a_side * usize::from(oversampling).pow(2)) as f32
+                / (resampled_side * resampled_side) as f32;
+            let mut pack = |load: &mut dyn FnMut(usize, &mut [Complex32])| {
+                for (hand, plane) in fine_planes.iter_mut().enumerate() {
+                    load(hand, plane);
+                }
+                let fine = |hand: usize| OversampledPlane {
+                    values: fine_planes[hand].as_slice(),
                     side: fine_side,
                     centre: [fine_side / 2; 2],
                     sampling: oversampling,
-                }],
-                [half_support; 2],
-            )
-        };
-        let imaging = self
-            .aw_planes
-            .iter()
-            .map(|cell| pack(&cell.values))
-            .collect();
-        let mut padded = vec![Complex32::default(); a_side * a_side];
-        let weight = self
-            .cells
-            .iter()
-            .map(|cell| {
-                padded.fill(Complex32::default());
-                insert_centre(&mut padded, a_side, &cell.weight, cell.a_side, cell.a_side);
-                pack(&padded)
-            })
-            .collect();
+                };
+                if self.muellers == 1 {
+                    dense_cell(&[fine(0)], [half_support; 2])
+                } else {
+                    dense_cell(&[fine(0), fine(1)], [half_support; 2])
+                }
+            };
+            for cell in group.aw_planes {
+                imaging.push(pack(&mut |hand, plane| {
+                    resample(&cell.values[hand], a_side, &axis, scale, plane)
+                }));
+            }
+            let mut padded = vec![Complex32::default(); a_side * a_side];
+            for cells in group.cells.chunks_exact(self.muellers) {
+                weight.push(pack(&mut |hand, plane| {
+                    let cell = &cells[hand];
+                    padded.fill(Complex32::default());
+                    insert_centre(&mut padded, a_side, &cell.weight, cell.a_side, cell.a_side);
+                    resample(&padded, a_side, &axis, scale, plane);
+                }));
+            }
+        }
+        let mut mueller = MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols());
+        if self.muellers == 2 {
+            for table in mueller.adjoint.iter_mut().chain(&mut mueller.forward) {
+                for row in table {
+                    for (plane, correlation) in row.iter_mut().zip(polarization.correlations()) {
+                        if plane.is_some() {
+                            *plane = match correlation {
+                                Correlation::RR => Some(0),
+                                Correlation::LL => Some(1),
+                                _ => None,
+                            };
+                        }
+                    }
+                }
+            }
+        }
         Awp2 {
             frequencies_hz,
             w_planes,
+            pa_centres,
+            feed_angle_rad,
             row_frequency_hz,
-            imaging,
-            weight,
+            imaging: imaging.into_boxed_slice(),
+            weight: weight.into_boxed_slice(),
             half_support,
-            mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
+            mueller,
             correction: ImageCorrection::mosaic_sinc(geometry.grid_shape(), oversampling),
         }
     }
@@ -545,10 +716,12 @@ fn interpolate(source: &[Complex32], side: usize, x: &LanczosTaps, y: &LanczosTa
     sum
 }
 
-/// AWPLPG's resident cells for unsquinted beams.
+/// AWPLPG's resident cells for VLA L-band imaging.
 pub struct Awp2 {
     frequencies_hz: Box<[f64]>,
     w_planes: Box<[f64]>,
+    pa_centres: Box<[f64]>,
+    feed_angle_rad: f32,
     row_frequency_hz: f64,
     imaging: Box<[DenseCell]>,
     weight: Box<[DenseCell]>,
@@ -558,11 +731,23 @@ pub struct Awp2 {
 }
 
 impl Awp2 {
+    fn prediction_group(&self, key: CfKey) -> usize {
+        let pa = usize::from(key.cube) / self.frequencies_hz.len();
+        pa * self.w_planes.len() + usize::from(key.group) % self.w_planes.len()
+    }
+
+    fn holder_conjugates(&self, group: usize, w_positive: bool) -> bool {
+        // The signed row index encodes W's sign only when its W index
+        // is nonzero. The holder conjugates a zero or negative row.
+        group == 0 || (!group.is_multiple_of(self.w_planes.len()) && w_positive)
+    }
+
     /// Bytes retained after the screen and interpolation workspaces are freed.
     #[must_use]
     pub fn resident_bytes(&self) -> u64 {
         (std::mem::size_of_val(self.frequencies_hz.as_ref())
             + std::mem::size_of_val(self.w_planes.as_ref())
+            + std::mem::size_of_val(self.pa_centres.as_ref())
             + std::mem::size_of_val(self.imaging.as_ref())
             + std::mem::size_of_val(self.weight.as_ref())
             + self
@@ -577,22 +762,35 @@ impl Awp2 {
 }
 
 impl ConvolutionFunctionSet for Awp2 {
-    fn key(&self, _row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
+    fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
         // AWConvFuncHolder compares the gridding frequency directly, using
         // the lower frequency when distances tie.
-        let (cube, _) = super::nearest(&self.frequencies_hz, freq_hz);
+        let (frequency, _) = super::nearest(&self.frequencies_hz, freq_hz);
         // The holder selects the W plane at the visibility buffer's
         // mean native frequency, independently of the channel's A term.
         let w = (w_lambda * self.row_frequency_hz / freq_hz).abs();
-        let (group, _) = super::nearest(&self.w_planes, w);
+        let (w_index, _) = super::nearest(&self.w_planes, w);
+        let (pa, prediction_pa) = if self.pa_centres.is_empty() {
+            (0, 0)
+        } else {
+            let pa = f64::from(-row.parallactic_angle_rad[0] as f32 + self.feed_angle_rad);
+            let rotated = pa - std::f64::consts::PI;
+            (
+                super::nearest(&self.pa_centres, pa).0,
+                super::nearest(&self.pa_centres, rotated.sin().atan2(rotated.cos())).0,
+            )
+        };
+        // A residual sample uses both keys. Keep the prediction PA in the
+        // high part of cube so the placement still needs only one key.
         CfKey {
-            group: group as u16,
-            cube: cube as u16,
+            group: (pa * self.w_planes.len() + w_index) as u16,
+            cube: (prediction_pa * self.frequencies_hz.len() + frequency) as u16,
         }
     }
 
     fn taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
-        self.imaging[usize::from(key.group) * self.frequencies_hz.len() + usize::from(key.cube)]
+        let frequencies = self.frequencies_hz.len();
+        self.imaging[usize::from(key.group) * frequencies + usize::from(key.cube) % frequencies]
             .layout()
     }
 
@@ -601,11 +799,37 @@ impl ConvolutionFunctionSet for Awp2 {
     }
 
     fn weight_taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
-        Some(self.weight[usize::from(key.cube)].layout())
+        let frequencies = self.frequencies_hz.len();
+        let pa = usize::from(key.group) / self.w_planes.len();
+        Some(self.weight[pa * frequencies + usize::from(key.cube) % frequencies].layout())
     }
 
-    fn psf_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
-        self.taps(CfKey { group: 0, ..key }, hold)
+    fn psf_taps<'s>(&'s self, mut key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        key.group -= (usize::from(key.group) % self.w_planes.len()) as u16;
+        self.taps(key, hold)
+    }
+
+    fn prediction_taps<'s>(&'s self, mut key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        key.group = self.prediction_group(key) as u16;
+        self.taps(key, hold)
+    }
+
+    fn adjoint_conjugates(&self, key: CfKey, mode: Mode, w_positive: bool) -> bool {
+        if self.pa_centres.is_empty() {
+            return w_positive;
+        }
+        match mode {
+            Mode::Data => self.holder_conjugates(usize::from(key.group), w_positive),
+            Mode::Psf => usize::from(key.group) < self.w_planes.len(),
+            Mode::Weight => false,
+        }
+    }
+
+    fn prediction_conjugates(&self, key: CfKey, w_positive: bool) -> bool {
+        if self.pa_centres.is_empty() {
+            return w_positive;
+        }
+        self.holder_conjugates(self.prediction_group(key), w_positive)
     }
 
     fn mueller(&self) -> &MuellerRouting {
@@ -657,6 +881,24 @@ fn invalid(reason: &'static str) -> OperatorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn awp2_squint_uses_the_casa_compact_aperture() {
+        let cell_rad = 1.6_f64.to_radians() / 3600.0;
+        let geometry = GridGeometry::new(
+            crate::ImageExtent {
+                shape: [1200; 2],
+                increment_rad: [-cell_rad, cell_rad],
+                reference_pixel: [600; 2],
+            },
+            crate::GridPadding::None,
+        )
+        .unwrap();
+        let sampling = Awp2Sampling::squinted(&geometry).unwrap();
+        assert_eq!((sampling.aperture_side, sampling.sky_side), (512, 512));
+        assert_eq!(sampling.beam_cell_rad, 4.6875e-5);
+        assert_eq!(sampling.oversampling, 9);
+    }
 
     #[test]
     fn awp2_small_field_uses_the_casa_aperture_and_sampling() {

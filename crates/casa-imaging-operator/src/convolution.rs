@@ -686,6 +686,23 @@ pub trait ConvolutionFunctionSet: Send + Sync {
         w_lambda
     }
 
+    /// Whether the CPU adjoint conjugates its selected cell before applying
+    /// the pointing phase. AWPLPG's signed row map also depends on the mode.
+    fn adjoint_conjugates(
+        &self,
+        _key: CfKey,
+        _mode: crate::accumulator::Mode,
+        w_positive: bool,
+    ) -> bool {
+        w_positive
+    }
+
+    /// Whether the CPU forward transform conjugates the selected cell
+    /// before applying the pointing phase and taking the tap's adjoint.
+    fn prediction_conjugates(&self, _key: CfKey, w_positive: bool) -> bool {
+        w_positive
+    }
+
     /// The paired image-domain correction.
     fn image_correction(&self) -> &ImageCorrection;
 
