@@ -45,7 +45,7 @@ pub enum Gridder {
     /// AWPLPG with an unsquinted VLA or EVLA L-band beam.
     Awp2 {
         /// Number of positive-|w| sampling planes, including zero.
-        #[serde(default, deserialize_with = "optional")]
+        #[serde(deserialize_with = "optional")]
         wprojplanes: Option<NonZeroUsize>,
         /// Optional explicit VLA radial dish surface in the CASA data format.
         #[serde(deserialize_with = "optional")]
