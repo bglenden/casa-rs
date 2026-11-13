@@ -84,10 +84,10 @@ impl Simulator {
                     scan.data_description_id,
                 )
             });
-            if key.is_none() || key != previous {
-                if let Some((window, field, first, last)) = pending.take() {
-                    emit(window, field, 0.5 * (first + last));
-                }
+            if (key.is_none() || key != previous)
+                && let Some((window, field, first, last)) = pending.take()
+            {
+                emit(window, field, 0.5 * (first + last));
             }
             previous = key;
             for time in self.integration_times_s(index) {
