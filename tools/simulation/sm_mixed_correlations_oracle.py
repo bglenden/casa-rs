@@ -21,6 +21,9 @@ CASES = {
     "alias_reversed": {"stokes": "YY XX", "components": True, "aliases": True},
     "alias_full": {"stokes": "XX XY YX YY", "components": True, "aliases": True},
     "alias_selected": {"stokes": "XX XY YX YY", "components": True, "aliases": True, "selected": True},
+    "fresh_linear": {"stokes": "XX XY YX YY", "components": True, "fresh": True},
+    "fresh_circular": {"stokes": "RR RL LR LL", "channels": 2, "fresh": True},
+    "fresh_selected": {"stokes": "XX XY YX YY", "channels": 2, "selected": True, "fresh": True},
 }
 
 def single_window_control(root, spec, kind="joint"):
@@ -66,7 +69,7 @@ def main():
     path=root/"predicted.ms"
     sm=make_session(path)
     assert sm.setspwindow(spwname="mixed",freq="230GHz",deltafreq="15.625MHz",
-        freqresolution="15.625MHz",refcode="TOPO",nchannels=4,stokes=spec["stokes"])
+        freqresolution="15.625MHz",refcode="TOPO",nchannels=spec.get("channels",4),stokes=spec["stokes"])
     assert sm.observe(sourcename="target",spwname="mixed",starttime="3s",stoptime="23s")
     assert sm.observe(sourcename="offset",spwname="mixed",starttime="23s",stoptime="43s")
     sm.close()
@@ -78,7 +81,11 @@ def main():
     for row in range(tb.nrows()):
         shape=tb.getcell("DATA",row).shape
         for column,value in (("DATA",3+4j),("MODEL_DATA",7-2j),("CORRECTED_DATA",-5+6j)):
-            tb.putcell(column,row,np.full(shape,value,dtype=np.complex64))
+            # Define CASA's scratch cells before copying/reopening controls.
+            # Fresh native simulations retain their approved DATA-only form.
+            tb.putcell(column,row,np.full(shape,0 if spec.get("fresh") else value,dtype=np.complex64))
+        if spec.get("fresh"):
+            continue
         flags=np.zeros(shape,dtype=bool)
         if row%11==2:flags[0,0]=True
         tb.putcell("FLAG",row,flags)
@@ -105,6 +112,7 @@ def main():
     returned=bool(sm.predict(**arguments))
     case=dict(name=args.case,returned=returned,spec=spec,all_fields_selected=True,
         before=before,after=snapshot(path))
+    if spec.get("fresh"):case["native_created"]=True
     sm.close()
     case["polarization_map_corrected_rows"]=single_window_control(root,spec)
     if spec.get("components"):

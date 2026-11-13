@@ -31,6 +31,11 @@ def main():
             path = args.native / f"{prefix}-{case['name']}.ms"
             actual = snapshot(path)
             expected = case["after"]
+            if case.get("native_created"):
+                tb = table()
+                tb.open(str(path))
+                assert "MODEL_DATA" not in tb.colnames() and "CORRECTED_DATA" not in tb.colnames(), path
+                tb.close()
             if "mapping" in case:
                 tb = table()
                 tb.open(str(path / "DATA_DESCRIPTION"))
@@ -48,6 +53,8 @@ def main():
             worst = 0.
             for row, (observed, reference) in enumerate(zip(actual["rows"], expected["rows"])):
                 for name, value in reference.items():
+                    if case.get("native_created") and name in ("model_data", "corrected_data"):
+                        continue
                     if "pointing_cache_corrected_rows" in case and name in ("data", "corrected_data", "model_data"):
                         value = case["pointing_cache_corrected_rows"][row][name]
                     if "direction_frame_corrected_rows" in case and name in ("data", "corrected_data", "model_data"):
@@ -100,6 +107,20 @@ def main():
             sm.close()
             count += 1
     print(f"CASA C++ read {count} native simulator MeasurementSets")
+    empty = args.native / "empty.ms"
+    if empty.exists():
+        tb = table()
+        tb.open(str(empty))
+        assert tb.nrows() == 0 and "DATA" in tb.colnames(), empty
+        tb.close()
+        for name, rows in (("ANTENNA", 1), ("SPECTRAL_WINDOW", 2), ("DATA_DESCRIPTION", 2)):
+            tb.open(str(empty/name))
+            assert tb.nrows() == rows, (empty, name)
+            tb.close()
+        sm = simulator()
+        assert sm.openfromms(str(empty))
+        sm.close()
+        print("CASA C++ reads/reopens empty mixed-shape MS")
 
 
 if __name__ == "__main__":

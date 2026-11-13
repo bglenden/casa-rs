@@ -195,7 +195,7 @@ pub(super) fn admit_main_write(
             minimum_writer_bytes(shape).map_or(u64::MAX, |bytes| (bytes as u64).saturating_mul(2));
         refusal_or(error, WRITER_PHASE, required, free)
     })?;
-    let mut reservation = admit(
+    let reservation = admit(
         host,
         policy,
         &Demand {
@@ -204,6 +204,17 @@ pub(super) fn admit_main_write(
         },
     )
     .map_err(SimulatorError::admission)?;
+    admit_pipeline(resources, shape, prediction, plan, reservation)
+}
+
+pub(super) fn admit_pipeline(
+    resources: &SessionResources,
+    shape: &MainShape<'_>,
+    prediction: Option<&DataStage<'_>>,
+    plan: MeasurementSetWritePlan,
+    mut reservation: Reservation,
+) -> SimulatorResult<MainAdmission> {
+    let (host, policy) = (resources.host(), resources.policy());
     let policy_cores = resources
         .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
     let free = free_memory(host, policy);
@@ -298,12 +309,18 @@ pub(super) fn writer_plan(
 /// The fewest writer bytes that plan `shape`'s MAIN write; `None` when no
 /// budget does.
 fn minimum_writer_bytes(shape: &MainShape<'_>) -> Option<usize> {
-    writer_plan(shape, UNBOUNDED_WRITER_BYTES).ok()?;
+    minimum_writer_bytes_for(|budget| writer_plan(shape, budget))
+}
+
+pub(super) fn minimum_writer_bytes_for(
+    make_plan: impl Fn(usize) -> Result<MeasurementSetWritePlan, MeasurementSetWriteError>,
+) -> Option<usize> {
+    make_plan(UNBOUNDED_WRITER_BYTES).ok()?;
     // Whether a budget plans is monotone in the budget.
     let (mut refused, mut planned) = (0, UNBOUNDED_WRITER_BYTES);
     while planned - refused > 1 {
         let middle = refused + (planned - refused) / 2;
-        if writer_plan(shape, middle).is_ok() {
+        if make_plan(middle).is_ok() {
             planned = middle;
         } else {
             refused = middle;
@@ -314,7 +331,7 @@ fn minimum_writer_bytes(shape: &MainShape<'_>) -> Option<usize> {
 
 /// A plan refused for its budget as an [`Admission`] of `required` bytes
 /// against `free`, and any other planning failure as raised.
-fn refusal_or(
+pub(super) fn refusal_or(
     error: MeasurementSetWriteError,
     phase: &'static str,
     required: u64,

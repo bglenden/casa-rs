@@ -83,6 +83,8 @@ def read_rows(path):
                 "sigma": tb.getcell("SIGMA", row).tolist(),
             }
             for column in ("DATA", "MODEL_DATA", "CORRECTED_DATA"):
+                if column not in tb.colnames():
+                    continue
                 record[column.lower()] = [[float(v.real), float(v.imag)]
                                          for v in tb.getcell(column, row).T.ravel()]
             rows.append(record)
