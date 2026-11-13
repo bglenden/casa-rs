@@ -142,7 +142,7 @@ fn awp2_stays_within_its_admission() {
     if !alone("aw::awp2_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("mfs", &[1.5e9], 2);
+    check_awp2_admission("mfs", "I", &[1.5e9], 2);
 }
 
 /// AWP2 shares one admitted kernel set across the spectral cube planes.
@@ -151,7 +151,7 @@ fn awp2_cube_stays_within_its_admission() {
     if !alone("aw::awp2_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", &[1.2e9, 1.5e9, 1.8e9], 1);
+    check_awp2_admission("cube", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
 }
 
 /// The nearest-cube route also admits a single native window of many channels.
@@ -160,10 +160,19 @@ fn awp2_nearest_cube_stays_within_its_admission() {
     if !alone("aw::awp2_nearest_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", &[1.5e9], 3);
+    check_awp2_admission("cube", "I", &[1.5e9], 3);
 }
 
-fn check_awp2_admission(mode: &str, frequencies: &[f64], channels_per_window: usize) {
+/// The shared aperture is charged beside four gridded polarizations.
+#[test]
+fn awp2_polarized_cube_stays_within_its_admission() {
+    if !alone("aw::awp2_polarized_cube_stays_within_its_admission") {
+        return;
+    }
+    check_awp2_admission("cube", "IQUV", &[1.5e9], 3);
+}
+
+fn check_awp2_admission(mode: &str, stokes: &str, frequencies: &[f64], channels_per_window: usize) {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set =
         super::l_band_observation(root.path(), "VLA", frequencies, channels_per_window);
@@ -186,6 +195,7 @@ fn check_awp2_admission(mode: &str, frequencies: &[f64], channels_per_window: us
         "imagename": root.path().join("awp2"),
         "gridder": "awp2",
         "specmode": mode,
+        "stokes": stokes,
         "imsize": 100,
         "cell": "8arcsec",
         "evla_surface": evla_surface(root.path()),
@@ -213,5 +223,15 @@ fn check_awp2_admission(mode: &str, frequencies: &[f64], channels_per_window: us
         outcome.problem.geometry().spectral().output_channels(),
         output_channels,
         "AWP2 keeps every requested output channel",
+    );
+    assert_eq!(
+        outcome
+            .problem
+            .reconstruction()
+            .polarization()
+            .coordinates()
+            .len(),
+        stokes.len(),
+        "AWP2 keeps every requested Stokes plane",
     );
 }

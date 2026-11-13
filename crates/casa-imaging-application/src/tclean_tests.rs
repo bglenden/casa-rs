@@ -365,6 +365,33 @@ fn an_automatic_mask_of_a_cube_or_stokes_planes_is_read() {
     }
 }
 
+#[test]
+fn awp2_unsquinted_stokes_reads_the_named_polarizations_at_zero_w() {
+    for stokes in ["I", "Q", "U", "V", "IV", "QU", "IQUV"] {
+        for specmode in ["mfs", "cube"] {
+            let read = request(json!({
+                "gridder": "awp2",
+                "specmode": specmode,
+                "stokes": stokes,
+                "wprojplanes": 1,
+            }));
+            assert_eq!(read.stokes.len(), stokes.len());
+        }
+    }
+    for stokes in ["RR", "IQ"] {
+        let refused = refusal(json!({ "gridder": "awp2", "stokes": stokes }));
+        assert_eq!(refused.parameter, "gridder");
+        assert!(refused.message.contains("#1071"));
+    }
+    let refused = refusal(json!({
+        "gridder": "awp2",
+        "stokes": "IV",
+        "savemodel": "modelcolumn",
+    }));
+    assert_eq!(refused.parameter, "gridder");
+    assert!(refused.message.contains("#1071"));
+}
+
 /// A value casa-rs cannot honour is refused at its parameter, naming the
 /// issue that tracks it.
 #[test]
@@ -416,7 +443,7 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#1071",
         ),
         (
-            json!({ "gridder": "awp2", "stokes": "Q" }),
+            json!({ "gridder": "awp2", "stokes": "Q", "wprojplanes": 2 }),
             "gridder",
             "#1071",
         ),
