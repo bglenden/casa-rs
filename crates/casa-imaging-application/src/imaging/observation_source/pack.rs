@@ -243,6 +243,14 @@ struct Arrays<'b> {
 }
 
 impl<'b> Arrays<'b> {
+    fn row_flagged(&self, sample: usize, channels: &[usize], correlations: &[usize]) -> bool {
+        channels.iter().all(|channel| {
+            correlations.iter().all(|product| {
+                self.flags[(sample * self.channels + channel) * self.correlations + product]
+            })
+        })
+    }
+
     fn new(batch: &VisibilityBatch<'b>, values: bool) -> Result<Self, SourceError> {
         let standard = "a batch array is not in standard order";
         let flags = batch.group.flags.ok_or("the batch carries no flags")?;
@@ -513,19 +521,12 @@ impl Packer<'_> {
                 sample,
                 time_s: batch.time.seconds_since(time, origin),
             };
-            self.project(geometry, sample, &mut scratch.projections)?;
-            if rest_aw {
-                for projection in &mut scratch.projections {
-                    projection.uvw_m = projection
-                        .uvw_m
-                        .map(|metres| metres * native_frequency_ratio);
-                    projection.phase_shift_m *= native_frequency_ratio;
-                }
-            }
-            let nonfinite_uvw = !scratch.projections.iter().all(|projection| {
-                projection.uvw_m.iter().all(|value| value.is_finite())
-                    && projection.phase_shift_m.is_finite()
-            });
+            let nonfinite_uvw = self.project(
+                geometry,
+                sample,
+                rest_aw.then_some(native_frequency_ratio),
+                &mut scratch.projections,
+            )?;
             if arrays.weights.is_none() {
                 scratch.row_weights.clear();
                 scratch.row_weights.extend(
@@ -539,12 +540,7 @@ impl Packer<'_> {
                 } else {
                     layout
                 };
-            let flagged = flag_layout.channels.iter().all(|channel| {
-                scratch.routed.iter().all(|product| {
-                    arrays.flags
-                        [(sample * arrays.channels + channel) * arrays.correlations + product]
-                })
-            });
+            let flagged = arrays.row_flagged(sample, &flag_layout.channels, &scratch.routed);
             let baseline = batch.baselines[sample % per_time];
             let field = batch.field[time];
             let header = NativeRowHeader {
@@ -655,13 +651,15 @@ impl Packer<'_> {
         Ok(())
     }
 
-    /// Sample `sample`'s projection on every chart into `projections`.
+    /// Project `sample` onto each chart and report a non-finite UVW or phase.
+    /// REST AW places wavelengths from the stored frequencies.
     fn project(
         &self,
         geometry: &BatchGeometry,
         sample: usize,
+        wavelength_scale: Option<f64>,
         projections: &mut Vec<DomainProjection>,
-    ) -> Result<(), SourceError> {
+    ) -> Result<bool, SourceError> {
         projections.clear();
         for chart in 0..self.charts {
             let projection = geometry.projection(sample, chart);
@@ -675,13 +673,21 @@ impl Packer<'_> {
                 )?,
                 None => [0.0; 2],
             };
-            projections.push(DomainProjection {
+            let mut projected = DomainProjection {
                 uvw_m: projection.uvw_m,
                 phase_shift_m: projection.phase_shift_m,
                 pointing_offset_rad,
-            });
+            };
+            if let Some(scale) = wavelength_scale {
+                projected.uvw_m = projected.uvw_m.map(|metres| metres * scale);
+                projected.phase_shift_m *= scale;
+            }
+            projections.push(projected);
         }
-        Ok(())
+        Ok(!projections.iter().all(|projection| {
+            projection.uvw_m.iter().all(|value| value.is_finite())
+                && projection.phase_shift_m.is_finite()
+        }))
     }
 }
 
