@@ -38,7 +38,7 @@ pub enum PrepareError {
     },
     /// The selected observation falls outside the initial AWP2 branch.
     #[error(
-        "AWP2 currently requires one fixed VLA field and one L-band TOPO spectral window in one MeasurementSet (#1071)"
+        "AWP2 currently requires fixed VLA or EVLA fields and one L-band TOPO spectral window in one MeasurementSet (#1071)"
     )]
     Awp2Selection,
     /// The required physical dish surface could not be located.

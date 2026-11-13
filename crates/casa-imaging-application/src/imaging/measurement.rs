@@ -490,13 +490,16 @@ fn kernel_set(
             let deployment = awp2.ok_or(ImagingError::Unsupported {
                 reason: "AWP2 requires a VLA dish surface and beam frequencies",
             })?;
-            let sampling = Awp2Sampling::new(geometry)?;
+            let sampling = Awp2Sampling::new(geometry, deployment.single_field)?;
             let screen_charge = admission.admit(
                 "AWP2 aperture screens",
                 sampling.screens_bytes(deployment.frequencies_hz.len()),
             )?;
-            let screens =
-                sampling.screens(&deployment.frequencies_hz, deployment.surface.clone())?;
+            let screens = sampling.screens(
+                &deployment.frequencies_hz,
+                deployment.surface.clone(),
+                deployment.legacy_vla,
+            )?;
             let mut kernels = admission.admit(PHASE, screens.kernel_bytes(geometry))?;
             let set = screens.finish(geometry, polarization, deployment.frequencies_hz.clone());
             drop(screen_charge);

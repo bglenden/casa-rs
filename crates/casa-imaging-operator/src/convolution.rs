@@ -587,6 +587,16 @@ impl ImageCorrection {
     }
 }
 
+/// `HetArrayConvFunc::checkPBOfField`: discard a pointing outside the
+/// image after truncating the coordinates to integers.
+pub(crate) fn mosaic_pointing_on_image(geometry: &GridGeometry, offset_rad: [f64; 2]) -> bool {
+    let image = geometry.image();
+    offset_rad.into_iter().enumerate().all(|(axis, offset)| {
+        let pixel = image.reference_pixel[axis] as f64 + offset / image.increment_rad[axis];
+        (0.0..image.shape[axis] as f64).contains(&pixel.trunc())
+    })
+}
+
 /// A kernel set: pure cell selection plus the taps, routing and correction
 /// the kernels read. Implementations: the standard spheroidal set, W-planes,
 /// the AW catalog and the mosaic primary beam.

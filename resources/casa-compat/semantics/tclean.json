@@ -344,7 +344,7 @@
     },
     "gridder": {
       "status": "Partial",
-      "scope": "Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural-weighted Stokes I dirty MFS for one fixed VLA L-band field and TOPO window, a small square image, one W plane and no squint (#1071).",
+      "scope": "Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural-weighted Stokes I Högbom MFS with fixed VLA or EVLA L-band fields, one TOPO window, square Lanczos-resampled images within the beam grid, one W plane and no squint (#1071).",
       "evidence": [
         "signature",
         "reader",
@@ -1454,8 +1454,8 @@
     },
     "awp2-dirty-mfs": {
       "kind": "Frozen CASA comparison",
-      "state": "Single-field dirty MFS verified",
-      "scope": "CASA 6.7.6-14, refim_point_linRL.ms FIELD/SPW 0, 100-square at 8 arcsec, natural Stokes I, default W and PA settings. Seven products agree with exact masks and sum of weights.",
+      "state": "Single-field dirty and two-field clean MFS verified",
+      "scope": "CASA 6.7.6-14, refim_point_linRL.ms FIELD/SPW 0, 100-square at 8 arcsec, natural Stokes I, default W and PA settings. Seven products agree with exact masks and sum of weights. The two-field refim_mawproject.ms SPW 1 clean at 512-square and 10 arcsec agrees on eight products, controller counts and the model column.",
       "links": [
         "https://github.com/bglenden/casa-rs/issues/1071#issuecomment-6698488720"
       ]

@@ -131,9 +131,11 @@ pub(crate) struct AwCatalogDeployment {
     pub(crate) generation_workers: Option<usize>,
 }
 
-/// The observing frequencies and bounded physical data of a single-field
-/// AWPLPG run. The operator owns generating the convolution functions.
+/// The observing frequencies and bounded physical data of an AWPLPG run.
+/// The operator owns generating the convolution functions.
 pub(crate) struct Awp2Deployment {
+    pub(crate) single_field: bool,
+    pub(crate) legacy_vla: bool,
     pub(crate) frequencies_hz: Box<[f64]>,
     pub(crate) surface: casa_imaging_model::EvlaDishSurface,
     pub(crate) _charge: casa_imaging_runtime::Reservation,

@@ -24,13 +24,15 @@ pub(super) fn plan(
     let [window] = surveyed.survey.spectral_windows.as_slice() else {
         return Err(PrepareError::Awp2Selection);
     };
-    let field = surveyed.survey.first_visibility_field_id;
     if surveyed.stores.len() != 1
-        || surveyed.survey.fields.len() != 1
         || surveyed.msv2.is_none()
-        || surveyed.engine.field_moves(field)
+        || surveyed
+            .survey
+            .fields
+            .iter()
+            .any(|field| surveyed.engine.field_moves(*field as usize))
         || window.frequency_reference != FrequencyRef::TOPO
-        || domain.telescope.trim() != "VLA"
+        || !matches!(domain.telescope.trim(), "VLA" | "EVLA")
     {
         return Err(PrepareError::Awp2Selection);
     }
@@ -83,6 +85,8 @@ pub(super) fn plan(
             + 2 * size_of::<usize>()) as u64,
     );
     Ok(Some(Awp2Deployment {
+        single_field: surveyed.survey.fields.len() == 1,
+        legacy_vla: domain.telescope.trim() == "VLA",
         frequencies_hz,
         surface,
         _charge: charge,

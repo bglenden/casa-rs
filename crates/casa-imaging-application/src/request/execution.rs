@@ -53,24 +53,21 @@ pub(crate) fn validate_awp2_scope(
             || request.mvc_output_channels.is_some()
             || request.mvc_auto_channels
             || request.deconvolver != Deconvolver::Hogbom
-            || request.niter != 0
             || request.weighting != Weighting::Natural
             || request.stokes != [PolarizationCoordinate::StokesI]
             || request.vis.len() != 1
             || request.outframe != FrequencyRef::LSRK
-            || request.phasecenter.is_some()
-            || request.phasecenter_field.is_some()
             || request.outlierfile.is_some()
             || request.has_start_model()
             || request.tclean_restart
-            || request.savemodel != SaveModel::None
+            || request.savemodel == SaveModel::Virtual
             || !request.calcpsf
             || !request.calcres
             || request.gridprecision == Some(GridPrecision::F32))
     {
         return Err(InvalidRequest {
             parameters: "gridder",
-            reason: "AWP2 currently supports a fresh natural-weighted Stokes I dirty MFS run with the selected field as phase centre and double-precision gridding (#1071)",
+            reason: "AWP2 currently supports a fresh natural-weighted Stokes I Högbom MFS run with double-precision gridding (#1071)",
         });
     }
     Ok(())
