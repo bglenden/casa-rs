@@ -154,6 +154,15 @@ fn awp2_cube_stays_within_its_admission() {
     check_awp2_admission("cube", &[1.2e9, 1.5e9, 1.8e9], 1);
 }
 
+/// The nearest-cube route also admits a single native window of many channels.
+#[test]
+fn awp2_nearest_cube_stays_within_its_admission() {
+    if !alone("aw::awp2_nearest_cube_stays_within_its_admission") {
+        return;
+    }
+    check_awp2_admission("cube", &[1.5e9], 3);
+}
+
 fn check_awp2_admission(mode: &str, frequencies: &[f64], channels_per_window: usize) {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set =
@@ -182,11 +191,19 @@ fn check_awp2_admission(mode: &str, frequencies: &[f64], channels_per_window: us
         "evla_surface": evla_surface(root.path()),
         "stage_timing": true,
     });
-    if mode == "cube" {
-        values["nchan"] = json!(frequencies.len());
-        values["start"] = json!("1.2GHz");
-        values["width"] = json!("300MHz");
-    }
+    let output_channels = if mode == "cube" {
+        let output_channels = frequencies.len() * channels_per_window;
+        values["nchan"] = json!(output_channels);
+        if channels_per_window == 1 {
+            values["start"] = json!("1.2GHz");
+            values["width"] = json!("300MHz");
+        } else {
+            values["interpolation"] = json!("nearest");
+        }
+        output_channels
+    } else {
+        1
+    };
     let request = imaging::request(values);
     let mut breaches = Vec::new();
     let measured = check(&mut breaches, "AWP2", &request, 1, AMPLE);
@@ -194,7 +211,7 @@ fn check_awp2_admission(mode: &str, frequencies: &[f64], channels_per_window: us
     let outcome = measured.outcome.unwrap();
     assert_eq!(
         outcome.problem.geometry().spectral().output_channels(),
-        frequencies.len(),
-        "the AWP2 cube keeps every output channel",
+        output_channels,
+        "AWP2 keeps every requested output channel",
     );
 }
