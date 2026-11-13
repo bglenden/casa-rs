@@ -10556,7 +10556,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'standard'</code></td>
 <td><code>'standard'</code>; <code>gridder</code> → <code>gridder</code></td>
 <td>Partial</td>
-<td>Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural-weighted Stokes I dirty MFS for one fixed VLA L-band field and TOPO window, a small square image, one W plane and no squint (#1071). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>awp2</code>, <code>awphpg</code>, <code>awproject</code>, <code>awprojectft</code>, <code>ft</code>, <code>ftmosaic</code>, <code>gridft</code>, <code>imagemosaic</code>, <code>mosaic</code>, <code>mosaicft</code>, <code>standard</code>, <code>widefield</code>, <code>wproject</code>, <code>wprojectft</code></td>
+<td>Standard, W and mosaic aliases normalize. AW projection runs as awproject. The awprojectft alias remains refused. AWP2 supports fresh, natural-weighted Stokes I Högbom MFS with fixed VLA or EVLA L-band fields, one TOPO window, square Lanczos-resampled images within the beam grid, one W plane and no squint (#1071). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>awp2</code>, <code>awphpg</code>, <code>awproject</code>, <code>awprojectft</code>, <code>ft</code>, <code>ftmosaic</code>, <code>gridft</code>, <code>imagemosaic</code>, <code>mosaic</code>, <code>mosaicft</code>, <code>standard</code>, <code>widefield</code>, <code>wproject</code>, <code>wprojectft</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-aw-cube-20261103">aw-cube-20261103</a></td>
 </tr>
 <tr>
@@ -11277,7 +11277,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <p><a id="tclean-evidence-awp2-dirty-mfs"></a></p>
 <h5 id="awp2-dirty-mfs">awp2-dirty-mfs<a class="headerlink" href="#awp2-dirty-mfs" title="Permanent link">&para;</a></h5>
-<p><strong>Frozen CASA comparison — Single-field dirty MFS verified.</strong> CASA 6.7.6-14, refim_point_linRL.ms FIELD/SPW 0, 100-square at 8 arcsec, natural Stokes I, default W and PA settings. Seven products agree with exact masks and sum of weights.</p>
+<p><strong>Frozen CASA comparison — Single-field dirty and two-field clean MFS verified.</strong> CASA 6.7.6-14, refim_point_linRL.ms FIELD/SPW 0, 100-square at 8 arcsec, natural Stokes I, default W and PA settings. Seven products agree with exact masks and sum of weights. The two-field refim_mawproject.ms SPW 1 clean at 512-square and 10 arcsec agrees on eight products, controller counts and the model column.</p>
 <ul>
 <li><a href="https://github.com/bglenden/casa-rs/issues/1071#issuecomment-6698488720">https://github.com/bglenden/casa-rs/issues/1071#issuecomment-6698488720</a></li>
 </ul>

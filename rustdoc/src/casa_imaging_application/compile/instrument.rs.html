@@ -152,7 +152,7 @@
 <a href=#152 id=152 data-nosnippet>152</a>                (diameter - <span class="number">25.0</span>).abs() &lt; <span class="number">1.0
 <a href=#153 id=153 data-nosnippet>153</a>            </span>})
 <a href=#154 id=154 data-nosnippet>154</a>        }
-<a href=#155 id=155 data-nosnippet>155</a>        Gridder::Awp2 { .. } <span class="kw">if </span>all(|name| name == <span class="string">"VLA"</span>) =&gt; {
+<a href=#155 id=155 data-nosnippet>155</a>        Gridder::Awp2 { .. } <span class="kw">if </span>all(|name| <span class="macro">matches!</span>(name, <span class="string">"VLA" </span>| <span class="string">"EVLA"</span>)) =&gt; {
 <a href=#156 id=156 data-nosnippet>156</a>            (InstrumentModel::CasaVlaAwplpg, |diameter| diameter == <span class="number">25.0</span>)
 <a href=#157 id=157 data-nosnippet>157</a>        }
 <a href=#158 id=158 data-nosnippet>158</a>        Gridder::Mosaic { .. } <span class="kw">if </span>all(AntennaResponseClass::casa_alma_aca_telescope) =&gt; (
