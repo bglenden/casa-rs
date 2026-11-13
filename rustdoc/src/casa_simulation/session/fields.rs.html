@@ -13,13 +13,16 @@
 <a href=#13 id=13 data-nosnippet>13</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) code: String,
 <a href=#14 id=14 data-nosnippet>14</a>    <span class="doccomment">/// The J2000 direction, radians: DELAY_DIR, PHASE_DIR and REFERENCE_DIR.
 <a href=#15 id=15 data-nosnippet>15</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) direction_rad: [f64; <span class="number">2</span>],
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// `distance`, metres; zero for a source at infinity. Used by `predict`.
-<a href=#17 id=17 data-nosnippet>17</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) distance_m: f64,
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// The SOURCE row's TIME: the reference time when `setfield` was
-<a href=#19 id=19 data-nosnippet>19</a>    /// called, UTC seconds.
-<a href=#20 id=20 data-nosnippet>20</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) source_time_s: f64,
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// The SOURCE row's single line, at the first spectral window's
-<a href=#22 id=22 data-nosnippet>22</a>    /// REF_FREQUENCY, if one existed when `setfield` was called.
-<a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) rest_frequency_hz: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// An opened FIELD has several PHASE_DIR coefficients; CASA cannot
+<a href=#17 id=17 data-nosnippet>17</a>    /// append an observation to that field.
+<a href=#18 id=18 data-nosnippet>18</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) polynomial: bool,
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="doccomment">/// `distance`, metres; zero for a source at infinity. Used by `predict`.
+<a href=#20 id=20 data-nosnippet>20</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) distance_m: f64,
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// The SOURCE row's TIME: the reference time when `setfield` was
+<a href=#22 id=22 data-nosnippet>22</a>    /// called, UTC seconds.
+<a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) source_time_s: f64,
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="doccomment">/// The SOURCE row's single line, at the first spectral window's
+<a href=#25 id=25 data-nosnippet>25</a>    /// REF_FREQUENCY, if one existed when `setfield` was called.
+<a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) rest_frequency_hz: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#27 id=27 data-nosnippet>27</a>}
 </code></pre></div></section></main></body></html>
