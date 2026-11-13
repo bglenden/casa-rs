@@ -73,7 +73,7 @@
 <a href=#73 id=73 data-nosnippet>73</a>    team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, |<span class="kw">_</span>, job| {
 <a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">for </span>components <span class="kw">in </span>plan.components_for_scan(job.index) {
 <a href=#75 id=75 data-nosnippet>75</a>            components.add_rows(
-<a href=#76 id=76 data-nosnippet>76</a>                (job.index, job.scan.spectral_window_id),
+<a href=#76 id=76 data-nosnippet>76</a>                (job.index, job.scan.data_description_id),
 <a href=#77 id=77 data-nosnippet>77</a>                job.rows.iter().map(|row| row.uvw_m),
 <a href=#78 id=78 data-nosnippet>78</a>                job.cells,
 <a href=#79 id=79 data-nosnippet>79</a>            );
