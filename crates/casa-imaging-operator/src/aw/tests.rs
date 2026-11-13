@@ -118,6 +118,7 @@ fn a_group_holds_each_kinds_largest_half_support() {
 fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
     AwCatalog {
         root: PathBuf::new(),
+        prediction_frequency_scale: 1.0,
         indexing: AwIndexing {
             conjugate_beams: false,
             image_reference_hz: 1.0e9,
@@ -148,10 +149,10 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
     }
 }
 
-/// The catalog's retained charge covers its new origin selector and
-/// every allocated group slot, including spare capacity (#1070).
+/// The catalog's retained charge covers the origin selector, prediction
+/// scale and every allocated group slot, including spare capacity.
 #[test]
-fn catalog_charge_counts_its_origin_selector() {
+fn catalog_charge_counts_its_origin_selector_and_prediction_scale() {
     let groups = Vec::<Group>::with_capacity(41);
     let per_group = 2 * size_of::<[u16; 2]>() + size_of::<[bool; 2]>();
     let allocated = groups.capacity() * per_group;
@@ -160,7 +161,7 @@ fn catalog_charge_counts_its_origin_selector() {
     let feed_bytes = 2 * size_of::<f32>() + 2 * size_of::<usize>();
     assert_eq!(
         catalog.cache_charge().kept,
-        (allocated + feed_bytes) as u64
+        (allocated + feed_bytes + size_of::<f64>()) as u64
             + (catalog.mueller_elements.capacity() * size_of::<u32>()) as u64
             + catalog.mueller.bytes()
             + catalog.correction.resident_bytes()

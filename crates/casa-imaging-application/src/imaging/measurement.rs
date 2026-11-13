@@ -311,7 +311,7 @@ pub(crate) fn domain_operator(
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
     requested_padding: Option<PaddingFactor>,
-    deployment: (Option<&AwCatalogDeployment>, Option<&Awp2Deployment>),
+    deployment: (Option<(&AwCatalogDeployment, f64)>, Option<&Awp2Deployment>),
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
@@ -411,7 +411,7 @@ fn kernel_set(
     problem: &CompiledProblem,
     kind: KernelSetKind,
     (geometry, polarization): (&GridGeometry, &PolarizationRouting),
-    (aw_catalog, awp2): (Option<&AwCatalogDeployment>, Option<&Awp2Deployment>),
+    (aw_catalog, awp2): (Option<(&AwCatalogDeployment, f64)>, Option<&Awp2Deployment>),
     keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<(Box<dyn ConvolutionFunctionSet>, Kernels), ImagingError> {
@@ -534,16 +534,18 @@ fn kernel_set(
             (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
         KernelSetKind::Aw => {
-            let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
-                reason: "an A-projection run needs its convolution-function catalog",
-            })?;
+            let (deployment, gridding_frequency_scale) =
+                aw_catalog.ok_or(ImagingError::Unsupported {
+                    reason: "an A-projection run needs its convolution-function catalog",
+                })?;
             let catalog = AwCatalog::open_casa(
                 &deployment.root,
                 deployment.indexing.clone(),
                 geometry,
                 polarization,
                 deployment.resident_bytes,
-            )?;
+            )?
+            .with_prediction_frequency_scale(gridding_frequency_scale);
             let kernels = Kernels::Catalog {
                 charge: catalog.cache_charge(),
                 bound: catalog.cache_bound(),
