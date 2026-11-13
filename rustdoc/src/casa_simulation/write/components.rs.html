@@ -72,13 +72,17 @@
 <a href=#72 id=72 data-nosnippet>72</a>    }
 <a href=#73 id=73 data-nosnippet>73</a>    team.for_each_mut(<span class="kw-2">&amp;mut </span>jobs, |<span class="kw">_</span>, job| {
 <a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">for </span>components <span class="kw">in </span>plan.components_for_scan(job.index) {
-<a href=#75 id=75 data-nosnippet>75</a>            components.add_rows(
-<a href=#76 id=76 data-nosnippet>76</a>                (job.index, job.scan.data_description_id),
-<a href=#77 id=77 data-nosnippet>77</a>                job.rows.iter().map(|row| row.uvw_m),
-<a href=#78 id=78 data-nosnippet>78</a>                job.cells,
-<a href=#79 id=79 data-nosnippet>79</a>            );
-<a href=#80 id=80 data-nosnippet>80</a>        }
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, SimulatorError&gt;(())
-<a href=#82 id=82 data-nosnippet>82</a>    })
-<a href=#83 id=83 data-nosnippet>83</a>}
+<a href=#75 id=75 data-nosnippet>75</a>            components
+<a href=#76 id=76 data-nosnippet>76</a>                .add_rows(
+<a href=#77 id=77 data-nosnippet>77</a>                    (job.index, job.scan.data_description_id),
+<a href=#78 id=78 data-nosnippet>78</a>                    job.rows.iter().map(|row| (row.uvw_m, row.time_s)),
+<a href=#79 id=79 data-nosnippet>79</a>                    job.cells,
+<a href=#80 id=80 data-nosnippet>80</a>                )
+<a href=#81 id=81 data-nosnippet>81</a>                .map_err(|error| {
+<a href=#82 id=82 data-nosnippet>82</a>                    SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"component prediction: {error}"</span>))
+<a href=#83 id=83 data-nosnippet>83</a>                })<span class="question-mark">?</span>;
+<a href=#84 id=84 data-nosnippet>84</a>        }
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, SimulatorError&gt;(())
+<a href=#86 id=86 data-nosnippet>86</a>    })
+<a href=#87 id=87 data-nosnippet>87</a>}
 </code></pre></div></section></main></body></html>
