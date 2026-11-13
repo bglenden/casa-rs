@@ -48,69 +48,79 @@ pub(crate) fn validate_awp2_scope(
         Deconvolver, FrequencyRef, Gridder, InvalidRequest, PolarizationCoordinate,
         ProductNormalization, SaveModel, SpecMode, Weighting,
     };
-    if let Gridder::Awp2 {
+    let Gridder::Awp2 {
         wprojplanes,
         computepastep,
         normtype,
         ..
     } = request.gridder
-        && (!matches!(request.specmode, SpecMode::Mfs | SpecMode::Cube)
-            || (request.specmode == SpecMode::Cube
-                && (computepastep < 180.0
-                    || wprojplanes.is_some_and(|count| count.get() != 1)
-                    || request.weighting != Weighting::Natural
-                    || request.savemodel != SaveModel::None))
-            || ((request.mvc_output_channels.is_some() || request.mvc_auto_channels)
-                && normtype != ProductNormalization::FlatNoise)
-            || (request.deconvolver != Deconvolver::Hogbom
-                && !(request.deconvolver == Deconvolver::Mtmfs
-                    && request.specmode == SpecMode::Mfs
-                    && request.nterms == 2
-                    && request.stokes == [PolarizationCoordinate::StokesI]
-                    && computepastep >= 180.0
+    else {
+        return Ok(());
+    };
+    let mvc = request.mvc_output_channels.is_some() || request.mvc_auto_channels;
+    let mvc_squint = mvc
+        && computepastep < 180.0
+        && wprojplanes.is_some_and(|count| count.get() > 1)
+        && request.stokes == [PolarizationCoordinate::StokesI]
+        && request.weighting == Weighting::Uniform;
+    if !matches!(request.specmode, SpecMode::Mfs | SpecMode::Cube)
+        || (request.specmode == SpecMode::Cube
+            && (request.savemodel != SaveModel::None
+                || (!mvc_squint
+                    && (computepastep < 180.0
+                        || wprojplanes.is_some_and(|count| count.get() != 1)
+                        || request.weighting != Weighting::Natural))))
+        || (mvc && normtype != ProductNormalization::FlatNoise)
+        || (request.deconvolver != Deconvolver::Hogbom
+            && !(request.deconvolver == Deconvolver::Mtmfs
+                && request.specmode == SpecMode::Mfs
+                && request.nterms == 2
+                && request.stokes == [PolarizationCoordinate::StokesI]
+                && ((computepastep >= 180.0
                     && wprojplanes.is_none_or(|count| count.get() == 1)
-                    && request.weighting == Weighting::Natural
-                    && request.savemodel == SaveModel::None))
-            || !matches!(request.weighting, Weighting::Natural | Weighting::Uniform)
-            || wprojplanes.is_some_and(|count| count.get() > usize::from(u16::MAX))
-            || !computepastep.is_finite()
-            || computepastep <= 0.0
-            || if computepastep < 180.0 {
-                request.stokes
-                    != [
-                        PolarizationCoordinate::StokesI,
-                        PolarizationCoordinate::StokesV,
-                    ]
-                    || wprojplanes.is_none_or(|count| count.get() < 2)
-            } else {
-                use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
-                match request.stokes.as_slice() {
-                    [StokesI] => false,
-                    [StokesQ]
-                    | [StokesU]
-                    | [StokesV]
-                    | [StokesI, StokesV]
-                    | [StokesQ, StokesU]
-                    | [StokesI, StokesQ, StokesU, StokesV] => {
-                        wprojplanes.is_some_and(|count| count.get() != 1)
-                            || request.savemodel != SaveModel::None
-                    }
-                    _ => true,
+                    && request.weighting == Weighting::Natural)
+                    || mvc_squint)
+                && request.savemodel == SaveModel::None))
+        || !matches!(request.weighting, Weighting::Natural | Weighting::Uniform)
+        || wprojplanes.is_some_and(|count| count.get() > usize::from(u16::MAX))
+        || !computepastep.is_finite()
+        || computepastep <= 0.0
+        || if computepastep < 180.0 && !mvc_squint {
+            request.stokes
+                != [
+                    PolarizationCoordinate::StokesI,
+                    PolarizationCoordinate::StokesV,
+                ]
+                || wprojplanes.is_none_or(|count| count.get() < 2)
+        } else {
+            use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+            match request.stokes.as_slice() {
+                [StokesI] => false,
+                [StokesQ]
+                | [StokesU]
+                | [StokesV]
+                | [StokesI, StokesV]
+                | [StokesQ, StokesU]
+                | [StokesI, StokesQ, StokesU, StokesV] => {
+                    wprojplanes.is_some_and(|count| count.get() != 1)
+                        || request.savemodel != SaveModel::None
                 }
+                _ => true,
             }
-            || request.vis.len() != 1
-            || request.outframe != FrequencyRef::LSRK
-            || request.outlierfile.is_some()
-            || request.has_start_model()
-            || request.tclean_restart
-            || request.savemodel == SaveModel::Virtual
-            || !request.calcpsf
-            || !request.calcres
-            || request.gridprecision == Some(GridPrecision::F32))
+        }
+        || request.vis.len() != 1
+        || request.outframe != FrequencyRef::LSRK
+        || request.outlierfile.is_some()
+        || request.has_start_model()
+        || request.tclean_restart
+        || request.savemodel == SaveModel::Virtual
+        || !request.calcpsf
+        || !request.calcres
+        || request.gridprecision == Some(GridPrecision::F32)
     {
         return Err(InvalidRequest {
             parameters: "gridder",
-            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted cubes with one W plane, no squint and no saved model. Unsquinted polarized imaging is available for I, Q, U, V, IV, QU and IQUV with one W plane and no saved model. Natural-weighted two-term Stokes I MT-MFS also runs without squint or a saved model and with one W plane. Its MVC combination currently requires flatnoise normalization (#1071)",
+            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted cubes with one W plane, no squint and no saved model. Unsquinted polarized imaging is available for I, Q, U, V, IV, QU and IQUV with one W plane and no saved model. Natural-weighted two-term Stokes I MT-MFS also runs without squint or a saved model and with one W plane. AWP2 MVC requires flatnoise normalization and supports natural weighting without squint or W projection, or uniform weighting with Stokes I, squint and multiple W planes (#1071)",
         });
     }
     Ok(())

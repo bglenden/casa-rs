@@ -340,9 +340,11 @@ pub enum InstrumentModel {
     /// beams among them), consumed through validated paired AW convolution
     /// functions.
     CasaEvlaWidebandAwV1,
-    /// VLA or EVLA L-band AWPLPG response with one W plane and the real RL
-    /// aperture beam shared by all correlations.
+    /// VLA or EVLA L-band AWPLPG with a beam shared by all correlations.
     CasaVlaAwplpg,
+    /// VLA or EVLA L-band AWPLPG with independent RR and LL aperture
+    /// beams keyed by the visibility buffer's feed parallactic angle.
+    CasaVlaAwplpgSquint,
 }
 
 /// Science-owned A/W-projection controls compiled into one paired operator.
@@ -1892,6 +1894,7 @@ impl CompiledProblem {
     #[must_use]
     pub fn requires_parallactic_angles(&self) -> bool {
         self.reconstruction.polarization().coordinates() != [PolarizationCoordinate::StokesI]
+            || self.science.instrument_model() == Some(InstrumentModel::CasaVlaAwplpgSquint)
             || self
                 .science
                 .measurement_equation()
@@ -2108,6 +2111,7 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
                         | InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1
                         | InstrumentModel::CasaEvlaWidebandAwV1
                         | InstrumentModel::CasaVlaAwplpg
+                        | InstrumentModel::CasaVlaAwplpgSquint
                 )
             )
     ) {

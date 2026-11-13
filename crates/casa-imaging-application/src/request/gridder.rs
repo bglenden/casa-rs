@@ -55,5 +55,8 @@ pub enum Gridder {
         /// Direction-dependent product normalization.
         #[serde(deserialize_with = "normalization")]
         normtype: ProductNormalization,
+        /// Weigh each field by its own visibility density (CASA's mosweight).
+        #[serde(default)]
+        mosweight: bool,
     },
 }

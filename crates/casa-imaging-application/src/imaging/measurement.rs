@@ -272,7 +272,10 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
         KernelSetKind::Aw
     } else if equation.w_projection().is_some() {
         KernelSetKind::WPlanes
-    } else if problem.science().instrument_model() == Some(InstrumentModel::CasaVlaAwplpg) {
+    } else if matches!(
+        problem.science().instrument_model(),
+        Some(InstrumentModel::CasaVlaAwplpg | InstrumentModel::CasaVlaAwplpgSquint)
+    ) {
         KernelSetKind::Awp2
     } else if matches!(
         problem.science().instrument_model(),

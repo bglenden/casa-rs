@@ -473,9 +473,12 @@ impl GeometryPlan {
                     .iter()
                     .any(|chart| chart.centre.frame() != DirectionFrame::J2000));
         let responses = match problem.science().instrument_model() {
-            None | Some(InstrumentModel::CasaEvlaWidebandAwV1 | InstrumentModel::CasaVlaAwplpg) => {
-                Responses::None
-            }
+            None
+            | Some(
+                InstrumentModel::CasaEvlaWidebandAwV1
+                | InstrumentModel::CasaVlaAwplpg
+                | InstrumentModel::CasaVlaAwplpgSquint,
+            ) => Responses::None,
             Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
                 Responses::Uniform(AntennaResponseClass::CasaAca7m)
             }
@@ -517,7 +520,7 @@ impl GeometryPlan {
                 || (problem.requires_parallactic_angles()
                     && matches!(
                         problem.science().instrument_model(),
-                        Some(InstrumentModel::CasaVlaAwplpg)
+                        Some(InstrumentModel::CasaVlaAwplpg | InstrumentModel::CasaVlaAwplpgSquint)
                     )),
             responses,
             aw: AwPointingGrouping::new(problem)?,

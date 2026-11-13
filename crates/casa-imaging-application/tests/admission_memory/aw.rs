@@ -2,6 +2,13 @@
 
 //! The admission laws of AW projection: an MT-MFS image and a cube.
 
+use std::path::{Path, PathBuf};
+
+use casa_ms::{
+    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
+    SyntheticSkyModel, SyntheticSpectralSetup, generate_synthetic_observation_ms,
+    tutorial_vla_a_antennas,
+};
 use serde_json::json;
 
 use super::{
@@ -142,7 +149,7 @@ fn awp2_stays_within_its_admission() {
     if !alone("aw::awp2_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("mfs", "hogbom", "I", &[1.5e9], 2);
+    check_awp2_admission("mfs", "hogbom", "I", &[1.5e9], 2, false);
 }
 
 /// AWP2 shares one admitted kernel set across the spectral cube planes.
@@ -151,7 +158,7 @@ fn awp2_cube_stays_within_its_admission() {
     if !alone("aw::awp2_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", "hogbom", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
+    check_awp2_admission("cube", "hogbom", "I", &[1.2e9, 1.5e9, 1.8e9], 1, false);
 }
 
 /// The nearest-cube route also admits a single native window of many channels.
@@ -160,7 +167,7 @@ fn awp2_nearest_cube_stays_within_its_admission() {
     if !alone("aw::awp2_nearest_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", "hogbom", "I", &[1.5e9], 3);
+    check_awp2_admission("cube", "hogbom", "I", &[1.5e9], 3, false);
 }
 
 /// The shared aperture is charged beside four gridded polarizations.
@@ -169,7 +176,7 @@ fn awp2_polarized_cube_stays_within_its_admission() {
     if !alone("aw::awp2_polarized_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", "hogbom", "IQUV", &[1.5e9], 3);
+    check_awp2_admission("cube", "hogbom", "IQUV", &[1.5e9], 3, false);
 }
 
 /// The two-term MFS solve holds its Taylor products alongside three beam kernels.
@@ -178,7 +185,7 @@ fn awp2_taylor_stays_within_its_admission() {
     if !alone("aw::awp2_taylor_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("mfs", "mtmfs", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
+    check_awp2_admission("mfs", "mtmfs", "I", &[1.2e9, 1.5e9, 1.8e9], 1, false);
 }
 
 /// The cube kernels, Taylor solve, projected model and output families
@@ -188,7 +195,17 @@ fn awp2_mvc_stays_within_its_admission() {
     if !alone("aw::awp2_mvc_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("mvc", "mtmfs", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
+    check_awp2_admission("mvc", "mtmfs", "I", &[1.2e9, 1.5e9, 1.8e9], 1, false);
+}
+
+/// Squinted Stokes I MVC retains PA geometry and W-plane kernels alongside
+/// the cube and Taylor products.
+#[test]
+fn awp2_squinted_mvc_stays_within_its_admission() {
+    if !alone("aw::awp2_squinted_mvc_stays_within_its_admission") {
+        return;
+    }
+    check_awp2_admission("mvc", "mtmfs", "I", &[1.2e9], 16, true);
 }
 
 fn check_awp2_admission(
@@ -197,10 +214,11 @@ fn check_awp2_admission(
     stokes: &str,
     frequencies: &[f64],
     channels_per_window: usize,
+    squint: bool,
 ) {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set =
-        super::l_band_observation(root.path(), "VLA", frequencies, channels_per_window);
+        l_band_observation(root.path(), "VLA", frequencies, channels_per_window, squint);
     let mut ms = casa_ms::MeasurementSet::open(&measurement_set).unwrap();
     for spw in 0..frequencies.len() {
         ms.spectral_window_mut()
@@ -227,6 +245,11 @@ fn check_awp2_admission(
         "evla_surface": evla_surface(root.path()),
         "stage_timing": true,
     });
+    if squint {
+        values["computepastep"] = json!(90.0);
+        values["wprojplanes"] = json!(2);
+        values["weighting"] = json!("uniform");
+    }
     let output_channels = if mode == "mvc" {
         values["nchan"] = json!(3);
         values["cycleniter"] = json!(2);
@@ -248,12 +271,16 @@ fn check_awp2_admission(
     if deconvolver == "mtmfs" {
         values["niter"] = json!(10);
     }
+    if squint {
+        values["perchanweightdensity"] = json!(true);
+    }
     let request = imaging::request(values);
     let mut breaches = Vec::new();
     let measured = check(&mut breaches, "AWP2", &request, 1, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
     let outcome = measured.outcome.unwrap();
     if mode == "mvc" {
+        assert_eq!(outcome.problem.requires_parallactic_angles(), squint);
         assert!(
             outcome.major_cycle_count > 1,
             "MVC refreshes the cube model"
@@ -283,4 +310,115 @@ fn check_awp2_admission(
         stokes.len(),
         "AWP2 keeps every requested Stokes plane",
     );
+    if squint {
+        let density = outcome.problem.weighting().density_scope();
+        assert!(density.is_continuum());
+        assert_eq!(density.fields().unwrap().count(), 2);
+        let channel_centres = |outcome: &casa_imaging_application::ImagingOutcome| {
+            (0..output_channels)
+                .map(|channel| {
+                    outcome
+                        .problem
+                        .geometry()
+                        .spectral()
+                        .channel_centre_hz(channel)
+                })
+                .collect::<Vec<_>>()
+        };
+        let both_fields = channel_centres(&outcome);
+        drop(outcome);
+
+        let mut first_field = request;
+        first_field.vis[0].field = Some("0".to_string());
+        first_field.imagename = root.path().join("awp2-field-zero");
+        first_field.niter = 0;
+        let first = check(
+            &mut breaches,
+            "AWP2 first selected field",
+            &first_field,
+            1,
+            AMPLE,
+        );
+        assert!(breaches.is_empty(), "{breaches:#?}");
+        assert_eq!(both_fields, channel_centres(&first.outcome.unwrap()));
+    }
+}
+
+pub(super) fn l_band_observation(
+    root: &Path,
+    telescope: &str,
+    frequencies_hz: &[f64],
+    channels_per_window: usize,
+    two_fields: bool,
+) -> PathBuf {
+    let measurement_set = root.join(format!("admission-{telescope}.ms"));
+    let mut antennas = tutorial_vla_a_antennas();
+    let count = antennas.len() as f64;
+    let centroid = antennas.iter().fold([0.0; 3], |sum, antenna| {
+        [
+            sum[0] + antenna.position_m[0] / count,
+            sum[1] + antenna.position_m[1] / count,
+            sum[2] + antenna.position_m[2] / count,
+        ]
+    });
+    for antenna in &mut antennas {
+        for (position, centre) in antenna.position_m.iter_mut().zip(centroid) {
+            *position = centre + (*position - centre) / 35.0;
+        }
+    }
+    let mut request = SyntheticObservationRequest::vla_ppdisk(
+        root.join("unused.fits"),
+        &measurement_set,
+        antennas,
+    );
+    request.telescope_name = telescope.to_string();
+    request.duration_seconds = 3_600.0;
+    request.integration_seconds = 60.0;
+    if two_fields {
+        use casa_ms::simulation::SyntheticField;
+        let [ra, dec] = request.phase_center_rad;
+        request.fields = vec![
+            SyntheticField {
+                name: request.field_name.clone(),
+                phase_center_rad: [ra, dec],
+            },
+            SyntheticField {
+                name: "offset".to_string(),
+                phase_center_rad: [ra + 0.0005, dec + 0.0005],
+            },
+        ];
+    }
+    request.spectral_windows = frequencies_hz
+        .iter()
+        .enumerate()
+        .map(|(index, &frequency)| SyntheticSpectralSetup {
+            name: format!("admission-lband-{index}"),
+            start_frequency_hz: frequency,
+            channel_width_hz: 8.0e6,
+            channel_count: channels_per_window,
+        })
+        .collect();
+    request.model = Some(SyntheticSkyModel::AnalyticComponents {
+        path: None,
+        schema_version: Some(1),
+        name: Some("admission-aw".to_string()),
+        components: vec![SyntheticAnalyticComponent::Point {
+            name: Some("point".to_string()),
+            l_rad: 0.0,
+            m_rad: 0.0,
+            spectrum: SyntheticAnalyticSpectrum {
+                flux_jy: 1.0,
+                spectral_index: -0.7,
+                reference_frequency_hz: Some(1.5e9),
+                line_peak_jy: 0.0,
+                line_center_fraction: 0.5,
+                line_sigma_fraction: 0.1,
+                absorption_peak_jy: 0.0,
+                absorption_center_fraction: 0.5,
+                absorption_sigma_fraction: 0.1,
+            },
+        }],
+    });
+    generate_synthetic_observation_ms(&request).expect("synthesise the EVLA MS");
+    measurement_set
 }

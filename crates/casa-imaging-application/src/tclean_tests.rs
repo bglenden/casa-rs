@@ -438,6 +438,52 @@ fn awp2_mvc_admits_natural_flatnoise_stokes_i_with_zero_w() {
     }
 }
 
+#[test]
+fn awp2_mvc_reads_squint_w_planes_and_continuum_weighting() {
+    let values = json!({
+        "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs",
+        "nchan": -1, "stokes": "I", "weighting": "uniform",
+        "computepastep": 15.0, "wprojplanes": 4, "perchanweightdensity": true,
+    });
+    let read = request(values.clone());
+    assert!(read.mvc_auto_channels);
+    assert_eq!(read.weighting, crate::Weighting::Uniform);
+    let crate::Gridder::Awp2 {
+        wprojplanes,
+        computepastep,
+        mosweight,
+        ..
+    } = read.gridder
+    else {
+        panic!("expected AWP2");
+    };
+    assert_eq!(wprojplanes, NonZeroUsize::new(4));
+    assert_eq!(computepastep, 15.0);
+    assert!(mosweight);
+
+    let mut global_density = values.clone();
+    global_density["mosweight"] = json!(false);
+    assert!(matches!(
+        request(global_density).gridder,
+        crate::Gridder::Awp2 {
+            mosweight: false,
+            ..
+        }
+    ));
+    for (parameter, value) in [
+        ("weighting", json!("natural")),
+        ("normtype", json!("flatsky")),
+        ("savemodel", json!("modelcolumn")),
+        ("stokes", json!("IV")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
 /// A value casa-rs cannot honour is refused at its parameter, naming the
 /// issue that tracks it.
 #[test]
