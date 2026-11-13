@@ -110,6 +110,8 @@ pub(crate) enum JonesKind {
     /// `Tf Jones`: tropospheric phase, per channel
     /// ([`super::troposphere`]).
     Troposphere,
+    /// A full sky-side matrix, such as linear-feed ionospheric rotation.
+    SkyGeneral,
 }
 
 /// A term's values, by block and antenna.
@@ -833,7 +835,9 @@ fn apply_receptors(
 ) {
     let correlations = receptors.len();
     match kind {
-        JonesKind::Troposphere | JonesKind::General => unreachable!("this term has its own values"),
+        JonesKind::Troposphere | JonesKind::General | JonesKind::SkyGeneral => {
+            unreachable!("this term has its own values")
+        }
         JonesKind::Gain | JonesKind::SkyGain => {
             // A cell has at most four correlations.
             let mut factors = [Complex32::new(1.0, 0.0); 4];

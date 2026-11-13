@@ -408,6 +408,7 @@ mod tests {
             seed,
             level: NoiseLevel::Simple(0.5),
             ordinal,
+            baseline: Vec::new(),
         }
     }
 

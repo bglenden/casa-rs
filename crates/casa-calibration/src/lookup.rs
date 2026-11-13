@@ -34,6 +34,12 @@ use crate::model::CalibrationParameterFamily;
 use crate::plan::{ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode};
 use crate::summary::summarize_table;
 
+#[path = "lookup_baseline.rs"]
+mod baseline;
+#[path = "lookup_bpoly.rs"]
+mod bpoly;
+#[path = "lookup_fringe.rs"]
+mod fringe;
 #[path = "lookup_real.rs"]
 mod real;
 #[path = "lookup_time.rs"]
@@ -122,6 +128,7 @@ pub struct CalibrationTableLookup {
     /// solutions across the fields, in time order.
     across_fields: Option<HashMap<(i32, i32), Vec<CalibrationSolution>>>,
     advanced_time: Option<TimePlan>,
+    baseline_antennas: Option<usize>,
 }
 
 /// One antenna's solution: CPARAM's values and FLAG, per receptor and
@@ -339,6 +346,7 @@ impl CalibrationTableLookup {
             interp,
             across_fields,
             advanced_time: None,
+            baseline_antennas: None,
         })
     }
 

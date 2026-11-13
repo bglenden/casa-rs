@@ -36,7 +36,11 @@ impl Simulator {
         }))
     }
 
-    pub(super) fn prepare_later_noise(&mut self, jones: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
+    pub(super) fn prepare_later_noise(
+        &mut self,
+        jones: &[Arc<HeldTerm>],
+        additive: &[crate::corrupt::NoiseApplication],
+    ) -> SimulatorResult<()> {
         for index in 0..self.noise_terms.len() {
             let term = &self.noise_terms[index];
             if self.antennas.len() != term.domain.antennas {
@@ -53,6 +57,9 @@ impl Simulator {
                     && term.snapshot.is_none()
                     && self.scans.iter().skip(term.domain.scans).any(|scan| {
                         term.domain.covers(scan.spectral_window_id)
+                            && additive
+                                .iter()
+                                .all(|term| term.covers(scan.spectral_window_id))
                             && jones
                                 .iter()
                                 .all(|term| term.covers(scan.spectral_window_id))

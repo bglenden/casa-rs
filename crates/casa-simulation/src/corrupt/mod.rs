@@ -130,7 +130,7 @@ impl PartialEq for NoiseLevel {
 
 /// One application of a noise term: the noise one `corrupt` adds for one
 /// `setnoise` term.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct NoiseApplication {
     pub(crate) domain: Arc<noise_domain::NoiseDomain>,
     /// The seed in force when the term was set (`sm.setseed`).
@@ -140,6 +140,23 @@ pub(crate) struct NoiseApplication {
     /// How many times the term had been applied before; below
     /// [`MAXIMUM_APPLICATIONS`].
     pub(crate) ordinal: u32,
+    /// Inverse M/Mf factors on the additive side of CASA's simulation pivot.
+    pub(crate) baseline: Vec<Arc<offline::OfflineNoise>>,
+}
+
+impl PartialEq for NoiseApplication {
+    fn eq(&self, other: &Self) -> bool {
+        self.domain == other.domain
+            && self.seed == other.seed
+            && self.level == other.level
+            && self.ordinal == other.ordinal
+            && self.baseline.len() == other.baseline.len()
+            && self
+                .baseline
+                .iter()
+                .zip(&other.baseline)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+    }
 }
 
 impl NoiseApplication {
@@ -164,6 +181,9 @@ impl NoiseApplication {
     /// (`simplenoise`): σ under [`Self::key`]; `None` when σ depends on the
     /// row (the Tsys modes).
     pub(crate) fn uniform(&self) -> Option<CellNoise> {
+        if !self.baseline.is_empty() {
+            return None;
+        }
         match self.level {
             NoiseLevel::Simple(sigma_jy) => Some(CellNoise::new(self.key(), sigma_jy)),
             NoiseLevel::Fixed(_)
@@ -210,7 +230,8 @@ impl NoiseApplication {
     }
 
     pub(crate) fn channel_sigma(&self) -> bool {
-        matches!(self.physical_level(), NoiseLevel::TsysAtm(_))
+        !self.baseline.is_empty()
+            || matches!(self.physical_level(), NoiseLevel::TsysAtm(_))
             || matches!(self.physical_level(), NoiseLevel::Snapshot(snapshot) if snapshot.kind.depends_on_frequency())
     }
 
@@ -310,7 +331,7 @@ impl<'s> NoiseScratch<'s> {
 
     /// The most a scratch for windows of at most `channels` channels holds.
     pub(crate) fn bytes(channels: usize) -> u64 {
-        (channels * size_of::<f32>()) as u64
+        (channels * (size_of::<f32>() + 4 * size_of::<Complex32>())) as u64
     }
 
     /// σ per channel of a row of `row`'s antennas: s_i(c)·s_j(c).

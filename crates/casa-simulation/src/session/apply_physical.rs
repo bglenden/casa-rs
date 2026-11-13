@@ -7,6 +7,8 @@ use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 
 pub(super) struct Geometry {
     elevations: Vec<f64>,
+    magnetic_gauss: Vec<f64>,
+    band_hz: [f64; 2],
 }
 
 impl Geometry {
@@ -15,13 +17,20 @@ impl Geometry {
         kind: AppliedKind,
         field: usize,
         time: f64,
+        ionosphere_height_m: f64,
+        band_hz: [f64; 2],
     ) -> SimulatorResult<Self> {
         let mut result = Self {
             elevations: Vec::new(),
+            magnetic_gauss: Vec::new(),
+            band_hz,
         };
         if !matches!(
             kind,
-            AppliedKind::Opacity | AppliedKind::GainCurve | AppliedKind::PowerCurve
+            AppliedKind::Opacity
+                | AppliedKind::GainCurve
+                | AppliedKind::PowerCurve
+                | AppliedKind::IonosphereLinear
         ) {
             return Ok(result);
         }
@@ -34,6 +43,16 @@ impl Geometry {
                 .with_epoch(epoch.clone())
                 .with_position(MPosition::new_itrf(x, y, z))
                 .with_measures(sm.options.measures.clone());
+            if matches!(kind, AppliedKind::IonosphereLinear) {
+                let field = casa_types::measures::earth_magnetic::calculate_igrf(
+                    ionosphere_height_m,
+                    &direction,
+                    &frame,
+                )
+                .map_err(raised)?;
+                result.magnetic_gauss.push(field.los_field_nt * 1e-5);
+                continue;
+            }
             debug_assert_eq!(index, result.elevations.len());
             let elevation = direction
                 .convert_to(DirectionRef::AZEL, &frame)
@@ -55,6 +74,30 @@ impl Geometry {
     ) -> Option<[Complex32; 2]> {
         let one = Complex32::new(1., 0.);
         match kind {
+            AppliedKind::SwitchedPower => Some(std::array::from_fn(|receptor| {
+                let parameter = receptor * 2;
+                if solution.flags[parameter * solution.channels] {
+                    one
+                } else {
+                    Complex32::new(solution.value(parameter, 0).re, 0.)
+                }
+            })),
+            AppliedKind::Fringe => Some(std::array::from_fn(|receptor| {
+                let parameter = receptor * 4;
+                if solution.flags[parameter] {
+                    return one;
+                }
+                let value = |index| f64::from(solution.value(parameter + index, 0).re);
+                let f = frequency / 1e9;
+                let lo = self.band_hz[0].min(self.band_hz[1]) / 1e9;
+                let hi = self.band_hz[0].max(self.band_hz[1]) / 1e9;
+                let dispersion =
+                    1e-3 * std::f64::consts::TAU * (1. / f + (f - lo - hi) / (lo * hi));
+                let phase = value(0)
+                    + std::f64::consts::TAU * value(1) * ((frequency - reference) / 1e9)
+                    + value(3) * dispersion;
+                Complex32::from_polar(1., phase as f32)
+            })),
             AppliedKind::CrossPhase => Some(if solution.flags[channel] {
                 [one; 2]
             } else {
@@ -125,5 +168,38 @@ impl Geometry {
             })),
             _ => None,
         }
+    }
+
+    fn ionosphere(&self, solution: &ComplexSolution, antenna: usize, frequency: f64) -> (f64, f64) {
+        if solution.flags[0] {
+            return (0., 0.);
+        }
+        let tec = f64::from(solution.value(0, 0).re);
+        (
+            -8.4483e-7 * tec / frequency,
+            2.3649 * tec * self.magnetic_gauss[antenna] / frequency / frequency,
+        )
+    }
+
+    pub(super) fn ionosphere_matrix(
+        &self,
+        solution: &ComplexSolution,
+        antenna: usize,
+        frequency: f64,
+        circular: bool,
+    ) -> [Complex32; 4] {
+        let (delay, rotation) = self.ionosphere(solution, antenna, frequency);
+        if circular {
+            return [
+                Complex32::from_polar(1., (delay + rotation) as f32),
+                Complex32::new(0., 0.),
+                Complex32::new(0., 0.),
+                Complex32::from_polar(1., (delay - rotation) as f32),
+            ];
+        }
+        let phase = Complex32::from_polar(1., delay as f32);
+        let diagonal = phase * (-rotation).cos() as f32;
+        let off_diagonal = phase * (-rotation).sin() as f32;
+        [diagonal, off_diagonal, -off_diagonal, diagonal]
     }
 }

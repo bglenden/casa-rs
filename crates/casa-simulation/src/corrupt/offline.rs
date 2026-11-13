@@ -9,12 +9,36 @@ use num_complex::Complex32;
 struct Chunk {
     time: f64,
     field: i32,
+    scan: u32,
     offset: usize,
 }
 #[derive(Debug)]
 struct Window {
     channels: usize,
     chunks: Vec<Chunk>,
+}
+
+impl Window {
+    fn nearest_chunk(&self, time: f64, scan: usize) -> Option<&Chunk> {
+        let chunks = if self.chunks.first()?.scan == u32::MAX {
+            &self.chunks[..]
+        } else {
+            let start = self
+                .chunks
+                .partition_point(|chunk| (chunk.scan as usize) < scan);
+            let end = self
+                .chunks
+                .partition_point(|chunk| chunk.scan as usize <= scan);
+            &self.chunks[start..end]
+        };
+        let after = chunks.partition_point(|chunk| chunk.time < time);
+        let index = match (after.checked_sub(1), chunks.get(after)) {
+            (Some(before), Some(later)) if later.time - time < time - chunks[before].time => after,
+            (Some(before), _) => before,
+            _ => 0,
+        };
+        chunks.get(index)
+    }
 }
 
 /// A complete A Noise field, with its storage admitted before construction.
@@ -94,6 +118,7 @@ impl OfflineNoise {
         self.windows[window].chunks.push(Chunk {
             time,
             field,
+            scan: u32::MAX,
             offset,
         });
         self.chunks += 1;
@@ -101,11 +126,54 @@ impl OfflineNoise {
 
     pub(crate) fn sorted(mut self) -> Self {
         for window in &mut self.windows {
-            window
-                .chunks
-                .sort_unstable_by(|a, b| a.time.total_cmp(&b.time).then(a.offset.cmp(&b.offset)));
+            window.chunks.sort_unstable_by(|a, b| {
+                a.scan
+                    .cmp(&b.scan)
+                    .then(a.time.total_cmp(&b.time))
+                    .then(a.offset.cmp(&b.offset))
+            });
         }
+        let kept = self.windows.capacity() * size_of::<Window>()
+            + self
+                .windows
+                .iter()
+                .map(|w| w.chunks.capacity() * size_of::<Chunk>())
+                .sum::<usize>()
+            + self.values.capacity() * size_of::<Complex32>()
+            + 1024;
+        self._reservation.retain(kept as u64);
         self
+    }
+
+    /// Fill one admitted A-table integration from supplied baseline values.
+    /// A failed callback leaves the partially formed field unrecorded.
+    pub(crate) fn push_with<E>(
+        &mut self,
+        window: usize,
+        time: f64,
+        field: i32,
+        scan: usize,
+        mut fill: impl FnMut(usize, usize, &mut [Complex32]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let channels = self.windows[window].channels;
+        let baselines = self.antennas * (self.antennas + 1) / 2;
+        let offset = self.values.len();
+        self.values
+            .resize(offset + baselines * channels * 4, Complex32::new(0., 0.));
+        for p in 0..self.antennas {
+            for q in p..self.antennas {
+                let begin = offset + self.baseline(p, q) * channels * 4;
+                fill(p, q, &mut self.values[begin..begin + channels * 4])?;
+            }
+        }
+        self.windows[window].chunks.push(Chunk {
+            time,
+            field,
+            scan: scan as u32,
+            offset,
+        });
+        self.chunks += 1;
+        Ok(())
     }
 
     pub(crate) fn covers(&self, window: usize) -> bool {
@@ -120,18 +188,44 @@ impl OfflineNoise {
 
     pub(crate) fn add_to_cell(
         &self,
-        window: usize,
-        time: f64,
+        query: (usize, f64, usize),
         antennas: (usize, usize),
         receptors: &[[usize; 2]],
         cell: &mut [Complex32],
     ) {
-        self.add_scaled_to_cell((window, time), antennas, receptors, cell, |_| 1.);
+        self.add_scaled_to_cell(query, antennas, receptors, cell, |_| 1.);
+    }
+
+    /// Apply admitted inverse baseline factors to an additive contribution.
+    pub(crate) fn multiply_cell(
+        &self,
+        (window, time, scan): (usize, f64, usize),
+        (p, q): (usize, usize),
+        receptors: &[[usize; 2]],
+        cell: &mut [Complex32],
+    ) {
+        let Some(window) = self.windows.get(window) else {
+            return;
+        };
+        let Some(chunk) = window.nearest_chunk(time, scan) else {
+            return;
+        };
+        if p >= self.antennas || q >= self.antennas {
+            return;
+        }
+        let reverse = p > q;
+        let offset = chunk.offset + self.baseline(p.min(q), p.max(q)) * window.channels * 4;
+        for (index, value) in cell.iter_mut().enumerate() {
+            let [r1, r2] = receptors[index % receptors.len()];
+            let parameter = if reverse { 2 * r2 + r1 } else { 2 * r1 + r2 };
+            let factor = self.values[offset + index / receptors.len() * 4 + parameter];
+            *value *= if reverse { factor.conj() } else { factor };
+        }
     }
 
     pub(crate) fn add_scaled_to_cell(
         &self,
-        (window, time): (usize, f64),
+        (window, time, scan): (usize, f64, usize),
         antennas: (usize, usize),
         receptors: &[[usize; 2]],
         cell: &mut [Complex32],
@@ -140,15 +234,8 @@ impl OfflineNoise {
         let Some(window) = self.windows.get(window).filter(|w| !w.chunks.is_empty()) else {
             return;
         };
-        let after = window.chunks.partition_point(|c| c.time < time);
-        let index = match (after.checked_sub(1), window.chunks.get(after)) {
-            (Some(before), Some(later))
-                if later.time - time < time - window.chunks[before].time =>
-            {
-                after
-            }
-            (Some(before), _) => before,
-            _ => 0,
+        let Some(chunk) = window.nearest_chunk(time, scan) else {
+            return;
         };
         let (p, q) = antennas;
         if p >= self.antennas || q >= self.antennas {
@@ -156,7 +243,7 @@ impl OfflineNoise {
         }
         let reverse = p > q;
         let (p, q) = if reverse { (q, p) } else { (p, q) };
-        let offset = window.chunks[index].offset + self.baseline(p, q) * window.channels * 4;
+        let offset = chunk.offset + self.baseline(p, q) * window.channels * 4;
         for (index, value) in cell.iter_mut().enumerate() {
             let [r1, r2] = receptors[index % receptors.len()];
             let parameter = if reverse { 2 * r2 + r1 } else { 2 * r1 + r2 };
@@ -196,5 +283,47 @@ impl OfflineNoise {
                     })
                 })
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supplied_noise_keeps_overlapping_scan_context() {
+        let window = Window {
+            channels: 1,
+            chunks: vec![
+                Chunk {
+                    time: 5.,
+                    field: 0,
+                    scan: 0,
+                    offset: 0,
+                },
+                Chunk {
+                    time: 15.,
+                    field: 0,
+                    scan: 0,
+                    offset: 4,
+                },
+                Chunk {
+                    time: 5.,
+                    field: 1,
+                    scan: 1,
+                    offset: 8,
+                },
+                Chunk {
+                    time: 15.,
+                    field: 1,
+                    scan: 1,
+                    offset: 12,
+                },
+            ],
+        };
+        assert_eq!(window.nearest_chunk(5., 0).unwrap().offset, 0);
+        assert_eq!(window.nearest_chunk(5., 1).unwrap().offset, 8);
+        assert_eq!(window.nearest_chunk(12., 1).unwrap().offset, 12);
+        assert!(window.nearest_chunk(5., 2).is_none());
     }
 }
