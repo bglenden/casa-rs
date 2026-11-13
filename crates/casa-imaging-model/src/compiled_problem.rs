@@ -340,6 +340,9 @@ pub enum InstrumentModel {
     /// beams among them), consumed through validated paired AW convolution
     /// functions.
     CasaEvlaWidebandAwV1,
+    /// VLA L-band AWPLPG response with one W plane and the real RL
+    /// aperture beam shared by all correlations.
+    CasaVlaAwplpg,
 }
 
 /// Science-owned A/W-projection controls compiled into one paired operator.
@@ -2104,6 +2107,7 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
                         | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
                         | InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1
                         | InstrumentModel::CasaEvlaWidebandAwV1
+                        | InstrumentModel::CasaVlaAwplpg
                 )
             )
     ) {

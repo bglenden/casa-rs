@@ -89,9 +89,9 @@ fn scales_px(request: &ImagingRequest) -> Vec<f64> {
 /// gridder, unit response otherwise.
 pub(super) fn normalization(request: &ImagingRequest) -> ProductNormalization {
     match &request.gridder {
-        Gridder::Mosaic { normtype, .. } | Gridder::Awproject(AwProjection { normtype, .. }) => {
-            *normtype
-        }
+        Gridder::Mosaic { normtype, .. }
+        | Gridder::Awproject(AwProjection { normtype, .. })
+        | Gridder::Awp2 { normtype, .. } => *normtype,
         Gridder::Standard { .. } | Gridder::Wproject { .. } => ProductNormalization::UnitResponse,
     }
 }

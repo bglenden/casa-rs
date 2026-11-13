@@ -683,3 +683,47 @@ fn concurrent_holders_hold_at_most_their_charge() {
         "{WORKERS} workers held {peak}, charged {charge}"
     );
 }
+
+#[test]
+fn awp2_stages_hold_at_most_what_they_state() {
+    if !alone("awp2_stages_hold_at_most_what_they_state") {
+        return;
+    }
+    let geometry = geometry(100, 8.0_f64.to_radians() / 3600.0, GridPadding::None);
+    let sampling = casa_imaging_operator::Awp2Sampling::new(&geometry).unwrap();
+    let frequencies = [1.0e9, 1.5e9];
+    let surface = EvlaDishSurface::new(
+        (0..=1250)
+            .map(|i| {
+                let r = f64::from(i) / 100.0;
+                [r, 0.028 * r * r, 0.056 * r]
+            })
+            .collect(),
+    )
+    .unwrap();
+    let screens_bytes = sampling.screens_bytes(frequencies.len());
+    let (peak, _, screens) = measure(|| sampling.screens(&frequencies, surface).unwrap());
+    assert!(
+        peak <= screens_bytes,
+        "aperture scratch {peak} exceeds {screens_bytes}"
+    );
+    let kernel_bytes = screens.kernel_bytes(&geometry);
+    let polarization = routing();
+    let (peak, _, set) =
+        measure(|| screens.finish(&geometry, &polarization, Box::new(frequencies)));
+    assert!(
+        peak <= kernel_bytes,
+        "kernel construction {peak} exceeds {kernel_bytes}"
+    );
+    // The screens were already live at the start of construction. Take
+    // another baseline after dropping the set to measure its retained heap.
+    let before_drop = LIVE.load(Ordering::Relaxed);
+    let resident = set.resident_bytes();
+    drop(set);
+    let measured = before_drop - LIVE.load(Ordering::Relaxed);
+    assert_eq!(
+        measured, resident,
+        "all resident AWP2 data and weight taps stay charged"
+    );
+    eprintln!("AWP2 kernel construction {peak}/{kernel_bytes} B, resident {resident} B");
+}

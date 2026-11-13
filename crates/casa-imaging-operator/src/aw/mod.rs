@@ -6,6 +6,7 @@
 //! and native EVLA generation that writes the same images
 //! (`AWConvFunc::makeConvFunction2`, `CFCell::makePersistent`).
 
+mod awp2;
 mod cache;
 mod cell_image;
 mod evla;
@@ -21,6 +22,7 @@ use casa_types::Correlation;
 use num_complex::Complex32;
 use thiserror::Error;
 
+pub use awp2::{Awp2, Awp2Sampling, Awp2Screens};
 pub use cache::{CacheBound, CacheCharge};
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};

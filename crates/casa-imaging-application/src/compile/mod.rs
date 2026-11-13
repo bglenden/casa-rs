@@ -11,6 +11,7 @@
 
 #[cfg(test)]
 mod aw_plan_tests;
+mod awp2;
 mod continuation;
 mod direction;
 mod domains;
@@ -364,10 +365,12 @@ pub(crate) fn prepare_with_view_hooks(
         start_model: continuation.start_model,
         existing: continuation.existing,
         minor_cycle_image_response: match &request.gridder {
-            Gridder::Mosaic { .. } | Gridder::Awproject(_) => Some(MinorCycleImageResponse::new(
-                specification::normalization(request),
-                specification::primary_beam_validity(request)?,
-            )?),
+            Gridder::Mosaic { .. } | Gridder::Awproject(_) | Gridder::Awp2 { .. } => {
+                Some(MinorCycleImageResponse::new(
+                    specification::normalization(request),
+                    specification::primary_beam_validity(request)?,
+                )?)
+            }
             Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
         },
         snapshot,
@@ -732,7 +735,7 @@ fn geometry(
 ) -> GeometryInput {
     let direction_dependent = matches!(
         request.gridder,
-        Gridder::Mosaic { .. } | Gridder::Awproject(_)
+        Gridder::Mosaic { .. } | Gridder::Awproject(_) | Gridder::Awp2 { .. }
     );
     GeometryInput::new(
         domains.iter().map(PreparedImageDomain::spec).collect(),
@@ -758,7 +761,7 @@ fn primary_beam_model(
     pb_antennas: &[bool],
 ) -> Result<Option<AnalyticPrimaryBeamModel>, PrepareError> {
     Ok(match request.gridder {
-        Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
+        Gridder::Mosaic { .. } | Gridder::Awproject(_) | Gridder::Awp2 { .. } => {
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. }
@@ -824,6 +827,7 @@ pub(crate) struct Deployment {
     /// Every domain's output directory.
     output_directories: Vec<PathBuf>,
     aw: Option<AwPlan>,
+    awp2: Option<crate::Awp2Deployment>,
 }
 
 /// The run's runtime but for its device, which the compiled problem resolves
@@ -895,6 +899,7 @@ impl Deployment {
                 diagnostics,
             },
             publication: self.publication,
+            awp2: self.awp2,
             aw_catalog: self
                 .aw
                 .map(|aw| aw.deploy((&host, &resource_policy)))
@@ -1061,6 +1066,7 @@ fn deployment(
             .iter()
             .map(|domain| parent(&domain.output))
             .collect(),
+        awp2: awp2::plan(request, surveyed, &domains[0], context)?,
         aw: match &request.gridder {
             Gridder::Awproject(aw) => Some(aw_plan(request, aw, surveyed, context)?),
             _ => None,

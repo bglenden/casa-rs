@@ -134,3 +134,38 @@ fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
+
+/// The single-field AWPLPG operator admits its aperture scratch, tap
+/// interpolation and all resident data and weight kernels.
+#[test]
+fn awp2_stays_within_its_admission() {
+    if !alone("aw::awp2_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = super::l_band_observation(root.path(), "VLA");
+    let mut ms = casa_ms::MeasurementSet::open(&measurement_set).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(
+            0,
+            "MEAS_FREQ_REF",
+            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+        )
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    warm(&measurement_set, root.path());
+    let request = imaging::request(json!({
+        "vis": measurement_set,
+        "imagename": root.path().join("awp2"),
+        "gridder": "awp2",
+        "imsize": 100,
+        "cell": "4arcsec",
+        "evla_surface": evla_surface(root.path()),
+        "stage_timing": true,
+    }));
+    let mut breaches = Vec::new();
+    check(&mut breaches, "AWP2 dirty MFS", &request, 1, AMPLE);
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}

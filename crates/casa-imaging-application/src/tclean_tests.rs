@@ -21,6 +21,7 @@ fn modes() -> Vec<Value> {
         json!({ "specmode": "cube", "nchan": 4 }),
         json!({ "gridder": "wproject" }),
         json!({ "gridder": "mosaic", "mosweight": false }),
+        json!({ "gridder": "awp2" }),
         json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf", "wprojplanes": 32 }),
         json!({
             "gridder": "awproject",
@@ -402,7 +403,17 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "facets",
             "#1063",
         ),
-        (json!({ "gridder": "awp2" }), "gridder", "#1071"),
+        (json!({ "gridder": "awp2", "niter": 1 }), "gridder", "#1071"),
+        (
+            json!({ "gridder": "awp2", "wprojplanes": 2 }),
+            "wprojplanes",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "computepastep": 90.0 }),
+            "computepastep",
+            "#1071",
+        ),
         (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#980"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
         // An mfs image's REST axis grids the data's frequencies as they are.

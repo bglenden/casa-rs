@@ -41,6 +41,41 @@ pub(super) fn validate_ft_padding(
     }
 }
 
+pub(crate) fn validate_awp2_scope(
+    request: &super::ImagingRequest,
+) -> Result<(), super::InvalidRequest> {
+    use super::{
+        Deconvolver, FrequencyRef, Gridder, InvalidRequest, PolarizationCoordinate, SaveModel,
+        SpecMode, Weighting,
+    };
+    if matches!(request.gridder, Gridder::Awp2 { .. })
+        && (request.specmode != SpecMode::Mfs
+            || request.mvc_output_channels.is_some()
+            || request.mvc_auto_channels
+            || request.deconvolver != Deconvolver::Hogbom
+            || request.niter != 0
+            || request.weighting != Weighting::Natural
+            || request.stokes != [PolarizationCoordinate::StokesI]
+            || request.vis.len() != 1
+            || request.outframe != FrequencyRef::LSRK
+            || request.phasecenter.is_some()
+            || request.phasecenter_field.is_some()
+            || request.outlierfile.is_some()
+            || request.has_start_model()
+            || request.tclean_restart
+            || request.savemodel != SaveModel::None
+            || !request.calcpsf
+            || !request.calcres
+            || request.gridprecision == Some(GridPrecision::F32))
+    {
+        return Err(InvalidRequest {
+            parameters: "gridder",
+            reason: "AWP2 currently supports a fresh natural-weighted Stokes I dirty MFS run with the selected field as phase centre and double-precision gridding (#1071)",
+        });
+    }
+    Ok(())
+}
+
 pub(super) fn major_cycle_limit<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<usize>, D::Error> {

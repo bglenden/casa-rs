@@ -473,7 +473,9 @@ impl GeometryPlan {
                     .iter()
                     .any(|chart| chart.centre.frame() != DirectionFrame::J2000));
         let responses = match problem.science().instrument_model() {
-            None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
+            None | Some(InstrumentModel::CasaEvlaWidebandAwV1 | InstrumentModel::CasaVlaAwplpg) => {
+                Responses::None
+            }
             Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
                 Responses::Uniform(AntennaResponseClass::CasaAca7m)
             }

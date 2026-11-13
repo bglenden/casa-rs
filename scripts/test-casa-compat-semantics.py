@@ -43,9 +43,9 @@ class SemanticReferenceTests(unittest.TestCase):
 
         compute = next(b for b in self.surface["bindings"] if b["name"] == "computepastep")
         gate = compute["unimplemented"]["applies_when"]
-        self.assertEqual(semantics.condition(gate), "(gridder='awphpg' or gridder='awprojectft' or gridder='awp2')")
+        self.assertEqual(semantics.condition(gate), "(gridder='awphpg' or gridder='awprojectft')")
         gate["predicates"][1]["value"]["value"] = "awproject"
-        self.assertEqual(semantics.condition(gate), "(gridder='awphpg' or gridder='awproject' or gridder='awp2')")
+        self.assertEqual(semantics.condition(gate), "(gridder='awphpg' or gridder='awproject')")
 
     def test_signature_recording_does_not_become_a_passing_behavior_result(self):
         self.assertNotEqual(self.data["evidence"]["signature"]["state"], "passed")

@@ -1411,7 +1411,11 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
 /// pads drawn 35 times towards their centroid (a 41″ beam), a 1 Jy point
 /// at the phase centre, two 8 MHz channels at 1.5 GHz over an hour.
 fn evla_observation(root: &Path) -> PathBuf {
-    let measurement_set = root.join("admission-EVLA.ms");
+    l_band_observation(root, "EVLA")
+}
+
+fn l_band_observation(root: &Path, telescope: &str) -> PathBuf {
+    let measurement_set = root.join(format!("admission-{telescope}.ms"));
     let mut antennas = tutorial_vla_a_antennas();
     let count = antennas.len() as f64;
     let centroid = antennas.iter().fold([0.0; 3], |sum, antenna| {
@@ -1431,7 +1435,7 @@ fn evla_observation(root: &Path) -> PathBuf {
         &measurement_set,
         antennas,
     );
-    request.telescope_name = "EVLA".to_string();
+    request.telescope_name = telescope.to_string();
     request.duration_seconds = 3_600.0;
     request.integration_seconds = 60.0;
     request.spectral_windows = vec![SyntheticSpectralSetup {

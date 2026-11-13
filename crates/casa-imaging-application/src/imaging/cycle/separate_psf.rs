@@ -46,6 +46,7 @@ pub(crate) fn form(
             cancel: runtime.cancel.clone(),
             spill_directory: &runtime.spill_directory,
             aw_catalog: None,
+            awp2: None,
             backend: runtime.backend,
             grid_precision: runtime.grid_precision,
             ft_padding: runtime.ft_padding,

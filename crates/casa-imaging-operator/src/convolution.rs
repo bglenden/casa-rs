@@ -514,6 +514,29 @@ impl ImageCorrection {
         }
     }
 
+    /// MosaicFT's sampling sinc: multiply the model and divide the dirty
+    /// image and PSF, leaving the weight image to the kernel set's rule.
+    pub(crate) fn mosaic_sinc([nx, ny]: [usize; 2], oversampling: u16) -> Self {
+        let sinc = |len: usize| {
+            (0..len)
+                .map(|index| {
+                    let x = std::f32::consts::PI * (index as f32 - (len / 2) as f32)
+                        / (len as f32 * f32::from(oversampling));
+                    if index == len / 2 {
+                        1.0
+                    } else {
+                        f64::from(x.sin() / x)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let model_x = sinc(nx);
+        let model_y = sinc(ny);
+        let image_x = model_x.iter().map(|value| 1.0 / value).collect();
+        let image_y = model_y.iter().map(|value| 1.0 / value).collect();
+        Self::split(image_x, image_y, model_x, model_y)
+    }
+
     /// Bytes the four correction vectors of a grid of `grid` hold.
     #[must_use]
     pub const fn bytes(grid: [usize; 2]) -> u64 {

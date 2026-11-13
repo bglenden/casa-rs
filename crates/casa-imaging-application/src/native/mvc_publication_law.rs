@@ -47,6 +47,7 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
         runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
@@ -211,6 +212,7 @@ fn mvc_native_publication_honours_precancel_before_admission() {
         mut runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
@@ -291,6 +293,7 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
         runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
@@ -401,6 +404,7 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
         mut runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
