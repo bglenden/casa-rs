@@ -37,6 +37,7 @@ mod corruption;
 pub mod error;
 mod feeds;
 pub mod fields;
+pub(crate) mod focus;
 mod from_ms;
 mod gains;
 mod later_noise;

@@ -179,7 +179,12 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             .flat_map(|phase| phase.noise_for_scan(0))
             .any(crate::corrupt::NoiseApplication::needs_time)
             || plan.corrupts_by_jones()
-            || plan.has_query(),
+            || plan.has_query()
+            || plan
+                .phases()
+                .iter()
+                .flat_map(|phase| phase.predictions())
+                .any(|(prediction, _)| prediction.focus.is_some()),
         noise_scales: NoiseScales::of(plan, channels, None),
     };
     let admission = admit_patch(resources, &shape, &columns, prediction.as_ref())?;

@@ -637,7 +637,8 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     assert_eq!(outcome, CasaOutcome::Raises);
     assert!(message.starts_with("No such VisVector type"), "{message}");
 
-    // A near-field distance on the last field CASA defines.
+    // Last-field focusing is supported; field_distance.rs supplies the
+    // independent CASA science comparisons.
     let mut near = session(
         &directory.path().join("near.ms"),
         "ALMA",
@@ -656,10 +657,9 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         3.0e11,
     )
     .expect("setfield");
-    assert_eq!(
-        refusal(near.predict(&spec(&[&model]))).0,
-        CasaOutcome::NotYetImplemented
-    );
+    near.predict(&spec(&[&model]))
+        .expect("finite-distance prediction");
+    near.close().expect("close focused prediction");
 }
 
 #[test]

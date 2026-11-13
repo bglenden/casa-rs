@@ -21,7 +21,7 @@
 pub(crate) mod append;
 mod components;
 mod data;
-mod geometry;
+pub(crate) mod geometry;
 mod grids;
 mod patch;
 mod pipeline;

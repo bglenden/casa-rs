@@ -59,6 +59,8 @@ pub struct SkyModel {
     /// The most the image's tile cache holds once a plane is read
     /// ([`Self::cache_bytes`]).
     cache_bytes: u64,
+    /// Optional finite focus distance from the image's miscellaneous record.
+    pub(crate) distance_m: f64,
 }
 
 /// Where a model's planes come from.
@@ -200,6 +202,34 @@ impl SkyModel {
                 })?
                 .as_angles()
         };
+        let distance_m = match image.misc_info().get("distance") {
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(value))) => *value,
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float32(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int64(value))) => *value as f64,
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int16(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt32(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt16(value))) => {
+                f64::from(*value)
+            }
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt8(value))) => {
+                f64::from(*value)
+            }
+            Some(_) => {
+                return Err(PredictError::InvalidModel(
+                    "image distance must be numeric".into(),
+                ));
+            }
+            None => 0.,
+        };
         Ok(Self {
             path: path.to_path_buf(),
             pixels: Pixels::Image(Box::new(Mutex::new(image))),
@@ -214,6 +244,7 @@ impl SkyModel {
             coordinates,
             first_spectral_world: centre[3],
             cache_bytes,
+            distance_m,
         })
     }
 
@@ -416,6 +447,7 @@ impl SkyModel {
             coordinates: self.coordinates.clone(),
             first_spectral_world: self.first_spectral_world,
             cache_bytes: 0,
+            distance_m: self.distance_m,
         })
     }
 
