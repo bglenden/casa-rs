@@ -210,6 +210,8 @@ pub(crate) struct Prediction {
     pub(crate) tangent: casa_types::measures::direction::MDirection,
     frame_measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
     phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
+    pub(crate) focus: Option<super::focus::Positions>,
+    pub(crate) distance_m: f64,
     /// The grids, or what `close` prepares each field's from.
     grids: StepGrids,
     /// The mosaic machine's pointing offsets, from the model's pixel
@@ -554,8 +556,8 @@ impl Simulator {
     ///   and casa-rs does not (other than Stokes I/Q/U/V, J2000,
     ///   direction–Stokes–spectral axes), a component casa-rs does not
     ///   predict (a direction not in J2000, or a flux, spectrum or shape
-    ///   casa-components does not evaluate), a near-field distance on the
-    ///   last field, scans whose windows differ in correlations, or
+    ///   casa-components does not evaluate), scans whose windows differ in
+    ///   correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
     ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
     ///   for pointings `observemany` moved off their fields.
@@ -584,15 +586,6 @@ impl Simulator {
             return Err(SimulatorError::refused(
                 "Failed to create SkyEquation: No model images found",
             ));
-        }
-        if let Some(field) = self.fields.last()
-            && field.distance_m != 0.0
-        {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict refocused to the distance {} m of field {} is not yet implemented in \
-                 casa-rs (#1053)",
-                field.distance_m, field.name
-            )));
         }
         // `createSkyEquation` reads the component list before the images.
         let list = read_component_lists(&lists, &self.options.resources)?;
@@ -669,9 +662,20 @@ impl Simulator {
         } else {
             None
         };
-        let predictions = opened_models(model, &images)
+        let mut predictions = opened_models(model, &images)
             .map(|model| self.prepare_image(model?, &correlations, beam, image_centres.clone()))
             .collect::<SimulatorResult<Vec<_>>>()?;
+        if predictions
+            .iter()
+            .any(|prediction| prediction.distance_m != 0.)
+        {
+            let focus = super::focus::capture(self)?;
+            for prediction in &mut predictions {
+                if prediction.distance_m != 0. {
+                    prediction.focus = Some(focus.clone());
+                }
+            }
+        }
         self.data_plan.begin_prediction(spec.incremental);
         let scans = self.scans.len();
         if let Some(components) = components {
@@ -756,7 +760,13 @@ impl Simulator {
             kernel_reservation.join(reservation);
         }
         let image_beam = beam.filter(|_| machine != FtMachine::Mosaic);
+        let distance_m = self
+            .fields
+            .last()
+            .filter(|field| field.distance_m != 0.)
+            .map_or(model.distance_m, |field| field.distance_m);
         let mut prediction = self.prepare(model, operator, image_beam, kernel_reservation)?;
+        prediction.distance_m = distance_m;
         prediction.phase_centres = phase_centres;
         prediction.pointings = pointings;
         prediction.antenna_types = antenna_types;
@@ -1146,6 +1156,8 @@ impl Simulator {
             tangent,
             frame_measures: self.options.measures.clone(),
             phase_centres: None,
+            focus: None,
+            distance_m: 0.,
             grids,
             pointings: Vec::new(),
             antenna_types: Vec::new(),

@@ -104,6 +104,8 @@ mod existing_append;
 mod feeds;
 #[path = "session_memory/field_grids.rs"]
 mod field_grids;
+#[path = "session_memory/focus.rs"]
+mod focus;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
 #[path = "session_memory/heap.rs"]

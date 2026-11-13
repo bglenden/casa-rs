@@ -42,6 +42,16 @@ impl Simulator {
         kernel: SingleDishKernel,
         beam: Option<PrimaryBeam>,
     ) -> SimulatorResult<SingleDishPrediction> {
+        if self
+            .fields
+            .last()
+            .is_some_and(|field| field.distance_m != 0.)
+            || model.distance_m != 0.
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "finite-distance total-power image prediction is not yet implemented in casa-rs (#1299)",
+            ));
+        }
         if model.tangent_direction().refer() != casa_types::measures::direction::DirectionRef::J2000
         {
             return Err(SimulatorError::not_yet_implemented(
