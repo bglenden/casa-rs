@@ -61,7 +61,15 @@ pub(crate) fn validate_awp2_scope(
                     || request.savemodel != SaveModel::None))
             || request.mvc_output_channels.is_some()
             || request.mvc_auto_channels
-            || request.deconvolver != Deconvolver::Hogbom
+            || (request.deconvolver != Deconvolver::Hogbom
+                && !(request.deconvolver == Deconvolver::Mtmfs
+                    && request.specmode == SpecMode::Mfs
+                    && request.nterms == 2
+                    && request.stokes == [PolarizationCoordinate::StokesI]
+                    && computepastep >= 180.0
+                    && wprojplanes.is_none_or(|count| count.get() == 1)
+                    && request.weighting == Weighting::Natural
+                    && request.savemodel == SaveModel::None))
             || !matches!(request.weighting, Weighting::Natural | Weighting::Uniform)
             || wprojplanes.is_some_and(|count| count.get() > usize::from(u16::MAX))
             || !computepastep.is_finite()
@@ -101,7 +109,7 @@ pub(crate) fn validate_awp2_scope(
     {
         return Err(InvalidRequest {
             parameters: "gridder",
-            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted cubes with one W plane, no squint and no saved model. Unsquinted polarized imaging is available for I, Q, U, V, IV, QU and IQUV with one W plane and no saved model (#1071)",
+            reason: "AWP2 currently supports fresh double-precision Högbom MFS with natural or uniform weighting, and natural-weighted cubes with one W plane, no squint and no saved model. Unsquinted polarized imaging is available for I, Q, U, V, IV, QU and IQUV with one W plane and no saved model. Natural-weighted two-term Stokes I MT-MFS also runs without squint or a saved model and with one W plane (#1071)",
         });
     }
     Ok(())
