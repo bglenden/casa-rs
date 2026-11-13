@@ -211,16 +211,16 @@
 <a href=#211 id=211 data-nosnippet>211</a>
 <a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// Write every row of the scans: `next` yields each integration with
 <a href=#213 id=213 data-nosnippet>213</a>    /// rows, as (scan, stored TIME), in MAIN order.
-<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_rows(
+<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_range(
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#216 id=216 data-nosnippet>216</a>        writer: <span class="kw-2">&amp;mut </span>MainWriter,
 <a href=#217 id=217 data-nosnippet>217</a>        <span class="kw-2">mut </span>next: <span class="kw">impl </span>Iterator&lt;Item = (usize, f64)&gt;,
-<a href=#218 id=218 data-nosnippet>218</a>        row_count: usize,
+<a href=#218 id=218 data-nosnippet>218</a>        range: std::ops::Range&lt;usize&gt;,
 <a href=#219 id=219 data-nosnippet>219</a>        batch_rows: usize,
 <a href=#220 id=220 data-nosnippet>220</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span><span class="kw-2">mut </span>first_row = <span class="number">0</span>;
-<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">while </span>first_row &lt; row_count {
-<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">let </span>rows = batch_rows.min(row_count - first_row);
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span><span class="kw-2">mut </span>first_row = range.start;
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">while </span>first_row &lt; range.end {
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">let </span>rows = batch_rows.min(range.end - first_row);
 <a href=#224 id=224 data-nosnippet>224</a>            <span class="kw">let </span>started = Instant::now();
 <a href=#225 id=225 data-nosnippet>225</a>            <span class="self">self</span>.rows.compute_geometry(<span class="kw-2">&amp;mut </span>next, rows)<span class="question-mark">?</span>;
 <a href=#226 id=226 data-nosnippet>226</a>            <span class="self">self</span>.times.geometry += started.elapsed();
