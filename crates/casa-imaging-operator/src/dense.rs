@@ -6,6 +6,7 @@
 use num_complex::{Complex32, Complex64};
 
 use crate::convolution::DenseCell;
+use crate::geometry::CellLocation;
 
 /// One oversampled convolution-function plane in CASA's layout: `side ×
 /// side` values, x fastest, with the kernel origin at `centre`. Tap `k`
@@ -42,11 +43,10 @@ impl OversampledPlane<'_> {
 pub(crate) fn dense_cell(planes: &[OversampledPlane<'_>], half_support: [u16; 2]) -> DenseCell {
     let first = planes.first().expect("a dense cell has a Mueller plane");
     let sampling = first.sampling;
-    assert!(sampling.is_multiple_of(2), "oversampling must be even");
     let support = [2 * half_support[0] + 1, 2 * half_support[1] + 1];
     let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
-    let rows = usize::from(sampling) + 1;
-    let half = i64::from(sampling / 2);
+    let rows = CellLocation::fine_rows(sampling);
+    let half = i64::from(CellLocation::fine_centre(sampling));
     let mut data = Vec::with_capacity(rows * rows * planes.len() * sx * sy);
     for oy in 0..rows {
         let off_y = oy as i64 - half;
@@ -77,7 +77,7 @@ pub(crate) fn dense_cell(planes: &[OversampledPlane<'_>], half_support: [u16; 2]
 /// Bytes the taps of [`dense_cell`]'s cell of `planes` planes at `sampling`
 /// and their tiles' sums hold for `half_support` ([`DenseCell::bytes`]).
 pub(crate) const fn dense_cell_bytes(planes: usize, sampling: u16, half_support: [u16; 2]) -> u64 {
-    let rows = sampling as usize + 1;
+    let rows = CellLocation::fine_rows(sampling);
     let taps = (2 * half_support[0] as usize + 1) * (2 * half_support[1] as usize + 1);
     (rows * rows * planes * (taps * size_of::<Complex32>() + size_of::<Complex64>())) as u64
 }
@@ -138,6 +138,29 @@ pub(crate) fn dense_cell_from_quadrant(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn odd_sampling_packs_the_two_endpoints_and_the_centre() {
+        let side = 36;
+        let values = (0..side * side)
+            .map(|index| Complex32::new(index as f32, 0.0))
+            .collect::<Vec<_>>();
+        let cell = dense_cell(
+            &[OversampledPlane {
+                values: &values,
+                side,
+                centre: [18; 2],
+                sampling: 9,
+            }],
+            [1; 2],
+        );
+        let rows = CellLocation::fine_rows(9);
+        assert_eq!(cell.data().len(), 11 * 11 * 9);
+        assert_eq!(cell.data()[4], values[13 * side + 13]);
+        assert_eq!(cell.data()[(5 * rows + 5) * 9 + 4], values[18 * side + 18]);
+        assert_eq!(cell.data()[cell.data().len() - 5], values[23 * side + 23]);
+        assert_eq!(cell.bytes() as u64, dense_cell_bytes(1, 9, [1; 2]));
+    }
 
     #[test]
     fn tiles_permute_the_oversampled_plane_by_fine_offset() {

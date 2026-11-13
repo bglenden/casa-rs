@@ -29,7 +29,7 @@ use super::spectral::PreparedSpectralAxis;
 use super::survey::WRange;
 use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, Weighting};
 
-const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+pub(super) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
 /// What the specification needs besides the request and the spectral axis.
 pub(super) struct SpecificationInputs {

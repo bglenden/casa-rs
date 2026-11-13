@@ -409,7 +409,7 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#1071",
         ),
         (
-            json!({ "gridder": "awp2", "wprojplanes": 2 }),
+            json!({ "gridder": "awp2", "wprojplanes": -1 }),
             "wprojplanes",
             "#1071",
         ),

@@ -493,15 +493,22 @@ fn kernel_set(
             let sampling = Awp2Sampling::new(geometry, deployment.single_field)?;
             let screen_charge = admission.admit(
                 "AWP2 aperture screens",
-                sampling.screens_bytes(deployment.frequencies_hz.len()),
+                sampling.screens_bytes(deployment.frequencies_hz.len(), deployment.w_planes.len()),
             )?;
             let screens = sampling.screens(
                 &deployment.frequencies_hz,
                 deployment.surface.clone(),
                 deployment.legacy_vla,
+                &deployment.w_planes,
             )?;
             let mut kernels = admission.admit(PHASE, screens.kernel_bytes(geometry))?;
-            let set = screens.finish(geometry, polarization, deployment.frequencies_hz.clone());
+            let set = screens.finish(
+                geometry,
+                polarization,
+                deployment.frequencies_hz.clone(),
+                deployment.w_planes.clone(),
+                deployment.row_frequency_hz,
+            );
             drop(screen_charge);
             kernels.retain(set.resident_bytes());
             (Box::new(set), Kernels::Admitted { _charge: kernels })

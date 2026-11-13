@@ -48,12 +48,13 @@ pub(crate) fn validate_awp2_scope(
         Deconvolver, FrequencyRef, Gridder, InvalidRequest, PolarizationCoordinate, SaveModel,
         SpecMode, Weighting,
     };
-    if matches!(request.gridder, Gridder::Awp2 { .. })
+    if let Gridder::Awp2 { wprojplanes, .. } = request.gridder
         && (request.specmode != SpecMode::Mfs
             || request.mvc_output_channels.is_some()
             || request.mvc_auto_channels
             || request.deconvolver != Deconvolver::Hogbom
-            || request.weighting != Weighting::Natural
+            || !matches!(request.weighting, Weighting::Natural | Weighting::Uniform)
+            || wprojplanes.is_some_and(|count| count.get() > usize::from(u16::MAX))
             || request.stokes != [PolarizationCoordinate::StokesI]
             || request.vis.len() != 1
             || request.outframe != FrequencyRef::LSRK
@@ -67,7 +68,7 @@ pub(crate) fn validate_awp2_scope(
     {
         return Err(InvalidRequest {
             parameters: "gridder",
-            reason: "AWP2 currently supports a fresh natural-weighted Stokes I Högbom MFS run with double-precision gridding (#1071)",
+            reason: "AWP2 currently supports a fresh natural- or uniform-weighted Stokes I Högbom MFS run with double-precision gridding (#1071)",
         });
     }
     Ok(())
