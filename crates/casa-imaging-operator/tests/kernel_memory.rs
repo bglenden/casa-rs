@@ -702,8 +702,23 @@ fn awp2_stages_hold_at_most_what_they_state() {
         ),
     ] {
         let geometry = geometry(side, cell_arcsec.to_radians() / 3600.0, GridPadding::None);
-        check_awp2_stages(&geometry, single_field, frequencies, w_planes);
+        check_awp2_stages(&geometry, single_field, frequencies, w_planes, &[]);
     }
+}
+
+#[test]
+fn awp2_squint_groups_hold_at_most_what_they_state() {
+    if !alone("awp2_squint_groups_hold_at_most_what_they_state") {
+        return;
+    }
+    let geometry = geometry(1200, 1.6_f64.to_radians() / 3600.0, GridPadding::None);
+    check_awp2_stages(
+        &geometry,
+        false,
+        &[1.2e9, 1.5e9],
+        &[0.0, 53_803.0],
+        &[-3.0, -1.5, 0.0, 1.5, 3.0],
+    );
 }
 
 fn check_awp2_stages(
@@ -711,8 +726,14 @@ fn check_awp2_stages(
     single_field: bool,
     frequencies: &[f64],
     w_planes: &[f64],
+    pa_centres: &[f64],
 ) {
-    let sampling = casa_imaging_operator::Awp2Sampling::new(geometry, single_field).unwrap();
+    let sampling = if pa_centres.is_empty() {
+        casa_imaging_operator::Awp2Sampling::new(geometry, single_field)
+    } else {
+        casa_imaging_operator::Awp2Sampling::squinted(geometry)
+    }
+    .unwrap();
     let surface = EvlaDishSurface::new(
         (0..=1250)
             .map(|i| {
@@ -722,10 +743,10 @@ fn check_awp2_stages(
             .collect(),
     )
     .unwrap();
-    let screens_bytes = sampling.screens_bytes(frequencies.len(), w_planes.len());
+    let screens_bytes = sampling.screens_bytes(frequencies.len(), w_planes.len(), pa_centres.len());
     let (screen_peak, _, screens) = measure(|| {
         sampling
-            .screens(frequencies, surface, single_field, w_planes)
+            .screens(frequencies, surface, single_field, w_planes, pa_centres)
             .unwrap()
     });
     assert!(
@@ -733,7 +754,18 @@ fn check_awp2_stages(
         "aperture scratch {screen_peak} exceeds {screens_bytes}"
     );
     let kernel_bytes = screens.kernel_bytes(geometry);
-    let polarization = routing();
+    let polarization = if pa_centres.is_empty() {
+        routing()
+    } else {
+        PolarizationRouting::compile(
+            &[Correlation::RR, Correlation::LL],
+            &[
+                PolarizationCoordinate::StokesI,
+                PolarizationCoordinate::StokesV,
+            ],
+        )
+        .unwrap()
+    };
     let (peak, _, set) = measure(|| {
         screens.finish(
             geometry,
@@ -741,13 +773,16 @@ fn check_awp2_stages(
             frequencies.into(),
             w_planes.into(),
             1.5e9,
+            (pa_centres.into(), 0.0),
         )
     });
     assert!(
         peak <= kernel_bytes,
         "kernel construction {peak} exceeds {kernel_bytes}"
     );
-    if w_planes.len() > 1 {
+    if !pa_centres.is_empty() {
+        check_awp2_squint_routing(&set);
+    } else if w_planes.len() > 1 {
         check_awp2_routing(&set);
     }
     // The screens were already live at the start of construction. Take
@@ -802,4 +837,99 @@ fn check_awp2_routing(set: &casa_imaging_operator::Awp2) {
         "PSF uses W=0 imaging taps"
     );
     assert_ne!(set_tap(lo, true), set_tap(lo, false));
+}
+
+fn check_awp2_squint_routing(set: &casa_imaging_operator::Awp2) {
+    let row = RowContext {
+        native_frequency_ratio: 1.0,
+        original_uvw_m: None,
+        time_s: 0.0,
+        antennas: [0, 1],
+        antenna_types: [0; 2],
+        parallactic_angle_rad: [2.25; 2],
+        field: 0,
+        spectral_window: 0,
+    };
+    let key = set.key(&row, 1.2e9, 53_803.0);
+    assert_eq!(
+        key,
+        CfKey { group: 1, cube: 6 },
+        "PA tie and half-turn prediction"
+    );
+    let other_pa = set.key(
+        &RowContext {
+            parallactic_angle_rad: [0.0; 2],
+            ..row
+        },
+        1.2e9,
+        53_803.0,
+    );
+    assert_eq!(
+        other_pa,
+        CfKey { group: 5, cube: 0 },
+        "prediction wraps at -π"
+    );
+    let mut hold = CellHold::new();
+    let mut expected_hold = CellHold::new();
+    fn data(layout: TapLayout<'_>) -> &[Complex32] {
+        match layout {
+            TapLayout::Dense { data, .. } => data,
+            _ => panic!("AWP2 uses dense taps"),
+        }
+    }
+    assert_eq!(
+        data(set.prediction_taps(key, &mut hold)),
+        data(set.taps(CfKey { group: 7, cube: 0 }, &mut expected_hold)),
+        "prediction changes PA while retaining frequency and W",
+    );
+    assert_eq!(
+        data(set.psf_taps(other_pa, &mut hold)),
+        data(set.taps(CfKey { group: 4, cube: 0 }, &mut expected_hold)),
+        "PSF uses W=0 at the same PA",
+    );
+    let zero = CfKey { group: 0, ..key };
+    let other_zero = CfKey {
+        group: 4,
+        ..other_pa
+    };
+    assert!(set.adjoint_conjugates(zero, Mode::Data, false));
+    assert!(!set.adjoint_conjugates(other_zero, Mode::Data, true));
+    assert!(set.adjoint_conjugates(key, Mode::Data, true));
+    assert!(!set.adjoint_conjugates(key, Mode::Data, false));
+    assert!(set.adjoint_conjugates(key, Mode::Psf, false));
+    assert!(!set.adjoint_conjugates(other_pa, Mode::Psf, true));
+    assert!(!set.adjoint_conjugates(other_pa, Mode::Weight, true));
+    assert!(set.prediction_conjugates(
+        CfKey {
+            group: 4,
+            ..other_pa
+        },
+        false
+    ));
+    assert!(!set.prediction_conjugates(CfKey { group: 0, ..key }, true));
+
+    let TapLayout::Dense {
+        data,
+        support,
+        mueller_planes,
+        ..
+    } = set.taps(key, &mut hold)
+    else {
+        panic!("AWP2 uses dense taps");
+    };
+    assert_eq!(mueller_planes, 2);
+    let span = usize::from(support[0]) * usize::from(support[1]);
+    assert_ne!(
+        &data[..span],
+        &data[span..2 * span],
+        "beam squint separates RR and LL"
+    );
+    for forward in [false, true] {
+        for positive in [false, true] {
+            assert_eq!(
+                set.mueller().table(positive, forward),
+                &[vec![Some(0), None], vec![None, Some(1)]],
+            );
+        }
+    }
 }

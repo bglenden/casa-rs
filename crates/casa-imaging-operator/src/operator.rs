@@ -292,12 +292,13 @@ impl MeasurementOperator {
             .geometry
             .locate(placement.u, placement.v, taps.oversampling());
         let w_positive = placement.prediction_w_positive;
+        let conjugate = self.cf.prediction_conjugates(placement.cf, w_positive);
         self.cf
             .mueller()
             .table(w_positive, true)
             .iter()
             .filter_map(|row| row[vpol])
-            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, !w_positive))
+            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, !conjugate))
             .sum()
     }
 

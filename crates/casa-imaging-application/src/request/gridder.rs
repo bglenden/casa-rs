@@ -42,11 +42,13 @@ pub enum Gridder {
     },
     /// EVLA A-projection with W-projection.
     Awproject(AwProjection),
-    /// AWPLPG with an unsquinted VLA or EVLA L-band beam.
+    /// AWPLPG with a VLA or EVLA L-band beam.
     Awp2 {
         /// Number of positive-|w| sampling planes, including zero.
         #[serde(deserialize_with = "optional")]
         wprojplanes: Option<NonZeroUsize>,
+        /// Beam PA spacing in degrees. CASA enables squint below 180 degrees.
+        computepastep: f32,
         /// Optional explicit VLA radial dish surface in the CASA data format.
         #[serde(deserialize_with = "optional")]
         evla_surface: Option<PathBuf>,

@@ -724,7 +724,10 @@ impl<'a> Tclean<'a> {
         if modes.gridder == "awproject" {
             self.copy(&["computepastep", "rotatepastep"])?;
         } else {
-            self.ignore(&["computepastep", "rotatepastep"])?;
+            self.ignore(&["rotatepastep"])?;
+            if modes.gridder != "awp2" {
+                self.ignore(&["computepastep"])?;
+            }
         }
         let usepointing = self.flag("usepointing")?;
         if matches!(modes.gridder, "mosaic" | "awproject") {
@@ -836,12 +839,16 @@ impl<'a> Tclean<'a> {
 
     /// AWPLPG selects W planes and squint independently of AWProjectFT.
     fn awp2_controls(&mut self) -> Result<(), TcleanRefusal> {
+        let pa_step = self
+            .value("computepastep")?
+            .as_f64()
+            .map(|step| step as f32)
+            .filter(|step| step.is_finite() && *step > 0.0);
+        let squint_supported = self.text("stokes")? == "IV" && self.integer("wprojplanes")? > 1;
         let controls = [
             (
                 "computepastep",
-                self.value("computepastep")?
-                    .as_f64()
-                    .is_some_and(|step| step >= 180.0),
+                pa_step.is_some_and(|step| step >= 180.0 || squint_supported),
             ),
             ("facets", self.integer("facets")? == 1),
             ("usepointing", !self.flag("usepointing")?),
@@ -856,6 +863,7 @@ impl<'a> Tclean<'a> {
                 ));
             }
         }
+        self.set("computepastep", pa_step.expect("checked PA step"));
         Ok(())
     }
 

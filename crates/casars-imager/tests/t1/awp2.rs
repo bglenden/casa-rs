@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_ms::{
-    MeasurementSet, SyntheticSpectralSetup, VisibilityDataColumn, tutorial_vla_a_antennas,
+    MeasurementSet, SyntheticPolarizationBasis, SyntheticPolarizationSetup, SyntheticSpectralSetup,
+    VisibilityDataColumn, tutorial_vla_a_antennas,
 };
-use casa_types::{ArrayValue, ScalarValue};
+use casa_types::{ArrayValue, ScalarValue, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Geometry, Observation, Setup};
@@ -116,6 +117,48 @@ fn awp2_cleans_and_predicts_the_in_image_fields() {
     assert_eq!(by_field[2], 0, "outside field received a model prediction");
 }
 
+/// AWPLPG includes an all-FLAG_ROW integration in the PA survey at
+/// MJD zero. That epoch is outside the native Measures model's range.
+#[test]
+fn awp2_squint_refuses_an_integration_without_a_valid_cross_row() {
+    let (observation, surface) = l_band_point("VLA", Geometry::square(100, 8.0), Vec::new());
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let time = |ms: &MeasurementSet, row| {
+        ms.main_table()
+            .cell_accessor(row, "TIME")
+            .unwrap()
+            .scalar()
+            .unwrap()
+            .clone()
+    };
+    let first = time(&ms, 0);
+    for row in 0..ms.row_count() {
+        if time(&ms, row) == first {
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(row, "FLAG_ROW", Value::Scalar(ScalarValue::Bool(true)))
+                .unwrap();
+        }
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let error = observation
+        .try_image(
+            "flagged-squint",
+            json!({
+                "gridder": "awp2",
+                "evla_surface": surface,
+                "stokes": "IV",
+                "wprojplanes": 2,
+                "computepastep": 15.0,
+                "niter": 0,
+            }),
+        )
+        .err()
+        .expect("an all-flagged PA epoch is outside the verified range");
+    assert!(error.contains("MJD-zero PA in CASA"), "{error}");
+}
+
 fn l_band_point(
     telescope: &str,
     geometry: Geometry,
@@ -128,7 +171,7 @@ fn l_band_point(
             *value = centre + (*value - centre) / 35.0;
         }
     }
-    let observation = Observation::synthesise_setup(
+    let observation = Observation::synthesise_polarized(
         Setup {
             telescope: telescope.into(),
             antennas,
@@ -141,6 +184,11 @@ fn l_band_point(
             }],
             geometry,
             noise_jy: 0.0,
+        },
+        SyntheticPolarizationSetup {
+            basis: SyntheticPolarizationBasis::Circular,
+            correlation_count: 2,
+            source_stokes_fractional_quv: [0.0; 3],
         },
         &[(
             "centre",

@@ -21,6 +21,7 @@ pub(super) fn plan(
     let Gridder::Awp2 {
         evla_surface,
         wprojplanes,
+        computepastep,
         ..
     } = &request.gridder
     else {
@@ -100,10 +101,22 @@ pub(super) fn plan(
         },
     )?;
     let surface = native_aw::read_dish_surface(path)?;
+    let (pa_centres, feed_angle_rad) = if *computepastep < 180.0 {
+        squint_centres(
+            surveyed,
+            window.spw_id,
+            *computepastep,
+            count,
+            frequencies_hz.len(),
+        )?
+    } else {
+        (Box::default(), 0.0)
+    };
     charge.retain(
         (std::mem::size_of_val(surface.samples())
             + std::mem::size_of_val(frequencies_hz.as_ref())
             + std::mem::size_of_val(w_planes.as_ref())
+            + std::mem::size_of_val(pa_centres.as_ref())
             + 2 * size_of::<usize>()) as u64,
     );
     Ok(Some(Awp2Deployment {
@@ -112,9 +125,63 @@ pub(super) fn plan(
         frequencies_hz,
         w_planes,
         row_frequency_hz,
+        pa_centres,
+        feed_angle_rad,
         surface,
         _charge: charge,
     }))
+}
+
+/// The finite PA lattice AWConvFuncHolder builds over the observed angles.
+fn squint_centres(
+    surveyed: &Surveyed<'_>,
+    spw_id: usize,
+    step_deg: f32,
+    w_count: usize,
+    frequency_count: usize,
+) -> Result<(Box<[f64]>, f32), PrepareError> {
+    if surveyed.survey.fields.len() != 1 {
+        return Err(PrepareError::Awp2Selection);
+    }
+    let feed_rad =
+        native_aw::receptor_zero_angle(surveyed.catalogue, surveyed.msv2, spw_id as u32)? as f32;
+    let mut limits = [f64::INFINITY, f64::NEG_INFINITY];
+    for epoch in surveyed.survey.window_epochs(spw_id) {
+        // AWPLPG::init surveys even an all-flagged buffer.
+        // Its MJD-zero feed angle lies outside the native Measures range.
+        if !epoch.has_unflagged_cross {
+            return Err(PrepareError::Awp2FlaggedPaEpoch);
+        }
+        let pa = f64::from(native_aw::feed_pa(
+            surveyed,
+            epoch.time_mjd_seconds,
+            epoch.field_id,
+            feed_rad,
+        )?);
+        limits = [limits[0].min(pa), limits[1].max(pa)];
+    }
+    let [minimum, maximum] = limits;
+    // The all-identical-angle special case in AWPLPG does not establish
+    // an observable range. Leave it outside the verified scope.
+    if minimum >= maximum {
+        return Err(PrepareError::Awp2Selection);
+    }
+    let limit = usize::from(u16::MAX) / w_count.max(frequency_count);
+    Ok((
+        pa_centres(minimum.abs().max(maximum), step_deg, limit)?,
+        feed_rad,
+    ))
+}
+
+fn pa_centres(max_abs_pa: f64, step_deg: f32, limit: usize) -> Result<Box<[f64]>, PrepareError> {
+    let step_rad = f64::from(step_deg) * std::f64::consts::PI / 180.0;
+    let count = (2.0 * max_abs_pa / step_rad).ceil();
+    if !(1.0..=limit as f64).contains(&count) {
+        return Err(PrepareError::Awp2Selection);
+    }
+    Ok((0..count as usize)
+        .map(|index| index as f64 * step_rad - max_abs_pa)
+        .collect())
 }
 
 /// SimplePBConvFunc::findUsefulChannels works in the native SPW frame,
@@ -147,6 +214,23 @@ fn beam_frequencies(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn awp2_pa_lattice_uses_the_captured_extent_and_exclusive_end() {
+        // AWConvFuncHolder on vla_wideband_2ptg_w_squint.ms, field 1.
+        let max_pa = 3.132_975_339_889_526_4_f64;
+        let centres = pa_centres(max_pa, 15.0, 24).unwrap();
+        assert_eq!(centres.len(), 24);
+        assert_eq!(centres[0], -max_pa);
+        assert!((centres[1] + 2.871_175_952_090_377).abs() < 1e-15);
+        assert!((centres[23] - 2.888_410_579_490_91).abs() < 1e-15);
+        assert!(pa_centres(max_pa, 15.0, 23).is_err());
+        let half_turn = 90.0_f64.to_radians();
+        assert_eq!(
+            &*pa_centres(half_turn, 90.0, 2).unwrap(),
+            &[-half_turn, 0.0]
+        );
+    }
 
     #[test]
     fn awp2_samples_the_whole_spw_before_cutting_to_the_image_band() {

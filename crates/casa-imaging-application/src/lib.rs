@@ -139,6 +139,8 @@ pub(crate) struct Awp2Deployment {
     pub(crate) frequencies_hz: Box<[f64]>,
     pub(crate) w_planes: Box<[f64]>,
     pub(crate) row_frequency_hz: f64,
+    pub(crate) pa_centres: Box<[f64]>,
+    pub(crate) feed_angle_rad: f32,
     pub(crate) surface: casa_imaging_model::EvlaDishSurface,
     pub(crate) _charge: casa_imaging_runtime::Reservation,
 }
