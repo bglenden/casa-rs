@@ -5585,6 +5585,20 @@ control's science while retaining the raw case's metadata and quality
 checks. Evidence: <code>frame_conversion_b1950</code> in
 <code>tools/simulation/sm_image_layouts_oracle.py</code> and
 <code>crates/casa-simulation/tests/image_layouts.rs</code>.</p>
+<h2 id="simulator-field-selection-drops-the-configured-focus-distance">Simulator field selection drops the configured focus distance<a class="headerlink" href="#simulator-field-selection-drops-the-configured-focus-distance" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 <code>simulator.setdata(fieldid=[0], msselect=...)</code> changes the
+simulator's <code>nField</code> to the length of the field selection without updating its
+configured <code>distance_p</code> vector. <code>Simulator::createSkyEquation</code> then skips the
+focus distance when <code>distance_p.nelements() &gt; nField</code>. The same rows selected
+using only <code>msselect="FIELD_ID == 0 &amp;&amp; ..."</code> retain the configured focus and
+produce different simulated DATA. A row selection must not change the physical
+sky's finite distance.</p>
+<p>casa-rs retains the last configured nonzero field distance for image prediction,
+independently of the selected fields. <code>tools/simulation/sm_field_distance_oracle.py</code>
+records the raw CASA field-selection result and an independent CASA control
+selecting exactly the same rows through TaQL alone. The regression compares
+corrected DATA to that control and keeps raw quality and geometry checks. The
+ordinary zero-distance selection behavior is unchanged.</p>
 
 
 
