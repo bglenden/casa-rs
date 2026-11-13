@@ -706,6 +706,27 @@ when the domain has no fitted beam. Restoration, the minor-cycle patch,
 and the sidelobe calculation use the same beam. Two-dimensional fits and
 saved beam metadata retain their existing treatment.
 
+## MT-MFS via cube can abort when the primary-beam cutoff removes the central PSF
+
+CASA 6.7.6-14 aborts for a standard-gridder MVC run on field 0 of
+`refim_oneshiftpoint.mosaic.ms` with a 512-square image, 10 arcsec cells,
+three output channels, and `pblimit=-0.8`. The reduced Taylor PSF's
+positive maximum is 0.035371 at (275, 168), outside the central 80-square
+region. Both a ten-iteration run and a dirty run with restoration enabled
+reproduce the abort.
+
+`MatrixCleaner::validatePsf` leaves the peak at (0, 0) when its central
+search sees only zeros. `MultiTermMatrixCleaner::computeHessianPeak` then
+uses that location to slice its 80-square convolution patch and throws an
+uncaught array exception for the negative corner (-40, -40).
+
+casa-rs rejects the clean request with a task error when the Taylor PSF
+has no positive finite peak in the central patch. Its dirty path
+publishes the cube and Taylor products without attempting that solve.
+With the same input and `pblimit=-0.1`, both clean runs complete ten
+iterations and three major cycles and stop at the iteration limit.
+[Issue #1140](https://github.com/bglenden/casa-rs/issues/1140).
+
 ## The analytic PB ignores a failed `toPixel`
 
 - Date noted: 2026-10-11
