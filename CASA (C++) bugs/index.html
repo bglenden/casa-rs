@@ -5568,6 +5568,23 @@ readback checks reverse each channel's four G products explicitly for
 that case. Other descriptions, unselected rows and metadata still match
 CASA directly. Evidence: the <code>alias_polarization_gain</code> case in
 <code>tools/simulation/sm_data_descriptions_oracle.py</code> and <code>tests/data_descriptions.rs</code>.</p>
+<h3 id="simulator-image-direction-conversion-changes-the-physical-sky">Simulator image direction conversion changes the physical sky<a class="headerlink" href="#simulator-image-direction-conversion-changes-the-physical-sky" title="Permanent link">&para;</a></h3>
+<p>In CASA 6.7.6.14, a J2000 image with only its direction display conversion
+changed to B1950 produces different simulated DATA. The pixels, native
+direction coordinate, spectral coordinate and observation remain identical.
+<code>DirectionCoordinate::toWorld(MDirection&amp;)</code> calls the world-value overload,
+which applies the conversion layer, then tags those converted angles with
+the native <code>type_p</code>. <code>FTMachine::initMaps</code> uses that mislabeled direction
+for its image tangent and UVW rotation.</p>
+<p>A display conversion changes coordinate presentation rather than physical
+pixel directions. casa-rs predicts from the native direction coordinate,
+ignoring that presentation layer. The oracle retains the raw CASA result
+and separately predicts an independent CASA control that clears only the
+display conversion. Native and C++ readback comparisons require that
+control's science while retaining the raw case's metadata and quality
+checks. Evidence: <code>frame_conversion_b1950</code> in
+<code>tools/simulation/sm_image_layouts_oracle.py</code> and
+<code>crates/casa-simulation/tests/image_layouts.rs</code>.</p>
 
 
 
