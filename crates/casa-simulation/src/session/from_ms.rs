@@ -20,7 +20,10 @@
 //!   ([`ScanRows::OnDisk`]). They were observed before any step, so every
 //!   later `predict` and `corrupt` covers them.
 //!
-//! `close` then patches DATA in place (`crate::write::patch`).
+//! `close` patches DATA in place (`crate::write::patch`). Observations added
+//! after opening are rendered through the same geometry and DATA operators,
+//! then published atomically with the existing rows. Publishing currently
+//! copies the existing MS, so its I/O cost grows with the existing data.
 //!
 //! What casa-rs does not read yet is refused, here or by the step needing
 //! it, rather than predicted wrongly: a PHASE_DIR polynomial, channel
@@ -28,8 +31,8 @@
 //! descriptions out of the windows' order, and a primary beam, the mosaic
 //! machine or total-power sampling when POINTING does not point at the
 //! scans' phase centres. Adding to the MeasurementSet after `openfromms`
-//! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`,
-//! `observe`, `observemany`) is not yet implemented.
+//! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`)
+//! is not yet implemented; `observe` and `observemany` extend the schedule.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -47,6 +50,9 @@ use super::fields::Field;
 use super::observe::{Observation, Scan, ScanRows};
 use super::spectral::SpectralWindow;
 use super::{Simulator, SimulatorOptions};
+
+#[path = "from_ms_append.rs"]
+mod append;
 
 /// MAIN rows read at a time while finding the scans.
 const SCAN_READ_ROWS: usize = 1 << 16;
@@ -105,8 +111,7 @@ impl Simulator {
         session.observations = read_observations(&ms)?;
         session.spectral_windows = read_windows(&ms)?;
         refuse_several_feeds(&ms)?;
-        // CASA's `getFeedMode` reads the feeds back; `observe`, which takes
-        // them, is refused after `openfromms`.
+        // Append reads the feed rows when observe first needs them.
         session.feeds_set = true;
         session.fields = read_fields(&session, &ms)?;
         let ReadScans {

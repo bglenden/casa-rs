@@ -188,6 +188,9 @@ pub struct Simulator {
     /// The MeasurementSet `openfromms` opened, whose rows `close` patches;
     /// `None` when `close` creates the MeasurementSet.
     opened: Option<from_ms::OpenedMs>,
+    /// Original MAIN rows preceding a separately rendered append segment.
+    noise_row_offset: u64,
+    existing_array_id: i32,
 }
 
 impl Simulator {
@@ -229,6 +232,8 @@ impl Simulator {
             squint: false,
             data_plan: DataPlan::default(),
             opened: None,
+            noise_row_offset: 0,
+            existing_array_id: 0,
         }
     }
 
@@ -460,7 +465,7 @@ impl Simulator {
     /// No antennas, spectral window or field, or none of the given names
     /// (CASA logs the error and returns `False`).
     pub fn observe(&mut self, spec: &ObserveSpec) -> SimulatorResult<()> {
-        self.refuse_after_openfromms("observe")?;
+        self.prepare_existing_append()?;
         self.plan_pointings(&ObserveManySpec::from(spec))
     }
 
@@ -474,7 +479,7 @@ impl Simulator {
     /// pointings; or a direction that cannot be converted to J2000 without
     /// an epoch and position.
     pub fn observe_many(&mut self, spec: &ObserveManySpec) -> SimulatorResult<()> {
-        self.refuse_after_openfromms("observemany")?;
+        self.prepare_existing_append()?;
         self.plan_pointings(spec)
     }
 
@@ -543,8 +548,9 @@ impl Simulator {
     }
 
     /// `sm.close()` / `sm.done()`: write the MeasurementSet, or, after
-    /// `openfromms`, patch the rows the DATA steps rewrite in place; then
-    /// write the calibration tables `setgain` and `setleakage` named.
+    /// `openfromms`, patch the selected DATA and append observations. Appending
+    /// publishes a private copy atomically and currently copies the existing
+    /// data as well as the new rows. Then write the requested calibration tables.
     ///
     /// # Errors
     ///
@@ -552,13 +558,21 @@ impl Simulator {
     /// calibration table.
     pub fn close(self) -> SimulatorResult<()> {
         if self.opened.is_some() {
-            write::patch_measurement_set(&self)?;
+            if self.scans.iter().any(|scan| scan.planned().is_some()) {
+                self.append_existing()?;
+            } else {
+                write::patch_measurement_set(&self)?;
+            }
         } else {
             write::write_measurement_set(&self)?;
         }
         self.write_jones_tables()?;
         self.write_noise_tables()?;
         self.write_offline_tables()
+    }
+
+    pub(crate) fn noise_row_offset(&self) -> u64 {
+        self.noise_row_offset
     }
 
     /// `direction` in J2000, as `[ra, dec]` radians with the longitude in

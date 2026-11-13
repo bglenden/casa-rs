@@ -278,24 +278,15 @@ fn wproject_and_the_mosaic_predict_after_openfromms_as_before() {
     assert_eq!(bits(&data(&one)), bits(&data(&two)));
 }
 
-/// What adds to the MeasurementSet is not yet implemented after
-/// `openfromms`, and a session with no DATA step leaves it as it was.
+/// A session with no DATA step or appended observation leaves the MS as it was.
 #[test]
-fn openfromms_refuses_additions_and_writes_nothing_without_a_step() {
+fn openfromms_writes_nothing_without_a_step() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("observed.ms");
     observed(&path).close().expect("close");
     let before = read_main(&path).0;
-    let mut sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
+    let sm = Simulator::open_from_ms(&path, options()).expect("openfromms");
     assert_eq!(sm.scan_count(), 2, "one scan per field");
-    let refused = sm
-        .observe(&scan("target", 120.0, 180.0))
-        .expect_err("observe");
-    assert_eq!(refused.outcome(), CasaOutcome::NotYetImplemented);
-    assert!(
-        refused.message().contains("observe after openfromms"),
-        "{refused}"
-    );
     sm.close().expect("close");
     assert_eq!(bits(&data(&read_main(&path).0)), bits(&data(&before)));
     let missing = Simulator::open_from_ms(directory.path().join("missing.ms"), options())

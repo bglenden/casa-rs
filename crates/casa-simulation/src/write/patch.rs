@@ -167,11 +167,8 @@ pub(crate) fn patch_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         reads_data: !plan.replaced(),
         reads_flags: plan.predicts_images() || plan.predicts_single_dish(),
         reads_scratch: [
-            plan.has_partial_rows(session.scans())
-                && !plan.replaced()
-                && opened.model_data
-                && plan.predicts(),
-            plan.has_partial_rows(session.scans()) && !plan.replaced() && opened.corrected_data,
+            plan.has_partial_rows(session.scans()) && opened.model_data && plan.predicts(),
+            plan.has_partial_rows(session.scans()) && opened.corrected_data,
         ],
         columns: columns.len(),
         antennas: session.antennas().len(),

@@ -199,6 +199,7 @@ pub(crate) enum ScanRows {
 /// The rows of a scan `observe` planned.
 #[derive(Debug, Clone)]
 pub(crate) struct PlannedRows {
+    pub(crate) array_id: i32,
     /// The scan's start (CASA's `Tstart`), UTC seconds.
     pub(crate) start_s: f64,
     pub(crate) integration_s: f64,
@@ -366,6 +367,17 @@ impl super::Simulator {
         let (start_s, stop_s) = (utc_s(first.start_s), utc_s(last.stop_s));
         tracing::info!("Full time range: {start_s} -- {stop_s} UTC with int = {integration_s}");
 
+        let array_id = if spec.add_observation || self.observations.is_empty() {
+            self.scans
+                .iter()
+                .filter_map(Scan::planned)
+                .map(|rows| rows.array_id)
+                .chain(std::iter::once(self.existing_array_id))
+                .max()
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let observation_id = self.observation_for(spec, [start_s, stop_s]);
         let state_id = match self.states.iter().rposition(|state| *state == spec.state) {
             Some(existing) => existing,
@@ -400,6 +412,7 @@ impl super::Simulator {
                     phase_center_rad: self.fields[field_id].direction_rad,
                     pointing_rad,
                     rows: ScanRows::Planned(PlannedRows {
+                        array_id,
                         start_s,
                         integration_s,
                         integration_count,
@@ -476,7 +489,7 @@ impl super::Simulator {
         });
         self.scans
             .iter()
-            .filter_map(|scan| scan.planned().map(|rows| rows.observation_id))
+            .map(|scan| scan.observation_id)
             .max()
             .map_or(0, |largest| largest + 1)
     }

@@ -75,6 +75,7 @@ pub(super) const MINIMUM_NOISE_JOB_ROWS: usize = 16;
 /// spectral window, and the antennas' dishes.
 #[derive(Clone, Copy)]
 pub(super) struct NoiseContext<'a> {
+    row_offset: u64,
     pub(super) scans: &'a [Scan],
     pub(super) windows: &'a [SpectralWindow],
     pub(super) antennas: &'a [Antenna],
@@ -84,6 +85,7 @@ impl<'a> NoiseContext<'a> {
     /// `session`'s scans, windows and antennas.
     pub(super) fn of(session: &'a Simulator) -> Self {
         Self {
+            row_offset: session.noise_row_offset(),
             scans: session.scans(),
             windows: session.spectral_windows(),
             antennas: session.antennas(),
@@ -503,7 +505,7 @@ pub(super) fn noise_jobs<'a>(
             let start = start + index * job_rows;
             jobs.push(NoiseJob {
                 scan,
-                first_row: first_row + start as u64,
+                first_row: context.row_offset + first_row + start as u64,
                 cells,
                 rows: &rows[start..],
                 noise,
