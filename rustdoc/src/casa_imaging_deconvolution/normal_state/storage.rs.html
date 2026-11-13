@@ -550,7 +550,7 @@
 <a href=#550 id=550 data-nosnippet>550</a>        }
 <a href=#551 id=551 data-nosnippet>551</a>    }
 <a href=#552 id=552 data-nosnippet>552</a>
-<a href=#553 id=553 data-nosnippet>553</a>    <span class="doccomment">/// Load only the selected unnormalized point-spread-function plane.
+<a href=#553 id=553 data-nosnippet>553</a>    <span class="doccomment">/// Load only the selected gridded or saved PSF plane.
 <a href=#554 id=554 data-nosnippet>554</a>    </span><span class="kw">pub fn </span>read_psf(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Cow&lt;<span class="lifetime">'a</span>, [Complex64]&gt;, NormalStateError&gt; {
 <a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>offset = <span class="self">self</span>.plane * <span class="self">self</span>.cells;
 <a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">match </span><span class="self">self</span>.backing {
@@ -562,7 +562,7 @@
 <a href=#562 id=562 data-nosnippet>562</a>        }
 <a href=#563 id=563 data-nosnippet>563</a>    }
 <a href=#564 id=564 data-nosnippet>564</a>
-<a href=#565 id=565 data-nosnippet>565</a>    <span class="doccomment">/// Read only the selected unnormalized point-spread-function plane as Float values.
+<a href=#565 id=565 data-nosnippet>565</a>    <span class="doccomment">/// Read only the selected gridded or saved PSF plane as Float values.
 <a href=#566 id=566 data-nosnippet>566</a>    ///
 <a href=#567 id=567 data-nosnippet>567</a>    /// Values use the x-major plane layout. `None` means the backing is not
 <a href=#568 id=568 data-nosnippet>568</a>    /// real Float and the complex reader must be used instead.

@@ -1084,6 +1084,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable">a Gaussian beam fit to collinear PSF samples</a>,
 <a href="#a-non-frequency-component-unit-corrupts-casas-spectrum">non-frequency component frequency units</a>,
 <a href="#component-flux-conversion-can-relabel-incompatible-units-or-crash">nonconforming component flux conversion</a>,
 <a href="#component-removal-can-lose-data-or-crash">duplicate and empty component removals</a>,
@@ -1692,6 +1693,44 @@ does any image's planes under <code>'common'</code>, and records that one beam. 
 two agree because <code>ToStokesPSF</code> gives every Stokes plane the first
 correlation's PSF, so every plane fits the same beam. A beam the request
 gives is recorded once in the same way.</p>
+<h2 id="a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable">A Gaussian beam fit to collinear PSF samples is unstable<a class="headerlink" href="#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-11</li>
+<li>Status: CASA 6.7.6.14 instability, with a deterministic failed-fit treatment in casa-rs (<a href="https://github.com/bglenden/casa-rs/issues/1140#issuecomment-6802113024">#1140</a>).</li>
+<li>Affected code: <code>synthesis/TransformMachines/StokesImageUtil.cc</code> (<code>FitGaussianPSF</code>),
+  <code>synthesis/ImagerObjects/SIImageStore.cc</code> (<code>makeImageBeamSet</code>, <code>getPSFSidelobeLevel</code>).</li>
+</ul>
+<p>In a 64-square, two-channel Clark restart at 8 arcsec per pixel, the saved
+unit-peak PSF of one channel is a one-pixel-wide line. Changing one
+off-peak sample by one Float step, about 5.96e-8, moves CASA's fitted
+position angle from 10.3232° to 0.0017° or −56.3750°, and the reported
+sidelobe from 0.585933 to 0.156330 or 0.900000. All three PSFs have the
+same collinear fit support. That support constrains one directional width,
+leaving the two-dimensional ellipse underdetermined.</p>
+<p>casa-rs checks the selected fit samples on their integer grid and retries
+with the existing lower cutoffs. When every attempt with enough samples
+is collinear, the plane uses the ordinary failed-fit beam for its domain.
+That is the largest fitted beam by area, or a circular 1e-6 arcsec beam
+when the domain has no fitted beam. Restoration, the minor-cycle patch,
+and the sidelobe calculation use the same beam. Two-dimensional fits and
+saved beam metadata retain their existing treatment.</p>
+<h2 id="mt-mfs-via-cube-can-abort-when-the-primary-beam-cutoff-removes-the-central-psf">MT-MFS via cube can abort when the primary-beam cutoff removes the central PSF<a class="headerlink" href="#mt-mfs-via-cube-can-abort-when-the-primary-beam-cutoff-removes-the-central-psf" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6-14 aborts for a standard-gridder MVC run on field 0 of
+<code>refim_oneshiftpoint.mosaic.ms</code> with a 512-square image, 10 arcsec cells,
+three output channels, and <code>pblimit=-0.8</code>. The reduced Taylor PSF's
+positive maximum is 0.035371 at (275, 168), outside the central 80-square
+region. Both a ten-iteration run and a dirty run with restoration enabled
+reproduce the abort.</p>
+<p><code>MatrixCleaner::validatePsf</code> leaves the peak at (0, 0) when its central
+search sees only zeros. <code>MultiTermMatrixCleaner::computeHessianPeak</code> then
+uses that location to slice its 80-square convolution patch and throws an
+uncaught array exception for the negative corner (-40, -40).</p>
+<p>casa-rs rejects the clean request with a task error when the Taylor PSF
+has no positive finite peak in the central patch. Its dirty path
+publishes the cube and Taylor products without attempting that solve.
+With the same input and <code>pblimit=-0.1</code>, both clean runs complete ten
+iterations and three major cycles and stop at the iteration limit.
+<a href="https://github.com/bglenden/casa-rs/issues/1140">Issue #1140</a>.</p>
 <h2 id="the-analytic-pb-ignores-a-failed-topixel">The analytic PB ignores a failed <code>toPixel</code><a class="headerlink" href="#the-analytic-pb-ignores-a-failed-topixel" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-11</li>
@@ -5170,6 +5209,37 @@ that channel widths are generally interchangeable. The per-row frame conversion
 can itself move a channel across a cell boundary, so casa-rs recovers the stored
 channel frequency for AW cell selection while retaining the converted frequency
 for UV placement. Rounding near an exact cell tie remains permitted.</p>
+<h2 id="aw-cube-interpolation-restores-the-native-channel-map">AW cube interpolation restores the native channel map<a class="headerlink" href="#aw-cube-interpolation-restores-the-native-channel-map" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-11</li>
+<li>Status: verified CASA 6.7.6.14 bug (<a href="https://github.com/bglenden/casa-rs/issues/1121#issuecomment-6698483927">#1121</a>).</li>
+<li>Affected code: <code>FTMachine::interpolateFrequencyTogrid</code>,
+  <code>AWProjectFT::put</code> and <code>setupVBStore</code>, and <code>AWVisResampler::DataToGridImpl_p</code>
+  in <code>synthesis/TransformMachines2</code>.</li>
+</ul>
+<p><code>AWProjectFT::put</code> calls <code>matchChannel</code> again after interpolating the data,
+weights and flags. The second call restores the map for native channels.
+<code>setupVBStore</code> supplies native reporting frequencies. The AW loop uses the
+length of the interpolated flag axis to index both native vectors.</p>
+<p>On <code>refim_point_linRL.ms</code> with <code>start=1, width=1, nchan=2</code> and linear
+interpolation, a trace of CASA's running sampler showed two interpolated
+entries and the native map <code>[-2, 0, 1]</code>. Only ordinals 0 and 1 were visited.
+Plane 1 had zero sum weight. CASA's standard gridder populated both planes
+on the same input. With <code>start=0, width=2, nchan=2</code>, the trace instead showed
+four entries. The AW loop reached ordinal 3 with positive weight and used
+the CF selection path even though the map and frequency vectors had length 3.</p>
+<p>casa-rs keeps each interpolated sample's output plane and frequency together
+through gridding and convolution-cell selection. This is the mapping used by
+the shared spectral resampler.</p>
+<p>For converted TOPO-to-LSRK sampling, the offset and width-two comparisons
+use the executing standard CASA gridder's interpolated samples. Putting
+the captured samples on a copy of the measurement set reproduces the
+standard linear products. CASA AW nearest then grids those samples with
+the original channel count and convolution cache. In the width-two
+control, the channel-width metadata is set so CASA selects the cell for
+the actual sample frequency, accounting for its averaged-width CF lookup
+described above. Both comparisons retain the image grid and check the
+output masks and predictions.</p>
 <h2 id="casa-discards-zero-dimensional-floating-quantity-record-values">CASA discards zero-dimensional floating quantity-record values<a class="headerlink" href="#casa-discards-zero-dimensional-floating-quantity-record-values" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
@@ -5626,6 +5696,28 @@ NRMS. An independent CASA control that grows the holder before
 180). All eight products then agree with casa-rs within 2.50e-7 NRMS,
 with exact masks and sum of weights. casa-rs always centres the PA
 planes. <a href="https://github.com/bglenden/casa-rs/issues/1071">Issue #1071</a>.</p>
+<h2 id="awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff">AWP2's Float sensitivity FFT can flip the primary-beam cutoff<a class="headerlink" href="#awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff" title="Permanent link">&para;</a></h2>
+<p>AWPLPG accumulates the sensitivity grid in double precision.
+<code>MosaicFT::finalizeToSky</code> converts that grid to Float for its inverse FFT.
+<code>SIImageStore::makePBFromWeight</code> and <code>divideResidualByWeight</code> then apply the
+strict <code>abs(pblimit)</code> cut. CASA's single-precision FFT can move a value
+across that cutoff by rounding alone.</p>
+<p>The named CASA 6.7.6-14 <code>test_widefield_mvc_squint_awp2</code> clean uses two fields
+of <code>vla_wideband_2ptg_w_squint.ms</code>, a 2000-square Stokes I image, uniform
+weighting, four W planes, a 15° PA step, and <code>pblimit=-0.1</code>. Four of
+20 million cube PB mask pixels differ between the release and native runs.
+The uncut beams at those pixels are within 1.3e-7 of 0.1. In output
+channel 3 (zero-based), one cutoff pixel raises the clean residual error
+to 1.132e-3 NRMS. Its error away from the cutoff crossings is 1.84e-4.</p>
+<p>A local CASA C++ control replaces only the Float inverse sensitivity FFT
+with CASA's own <code>FFT2D::c2cFFTInDouble</code>, preserving Float image storage
+and the strict cutoff. It reproduces all four PB mask flips within CASA,
+including the residual difference in channel 3. Native keeps its existing
+double-precision transform and the same cutoff. It agrees with this CASA
+control on all 25 clean products, with exact masks and cube sum of weights,
+the same 20 iterations, two major cycles and stop code 1, and a maximum
+per-plane NRMS of 1.60e-5. The channel-3 residual agrees within 7.58e-6.
+<a href="https://github.com/bglenden/casa-rs/issues/1071">Issue #1071</a>.</p>
 <h2 id="simulator-image-prediction-retains-the-first-windows-polarization-map">Simulator image prediction retains the first window's polarization map<a class="headerlink" href="#simulator-image-prediction-retains-the-first-windows-polarization-map" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 image prediction over windows with different <code>CORR_TYPE</code> arrays
 can route later windows using the first window's map. For example, an IQUV

@@ -172,53 +172,54 @@
 <a href=#172 id=172 data-nosnippet>172</a>        plane,
 <a href=#173 id=173 data-nosnippet>173</a>        domain_ordinal: <span class="number">0</span>,
 <a href=#174 id=174 data-nosnippet>174</a>        polarization: <span class="number">0</span>,
-<a href=#175 id=175 data-nosnippet>175</a>        fitted_beam: <span class="prelude-val">None</span>,
-<a href=#176 id=176 data-nosnippet>176</a>        restoring_beam: <span class="prelude-val">None</span>,
-<a href=#177 id=177 data-nosnippet>177</a>        primary_beam_model: planned.primary_beam_model(),
-<a href=#178 id=178 data-nosnippet>178</a>        fft_threads: <span class="number">1</span>,
-<a href=#179 id=179 data-nosnippet>179</a>    })
-<a href=#180 id=180 data-nosnippet>180</a>}
-<a href=#181 id=181 data-nosnippet>181</a>
-<a href=#182 id=182 data-nosnippet>182</a><span class="kw">fn </span>make_plane(
-<a href=#183 id=183 data-nosnippet>183</a>    member: <span class="kw-2">&amp;</span>PlannedMember,
-<a href=#184 id=184 data-nosnippet>184</a>    plane: <span class="kw-2">&amp;</span>FinalNormalPlaneReader&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#185 id=185 data-nosnippet>185</a>    planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
-<a href=#186 id=186 data-nosnippet>186</a>    inputs: <span class="kw-2">&amp;</span>ContinuumProductInputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#187 id=187 data-nosnippet>187</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f32&gt;, ProductsError&gt; {
-<a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = raw_plane(member, plane, planned, inputs)<span class="question-mark">?</span>;
-<a href=#189 id=189 data-nosnippet>189</a>    apply_validity(<span class="kw-2">&amp;mut </span>values, member, plane, planned, inputs)<span class="question-mark">?</span>;
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="prelude-val">Ok</span>(values)
-<a href=#191 id=191 data-nosnippet>191</a>}
-<a href=#192 id=192 data-nosnippet>192</a>
-<a href=#193 id=193 data-nosnippet>193</a><span class="kw">fn </span>apply_validity(
-<a href=#194 id=194 data-nosnippet>194</a>    values: <span class="kw-2">&amp;mut </span>[f32],
-<a href=#195 id=195 data-nosnippet>195</a>    member: <span class="kw-2">&amp;</span>PlannedMember,
-<a href=#196 id=196 data-nosnippet>196</a>    plane: <span class="kw-2">&amp;</span>FinalNormalPlaneReader&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#197 id=197 data-nosnippet>197</a>    planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
-<a href=#198 id=198 data-nosnippet>198</a>    inputs: <span class="kw-2">&amp;</span>ContinuumProductInputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#199 id=199 data-nosnippet>199</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProductsError&gt; {
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">match </span>member.validity() {
-<a href=#201 id=201 data-nosnippet>201</a>        ProductValidityRule::All =&gt; {}
-<a href=#202 id=202 data-nosnippet>202</a>        ProductValidityRule::PrimaryBeam(policy)
-<a href=#203 id=203 data-nosnippet>203</a>            <span class="kw">if </span><span class="macro">matches!</span>(member.role(), ProductRole::PrimaryBeam(<span class="kw">_</span>)) =&gt;
-<a href=#204 id=204 data-nosnippet>204</a>        {
-<a href=#205 id=205 data-nosnippet>205</a>            <span class="kw">for </span>value <span class="kw">in </span>values {
-<a href=#206 id=206 data-nosnippet>206</a>                <span class="kw">if </span><span class="kw-2">*</span>value &lt;= policy.cutoff() {
-<a href=#207 id=207 data-nosnippet>207</a>                    <span class="kw-2">*</span>value = <span class="number">0.0</span>;
-<a href=#208 id=208 data-nosnippet>208</a>                }
-<a href=#209 id=209 data-nosnippet>209</a>            }
-<a href=#210 id=210 data-nosnippet>210</a>        }
-<a href=#211 id=211 data-nosnippet>211</a>        rule =&gt; {
-<a href=#212 id=212 data-nosnippet>212</a>            <span class="kw">let </span>valid = product_plane_validity(
-<a href=#213 id=213 data-nosnippet>213</a>                rule,
-<a href=#214 id=214 data-nosnippet>214</a>                plane,
-<a href=#215 id=215 data-nosnippet>215</a>                planned.primary_beam_model(),
-<a href=#216 id=216 data-nosnippet>216</a>                inputs,
-<a href=#217 id=217 data-nosnippet>217</a>                (<span class="kw-2">&amp;</span>ImageDomainRole::Main, <span class="number">0</span>),
-<a href=#218 id=218 data-nosnippet>218</a>            )<span class="question-mark">?</span>;
-<a href=#219 id=219 data-nosnippet>219</a>            zero_invalid_plane_values(values, <span class="kw-2">&amp;</span>valid);
-<a href=#220 id=220 data-nosnippet>220</a>        }
-<a href=#221 id=221 data-nosnippet>221</a>    }
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="prelude-val">Ok</span>(())
-<a href=#223 id=223 data-nosnippet>223</a>}
+<a href=#175 id=175 data-nosnippet>175</a>        reuses_single_psf: <span class="bool-val">false</span>,
+<a href=#176 id=176 data-nosnippet>176</a>        fitted_beam: <span class="prelude-val">None</span>,
+<a href=#177 id=177 data-nosnippet>177</a>        restoring_beam: <span class="prelude-val">None</span>,
+<a href=#178 id=178 data-nosnippet>178</a>        primary_beam_model: planned.primary_beam_model(),
+<a href=#179 id=179 data-nosnippet>179</a>        fft_threads: <span class="number">1</span>,
+<a href=#180 id=180 data-nosnippet>180</a>    })
+<a href=#181 id=181 data-nosnippet>181</a>}
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a><span class="kw">fn </span>make_plane(
+<a href=#184 id=184 data-nosnippet>184</a>    member: <span class="kw-2">&amp;</span>PlannedMember,
+<a href=#185 id=185 data-nosnippet>185</a>    plane: <span class="kw-2">&amp;</span>FinalNormalPlaneReader&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#186 id=186 data-nosnippet>186</a>    planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
+<a href=#187 id=187 data-nosnippet>187</a>    inputs: <span class="kw-2">&amp;</span>ContinuumProductInputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#188 id=188 data-nosnippet>188</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f32&gt;, ProductsError&gt; {
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = raw_plane(member, plane, planned, inputs)<span class="question-mark">?</span>;
+<a href=#190 id=190 data-nosnippet>190</a>    apply_validity(<span class="kw-2">&amp;mut </span>values, member, plane, planned, inputs)<span class="question-mark">?</span>;
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="prelude-val">Ok</span>(values)
+<a href=#192 id=192 data-nosnippet>192</a>}
+<a href=#193 id=193 data-nosnippet>193</a>
+<a href=#194 id=194 data-nosnippet>194</a><span class="kw">fn </span>apply_validity(
+<a href=#195 id=195 data-nosnippet>195</a>    values: <span class="kw-2">&amp;mut </span>[f32],
+<a href=#196 id=196 data-nosnippet>196</a>    member: <span class="kw-2">&amp;</span>PlannedMember,
+<a href=#197 id=197 data-nosnippet>197</a>    plane: <span class="kw-2">&amp;</span>FinalNormalPlaneReader&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#198 id=198 data-nosnippet>198</a>    planned: <span class="kw-2">&amp;</span>PlannedContinuumGeneration,
+<a href=#199 id=199 data-nosnippet>199</a>    inputs: <span class="kw-2">&amp;</span>ContinuumProductInputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#200 id=200 data-nosnippet>200</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProductsError&gt; {
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">match </span>member.validity() {
+<a href=#202 id=202 data-nosnippet>202</a>        ProductValidityRule::All =&gt; {}
+<a href=#203 id=203 data-nosnippet>203</a>        ProductValidityRule::PrimaryBeam(policy)
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="kw">if </span><span class="macro">matches!</span>(member.role(), ProductRole::PrimaryBeam(<span class="kw">_</span>)) =&gt;
+<a href=#205 id=205 data-nosnippet>205</a>        {
+<a href=#206 id=206 data-nosnippet>206</a>            <span class="kw">for </span>value <span class="kw">in </span>values {
+<a href=#207 id=207 data-nosnippet>207</a>                <span class="kw">if </span><span class="kw-2">*</span>value &lt;= policy.cutoff() {
+<a href=#208 id=208 data-nosnippet>208</a>                    <span class="kw-2">*</span>value = <span class="number">0.0</span>;
+<a href=#209 id=209 data-nosnippet>209</a>                }
+<a href=#210 id=210 data-nosnippet>210</a>            }
+<a href=#211 id=211 data-nosnippet>211</a>        }
+<a href=#212 id=212 data-nosnippet>212</a>        rule =&gt; {
+<a href=#213 id=213 data-nosnippet>213</a>            <span class="kw">let </span>valid = product_plane_validity(
+<a href=#214 id=214 data-nosnippet>214</a>                rule,
+<a href=#215 id=215 data-nosnippet>215</a>                plane,
+<a href=#216 id=216 data-nosnippet>216</a>                planned.primary_beam_model(),
+<a href=#217 id=217 data-nosnippet>217</a>                inputs,
+<a href=#218 id=218 data-nosnippet>218</a>                (<span class="kw-2">&amp;</span>ImageDomainRole::Main, <span class="number">0</span>),
+<a href=#219 id=219 data-nosnippet>219</a>            )<span class="question-mark">?</span>;
+<a href=#220 id=220 data-nosnippet>220</a>            zero_invalid_plane_values(values, <span class="kw-2">&amp;</span>valid);
+<a href=#221 id=221 data-nosnippet>221</a>        }
+<a href=#222 id=222 data-nosnippet>222</a>    }
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="prelude-val">Ok</span>(())
+<a href=#224 id=224 data-nosnippet>224</a>}
 </code></pre></div></section></main></body></html>

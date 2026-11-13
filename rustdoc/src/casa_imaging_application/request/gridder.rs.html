@@ -55,6 +55,9 @@
 <a href=#55 id=55 data-nosnippet>55</a>        <span class="doccomment">/// Direction-dependent product normalization.
 <a href=#56 id=56 data-nosnippet>56</a>        </span><span class="attr">#[serde(deserialize_with = <span class="string">"normalization"</span>)]
 <a href=#57 id=57 data-nosnippet>57</a>        </span>normtype: ProductNormalization,
-<a href=#58 id=58 data-nosnippet>58</a>    },
-<a href=#59 id=59 data-nosnippet>59</a>}
+<a href=#58 id=58 data-nosnippet>58</a>        <span class="doccomment">/// Weigh each field by its own visibility density (CASA's mosweight).
+<a href=#59 id=59 data-nosnippet>59</a>        </span><span class="attr">#[serde(default)]
+<a href=#60 id=60 data-nosnippet>60</a>        </span>mosweight: bool,
+<a href=#61 id=61 data-nosnippet>61</a>    },
+<a href=#62 id=62 data-nosnippet>62</a>}
 </code></pre></div></section></main></body></html>
