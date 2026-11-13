@@ -530,7 +530,7 @@ impl Simulator {
     ///   image that does not exist or does not open
     ///   ([`PredictSpec::check_images`]).
     /// - Not yet implemented: a model layout CASA reads
-    ///   and casa-rs does not (other than Stokes I, J2000,
+    ///   and casa-rs does not (other than Stokes I/Q/U/V, J2000,
     ///   direction–Stokes–spectral axes), a component casa-rs does not
     ///   predict (a direction not in J2000, or a flux, spectrum or shape
     ///   casa-components does not evaluate), a near-field distance on the
@@ -1270,6 +1270,9 @@ fn read_component_list(
 /// raised.
 fn model_error(error: PredictError) -> SimulatorError {
     match error {
+        PredictError::InvalidModel(reason) => {
+            SimulatorError::refused(format!("Caught exception: {reason}"))
+        }
         PredictError::UnsupportedModel(reason) => SimulatorError::not_yet_implemented(format!(
             "predict from this model is not yet implemented in casa-rs (#1053): {reason}"
         )),
