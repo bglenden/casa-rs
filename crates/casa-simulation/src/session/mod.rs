@@ -191,6 +191,7 @@ pub struct Simulator {
     /// The MeasurementSet `openfromms` opened, whose rows `close` patches;
     /// `None` when `close` creates the MeasurementSet.
     opened: Option<from_ms::OpenedMs>,
+    scan_memory: Option<casa_imaging_runtime::Reservation>,
     /// Original MAIN rows preceding a separately rendered append segment.
     noise_row_offset: u64,
     existing_array_id: i32,
@@ -224,6 +225,7 @@ impl Simulator {
             observations: Vec::new(),
             states: Vec::new(),
             scans: Vec::new(),
+            scan_memory: None,
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
             offline_tables: Vec::new(),
@@ -255,7 +257,27 @@ impl Simulator {
     /// MeasurementSet `openfromms` opened. DATA is written only at
     /// [`close`](Self::close); a session dropped without it writes nothing.
     pub fn scan_count(&self) -> usize {
-        self.scans.len()
+        let mut count = 0;
+        let mut previous = None;
+        for scan in &self.scans {
+            if matches!(scan.rows, observe::ScanRows::OnDisk(_)) {
+                let key = (
+                    scan.array_id,
+                    scan.observation_id,
+                    scan.scan_number,
+                    scan.field_id,
+                    scan.data_description_id,
+                );
+                if previous != Some(key) {
+                    count += 1;
+                }
+                previous = Some(key);
+            } else {
+                count += 1;
+                previous = None;
+            }
+        }
+        count
     }
 
     /// `sm.setconfig(...)`: append the antennas.

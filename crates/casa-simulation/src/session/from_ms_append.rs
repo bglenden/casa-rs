@@ -10,6 +10,18 @@ impl Simulator {
         if self.opened.is_none() || !self.feeds.is_empty() {
             return Ok(());
         }
+        let resources = &self.options.resources;
+        let _reading = casa_imaging_runtime::admit(
+            resources.host(),
+            resources.policy(),
+            &casa_imaging_runtime::Demand {
+                phase: "reading stored simulation append metadata",
+                memory: (self.data_descriptions.len() as u64)
+                    .saturating_mul(128)
+                    .saturating_add(256 << 10),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
         let ms = MeasurementSet::open(self.path()).map_err(read_error("append metadata"))?;
         let table = ms.feed().map_err(read_error("FEED"))?;
         let mut feeds = Vec::with_capacity(table.row_count());
@@ -97,6 +109,21 @@ impl Simulator {
             .iter()
             .take_while(|scan| scan.on_disk().is_some())
             .count();
+        let resources = &self.options.resources;
+        let _metadata_memory = casa_imaging_runtime::admit(
+            resources.host(),
+            resources.policy(),
+            &casa_imaging_runtime::Demand {
+                phase: "copying stored simulation integration metadata",
+                memory: self
+                    .scan_memory
+                    .as_ref()
+                    .map_or(0, |memory| memory.memory())
+                    .saturating_add((self.scans.len() - old_scans) as u64 * 256)
+                    .saturating_add(256 << 10),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
         let mut segment = self.append_segment(&scratch.path().join("segment.ms"), old_scans)?;
         let steps = std::mem::take(&mut segment.data_plan);
         crate::write::write_measurement_set(&segment)?;
@@ -130,6 +157,8 @@ impl Simulator {
         });
         segment.data_plan = steps;
         crate::write::patch_measurement_set(&segment)?;
+        let segment_path = segment.path().to_path_buf();
+        drop(segment);
 
         let replacement = casa_ms::observation_io::creation::Replacement::hold(self.path())
             .map_err(|e| SimulatorError::raised(e.to_string()))?;
@@ -138,7 +167,7 @@ impl Simulator {
         } else {
             let copied = scratch.path().join("old.ms");
             crate::write::append::copy_tree(self.path(), &copied)?;
-            let mut old = self.append_segment(&copied, old_scans)?;
+            let mut old = self.append_context(&copied);
             old.scans = self.scans[..old_scans].to_vec();
             old.opened = self.opened.clone();
             old.noise_row_offset = 0;
@@ -146,14 +175,14 @@ impl Simulator {
             copied
         };
         let output = scratch.path().join("merged.ms");
-        crate::write::append::merge(&stored, segment.path(), &output, &self.options.resources)?;
+        crate::write::append::merge(&stored, &segment_path, &output, &self.options.resources)?;
         replacement
             .publish(&output)
             .map_err(|e| SimulatorError::raised(e.to_string()))?;
         Ok(())
     }
 
-    fn append_segment(&self, path: &Path, old: usize) -> SimulatorResult<Self> {
+    fn append_context(&self, path: &Path) -> Self {
         let mut segment = Self::open(path, self.options.clone());
         macro_rules! copied { ($($field:ident),+) => { $(segment.$field.clone_from(&self.$field);)+ }; }
         copied!(
@@ -172,7 +201,6 @@ impl Simulator {
             autocorrelation_weight,
             observations,
             states,
-            scans,
             padding,
             w_projection_planes,
             mosaic,
@@ -181,6 +209,12 @@ impl Simulator {
             squint,
             data_plan
         );
+        segment
+    }
+
+    fn append_segment(&self, path: &Path, old: usize) -> SimulatorResult<Self> {
+        let mut segment = self.append_context(path);
+        segment.scans = self.scans.clone();
         let mut empty: PlannedRows = self
             .scans
             .get(old)

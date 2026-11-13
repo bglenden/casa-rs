@@ -53,7 +53,7 @@ fn prepare(
 ) -> Result<ComponentPrediction, ComponentRefusal> {
     let targets = ComponentTargets {
         windows,
-        pointings: &[(0, CENTRE)],
+        pointings: &[(0, CENTRE, CENTRE)],
         pointing_of_scan: &[0],
         beam,
     };
@@ -241,7 +241,14 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
     for beam in [None, Some(&pattern)] {
         let targets = ComponentTargets {
             windows: &windows,
-            pointings: &[(2, CENTRE), (0, [CENTRE[0], CENTRE[1] + 1.0e-4])],
+            pointings: &[
+                (2, CENTRE, CENTRE),
+                (
+                    0,
+                    [CENTRE[0], CENTRE[1] + 1.0e-4],
+                    [CENTRE[0], CENTRE[1] + 1.0e-4],
+                ),
+            ],
             pointing_of_scan: &[2, 0, 2],
             beam,
         };

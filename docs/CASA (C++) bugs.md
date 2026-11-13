@@ -1708,8 +1708,9 @@ refuses it ([the next entry](#the-beam-on-a-moved-pointing-stays-where-the-field
 ## The beam on a moved pointing stays where the field's first row points
 
 - Date noted: 2026-10-24
-- Status: CASA bug; casa-rs refuses a primary beam, and the mosaic machine,
-  on a moved pointing rather than follow it (#884, PR #888 review)
+- Status: CASA bug; resumed simulations centre each integration's beam and
+  mosaic kernels on its stored POINTING. Fresh moved `observemany` beams
+  remain explicitly refused (#884, #1294).
 - Affected code: `synthesis/TransformMachines/BeamSkyJones.cc` (`changed`,
   `update`) and `synthesis/MeasurementEquations/Simulator.cc`
   (`makeVisSet`'s sort)
@@ -1738,10 +1739,19 @@ Measured on CASA 6.7.6, ALMA at 230 GHz, a second pointing moved 10.4″ east:
   the BOX kernel, CASA's moved samples are 0.671.
 
 None of these is the beam the moved pointing sees, which follows the
-antennas. casa-rs refuses a primary beam over a model image, a component
-list or total power, and the mosaic machine, on a pointing `observemany`
-moved off its field. It does not reproduce a cache. `simobserve` gives each
-pointing its own field and never reaches this.
+antennas. Resumed simulations now separate FIELD's visibility phase from
+POINTING's beam and total-power sample direction. For changing pointings,
+`tools/simulation/sm_offset_pointings_oracle.py` retains the raw CASA output
+and records a second independent CASA control with a distinct, equal-phase
+FIELD identity per integration, forcing the stale cache to refresh. Native
+beam and mosaic predictions agree with that control. Native total power
+continues to use autocorrelations only, correcting the separate `SDGrid`
+cross-correlation defect documented above. Incomplete or disagreeing antenna
+pointings are explicitly refused before changing the DATA plan.
+
+Fresh `observemany` beams on pointings moved off their fields remain
+explicitly refused. `simobserve` gives each pointing its own field and does
+not reach this cache defect.
 
 ## `predict` and `corrupt` add scratch columns to a MeasurementSet without them
 

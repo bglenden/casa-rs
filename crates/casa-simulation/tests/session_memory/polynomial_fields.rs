@@ -29,7 +29,7 @@ fn polynomial(path: &Path, terms: usize) {
     table.save(TableOptions::new(path.join("FIELD"))).unwrap();
 }
 
-fn measured(label: &str, operation: impl FnOnce() -> Simulator) -> Simulator {
+pub(super) fn measured(label: &str, operation: impl FnOnce() -> Simulator) -> Simulator {
     let reserved = reserved_memory();
     let baseline = LIVE.load(Ordering::Relaxed);
     PEAK.store(baseline, Ordering::Relaxed);
@@ -103,23 +103,7 @@ fn selected_polynomial_chunks_keep_their_admitted_snapshot() {
         .join("tests/data/sm_irregular_channels/spectrum.image");
     for count in [64usize, 20_000, 200_000] {
         let path = directory.path().join(format!("chunks-{count}.ms"));
-        let mut initial = configured(&path, &measures, 512 << 20, 4);
-        initial.observe(&scan(count.div_ceil(21))).unwrap();
-        initial.close().unwrap();
-        let rows = Table::open(TableOptions::new(&path)).unwrap().row_count();
-        let mut dd = Table::open(TableOptions::new(path.join("DATA_DESCRIPTION"))).unwrap();
-        for _ in 1..rows {
-            dd.add_row(RecordValue::new(vec![
-                RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
-            ]))
-            .unwrap();
-        }
-        dd.save(TableOptions::new(path.join("DATA_DESCRIPTION")))
-            .unwrap();
-        drop(dd);
-        super::patch::index_rows(&path, "DATA_DESC_ID", 0);
+        let rows = chunked_ms(&path, count, &measures);
         polynomial(&path, 2);
         let mut sm = Simulator::open_from_ms(
             &path,
@@ -149,4 +133,29 @@ fn selected_polynomial_chunks_keep_their_admitted_snapshot() {
             ));
         }
     }
+}
+
+pub(super) fn chunked_ms(
+    path: &Path,
+    count: usize,
+    measures: &std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+) -> usize {
+    let mut initial = configured(path, measures, 512 << 20, 4);
+    initial.observe(&scan(count.div_ceil(21))).unwrap();
+    initial.close().unwrap();
+    let rows = Table::open(TableOptions::new(path)).unwrap().row_count();
+    let mut dd = Table::open(TableOptions::new(path.join("DATA_DESCRIPTION"))).unwrap();
+    for _ in 1..rows {
+        dd.add_row(RecordValue::new(vec![
+            RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+        ]))
+        .unwrap();
+    }
+    dd.save(TableOptions::new(path.join("DATA_DESCRIPTION")))
+        .unwrap();
+    drop(dd);
+    super::patch::index_rows(path, "DATA_DESC_ID", 0);
+    rows
 }
