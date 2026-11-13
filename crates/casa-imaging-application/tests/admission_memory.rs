@@ -1411,10 +1411,15 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
 /// pads drawn 35 times towards their centroid (a 41″ beam), a 1 Jy point
 /// at the phase centre, two 8 MHz channels at 1.5 GHz over an hour.
 fn evla_observation(root: &Path) -> PathBuf {
-    l_band_observation(root, "EVLA")
+    l_band_observation(root, "EVLA", &[1.5e9], 2)
 }
 
-fn l_band_observation(root: &Path, telescope: &str) -> PathBuf {
+fn l_band_observation(
+    root: &Path,
+    telescope: &str,
+    frequencies_hz: &[f64],
+    channels_per_window: usize,
+) -> PathBuf {
     let measurement_set = root.join(format!("admission-{telescope}.ms"));
     let mut antennas = tutorial_vla_a_antennas();
     let count = antennas.len() as f64;
@@ -1438,12 +1443,16 @@ fn l_band_observation(root: &Path, telescope: &str) -> PathBuf {
     request.telescope_name = telescope.to_string();
     request.duration_seconds = 3_600.0;
     request.integration_seconds = 60.0;
-    request.spectral_windows = vec![SyntheticSpectralSetup {
-        name: "admission-lband".to_string(),
-        start_frequency_hz: 1.5e9,
-        channel_width_hz: 8.0e6,
-        channel_count: 2,
-    }];
+    request.spectral_windows = frequencies_hz
+        .iter()
+        .enumerate()
+        .map(|(index, &frequency)| SyntheticSpectralSetup {
+            name: format!("admission-lband-{index}"),
+            start_frequency_hz: frequency,
+            channel_width_hz: 8.0e6,
+            channel_count: channels_per_window,
+        })
+        .collect();
     request.model = Some(SyntheticSkyModel::AnalyticComponents {
         path: None,
         schema_version: Some(1),

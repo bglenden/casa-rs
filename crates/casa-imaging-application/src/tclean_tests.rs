@@ -22,6 +22,7 @@ fn modes() -> Vec<Value> {
         json!({ "gridder": "wproject" }),
         json!({ "gridder": "mosaic", "mosweight": false }),
         json!({ "gridder": "awp2" }),
+        json!({ "gridder": "awp2", "specmode": "cube" }),
         json!({ "gridder": "awp2", "stokes": "IV", "computepastep": 15.0, "wprojplanes": 2 }),
         json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf", "wprojplanes": 32 }),
         json!({
@@ -403,6 +404,16 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "gridder": "wproject", "wprojplanes": -1, "facets": 2 }),
             "facets",
             "#1063",
+        ),
+        (
+            json!({ "gridder": "awp2", "specmode": "cube", "wprojplanes": 2 }),
+            "gridder",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "specmode": "cube", "savemodel": "modelcolumn" }),
+            "gridder",
+            "#1071",
         ),
         (
             json!({ "gridder": "awp2", "stokes": "Q" }),

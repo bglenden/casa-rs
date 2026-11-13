@@ -9,8 +9,11 @@ use casa_types::measures::{
     frequency::{FrequencyRef, MFrequencyConverter},
 };
 
-use super::{PrepareError, Surveyed, domains::PreparedImageDomain, native_aw};
-use crate::{Awp2Deployment, Gridder, ImagingRequest, RunContext};
+use super::{
+    PrepareError, Surveyed, domains::PreparedImageDomain, native_aw,
+    selection::SourceSpectralWindow,
+};
+use crate::{Awp2Deployment, Gridder, ImagingRequest, RunContext, SpecMode};
 
 pub(super) fn plan(
     request: &ImagingRequest,
@@ -27,9 +30,18 @@ pub(super) fn plan(
     else {
         return Ok(None);
     };
-    let [window] = surveyed.survey.spectral_windows.as_slice() else {
+    let windows = &surveyed.survey.spectral_windows;
+    let cube = request.specmode == SpecMode::Cube;
+    if windows.is_empty()
+        || (!cube && windows.len() != 1)
+        || (cube
+            && windows
+                .iter()
+                .any(|window| window.frequencies_hz.len() != 1))
+    {
         return Err(PrepareError::Awp2Selection);
-    };
+    }
+    let window = &windows[0];
     if surveyed.stores.len() != 1
         || surveyed.msv2.is_none()
         || surveyed
@@ -37,7 +49,9 @@ pub(super) fn plan(
             .fields
             .iter()
             .any(|field| surveyed.engine.field_moves(*field as usize))
-        || window.frequency_reference != FrequencyRef::TOPO
+        || windows
+            .iter()
+            .any(|window| window.frequency_reference != FrequencyRef::TOPO)
         || !matches!(domain.telescope.trim(), "VLA" | "EVLA")
     {
         return Err(PrepareError::Awp2Selection);
@@ -62,44 +76,53 @@ pub(super) fn plan(
     let spectral = &surveyed.spectral.image;
     let mut converter =
         MFrequencyConverter::new(spectral.frequency_reference, window.frequency_reference);
-    let [lo, hi] =
-        [-0.5, 0.5].map(|pixel| spectral.reference_frequency_hz + pixel * spectral.increment_hz);
+    let last_edge = surveyed.spectral.output_channels as f64 - 0.5;
+    let [lo, hi] = [-0.5, last_edge]
+        .map(|pixel| spectral.reference_frequency_hz + pixel * spectral.increment_hz);
     let band = [
         converter.convert_hz(lo, &frame)?.hz(),
         converter.convert_hz(hi, &frame)?.hz(),
     ];
-    let frequencies_hz =
-        beam_frequencies(&window.frequencies_hz, window.channel_widths_hz[0], band)?;
-
-    let count = wprojplanes.map_or(1, std::num::NonZeroUsize::get);
-    let maximum_w = surveyed.survey.w.maximum_abs_m * frequencies_hz.last().unwrap()
-        / super::specification::SPEED_OF_LIGHT_M_PER_S;
-    let step = maximum_w / (count.saturating_sub(1).max(1) as f64).powi(2);
-    let w_planes: Box<[f64]> = (0..count).map(|i| (i as f64).powi(2) * step).collect();
-    let channels = super::selection::selected_channels(
-        request,
-        &surveyed.survey.spw_channels,
-        window.spw_id,
-        &window.frequencies_hz,
-    )?;
-    let row_frequency_hz = channels
-        .iter()
-        .map(|&channel| window.frequencies_hz[channel])
-        .sum::<f64>()
-        / channels.len() as f64;
     let path = evla_surface
         .as_deref()
         .ok_or(PrepareError::Awp2SurfacePath)?;
-    // The bounded parser holds raw text, radial samples and their shared
-    // allocation during conversion. Retain only the physical data afterward.
+    // Cover the bounded dish parser and the frequency and PA axes before
+    // allocating them. The latter stay charged with the deployment.
+    let channels: usize = windows
+        .iter()
+        .map(|window| window.frequencies_hz.len())
+        .sum();
+    let frequency_scratch = channels.max(1).saturating_mul(2 * size_of::<f64>()) as u64;
     let mut charge = admit(
         &context.host,
         &context.policy,
         &Demand {
             phase: "AWP2 dish surface",
-            memory: 16 << 20,
+            memory: (16_u64 << 20).saturating_add(frequency_scratch),
         },
     )?;
+    let frequencies_hz = beam_frequencies(windows, band)?;
+    let count = wprojplanes.map_or(1, std::num::NonZeroUsize::get);
+    let maximum_w = surveyed.survey.w.maximum_abs_m * frequencies_hz.last().unwrap()
+        / super::specification::SPEED_OF_LIGHT_M_PER_S;
+    let step = maximum_w / (count.saturating_sub(1).max(1) as f64).powi(2);
+    let w_planes: Box<[f64]> = (0..count).map(|i| (i as f64).powi(2) * step).collect();
+    let row_frequency_hz = if count == 1 {
+        // The only W plane is zero, so no buffer-frequency scaling is needed.
+        spectral.reference_frequency_hz
+    } else {
+        let channels = super::selection::selected_channels(
+            request,
+            &surveyed.survey.spw_channels,
+            window.spw_id,
+            &window.frequencies_hz,
+        )?;
+        channels
+            .iter()
+            .map(|&channel| window.frequencies_hz[channel])
+            .sum::<f64>()
+            / channels.len() as f64
+    };
     let surface = native_aw::read_dish_surface(path)?;
     let (pa_centres, feed_angle_rad) = if *computepastep < 180.0 {
         squint_centres(
@@ -184,27 +207,37 @@ fn pa_centres(max_abs_pa: f64, step_deg: f32, limit: usize) -> Result<Box<[f64]>
         .collect())
 }
 
-/// SimplePBConvFunc::findUsefulChannels works in the native SPW frame,
-/// sampling the whole SPW first and then filtering by the image band.
+/// SimplePBConvFunc samples the entire native window before applying the
+/// image band. AWPLPG merges the surviving frequencies of all buffers.
 fn beam_frequencies(
-    window_hz: &[f64],
-    first_width_hz: f64,
+    windows: &[SourceSpectralWindow],
     [first_edge, last_edge]: [f64; 2],
 ) -> Result<Box<[f64]>, PrepareError> {
-    let [low, high] = window_hz
-        .iter()
-        .fold([f64::INFINITY, f64::NEG_INFINITY], |[low, high], &hz| {
-            [low.min(hz), high.max(hz)]
-        });
-    if !(0.9e9..=2e9 + 1e-6).contains(&low) || !(0.9e9..=2e9 + 1e-6).contains(&high) {
+    let band = first_edge.min(last_edge)..=first_edge.max(last_edge);
+    let mut frequencies = Vec::new();
+    for window in windows {
+        let [low, high] = window
+            .frequencies_hz
+            .iter()
+            .fold([f64::INFINITY, f64::NEG_INFINITY], |[low, high], &hz| {
+                [low.min(hz), high.max(hz)]
+            });
+        if !(0.9e9..=2e9 + 1e-6).contains(&low) || !(0.9e9..=2e9 + 1e-6).contains(&high) {
+            return Err(PrepareError::Awp2Selection);
+        }
+        let tolerance = (high / 100.0).max(window.channel_widths_hz[0].abs());
+        let count = (((high - low).round() / tolerance) as usize).max(1);
+        frequencies.extend(
+            (0..count)
+                .map(|k| low + k as f64 * tolerance)
+                .filter(|hz| band.contains(hz)),
+        );
+    }
+    frequencies.sort_unstable_by(f64::total_cmp);
+    frequencies.dedup();
+    if frequencies.len() > usize::from(u16::MAX) {
         return Err(PrepareError::Awp2Selection);
     }
-    let tolerance = (high / 100.0).max(first_width_hz.abs());
-    let count = (((high - low).round() / tolerance) as usize).max(1);
-    let mut frequencies: Vec<_> = (0..count)
-        .map(|k| low + k as f64 * tolerance)
-        .filter(|hz| (first_edge.min(last_edge)..=first_edge.max(last_edge)).contains(hz))
-        .collect();
     if frequencies.is_empty() {
         frequencies.push((first_edge + last_edge) / 2.0);
     }
@@ -233,17 +266,38 @@ mod tests {
     }
 
     #[test]
+    fn awp2_cube_combines_native_windows_in_frequency_order() {
+        let windows = [1.8e9, 1.2e9, 1.5e9, 1.5e9, 1.95e9]
+            .into_iter()
+            .enumerate()
+            .map(|(spw_id, frequency)| SourceSpectralWindow {
+                spw_id,
+                frequency_reference: FrequencyRef::TOPO,
+                frequencies_hz: vec![frequency],
+                channel_widths_hz: vec![2.5e7],
+            })
+            .collect::<Vec<_>>();
+        let frequencies = beam_frequencies(&windows, [1.9e9, 1.1e9]).unwrap();
+        assert_eq!(&*frequencies, &[1.2e9, 1.5e9, 1.8e9]);
+    }
+
+    #[test]
     fn awp2_samples_the_whole_spw_before_cutting_to_the_image_band() {
         let first = 999_999_999.999_999_9;
-        let channels = [first, 1.5e9, 2e9];
+        let windows = [SourceSpectralWindow {
+            spw_id: 0,
+            frequency_reference: FrequencyRef::TOPO,
+            frequencies_hz: vec![first, 1.5e9, 2e9],
+            channel_widths_hz: vec![5e8; 3],
+        }];
         // CASA's captured inputs omit the high endpoint even though the
         // wide MFS image reaches it.
-        let frequencies = beam_frequencies(&channels, 5e8, [0.75e9, 2.25e9]).unwrap();
+        let frequencies = beam_frequencies(&windows, [0.75e9, 2.25e9]).unwrap();
         assert_eq!(&*frequencies, &[first, 1.5e9]);
         // Inclusive image edges, regardless of axis order.
-        let frequencies = beam_frequencies(&channels, 5e8, [1.5e9, 1.25e9]).unwrap();
+        let frequencies = beam_frequencies(&windows, [1.5e9, 1.25e9]).unwrap();
         assert_eq!(&*frequencies, &[1.5e9]);
-        let frequencies = beam_frequencies(&channels, 5e8, [1.5e9 + 1.0, 1.7e9]).unwrap();
+        let frequencies = beam_frequencies(&windows, [1.5e9 + 1.0, 1.7e9]).unwrap();
         assert_eq!(&*frequencies, &[1.6e9 + 0.5]);
     }
 }

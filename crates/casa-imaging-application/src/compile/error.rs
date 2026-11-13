@@ -38,7 +38,7 @@ pub enum PrepareError {
     },
     /// The selected observation falls outside the initial AWP2 branch.
     #[error(
-        "AWP2 currently requires fixed VLA or EVLA fields and one L-band TOPO spectral window in one MeasurementSet (#1071)"
+        "AWP2 currently requires fixed VLA or EVLA fields and L-band TOPO data from one MeasurementSet, with one continuum window or single-channel windows for a cube (#1071)"
     )]
     Awp2Selection,
     /// AWPLPG would evaluate a buffer with no valid cross-row at MJD zero.
