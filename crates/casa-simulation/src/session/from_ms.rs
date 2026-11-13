@@ -25,7 +25,7 @@
 //!
 //! What casa-rs does not read yet is refused, here or by the step needing
 //! it, rather than predicted wrongly: a PHASE_DIR polynomial,
-//! several feeds per antenna, and a primary beam, the mosaic
+//! and a primary beam, the mosaic
 //! machine or total-power sampling when POINTING does not point at the
 //! scans' phase centres. Adding to the MeasurementSet after `openfromms`
 //! (`setconfig`, `setfeed`, `setspwindow`, `setfield`, `setmosaicfield`)
@@ -120,7 +120,6 @@ impl Simulator {
             &session.polarizations,
             &session.options.resources,
         )?;
-        refuse_several_feeds(&ms)?;
         // Append reads the feed rows when observe first needs them.
         session.feeds_set = true;
         session.fields = read_fields(&session, &ms)?;
@@ -307,22 +306,6 @@ fn read_window(
         }));
     }
     Ok(window)
-}
-
-/// Refuse a FEED table with several feeds per antenna, which `setfeed`
-/// cannot write either.
-fn refuse_several_feeds(ms: &MeasurementSet) -> SimulatorResult<()> {
-    let error = read_error("FEED");
-    let feed = ms.feed().map_err(&error)?;
-    for row in 0..feed.row_count() {
-        if feed.i32(row, "FEED_ID").map_err(&error)? != 0 {
-            return Err(SimulatorError::not_yet_implemented(
-                "openfromms on a MeasurementSet with several feeds per antenna is not yet \
-                 implemented in casa-rs (#1053)",
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<Field>> {
