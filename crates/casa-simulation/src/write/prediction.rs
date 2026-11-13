@@ -778,8 +778,21 @@ impl<'s> PredictionStage<'s> {
                     .projections
                     .iter()
                     .zip(&segment.pointing_offsets)
-                    .map(|(projection, pointing_offset_rad)| {
-                        let (uvw_m, phase_shift_m) = projection.apply(row.uvw_m);
+                    .zip(&segment.steps)
+                    .map(|((projection, pointing_offset_rad), &step)| {
+                        let prediction = self.predictions[step];
+                        let (mut uvw_m, mut phase_shift_m) = projection.apply(row.uvw_m);
+                        if let Some(focus) = &prediction.focus {
+                            (uvw_m, phase_shift_m) = crate::session::focus::apply(
+                                focus,
+                                first_row + offset as u64,
+                                row,
+                                projection,
+                                prediction.distance_m,
+                                uvw_m,
+                                phase_shift_m,
+                            );
+                        }
                         DomainProjection {
                             uvw_m,
                             phase_shift_m,

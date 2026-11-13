@@ -32,13 +32,22 @@ pub fn copy(source: &Path, output: &Path) {
 }
 
 pub fn compare(path: &Path, case: &Value) -> f64 {
+    compare_columns(path, case, &["DATA", "MODEL_DATA", "CORRECTED_DATA"])
+}
+
+/// Newly created native simulations do not add optional scratch columns.
+pub fn compare_created(path: &Path, case: &Value) -> f64 {
+    compare_columns(path, case, &["DATA"])
+}
+
+fn compare_columns(path: &Path, case: &Value, columns: &[&str]) -> f64 {
     let table = Table::open(TableOptions::new(path)).unwrap();
     let expected = case["after"]["rows"].as_array().unwrap();
     assert_eq!(table.row_count(), expected.len());
     let mut error = 0.;
     let mut norm = 0.;
     for (row, expected) in expected.iter().enumerate() {
-        for column in ["DATA", "MODEL_DATA", "CORRECTED_DATA"] {
+        for &column in columns {
             let ArrayValue::Complex32(values) =
                 table.cell_accessor(row, column).unwrap().array().unwrap()
             else {
@@ -47,6 +56,7 @@ pub fn compare(path: &Path, case: &Value) -> f64 {
             let science = case["pointing_cache_corrected_rows"]
                 .get(row)
                 .or_else(|| case["direction_frame_corrected_rows"].get(row))
+                .or_else(|| case["field_distance_corrected_rows"].get(row))
                 .unwrap_or(expected);
             let reference = science[column.to_lowercase()].as_array().unwrap();
             assert_eq!(values.len(), reference.len());
@@ -64,7 +74,8 @@ pub fn compare(path: &Path, case: &Value) -> f64 {
                 } else {
                     index
                 }];
-                let actual = values[[index % 4, index / 4]];
+                let correlations = values.shape()[0];
+                let actual = values[[index % correlations, index / correlations]];
                 let mut reference = [
                     reference[0].as_f64().unwrap(),
                     reference[1].as_f64().unwrap(),
@@ -111,7 +122,11 @@ pub fn compare(path: &Path, case: &Value) -> f64 {
             panic!("FLAG")
         };
         for (index, flag) in expected["flags"].as_array().unwrap().iter().enumerate() {
-            assert_eq!(flags[[index % 4, index / 4]], flag.as_bool().unwrap());
+            let correlations = flags.shape()[0];
+            assert_eq!(
+                flags[[index % correlations, index / correlations]],
+                flag.as_bool().unwrap()
+            );
         }
         let ScalarValue::Bool(flag) = table
             .cell_accessor(row, "FLAG_ROW")

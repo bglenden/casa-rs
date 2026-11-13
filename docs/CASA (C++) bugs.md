@@ -4778,6 +4778,23 @@ checks. Evidence: `frame_conversion_b1950` in
 `tools/simulation/sm_image_layouts_oracle.py` and
 `crates/casa-simulation/tests/image_layouts.rs`.
 
+## Simulator field selection drops the configured focus distance
+
+CASA 6.7.6.14 `simulator.setdata(fieldid=[0], msselect=...)` changes the
+simulator's `nField` to the length of the field selection without updating its
+configured `distance_p` vector. `Simulator::createSkyEquation` then skips the
+focus distance when `distance_p.nelements() > nField`. The same rows selected
+using only `msselect="FIELD_ID == 0 && ..."` retain the configured focus and
+produce different simulated DATA. A row selection must not change the physical
+sky's finite distance.
+
+casa-rs retains the last configured nonzero field distance for image prediction,
+independently of the selected fields. `tools/simulation/sm_field_distance_oracle.py`
+records the raw CASA field-selection result and an independent CASA control
+selecting exactly the same rows through TaQL alone. The regression compares
+corrected DATA to that control and keeps raw quality and geometry checks. The
+ordinary zero-distance selection behavior is unchanged.
+
 ## AWP2 includes an MJD-zero angle for a fully flagged integration
 
 `AWPLPG::init` surveys every selected visibility buffer before the major
