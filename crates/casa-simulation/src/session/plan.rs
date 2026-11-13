@@ -23,6 +23,14 @@ pub(crate) struct DataPlan {
 }
 
 impl DataPlan {
+    pub(in crate::session) fn cloned_bytes(&self) -> usize {
+        self.phases.len() * size_of::<DataPhase>()
+            + self
+                .phases
+                .iter()
+                .map(DataPhase::cloned_bytes)
+                .sum::<usize>()
+    }
     pub(crate) fn selection(&self) -> &DataSelection {
         &self.selection
     }

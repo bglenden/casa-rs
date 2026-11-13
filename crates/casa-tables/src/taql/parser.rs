@@ -33,6 +33,11 @@ pub struct Parser<'src> {
     lexer: Lexer<'src>,
 }
 
+enum NumericSuffix {
+    Unit(String),
+    Imaginary,
+}
+
 impl<'src> Parser<'src> {
     /// Creates a new parser for the given TaQL source.
     pub fn new(source: &'src str) -> Self {
@@ -141,8 +146,10 @@ impl<'src> Parser<'src> {
             None
         };
 
-        let group_by = if self.lexer.eat_if(&Token::Group).is_some() {
-            self.lexer.expect(&Token::By)?;
+        let group_by = if let Some(span) = self.lexer.eat_if(&Token::Group) {
+            if self.lexer.slice(&span).eq_ignore_ascii_case("GROUP") {
+                self.lexer.expect(&Token::By)?;
+            }
             self.parse_expr_list()?
         } else {
             vec![]
@@ -154,8 +161,10 @@ impl<'src> Parser<'src> {
             None
         };
 
-        let order_by = if self.lexer.eat_if(&Token::Order).is_some() {
-            self.lexer.expect(&Token::By)?;
+        let order_by = if let Some(span) = self.lexer.eat_if(&Token::Order) {
+            if self.lexer.slice(&span).eq_ignore_ascii_case("ORDER") {
+                self.lexer.expect(&Token::By)?;
+            }
             self.parse_order_by_list()?
         } else {
             vec![]
@@ -754,13 +763,15 @@ impl<'src> Parser<'src> {
                 let n: i64 = s.parse().map_err(|_| {
                     TaqlError::parse(self.lexer.position(span.start), "invalid integer literal")
                 })?;
-                if let Some(unit) = self.parse_optional_quantity_unit()? {
-                    Ok(Expr::Literal(Literal::Quantity {
+                match self.parse_optional_quantity_unit(span.end)? {
+                    Some(NumericSuffix::Unit(unit)) => Ok(Expr::Literal(Literal::Quantity {
                         value: n as f64,
                         unit,
-                    }))
-                } else {
-                    Ok(Expr::Literal(Literal::Int(n)))
+                    })),
+                    Some(NumericSuffix::Imaginary) => Ok(Expr::Literal(Literal::Complex(
+                        num_complex::Complex64::new(0., n as f64),
+                    ))),
+                    None => Ok(Expr::Literal(Literal::Int(n))),
                 }
             }
             Some(Token::FloatLiteral) => {
@@ -769,11 +780,29 @@ impl<'src> Parser<'src> {
                 let v: f64 = s.parse().map_err(|_| {
                     TaqlError::parse(self.lexer.position(span.start), "invalid float literal")
                 })?;
-                if let Some(unit) = self.parse_optional_quantity_unit()? {
-                    Ok(Expr::Literal(Literal::Quantity { value: v, unit }))
-                } else {
-                    Ok(Expr::Literal(Literal::Float(v)))
+                match self.parse_optional_quantity_unit(span.end)? {
+                    Some(NumericSuffix::Unit(unit)) => {
+                        Ok(Expr::Literal(Literal::Quantity { value: v, unit }))
+                    }
+                    Some(NumericSuffix::Imaginary) => Ok(Expr::Literal(Literal::Complex(
+                        num_complex::Complex64::new(0., v),
+                    ))),
+                    None => Ok(Expr::Literal(Literal::Float(v))),
                 }
+            }
+            Some(Token::LBracket) => {
+                self.lexer.next_token();
+                let mut values = Vec::new();
+                if self.lexer.peek() != Some(&Token::RBracket) {
+                    loop {
+                        values.push(self.parse_expr()?);
+                        if self.lexer.eat_if(&Token::Comma).is_none() {
+                            break;
+                        }
+                    }
+                }
+                self.lexer.expect(&Token::RBracket)?;
+                Ok(Expr::ArrayLiteral(values))
             }
             Some(Token::StringLiteral) => {
                 let (_, span) = self.lexer.next_token().unwrap();
@@ -888,6 +917,27 @@ impl<'src> Parser<'src> {
         } else {
             self.parse_expr()?
         };
+        if matches!(func, AggregateFunc::Min | AggregateFunc::Max)
+            && self.lexer.eat_if(&Token::Comma).is_some()
+        {
+            let mut args = vec![arg];
+            loop {
+                args.push(self.parse_expr()?);
+                if self.lexer.eat_if(&Token::Comma).is_none() {
+                    break;
+                }
+            }
+            self.lexer.expect(&Token::RParen)?;
+            return Ok(Expr::FunctionCall {
+                name: if func == AggregateFunc::Min {
+                    "min"
+                } else {
+                    "max"
+                }
+                .into(),
+                args,
+            });
+        }
         self.lexer.expect(&Token::RParen)?;
         Ok(Expr::Aggregate {
             func,
@@ -895,13 +945,19 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn parse_optional_quantity_unit(&mut self) -> Result<Option<String>, TaqlError> {
+    fn parse_optional_quantity_unit(
+        &mut self,
+        number_end: usize,
+    ) -> Result<Option<NumericSuffix>, TaqlError> {
         let Some(token) = self.lexer.peek().cloned() else {
             return Ok(None);
         };
         let (unit, start) = match token {
             Token::Ident => {
                 let (_, span) = self.lexer.next_token().unwrap();
+                if span.start == number_end && matches!(self.lexer.slice(&span), "i" | "j") {
+                    return Ok(Some(NumericSuffix::Imaginary));
+                }
                 (self.lexer.slice(&span).to_string(), span.start)
             }
             Token::StringLiteral => {
@@ -917,7 +973,7 @@ impl<'src> Parser<'src> {
                 format!("invalid unit literal '{unit}'"),
             )
         })?;
-        Ok(Some(unit))
+        Ok(Some(NumericSuffix::Unit(unit)))
     }
 
     /// Parse an identifier expression: column reference or function call.

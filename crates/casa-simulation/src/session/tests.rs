@@ -382,7 +382,8 @@ fn setmosaicfield_centres_its_grid_on_the_field_centre() {
 /// selection fallback. Numerical behavior is independently checked in selection.rs.
 #[test]
 fn setdata_takes_subsets_and_supported_header_queries() {
-    let mut session = ready(Path::new("unused.ms"));
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = ready(&directory.path().join("selected.ms"));
     session
         .set_spectral_window(&window("CBand"))
         .expect("second window");
@@ -412,7 +413,10 @@ fn setdata_takes_subsets_and_supported_header_queries() {
     session
         .set_data(&[0], &[0, 1], "ANTENNA1==0")
         .expect("row subset");
-    let (outcome, message) = refusal(session.set_data(&[0], &[0, 1], "UVW[1]>0"));
+    session
+        .set_data(&[0], &[0, 1], "UVW[1]>0")
+        .expect("stored-cell predicate");
+    let (outcome, message) = refusal(session.set_data(&[0], &[0, 1], "gcount()>0"));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(message.contains("#1053"), "{message}");
 }
