@@ -3568,9 +3568,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>evla_surface</code></td>
 <td><code>parameter.evla_surface@r1</code></td>
 <td><code>optional&lt;path (file)&gt; (states: none)</code></td>
-<td><code>"none"</code>; required</td>
+<td><code>"none"</code>; required when (gridder="awproject" and aw_cf_source="native-evla")</td>
 <td>Advanced Wide-Field</td>
-<td>EVLA dish surface model<br><em>Surface:</em> Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery.</td>
+<td>EVLA dish surface model<br><em>Surface:</em> Radius, height and slope for the homogeneous 25 m VLA or EVLA dish. AWP2 defaults to VLA.surface in the local CASA data tree.</td>
 </tr>
 <tr>
 <td><code>native_cf_policy</code></td>

@@ -89,9 +89,9 @@
 <a href=#89 id=89 data-nosnippet>89</a>/// gridder, unit response otherwise.
 <a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>normalization(request: <span class="kw-2">&amp;</span>ImagingRequest) -&gt; ProductNormalization {
 <a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
-<a href=#92 id=92 data-nosnippet>92</a>        Gridder::Mosaic { normtype, .. } | Gridder::Awproject(AwProjection { normtype, .. }) =&gt; {
-<a href=#93 id=93 data-nosnippet>93</a>            <span class="kw-2">*</span>normtype
-<a href=#94 id=94 data-nosnippet>94</a>        }
+<a href=#92 id=92 data-nosnippet>92</a>        Gridder::Mosaic { normtype, .. }
+<a href=#93 id=93 data-nosnippet>93</a>        | Gridder::Awproject(AwProjection { normtype, .. })
+<a href=#94 id=94 data-nosnippet>94</a>        | Gridder::Awp2 { normtype, .. } =&gt; <span class="kw-2">*</span>normtype,
 <a href=#95 id=95 data-nosnippet>95</a>        Gridder::Standard { .. } | Gridder::Wproject { .. } =&gt; ProductNormalization::UnitResponse,
 <a href=#96 id=96 data-nosnippet>96</a>    }
 <a href=#97 id=97 data-nosnippet>97</a>}
