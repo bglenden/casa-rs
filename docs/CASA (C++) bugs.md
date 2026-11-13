@@ -4410,6 +4410,17 @@ the actual sample frequency, accounting for its averaged-width CF lookup
 described above. Both comparisons retain the image grid and check the
 output masks and predictions.
 
+For BARY input and a TOPO image, the release AW gridder can segfault in
+`AWVisResampler::DataToGridImpl_p`. A trace of the three-channel
+`refim_point_linRL.ms` fixture with its test copy tagged BARY shows five
+interpolation frequencies before the native AW map is restored. The standard
+gridder visits the same five frequencies without the stale native map. Across
+14 buffers it flags all but the middle sample. Materializing those samples
+reproduces the standard products. CASA AW nearest on those samples and the
+original cache agrees with casa-rs AW linear on products and masks. Both
+clean runs report three iterations, four major cycles and stop code 1.
+The saved MODEL_DATA agrees within 7.6e-7 normalized RMS.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
