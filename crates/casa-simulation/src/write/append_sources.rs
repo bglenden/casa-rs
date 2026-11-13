@@ -10,6 +10,26 @@ use std::sync::Mutex;
 pub(super) const SCALAR_ROWS: usize = 512;
 pub(super) const ARRAY_BYTES: usize = 256 * 1024;
 
+/// Encoded files bound strings when their manager cannot report header-only
+/// lengths. This is conservative for a table mixing strings with science data.
+pub(super) fn text_bound(path: &std::path::Path) -> SimulatorResult<usize> {
+    std::fs::read_dir(path)
+        .map_err(super::error)?
+        .try_fold(0usize, |total, entry| {
+            let metadata = entry
+                .map_err(super::error)?
+                .metadata()
+                .map_err(super::error)?;
+            if metadata.is_file() {
+                total
+                    .checked_add(usize::try_from(metadata.len()).map_err(super::error)?)
+                    .ok_or_else(|| super::error("encoded table size overflows usize"))
+            } else {
+                Ok(total)
+            }
+        })
+}
+
 /// The source descriptors, bounded source blocks and SSM save buffers coexist.
 /// Tiled reads can stage two tiles; scalar save's bound also covers its index
 /// and encoding buffers. Source bucket indices use at most two usize pairs per
@@ -18,6 +38,7 @@ pub(super) fn admit_copy(
     template: &Table,
     left: &Table,
     right: &Table,
+    text_bound: usize,
     resources: &SessionResources,
 ) -> SimulatorResult<Reservation> {
     let error = |e: casa_tables::TableError| SimulatorError::raised(e.to_string());
@@ -31,6 +52,21 @@ pub(super) fn admit_copy(
         + metadata(left.retained_read_metadata_bytes())?
         + metadata(right.retained_read_metadata_bytes())?;
     let columns = template.schema().expect("append schema").columns();
+    let text_factor = columns
+        .iter()
+        .filter(|column| column.data_type() == Some(PrimitiveType::String))
+        .map(|column| {
+            if matches!(column.column_type(), casa_tables::ColumnType::Array(_)) {
+                16
+            } else {
+                4
+            }
+        })
+        .max()
+        .unwrap_or(0);
+    bytes += text_bound
+        .checked_mul(text_factor)
+        .ok_or_else(|| super::error("append text memory overflows usize"))?;
     bytes += casa_tables::streamed_scalar_columns_resident_bytes(columns.len())
         .ok_or_else(|| SimulatorError::raised("append copy memory overflows usize"))?;
     bytes += left.row_count().max(right.row_count()) * 4 * size_of::<usize>();
@@ -69,6 +105,7 @@ pub(super) struct Block<T> {
     owner: usize,
     first: usize,
     values: Vec<Option<T>>,
+    extra: Reservation,
 }
 
 impl<T> Default for Block<T> {
@@ -77,6 +114,7 @@ impl<T> Default for Block<T> {
             owner: 0,
             first: 0,
             values: Vec::new(),
+            extra: Reservation::none(),
         }
     }
 }
@@ -122,34 +160,57 @@ pub(super) fn array(
     key: &str,
     row: usize,
     cache: &Mutex<Block<ArrayValue>>,
-) -> Result<Option<ArrayValue>, TableError> {
+    resources: &SessionResources,
+) -> SimulatorResult<Option<ArrayValue>> {
     let mut cache = cache.lock().expect("append array block");
     if !cache.contains(table, row) {
-        let column = table.column_accessor(key)?;
+        let column = table.column_accessor(key).map_err(super::error)?;
         let candidates: Vec<_> = (row..table.row_count().min(row + 64)).collect();
         let text = table
             .schema()
             .and_then(|schema| schema.column(key))
             .and_then(|column| column.data_type())
             == Some(PrimitiveType::String);
+        let mut extra = Reservation::none();
         let count = if text {
             1
         } else {
             let size = column
-                .array_shapes_uncached(&candidates)?
+                .array_shapes_uncached(&candidates)
+                .map_err(super::error)?
                 .iter()
                 .flatten()
                 .map(|shape| shape.iter().copied().fold(16usize, usize::saturating_mul))
                 .max()
                 .unwrap_or(1)
                 .max(1);
+            // A single cell can exceed the target block size. Admit its
+            // decoded cache, returned clone and encoding before reading it.
+            let bytes = size
+                .checked_mul(3)
+                .ok_or_else(|| super::error("append cell size overflows usize"))?
+                .saturating_sub(2 * ARRAY_BYTES);
+            if bytes != 0 {
+                extra = admit(
+                    resources.host(),
+                    resources.policy(),
+                    &Demand {
+                        phase: "copying an oversized simulated cell",
+                        memory: bytes as u64,
+                    },
+                )
+                .map_err(SimulatorError::admission)?;
+            }
             (ARRAY_BYTES / size).clamp(1, candidates.len())
         };
         cache.store(
             table,
             row,
-            column.array_cells_owned_uncached(&candidates[..count])?,
+            column
+                .array_cells_owned_uncached(&candidates[..count])
+                .map_err(super::error)?,
         );
+        cache.extra = extra;
     }
     Ok(cache.value(row))
 }

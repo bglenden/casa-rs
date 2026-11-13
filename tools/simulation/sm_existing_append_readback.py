@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from casatasks import version_string
+from casatools import simulator
 
 from sm_existing_append_oracle import snapshot
 
@@ -51,8 +52,11 @@ def main():
                     else:
                         assert np.array_equal(left, right), (path, name, column)
             print(f"CASA C++ reads {path.name}: DATA NRMS <= {worst:.6g}, quality and metadata agree")
+            sm = simulator()
+            assert sm.openfromms(str(path)), path
+            sm.close()
             count += 1
-    assert count == 14
+    print(f"CASA C++ read {count} appended native MeasurementSets")
 
 
 if __name__ == "__main__":

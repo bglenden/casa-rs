@@ -51,12 +51,17 @@ def main():
     cl.rename(str(component))
     cl.done()
     cases = []
-    for name in ("one", "observation", "many", "selected_corrupt_then_append",
+    for name in ("one", "observation", "many", "array_id", "predict_then_append", "selected_corrupt_then_append",
                  "append_then_selected_predict_corrupt", "append_then_selected_increment", "missing_source"):
         path = root / (name + ".ms")
         sm = make_session(path, stokes="XX XY YX YY")
         sm.close()
         initialize(path)
+        if name == "array_id":
+            tb = table()
+            tb.open(str(path), nomodify=False)
+            tb.putcol("ARRAY_ID", np.full(tb.nrows(), 7, dtype=np.int32))
+            tb.close()
         before = snapshot(path)
         if name == "one":
             shutil.copytree(path, inputs / "base.ms", ignore=shutil.ignore_patterns("table.lock"))
@@ -72,6 +77,8 @@ def main():
             assert sm.setdata(fieldid=[1])
             assert sm.setapply(table=str(gain), interp="nearest", calwt=False)
             assert sm.corrupt()
+        if name == "predict_then_append":
+            assert sm.predict(complist=str(component), incremental=False)
         if name == "many":
             outcome = sm.observemany(sourcenames=["target", "offset"], spwname="band6",
                                     starttimes=["3s", "23s"], stoptimes=["23s", "43s"],
@@ -79,7 +86,7 @@ def main():
         else:
             outcome = sm.observe(sourcename="missing" if name == "missing_source" else "target",
                                  spwname="band6", starttime="3s", stoptime="23s",
-                                 add_observation=name == "observation", project="continued")
+                                 add_observation=name in ("observation", "array_id"), project="continued")
         if name.startswith("append_then_selected"):
             assert sm.setdata(fieldid=[0])
             assert sm.predict(complist=str(component), incremental=name.endswith("increment"))
@@ -89,7 +96,7 @@ def main():
         sm.close()
         me.done()
         after = snapshot(path)
-        if "selected" not in name:
+        if "selected" not in name and name != "predict_then_append":
             assert after["rows"][:len(before["rows"])] == before["rows"]
         assert len(after["rows"]) == len(before["rows"]) + (144 if name == "many" else 0 if name == "missing_source" else 72)
         cases.append(dict(name=name, returned=bool(outcome), before=before, after=after))

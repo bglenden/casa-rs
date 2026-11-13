@@ -424,6 +424,7 @@ impl MainWriter {
         }
         for (column, name) in columns.constants {
             let value = match name {
+                "ARRAY_ID" => ScalarValue::Int32(planned.array_id),
                 "DATA_DESC_ID" => ScalarValue::Int32(scan.spectral_window_id as i32),
                 "EXPOSURE" | "INTERVAL" => ScalarValue::Float64(planned.integration_s),
                 "FIELD_ID" => ScalarValue::Int32(scan.field_id as i32),
@@ -431,7 +432,7 @@ impl MainWriter {
                 "SCAN_NUMBER" => ScalarValue::Int32(scan.scan_number),
                 "STATE_ID" => ScalarValue::Int32(planned.state_id as i32),
                 "FEED1" | "FEED2" => ScalarValue::Int32(planned.feed_id),
-                // ARRAY_ID and PROCESSOR_ID.
+                // PROCESSOR_ID.
                 _ => ScalarValue::Int32(0),
             };
             session

@@ -133,9 +133,16 @@ impl DataPlan {
     pub(crate) fn has_partial_rows(&self, scans: &[super::observe::Scan]) -> bool {
         self.has_selection()
             || scans.iter().enumerate().any(|(index, scan)| {
-                self.phases
-                    .iter()
-                    .any(|phase| phase.has_uncovered_corruption(index, scan.spectral_window_id))
+                if scan.row_count() == 0 {
+                    return false;
+                }
+                let uncovered_prediction =
+                    self.predicts() && !self.phases.iter().any(|phase| phase.predicts_scan(index));
+                uncovered_prediction
+                    || self
+                        .phases
+                        .iter()
+                        .any(|phase| phase.has_uncovered_corruption(index, scan.spectral_window_id))
             })
     }
 

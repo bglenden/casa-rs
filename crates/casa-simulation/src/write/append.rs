@@ -40,7 +40,7 @@ pub(crate) fn copy_tree(source: &Path, target: &Path) -> SimulatorResult<()> {
 struct RowsCopy {
     template: Table,
     columns: ColumnOverrides,
-    failed: Arc<Mutex<Option<String>>>,
+    failed: Arc<Mutex<Option<SimulatorError>>>,
     _reservation: Reservation,
 }
 
@@ -53,11 +53,12 @@ impl RowsCopy {
     ) -> SimulatorResult<Self> {
         // Every output column comes from an override. A metadata construction
         // table prevents save() from materializing the input's generic rows.
+        let text_bound = sources::text_bound(left)?.max(sources::text_bound(right)?);
         let template =
             Table::open_metadata_for_construction(TableOptions::new(left), 0).map_err(error)?;
         let left = Arc::new(Table::open(TableOptions::new(left)).map_err(error)?);
         let right = Arc::new(Table::open(TableOptions::new(right)).map_err(error)?);
-        let reservation = sources::admit_copy(&template, &left, &right, resources)?;
+        let reservation = sources::admit_copy(&template, &left, &right, text_bound, resources)?;
         let first = left.row_count();
         let rows = first
             .checked_add(
@@ -67,7 +68,7 @@ impl RowsCopy {
                     .ok_or_else(|| error("invalid appended row range"))?,
             )
             .ok_or_else(|| error("appended row count overflows usize"))?;
-        let failed = Arc::new(Mutex::new(None::<String>));
+        let failed = Arc::new(Mutex::new(None));
         let mut columns = ColumnOverrides::for_row_count(rows);
         for column in template
             .schema()
@@ -86,6 +87,7 @@ impl RowsCopy {
             match column.column_type() {
                 ColumnType::Array(_) => {
                     let key = name.clone();
+                    let resources = *resources;
                     let cache = Mutex::new(sources::Block::default());
                     columns.insert_generated_array(
                         name,
@@ -97,13 +99,13 @@ impl RowsCopy {
                             {
                                 return None;
                             }
-                            match sources::array(&table, &key, row, &cache) {
+                            match sources::array(&table, &key, row, &cache, &resources) {
                                 Ok(value) => value,
                                 Err(value) => {
                                     failure
                                         .lock()
                                         .expect("append read error")
-                                        .get_or_insert_with(|| value.to_string());
+                                        .get_or_insert(value);
                                     None
                                 }
                             }
@@ -129,7 +131,7 @@ impl RowsCopy {
                                     failure
                                         .lock()
                                         .expect("append read error")
-                                        .get_or_insert_with(|| value.to_string());
+                                        .get_or_insert_with(|| error(value));
                                     None
                                 }
                             }
@@ -161,7 +163,7 @@ impl RowsCopy {
             )
             .map_err(error)?;
         if let Some(failure) = self.failed.lock().expect("append read error").take() {
-            return Err(error(failure));
+            return Err(failure);
         }
         Ok(())
     }

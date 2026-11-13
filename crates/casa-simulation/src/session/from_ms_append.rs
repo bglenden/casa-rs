@@ -60,6 +60,25 @@ impl Simulator {
             .collect::<SimulatorResult<Vec<_>>>()?;
         self.feeds = feeds;
         self.states = states;
+        let main = ms
+            .main_table()
+            .column_accessor("ARRAY_ID")
+            .map_err(|e| SimulatorError::raised(e.to_string()))?;
+        let mut maximum = None;
+        for first in (0..ms.row_count()).step_by(512) {
+            let rows: Vec<_> = (first..ms.row_count().min(first + 512)).collect();
+            for value in main
+                .scalar_cells_owned_for_rows(&rows)
+                .map_err(|e| SimulatorError::raised(e.to_string()))?
+                .into_iter()
+                .flatten()
+            {
+                if let casa_types::ScalarValue::Int32(value) = value {
+                    maximum = Some(maximum.map_or(value, |old: i32| old.max(value)));
+                }
+            }
+        }
+        self.existing_array_id = maximum.unwrap_or(0);
         Ok(())
     }
 

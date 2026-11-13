@@ -191,6 +191,18 @@ fn reopened_observe_and_observemany_match_actual_casa() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("appended.ms");
         copy(&inputs.join("base.ms"), &path);
+        let name = case["name"].as_str().unwrap();
+        if name == "array_id" {
+            let mut table = Table::open(TableOptions::new(&path)).unwrap();
+            for row in 0..table.row_count() {
+                table
+                    .cell_accessor_mut(row, "ARRAY_ID")
+                    .unwrap()
+                    .set(casa_types::Value::Scalar(ScalarValue::Int32(7)))
+                    .unwrap();
+            }
+            table.save(TableOptions::new(&path)).unwrap();
+        }
         let mut sm = Simulator::open_from_ms(
             &path,
             SimulatorOptions {
@@ -206,7 +218,14 @@ fn reopened_observe_and_observemany_match_actual_casa() {
             MEpoch::from_mjd(predict_support::REFERENCE_MJD, EpochRef::UTC),
         )
         .unwrap();
-        let name = case["name"].as_str().unwrap();
+        if name == "predict_then_append" {
+            sm.predict(&casa_simulation::PredictSpec {
+                images: Vec::new(),
+                component_lists: vec![inputs.join("point.cl")],
+                incremental: false,
+            })
+            .unwrap();
+        }
         if name == "selected_corrupt_then_append" {
             sm.set_data(&[], &[1], "").unwrap();
             sm.set_apply(&ApplySpec {
@@ -230,7 +249,7 @@ fn reopened_observe_and_observemany_match_actual_casa() {
             40.,
             60.,
         );
-        spec.add_observation = name == "observation" || name == "many";
+        spec.add_observation = matches!(name, "observation" | "many" | "array_id");
         spec.project = "continued".into();
         spec.observer = "CASA simulator".into();
         let result = if name == "many" {

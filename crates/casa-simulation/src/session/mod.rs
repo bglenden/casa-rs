@@ -190,6 +190,7 @@ pub struct Simulator {
     opened: Option<from_ms::OpenedMs>,
     /// Original MAIN rows preceding a separately rendered append segment.
     noise_row_offset: u64,
+    existing_array_id: i32,
 }
 
 impl Simulator {
@@ -232,6 +233,7 @@ impl Simulator {
             data_plan: DataPlan::default(),
             opened: None,
             noise_row_offset: 0,
+            existing_array_id: 0,
         }
     }
 
