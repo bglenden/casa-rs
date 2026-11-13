@@ -14,7 +14,7 @@ use super::{
     PrepareError, Surveyed, domains::PreparedImageDomain, native_aw,
     selection::SourceSpectralWindow,
 };
-use crate::{Awp2Deployment, Gridder, ImagingRequest, RunContext, SpecMode};
+use crate::{Awp2Deployment, Deconvolver, Gridder, ImagingRequest, RunContext, SpecMode};
 
 pub(super) fn plan(
     request: &ImagingRequest,
@@ -32,7 +32,12 @@ pub(super) fn plan(
         return Ok(None);
     };
     let windows = &surveyed.survey.spectral_windows;
-    if !supported_windows(windows, request.specmode, request.interpolation) {
+    if !supported_windows(
+        windows,
+        request.specmode,
+        request.interpolation,
+        request.deconvolver,
+    ) {
         return Err(PrepareError::Awp2Selection);
     }
     let window = &windows[0];
@@ -205,9 +210,17 @@ fn supported_windows(
     windows: &[SourceSpectralWindow],
     mode: SpecMode,
     interpolation: CubeInterpolation,
+    deconvolver: Deconvolver,
 ) -> bool {
     match mode {
-        SpecMode::Mfs => windows.len() == 1,
+        SpecMode::Mfs => {
+            windows.len() == 1
+                || (deconvolver == Deconvolver::Mtmfs
+                    && !windows.is_empty()
+                    && windows
+                        .iter()
+                        .all(|window| window.frequencies_hz.len() == 1))
+        }
         SpecMode::Cube => {
             !windows.is_empty()
                 && (interpolation == CubeInterpolation::Nearest
@@ -288,11 +301,43 @@ mod tests {
         assert!(supported_windows(
             &windows,
             SpecMode::Cube,
-            CubeInterpolation::Nearest
+            CubeInterpolation::Nearest,
+            Deconvolver::Hogbom
         ));
         for interpolation in [CubeInterpolation::Linear, CubeInterpolation::Cubic] {
-            assert!(!supported_windows(&windows, SpecMode::Cube, interpolation));
+            assert!(!supported_windows(
+                &windows,
+                SpecMode::Cube,
+                interpolation,
+                Deconvolver::Hogbom
+            ));
         }
+    }
+
+    #[test]
+    fn awp2_taylor_admits_several_single_channel_windows() {
+        let mut windows = [1.2e9, 1.5e9, 1.8e9].map(|frequency| SourceSpectralWindow {
+            spw_id: 0,
+            frequency_reference: FrequencyRef::TOPO,
+            frequencies_hz: vec![frequency],
+            channel_widths_hz: vec![2.5e7],
+        });
+        for (index, window) in windows.iter_mut().enumerate() {
+            window.spw_id = index;
+        }
+        let admitted = |windows: &[SourceSpectralWindow], deconvolver| {
+            supported_windows(
+                windows,
+                SpecMode::Mfs,
+                CubeInterpolation::Linear,
+                deconvolver,
+            )
+        };
+        assert!(admitted(&windows, Deconvolver::Mtmfs));
+        assert!(!admitted(&windows, Deconvolver::Hogbom));
+        windows[0].frequencies_hz.push(1.225e9);
+        windows[0].channel_widths_hz.push(2.5e7);
+        assert!(!admitted(&windows, Deconvolver::Mtmfs));
     }
 
     #[test]

@@ -392,6 +392,29 @@ fn awp2_unsquinted_stokes_reads_the_named_polarizations_at_zero_w() {
     assert!(refused.message.contains("#1071"));
 }
 
+#[test]
+fn awp2_taylor_reads_the_two_term_unsquinted_continuum() {
+    let values = json!({"gridder": "awp2", "deconvolver": "mtmfs", "niter": 30});
+    let read = request(values.clone());
+    assert_eq!(read.deconvolver, Deconvolver::Mtmfs);
+    assert_eq!(read.nterms, 2);
+    assert_eq!(read.specmode, SpecMode::Mfs);
+
+    for (parameter, value) in [
+        ("nterms", json!(3)),
+        ("stokes", json!("Q")),
+        ("wprojplanes", json!(2)),
+        ("weighting", json!("uniform")),
+        ("savemodel", json!("modelcolumn")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
 /// A value casa-rs cannot honour is refused at its parameter, naming the
 /// issue that tracks it.
 #[test]

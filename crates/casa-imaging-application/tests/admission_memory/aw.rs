@@ -142,7 +142,7 @@ fn awp2_stays_within_its_admission() {
     if !alone("aw::awp2_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("mfs", "I", &[1.5e9], 2);
+    check_awp2_admission("mfs", "hogbom", "I", &[1.5e9], 2);
 }
 
 /// AWP2 shares one admitted kernel set across the spectral cube planes.
@@ -151,7 +151,7 @@ fn awp2_cube_stays_within_its_admission() {
     if !alone("aw::awp2_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
+    check_awp2_admission("cube", "hogbom", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
 }
 
 /// The nearest-cube route also admits a single native window of many channels.
@@ -160,7 +160,7 @@ fn awp2_nearest_cube_stays_within_its_admission() {
     if !alone("aw::awp2_nearest_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", "I", &[1.5e9], 3);
+    check_awp2_admission("cube", "hogbom", "I", &[1.5e9], 3);
 }
 
 /// The shared aperture is charged beside four gridded polarizations.
@@ -169,10 +169,25 @@ fn awp2_polarized_cube_stays_within_its_admission() {
     if !alone("aw::awp2_polarized_cube_stays_within_its_admission") {
         return;
     }
-    check_awp2_admission("cube", "IQUV", &[1.5e9], 3);
+    check_awp2_admission("cube", "hogbom", "IQUV", &[1.5e9], 3);
 }
 
-fn check_awp2_admission(mode: &str, stokes: &str, frequencies: &[f64], channels_per_window: usize) {
+/// The two-term MFS solve holds its Taylor products alongside three beam kernels.
+#[test]
+fn awp2_taylor_stays_within_its_admission() {
+    if !alone("aw::awp2_taylor_stays_within_its_admission") {
+        return;
+    }
+    check_awp2_admission("mfs", "mtmfs", "I", &[1.2e9, 1.5e9, 1.8e9], 1);
+}
+
+fn check_awp2_admission(
+    mode: &str,
+    deconvolver: &str,
+    stokes: &str,
+    frequencies: &[f64],
+    channels_per_window: usize,
+) {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set =
         super::l_band_observation(root.path(), "VLA", frequencies, channels_per_window);
@@ -195,6 +210,7 @@ fn check_awp2_admission(mode: &str, stokes: &str, frequencies: &[f64], channels_
         "imagename": root.path().join("awp2"),
         "gridder": "awp2",
         "specmode": mode,
+        "deconvolver": deconvolver,
         "stokes": stokes,
         "imsize": 100,
         "cell": "8arcsec",
@@ -214,11 +230,20 @@ fn check_awp2_admission(mode: &str, stokes: &str, frequencies: &[f64], channels_
     } else {
         1
     };
+    if deconvolver == "mtmfs" {
+        values["niter"] = json!(10);
+    }
     let request = imaging::request(values);
     let mut breaches = Vec::new();
     let measured = check(&mut breaches, "AWP2", &request, 1, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
     let outcome = measured.outcome.unwrap();
+    if deconvolver == "mtmfs" {
+        assert_eq!(
+            outcome.problem.reconstruction().basis(),
+            casa_imaging_model::ReconstructionBasis::Taylor { terms: 2 },
+        );
+    }
     assert_eq!(
         outcome.problem.geometry().spectral().output_channels(),
         output_channels,
