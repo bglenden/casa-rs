@@ -116,11 +116,10 @@ fn trackfield_images_mfs_and_a_rest_frame_cube() {
     );
 }
 
-/// A moving source's AW cube uses its REST axis for channel selection.
-#[test]
-fn aw_nearest_images_a_multichannel_rest_cube() {
+/// An AW request on a moving field with a native TOPO window.
+fn moving_aw_cube(channels: usize) -> (Observation, serde_json::Value) {
     let mut setup = super::aw_projection::setup();
-    setup.spectral_windows[0].channel_count = 4;
+    setup.spectral_windows[0].channel_count = channels;
     let observation = following_body(Observation::synthesise_setup(setup, &[("point", POINT)]));
     let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
     ms.spectral_window_mut()
@@ -141,10 +140,17 @@ fn aw_nearest_images_a_multichannel_rest_cube() {
     request["specmode"] = json!("cubesource");
     request["outframe"] = json!("REST");
     request["restfreq"] = json!("1.5GHz");
-    request["nchan"] = json!(4);
+    request["nchan"] = json!(channels);
     request["niter"] = json!(0);
     request["interpolation"] = json!("nearest");
     request["wprojplanes"] = json!(1);
+    (observation, request)
+}
+
+/// A moving source's AW cube uses its REST axis for channel selection.
+#[test]
+fn aw_nearest_images_a_multichannel_rest_cube() {
+    let (observation, mut request) = moving_aw_cube(4);
     let (_, products) = observation.image("aw-rest-cube", request.clone());
     // Nearest selects the same stored channels on both axes. The ephemeris,
     // geometry, cache, and native wavelengths are identical for the two PSFs.
@@ -217,6 +223,34 @@ fn aw_nearest_images_a_multichannel_rest_cube() {
             .channel_values()
             .iter()
             .all(|&w| w > 0.0)
+    );
+}
+
+/// Cubic interpolation on an offset REST grid uses the four-point stencil.
+#[test]
+fn aw_cubic_images_a_multichannel_rest_cube() {
+    let (observation, mut request) = moving_aw_cube(6);
+    request["nchan"] = json!(4);
+    request["start"] = json!("1504MHz");
+    request["width"] = json!("8.001MHz");
+    request["interpolation"] = json!("cubic");
+    let (_, cubic) = observation.image("aw-rest-cubic", request.clone());
+    let weights = cubic.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 4);
+    assert!(weights.iter().all(|&weight| weight > 0.0), "{weights:?}");
+
+    request["interpolation"] = json!("linear");
+    let (_, linear) = observation.image("aw-rest-linear-control", request);
+    let difference = cubic
+        .get(".residual")
+        .values()
+        .into_iter()
+        .zip(linear.get(".residual").values())
+        .map(|(cubic, linear)| (cubic - linear).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        difference > 1e-4,
+        "REST cubic and linear difference: {difference}"
     );
 }
 
