@@ -375,7 +375,9 @@ fn prepare_start(
     context: &crate::RunContext,
     view_charge: &mut casa_imaging_runtime::Reservation,
 ) -> Result<Option<MvcStart>, super::PrepareError> {
-    use crate::restart::{check_grid, mvc_cube_product, product_path, products, suffix};
+    use crate::restart::{
+        check_grid, continuation_products, mvc_cube_product, product_path, suffix,
+    };
     if !restarts_standard_clean(request) {
         return Ok(None);
     }
@@ -384,7 +386,7 @@ fn prepare_start(
         coordinates: domain.coordinates.clone(),
         shape: vec![nx, ny, 1, 1],
     };
-    for path in products(&request.imagename)? {
+    for path in continuation_products(request, &request.imagename)? {
         let name = suffix(&request.imagename, &path);
         if !mvc_cube_product(&name) {
             check_grid(&path, &name, &template, None)?;

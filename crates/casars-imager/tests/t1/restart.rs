@@ -760,3 +760,84 @@ fn same_prefix_restart_predicts_a_shared_component_once() {
         );
     }
 }
+
+/// CASA's updated-mask sequence names a separate input image under the
+/// same prefix as the output, after deleting the previous CLEAN mask.
+#[test]
+fn restart_reads_a_replacement_mask_named_beside_its_products() {
+    let point = |offset_px, flux_jy| Component {
+        offset_px,
+        flux_jy,
+        fwhm_px: None,
+        spectral_index: 0.0,
+    };
+    let observation = Observation::synthesise(&[
+        ("dim", point([-12, 4], 1.0)),
+        ("bright", point([14, -6], 2.0)),
+    ]);
+    let directory = observation.scratch("replacement-mask");
+    fs::create_dir(&directory).unwrap();
+    let geometry = observation.geometry();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": "image",
+        "imsize": geometry.image_size, "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        "backend": "cpu", "niter": 2, "savemodel": "none",
+    });
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(&directory, values.clone());
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    };
+    run(&values);
+    let replacement = directory.join("image.mask.dim.source");
+    fs::rename(directory.join("image.mask"), &replacement).unwrap();
+    let [middle, _] = geometry.centre();
+    let source = {
+        let mut image = PagedImage::<f32>::open(&replacement).unwrap();
+        let mask = ndarray::ArrayD::from_shape_fn(ndarray::IxDyn(image.shape()), |pixel| {
+            f32::from(pixel[0] < middle)
+        });
+        // Shift the input by one pixel. The named mask reader reprojects
+        // it, whereas a saved output must share the requested grid.
+        image.set_reference_pixel(0, middle as f64 + 1.0).unwrap();
+        image.put_slice(&mask, &[0; 4]).unwrap();
+        image.save().unwrap();
+        ndarray::ArrayD::from_shape_fn(ndarray::IxDyn(image.shape()), |pixel| {
+            f32::from(pixel[0] + 1 < middle)
+        })
+    };
+    let scientific = |path: &Path| {
+        let mut files = snapshot(path);
+        // CASA's prefix-based task history also appends to the input
+        // image's logtable. Compare the scientific table and its masks.
+        files.retain(|name, _| !name.starts_with(path.join("logtable")));
+        files
+    };
+    let previous = scientific(&replacement);
+    let read = |name: &str| {
+        PagedImage::<f32>::open(directory.join(name))
+            .unwrap()
+            .get()
+            .unwrap()
+    };
+    let initial = read("image.model");
+    values["mask"] = json!("image.mask.dim.source");
+    values["niter"] = json!(1);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    run(&values);
+    let final_model = read("image.model");
+    assert_eq!(read("image.mask"), source);
+    assert_unchanged(&previous, &scientific(&replacement));
+    let [x, y] = geometry.centre();
+    assert!(final_model[[x - 12, y + 4, 0, 0]] > initial[[x - 12, y + 4, 0, 0]]);
+    assert_eq!(
+        final_model[[x + 14, y - 6, 0, 0]],
+        initial[[x + 14, y - 6, 0, 0]]
+    );
+
+    // A real output mask still conflicts with an explicit replacement.
+    let previous = snapshot(&directory);
+    let reply = json_run_with(&directory, values, true);
+    assert!(matches!(reply, TaskReply::Failed { .. }), "{reply:?}");
+    assert_unchanged(&previous, &snapshot(&directory));
+}

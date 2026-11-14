@@ -124,7 +124,7 @@ fn read_domain(
         shape: vec![nx, ny, polarizations, planes],
     };
     let saved_mosaic_psf = request.supports_separate_psf().then_some(domain.direction);
-    for path in restart::products(&domain.output)? {
+    for path in restart::continuation_products(request, &domain.output)? {
         let suffix = restart::suffix(&domain.output, &path);
         if mvc_start.is_some() && suffix != "mask" && !restart::mvc_cube_product(&suffix) {
             continue;
