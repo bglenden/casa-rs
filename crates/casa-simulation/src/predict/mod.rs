@@ -53,6 +53,7 @@ pub(crate) mod image_beam;
 pub(crate) mod jones;
 mod jones_mosaic;
 mod model;
+pub(crate) use model::PointingGeometry;
 mod single_dish;
 
 pub(crate) fn fixed_direction_frame(

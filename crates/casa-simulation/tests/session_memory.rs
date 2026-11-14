@@ -301,9 +301,13 @@ fn write_model(path: &Path, channels: usize) {
 
 /// [`write_model`] of `pixels` pixels a side.
 fn write_model_of(path: &Path, channels: usize, pixels: usize) {
+    write_model_in_frame(path, channels, pixels, DirectionRef::J2000);
+}
+
+fn write_model_in_frame(path: &Path, channels: usize, pixels: usize, frame: DirectionRef) {
     let mut coordinates = ImageCoordinates::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
-        DirectionRef::J2000,
+        frame,
         Projection::new(ProjectionType::SIN),
         CENTRE_RAD,
         [-CELL_RAD, CELL_RAD],
