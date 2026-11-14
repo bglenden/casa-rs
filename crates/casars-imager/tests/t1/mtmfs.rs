@@ -124,18 +124,31 @@ fn mtmfs_two_terms_recover_flux_and_spectral_index() {
 #[test]
 fn taylor_facets_keep_the_parent_primary_beam_mask() {
     let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
-    let (_, products) = observation.image(
-        "faceted-taylor-mask",
-        json!({
-            "deconvolver": "mtmfs", "nterms": 2, "facets": 2,
-            "niter": 0, "write_pb": true, "pblimit": PBLIMIT,
-        }),
+    let [natural, briggs] = ["natural", "briggs"].map(|weighting| {
+        let (_, products) = observation.image(
+            &format!("faceted-taylor-mask-{weighting}"),
+            json!({
+                "deconvolver": "mtmfs", "nterms": 2, "facets": 2,
+                "niter": 0, "write_pb": true, "pblimit": PBLIMIT,
+                "weighting": weighting, "robust": 0.5,
+            }),
+        );
+        let pb = products.get(".pb.tt0").mask().expect("PB mask");
+        assert!(pb.iter().any(|valid| !valid));
+        for name in [".residual.tt0", ".residual.tt1", ".image.tt0", ".image.tt1"] {
+            assert_eq!(products.get(name).mask().as_ref(), Some(&pb), "{name}");
+        }
+        products.get(".sumwt.tt0").pixels.clone()
+    });
+    // Briggs uses w / (1 + f²D) with positive f² at this robust value.
+    // It must lower the facet weights when the selected data occupy density cells.
+    assert_eq!(natural.shape(), &[2, 2]);
+    assert_eq!(briggs.shape(), natural.shape());
+    assert!(natural.iter().zip(&briggs).all(|(n, b)| b <= n));
+    assert!(
+        natural.iter().zip(&briggs).any(|(n, b)| *b > 0.0 && b < n),
+        "a populated facet's Briggs sum must be lower than its natural sum"
     );
-    let pb = products.get(".pb.tt0").mask().expect("PB mask");
-    assert!(pb.iter().any(|valid| !valid));
-    for name in [".residual.tt0", ".residual.tt1", ".image.tt0", ".image.tt1"] {
-        assert_eq!(products.get(name).mask().as_ref(), Some(&pb), "{name}");
-    }
 }
 
 #[test]

@@ -405,7 +405,7 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
 }
 
 /// Constant-basis facets run with the standard or W kernel set, and
-/// natural Stokes I Taylor facets use the standard set (#1063).
+/// natural or Briggs Stokes I Taylor facets use the standard set (#1063).
 #[test]
 fn facets_admit_standard_continuum_and_bounded_w_and_taylor_modes() {
     let faceted = || ProblemFixture {
@@ -432,6 +432,11 @@ fn facets_admit_standard_continuum_and_bounded_w_and_taylor_modes() {
         ..faceted()
     };
     on_cpu(&taylor().compile()).expect("standard natural Stokes I Taylor facets");
+    let briggs_taylor = ProblemFixture {
+        weighting: WeightingScheme::Briggs { robust: 0.5 },
+        ..taylor()
+    };
+    on_cpu(&briggs_taylor.compile()).expect("standard Briggs Stokes I Taylor facets");
     let unverified = [
         ProblemFixture {
             basis: ReconstructionBasis::Taylor { terms: 3 },

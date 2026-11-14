@@ -84,8 +84,9 @@ impl fmt::Display for Unsupported {
                  and AW projection run on the CPU",
             ),
             Self::FacetedBasis => formatter.write_str(
-                "facets image single-term MFS, or standard natural-weighted Stokes I with \
-                 two-term MT-MFS or same-frame nearest-channel dirty/Högbom cubes (#1063)",
+                "facets image single-term MFS, standard Stokes I two-term MT-MFS with natural or \
+                 Briggs weighting, or standard natural-weighted Stokes I same-frame \
+                 nearest-channel dirty/Högbom cubes (#1063)",
             ),
             Self::FacetedKernelSet => {
                 formatter.write_str("facets grid with standard or W projection only (#1063)")
@@ -252,14 +253,19 @@ pub fn check(
     {
         let standard = crate::imaging::standard_kernel_set(problem);
         let basis = problem.reconstruction().basis();
-        let natural_standard_i = standard
+        let standard_i = standard
             && problem.reconstruction().polarization().coordinates()
-                == [PolarizationCoordinate::StokesI]
-            && problem.weighting().scheme() == WeightingScheme::Natural;
-        let taylor =
-            natural_standard_i && matches!(basis, ReconstructionBasis::Taylor { terms: 2 });
+                == [PolarizationCoordinate::StokesI];
+        let weighting = problem.weighting().scheme();
+        let taylor = standard_i
+            && matches!(
+                weighting,
+                WeightingScheme::Natural | WeightingScheme::Briggs { .. }
+            )
+            && matches!(basis, ReconstructionBasis::Taylor { terms: 2 });
         let spectral = problem.geometry().spectral();
-        let cube = natural_standard_i
+        let cube = standard_i
+            && weighting == WeightingScheme::Natural
             && matches!(basis, ReconstructionBasis::ChannelLocal { .. })
             && matches!(
                 problem.reconstruction().algorithm(),
