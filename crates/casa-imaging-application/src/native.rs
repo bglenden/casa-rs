@@ -602,22 +602,7 @@ pub(crate) fn run(
     let (products, taylor_names, names_reservation) = products?;
     let mut retained = outcome.retained;
     retained.join(names_reservation);
-    for plan in &virtual_model {
-        run_phase(
-            "virtual model",
-            &runtime.cancel,
-            runtime.diagnostics,
-            summary,
-            || {
-                crate::virtual_model::save(
-                    problem,
-                    products.scientific.final_model(),
-                    plan,
-                    &runtime,
-                )
-            },
-        )?;
-    }
+    save_virtual_models(problem, &runtime, &products, &virtual_model, summary)?;
     let workers = team.workers();
     let problem = problem.clone();
     Ok(move |summary| ImagingOutcome {
@@ -640,6 +625,33 @@ pub(crate) fn run(
         mvc_run,
         _retained: retained,
     })
+}
+
+/// Save the final virtual models after the image products are published.
+fn save_virtual_models(
+    problem: &CompiledProblem,
+    runtime: &ApplicationRuntime,
+    products: &Products,
+    virtual_model: &[crate::virtual_model::VirtualModelPlan],
+    summary: &mut RunSummary,
+) -> Result<(), NativeError> {
+    for plan in virtual_model {
+        run_phase(
+            "virtual model",
+            &runtime.cancel,
+            runtime.diagnostics,
+            summary,
+            || {
+                crate::virtual_model::save(
+                    problem,
+                    products.scientific.final_model(),
+                    plan,
+                    runtime,
+                )
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// CASA selects the cube's VLA aperture through its LSRK conversion layer,

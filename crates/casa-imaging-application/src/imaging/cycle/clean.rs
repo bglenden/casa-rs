@@ -92,13 +92,12 @@ pub(super) fn run(
                     ),
                 )?;
                 let refreshed = outcome.major_cycle_count > 0;
-                let (saved_masks, saved_mask_charge) = if !refreshed
-                    || ((read_mosaic_residual || read_field_residuals) && use_pb_mask)
-                {
-                    read_saved_masks(&run, mvc.as_ref(), refreshed)?
-                } else {
-                    (Vec::new(), Reservation::none())
-                };
+                let (saved_masks, saved_mask_charge) = read_saved_masks(
+                    &run,
+                    mvc.as_ref(),
+                    refreshed,
+                    (read_mosaic_residual || read_field_residuals) && use_pb_mask,
+                )?;
                 let prepared = prepare_minor_cycle_with_residual_masks(
                     &outcome.scientific,
                     &mask_plans,
@@ -248,6 +247,7 @@ fn read_saved_masks(
     run: &Run<'_>,
     mvc: Option<&MvcState<'_>>,
     refreshed: bool,
+    keep_after_refresh: bool,
 ) -> Result<
     (
         Vec<Option<casa_imaging_deconvolution::Support>>,
@@ -255,6 +255,9 @@ fn read_saved_masks(
     ),
     ImagingError,
 > {
+    if refreshed && !keep_after_refresh {
+        return Ok((Vec::new(), Reservation::none()));
+    }
     let Some(main) = mvc
         .and_then(MvcState::saved_taylor)
         .or(run.existing.as_ref())
