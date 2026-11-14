@@ -2,7 +2,7 @@
 //! Retain a sky once and prepare its Jones-applied grids per pointing.
 use super::super::observe::{Scan, ScanRows};
 use super::*;
-use crate::predict::jones::JonesImage;
+use crate::predict::image_beam::ImageBeam;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MPosition};
 use std::collections::HashMap;
@@ -25,6 +25,59 @@ pub(super) fn visit_key(scan: &Scan) -> VisitKey {
 }
 
 impl Simulator {
+    pub(super) fn transformed_image_beam(
+        &self,
+        model: &SkyModel,
+        correlations: &[Correlation],
+        selected: Option<&super::super::voltage_patterns::ResolvedBeam>,
+    ) -> SimulatorResult<Option<ImageBeam>> {
+        use super::super::voltage_patterns::BeamSource;
+        let Some(selected) = selected.filter(|_| !self.mosaic) else {
+            return Ok(None);
+        };
+        if let Some(image) = selected.pattern.image() {
+            return Ok(Some(ImageBeam::Jones(image.clone())));
+        }
+        let Some((offset, reference_hz)) = selected.squint else {
+            return Ok(None);
+        };
+        if model.is_stokes_i_only()
+            || !correlations.iter().any(|correlation| {
+                matches!(
+                    correlation,
+                    Correlation::RR | Correlation::RL | Correlation::LR | Correlation::LL
+                )
+            })
+        {
+            return Ok(None);
+        }
+        let pattern = match &selected.pattern {
+            BeamSource::Tabulated(pattern) => pattern.clone(),
+            BeamSource::Configured(beam) => {
+                let resources = &self.options.resources;
+                let reservation = admit(
+                    resources.host(),
+                    resources.policy(),
+                    &Demand {
+                        phase: MODEL_PHASE,
+                        memory: BeamPattern::BYTES + 128,
+                    },
+                )
+                .map_err(SimulatorError::admission)?;
+                Arc::new(casa_imaging_runtime::Admitted {
+                    value: beam.pattern(),
+                    reservation,
+                })
+            }
+            BeamSource::Image(_) => unreachable!("Jones images were handled above"),
+        };
+        Ok(Some(ImageBeam::Squinted {
+            pattern,
+            offset,
+            reference_hz,
+        }))
+    }
+
     pub(super) fn mosaic_jones_angles(
         &self,
         phase_centres: Option<&super::super::from_ms::polynomial::PhaseCentres>,
@@ -122,11 +175,11 @@ impl Simulator {
         Ok(angles)
     }
 
-    pub(super) fn prepare_jones_image(
+    pub(super) fn prepare_image_beam(
         &self,
         model: SkyModel,
         operator: ModelOperator,
-        image: Arc<JonesImage>,
+        image: ImageBeam,
         kernels: Reservation,
         phase_centres: Option<&super::super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
@@ -144,7 +197,7 @@ impl Simulator {
         let reservation = admitted(
             MODEL_PHASE,
             model.held_bytes()
-                + size_of::<JonesFieldModel>() as u64
+                + size_of::<ImageBeamModel>() as u64
                 + (self.scans.len()
                     * (size_of::<(([u64; 2], usize), f64)>()
                         + size_of::<(VisitKey, usize)>()
@@ -227,7 +280,7 @@ impl Simulator {
         visits.dedup_by_key(|(key, _)| *key);
         drop(admitted(
             PREPARATION_PHASE,
-            operator.grid_bytes() + operator.jones_scratch_bytes(&model),
+            operator.grid_bytes() + operator.image_beam_scratch_bytes(&model),
         )?);
         let reading = admitted(PREPARATION_PHASE, model.plane_bytes() + model.cache_bytes())?;
         let held = model.held().map_err(model_error)?;
@@ -242,7 +295,7 @@ impl Simulator {
             phase_centres: None,
             focus: None,
             distance_m: 0.,
-            grids: StepGrids::Jones(Box::new(JonesFieldModel {
+            grids: StepGrids::ImageBeam(Box::new(ImageBeamModel {
                 model: held,
                 image,
                 centres,

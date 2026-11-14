@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The primary beam `sm.setvp(dovp=True)` applies: CASA's default voltage
 //! patterns, as `PBMath` gives them by telescope name and frequency
-//! ([`PrimaryBeam`], from `casa-numerics`), unsquinted, which is what CASA
-//! applies equally to the simulator’s Stokes image planes.
+//! ([`PrimaryBeam`], from `casa-numerics`). This scalar path applies the
+//! central pattern equally to the sky planes; polarized squinted images
+//! use `image_beam` to mix their Stokes signals before gridding.
 
 pub use casa_numerics::{BeamPattern, PrimaryBeam};
 use ndarray::Array2;

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Saved radial-beam squint applied to simulated components and Stokes-I images."""
+"""Saved radial-beam squint applied to simulated components and Stokes images."""
 import argparse
 from pathlib import Path
 
@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--data", type=Path, required=True)
+    parser.add_argument("--polarized-images", action="store_true")
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()
@@ -37,7 +38,11 @@ def main():
     cs.setincrement([.1e9], type="spectral")
     cs.setincrement([-2e-4, 2e-4], type="direction")
     ia.done()
-    ia.fromarray(outfile=str(inputs / "vla.image"), pixels=pixels, csys=cs.torecord())
+    sky_name = "vla_polarized.image" if args.polarized_images else "vla.image"
+    if args.polarized_images:
+        pixels = np.concatenate([pixels, pixels*.1, pixels*.04, pixels*.03], axis=2)
+        cs.setstokes("I Q U V")
+    ia.fromarray(outfile=str(inputs / sky_name), pixels=pixels, csys=cs.torecord())
     ia.setbrightnessunit("Jy/pixel")
     ia.done()
     cs.done()
@@ -49,14 +54,16 @@ def main():
             ("components", "equatorial", True, .01, "equatorial"),
             ("image", "off", False, 360., "alt-az"),
             ("image", "on", True, 360., "alt-az")):
-        name = f"saved_gaussian_{operation}_{mode}"
+        if args.polarized_images and operation != "image":
+            continue
+        name = f"saved_gaussian_{'polarized_' if args.polarized_images else ''}{operation}_{mode}"
         path = root / f"{name}.ms"
         sm = observation(path, "VLA", 1.4e9, mount)
         before = snapshot(path)
         assert sm.setvp(dovp=True, usedefaultvp=False,
             vptable=str(inputs / "custom_gaussian.vp"), dosquint=squint,
             parangleinc=f"{increment}deg")
-        arguments = {"imagename": str(inputs / "vla.image")} if operation == "image" else {
+        arguments = {"imagename": str(inputs / sky_name)} if operation == "image" else {
             "complist": str(args.data / "sm_squint/vla.cl")}
         assert sm.predict(**arguments, incremental=False)
         sm.close()
@@ -64,15 +71,16 @@ def main():
             squint=squint, increment_deg=increment, native_created=True,
             saved_beam="custom_gaussian.vp", before=before, after=snapshot(path))
         if operation == "image":
-            case["sky_image"] = "vla.image"
+            case["sky_image"] = sky_name
         cases.append(case)
         write(args.fixture, dict(casa_version=version_string(),
             recipe="tools/simulation/sm_saved_squint_oracle.py", cases=cases))
         print(name, "passed", flush=True)
     signal = lambda case: np.asarray([row["data"] for row in case["after"]["rows"]])
-    for left, right in ((0, 1), (1, 2), (2, 3), (4, 5)):
+    for left, right in (((0, 1),) if args.polarized_images else ((0, 1), (1, 2), (2, 3), (4, 5))):
         contrast = np.linalg.norm(signal(cases[left])-signal(cases[right])) / np.linalg.norm(signal(cases[right]))
-        assert contrast > 1e-3 if left < 4 else contrast < 1e-6, contrast
+        if not args.polarized_images:
+            assert contrast > 1e-3 if left < 4 else contrast < 1e-6, contrast
         print(cases[left]["name"], cases[right]["name"], "contrast", contrast, flush=True)
 
 
