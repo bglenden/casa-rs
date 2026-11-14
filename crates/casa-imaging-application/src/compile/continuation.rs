@@ -128,7 +128,7 @@ fn read(
         // CASA's setupMask reuses an existing mask only when no mask is
         // given; `restart::check` refused the other cleaning cases.
         if suffix == "mask"
-            && request.niter > 0
+            && (request.niter > 0 || mvc_start)
             && request.usemask == UseMask::User
             && main.mask == DomainMask::FullPlane
         {

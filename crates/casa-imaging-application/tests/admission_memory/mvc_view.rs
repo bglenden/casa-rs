@@ -653,13 +653,21 @@ fn mvc_start_model_keeps_live_allocations_admitted() {
     )
     .expect("initial MVC");
     let start = [root.path().join("seed.tt0"), root.path().join("seed.tt1")];
-    for (term, target) in start.iter().enumerate() {
-        std::fs::rename(
-            root.path().join(format!("mvc-start.model.tt{term}")),
-            target,
-        )
-        .unwrap();
-    }
+    let tt0 = root.path().join("mvc-start.model.tt0");
+    let coordinates = casa_images::PagedImage::<f32>::open(&tt0)
+        .unwrap()
+        .coordinates()
+        .clone();
+    std::fs::remove_dir_all(tt0).unwrap();
+    // A start image can cover a wider field than the output. Its regrid
+    // workspace must be admitted separately from the small cube's passes.
+    let mut wide =
+        casa_images::PagedImage::<f32>::create(vec![3072, 3072, 1, 1], coordinates, &start[0])
+            .unwrap();
+    wide.set_units("Jy/pixel").unwrap();
+    wide.save().unwrap();
+    drop(wide);
+    std::fs::rename(root.path().join("mvc-start.model.tt1"), &start[1]).unwrap();
     controls["startmodel"] = json!(start);
     controls["threshold"] = json!("100Jy");
     let resumed = request(&ms, &prefix, 256, controls)

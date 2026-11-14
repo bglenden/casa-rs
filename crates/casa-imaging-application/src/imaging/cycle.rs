@@ -350,6 +350,7 @@ pub(crate) fn run(
     let mvc = if let Some(spec) = mvc {
         let (state, taylor) = clean::MvcState::begin(spec, outcome.scientific, &mut run)?;
         outcome.scientific = taylor;
+        outcome.plane_rows.start_model_flux = std::mem::take(&mut run.start_model_flux);
         Some(state)
     } else {
         None

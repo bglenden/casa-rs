@@ -151,6 +151,8 @@ fn seed(
             .model
             .main_samples()
             .map_err(ImagingError::StartModel)?;
+        run.start_model_flux =
+            super::super::seeding::plane_fluxes(spec.taylor_problem, &start.model, &samples);
         lifecycle.prepare_final_model(lifecycle.initial_from_start_model(&samples)?, [])?
     };
     let projected = {

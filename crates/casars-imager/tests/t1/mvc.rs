@@ -568,7 +568,9 @@ fn mvc_start_model_uses_the_saved_cube_and_taylor_beams() {
         "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
         "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
     });
-    let (_, initial) = observation.image(name, controls.clone());
+    let mut initial_controls = controls.clone();
+    initial_controls["mask"] = json!("box[[148pix,140pix],[156pix,148pix]]");
+    let (_, initial) = observation.image(name, initial_controls);
     let root = observation.measurement_set().parent().unwrap();
     let path = |suffix: &str| root.join(format!("{name}.{suffix}"));
     let start = [root.join("seed.tt0"), root.join("seed.tt1")];
@@ -617,6 +619,10 @@ fn mvc_start_model_uses_the_saved_cube_and_taylor_beams() {
     let (summary, products) = observation.image(name, resumed.clone());
     assert_eq!(summary.actual_minor_iterations, 0);
     assert_eq!(summary.major_cycles, 1);
+    let old_mask = &initial.get(".mask").pixels;
+    assert!(old_mask.iter().any(|&value| value == 0.0));
+    assert!(old_mask.iter().any(|&value| value == 1.0));
+    assert_eq!(products.get(".mask").pixels, *old_mask);
     for (channel, response) in beam.into_iter().enumerate() {
         let hz = reference + (channel as f64 - pixel) * increment;
         let model = (f64::from(coefficients[0])
@@ -652,6 +658,36 @@ fn mvc_start_model_uses_the_saved_cube_and_taylor_beams() {
         refused.contains("startmodel cannot be supplied"),
         "{refused}"
     );
+    for term in 0..2 {
+        std::fs::remove_dir_all(path(&format!("model.tt{term}"))).unwrap();
+    }
+    let reply = super::casa_return::json_run(
+        root,
+        json!({
+            "vis": observation.measurement_set(), "imagename": name,
+            "imsize": 256, "cell": "0.3arcsec", "backend": "cpu",
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+            "startmodel": start, "fullsummary": true,
+        }),
+    );
+    let casa_provider_contracts::TaskReply::Succeeded { value, .. } = reply else {
+        panic!("seeded tclean return: {reply:?}");
+    };
+    let row = |field| super::casa_return::plane_row(&value, [0, 0, 0], field)[0];
+    let tt0_flux: f64 = Product::open(&path("model.tt0"))
+        .pixels
+        .iter()
+        .map(|&v| f64::from(v))
+        .sum();
+    let start_flux: f64 = Product::open(&start[0])
+        .pixels
+        .iter()
+        .map(|&v| f64::from(v))
+        .sum();
+    assert!((row("startModelFlux") - start_flux).abs() < 1e-6);
+    assert!((row("modelFlux") - tt0_flux).abs() < 1e-6);
 }
 
 /// CASA copies the common Taylor PB support onto MVC's restored and
