@@ -295,16 +295,7 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
 }
 
 #[test]
-fn directions_and_correlations_casa_rs_does_not_predict_are_refused() {
-    let horizon = list(vec![point(
-        Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
-        CENTRE,
-        DirectionRef::HADEC,
-    )]);
-    assert!(matches!(
-        prepare(&horizon, &[window(vec![9, 12])], Some(&PrimaryBeam::ALMA.pattern())),
-        Err(ComponentRefusal::NotYetImplemented(reason)) if reason.contains("#1297")
-    ));
+fn correlations_casa_rs_does_not_predict_are_refused() {
     let j2000 = list(vec![point(
         Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
         CENTRE,

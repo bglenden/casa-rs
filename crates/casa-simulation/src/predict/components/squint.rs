@@ -23,6 +23,9 @@ enum Source {
 }
 
 impl Config {
+    pub(crate) fn unsquinted(increment: f64, alt_az: bool) -> Self {
+        Self::offset([0., 0.], 0., increment, alt_az)
+    }
     pub(crate) fn offset(offset: [f64; 2], frequency: f64, increment: f64, alt_az: bool) -> Self {
         Self {
             source: Source::Offset(offset, frequency),
@@ -128,6 +131,39 @@ impl BeamContext {
 }
 
 impl Squint {
+    /// BeamSkyJones converts POINTING into the component's native frame,
+    /// with the array observer and the current visibility-buffer epoch.
+    pub(super) fn directions(
+        &self,
+        direction: &MDirection,
+        pointing: [f64; 2],
+        frame: &MeasFrame,
+        time_s: f64,
+    ) -> Result<([f64; 2], [f64; 2]), ComponentError> {
+        use casa_types::measures::direction::DirectionRef;
+        let dynamic = !super::super::fixed_direction_frame(direction.refer());
+        let frame = if dynamic {
+            frame
+                .clone()
+                .with_epoch(MEpoch::from_mjd(time_s / 86400., EpochRef::UTC))
+        } else {
+            frame.clone()
+        };
+        if dynamic && self.config.radial() {
+            let centre = MDirection::from_angles(pointing[0], pointing[1], DirectionRef::J2000)
+                .convert_to(direction.refer(), &frame)
+                .map_err(error)?
+                .as_angles();
+            let source = direction.as_angles();
+            Ok(([source.0, source.1], [centre.0, centre.1]))
+        } else {
+            let source = direction
+                .convert_to(DirectionRef::J2000, &frame)
+                .map_err(error)?
+                .as_angles();
+            Ok(([source.0, source.1], pointing))
+        }
+    }
     pub(super) fn bytes(workers: usize, channels: usize, radial: bool) -> u64 {
         size_of::<Self>() as u64
             + if radial { BeamPattern::BYTES } else { 0 }

@@ -24,6 +24,8 @@ EXTRA_FRAMES = ("SUPERGAL", "ECLIPTIC", "JMEAN", "JTRUE", "JNAT", "APP",
 FRAME_COMBINATIONS = tuple(f"frame_{frame}_{mode}" for frame in ("b1950", "galactic", "icrs")
     for mode in ("beam", "mosaic")) + ("frame_j2000_mosaic",)
 FRAME_COMBINATIONS += ("frame_hadec_mosaic",)
+FRAME_COMBINATIONS += tuple(f"frame_{frame.lower()}_beam" for frame in
+    ("JMEAN", "APP", "HADEC", "AZEL"))
 HORIZON_FRAMES = ("HADEC", "AZEL", "AZELSW", "AZELGEO", "AZELSWGEO", "ITRF")
 
 
@@ -140,8 +142,9 @@ def main():
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--constant-frequency", type=float,
         help="Independent one-frequency control for CASA's irregular mosaic beam-axis defect")
-    parser.add_argument("--location", choices=("ALMA",),
+    parser.add_argument("--location", choices=("ALMA", "ARRAY"),
         help="Explicit setoptions reference position for horizon-frame controls")
+    parser.add_argument("--refresh-beam", action="store_true")
     parser.add_argument("--case", required=True, choices=("canonical", "spectral_before_stokes", "direction_last", "no_stokes", "direction_only", "iquv", "iquv_beam", "frame_j2000", "frame_b1950", "frame_galactic", "frame_icrs", "frame_conversion_b1950", *("frame_"+frame.lower() for frame in EXTRA_FRAMES), *FRAME_COMBINATIONS))
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
@@ -157,7 +160,14 @@ def main():
         tb.putcell("REF_FREQUENCY", 0, args.constant_frequency)
         tb.close()
     model = inputs / "model.image"
-    location = measures().observatory(args.location) if args.location else None
+    if args.location == "ARRAY":
+        tb = table()
+        tb.open(str(inputs / "base.ms" / "ANTENNA"))
+        position = tb.getcell("POSITION", 0)
+        tb.close()
+        location = measures().position("ITRF", *(f"{value}m" for value in position))
+    else:
+        location = measures().observatory(args.location) if args.location else None
     make_model(model, args.case, location)
     before = snapshot(inputs / "base.ms")
     path = root / "predicted.ms"
@@ -170,9 +180,12 @@ def main():
     beam = args.case == "iquv_beam" or args.case.endswith("_beam")
     mosaic = args.case.endswith("_mosaic")
     if beam:
-        assert sm.setvp(dovp=True, dosquint=False)
-    horizon = args.case.removeprefix("frame_").removesuffix("_mosaic").upper() in HORIZON_FRAMES
+        assert sm.setvp(dovp=True, dosquint=False,
+            parangleinc="0deg" if args.refresh_beam else "360deg")
+    horizon = args.case.removeprefix("frame_").removesuffix("_mosaic").removesuffix("_beam").upper() in HORIZON_FRAMES
     options = dict(ftmachine="mosaic") if mosaic else {}
+    if location is not None:
+        options["location"] = location
     if horizon:
         options["location"] = location if location is not None else geocentre_limit(measures())
     if options:
@@ -188,8 +201,12 @@ def main():
         lon, lat, radius = [itrf[f"m{i}"]["value"] for i in range(3)]
         case["location_itrf_m"] = [radius*np.cos(lat)*np.cos(lon),
             radius*np.cos(lat)*np.sin(lon), radius*np.sin(lat)]
-        case["name"] += "_at_alma"
+        case["name"] += "_at_" + args.location.lower()
         case.pop("casa_defect", None)
+    if beam:
+        case["beam_increment_deg"] = 0. if args.refresh_beam else 360.
+        if args.refresh_beam:
+            case["name"] += "_refresh"
     if args.constant_frequency is not None:
         case["constant_frequency_hz"] = args.constant_frequency
     elif mosaic:

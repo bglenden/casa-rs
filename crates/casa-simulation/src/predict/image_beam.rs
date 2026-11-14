@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub(crate) enum ImageBeam {
     Jones(Arc<JonesImage>),
+    Radial(Arc<Admitted<BeamPattern>>),
     Squinted {
         pattern: Arc<Admitted<BeamPattern>>,
         offset: [f64; 2],
@@ -22,9 +23,26 @@ impl ImageBeam {
         images: Vec<Array2<f32>>,
         pointing: [f64; 2],
         angle: f64,
+        frame: Option<&casa_types::measures::MeasFrame>,
     ) -> Result<Vec<Array2<f32>>, PredictError> {
+        let pixel_of = |direction| {
+            frame.map_or_else(
+                || model.pixel_of(direction),
+                |frame| model.pixel_of_with_frame(direction, frame),
+            )
+        };
         match self {
-            Self::Jones(image) => image.apply_plane(model, plane, images, pointing, angle),
+            Self::Jones(image) => image.apply_plane(model, plane, images, pointing, angle, frame),
+            Self::Radial(pattern) => {
+                let centre = pixel_of(pointing)?;
+                Ok(radial_plane(
+                    model,
+                    plane,
+                    images,
+                    &pattern.value,
+                    [centre; 3],
+                ))
+            }
             Self::Squinted {
                 pattern,
                 offset,
@@ -43,9 +61,9 @@ impl ImageBeam {
                         ra + dx.sin().atan2(dx.cos() * (dec + dy).cos()),
                         (dx.cos() * (dec + dy).sin()).asin(),
                     ];
-                    model.pixel_of(direction)
+                    pixel_of(direction)
                 });
-                let centres = [right?, left?, model.pixel_of(pointing)?];
+                let centres = [right?, left?, pixel_of(pointing)?];
                 Ok(radial_plane(model, plane, images, &pattern.value, centres))
             }
         }

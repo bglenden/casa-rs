@@ -212,8 +212,7 @@ impl ComponentPrediction {
     ///
     /// # Errors
     ///
-    /// [`ComponentRefusal::NotYetImplemented`]: a time-dependent component
-    /// beam needing separate observer context, correlations not all circular or all
+    /// [`ComponentRefusal::NotYetImplemented`]: correlations not all circular or all
     /// linear, or a flux, spectrum or shape casa-components does not
     /// evaluate.
     pub(crate) fn new(
@@ -227,23 +226,6 @@ impl ComponentPrediction {
         let mut transforms = Vec::with_capacity(components.len());
         for (index, component) in components.iter().enumerate() {
             let direction = component.shape().reference_direction();
-            if (targets.beam.is_some() || targets.squint.is_some())
-                && !matches!(
-                    direction.refer(),
-                    DirectionRef::J2000
-                        | DirectionRef::B1950
-                        | DirectionRef::B1950Vla
-                        | DirectionRef::GALACTIC
-                        | DirectionRef::ICRS
-                        | DirectionRef::SUPERGAL
-                        | DirectionRef::ECLIPTIC
-                )
-            {
-                return Err(refused(format!(
-                    "component {index} in {:?} needs its beam's actual array observer context (#1297)",
-                    direction.refer()
-                )));
-            }
             let (ra, dec) = direction
                 .convert_to(DirectionRef::J2000, targets.frame)
                 .map_err(|error| refused(error.to_string()))?
@@ -442,20 +424,8 @@ impl ComponentPrediction {
             self.transforms.iter().zip(&terms.projections).enumerate()
         {
             let direction = &self.directions[component];
-            let physical = if self.squint.is_some() {
-                let (ra, dec) = direction
-                    .convert_to(DirectionRef::J2000, &self.frame)
-                    .map_err(|error| casa_components::ComponentError::Visibility {
-                        shape: "component beam",
-                        reason: error.to_string(),
-                    })?
-                    .as_angles();
-                [ra, dec]
-            } else {
-                [0.; 2]
-            };
             let mut beam_context = context;
-            let mut flux_angle = None;
+            let mut flux_state = None;
             let mut projection = *initial_projection;
             let mut epoch = None;
             for (row, (uvw_m, time_s)) in rows.clone().enumerate() {
@@ -468,6 +438,11 @@ impl ComponentPrediction {
                         squint.config.alt_az,
                     )?,
                     _ => 0.,
+                };
+                let beam_time = if super::fixed_direction_frame(direction.refer()) {
+                    0.
+                } else {
+                    time_s
                 };
                 if direction.refer() != DirectionRef::J2000 && epoch != Some(time_s) {
                     let current = self
@@ -500,8 +475,10 @@ impl ComponentPrediction {
                 let fluxes = &prepared.fluxes[component * channels * stored..][..channels * stored];
                 let powers = powers.map(|powers| &powers[component * channels..][..channels]);
                 if let Some(squint) = &self.squint
-                    && flux_angle != Some(angle)
+                    && flux_state != Some((angle, beam_time))
                 {
+                    let (physical, beam_centre) =
+                        squint.directions(direction, terms.beam_centre, &self.frame, beam_time)?;
                     let workspace = workspace.as_mut().expect("squint has a workspace");
                     for channel in 0..channels {
                         let frequency = prepared.stored_frequencies.as_ref().map_or_else(
@@ -512,14 +489,14 @@ impl ComponentPrediction {
                         let flux = squint.flux(
                             circular,
                             physical,
-                            terms.beam_centre,
+                            beam_centre,
                             angle,
                             frequency,
                             prepared.basis,
                         );
                         workspace[channel * 4..(channel + 1) * 4].copy_from_slice(&flux);
                     }
-                    flux_angle = Some(angle);
+                    flux_state = Some((angle, beam_time));
                 }
                 for channel in 0..channels {
                     let frequency_hz = prepared.stored_frequencies.as_ref().map_or_else(

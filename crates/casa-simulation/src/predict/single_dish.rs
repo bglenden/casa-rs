@@ -335,6 +335,7 @@ impl SingleDishPrediction {
                             sky.clone(),
                             direction,
                             angles[pointing],
+                            None,
                         )?;
                         &apparent
                     }

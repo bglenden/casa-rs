@@ -125,10 +125,17 @@ impl Prediction {
         team: &WorkerTeam,
     ) -> SimulatorResult<PreparedModelGrids> {
         if let StepGrids::ImageBeam(held) = &self.grids {
-            let (key, angle) = held
+            let (key, angle, time) = held
                 .centres
                 .get(field)
                 .ok_or_else(|| SimulatorError::raised("image-beam pointing was not prepared"))?;
+            let frame = held.observer_position_itrf_m.map(|[x, y, z]| {
+                use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+                MeasFrame::new()
+                    .with_measures(self.frame_measures.clone())
+                    .with_position(MPosition::new_itrf(x, y, z))
+                    .with_epoch(MEpoch::from_mjd(time / 86400., EpochRef::UTC))
+            });
             return self
                 .model
                 .prepare_image_beam(
@@ -136,6 +143,7 @@ impl Prediction {
                     &held.image,
                     key.0.map(f64::from_bits),
                     *angle,
+                    frame.as_ref(),
                     team,
                 )
                 .map_err(model_error);
