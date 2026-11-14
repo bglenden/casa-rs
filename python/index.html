@@ -796,6 +796,10 @@
   sky-model helpers <code>modifymodel</code> and <code>flatimage</code>, and the analysis helpers
   <code>ismstp</code>, <code>cellsize</code>, <code>statim</code> and <code>convimage</code>, the geodesy helpers, and
   <code>msg</code>, the report helpers, <code>dir_s2m</code>, <code>is4d</code>, <code>spectral</code> and <code>setcfg</code>.
+  Its plotting methods <code>newfig</code>, <code>nextfig</code>, <code>endfig</code>, <code>plotants</code>,
+  <code>ephemeris</code> and the default <code>statim(plot=True)</code> use the <code>plot</code> extra.
+  Rust prepares all scientific arrays; Matplotlib draws onto the current
+  figure and panel, so scripts can annotate and save them as in CASA.
   Its other methods have
   CASA's signatures and raise <code>NotImplementedError</code> naming the issue that
   records them. <code>from casars import simutil</code> is its public import.</li>
@@ -858,6 +862,14 @@ available as <code>casars.data.measurement_set_plot(...)</code> and are drawn wi
 Matplotlib by <code>casars.data.plot_matplotlib(...)</code>. <code>casars.imexplore</code> reads
 image planes as NumPy arrays (<code>casars.imexplore.data(...)</code>) and draws them with
 Matplotlib (<code>casars.imexplore.imshow(...)</code>).</p>
+<p>Install <code>casa-rs-python[plot]</code> for simulation graphics. <code>tasks.simobserve</code>
+honours <code>graphics='file'</code>, <code>'screen'</code>, <code>'both'</code> and <code>'none'</code>: it saves the
+model/pointing and observation figures, displays them, does both, or skips
+graphics. Figures include the complete model and UV samples. The
+interferometric quick PSF is a CASA image beside the MeasurementSet.
+The generic <code>tasks.run('simobserve', ...)</code> completion lists PNG files after
+they have been rendered. Displaying figures uses the Python session's
+Matplotlib backend.</p>
 <p>See <a href="../task-parameters/">Task Parameter Profiles</a> for sparse TOML,
 managed Last paths, source precedence, and examples.</p>
 <p>Tagged releases build Python artifacts for Linux <code>x86_64</code> and macOS <code>arm64</code>,

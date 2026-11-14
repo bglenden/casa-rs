@@ -1170,6 +1170,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#graphics-20261111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        graphics-20261111
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulation-figures-20261114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulation-figures-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4496,6 +4518,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#ephemeris-quantity-duration-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ephemeris-quantity-duration: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4650,6 +4683,17 @@
     <span class="md-ellipsis">
       
         numerical-diagnostics-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulation-figures-20261114_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulation-figures-20261114
       
     </span>
   </a>
@@ -5713,6 +5757,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#graphics-20261111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        graphics-20261111
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulation-figures-20261114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulation-figures-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9039,6 +9105,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#ephemeris-quantity-duration-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ephemeris-quantity-duration: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9193,6 +9270,17 @@
     <span class="md-ellipsis">
       
         numerical-diagnostics-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulation-figures-20261114_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulation-figures-20261114
       
     </span>
   </a>
@@ -9808,7 +9896,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h4 id="simobserve-parameter-implementation">simobserve parameter implementation<a class="headerlink" href="#simobserve-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Default only: 0, Implemented: 37, Not implemented: 0, Partial: 1, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Default only: 0, Implemented: 38, Not implemented: 0, Partial: 0, Unassessed: 0.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -10106,9 +10194,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>graphics</code></td>
 <td><code>'both'</code></td>
 <td><code>'both'</code>; <code>graphics</code> → <code>graphics</code></td>
-<td>Partial</td>
-<td>Interferometric file/screen/both writes the numerical .quick.psf before corruption, using legacy single-field padding 1.0. PNG rendering remains unfinished and warns (#1025); none and single-dish do not write a quick PSF. <a href="#simobserve-behavior-outputs">outputs</a><br>Catalog domain: <code>`,</code>both<code>,</code>file<code>,</code>none<code>,</code>screen`</td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-quick-psf-20261111">quick-psf-20261111</a>, <a href="#simobserve-evidence-quick-psf-relative-project-20261111">quick-psf-relative-project-20261111</a></td>
+<td>Implemented</td>
+<td>The Python host renders complete .skymodel.png and .observe.png figures for file/screen/both; none draws nothing. Rust prepares all scientific data, transferred by bounded typed file views without thinning. Interferometric file/screen/both also writes the numerical .quick.psf before corruption using the accepted legacy single-field padding 1.0; none and single-dish do not. Direct headless use without the caller payload warns that PNGs require the Python host. Representative task settings and public simulation helpers pass their integrated CASA comparisons. <a href="#simobserve-behavior-outputs">outputs</a><br>Catalog domain: <code>`,</code>both<code>,</code>file<code>,</code>none<code>,</code>screen`</td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-quick-psf-20261111">quick-psf-20261111</a>, <a href="#simobserve-evidence-quick-psf-relative-project-20261111">quick-psf-relative-project-20261111</a>, <a href="#simobserve-evidence-graphics-20261111">graphics-20261111</a>, <a href="#simobserve-evidence-simulation-figures-20261114">simulation-figures-20261114</a></td>
 </tr>
 <tr>
 <td><code>verbose</code></td>
@@ -10161,9 +10249,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-noise-seeds-20261103">noise-seeds-20261103</a>.</p>
 <p><a id="simobserve-behavior-outputs"></a></p>
 <h5 id="files-overwrite-and-graphics">Files, overwrite and graphics<a class="headerlink" href="#files-overwrite-and-graphics" title="Permanent link">&para;</a></h5>
-<p><strong>Partial</strong> — CASA's file names under the project, overwrite, verbose and graphics.</p>
-<p>PNG rendering (.skymodel.png and .observe.png) remains unfinished and warns (#1025). Numerical interferometric .quick.psf is implemented; broader graphics and task acceptance remain open (#1053).</p>
-<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-quick-psf-20261111">quick-psf-20261111</a>, <a href="#simobserve-evidence-quick-psf-relative-project-20261111">quick-psf-relative-project-20261111</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a>.</p>
+<p><strong>Implemented</strong> — CASA's file names under the project, overwrite, verbose and graphics.</p>
+<p>Complete image/component/dense-pointing/single-dish figures, file/screen/both/none and public simulation helpers have scoped CASA comparisons. PNG rendering requires the Python host and plot extra; direct headless use without its payload warns. These are representative workflows, not an exhaustive Cartesian product of inputs.</p>
+<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-quick-psf-20261111">quick-psf-20261111</a>, <a href="#simobserve-evidence-quick-psf-relative-project-20261111">quick-psf-relative-project-20261111</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a>, <a href="#simobserve-evidence-graphics-20261111">graphics-20261111</a>, <a href="#simobserve-evidence-simulation-figures-20261114">simulation-figures-20261114</a>.</p>
 <h4 id="simobserve-deviations-and-unfinished-work">simobserve deviations and unfinished work<a class="headerlink" href="#simobserve-deviations-and-unfinished-work" title="Permanent link">&para;</a></h4>
 <h5 id="compwidth-unset-spectral-increment-previously-agreed">compwidth-unset-spectral-increment: Previously agreed<a class="headerlink" href="#compwidth-unset-spectral-increment-previously-agreed" title="Permanent link">&para;</a></h5>
 <ul>
@@ -10493,6 +10581,34 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>cd6b94a073c381bd8bdb28335e7566d6f58526e5</code>; CASA: <code>6.7.6.14</code>.</li>
 <li>Command: <code>CASAPY tools/simulation/simobserve_projects_parity.py --out OUT --casars-bin TARGET/debug/simobserve --atmosphere-model TARGET/debug/examples/at_tool_quantities</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/simobserve-projects-20261114.json</code>.</li>
+</ul>
+<p><a id="simobserve-evidence-graphics-20261111"></a></p>
+<h5 id="graphics-20261111">graphics-20261111<a class="headerlink" href="#graphics-20261111" title="Permanent link">&para;</a></h5>
+<p><strong>Installed CASA artists, real task rendering and C++ image readback — passed.</strong> Sixteen figures from four image/component/dense-279-point/single-dish cases agree with independent CASA artists at one/three workers, with all samples and pixels. CASA reads six native PSFs, maximum NRMS 6.63e-7. Real Python file/screen/both/none completion and payload cleanup pass. One renderer review is resolved with before/after regressions. Python-host model and observation PNGs plus numerical controls; public simutil graphics, broader mode combinations, raster bit identity and performance acceptance remain open. Plot-time comparisons have bounded approximate alignment and do not replace equal-stored-TIME MS/UVW checks.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/117d49965afae282afce55806d8feedddcb9e42f/crates/casa-simulation/src/simobserve/graphics/mod.rs">crates/casa-simulation/src/simobserve/graphics/mod.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/117d49965afae282afce55806d8feedddcb9e42f/crates/casa-simulation/tests/simobserve_quick_psf.rs">crates/casa-simulation/tests/simobserve_quick_psf.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/117d49965afae282afce55806d8feedddcb9e42f/crates/casars-python/python/casars/_plot_document.py">crates/casars-python/python/casars/_plot_document.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/117d49965afae282afce55806d8feedddcb9e42f/crates/casars-python/python/tests/test_simobserve_graphics.py">crates/casars-python/python/tests/test_simobserve_graphics.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/117d49965afae282afce55806d8feedddcb9e42f/tools/simulation/check_simobserve_rendering.py">tools/simulation/check_simobserve_rendering.py</a></li>
+<li>Revision: <code>117d49965afae282afce55806d8feedddcb9e42f</code>; CASA: <code>casatasks 6.7.6.14, casatools 6.7.6-14</code>.</li>
+<li>Command: <code>RUST_TEST_THREADS=1 CASA_RS_GRAPHICS_DEBUG_DIR=OUT cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; python tools/simulation/check_simobserve_rendering.py --native DIR --reference FIXTURE --out OUT; pytest crates/casars-python/python/tests</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simobserve-graphics-20261111.json</code>.</li>
+</ul>
+<p><a id="simobserve-evidence-simulation-figures-20261114"></a></p>
+<h5 id="simulation-figures-20261114">simulation-figures-20261114<a class="headerlink" href="#simulation-figures-20261114" title="Permanent link">&para;</a></h5>
+<p><strong>Integrated CASA simulation figures and public helper comparisons — passed.</strong> 139 Python tests pass (one existing optional live-CASA skip); four native figure/PSF tests pass (one parent-invoked helper ignore). 16 task PNG figures and 34 helper artist cases agree with CASA 6.7.6.14; helper image NRMS 0, maximum helper coordinate difference 1.34e-7. CASA C++ reads six native PSFs, maximum NRMS 6.63e-7 under 1e-3. No thinning; all 279 dense pointings retained. SIM-29/30/31 task figure settings, complete plotted values/artists, lifecycle/antenna/ephemeris/statistic helpers and numerical quick-PSF preservation.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casa-simulation/src/simobserve/graphics/mod.rs">crates/casa-simulation/src/simobserve/graphics/mod.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casa-simulation/src/simutil/graphics.rs">crates/casa-simulation/src/simutil/graphics.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casars-python/src/tools/simutil/graphics.rs">crates/casars-python/src/tools/simutil/graphics.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casars-python/python/casars/_plot_document.py">crates/casars-python/python/casars/_plot_document.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casars-python/python/tests/test_simutil_graphics.py">crates/casars-python/python/tests/test_simutil_graphics.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/tools/simulation/check_simobserve_rendering.py">tools/simulation/check_simobserve_rendering.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/tools/simulation/simutil_graphics_oracle.py">tools/simulation/simutil_graphics_oracle.py</a></li>
+<li>Revision: <code>514f31e98d393a8e68c4287583701e1b9a523aed</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py ; CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture ; python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered ; CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simulation-figures-20261114.json</code>.</li>
 </ul>
 <h3 id="split">split<a class="headerlink" href="#split" title="Permanent link">&para;</a></h3>
 <ul>
@@ -12154,9 +12270,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.simutil</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">48</td>
+<td style="text-align: right;">54</td>
+<td style="text-align: right;">1</td>
 <td style="text-align: right;">2</td>
-<td style="text-align: right;">7</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -15412,7 +15528,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="simutil">simutil<a class="headerlink" href="#simutil" title="Permanent link">&para;</a></h3>
 <h4 id="simutil-method-implementation">simutil method implementation<a class="headerlink" href="#simutil-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 48, Partial: 2, Not implemented: 7, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 54, Partial: 1, Not implemented: 2, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -15511,16 +15627,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>endfig</code></td>
 <td><code>show=True, filename=''</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Applies x-small tick labels, draws when requested, saves a supplied filename and disables interactive mode; returns None as CASA does.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-simulation-figures-20261114">simulation-figures-20261114</a></td>
 </tr>
 <tr>
 <td><code>ephemeris</code></td>
 <td><code>date, usehourangle=True, direction=None, telescope=None, ms=None, cofa=None</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Prepares the 96-sample elevation curve, transit and optional MS time range or quantity-duration bar in Rust, using the supplied date/hour-angle choice, direction or list, known telescope or explicit cofa; draws on current axes. Corrects CASA's default quantity-record comparison defect under the standing deviations rule.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-simulation-figures-20261114">simulation-figures-20261114</a></td>
 </tr>
 <tr>
 <td><code>flatimage</code></td>
@@ -15679,16 +15795,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>newfig</code></td>
 <td><code>multi=0, show=True</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Clears the current Matplotlib figure, sets interactive mode and selects a multi-panel layout; retains the caller's list as pmulti, as CASA does. Requires the plot extra.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-simulation-figures-20261114">simulation-figures-20261114</a></td>
 </tr>
 <tr>
 <td><code>nextfig</code></td>
 <td></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Applies x-small tick labels and advances the retained multi-panel list, keeping the last axes after its final panel, as CASA does.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-simulation-figures-20261114">simulation-figures-20261114</a></td>
 </tr>
 <tr>
 <td><code>noisetemp</code></td>
@@ -15707,9 +15823,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>plotants</code></td>
 <td><code>x, y, z, d, name</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Draws every antenna in its native local tangent plane, with CASA's dish-circle or marker choice and labels for fewer than ten antennas, on the selected axes. Requires the plot extra.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-simulation-figures-20261114">simulation-figures-20261114</a></td>
 </tr>
 <tr>
 <td><code>polsettings</code></td>
@@ -15763,9 +15879,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>statim</code></td>
 <td><code>image, plot=True, incell=None, disprange=None, bar=True, showstats=True</code></td>
-<td>Partial (#1025)</td>
-<td>CASA's (min, max, rms, unit), the values 0-d float64 arrays as CASA returns them. plot=True, CASA's default, draws no figure yet and says so (#1025). A Jy/beam image without a beam is not scaled by the pixel area as CASA scales it (recorded deviation).</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-simanalyze-casa-fixture">simanalyze-casa-fixture</a>, <a href="#simutil-evidence-binding-tests">binding-tests</a></td>
+<td>Implemented</td>
+<td>CASA's (min, max, rms, unit), values as 0-d float64 arrays, plus its complete default plot. Supports display-range scalar/list controls (an empty list receives computed limits), mask, colour-scale and statistics options; incell is unused as in CASA. Requires the plot extra only for plot=True. Retains the recorded Jy/beam-without-beam scaling correction.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-simanalyze-casa-fixture">simanalyze-casa-fixture</a>, <a href="#simutil-evidence-binding-tests">binding-tests</a>, <a href="#simutil-evidence-simulation-figures-20261114">simulation-figures-20261114</a></td>
 </tr>
 <tr>
 <td><code>tconpc</code></td>
@@ -15987,6 +16103,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Owner decision: Standing AGENTS.md CASA-deviation rule: correct CASA failures that contradict the documented/evident intent; preserve deliberate observable behavior.</li>
 <li>Evidence: <a href="#simutil-evidence-numerical-diagnostics-20261114">numerical-diagnostics-20261114</a>.</li>
 </ul>
+<h5 id="ephemeris-quantity-duration-previously-agreed">ephemeris-quantity-duration: Previously agreed<a class="headerlink" href="#ephemeris-quantity-duration-previously-agreed" title="Permanent link">&para;</a></h5>
+<ul>
+<li>Inputs: Public simutil.ephemeris without an MS and the constructor default or a supplied quantity-record duration.</li>
+<li>CASA: Compares its quantity record to an integer and raises TypeError after partially drawing the figure.</li>
+<li>casa-rs: Convert the duration quantity before comparison; default zero draws no observation bar, while positive durations draw their actual hour range.</li>
+<li>Rationale: The constructor itself supplies a quantity record, and the helper evidently intends a time interval rather than a Python type error.</li>
+<li>User impact: Default and quantity-duration calls work while preserving the independent CASA elevation/transit curve.</li>
+<li>Owner decision: Standing AGENTS.md CASA-deviation rule: correct behavior that contradicts documented or evident intent; the existing checkpoint already records this correction.</li>
+<li>Evidence: <a href="#simutil-evidence-simulation-figures-20261114">simulation-figures-20261114</a>.</li>
+</ul>
 <h4 id="simutil-evidence">simutil evidence<a class="headerlink" href="#simutil-evidence" title="Permanent link">&para;</a></h4>
 <p>Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.</p>
 <p><a id="simutil-evidence-signature"></a></p>
@@ -16099,6 +16225,21 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>c906e21e0f31dd0a4dc3f19169551657f9188517</code>; CASA: <code>6.7.6.14</code>.</li>
 <li>Command: <code>CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna ; NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native ; CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native-image OUT/native-report.json</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/simutil-diagnostics-20261114.json</code>.</li>
+</ul>
+<p><a id="simutil-evidence-simulation-figures-20261114"></a></p>
+<h5 id="simulation-figures-20261114_1">simulation-figures-20261114<a class="headerlink" href="#simulation-figures-20261114_1" title="Permanent link">&para;</a></h5>
+<p><strong>Integrated CASA simulation figures and public helper comparisons — passed.</strong> 139 Python tests pass (one existing optional live-CASA skip); four native figure/PSF tests pass (one parent-invoked helper ignore). 16 task PNG figures and 34 helper artist cases agree with CASA 6.7.6.14; helper image NRMS 0, maximum helper coordinate difference 1.34e-7. CASA C++ reads six native PSFs, maximum NRMS 6.63e-7 under 1e-3. No thinning; all 279 dense pointings retained. SIM-29/30/31 task figure settings, complete plotted values/artists, lifecycle/antenna/ephemeris/statistic helpers and numerical quick-PSF preservation.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casa-simulation/src/simobserve/graphics/mod.rs">crates/casa-simulation/src/simobserve/graphics/mod.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casa-simulation/src/simutil/graphics.rs">crates/casa-simulation/src/simutil/graphics.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casars-python/src/tools/simutil/graphics.rs">crates/casars-python/src/tools/simutil/graphics.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casars-python/python/casars/_plot_document.py">crates/casars-python/python/casars/_plot_document.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/crates/casars-python/python/tests/test_simutil_graphics.py">crates/casars-python/python/tests/test_simutil_graphics.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/tools/simulation/check_simobserve_rendering.py">tools/simulation/check_simobserve_rendering.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cbc37eaf51ecf1d1f6eba8cddb231cb898d77875/tools/simulation/simutil_graphics_oracle.py">tools/simulation/simutil_graphics_oracle.py</a></li>
+<li>Revision: <code>514f31e98d393a8e68c4287583701e1b9a523aed</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py ; CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture ; python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered ; CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simulation-figures-20261114.json</code>.</li>
 </ul>
 
 

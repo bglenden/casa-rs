@@ -131,166 +131,170 @@
 <a href=#131 id=131 data-nosnippet>131</a>    <span class="doccomment">/// The rms of the unmasked pixels of the first quarter of each direction
 <a href=#132 id=132 data-nosnippet>132</a>    /// axis, through every plane; 0 when all of those are masked.
 <a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">pub </span>rms: f64,
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// The brightness unit.
-<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">pub </span>unit: String,
-<a href=#136 id=136 data-nosnippet>136</a>}
-<a href=#137 id=137 data-nosnippet>137</a>
-<a href=#138 id=138 data-nosnippet>138</a><span class="doccomment">/// `simutil.statim(image, plot=False)`.
-<a href=#139 id=139 data-nosnippet>139</a>///
-<a href=#140 id=140 data-nosnippet>140</a>/// Like CASA, it first takes the image's [`cell_size`], so it refuses an
-<a href=#141 id=141 data-nosnippet>141</a>/// image whose direction axes are rotated. The values are the image's own.
-<a href=#142 id=142 data-nosnippet>142</a>/// CASA scales them by a flux-per-pixel factor, which is 1 for Jy/pixel, for
-<a href=#143 id=143 data-nosnippet>143</a>/// Jy/beam with a restoring beam and for the units it does not know. For
-<a href=#144 id=144 data-nosnippet>144</a>/// Jy/beam without a beam the factor is the pixel area in square arcseconds,
-<a href=#145 id=145 data-nosnippet>145</a>/// while CASA still reports the unit as Jy/beam; casa-rs does not scale them
-<a href=#146 id=146 data-nosnippet>146</a>/// (`docs/CASA (C++) bugs.md`). The corner is CASA's `rg.box([0, 0],
-<a href=#147 id=147 data-nosnippet>147</a>/// [nx/4, ny/4])`: pixels 0 to `nx/4` rounded half up, inclusive, on the
-<a href=#148 id=148 data-nosnippet>148</a>/// image's first two axes.
-<a href=#149 id=149 data-nosnippet>149</a>///
-<a href=#150 id=150 data-nosnippet>150</a>/// # Errors
-<a href=#151 id=151 data-nosnippet>151</a>///
-<a href=#152 id=152 data-nosnippet>152</a>/// An image that cannot be read, or that [`cell_size`] refuses.
-<a href=#153 id=153 data-nosnippet>153</a></span><span class="kw">pub fn </span>statim(image: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;ImageStatistics, AnalysisError&gt; {
-<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span>image = PagedImage::&lt;f32&gt;::open(image)<span class="question-mark">?</span>;
-<a href=#155 id=155 data-nosnippet>155</a>    cell_size(image.coordinates())<span class="question-mark">?</span>;
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">let </span>shape = image.shape().to_vec();
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">let </span>pixels = image.get()<span class="question-mark">?</span>;
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">let </span>mask = image.default_mask()<span class="question-mark">?</span>;
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">let </span>corner = [<span class="number">0</span>, <span class="number">1</span>].map(|axis| {
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>top = (shape[axis] <span class="kw">as </span>f64 * <span class="number">0.25 </span>+ <span class="number">0.5</span>).floor() <span class="kw">as </span>usize;
-<a href=#161 id=161 data-nosnippet>161</a>        top.min(shape[axis] - <span class="number">1</span>)
-<a href=#162 id=162 data-nosnippet>162</a>    });
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>min, <span class="kw-2">mut </span>max) = (f64::INFINITY, f64::NEG_INFINITY);
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>sum_squares, <span class="kw-2">mut </span>count) = (<span class="number">0.0</span>, <span class="number">0_usize</span>);
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">for </span>(position, value) <span class="kw">in </span>pixels.indexed_iter() {
-<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">if </span>mask.as_ref().is_some_and(|mask| !mask[<span class="kw-2">&amp;</span>position]) {
-<a href=#167 id=167 data-nosnippet>167</a>            <span class="kw">continue</span>;
-<a href=#168 id=168 data-nosnippet>168</a>        }
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw">let </span>value = f64::from(<span class="kw-2">*</span>value);
-<a href=#170 id=170 data-nosnippet>170</a>        min = min.min(value);
-<a href=#171 id=171 data-nosnippet>171</a>        max = max.max(value);
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">if </span>position[<span class="number">0</span>] &lt;= corner[<span class="number">0</span>] &amp;&amp; position[<span class="number">1</span>] &lt;= corner[<span class="number">1</span>] {
-<a href=#173 id=173 data-nosnippet>173</a>            sum_squares += value * value;
-<a href=#174 id=174 data-nosnippet>174</a>            count += <span class="number">1</span>;
-<a href=#175 id=175 data-nosnippet>175</a>        }
-<a href=#176 id=176 data-nosnippet>176</a>    }
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="kw">let </span>any = min &lt;= max;
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="prelude-val">Ok</span>(ImageStatistics {
-<a href=#179 id=179 data-nosnippet>179</a>        min: <span class="kw">if </span>any { min } <span class="kw">else </span>{ <span class="number">0.0 </span>},
-<a href=#180 id=180 data-nosnippet>180</a>        max: <span class="kw">if </span>any { max } <span class="kw">else </span>{ <span class="number">1.0 </span>},
-<a href=#181 id=181 data-nosnippet>181</a>        rms: <span class="kw">if </span>count == <span class="number">0 </span>{
-<a href=#182 id=182 data-nosnippet>182</a>            <span class="number">0.0
-<a href=#183 id=183 data-nosnippet>183</a>        </span>} <span class="kw">else </span>{
-<a href=#184 id=184 data-nosnippet>184</a>            (sum_squares / count <span class="kw">as </span>f64).sqrt()
-<a href=#185 id=185 data-nosnippet>185</a>        },
-<a href=#186 id=186 data-nosnippet>186</a>        unit: image.units().to_string(),
-<a href=#187 id=187 data-nosnippet>187</a>    })
-<a href=#188 id=188 data-nosnippet>188</a>}
-<a href=#189 id=189 data-nosnippet>189</a>
-<a href=#190 id=190 data-nosnippet>190</a><span class="doccomment">/// `simutil.ismstp`: the MeasurementSet is total power when its first
-<a href=#191 id=191 data-nosnippet>191</a>/// antenna is named `…TP…`, when it has one antenna, or when every UVW
-<a href=#192 id=192 data-nosnippet>192</a>/// value is zero. CASA tests `uvw.all() == 0`, true when any value is zero;
-<a href=#193 id=193 data-nosnippet>193</a>/// casa-rs tests what was meant.
-<a href=#194 id=194 data-nosnippet>194</a>///
-<a href=#195 id=195 data-nosnippet>195</a>/// # Errors
-<a href=#196 id=196 data-nosnippet>196</a>///
-<a href=#197 id=197 data-nosnippet>197</a>/// A MeasurementSet whose ANTENNA table or UVW column cannot be read.
-<a href=#198 id=198 data-nosnippet>198</a></span><span class="kw">pub fn </span>is_total_power(ms: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;bool, AnalysisError&gt; {
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>failed = |reason: <span class="kw-2">&amp;</span><span class="kw">dyn </span>std::fmt::Display| AnalysisError::Table {
-<a href=#200 id=200 data-nosnippet>200</a>        table: ms.to_path_buf(),
-<a href=#201 id=201 data-nosnippet>201</a>        reason: reason.to_string(),
-<a href=#202 id=202 data-nosnippet>202</a>    };
-<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">let </span>set = MeasurementSet::open(ms).map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
-<a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">let </span>antennas = set.antenna().map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">let </span>names = (<span class="number">0</span>..antennas.row_count())
-<a href=#206 id=206 data-nosnippet>206</a>        .map(|row| antennas.name(row))
-<a href=#207 id=207 data-nosnippet>207</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#208 id=208 data-nosnippet>208</a>        .map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="kw">if </span>names.first().is_some_and(|name| name.contains(<span class="string">"TP"</span>)) || names.len() == <span class="number">1 </span>{
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">true</span>);
-<a href=#211 id=211 data-nosnippet>211</a>    }
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">let </span>main = set.main_table();
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">let </span>column = main
-<a href=#214 id=214 data-nosnippet>214</a>        .column_accessor(<span class="string">"UVW"</span>)
-<a href=#215 id=215 data-nosnippet>215</a>        .map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>rows: Vec&lt;usize&gt; = (<span class="number">0</span>..main.row_count()).collect();
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">for </span>chunk <span class="kw">in </span>rows.chunks(<span class="number">1 </span>&lt;&lt; <span class="number">16</span>) {
-<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">for </span>cell <span class="kw">in </span>column
-<a href=#219 id=219 data-nosnippet>219</a>            .array_cells_owned(chunk)
-<a href=#220 id=220 data-nosnippet>220</a>            .map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?
-<a href=#221 id=221 data-nosnippet>221</a>        </span>{
-<a href=#222 id=222 data-nosnippet>222</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(ArrayValue::Float64(uvw)) = cell
-<a href=#223 id=223 data-nosnippet>223</a>                &amp;&amp; uvw.iter().any(|<span class="kw-2">&amp;</span>value| value != <span class="number">0.</span>)
-<a href=#224 id=224 data-nosnippet>224</a>            {
-<a href=#225 id=225 data-nosnippet>225</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
-<a href=#226 id=226 data-nosnippet>226</a>            }
-<a href=#227 id=227 data-nosnippet>227</a>        }
-<a href=#228 id=228 data-nosnippet>228</a>    }
-<a href=#229 id=229 data-nosnippet>229</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
-<a href=#230 id=230 data-nosnippet>230</a>}
-<a href=#231 id=231 data-nosnippet>231</a>
-<a href=#232 id=232 data-nosnippet>232</a><span class="doccomment">/// The one restoring beam of an image's information, which `convimage`
-<a href=#233 id=233 data-nosnippet>233</a>/// reads as `ia.restoringbeam()`.
-<a href=#234 id=234 data-nosnippet>234</a></span><span class="kw">fn </span>single_beam(info: <span class="kw-2">&amp;</span>ImageInfo, image: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;GaussianBeam, AnalysisError&gt; {
-<a href=#235 id=235 data-nosnippet>235</a>    info.beam_set
-<a href=#236 id=236 data-nosnippet>236</a>        .single_beam()
-<a href=#237 id=237 data-nosnippet>237</a>        .filter(|beam| !beam.is_null())
-<a href=#238 id=238 data-nosnippet>238</a>        .ok_or_else(|| {
-<a href=#239 id=239 data-nosnippet>239</a>            AnalysisError::Analysis(<span class="macro">format!</span>(
-<a href=#240 id=240 data-nosnippet>240</a>                <span class="string">"{}: convimage needs an image with one restoring beam"</span>,
-<a href=#241 id=241 data-nosnippet>241</a>                image.display()
-<a href=#242 id=242 data-nosnippet>242</a>            ))
-<a href=#243 id=243 data-nosnippet>243</a>        })
-<a href=#244 id=244 data-nosnippet>244</a>}
-<a href=#245 id=245 data-nosnippet>245</a>
-<a href=#246 id=246 data-nosnippet>246</a><span class="doccomment">/// The element-wise AND of two optional masks: what an image expression of
-<a href=#247 id=247 data-nosnippet>247</a>/// two images keeps.
-<a href=#248 id=248 data-nosnippet>248</a></span><span class="kw">fn </span>both(a: <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;, b: <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt; {
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">match </span>(a, b) {
-<a href=#250 id=250 data-nosnippet>250</a>        (<span class="prelude-val">Some</span>(<span class="kw-2">mut </span>a), <span class="prelude-val">Some</span>(b)) =&gt; {
-<a href=#251 id=251 data-nosnippet>251</a>            a.zip_mut_with(<span class="kw-2">&amp;</span>b, |a, b| <span class="kw-2">*</span>a = <span class="kw-2">*</span>a &amp;&amp; <span class="kw-2">*</span>b);
-<a href=#252 id=252 data-nosnippet>252</a>            <span class="prelude-val">Some</span>(a)
-<a href=#253 id=253 data-nosnippet>253</a>        }
-<a href=#254 id=254 data-nosnippet>254</a>        (a, b) =&gt; a.or(b),
-<a href=#255 id=255 data-nosnippet>255</a>    }
-<a href=#256 id=256 data-nosnippet>256</a>}
-<a href=#257 id=257 data-nosnippet>257</a>
-<a href=#258 id=258 data-nosnippet>258</a><span class="doccomment">/// Write `pixels` as a new single-precision image at `path`, replacing what
-<a href=#259 id=259 data-nosnippet>259</a>/// is there, with `info` and, when given, `mask` as the default `mask0`.
-<a href=#260 id=260 data-nosnippet>260</a></span><span class="kw">fn </span>write_product(
-<a href=#261 id=261 data-nosnippet>261</a>    path: <span class="kw-2">&amp;</span>Path,
-<a href=#262 id=262 data-nosnippet>262</a>    pixels: <span class="kw-2">&amp;</span>ArrayD&lt;f32&gt;,
-<a href=#263 id=263 data-nosnippet>263</a>    coordinates: CoordinateSystem,
-<a href=#264 id=264 data-nosnippet>264</a>    units: <span class="kw-2">&amp;</span>str,
-<a href=#265 id=265 data-nosnippet>265</a>    info: <span class="kw-2">&amp;</span>ImageInfo,
-<a href=#266 id=266 data-nosnippet>266</a>    mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ArrayD&lt;bool&gt;&gt;,
-<a href=#267 id=267 data-nosnippet>267</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PagedImage&lt;f32&gt;, AnalysisError&gt; {
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">let </span>removed = <span class="kw">if </span>path.is_dir() {
-<a href=#269 id=269 data-nosnippet>269</a>        std::fs::remove_dir_all(path)
-<a href=#270 id=270 data-nosnippet>270</a>    } <span class="kw">else if </span>path.exists() {
-<a href=#271 id=271 data-nosnippet>271</a>        std::fs::remove_file(path)
-<a href=#272 id=272 data-nosnippet>272</a>    } <span class="kw">else </span>{
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="prelude-val">Ok</span>(())
-<a href=#274 id=274 data-nosnippet>274</a>    };
-<a href=#275 id=275 data-nosnippet>275</a>    removed.map_err(|source| AnalysisError::Io {
-<a href=#276 id=276 data-nosnippet>276</a>        path: path.to_path_buf(),
-<a href=#277 id=277 data-nosnippet>277</a>        source,
-<a href=#278 id=278 data-nosnippet>278</a>    })<span class="question-mark">?</span>;
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">let </span>shape = pixels.shape().to_vec();
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path)<span class="question-mark">?</span>;
-<a href=#281 id=281 data-nosnippet>281</a>    image.put_slice(pixels, <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0</span>; shape.len()])<span class="question-mark">?</span>;
-<a href=#282 id=282 data-nosnippet>282</a>    image.set_units(units)<span class="question-mark">?</span>;
-<a href=#283 id=283 data-nosnippet>283</a>    image.set_image_info(info)<span class="question-mark">?</span>;
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(mask) = mask {
-<a href=#285 id=285 data-nosnippet>285</a>        image.put_mask(<span class="string">"mask0"</span>, mask)<span class="question-mark">?</span>;
-<a href=#286 id=286 data-nosnippet>286</a>        image.set_default_mask(<span class="string">"mask0"</span>)<span class="question-mark">?</span>;
-<a href=#287 id=287 data-nosnippet>287</a>    }
-<a href=#288 id=288 data-nosnippet>288</a>    image.save()<span class="question-mark">?</span>;
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="prelude-val">Ok</span>(image)
-<a href=#290 id=290 data-nosnippet>290</a>}
-<a href=#291 id=291 data-nosnippet>291</a>
-<a href=#292 id=292 data-nosnippet>292</a><span class="doccomment">/// The path `&lt;image&gt;&lt;suffix&gt;`, as CASA names its products.
-<a href=#293 id=293 data-nosnippet>293</a></span><span class="kw">fn </span>suffixed(image: <span class="kw-2">&amp;</span>Path, suffix: <span class="kw-2">&amp;</span>str) -&gt; PathBuf {
-<a href=#294 id=294 data-nosnippet>294</a>    PathBuf::from(<span class="macro">format!</span>(<span class="string">"{}{suffix}"</span>, image.display()))
-<a href=#295 id=295 data-nosnippet>295</a>}
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Number of unmasked samples in that corner. CASA uses its absence
+<a href=#135 id=135 data-nosnippet>135</a>    /// to fall back to the full extrema when choosing plot colour limits.
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub </span>corner_samples: usize,
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// The brightness unit.
+<a href=#138 id=138 data-nosnippet>138</a>    </span><span class="kw">pub </span>unit: String,
+<a href=#139 id=139 data-nosnippet>139</a>}
+<a href=#140 id=140 data-nosnippet>140</a>
+<a href=#141 id=141 data-nosnippet>141</a><span class="doccomment">/// `simutil.statim(image, plot=False)`.
+<a href=#142 id=142 data-nosnippet>142</a>///
+<a href=#143 id=143 data-nosnippet>143</a>/// Like CASA, it first takes the image's [`cell_size`], so it refuses an
+<a href=#144 id=144 data-nosnippet>144</a>/// image whose direction axes are rotated. The values are the image's own.
+<a href=#145 id=145 data-nosnippet>145</a>/// CASA scales them by a flux-per-pixel factor, which is 1 for Jy/pixel, for
+<a href=#146 id=146 data-nosnippet>146</a>/// Jy/beam with a restoring beam and for the units it does not know. For
+<a href=#147 id=147 data-nosnippet>147</a>/// Jy/beam without a beam the factor is the pixel area in square arcseconds,
+<a href=#148 id=148 data-nosnippet>148</a>/// while CASA still reports the unit as Jy/beam; casa-rs does not scale them
+<a href=#149 id=149 data-nosnippet>149</a>/// (`docs/CASA (C++) bugs.md`). The corner is CASA's `rg.box([0, 0],
+<a href=#150 id=150 data-nosnippet>150</a>/// [nx/4, ny/4])`: pixels 0 to `nx/4` rounded half up, inclusive, on the
+<a href=#151 id=151 data-nosnippet>151</a>/// image's first two axes.
+<a href=#152 id=152 data-nosnippet>152</a>///
+<a href=#153 id=153 data-nosnippet>153</a>/// # Errors
+<a href=#154 id=154 data-nosnippet>154</a>///
+<a href=#155 id=155 data-nosnippet>155</a>/// An image that cannot be read, or that [`cell_size`] refuses.
+<a href=#156 id=156 data-nosnippet>156</a></span><span class="kw">pub fn </span>statim(image: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;ImageStatistics, AnalysisError&gt; {
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">let </span>image = PagedImage::&lt;f32&gt;::open(image)<span class="question-mark">?</span>;
+<a href=#158 id=158 data-nosnippet>158</a>    cell_size(image.coordinates())<span class="question-mark">?</span>;
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">let </span>shape = image.shape().to_vec();
+<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">let </span>pixels = image.get()<span class="question-mark">?</span>;
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">let </span>mask = image.default_mask()<span class="question-mark">?</span>;
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="kw">let </span>corner = [<span class="number">0</span>, <span class="number">1</span>].map(|axis| {
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>top = (shape[axis] <span class="kw">as </span>f64 * <span class="number">0.25 </span>+ <span class="number">0.5</span>).floor() <span class="kw">as </span>usize;
+<a href=#164 id=164 data-nosnippet>164</a>        top.min(shape[axis] - <span class="number">1</span>)
+<a href=#165 id=165 data-nosnippet>165</a>    });
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>min, <span class="kw-2">mut </span>max) = (f64::INFINITY, f64::NEG_INFINITY);
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>sum_squares, <span class="kw-2">mut </span>count) = (<span class="number">0.0</span>, <span class="number">0_usize</span>);
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">for </span>(position, value) <span class="kw">in </span>pixels.indexed_iter() {
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw">if </span>mask.as_ref().is_some_and(|mask| !mask[<span class="kw-2">&amp;</span>position]) {
+<a href=#170 id=170 data-nosnippet>170</a>            <span class="kw">continue</span>;
+<a href=#171 id=171 data-nosnippet>171</a>        }
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">let </span>value = f64::from(<span class="kw-2">*</span>value);
+<a href=#173 id=173 data-nosnippet>173</a>        min = min.min(value);
+<a href=#174 id=174 data-nosnippet>174</a>        max = max.max(value);
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">if </span>position[<span class="number">0</span>] &lt;= corner[<span class="number">0</span>] &amp;&amp; position[<span class="number">1</span>] &lt;= corner[<span class="number">1</span>] {
+<a href=#176 id=176 data-nosnippet>176</a>            sum_squares += value * value;
+<a href=#177 id=177 data-nosnippet>177</a>            count += <span class="number">1</span>;
+<a href=#178 id=178 data-nosnippet>178</a>        }
+<a href=#179 id=179 data-nosnippet>179</a>    }
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">let </span>any = min &lt;= max;
+<a href=#181 id=181 data-nosnippet>181</a>    <span class="prelude-val">Ok</span>(ImageStatistics {
+<a href=#182 id=182 data-nosnippet>182</a>        min: <span class="kw">if </span>any { min } <span class="kw">else </span>{ <span class="number">0.0 </span>},
+<a href=#183 id=183 data-nosnippet>183</a>        max: <span class="kw">if </span>any { max } <span class="kw">else </span>{ <span class="number">1.0 </span>},
+<a href=#184 id=184 data-nosnippet>184</a>        rms: <span class="kw">if </span>count == <span class="number">0 </span>{
+<a href=#185 id=185 data-nosnippet>185</a>            <span class="number">0.0
+<a href=#186 id=186 data-nosnippet>186</a>        </span>} <span class="kw">else </span>{
+<a href=#187 id=187 data-nosnippet>187</a>            (sum_squares / count <span class="kw">as </span>f64).sqrt()
+<a href=#188 id=188 data-nosnippet>188</a>        },
+<a href=#189 id=189 data-nosnippet>189</a>        corner_samples: count,
+<a href=#190 id=190 data-nosnippet>190</a>        unit: image.units().to_string(),
+<a href=#191 id=191 data-nosnippet>191</a>    })
+<a href=#192 id=192 data-nosnippet>192</a>}
+<a href=#193 id=193 data-nosnippet>193</a>
+<a href=#194 id=194 data-nosnippet>194</a><span class="doccomment">/// `simutil.ismstp`: the MeasurementSet is total power when its first
+<a href=#195 id=195 data-nosnippet>195</a>/// antenna is named `…TP…`, when it has one antenna, or when every UVW
+<a href=#196 id=196 data-nosnippet>196</a>/// value is zero. CASA tests `uvw.all() == 0`, true when any value is zero;
+<a href=#197 id=197 data-nosnippet>197</a>/// casa-rs tests what was meant.
+<a href=#198 id=198 data-nosnippet>198</a>///
+<a href=#199 id=199 data-nosnippet>199</a>/// # Errors
+<a href=#200 id=200 data-nosnippet>200</a>///
+<a href=#201 id=201 data-nosnippet>201</a>/// A MeasurementSet whose ANTENNA table or UVW column cannot be read.
+<a href=#202 id=202 data-nosnippet>202</a></span><span class="kw">pub fn </span>is_total_power(ms: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;bool, AnalysisError&gt; {
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">let </span>failed = |reason: <span class="kw-2">&amp;</span><span class="kw">dyn </span>std::fmt::Display| AnalysisError::Table {
+<a href=#204 id=204 data-nosnippet>204</a>        table: ms.to_path_buf(),
+<a href=#205 id=205 data-nosnippet>205</a>        reason: reason.to_string(),
+<a href=#206 id=206 data-nosnippet>206</a>    };
+<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">let </span>set = MeasurementSet::open(ms).map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">let </span>antennas = set.antenna().map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
+<a href=#209 id=209 data-nosnippet>209</a>    <span class="kw">let </span>names = (<span class="number">0</span>..antennas.row_count())
+<a href=#210 id=210 data-nosnippet>210</a>        .map(|row| antennas.name(row))
+<a href=#211 id=211 data-nosnippet>211</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#212 id=212 data-nosnippet>212</a>        .map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">if </span>names.first().is_some_and(|name| name.contains(<span class="string">"TP"</span>)) || names.len() == <span class="number">1 </span>{
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">true</span>);
+<a href=#215 id=215 data-nosnippet>215</a>    }
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>main = set.main_table();
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span>column = main
+<a href=#218 id=218 data-nosnippet>218</a>        .column_accessor(<span class="string">"UVW"</span>)
+<a href=#219 id=219 data-nosnippet>219</a>        .map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?</span>;
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">let </span>rows: Vec&lt;usize&gt; = (<span class="number">0</span>..main.row_count()).collect();
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">for </span>chunk <span class="kw">in </span>rows.chunks(<span class="number">1 </span>&lt;&lt; <span class="number">16</span>) {
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">for </span>cell <span class="kw">in </span>column
+<a href=#223 id=223 data-nosnippet>223</a>            .array_cells_owned(chunk)
+<a href=#224 id=224 data-nosnippet>224</a>            .map_err(|error| failed(<span class="kw-2">&amp;</span>error))<span class="question-mark">?
+<a href=#225 id=225 data-nosnippet>225</a>        </span>{
+<a href=#226 id=226 data-nosnippet>226</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(ArrayValue::Float64(uvw)) = cell
+<a href=#227 id=227 data-nosnippet>227</a>                &amp;&amp; uvw.iter().any(|<span class="kw-2">&amp;</span>value| value != <span class="number">0.</span>)
+<a href=#228 id=228 data-nosnippet>228</a>            {
+<a href=#229 id=229 data-nosnippet>229</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
+<a href=#230 id=230 data-nosnippet>230</a>            }
+<a href=#231 id=231 data-nosnippet>231</a>        }
+<a href=#232 id=232 data-nosnippet>232</a>    }
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+<a href=#234 id=234 data-nosnippet>234</a>}
+<a href=#235 id=235 data-nosnippet>235</a>
+<a href=#236 id=236 data-nosnippet>236</a><span class="doccomment">/// The one restoring beam of an image's information, which `convimage`
+<a href=#237 id=237 data-nosnippet>237</a>/// reads as `ia.restoringbeam()`.
+<a href=#238 id=238 data-nosnippet>238</a></span><span class="kw">fn </span>single_beam(info: <span class="kw-2">&amp;</span>ImageInfo, image: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;GaussianBeam, AnalysisError&gt; {
+<a href=#239 id=239 data-nosnippet>239</a>    info.beam_set
+<a href=#240 id=240 data-nosnippet>240</a>        .single_beam()
+<a href=#241 id=241 data-nosnippet>241</a>        .filter(|beam| !beam.is_null())
+<a href=#242 id=242 data-nosnippet>242</a>        .ok_or_else(|| {
+<a href=#243 id=243 data-nosnippet>243</a>            AnalysisError::Analysis(<span class="macro">format!</span>(
+<a href=#244 id=244 data-nosnippet>244</a>                <span class="string">"{}: convimage needs an image with one restoring beam"</span>,
+<a href=#245 id=245 data-nosnippet>245</a>                image.display()
+<a href=#246 id=246 data-nosnippet>246</a>            ))
+<a href=#247 id=247 data-nosnippet>247</a>        })
+<a href=#248 id=248 data-nosnippet>248</a>}
+<a href=#249 id=249 data-nosnippet>249</a>
+<a href=#250 id=250 data-nosnippet>250</a><span class="doccomment">/// The element-wise AND of two optional masks: what an image expression of
+<a href=#251 id=251 data-nosnippet>251</a>/// two images keeps.
+<a href=#252 id=252 data-nosnippet>252</a></span><span class="kw">fn </span>both(a: <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;, b: <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt; {
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">match </span>(a, b) {
+<a href=#254 id=254 data-nosnippet>254</a>        (<span class="prelude-val">Some</span>(<span class="kw-2">mut </span>a), <span class="prelude-val">Some</span>(b)) =&gt; {
+<a href=#255 id=255 data-nosnippet>255</a>            a.zip_mut_with(<span class="kw-2">&amp;</span>b, |a, b| <span class="kw-2">*</span>a = <span class="kw-2">*</span>a &amp;&amp; <span class="kw-2">*</span>b);
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="prelude-val">Some</span>(a)
+<a href=#257 id=257 data-nosnippet>257</a>        }
+<a href=#258 id=258 data-nosnippet>258</a>        (a, b) =&gt; a.or(b),
+<a href=#259 id=259 data-nosnippet>259</a>    }
+<a href=#260 id=260 data-nosnippet>260</a>}
+<a href=#261 id=261 data-nosnippet>261</a>
+<a href=#262 id=262 data-nosnippet>262</a><span class="doccomment">/// Write `pixels` as a new single-precision image at `path`, replacing what
+<a href=#263 id=263 data-nosnippet>263</a>/// is there, with `info` and, when given, `mask` as the default `mask0`.
+<a href=#264 id=264 data-nosnippet>264</a></span><span class="kw">fn </span>write_product(
+<a href=#265 id=265 data-nosnippet>265</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#266 id=266 data-nosnippet>266</a>    pixels: <span class="kw-2">&amp;</span>ArrayD&lt;f32&gt;,
+<a href=#267 id=267 data-nosnippet>267</a>    coordinates: CoordinateSystem,
+<a href=#268 id=268 data-nosnippet>268</a>    units: <span class="kw-2">&amp;</span>str,
+<a href=#269 id=269 data-nosnippet>269</a>    info: <span class="kw-2">&amp;</span>ImageInfo,
+<a href=#270 id=270 data-nosnippet>270</a>    mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ArrayD&lt;bool&gt;&gt;,
+<a href=#271 id=271 data-nosnippet>271</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PagedImage&lt;f32&gt;, AnalysisError&gt; {
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>removed = <span class="kw">if </span>path.is_dir() {
+<a href=#273 id=273 data-nosnippet>273</a>        std::fs::remove_dir_all(path)
+<a href=#274 id=274 data-nosnippet>274</a>    } <span class="kw">else if </span>path.exists() {
+<a href=#275 id=275 data-nosnippet>275</a>        std::fs::remove_file(path)
+<a href=#276 id=276 data-nosnippet>276</a>    } <span class="kw">else </span>{
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="prelude-val">Ok</span>(())
+<a href=#278 id=278 data-nosnippet>278</a>    };
+<a href=#279 id=279 data-nosnippet>279</a>    removed.map_err(|source| AnalysisError::Io {
+<a href=#280 id=280 data-nosnippet>280</a>        path: path.to_path_buf(),
+<a href=#281 id=281 data-nosnippet>281</a>        source,
+<a href=#282 id=282 data-nosnippet>282</a>    })<span class="question-mark">?</span>;
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">let </span>shape = pixels.shape().to_vec();
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(shape.clone(), coordinates, path)<span class="question-mark">?</span>;
+<a href=#285 id=285 data-nosnippet>285</a>    image.put_slice(pixels, <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0</span>; shape.len()])<span class="question-mark">?</span>;
+<a href=#286 id=286 data-nosnippet>286</a>    image.set_units(units)<span class="question-mark">?</span>;
+<a href=#287 id=287 data-nosnippet>287</a>    image.set_image_info(info)<span class="question-mark">?</span>;
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(mask) = mask {
+<a href=#289 id=289 data-nosnippet>289</a>        image.put_mask(<span class="string">"mask0"</span>, mask)<span class="question-mark">?</span>;
+<a href=#290 id=290 data-nosnippet>290</a>        image.set_default_mask(<span class="string">"mask0"</span>)<span class="question-mark">?</span>;
+<a href=#291 id=291 data-nosnippet>291</a>    }
+<a href=#292 id=292 data-nosnippet>292</a>    image.save()<span class="question-mark">?</span>;
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="prelude-val">Ok</span>(image)
+<a href=#294 id=294 data-nosnippet>294</a>}
+<a href=#295 id=295 data-nosnippet>295</a>
+<a href=#296 id=296 data-nosnippet>296</a><span class="doccomment">/// The path `&lt;image&gt;&lt;suffix&gt;`, as CASA names its products.
+<a href=#297 id=297 data-nosnippet>297</a></span><span class="kw">fn </span>suffixed(image: <span class="kw-2">&amp;</span>Path, suffix: <span class="kw-2">&amp;</span>str) -&gt; PathBuf {
+<a href=#298 id=298 data-nosnippet>298</a>    PathBuf::from(<span class="macro">format!</span>(<span class="string">"{}{suffix}"</span>, image.display()))
+<a href=#299 id=299 data-nosnippet>299</a>}
 </code></pre></div></section></main></body></html>
