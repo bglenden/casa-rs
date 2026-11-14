@@ -70,7 +70,7 @@ use crate::native::OpenedObservation;
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
     AwProjection, BackendChoice, Deconvolver, Gridder, ImagingRequest, MeasurementSetSelection,
-    NativeAwCachePolicy, RunContext, SaveModel, SpecMode,
+    NativeAwCachePolicy, RunContext, SaveModel, SpecMode, Weighting,
 };
 use direction::Centre;
 use domains::PreparedImageDomain;
@@ -799,6 +799,23 @@ fn cube_density_padding(
     per_field: bool,
 ) -> Result<Option<usize>, PrepareError> {
     let (survey, spectral) = (surveyed.survey, surveyed.spectral);
+    if request.specmode == SpecMode::Cubesource && request.weighting.per_channel_density() {
+        let rest_aw = matches!(request.gridder, Gridder::Awproject(_))
+            && matches!(request.weighting, Weighting::Briggs | Weighting::Uniform);
+        if rest_aw {
+            if !request.perchanweightdensity
+                || request.interpolation != casa_ms::CubeInterpolation::Cubic
+                || survey.source_frequency_reference != FrequencyRef::TOPO
+                || survey.fields.len() != 1
+                || request.uvtaper.is_some()
+            {
+                return Err(PrepareError::RestAwCubeDensity);
+            }
+            // A single field and window contribute one channel envelope to
+            // estimateSwingChanPad, so the inter-envelope swing is zero.
+            return Ok(Some((spectral.output_channels / 10).clamp(1, 4)));
+        }
+    }
     specification::refuse_source_frame_cube_density(request)?;
     if !specification::cube_density_padded(request) {
         return Ok(None);

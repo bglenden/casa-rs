@@ -4,6 +4,8 @@
 //! bypasses.
 
 mod common;
+#[path = "resample/rest_density.rs"]
+mod rest_density;
 #[path = "resample/uniform_cell.rs"]
 mod uniform_cell;
 

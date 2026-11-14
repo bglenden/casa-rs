@@ -239,6 +239,26 @@ fn aw_cubic_images_a_multichannel_rest_cube() {
     assert_eq!(weights.len(), 4);
     assert!(weights.iter().all(|&weight| weight > 0.0), "{weights:?}");
 
+    for weighting in ["briggs", "uniform"] {
+        let mut weighted = request.clone();
+        weighted["weighting"] = json!(weighting);
+        weighted["robust"] = json!(0.5);
+        weighted["perchanweightdensity"] = json!(true);
+        let (_, products) = observation.image(&format!("aw-rest-cubic-{weighting}"), weighted);
+        let sums = products.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), 4);
+        assert!(
+            sums.iter().all(|&weight| weight > 0.0),
+            "{weighting}: {sums:?}"
+        );
+        assert!(
+            sums.iter()
+                .zip(&weights)
+                .all(|(weighted, natural)| weighted < natural),
+            "{weighting}: {sums:?}, natural: {weights:?}"
+        );
+    }
+
     request["interpolation"] = json!("linear");
     let (_, linear) = observation.image("aw-rest-linear-control", request);
     let difference = cubic

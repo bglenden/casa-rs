@@ -604,7 +604,7 @@ fn sample_weight(
     source: Source,
     placement: &Placement,
     density_axis: Option<SpectralAxis>,
-    density_wavelength_scale: f64,
+    (density_wavelength_scale, rest_aw_density): (f64, bool),
 ) -> f32 {
     let channel_weight = |channel: usize| {
         let input = unpolarized_weight(row, npol, channel);
@@ -637,7 +637,12 @@ fn sample_weight(
             plane,
             ..*placement
         };
-        let density_uv = if density_axis.is_some() && density_wavelength_scale != 1.0 {
+        let density_uv = if density_axis.is_some() && rest_aw_density {
+            DensityUv::casa(
+                row.context.original_uvw_m.unwrap_or(uvw_m),
+                frequency_hz * row.context.native_frequency_ratio,
+            )
+        } else if density_axis.is_some() && density_wavelength_scale != 1.0 {
             DensityUv::casa(
                 uvw_m.map(|metres| metres / density_wavelength_scale),
                 frequency_hz * density_wavelength_scale,
@@ -812,6 +817,7 @@ pub struct SpectralResampler {
     /// The source span excludes the last output plane from gridding.
     omit_terminal_plane: bool,
     density_wavelength_scale: f64,
+    rest_aw_density: bool,
 }
 
 impl SpectralResampler {
@@ -829,6 +835,7 @@ impl SpectralResampler {
             autocorrelations: false,
             omit_terminal_plane: false,
             density_wavelength_scale: 1.0,
+            rest_aw_density: false,
         })
     }
 
@@ -848,6 +855,7 @@ impl SpectralResampler {
             autocorrelations: false,
             omit_terminal_plane: false,
             density_wavelength_scale: 1.0,
+            rest_aw_density: false,
         }
     }
 
@@ -867,6 +875,15 @@ impl SpectralResampler {
     #[must_use]
     pub const fn with_density_wavelength_scale(mut self, scale: f64) -> Self {
         self.density_wavelength_scale = scale;
+        self
+    }
+
+    /// Use CASA's moving-source AW density coordinates. The density GridFT
+    /// accumulates rotated baselines at REST frequencies. Lookup uses the
+    /// stored frequency and original baseline, with the REST channel map.
+    #[must_use]
+    pub const fn with_rest_aw_density(mut self) -> Self {
+        self.rest_aw_density = true;
         self
     }
 
@@ -1160,7 +1177,7 @@ impl SpectralResampler {
                     source,
                     &placement,
                     density_axis,
-                    self.density_wavelength_scale,
+                    (self.density_wavelength_scale, self.rest_aw_density),
                 );
                 if let Some((slots, channel)) = slot {
                     slots.keep(channel, weight);
@@ -1273,7 +1290,14 @@ impl SpectralResampler {
                     let uv = DensityUv::casa(uvw_m, frequency_hz);
                     (f64::from(uv.u), f64::from(uv.v))
                 }
-                DensityCellRule::Cube => (row.uvw_m[0] * scale, row.uvw_m[1] * scale),
+                DensityCellRule::Cube => {
+                    let scale = if self.rest_aw_density {
+                        scale / row.context.native_frequency_ratio
+                    } else {
+                        scale
+                    };
+                    (row.uvw_m[0] * scale, row.uvw_m[1] * scale)
+                }
             };
             let placement = Placement {
                 u,
