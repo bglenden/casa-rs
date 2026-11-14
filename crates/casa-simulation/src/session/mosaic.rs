@@ -17,8 +17,9 @@
 //! - Every channel of each window observed is selected.
 //! - A scan's beam uses POINTING independently of its FIELD phase centre;
 //!   the kernels' phase ramp is its offset from the model's pixel
-//!   `(nx/2, ny/2)`. CASA predicts nothing for a pointing outside the
-//!   model image (`checkPBOfField`); casa-rs does not predict one yet.
+//!   `(nx/2, ny/2)`. Heterogeneous-array beams predict nothing for a
+//!   pointing outside the model image (`checkPBOfField`); common beams
+//!   keep applying the phase ramp outside the image.
 
 use casa_imaging_operator::{AiryDish, MosaicWindow};
 
@@ -41,7 +42,7 @@ const DIAMETER_KEY_BYTES: usize = 32;
 
 /// One pointing the mosaic machine keeps: a phase centre's bits and its
 /// offset.
-pub(super) type MosaicPointing = ([u64; 2], [f64; 2]);
+pub(super) type MosaicPointing = ([u64; 2], Option<[f64; 2]>);
 
 impl Simulator {
     /// Bytes the mosaic machine's state holds, known before it is formed:
@@ -83,9 +84,8 @@ impl Simulator {
             None => PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz()),
         };
         if common && default.is_none() && custom.is_none() {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict with setoptions(ftmachine='mosaic') for telescope {telescope} is not \
-                 yet implemented in casa-rs (#1297)"
+            return Err(SimulatorError::refused(format!(
+                "Failed to create SkyEquation: vpmanager does not have a beam for {telescope}"
             )));
         }
         // At most one class an antenna: the capacities are the bounds
@@ -167,34 +167,28 @@ impl Simulator {
 
     /// Each distinct pointing of the scans observed so far (its bits), where
     /// their antennas point, and its offset in `model`
-    /// ([`SkyModel::pointing_offset_rad`]), sorted by the bits. The capacity
+    /// ([`SkyModel::pointing_offset_and_coverage`]), sorted by the bits. The capacity
     /// is a pointing for each scan, the bound `mosaic_state_bytes` admits.
     ///
     /// # Errors
     ///
-    /// Not yet implemented: a pointing outside the model image. Raised: a
-    /// pointing the model's coordinates cannot convert.
+    /// Raised: a pointing the model's coordinates cannot convert. A `None`
+    /// offset records CASA's heterogeneous-array zero contribution outside
+    /// the model image; common beams retain the offset.
     pub(super) fn mosaic_pointings(
         &self,
         model: &SkyModel,
+        bounded: bool,
     ) -> SimulatorResult<Vec<MosaicPointing>> {
         let mut pointings: Vec<MosaicPointing> = Vec::with_capacity(self.scans.len());
         for scan in &self.scans {
             let key = scan.pointing_rad.map(f64::to_bits);
-            let offset = model
-                .pointing_offset_rad(scan.pointing_rad)
+            let (offset, inside) = model
+                .pointing_offset_and_coverage(scan.pointing_rad)
                 .map_err(|error: PredictError| {
                     SimulatorError::raised(format!("Caught exception: {error}"))
-                })?
-                .ok_or_else(|| {
-                    SimulatorError::not_yet_implemented(format!(
-                        "predict with setoptions(ftmachine='mosaic') for field {} pointed \
-                         outside the model image is not yet implemented in casa-rs (#1053); \
-                         CASA predicts nothing for it",
-                        self.fields[scan.field_id].name
-                    ))
                 })?;
-            pointings.push((key, offset));
+            pointings.push((key, (!bounded || inside).then_some(offset)));
         }
         pointings.sort_unstable_by_key(|(key, _)| *key);
         pointings.dedup_by_key(|(key, _)| *key);

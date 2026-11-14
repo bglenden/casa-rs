@@ -1323,6 +1323,17 @@ rows by dividing selected correlations by that original unit-phase factor.
 No scientific tolerance changes; the remaining documented LSRK-label error
 is below the existing 1e-3 threshold in these controls.
 
+## An uncovered first mosaic image suppresses a valid model
+
+CASA 6.7.6.14 accepts `sm.predict(imagename=[outside, inside])` but produces
+zero DATA when all pointings lie outside the first image, even though the
+second model alone produces signal. `sm_mosaic_coverage_oracle.py` retains
+that raw result and captures the valid model alone in a fresh simulator.
+Its outside-only control is zero, so linearity independently gives the
+expected sum. casa-rs tests coverage for each image and preserves the valid
+contribution. The unchanged 1e-3 threshold applies to the actual C++ control.
+This is a data-loss defect casa-rs corrects under SIM-10 (#1297).
+
 ## Saved Jones-image beams lose or reverse image polarization
 
 - Date noted: 2026-11-14

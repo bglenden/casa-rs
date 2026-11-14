@@ -266,6 +266,7 @@ impl SimpleMosaicScreens {
             }
         }
         Ok(MosaicPb {
+            bounded_pointings: false,
             dishes: 1,
             windows: self.layout.windows,
             cells_per_plane: self.layout.cells,
