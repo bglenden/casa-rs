@@ -4568,6 +4568,23 @@ and clean pairs with the frame-initialized CASA control agree on all
 6.16e-7 and saved MODEL_DATA normalized RMS 5.09e-7. The unscaled native
 comparison had PSF normalized RMS 2.24e-3.
 
+For linear interpolation on this fixture, CASA shifts the input channel
+centres and widths before regridding. A frequency-valued start and width
+already describe the REST grid. The 500 MHz width is below CASA's
+converted 500.028 MHz minimum. At 500.1 MHz, direct CASA reports the
+requested 1.30 GHz start and 500.1 MHz spacing. Its AW resampler
+restores the native channel map after interpolation, which associates
+in-band values with the wrong native ordinals. The unmodified AW path
+with the frame initialized gives PSF NRMS 0.844 against the shared
+resampler's output.
+
+The comparison takes the two in-band samples from CASA GridFT, replays
+them with the original AW cache and preserves the wavelength products
+at each epoch. The clean control predicts on the stored channels,
+resamples the native residual, and restores with CASA. All 17 products
+and 12 beams agree with exact masks and controller counts. Maximum
+product normalized RMS is 3.29e-7 and MODEL_DATA is 3.54e-7 (#1121).
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05

@@ -429,6 +429,7 @@ fn cube_setup(
     (survey, band_surveys): (&Survey, &[&Survey]),
     frame: &FrameContext<'_>,
     mut axis: CubeAxisConfig,
+    input_frequency_factor: f64,
 ) -> Result<(CubeSpectralSetup, [f64; 2]), PrepareError> {
     fn selected<'w>(
         survey: &'w Survey,
@@ -469,7 +470,7 @@ fn cube_setup(
     }))
     .ok_or(PrepareError::NoSelectedSamples)?;
     axis.selected_band_hz = Some(band_hz);
-    let (frequencies_hz, widths_hz) = match windows.as_slice() {
+    let (mut frequencies_hz, mut widths_hz) = match windows.as_slice() {
         [window] => (
             window.frequencies_hz.clone(),
             window.channel_widths_hz.clone(),
@@ -486,6 +487,23 @@ fn cube_setup(
                 .collect::<Vec<_>>(),
         )?,
     };
+    if input_frequency_factor != 1.0 {
+        // CASA cuts the stored axis at the selected edges before shifting it.
+        if axis.start.is_none()
+            && let Some(cut) = casa_ms::spectral_selection::casa_default_start_channels(
+                &frequencies_hz,
+                &widths_hz,
+                band_hz,
+            )
+        {
+            frequencies_hz = frequencies_hz[cut.clone()].to_vec();
+            widths_hz = widths_hz[cut].to_vec();
+        }
+        axis.selected_band_hz = None;
+        for hz in frequencies_hz.iter_mut().chain(&mut widths_hz) {
+            *hz *= input_frequency_factor;
+        }
+    }
     let setup = CubeSpectralSetup::for_casa_cube_axis(
         survey.source_frequency_reference,
         &frequencies_hz,
@@ -758,7 +776,7 @@ fn image_band(
         return Ok(None);
     }
     let channels = setup.output_channel_frequencies_hz.len();
-    let (first_hz, increment_hz) = first_and_increment(setup, channels, 1.0)?;
+    let (first_hz, increment_hz) = first_and_increment(setup, channels)?;
     Ok(Some(frequency_bands::image_band_lsrk(
         frame,
         setup.output_freq_ref,
@@ -814,11 +832,11 @@ fn cube_law(
         casa_cube_frequency(&mut axis.start, request.start.as_deref());
         casa_cube_frequency(&mut axis.width, request.width.as_deref());
     }
-    let (setup, band_hz) = cube_setup(request, (survey, &band_surveys), frame, axis.clone())?;
+    let (setup, band_hz) = cube_setup(request, (survey, &band_surveys), frame, axis.clone(), 1.0)?;
     let (selected_source_channels, window_reads) =
         cube_store_reads(request, (stores, reference), frame, &setup)?;
     let output_channels = setup.output_channel_frequencies_hz.len();
-    let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels, 1.0)?;
+    let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels)?;
     let source_rest_hz =
         source_rest_frequency(catalogue, frame.field_id, &survey.spectral_windows)?;
     let (resolved_rest_hz, image_rest_frequency_hz) =
@@ -1014,8 +1032,8 @@ fn source_grid_at_terminal(frequencies: &[f64], widths: &[f64]) -> Option<Source
     })
 }
 
-/// A cube in the rest frame of a moving source: the data-frame axis
-/// scaled into the source's rest frame (`cubesource`), on `store`'s one
+/// A cube in the rest frame of a moving source: regrid the shifted
+/// data channels (`cubesource`), on `store`'s one
 /// window, reading its channels as [`store_reads`] reads a `cubedata`
 /// cube's.
 ///
@@ -1036,12 +1054,32 @@ fn source_frame_cube_law(
         });
     }
     let source_reference = survey.source_frequency_reference;
-    let axis = CubeAxisConfig {
+    let factor = casa_ms::convert_frequency_to_frame_with_frame(
+        source_reference,
+        FrequencyRef::REST,
+        1.0,
+        Some(moving_rest_frame),
+    )?;
+    let mut axis = CubeAxisConfig {
         specmode: CubeSpecMode::Cubedata,
         outframe: source_reference,
         ..cube_axis(request)?
     };
-    let (setup, _) = cube_setup(request, (survey, &[survey]), frame, axis)?;
+    casa_cube_frequency(&mut axis.start, request.start.as_deref());
+    casa_cube_frequency(&mut axis.width, request.width.as_deref());
+    // CASA shifts the input centres and widths before regridding.
+    let (mut setup, _) = cube_setup(request, (survey, &[survey]), frame, axis, factor)?;
+    let output_channels = setup.output_channel_frequencies_hz.len();
+    let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels)?;
+    // The selection helper reads stored frequencies. Put its support
+    // bounds in that same frame before choosing the source channels.
+    for hz in setup
+        .output_channel_frequencies_hz
+        .iter_mut()
+        .chain(&mut setup.output_channel_widths_hz)
+    {
+        *hz /= factor;
+    }
     let reads = store_reads(
         request,
         ((catalogue, &store.engine), survey, frame.field_id),
@@ -1051,15 +1089,6 @@ fn source_frame_cube_law(
     if !reads.reaches_axis {
         return Err(PrepareError::NoCommonCubeChannels);
     }
-    let output_channels = setup.output_channel_frequencies_hz.len();
-    let factor = casa_ms::convert_frequency_to_frame_with_frame(
-        source_reference,
-        FrequencyRef::REST,
-        1.0,
-        Some(moving_rest_frame),
-    )?;
-    let (reference_frequency_hz, increment_hz) =
-        first_and_increment(&setup, output_channels, factor)?;
     let rest_frequency_hz = request
         .restfreq
         .first()
@@ -1129,23 +1158,22 @@ fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
     })
 }
 
-/// The first output channel's centre and the channel increment, scaled by
-/// `factor`; a one-channel cube's increment is its width.
+/// The first output channel's centre and the channel increment.
+/// A one-channel cube's increment is its width.
 fn first_and_increment(
     setup: &CubeSpectralSetup,
     output_channels: usize,
-    factor: f64,
 ) -> Result<(f64, f64), PrepareError> {
     let first_hz = setup.output_channel_frequencies_hz[0];
     let increment_hz = if output_channels > 1 {
         setup.output_channel_frequencies_hz[1] - first_hz
     } else {
         setup.output_channel_widths_hz[0]
-    } * factor;
+    };
     if !increment_hz.is_finite() || increment_hz == 0.0 {
         return Err(PrepareError::CubeIncrement { increment_hz });
     }
-    Ok((first_hz * factor, increment_hz))
+    Ok((first_hz, increment_hz))
 }
 
 /// The model's Doppler convention of CASA `veltype`.

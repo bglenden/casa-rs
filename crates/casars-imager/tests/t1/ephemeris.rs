@@ -148,9 +148,14 @@ fn aw_nearest_images_a_multichannel_rest_cube() {
     let (_, products) = observation.image("aw-rest-cube", request.clone());
     // Nearest selects the same stored channels on both axes. The ephemeris,
     // geometry, cache, and native wavelengths are identical for the two PSFs.
+    let mut selected_request = request.clone();
+    selected_request["spw"] = json!("0:1~2");
+    selected_request["nchan"] = json!(2);
+    let (_, selected) = observation.image("aw-rest-selected-default-start", selected_request);
+
     request["specmode"] = json!("cubedata");
     request["outframe"] = json!("TOPO");
-    let (_, native_axis) = observation.image("aw-native-axis-cube", request);
+    let (_, native_axis) = observation.image("aw-native-axis-cube", request.clone());
     let psf_difference = products
         .get(".psf")
         .values()
@@ -174,6 +179,44 @@ fn aw_nearest_images_a_multichannel_rest_cube() {
     assert_eq!(
         coordinate.frequency_ref(),
         casa_types::measures::frequency::FrequencyRef::REST
+    );
+
+    let selected_coordinate = selected
+        .get(".image")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    // CASA trims to the selected band on the stored axis, then shifts it.
+    for (output, source) in [(0.0, 1.0), (1.0, 2.0)] {
+        let expected = coordinate.world_frequency_hz(source).unwrap();
+        let actual = selected_coordinate.world_frequency_hz(output).unwrap();
+        assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+    }
+
+    // CASA Doppler-shifts the input frequencies before regridding.
+    // The user-supplied start and width already describe the REST axis.
+    request["specmode"] = json!("cubesource");
+    request["outframe"] = json!("REST");
+    request["interpolation"] = json!("linear");
+    request["start"] = json!("1502MHz");
+    request["width"] = json!("8.001MHz");
+    request["nchan"] = json!(2);
+    let (_, linear) = observation.image("aw-rest-linear", request);
+    let coordinate = linear
+        .get(".psf")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    assert_eq!(coordinate.world_frequency_hz(0.0).unwrap(), 1_502_000_000.0);
+    assert_eq!(coordinate.world_increment_hz().unwrap(), 8_001_000.0);
+    assert!(
+        linear
+            .get(".sumwt")
+            .channel_values()
+            .iter()
+            .all(|&w| w > 0.0)
     );
 }
 
