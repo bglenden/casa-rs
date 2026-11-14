@@ -578,6 +578,16 @@ and masks in casa-rs. The independent CASA one-integration
 control and the full field match all seven products and masks under the
 existing limits. The largest full-field NRMS is 6.737e-5.
 
+The same history extends across Högbom major cycles. In the field 0
+eight-iteration CLEAN, CASA starts each residual refresh by rotating
+the cell left by the previous pass from 90.5703° back to -86.0481°.
+Recomputing the final residual in a fresh CASA run with the saved model
+and the same inputs changes the residual by 1.879e-4 NRMS. The static
+360-degree control repeats exactly. Casa-rs starts each rotation from
+the saved cell and uses the selected epoch for both prediction and
+gridding. It matches all eight CLEAN products, masks, and iteration
+counts, with worst NRMS 2.384e-4 over the full field (#1070).
+
 ## AW pointing can reuse the origin of an earlier convolution buffer
 
 - Date noted: 2026-11-12
