@@ -2573,6 +2573,16 @@ The raw DATA is retained in <code>sm_multiple_models_casa.json.gz</code>, genera
 <code>tools/simulation/sm_multiple_models_oracle.py</code>. casa-rs predicts total
 power into autocorrelations only; the new test compares those directly
 with CASA and requires every cross-correlation sample to be exactly zero.</p>
+<p><code>GridBoth::get</code> adds this same SDGrid result to its interferometric result.
+Its GridFT has autocorrelations disabled. casa-rs therefore uses single-dish
+signals on autocorrelations and interferometric signals on cross-correlations;
+<code>sm_ft_modes_oracle.py</code> retains raw joint output and uses independent GridFT
+cross-correlations as its corrected reference.</p>
+<p>The joint PB control also exposes failed-call data loss: with a 64-pixel
+image and gridding support 134, CASA returns false but erases selected DATA.
+casa-rs rejects the insufficient extent before recording the prediction and
+keeps the input DATA. The raw failure and the successful 256-pixel joint PB
+calculation are retained in the same fixture.</p>
 <h2 id="the-evlas-beam-table-has-no-11052-mhz-fit">The EVLA's beam table has no 11052 MHz fit<a class="headerlink" href="#the-evlas-beam-table-has-no-11052-mhz-fit" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
@@ -4189,7 +4199,7 @@ or for wavelengths (<code>casa_imaging_application::ImagingRequest::uvtaper</cod
 <ul>
 <li>Date noted: 2026-10-31</li>
 <li>Status: CASA bug; owner approved preserving the correct directory (#944).
-  Native <code>restart=False</code> numbering is still unfinished.</li>
+  Native numbering keeps absolute paths for both the main image and outliers.</li>
 <li>Affected build/code: CASA 6.7.6.14, casatasks
   <code>private/imagerhelpers/input_parameters.py</code>, <code>incrementImageNameList</code>.</li>
 </ul>
@@ -4200,8 +4210,8 @@ absolute imagename under <code>/Volumes/</code>, this instead produces <code>olu
 fails to create the numbered PSF. Relative prefixes in the same probe
 correctly produce <code>_2</code> and <code>_3</code>. The exact build, parameters and failure
 are recorded on #944 and in the lifecycle receipt linked from the generated
-compatibility reference. The approved casa-rs target keeps the requested
-absolute directory; this decision is not evidence that restart is complete.</p>
+compatibility reference. The native implementation keeps the requested absolute directory and
+uses the same suffix across the main and outlier prefixes.</p>
 <h2 id="tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask"><code>tclean</code> cleans nothing with <code>nsigma</code>, <code>fastnoise=False</code> and no mask<a class="headerlink" href="#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-02</li>
