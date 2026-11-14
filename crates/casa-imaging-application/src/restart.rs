@@ -248,7 +248,7 @@ pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
     }
 }
 
-/// Ordinary single-plane CLEAN or restoration from a saved mosaic residual.
+/// Ordinary single-term CLEAN or restoration from a saved mosaic residual.
 fn supports_saved_mosaic_residual(request: &ImagingRequest) -> bool {
     matches!(
         request.gridder,
@@ -266,6 +266,15 @@ fn supports_saved_mosaic_residual(request: &ImagingRequest) -> bool {
         && request.nsigma == 0.0
         && request.pbmask == 0.0
         && request.savemodel == crate::SaveModel::None
+}
+
+/// Whether the ordinary mosaic cube reforms its PSF before using its saved residual.
+pub(crate) fn rebuilds_mosaic_cube_psf(request: &ImagingRequest) -> bool {
+    request.calcpsf
+        && !request.calcres
+        && request.specmode == crate::SpecMode::Cube
+        && !request.uses_separate_psf()
+        && supports_saved_mosaic_residual(request)
 }
 
 /// Check that what `calcpsf=False` and `calcres=False` read exists and that
@@ -306,6 +315,7 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         {
             None
         }
+        Gridder::Mosaic { .. } if rebuilds_mosaic_cube_psf(request) => None,
         Gridder::Mosaic { .. } => Some("with the mosaic gridder"),
         Gridder::Awproject(_) => Some("with A-projection"),
         Gridder::Awp2 { .. } => Some("with AWP2 (#1071)"),
@@ -344,7 +354,8 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
     if !request.calcres
         && (request.niter > 0
             || request.outlierfile.is_some()
-            || reuses_direction_dependent_psf(request))
+            || reuses_direction_dependent_psf(request)
+            || rebuilds_mosaic_cube_psf(request))
         && let Some(path) = missing("residual")
     {
         return refuse(

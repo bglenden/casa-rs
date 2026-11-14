@@ -860,7 +860,7 @@ fn controls_after_cycles(
         if keeps_pb_mask
             && existing
                 .mosaic_beam()
-                .is_some_and(|beam| beam.has_generated_mask())
+                .is_none_or(|beam| beam.has_generated_mask())
         {
             controls
         } else {

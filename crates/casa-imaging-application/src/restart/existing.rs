@@ -92,8 +92,9 @@ impl ExistingProducts {
         };
         let mut tile_bytes = 0;
         let mut mosaic_beam = None;
-        let residual_in_image_units =
-            residual && (weight || (read_residual_mask && matches!(family, Family::Taylor { .. })));
+        let residual_in_image_units = residual
+            && (weight
+                || (read_residual_mask && (cube || matches!(family, Family::Taylor { .. }))));
         let mut saved_residual_mask_bytes =
             (residual && (weight || read_residual_mask)).then_some(0);
         let mut primary_beam_mask_bytes = 0;
@@ -157,7 +158,7 @@ impl ExistingProducts {
                 }
             }
         }
-        if residual && read_residual_mask && !weight && matches!(family, Family::Single) {
+        if residual && read_residual_mask && !weight && !cube && matches!(family, Family::Single) {
             let path = product_path(prefix, "pb");
             if path.exists() {
                 let image = open(&path)?;
@@ -182,7 +183,7 @@ impl ExistingProducts {
         }
         let mut saved_model_plane_bytes = 0;
         let mut saved_pbcor_mask_bytes = None;
-        if cube && residual && weight {
+        if cube && residual_in_image_units {
             let path = product_path(prefix, "model");
             if path.exists() {
                 let model = open(&path)?;

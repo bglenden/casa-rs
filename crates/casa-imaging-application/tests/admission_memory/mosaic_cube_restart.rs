@@ -69,4 +69,15 @@ fn mosaic_cube_saved_residual_masks_stay_within_admission() {
     );
     assert!(breaches.is_empty(), "{}", breaches.join("\n"));
     assert!(measured.outcome.unwrap().major_cycle_count > 0);
+
+    resumed.calcpsf = true;
+    let measured = check(
+        &mut breaches,
+        "rebuilt mosaic cube PSF with a saved residual and model",
+        &resumed,
+        2,
+        AMPLE,
+    );
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    assert!(measured.outcome.unwrap().major_cycle_count > 0);
 }

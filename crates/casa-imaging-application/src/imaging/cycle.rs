@@ -511,6 +511,7 @@ fn predict_final_model(
         outcome.scientific,
         (Vec::new(), Vec::new(), Reservation::none()),
         true,
+        outcome.major_cycle_count == 0,
     )?;
     if outcome.major_cycle_count == 0 {
         let visibility = major.visibility.take();
@@ -841,6 +842,7 @@ impl<'a> Run<'a> {
             Reservation,
         ),
         last: bool,
+        first_residual_pass: bool,
     ) -> Result<Major, ImagingError> {
         // The retained charge still covers the normal state and model the
         // pass refreshes; the pass adds its scratch and the new residual,
@@ -848,7 +850,7 @@ impl<'a> Run<'a> {
         // holds them.
         let (normal_state, mut model) = completion.into_parts();
         let saved_seed = self.reseed.filter(|_| {
-            normal_state.sample_count() == 0
+            first_residual_pass
                 && !self.forms.residual
                 && self
                     .existing
