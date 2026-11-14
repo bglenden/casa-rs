@@ -138,9 +138,6 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(bool, bool), PrepareErr
     let mut model = false;
     for (prefix, paths) in all {
         model |= check_products(request, family, prefix, &paths)?;
-        if !request.calcres && prefix != request.imagename {
-            check_saved_outlier_residual(prefix)?;
-        }
     }
     check_inputs(request, continuing)?;
     Ok((continuing, model))
@@ -368,17 +365,6 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             }
             .into(),
         );
-    }
-    Ok(())
-}
-
-fn check_saved_outlier_residual(prefix: &Path) -> Result<(), PrepareError> {
-    let path = product_path(prefix, "residual");
-    if !path.exists() {
-        return Err(PrepareError::Restart {
-            path,
-            reason: "calcres=False requires the residual that an earlier run left for this outlier (#944)".into(),
-        });
     }
     Ok(())
 }

@@ -63,9 +63,18 @@ pub(super) fn set_residual(
     existing: Option<&ExistingProducts>,
     images: &mut PassImages,
     terms: usize,
+    preserve_field_sum: bool,
 ) -> Result<(), ImageError> {
     match existing {
-        Some(existing) => existing.fill_residual(images),
+        Some(existing) => {
+            // A serial standard-gridder PSF pass fills only an empty sum.
+            // It still normalizes the new PSF by its freshly gridded peak.
+            if preserve_field_sum && let Some(sum) = existing.positive_scalar_sum()? {
+                images.sum_weights[0] = sum;
+                images.published_sum_weights[0] = sum;
+            }
+            existing.fill_residual(images)
+        }
         None => {
             let cells = images.shape[0] * images.shape[1];
             images.residual =

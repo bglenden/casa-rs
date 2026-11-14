@@ -259,7 +259,7 @@ fn restart_mask_refresh(run: &Run<'_>, setup: &mut MinorCycleSetup<'_>, mvc: boo
     } else {
         (
             (mosaic || outliers) && positive_cutoff,
-            positive_cutoff && !outliers,
+            positive_cutoff && (!outliers || run.forms.psf),
         )
     }
 }

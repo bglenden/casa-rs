@@ -1271,10 +1271,12 @@ impl<'a> Run<'a> {
                         // A pass of the PSF alone takes the residual it does
                         // not form ([`continuation`]).
                         if !modes.data {
+                            let saved = saved_by_domain(images.domain);
                             continuation::set_residual(
-                                saved_by_domain(images.domain),
+                                saved,
                                 &mut images,
                                 basis.data_terms(),
+                                !self.outlier_products.is_empty(),
                             )
                             .map_err(|error| PassError::Images(Box::new(error)))?;
                         }

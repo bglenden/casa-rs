@@ -66,6 +66,8 @@ pub struct ContinuumProductControls {
     preserves_saved_residual: bool,
     saved_weighted_residual: bool,
     field_residual_mask: Option<FieldResidualMask>,
+    rebuilds_field_pb: bool,
+    rebuilds_field_psfs: bool,
 }
 
 impl ContinuumProductControls {
@@ -126,8 +128,11 @@ impl ContinuumProductControls {
         mask_read_bytes: u64,
         refreshed: bool,
         keeps_pb_mask: bool,
+        (rebuilds_psfs, rebuilds_pb): (bool, bool),
     ) -> Self {
         self.preserves_saved_residual = !refreshed;
+        self.rebuilds_field_psfs = rebuilds_psfs;
+        self.rebuilds_field_pb = rebuilds_pb;
         self.field_residual_mask = Some(match (refreshed, keeps_pb_mask) {
             (false, _) => FieldResidualMask::Saved,
             (true, true) => FieldResidualMask::SavedOrPrimaryBeam,
@@ -254,6 +259,8 @@ impl Default for ContinuumProductControls {
             preserves_saved_residual: false,
             saved_weighted_residual: false,
             field_residual_mask: None,
+            rebuilds_field_pb: false,
+            rebuilds_field_psfs: false,
         }
     }
 }
@@ -292,6 +299,8 @@ pub struct PlannedContinuumGeneration {
     pub(crate) saved_cube_pbcor_mask: Option<SavedPbcorMask>,
     pub(crate) saved_weighted_residual: bool,
     pub(crate) field_residual_mask: Option<FieldResidualMask>,
+    pub(crate) rebuilds_field_pb: bool,
+    pub(crate) rebuilds_field_psfs: bool,
     pub(crate) members: Box<[PlannedMember]>,
 }
 
@@ -414,6 +423,8 @@ impl PlannedContinuumGeneration {
             saved_cube_pbcor_mask: controls.saved_cube_pbcor_mask,
             saved_weighted_residual: controls.saved_weighted_residual,
             field_residual_mask: controls.field_residual_mask,
+            rebuilds_field_pb: controls.rebuilds_field_pb,
+            rebuilds_field_psfs: controls.rebuilds_field_psfs,
             uses_weight_image: list
                 .entries()
                 .iter()
