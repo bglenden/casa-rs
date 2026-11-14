@@ -670,10 +670,12 @@ impl CasaImageWriter {
             matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)).then_some("mask0"),
         );
         if let Some(name) = mask_name
-            && (!matches!(
-                Path::new(name).components().next(),
-                Some(std::path::Component::Normal(part)) if part == name
-            ) || staged.staging.join(name).exists())
+            && (name.eq_ignore_ascii_case("logtable")
+                || !matches!(
+                    Path::new(name).components().next(),
+                    Some(std::path::Component::Normal(part)) if part == name
+                )
+                || staged.staging.join(name).exists())
         {
             return Err(image_error(casa_images::ImageError::InvalidMetadata(
                 format!("invalid output pixel-mask name {name:?}"),

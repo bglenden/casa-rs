@@ -397,4 +397,41 @@ fn saved_outlier_user_pixel_masks_follow_casa_restoration() {
         );
         assert_eq!(restored.get_mask().unwrap().unwrap(), prior_mask);
     }
+    let path = directory.join("field.image");
+    let options = casa_tables::TableOptions::new(&path);
+    let mut table = casa_tables::Table::open_metadata_only(options.clone()).unwrap();
+    let Some(casa_types::Value::Record(masks)) = table.keywords_mut().get_mut("masks") else {
+        panic!("expected a saved mask record");
+    };
+    let support = masks.get("prior_support").unwrap().clone();
+    // Casacore's defineRegion stores its logical name independently of
+    // the mask table path. Leave the mask in prior_support and the history
+    // table in logtable, like an image from that API.
+    masks.upsert("logtable", support);
+    table.keywords_mut().upsert(
+        "Image_defaultmask",
+        casa_types::Value::Scalar(casa_types::ScalarValue::String("logtable".into())),
+    );
+    table.save_metadata_only(options).unwrap();
+    drop(table);
+    let image = open("field.image");
+    assert_eq!(image.get_mask().unwrap().unwrap(), prior_mask);
+    drop(image);
+    let snapshot_products = || {
+        let mut files = snapshot(&directory);
+        files.retain(|path, _| path.file_name().unwrap() != "table.lock");
+        files
+    };
+    let before = snapshot_products();
+    match json_run_with(&directory, values, true) {
+        TaskReply::Failed { message, .. } => {
+            assert!(
+                message.contains("invalid output pixel-mask name"),
+                "{message}"
+            );
+            assert!(message.contains("logtable"), "{message}");
+        }
+        reply => panic!("reserved output mask name was accepted: {reply:?}"),
+    }
+    assert_unchanged(&before, &snapshot_products());
 }

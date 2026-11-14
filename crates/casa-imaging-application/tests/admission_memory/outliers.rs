@@ -106,9 +106,7 @@ fn outlier_restart_seed_stays_within_admission() {
     image.make_mask("prior_support", true, false).unwrap();
     image.save().unwrap();
     drop(image);
-    let pb = outlier.with_extension("pb");
-    let withheld = root.path().join("withheld-pb");
-    std::fs::rename(&pb, &withheld).unwrap();
+    assert!(!outlier.with_extension("pb").exists());
     let mut restore = saved_residual.clone();
     restore.niter = 0;
     let measured = check(
@@ -123,7 +121,6 @@ fn outlier_restart_seed_stays_within_admission() {
     let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
     assert_eq!(image.default_mask_name().as_deref(), Some("prior_support"));
     drop(image);
-    std::fs::rename(withheld, pb).unwrap();
 
     let sum_path = outlier.with_extension("sumwt");
     let mut sum = casa_images::PagedImage::<f32>::open(&sum_path).unwrap();
