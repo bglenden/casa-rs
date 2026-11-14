@@ -136,7 +136,7 @@
     },
     "imagename": {
       "status": "Partial",
-      "scope": "Fresh namespaces for supported imaging; restart=True continues on the products at imagename for every spectral mode, Taylor family and Stokes set casa-rs images (main image only), reusing the model, a CLEAN mask with no new mask, and with calcpsf/calcres=False the PSF, sums and residual. Owner-approved contract32 enables fresh single-main restart=False numbering, including relative/absolute paths. Outlier/orphan namespaces and broader persistence remain unfinished (#944).",
+      "scope": "Fresh namespaces for supported imaging; restart=True continues on the products at imagename for every spectral mode, Taylor family and Stokes set casa-rs images (main image only), reusing the model, a CLEAN mask with no new mask, and with calcpsf/calcres=False the PSF, sums and residual. With restart=False the main image and its outliers share the next suffix, preserving relative and absolute directories and refusing an occupied destination. Same-prefix outlier continuation remains unfinished (#944).",
       "evidence": [
         "signature",
         "reader",
@@ -1005,7 +1005,7 @@
       ]
     },
     "restart": {
-      "scope": "Contract 36: True continues on an earlier run's products at imagename on the same grid, as SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane; a mosaic's flat-noise model made physical with the weights the run forms, every Taylor term with term 0's) starts the solve, an existing binary CLEAN mask is reused plane by plane when no mask is given, and calcpsf/calcres=False read the PSF, sums of weights and residual. False keeps contract32's single-main numbering. Refused (#944, #980): outlier fields, another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, embedded model/mask pixel masks and tabulated spectral axes. Preserving prior image histories remains the owner-agreed deviation.",
+      "scope": "Contract 36: True continues on an earlier run's products at imagename on the same grid, as SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane; a mosaic's flat-noise model made physical with the weights the run forms, every Taylor term with term 0's) starts the solve, an existing binary CLEAN mask is reused plane by plane when no mask is given, and calcpsf/calcres=False read the PSF, sums of weights and residual. False applies one shared suffix to the main image and every outlier. Refused for continuation (#944, #980): existing outlier fields, another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, embedded model/mask pixel masks and tabulated spectral axes. Preserving prior image histories remains the owner-agreed deviation.",
       "evidence": [
         "signature",
         "reader",

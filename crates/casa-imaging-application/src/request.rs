@@ -42,6 +42,9 @@ pub struct ImagingRequest {
     /// run wrote its own; never a catalog value.
     #[serde(skip)]
     pub(crate) continued_model: bool,
+    /// Outlier destinations selected with the main image before execution.
+    #[serde(skip)]
+    pub(crate) numbered_outlier_outputs: Option<Vec<(PathBuf, PathBuf)>>,
     /// A supplied region file with no regions means zero support, not no mask.
     /// Internal reader provenance only; this is never a catalog parameter.
     #[serde(default)]
@@ -668,30 +671,45 @@ impl ImagingRequest {
     }
 
     /// Apply CASA's task output policy before summary creation or execution.
-    /// `restart=true` continues on the products at `imagename`; `false`
-    /// selects the next single-main-image namespace and protects every
-    /// existing chosen product.
+    /// `restart=true` continues on the products at `imagename`. With
+    /// `restart=false`, the main image and its outliers receive a common
+    /// suffix and every selected destination is checked before imaging.
     ///
     /// # Errors
-    /// Unsupported coordinated outlier numbering, invalid numbered names,
-    /// unreadable directories, or an occupied chosen scientific namespace.
+    ///
+    /// Invalid or duplicate names, unreadable directories or outlier file,
+    /// an occupied destination, or missing saved inputs.
     pub fn with_tclean_output_policy(&self, restart: bool) -> Result<Self, crate::PrepareError> {
         if restart {
             return self.with_tclean_restart();
         }
+        let mut prefixes = vec![self.imagename.clone()];
         if let Some(path) = &self.outlierfile {
-            return Err(crate::PrepareError::Restart {
-                path: path.clone(),
-                reason: "restart=False coordinated outlier numbering is unfinished (#944)".into(),
-            });
+            prefixes.extend(crate::compile::outlier_output_prefixes(path)?);
+        }
+        let mut outputs = crate::restart::next_prefixes(&prefixes)?.into_iter();
+        let mut unique = std::collections::BTreeSet::new();
+        for output in outputs.as_slice() {
+            let member = crate::restart::product_path(output, "model");
+            let absolute = std::path::absolute(&member).unwrap_or(member);
+            if !unique.insert(absolute) {
+                return Err(crate::PrepareError::DuplicateOutput {
+                    path: output.clone(),
+                });
+            }
+            crate::restart::check_prefix(output)?;
         }
         let mut request = self.clone();
-        request.imagename = crate::restart::next_prefix(&self.imagename)?;
-        crate::restart::check_prefix(&request.imagename)?;
+        request.imagename = outputs.next().expect("always a main image");
+        request.numbered_outlier_outputs = self
+            .outlierfile
+            .as_ref()
+            .map(|_| prefixes.into_iter().skip(1).zip(outputs).collect());
         // A new namespace holds no PSF or residual for calcpsf or calcres to
         // leave standing.
         crate::restart::check_inputs(&request, false)?;
         request.tclean_restart = false;
+        request.continued_model = false;
         Ok(request)
     }
 
@@ -945,9 +963,12 @@ impl ImagingRequest {
     /// file's, which an unreadable file leaves out.
     #[must_use]
     pub fn image_names(&self) -> Vec<PathBuf> {
-        let outliers = self.outlierfile.as_deref().map_or_else(Vec::new, |path| {
-            crate::compile::outlier_output_prefixes(path).unwrap_or_default()
-        });
+        let outliers = match &self.numbered_outlier_outputs {
+            Some(outputs) => outputs.iter().map(|(_, output)| output.clone()).collect(),
+            None => self.outlierfile.as_deref().map_or_else(Vec::new, |path| {
+                crate::compile::outlier_output_prefixes(path).unwrap_or_default()
+            }),
+        };
         std::iter::once(self.imagename.clone())
             .chain(outliers)
             .collect()

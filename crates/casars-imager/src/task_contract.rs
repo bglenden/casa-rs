@@ -118,8 +118,19 @@ impl ImagerRunTaskResult {
         outcome: &ImagingOutcome,
         elapsed: Duration,
     ) -> Self {
+        let names = request.image_names();
+        let base_names = names
+            .iter()
+            .map(|name| name.to_string_lossy())
+            .collect::<Vec<_>>();
+        let artifacts = outcome
+            .summary
+            .products
+            .iter()
+            .map(|path| artifact(path.into(), image_suffix(path, &base_names)))
+            .collect();
         Self {
-            artifacts: artifacts(&request.imagename, &outcome.product_names()),
+            artifacts,
             request: parameters,
             run: ImagerRunReport {
                 gridded_samples: outcome.scientific().normal_state().sample_count(),
@@ -468,32 +479,33 @@ pub struct ImagerArtifact {
     pub exists: bool,
 }
 
-/// The products of a run with prefix `imagename` and CASA suffixes
-/// `products`.
-fn artifacts(imagename: &std::path::Path, products: &[String]) -> Vec<ImagerArtifact> {
-    let base = imagename.to_string_lossy();
-    products
+fn image_suffix<'a>(path: &'a str, bases: &[std::borrow::Cow<'_, str>]) -> &'a str {
+    bases
         .iter()
-        .map(|suffix| {
-            let kind = ImagerArtifactKind::of_suffix(suffix);
-            let label = suffix
-                .split(".tt")
-                .nth(1)
-                .and_then(|term| term.split('.').next())
-                .filter(|term| !term.is_empty())
-                .map_or_else(
-                    || kind.label().to_string(),
-                    |term| format!("{} tt{term}", kind.label()),
-                );
-            let path = PathBuf::from(format!("{base}{suffix}"));
-            ImagerArtifact {
-                kind,
-                label,
-                exists: path.exists(),
-                path: path.display().to_string(),
-            }
-        })
-        .collect()
+        .filter_map(|base| path.strip_prefix(base.as_ref()))
+        .filter(|suffix| suffix.starts_with('.'))
+        .min_by_key(|suffix| suffix.len())
+        .unwrap_or_default()
+}
+
+/// Describe one product at the actual destination used by publication.
+fn artifact(path: PathBuf, suffix: &str) -> ImagerArtifact {
+    let kind = ImagerArtifactKind::of_suffix(suffix);
+    let label = suffix
+        .split(".tt")
+        .nth(1)
+        .and_then(|term| term.split('.').next())
+        .filter(|term| !term.is_empty())
+        .map_or_else(
+            || kind.label().to_string(),
+            |term| format!("{} tt{term}", kind.label()),
+        );
+    ImagerArtifact {
+        kind,
+        label,
+        exists: path.exists(),
+        path: path.display().to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -517,16 +529,18 @@ mod tests {
     }
 
     #[test]
+    fn artifact_uses_the_owning_image_name_when_prefixes_overlap() {
+        let bases = ["/images/target".into(), "/images/target.field".into()];
+        let path = "/images/target.field.psf";
+        let product = artifact(path.into(), image_suffix(path, &bases));
+        assert_eq!(product.kind, ImagerArtifactKind::Psf);
+        assert_eq!(product.label, "PSF");
+    }
+
+    #[test]
     fn products_are_labelled_by_kind_and_taylor_term() {
-        let artifacts = artifacts(
-            std::path::Path::new("/nowhere/run"),
-            &[
-                ".image.tt0".to_string(),
-                ".alpha.error".to_string(),
-                ".pb.tt0".to_string(),
-                ".image.tt0.pbcor".to_string(),
-            ],
-        );
+        let artifacts = [".image.tt0", ".alpha.error", ".pb.tt0", ".image.tt0.pbcor"]
+            .map(|suffix| artifact(PathBuf::from(format!("/nowhere/run{suffix}")), suffix));
         let kinds = artifacts
             .iter()
             .map(|artifact| (artifact.kind, artifact.label.as_str()))

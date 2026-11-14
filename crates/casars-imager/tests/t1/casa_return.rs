@@ -341,7 +341,7 @@ fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
 }
 
 #[test]
-fn restart_false_is_resolved_and_coordinated_outliers_remain_refused() {
+fn restart_false_checks_the_outlier_file_before_opening_the_measurement_set() {
     use casars_imager::{ImagingParameters, resolve_request, run};
     let directory = tempfile::tempdir().unwrap();
     let values = json!({
@@ -355,7 +355,7 @@ fn restart_false_is_resolved_and_coordinated_outliers_remain_refused() {
     outlier.outlierfile = Some(directory.path().join("outliers.txt"));
     let error = run(parameters, &outlier).unwrap_err();
     assert!(
-        error.contains("coordinated outlier") && error.contains("#944"),
+        error.contains("outliers.txt") && error.contains("cannot read"),
         "{error}"
     );
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);

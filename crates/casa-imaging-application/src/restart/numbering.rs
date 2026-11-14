@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! CASA single-namespace restart=False filename selection (#944).
+//! CASA restart=False filename selection across image domains (#944).
 
 use crate::PrepareError;
 use std::{
@@ -8,7 +8,35 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) fn next_prefix(prefix: &Path) -> Result<PathBuf, PrepareError> {
+pub(crate) fn next_prefixes(prefixes: &[PathBuf]) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut maximum = None;
+    for prefix in prefixes {
+        if let Some(id) = maximum_id(prefix)? {
+            keep_maximum(&mut maximum, id);
+        }
+    }
+    let Some(maximum) = maximum else {
+        return Ok(prefixes.to_vec());
+    };
+    let suffix = format!("_{}", increment(&maximum));
+    Ok(prefixes
+        .iter()
+        .map(|prefix| {
+            // Preserve relative and absolute directories, including the
+            // original path bytes before the filename extension.
+            let mut selected = prefix.as_os_str().to_os_string();
+            selected.push(&suffix);
+            selected.into()
+        })
+        .collect())
+}
+
+#[cfg(test)]
+fn next_prefix(prefix: &Path) -> Result<PathBuf, PrepareError> {
+    next_prefixes(&[prefix.into()]).map(|mut prefixes| prefixes.remove(0))
+}
+
+fn maximum_id(prefix: &Path) -> Result<Option<String>, PrepareError> {
     // Match the actual publication directory, including a trailing slash.
     let mut probe = prefix.as_os_str().to_os_string();
     probe.push(".model");
@@ -28,7 +56,7 @@ pub(crate) fn next_prefix(prefix: &Path) -> Result<PathBuf, PrepareError> {
         })?;
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(prefix.into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
             return Err(PrepareError::InspectOutputDirectory {
                 path: directory.into(),
@@ -47,18 +75,16 @@ pub(crate) fn next_prefix(prefix: &Path) -> Result<PathBuf, PrepareError> {
         let Some(id) = product_id(stem, name, &entry.path())? else {
             continue;
         };
-        let current = maximum.get_or_insert_with(|| "1".into());
-        if (id.len(), id.as_str()) > (current.len(), current.as_str()) {
-            *current = id;
-        }
+        keep_maximum(&mut maximum, id);
     }
-    let Some(maximum) = maximum else {
-        return Ok(prefix.into());
-    };
-    // Append to the original bytes, preserving relative and absolute directories.
-    let mut selected = prefix.as_os_str().to_os_string();
-    selected.push(format!("_{}", increment(&maximum)));
-    Ok(selected.into())
+    Ok(maximum)
+}
+
+fn keep_maximum(maximum: &mut Option<String>, id: String) {
+    let current = maximum.get_or_insert_with(|| "1".into());
+    if (id.len(), id.as_str()) > (current.len(), current.as_str()) {
+        *current = id;
+    }
 }
 
 fn product_id(stem: &[u8], name: &[u8], path: &Path) -> Result<Option<String>, PrepareError> {
