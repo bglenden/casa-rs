@@ -1604,6 +1604,19 @@ and the same inputs changes the residual by 1.879e-4 NRMS. The static
 the saved cell and uses the selected epoch for both prediction and
 gridding. It matches all eight CLEAN products, masks, and iteration
 counts, with worst NRMS 2.384e-4 over the full field (#1070).</p>
+<p>The wideband two-term case on the 1.2, 1.5 and 1.8 GHz windows of
+the same field runs the rotation chain separately during the Taylor
+passes. The stock CASA run repeats exactly but differs from casa-rs
+by 2.769e-3 NRMS in <code>residual.tt0</code> and 3.726e-3 in <code>residual.tt1</code>.
+Fourteen alpha-mask pixels differ. In a CASA control,
+<code>AzElAperture::rotate2</code> keeps the same trigger and output angle but
+hands <code>rotateComplexArray</code> the original cell pixels and original
+angle on every call. With just that intervention, both residuals
+agree within 1.192e-6 NRMS, both alpha masks agree exactly, and all 19
+products pass, including the weak odd Taylor weight check. A
+debugger run without the intervention reproduces all 19 stock
+products exactly. The three windows share a feed angle and usable
+integration times, so casa-rs uses one schedule for all three.</p>
 <h2 id="aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer">AW pointing can reuse the origin of an earlier convolution buffer<a class="headerlink" href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>
