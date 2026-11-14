@@ -193,7 +193,7 @@
 <a href=#193 id=193 data-nosnippet>193</a>/// upper bounds are exclusive, as in casacore, and an axis no longer than
 <a href=#194 id=194 data-nosnippet>194</a>/// the patch is searched from 0 to its last pixel exclusive.
 <a href=#195 id=195 data-nosnippet>195</a></span><span class="attr">#[must_use]
-<a href=#196 id=196 data-nosnippet>196</a></span><span class="kw">pub fn </span>psf_peak(psf: <span class="kw-2">&amp;</span>[f64], shape: PlaneShape) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#196 id=196 data-nosnippet>196</a></span><span class="kw">pub fn </span>psf_peak&lt;T: Copy + Into&lt;f64&gt;&gt;(psf: <span class="kw-2">&amp;</span>[T], shape: PlaneShape) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
 <a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">let </span>support = beam_patch(<span class="number">0.0</span>, shape);
 <a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>bounds = |extent: usize| {
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">if </span>extent &gt; support {
@@ -208,7 +208,7 @@
 <a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">for </span>y <span class="kw">in </span>y0..y1 {
 <a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">for </span>x <span class="kw">in </span>x0..x1 {
 <a href=#210 id=210 data-nosnippet>210</a>            <span class="kw">let </span>index = shape.index(x, y);
-<a href=#211 id=211 data-nosnippet>211</a>            <span class="kw">let </span>magnitude = psf[index].abs();
+<a href=#211 id=211 data-nosnippet>211</a>            <span class="kw">let </span>magnitude = psf[index].into().abs();
 <a href=#212 id=212 data-nosnippet>212</a>            <span class="kw">if </span>best.is_none_or(|(<span class="kw">_</span>, peak)| magnitude &gt; peak) {
 <a href=#213 id=213 data-nosnippet>213</a>                best = <span class="prelude-val">Some</span>((index, magnitude));
 <a href=#214 id=214 data-nosnippet>214</a>            }
