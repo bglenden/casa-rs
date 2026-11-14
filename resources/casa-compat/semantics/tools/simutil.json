@@ -849,7 +849,7 @@
    "kind": "CASA numerical simulation diagnostic controls",
    "state": "passed",
    "scope": "SIM-27/28 sensitivity and single-dish beam/cell/support/sampling diagnostics; retains existing approximate synthesized-beam evidence.",
-   "result": "25/25 API cases pass. Seven beam widths agree to 1e-9; configured ALMA/ACA/VLA and explicit-array radiometer sensitivities satisfy 1e-3. Optional noise image agrees with independent CASA tclean at 1.905e-7 NRMS. 84 Python tests pass; one pre-existing optional live-CASA import is skipped in native Python.",
+   "result": "25/25 API cases pass. Seven beam widths agree to 1e-9; configured ALMA/ACA/VLA and explicit-array radiometer sensitivities satisfy 1e-3. Optional noise image agrees with independent CASA tclean at 1.905e-7 NRMS. 94 focused Python tests pass across retained and post-fix batches; one pre-existing optional live-CASA import is skipped in native Python. Ten invalid-Tsys/nonfinite-input regression checks pass before bad-gain neutralization; valid controls remain unchanged.",
    "links": [
     "crates/casa-simulation/src/simutil/beam.rs",
     "crates/casa-simulation/src/simutil/sensitivity.rs",
@@ -860,7 +860,7 @@
    ],
    "casa_version": "6.7.6.14",
    "revision": "c906e21e0f31dd0a4dc3f19169551657f9188517",
-   "source_revision": "c906e21e0f31dd0a4dc3f19169551657f9188517",
+   "source_revision": "e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a",
    "command": "CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna ; NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native ; CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native-image OUT/native-report.json",
    "receipt": "resources/casa-compat/evidence/simutil-diagnostics-20261114.json"
   }

@@ -4,7 +4,7 @@
  "date": "2026-11-14",
  "oracle": "casatasks and casatools 6.7.6.14; SciPy scalar-array control and existing independent radiometer equations with CASA receivers/ATM",
  "native_revision": "c906e21e0f31dd0a4dc3f19169551657f9188517",
- "source_revision": "c906e21e0f31dd0a4dc3f19169551657f9188517",
+ "source_revision": "e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a",
  "commands": [
   "CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna",
   "NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native",
@@ -16,7 +16,7 @@
   "beam_widths": 7,
   "ordinary_relative_limit": 0.001,
   "maximum_raw_sensitivity_relative_difference": 0.0006163255389362021,
-  "python_tests_passed": 84,
+  "python_tests_passed": 94,
   "python_tests_skipped": 1,
   "skip": "Existing optional live-CASA signature check in the native-only Python environment; independent CASA oracle commands above were run separately.",
   "beam_relative_limit": 1e-09,
@@ -744,5 +744,11 @@
     "seconds": 0.00447766499928548
    }
   }
- ]
+ ],
+ "review_fix": {
+  "source_revision": "e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a",
+  "finding": "Explicit-array sensitivity could bypass Simulator Tsys validation and turn invalid gains into a plausible unit-gain estimate.",
+  "result": "Ten new regressions reject tau0=-100,100,NaN and nonfinite elevation through both configured and explicit-array paths. All 36 diagnostic Python tests pass after the fix, including unchanged numeric/image controls; 58 unaffected existing simutil passes and one optional live-CASA skip are reused. Strict clippy, formatting, architecture and docs pass. Valid-model numerical evidence is unchanged.",
+  "command": "pytest -q crates/casars-python/python/tests/test_simutil_diagnostics.py"
+ }
 }

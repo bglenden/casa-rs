@@ -4266,14 +4266,14 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="simutil-evidence-numerical-diagnostics-20261114"></a>
 ##### numerical-diagnostics-20261114
 
-**CASA numerical simulation diagnostic controls — passed.** 25/25 API cases pass. Seven beam widths agree to 1e-9; configured ALMA/ACA/VLA and explicit-array radiometer sensitivities satisfy 1e-3. Optional noise image agrees with independent CASA tclean at 1.905e-7 NRMS. 84 Python tests pass; one pre-existing optional live-CASA import is skipped in native Python. SIM-27/28 sensitivity and single-dish beam/cell/support/sampling diagnostics; retains existing approximate synthesized-beam evidence.
+**CASA numerical simulation diagnostic controls — passed.** 25/25 API cases pass. Seven beam widths agree to 1e-9; configured ALMA/ACA/VLA and explicit-array radiometer sensitivities satisfy 1e-3. Optional noise image agrees with independent CASA tclean at 1.905e-7 NRMS. 94 focused Python tests pass across retained and post-fix batches; one pre-existing optional live-CASA import is skipped in native Python. Ten invalid-Tsys/nonfinite-input regression checks pass before bad-gain neutralization; valid controls remain unchanged. SIM-27/28 sensitivity and single-dish beam/cell/support/sampling diagnostics; retains existing approximate synthesized-beam evidence.
 
-- [crates/casa-simulation/src/simutil/beam.rs](https://github.com/bglenden/casa-rs/blob/c906e21e0f31dd0a4dc3f19169551657f9188517/crates/casa-simulation/src/simutil/beam.rs)
-- [crates/casa-simulation/src/simutil/sensitivity.rs](https://github.com/bglenden/casa-rs/blob/c906e21e0f31dd0a4dc3f19169551657f9188517/crates/casa-simulation/src/simutil/sensitivity.rs)
-- [crates/casars-python/src/tools/simutil/diagnostics.rs](https://github.com/bglenden/casa-rs/blob/c906e21e0f31dd0a4dc3f19169551657f9188517/crates/casars-python/src/tools/simutil/diagnostics.rs)
-- [crates/casars-python/python/tests/test_simutil_diagnostics.py](https://github.com/bglenden/casa-rs/blob/c906e21e0f31dd0a4dc3f19169551657f9188517/crates/casars-python/python/tests/test_simutil_diagnostics.py)
-- [tools/simulation/simutil_diagnostics_oracle.py](https://github.com/bglenden/casa-rs/blob/c906e21e0f31dd0a4dc3f19169551657f9188517/tools/simulation/simutil_diagnostics_oracle.py)
-- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/c906e21e0f31dd0a4dc3f19169551657f9188517/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- [crates/casa-simulation/src/simutil/beam.rs](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casa-simulation/src/simutil/beam.rs)
+- [crates/casa-simulation/src/simutil/sensitivity.rs](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casa-simulation/src/simutil/sensitivity.rs)
+- [crates/casars-python/src/tools/simutil/diagnostics.rs](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casars-python/src/tools/simutil/diagnostics.rs)
+- [crates/casars-python/python/tests/test_simutil_diagnostics.py](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casars-python/python/tests/test_simutil_diagnostics.py)
+- [tools/simulation/simutil_diagnostics_oracle.py](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/tools/simulation/simutil_diagnostics_oracle.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 - Revision: `c906e21e0f31dd0a4dc3f19169551657f9188517`; CASA: `6.7.6.14`.
 - Command: `CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna ; NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native ; CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native-image OUT/native-report.json`.
 - Receipt: `resources/casa-compat/evidence/simutil-diagnostics-20261114.json`.
