@@ -421,7 +421,7 @@
 <a href=#421 id=421 data-nosnippet>421</a>            output != Rest || (source == Topocentric &amp;&amp; weighting == WeightingScheme::Natural)
 <a href=#422 id=422 data-nosnippet>422</a>        }
 <a href=#423 id=423 data-nosnippet>423</a>        SpectralKernel::Cubic =&gt; <span class="kw">match </span>(source, output) {
-<a href=#424 id=424 data-nosnippet>424</a>            (Topocentric, Rest) =&gt; weighting == WeightingScheme::Natural,
+<a href=#424 id=424 data-nosnippet>424</a>            (Topocentric, Rest) =&gt; common_weighting,
 <a href=#425 id=425 data-nosnippet>425</a>            (Topocentric | Barycentric, Topocentric | Barycentric) =&gt; tracked &amp;&amp; common_weighting,
 <a href=#426 id=426 data-nosnippet>426</a>            (Lsrk | Topocentric | Barycentric, Lsrk) | (Lsrk, Topocentric | Barycentric) =&gt; {
 <a href=#427 id=427 data-nosnippet>427</a>                common_weighting
@@ -580,7 +580,7 @@
 <a href=#580 id=580 data-nosnippet>580</a>                            weighting
 <a href=#581 id=581 data-nosnippet>581</a>                        ),
 <a href=#582 id=582 data-nosnippet>582</a>                        <span class="kw">match </span>(source, output) {
-<a href=#583 id=583 data-nosnippet>583</a>                            (Topocentric, Rest) =&gt; weighting == WeightingScheme::Natural,
+<a href=#583 id=583 data-nosnippet>583</a>                            (Topocentric, Rest) =&gt; supported,
 <a href=#584 id=584 data-nosnippet>584</a>                            (
 <a href=#585 id=585 data-nosnippet>585</a>                                Lsrk | Topocentric | Barycentric,
 <a href=#586 id=586 data-nosnippet>586</a>                                Lsrk | Topocentric | Barycentric,
