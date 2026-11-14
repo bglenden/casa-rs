@@ -423,7 +423,7 @@ fn saved_outlier_user_pixel_masks_follow_casa_restoration() {
         files
     };
     let before = snapshot_products();
-    match json_run_with(&directory, values, true) {
+    match json_run_with(&directory, values, false) {
         TaskReply::Failed { message, .. } => {
             assert!(
                 message.contains("invalid output pixel-mask name"),
