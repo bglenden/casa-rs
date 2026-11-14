@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use casa_imaging_deconvolution::{PassImages, casa_divides_plane};
-use casa_imaging_model::{CompiledImageDomain, CompiledProblem};
+use casa_imaging_model::{CompiledImageDomain, CompiledProblem, ReconstructionBasis};
 use casa_imaging_operator::ImageExtent;
 
 use super::ImagingError;
@@ -95,8 +95,12 @@ struct FacetSums {
 }
 
 impl FacetSums {
-    fn populated(&self) -> bool {
-        self.published.iter().all(|sum| casa_divides_plane(*sum))
+    fn populated(&self, polarizations: usize) -> bool {
+        // CASA normalizes every Taylor residual by sumwt.tt0. The higher
+        // moments are signed and may vanish even on a populated facet.
+        self.published[..polarizations]
+            .iter()
+            .all(|sum| casa_divides_plane(*sum))
     }
 }
 
@@ -126,15 +130,15 @@ pub(crate) enum StitchError {
 /// chart forms them, a faceted domain's stitched from its facets as CASA's
 /// normalizer reads them through each facet store
 /// (`SynthesisNormalizer`), with a populated reference facet `r`, the lowest
-/// whose `sumwt` exceeds 1e-7 in every polarization (facet 0 unless it is
-/// empty):
-/// - each facet's residual divided by that facet's own `sumwt`, here by
+/// whose zeroth `sumwt` exceeds 1e-7 in every polarization (facet 0 unless
+/// it is empty):
+/// - each facet's residual divided by that facet's own zeroth `sumwt`, here by
 ///   scaling facet `f` by `s_r / s_f` before the normal state divides the
 ///   whole by `s_r`; an empty facet is zero, as `divideImageByWeightVal`
 ///   leaves it;
-/// - facet `r`'s PSF, placed at the image centre in an image of zeros
+/// - facet `r`'s PSF moments, placed at the image centre in images of zeros
 ///   (`setPsfFromOneFacet`, which takes facet 0), which the reconstruction
-///   normalises by its peak;
+///   normalises by the zeroth PSF's peak;
 /// - facet `r`'s sums of weights for the domain.
 ///
 /// Each facet's own sums are published in its pixel of `.sumwt`
@@ -148,6 +152,8 @@ pub(crate) struct ChartStitch {
     assemblies: BTreeMap<usize, Assembly>,
     /// The requested polarizations, one image each per plane and term.
     pols: usize,
+    coefficients: usize,
+    moments: usize,
 }
 
 impl ChartStitch {
@@ -160,21 +166,29 @@ impl ChartStitch {
             .map(|domain| domain.shape().pixels())
             .collect();
         let sums = vec![None; charts.len()];
+        let (coefficients, moments) = match problem.reconstruction().basis() {
+            ReconstructionBasis::Taylor { terms } => (terms, 2 * terms - 1),
+            _ => (1, 1),
+        };
         Self {
             charts,
             shapes,
             sums,
             assemblies: BTreeMap::new(),
             pols: problem.reconstruction().polarization().coordinates().len(),
+            coefficients,
+            moments,
         }
     }
 
     /// Bytes a pass's stitch holds beside the pass's own images: each
     /// faceted domain's full-size residual, and on an initial pass (`psf`)
-    /// its full-size PSF and one facet's PSF. Faceted domains have a
-    /// constant basis: one plane, one term.
+    /// its full-size PSF and one facet's PSF, for all Taylor coefficients
+    /// and moments when present.
     pub(crate) fn pass_bytes(&self, psf: bool) -> u64 {
-        let image = |pixels: [usize; 2]| (pixels[0] * pixels[1] * self.pols * 4) as u64;
+        let plane = |[width, height]: [usize; 2]| {
+            width as u64 * height as u64 * self.pols as u64 * size_of::<f32>() as u64
+        };
         self.charts
             .iter()
             .enumerate()
@@ -182,15 +196,20 @@ impl ChartStitch {
                 candidate.window.is_some() && self.first_chart(candidate.domain) == *chart
             })
             .map(|(_, chart)| {
-                let full = image(self.shapes[chart.domain]);
-                let facet = chart.window.map_or(0, |window| image(window.shape()));
-                if psf { 2 * full + facet } else { full }
+                let full = plane(self.shapes[chart.domain]);
+                let residual = full * self.coefficients as u64;
+                if psf {
+                    let facet = chart.window.map_or(0, |window| plane(window.shape()));
+                    residual + (full + facet) * self.moments as u64
+                } else {
+                    residual
+                }
             })
             .sum()
     }
 
     /// Each faceted domain's facets' published sums of weights, per facet
-    /// in CASA's order and per polarization, from the initial pass:
+    /// in CASA's order, then by moment and polarization, from the initial pass:
     /// CASA's `.sumwt` of a faceted image holds each facet store's own.
     pub(crate) fn facet_sum_weights(&self) -> BTreeMap<usize, Vec<Vec<f64>>> {
         let mut domains = BTreeMap::<usize, Vec<Vec<f64>>>::new();
@@ -236,7 +255,7 @@ impl ChartStitch {
         let populated = self.sums[chart]
             .as_ref()
             .ok_or(StitchError::UnscaledFacet { chart })?
-            .populated();
+            .populated(self.pols);
         let full = self.shapes[domain];
         let assembly = self.assemblies.entry(domain).or_insert_with(|| Assembly {
             images: empty_domain_images(&images, full),
@@ -301,7 +320,7 @@ impl ChartStitch {
         // zero the whole image.
         let reference = charts
             .iter()
-            .find(|(_, _, sums)| sums.populated())
+            .find(|(_, _, sums)| sums.populated(self.pols))
             .unwrap_or(&charts[0]);
         let full = self.shapes[domain];
         let pols = assembly.images.polarizations;
@@ -433,6 +452,8 @@ mod tests {
             sums: vec![None; 4],
             assemblies: BTreeMap::new(),
             pols: 1,
+            coefficients: 1,
+            moments: 1,
         }
     }
 
@@ -544,6 +565,77 @@ mod tests {
         let psf = stitched.psf.unwrap();
         assert_eq!(psf[4 * 4 + 2], 100.0 + (2 * 2 + 1) as f32);
         assert_eq!(psf.iter().filter(|value| **value != 0.0).count(), 8);
+    }
+
+    fn taylor_facet(index: usize, initial: bool) -> PassImages {
+        let zero = [2.0, 4.0, 1.0, 0.0][index];
+        let mut images = facet(zero, |_| 1.0, initial);
+        images.residual.extend([3.0; 8]);
+        if let Some(psf) = &mut images.psf {
+            psf.reserve_exact(16);
+            psf[5] += index as f32;
+            psf.extend([-(index as f32) - 6.0; 8]);
+            psf.extend([index as f32 + 8.0; 8]);
+            images.sum_weights.extend([-0.5, 0.75]);
+            images.published_sum_weights.extend([-0.75, 0.5]);
+        }
+        images
+    }
+
+    #[test]
+    fn taylor_facets_use_zeroth_weights_and_keep_every_psf_moment() {
+        let mut stitch = stitch();
+        let mut assembled = None;
+        for index in [3, 2, 1, 0] {
+            assembled = stitch.accept(index, taylor_facet(index, true)).unwrap();
+        }
+        let result = assembled.unwrap();
+        let psf = result.psf.unwrap();
+        let centre = 4 * 4 + 2;
+        assert_eq!(
+            [psf[centre], psf[32 + centre], psf[64 + centre]],
+            [105.0, -6.0, 8.0]
+        );
+        assert_eq!(result.published_sum_weights, [2.0, -0.75, 0.5]);
+        for first_pass in [true, false] {
+            let mut refreshed = None;
+            let residual = if first_pass {
+                &result.residual
+            } else {
+                for index in [0, 1, 2, 3] {
+                    refreshed = stitch.accept(index, taylor_facet(index, false)).unwrap();
+                }
+                &refreshed.as_ref().unwrap().residual
+            };
+            for (index, expected) in [1.0, 0.5, 2.0, 0.0].into_iter().enumerate() {
+                assert_eq!(at(residual, index, 0, 0), expected);
+                assert_eq!(at(&residual[32..], index, 0, 0), 3.0 * expected);
+            }
+        }
+    }
+
+    #[test]
+    fn a_taylor_stitch_charges_every_retained_image_plane() {
+        let mut stitch = stitch();
+        stitch.coefficients = 2;
+        stitch.moments = 3;
+        stitch.accept(0, taylor_facet(0, true)).unwrap();
+        let assembly = &stitch.assemblies[&0];
+        let pass_cells = assembly.images.residual.capacity()
+            + assembly.images.psf.as_ref().unwrap().capacity()
+            + assembly.psf.as_ref().unwrap().1.capacity();
+        assert_eq!(
+            stitch.pass_bytes(true),
+            (pass_cells * size_of::<f32>()) as u64
+        );
+        for index in 1..4 {
+            stitch.accept(index, taylor_facet(index, true)).unwrap();
+        }
+        stitch.accept(0, taylor_facet(0, false)).unwrap();
+        let assembly = &stitch.assemblies[&0];
+        assert!(assembly.psf.is_none() && assembly.images.psf.is_none());
+        let refresh_bytes = assembly.images.residual.capacity() * size_of::<f32>();
+        assert_eq!(stitch.pass_bytes(false), refresh_bytes as u64);
     }
 
     /// What a pass's stitch holds: a full residual, and on the initial pass

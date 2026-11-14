@@ -1397,14 +1397,19 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
     // four.
     let mut full_stokes = mtmfs_controls();
     full_stokes["stokes"] = json!("IQUV");
+    let mut facets = mtmfs_controls();
+    facets["facets"] = json!(2);
     for (imsize, workers, controls) in [
         (1024, 1, mtmfs_controls()),
         (1024, 4, mtmfs_controls()),
         (2048, 1, mtmfs_controls()),
         (1024, 1, full_stokes),
+        (1024, 1, facets),
     ] {
         let stokes = controls["stokes"].as_str().unwrap_or("I");
-        let label = format!("mtmfs {stokes} {imsize} px {workers} workers");
+        let facets = controls["facets"].as_u64().unwrap_or(1);
+        let label =
+            format!("mtmfs {stokes} {imsize} px {facets}x{facets} facets {workers} workers");
         let image = root.path().join(label.replace(' ', "-"));
         let measured = check(
             &mut breaches,
