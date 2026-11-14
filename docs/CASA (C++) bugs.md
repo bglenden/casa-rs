@@ -4501,6 +4501,23 @@ products as casa-rs. The 17 products and 48 beams agree, the masks
 and controller counts match exactly, and the largest product and
 MODEL_DATA normalized RMS are 9.16e-7 and 9.41e-7 (#1121).
 
+In the Briggs and uniform variants of this TOPO cube, the density lookup
+takes the nearest native weight in LSRK. CASA's unit conversion and
+per-hop Doppler arithmetic place plane 5 of the first buffer one Float64
+step above the midpoint. The upper channel changes 55 uniform weights
+and the resulting PSF. Retaining the LSRK interpolation grid and applying
+the per-hop conversion to the native centres reproduces the CASA weights.
+When the image and native channel widths coincide, the spacing of the
+first two selected native channels determines whether CASA uses a finer
+grid or converts each reporting centre directly. The density grid moves
+the reporting reference pixel before evaluating its first spacing. Its
+lookup converts each LSRK channel back to the reporting frame before
+rounding the pixel. A tuned model-column run can select different first
+channels, so the clean control uses the tuned CASA iterator. The three
+weighted dirty and clean pairs agree across 51 products and 132 beams
+with exact masks and controller counts. The largest normalized RMS is
+8.80e-7 for products and 8.98e-7 for MODEL_DATA (#1121).
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed

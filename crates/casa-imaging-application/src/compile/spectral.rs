@@ -19,9 +19,10 @@ use casa_ms::{
 use casa_observation::{Catalogue, FieldId, WindowId};
 use casa_types::ArrayValue;
 use casa_types::measures::{
-    direction::MDirection, doppler::DopplerRef, epoch::EpochRef, frame::MeasFrame,
-    frequency::FrequencyRef,
+    PreparedFrequencyConversion, direction::MDirection, doppler::DopplerRef, epoch::EpochRef,
+    frame::MeasFrame, frequency::FrequencyRef,
 };
+use casa_types::quanta::Quantity;
 
 use super::PrepareError;
 use super::direction::ImageSpectralCoordinate;
@@ -576,7 +577,9 @@ struct StoreReads {
 /// those `spw` names. Where the bands do not
 /// select every channel read at every epoch, the window carries them and
 /// each time reads only the channels they select then, as CASA's iterator
-/// does.
+/// does. For tracked cubic AW with per-plane density, retain every
+/// iterator-selected channel of a contributing window. The spacing of the
+/// first pair determines CASA's resampling branch after Doppler conversion.
 ///
 /// A window none of whose channels reaches the axis is read as `spw`
 /// selects it, tuned or not, as CASA does, by the two passes that need it:
@@ -594,6 +597,11 @@ fn store_reads(
     (image_band, tuned): (Option<[f64; 2]>, bool),
 ) -> Result<StoreReads, PrepareError> {
     let bands = cube_bands(request, (catalogue, engine), survey, image_band)?;
+    let keep_iterator_channels = tracked_aw_cube_density(
+        request,
+        survey.source_frequency_reference,
+        setup.output_freq_ref,
+    );
     let density_bands = if whole_selection_density(request) {
         cube_bands(request, (catalogue, engine), survey, None)?
     } else {
@@ -641,6 +649,14 @@ fn store_reads(
             reads.windows.entry(window.spw_id).or_default().density_only = true;
         } else {
             reads.reaches_axis = true;
+            if keep_iterator_channels && let Some(selection) = &selection {
+                // FTM first compares the iterator's channel spacing with
+                // the image step. Trimming even an unused leading channel
+                // can change that comparison after frequency conversion.
+                channels = (0..window.frequencies_hz.len())
+                    .filter(|&channel| selection.ever(channel))
+                    .collect();
+            }
             if let (Some(bands), Some(selection)) = (&bands, &selection)
                 && channels.iter().any(|channel| !selection.always(*channel))
                 && let Some(window_bands) = bands.frequency_bands(window.spw_id)
@@ -791,7 +807,13 @@ fn cube_law(
     let store = &stores[reference];
     let (catalogue, survey) = (store.catalogue(), &store.survey);
     let band_surveys = stores.iter().map(|store| &store.survey).collect::<Vec<_>>();
-    let axis = cube_axis(request)?;
+    let mut axis = cube_axis(request)?;
+    let exact_aw_grid =
+        tracked_aw_cube_density(request, survey.source_frequency_reference, axis.outframe);
+    if exact_aw_grid {
+        casa_cube_frequency(&mut axis.start, request.start.as_deref());
+        casa_cube_frequency(&mut axis.width, request.width.as_deref());
+    }
     let (setup, band_hz) = cube_setup(request, (survey, &band_surveys), frame, axis.clone())?;
     let (selected_source_channels, window_reads) =
         cube_store_reads(request, (stores, reference), frame, &setup)?;
@@ -811,11 +833,20 @@ fn cube_law(
             doppler_convention(request.veltype)?,
         ),
     };
+    let source_lsrk_grid = if exact_aw_grid && output_channels > 1 {
+        Some(tracked_cube_grid(
+            frame,
+            reference_frequency_hz,
+            increment_hz,
+        )?)
+    } else {
+        topo_source_grid(request, &axis, &band_surveys, output_channels)
+    };
     Ok(AxisLaw {
         selected_source_channels: Cow::Owned(selected_source_channels),
         window_reads,
         output_frequency_reference: setup.output_freq_ref,
-        source_lsrk_grid: topo_source_grid(request, &axis, &band_surveys, output_channels),
+        source_lsrk_grid,
         reference_frequency_hz,
         increment_hz,
         output_channels,
@@ -834,6 +865,76 @@ fn cube_law(
         basis: ReconstructionBasis::ChannelLocal {
             channels: output_channels,
         },
+    })
+}
+
+/// A tracked AW cube whose nearest density weight needs CASA's LSRK
+/// sampling coordinate and its selected native-channel spacing.
+fn tracked_aw_cube_density(
+    request: &ImagingRequest,
+    source: FrequencyRef,
+    output: FrequencyRef,
+) -> bool {
+    matches!(request.gridder, Gridder::Awproject(_))
+        && request.specmode == SpecMode::Cube
+        && request.interpolation == CubeInterpolation::Cubic
+        && source == FrequencyRef::TOPO
+        && output == FrequencyRef::TOPO
+        && request.perchanweightdensity
+        && request.weighting.per_channel_density()
+}
+
+/// `MSTransformRegridder::convertGridPars` reads frequency quantities
+/// through `Quantum::getValue`, which divides by the ratio of unit scales.
+/// The last bit matters when a converted centre falls between two density
+/// weights. Channel and velocity requests keep their existing axis law.
+fn casa_cube_frequency(value: &mut Option<CubeAxisValue>, text: Option<&str>) {
+    if let (Some(CubeAxisValue::FrequencyHz { hz, .. }), Some(text)) = (value, text) {
+        let quantity = text
+            .parse::<Quantity>()
+            .expect("already parsed the frequency");
+        *hz = quantity.value() / (1.0 / quantity.unit().val().factor);
+    }
+}
+
+/// `FTMachine` samples the image coordinate in LSRK and subtracts the
+/// first two world frequencies for its interpolation step. Retain that
+/// axis for a tracked cubic AW cube using per-channel density.
+fn tracked_cube_grid(
+    frame: &FrameContext<'_>,
+    first_hz: f64,
+    increment_hz: f64,
+) -> Result<SourceLsrkGrid, PrepareError> {
+    let reference = frame.direction.reference_direction();
+    let direction = MDirection::from_angles(
+        reference.longitude_rad(),
+        reference.latitude_rad(),
+        reference.frame().direction_ref(),
+    );
+    let anchor = frame
+        .engine
+        .spectral_frame_observatory_direction(frame.anchor_time_mjd_seconds, direction)?;
+    let conversion = PreparedFrequencyConversion::new(
+        FrequencyRef::TOPO,
+        FrequencyRef::LSRK,
+        Some(&anchor),
+        Some(&anchor),
+    )?;
+    let first_lsrk = conversion.convert_hz(first_hz);
+    let second_lsrk = conversion.convert_hz(first_hz + increment_hz);
+    Ok(SourceLsrkGrid {
+        first_hz: first_lsrk,
+        increment_hz: second_lsrk - first_lsrk,
+        reporting_conversions: Some([
+            conversion,
+            PreparedFrequencyConversion::new(
+                FrequencyRef::LSRK,
+                FrequencyRef::TOPO,
+                Some(&anchor),
+                Some(&anchor),
+            )?,
+        ]),
+        terminal_plane_outside: false,
     })
 }
 
@@ -908,6 +1009,7 @@ fn source_grid_at_terminal(frequencies: &[f64], widths: &[f64]) -> Option<Source
     Some(SourceLsrkGrid {
         first_hz: first,
         increment_hz: step,
+        reporting_conversions: None,
         terminal_plane_outside,
     })
 }
@@ -1170,6 +1272,16 @@ mod tests {
     use super::*;
     use crate::request::tests::request;
     use serde_json::json;
+
+    #[test]
+    fn casa_aw_cube_frequency_uses_the_quantum_unit_ratio() {
+        let mut start = Some(CubeAxisValue::parse("1.275GHz", DopplerRef::RADIO).unwrap());
+        casa_cube_frequency(&mut start, Some("1.275GHz"));
+        let Some(CubeAxisValue::FrequencyHz { hz, .. }) = start else {
+            panic!("a frequency start");
+        };
+        assert_eq!(hz, 1_274_999_999.999_999_8);
+    }
 
     #[test]
     fn topo_source_grid_distinguishes_signed_terminal_offsets() {

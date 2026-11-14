@@ -189,3 +189,52 @@ fn mfs_header_rest_frequency_refuses_active_doppler_even_without_source() {
     let error = continuum_rest_frequency_hz(&ms, 0, 0, 1.5e9).unwrap_err();
     assert!(error.to_string().contains("DOPPLER table is not supported"));
 }
+
+/// CASA's FTMachine measures the first two iterator channels even when
+/// neither reaches the image's first cubic stencil.
+#[test]
+fn tracked_aw_density_keeps_the_selected_native_channel_spacing() {
+    use crate::mvc_compile_law::synthetic_observation::observation;
+    use crate::{Cancel, HostResources, RunContext};
+    use casa_imaging_model::compile_observation;
+    use serde_json::json;
+
+    let root = tempfile::tempdir().expect("cube fixture");
+    let ms = observation(root.path(), 20);
+    let mut stored = MeasurementSet::open(&ms).expect("MeasurementSet");
+    stored
+        .spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(0, "MEAS_FREQ_REF", 5)
+        .expect("TOPO channels");
+    stored.save().expect("save TOPO reference");
+    drop(stored);
+    let request = crate::request::tests::request(json!({
+        "vis": ms,
+        "imagename": root.path().join("cube"),
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "interpolation": "cubic",
+        "gridder": "awproject",
+        "cfcache": root.path().join("unused-cache"),
+        "weighting": "uniform",
+        "perchanweightdensity": true,
+        "imsize": 32,
+        "cell": "0.3arcsec",
+        "spw": "0:1~17",
+        "start": "45.536GHz",
+        "width": "129MHz",
+        "nchan": 6,
+    }));
+    let context = RunContext {
+        host: HostResources::detect().expect("host resources"),
+        policy: request.resource_policy(),
+        cancel: Cancel::default(),
+        summary: None,
+    };
+    let prepared = crate::compile::prepare(&request, &context).expect("compile cube");
+    let snapshot = compile_observation(prepared.snapshot).expect("observation");
+    let source = &snapshot.sources()[0];
+    let window = &source.selection().spectral_windows()[0];
+    assert_eq!(window.channel_indices(), (1..=17).collect::<Vec<_>>());
+}

@@ -13,10 +13,13 @@
 //! bypasses interpolation and maps like `nearest`.
 
 mod prediction;
+#[cfg(test)]
+mod reporting_axis_tests;
 mod stencil;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use casa_types::measures::PreparedFrequencyConversion;
 use num_complex::{Complex32, Complex64};
 
 pub use self::prediction::{PlacedRow, PredictionScratch};
@@ -119,6 +122,17 @@ pub struct SpectralAxis {
     first_hz: f64,
     increment_hz: f64,
     channels: u32,
+    reporting_axis: Option<ReportingAxis>,
+}
+
+/// A retained LSRK axis's reported image coordinate and its conversion.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ReportingAxis {
+    reference_pixel: f64,
+    reference_hz: f64,
+    increment_hz: f64,
+    to_lsrk: PreparedFrequencyConversion,
+    to_reporting: PreparedFrequencyConversion,
 }
 
 impl SpectralAxis {
@@ -145,7 +159,27 @@ impl SpectralAxis {
             first_hz,
             increment_hz,
             channels,
+            reporting_axis: None,
         })
+    }
+
+    /// Evaluate unrefined channel centres through the image's reporting
+    /// coordinate. The axis's first-two spacing still sets the fine grid.
+    #[must_use]
+    pub fn with_reporting_conversion(
+        mut self,
+        [reference_pixel, reference_hz, increment_hz]: [f64; 3],
+        to_lsrk: PreparedFrequencyConversion,
+        to_reporting: PreparedFrequencyConversion,
+    ) -> Self {
+        self.reporting_axis = Some(ReportingAxis {
+            reference_pixel,
+            reference_hz,
+            increment_hz,
+            to_lsrk,
+            to_reporting,
+        });
+        self
     }
 
     /// Centre of the first channel in Hz.
@@ -169,7 +203,12 @@ impl SpectralAxis {
     /// Centre of `channel` in Hz.
     #[must_use]
     pub fn centre_hz(self, channel: u32) -> f64 {
-        self.first_hz + f64::from(channel) * self.increment_hz
+        match self.reporting_axis {
+            Some(axis) => axis.to_lsrk.convert_hz(
+                axis.reference_hz + (f64::from(channel) - axis.reference_pixel) * axis.increment_hz,
+            ),
+            None => self.first_hz + f64::from(channel) * self.increment_hz,
+        }
     }
 
     fn last_hz(self) -> f64 {
@@ -192,24 +231,43 @@ impl SpectralAxis {
             .ok_or(OperatorError::SpectralAxis {
                 reason: "the padded axis has too many channels",
             })?;
-        let first_hz = self.first_hz - f64::from(planes_per_side) * self.increment_hz;
-        if !first_hz.is_finite() {
+        let mut axis = Self {
+            channels,
+            reporting_axis: self.reporting_axis.map(|mut axis| {
+                axis.reference_pixel += f64::from(planes_per_side);
+                axis
+            }),
+            ..self
+        };
+        if axis.reporting_axis.is_some() {
+            // CASA shifts the padded coordinate's reference pixel, then
+            // measures the increment again at its first two planes.
+            axis.first_hz = axis.centre_hz(0);
+            axis.increment_hz = axis.centre_hz(1) - axis.first_hz;
+        } else {
+            axis.first_hz -= f64::from(planes_per_side) * axis.increment_hz;
+        }
+        if !axis.first_hz.is_finite() {
             return Err(OperatorError::SpectralAxis {
                 reason: "the padded axis's first channel centre must be finite",
             });
         }
-        Ok(Self {
-            first_hz,
-            channels,
-            ..self
-        })
+        Ok(axis)
     }
 
     /// `FTMachine::matchChannel`: the channel whose rounded spectral pixel
-    /// `floor((ν − ν₀)/Δν + 0.5)` lies on the axis.
+    /// lies on the axis. A converted coordinate applies the inverse
+    /// Doppler hops before computing the reported pixel.
     #[must_use]
     pub fn nearest_channel(self, frequency_hz: f64) -> Option<u32> {
-        let pixel = ((frequency_hz - self.first_hz) / self.increment_hz + 0.5).floor();
+        let pixel = match self.reporting_axis {
+            Some(axis) => {
+                let world_hz = axis.to_reporting.convert_hz(frequency_hz);
+                (world_hz - axis.reference_hz) / axis.increment_hz + axis.reference_pixel
+            }
+            None => (frequency_hz - self.first_hz) / self.increment_hz,
+        };
+        let pixel = (pixel + 0.5).floor();
         (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
     }
 
@@ -237,6 +295,7 @@ struct FineGrid {
     start_hz: f64,
     increment_hz: f64,
     per_output: usize,
+    direct_centres: bool,
     output: SpectralAxis,
 }
 
@@ -258,6 +317,7 @@ impl FineGrid {
                 start_hz,
                 increment_hz,
                 per_output: 1,
+                direct_centres: output.reporting_axis.is_some(),
                 output,
             });
         }
@@ -277,6 +337,7 @@ impl FineGrid {
             start_hz,
             increment_hz,
             per_output,
+            direct_centres: false,
             output,
         })
     }
@@ -286,7 +347,11 @@ impl FineGrid {
     }
 
     fn frequency_hz(self, ordinal: usize) -> f64 {
-        self.start_hz + ordinal as f64 * self.increment_hz
+        if self.direct_centres {
+            self.output.centre_hz(self.output_channel(ordinal))
+        } else {
+            self.start_hz + ordinal as f64 * self.increment_hz
+        }
     }
 
     fn output_channel(self, ordinal: usize) -> u32 {
@@ -1147,7 +1212,10 @@ impl SpectralResampler {
     ) -> usize {
         match (shape.rule, self.sampling) {
             (DensityCellRule::Cube, Sampling::Interpolated(axis, _)) => {
-                linear_samples(axis.increment_hz, shape.planes, spectrum)
+                let increment_hz = axis
+                    .padded(shape.padding)
+                    .map_or(axis.increment_hz, SpectralAxis::increment_hz);
+                linear_samples(increment_hz, shape.planes, spectrum)
             }
             _ => spectrum.channels,
         }

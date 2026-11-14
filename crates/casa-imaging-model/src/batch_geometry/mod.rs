@@ -203,6 +203,9 @@ pub struct GeometryPlan {
     output_in_lsrk: Option<f64>,
     /// Factor between the interpolation frequency coordinate and LSRK.
     grid_in_lsrk: f64,
+    /// A retained LSRK grid with converted inputs compares native channels
+    /// after each Doppler hop, preserving CASA's nearest-weight boundary.
+    convert_lsrk_hops: bool,
     parallactic: bool,
     aw_pa: bool,
     responses: Responses,
@@ -503,6 +506,7 @@ impl GeometryPlan {
             catalogue: Arc::clone(catalogue),
             output_in_lsrk,
             grid_in_lsrk,
+            convert_lsrk_hops: spectral.reporting_conversions().is_some(),
             frames,
             phase,
             anchor,
@@ -1051,6 +1055,9 @@ impl GeometryPlan {
                 Some(&frame),
                 Some(&frame),
             )?;
+            if self.convert_lsrk_hops {
+                return Ok(RowFrequencies::Direct(lsrk));
+            }
             return Ok(RowFrequencies::ThroughLsrk(
                 lsrk.convert_hz(1.0) / self.grid_in_lsrk,
             ));
@@ -1098,7 +1105,7 @@ impl RowFrequencies {
 }
 
 /// The interpolation grid and its UVW scale share a frequency coordinate.
-/// Verify that a retained LSRK grid represents the anchored TOPO planes.
+/// Verify that the retained LSRK grid represents the anchored TOPO planes.
 fn interpolation_frequency_scale(
     spectral: &SpectralCoordinateSpec,
     output_in_lsrk: Option<f64>,
@@ -1190,6 +1197,7 @@ mod source_grid_tests {
             Some(SourceLsrkGrid {
                 first_hz,
                 increment_hz,
+                reporting_conversions: None,
                 terminal_plane_outside: false,
             })
         };
