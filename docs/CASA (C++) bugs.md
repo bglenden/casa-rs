@@ -4491,8 +4491,8 @@ The Briggs and uniform controls each agree across 17 dirty and clean
 products and 48 fitted beams. The worst normalized RMS is 9.38e-7
 for products and 1.11e-6 for MODEL_DATA (#1121).
 
-With native TOPO rows and a tracked TOPO cubic image, CASA still
-converts each visibility buffer to LSRK. At 50 MHz spacing the first
+With native TOPO rows and a natural-weighted tracked TOPO cubic image,
+CASA converts each visibility buffer to LSRK. At 50 MHz spacing the first
 buffer's interpolation includes two lower halo frequencies outside the
 eight image planes. The later buffers interpolate directly on the eight
 centres. Replaying the in-image samples on their LSRK grid through
