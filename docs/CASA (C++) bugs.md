@@ -5274,6 +5274,36 @@ CASA dirty inputs and the saved standard-gridder PSFs, all 19 CLEAN
 products agree to 5.02e-7 NRMS or better, with exact masks, ten iterations
 and one major cycle. [Issue #1070](https://github.com/bglenden/casa-rs/issues/1070).
 
+## AW Float tap products perturb cancelling Taylor sensitivities
+
+`AWVisResampler::DataToGridImpl_p` multiplies the saved weight
+convolution tap by a Float complex pointing phasor, then by a Float
+imaging weight. Both products round before the double-complex grid
+accumulation. `PhaseGrad::ComputeFieldPointingGrad` also stores the
+product of the rounded axis phasors as Float complex. The higher Taylor
+orders can expose this rounding where frequency contributions nearly
+cancel, and the principal sensitivity can round across a sharp PB cut.
+
+In CASA 6.7.6-14, the original one-group MT-MFS case on
+`refim_heterogeneous_pointings.ms` has 40 Taylor moment matrices
+outside PB support that fail the PSD bound. One pixel crosses the
+original `abs(pblimit)=0.01` when compared with casa-rs. In the
+four-corner case with CASA's baseline group assignment corrected, the
+odd weight misses its existing pointwise limit by a factor of 88.
+Both differences are already present in the grids before the FFT.
+
+An independent replay using the saved CASA kernels, measured Taylor
+frequencies and source Float arithmetic reproduces the three captured
+grids to at most 5.8e-8 NRMS. A second replay retains the Taylor
+coefficients and widens the pointing and weighted tap products to
+double. Feeding only its weight grids back through CASA's FFT and
+product pipeline clears both failures at the original frequency and
+cutoff. Against this control, casa-rs agrees on all 18 dirty products
+for each selection, with exact masks, sums of weights and controller
+counts. Worst product NRMS is 2.25e-6. The odd weight passes the same
+pointwise and PSD checks. The native operator retains its double
+arithmetic. [Issue #1070](https://github.com/bglenden/casa-rs/issues/1070).
+
 ## AWP2's Float sensitivity FFT can flip the primary-beam cutoff
 
 AWPLPG accumulates the sensitivity grid in double precision.
