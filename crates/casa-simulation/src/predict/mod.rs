@@ -50,6 +50,7 @@
 mod beam;
 mod components;
 pub(crate) mod jones;
+mod jones_mosaic;
 mod model;
 mod single_dish;
 
@@ -143,10 +144,49 @@ pub(crate) struct MosaicBeams {
     /// SimplePBConvFunc uses one common telescope beam for all antennas.
     pub(crate) common: bool,
     pub(crate) custom_pattern: Option<crate::session::voltage_patterns::BeamSource>,
+    pub(crate) image_angles_rad: Vec<(u32, f64)>,
     /// One dish's Airy pattern per class, in class order.
     pub(crate) dishes: Vec<PrimaryBeam>,
     /// The windows of the scans predicted, every channel selected.
     pub(crate) windows: Vec<MosaicWindow>,
+}
+
+impl MosaicBeams {
+    pub(crate) fn simple_screens(
+        &self,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+    ) -> Result<casa_imaging_operator::SimpleMosaicScreens, PredictError> {
+        if let Some(image) = self.custom_pattern.as_ref().and_then(|beam| beam.image()) {
+            return Ok(MosaicPb::simple_sampled_screens(
+                geometry,
+                polarization,
+                &self.windows,
+                |plane, side, increments, frequency, window, weight| {
+                    let angle = self
+                        .image_angles_rad
+                        .iter()
+                        .find(|v| v.0 == window)
+                        .map_or(0., |v| v.1);
+                    image.fill_mosaic_screen(plane, side, increments, frequency, angle, weight);
+                    Ok(())
+                },
+            )?);
+        }
+        let pattern = self
+            .custom_pattern
+            .as_ref()
+            .map(|beam| beam.pattern())
+            .transpose()
+            .map_err(|e| PredictError::UnsupportedModel(e.to_string()))?
+            .unwrap_or_else(|| self.dishes[0].pattern());
+        Ok(MosaicPb::simple_pattern_screens(
+            geometry,
+            polarization,
+            &pattern,
+            &self.windows,
+        )?)
+    }
 }
 
 /// The grid, polarization routing and spectral resampler of a model's
@@ -273,19 +313,9 @@ impl ModelLayout {
                 WPlaneCount::Fixed(planes),
             )?),
             (FtMachine::Mosaic, Some(beams)) if beams.common => Box::new(
-                MosaicPb::simple_pattern_screens(
-                    &self.geometry,
-                    &self.polarization,
-                    &beams
-                        .custom_pattern
-                        .as_ref()
-                        .map(crate::session::voltage_patterns::BeamSource::pattern)
-                        .transpose()
-                        .map_err(|e| PredictError::UnsupportedModel(e.to_string()))?
-                        .unwrap_or_else(|| beams.dishes[0].pattern()),
-                    &beams.windows,
-                )?
-                .finish()?,
+                beams
+                    .simple_screens(&self.geometry, &self.polarization)?
+                    .finish()?,
             ),
             (FtMachine::Mosaic, Some(beams)) => Box::new(MosaicPb::new(
                 MosaicRules::Simulator,

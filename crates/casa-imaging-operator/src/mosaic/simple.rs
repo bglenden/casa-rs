@@ -112,6 +112,52 @@ impl MosaicPb {
         pattern: &casa_numerics::BeamPattern,
         windows: &[MosaicWindow],
     ) -> Result<SimpleMosaicScreens, OperatorError> {
+        Self::simple_sampled_screens(
+            geometry,
+            polarization,
+            windows,
+            |plane, side, increments, last, _window, weight| {
+                let at = pattern.at_frequency(last);
+                let centre = side / 2;
+                for y in 0..side {
+                    let ry = ((y as f64 - centre as f64) * increments[1]).powi(2) as f32;
+                    for x in 0..side {
+                        let rx = ((x as f64 - centre as f64) * increments[0]).powi(2) as f32;
+                        let radius = (f64::from((rx + ry).sqrt()) * 60. * last / 1e9) as f32;
+                        let power = at.power(f64::from(radius));
+                        plane[y * side + x] =
+                            Complex32::new(if weight { power * power } else { power }, 0.);
+                    }
+                }
+                Ok(())
+            },
+        )
+    }
+
+    /// Construct common-beam planes from sampled two-dimensional responses.
+    ///
+    /// `fill` receives the centred square plane, its side, angular increments
+    /// in degrees, frequency in Hz, spectral-window ID, and whether it is
+    /// the noise-weight plane.
+    /// It writes the power response, or its noise covariance for a weight
+    /// plane. Frequency scaling, support and integral normalization follow
+    /// the same SimplePBConvFunc path as radial telescope patterns.
+    ///
+    /// # Errors
+    /// Invalid image/window geometry, a sampling failure, or FFT failure.
+    pub fn simple_sampled_screens(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        windows: &[MosaicWindow],
+        mut fill: impl FnMut(
+            &mut [Complex32],
+            usize,
+            [f64; 2],
+            f64,
+            u32,
+            bool,
+        ) -> Result<(), OperatorError>,
+    ) -> Result<SimpleMosaicScreens, OperatorError> {
         let layout = Layout::new(geometry, windows)?;
         let mut fft = PlaneFft::<f32>::new([layout.side; 2], false)?;
         let mut plane = vec![Complex32::default(); layout.side * layout.side];
@@ -120,19 +166,14 @@ impl MosaicPb {
         for window in &layout.windows {
             let last = *window.frequencies_hz.last().expect("a nonempty beam axis");
             let mut transform = |weight: bool| {
-                let at = pattern.at_frequency(last);
-                let centre = layout.side / 2;
-                for y in 0..layout.side {
-                    let ry = ((y as f64 - centre as f64) * layout.increments_deg[1]).powi(2) as f32;
-                    for x in 0..layout.side {
-                        let rx =
-                            ((x as f64 - centre as f64) * layout.increments_deg[0]).powi(2) as f32;
-                        let radius = (f64::from((rx + ry).sqrt()) * 60. * last / 1e9) as f32;
-                        let power = at.power(f64::from(radius));
-                        plane[y * layout.side + x] =
-                            Complex32::new(if weight { power * power } else { power }, 0.);
-                    }
-                }
+                fill(
+                    &mut plane,
+                    layout.side,
+                    layout.increments_deg,
+                    last,
+                    window.spectral_window,
+                    weight,
+                )?;
                 fft.transform(&mut plane, false)?;
                 Ok::<_, OperatorError>(crop(&plane, layout.side, layout.crop))
             };

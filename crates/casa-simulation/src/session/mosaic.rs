@@ -54,7 +54,8 @@ impl Simulator {
             self.scans.len() * size_of::<MosaicPointing>() + self.antennas.len() * size_of::<u8>();
         let antennas = self.antennas.len()
             * (size_of::<PrimaryBeam>() + size_of::<String>() + DIAMETER_KEY_BYTES);
-        let windows = self.spectral_windows.len() * size_of::<MosaicWindow>()
+        let windows = self.spectral_windows.len()
+            * (size_of::<MosaicWindow>() + size_of::<(u32, f64)>())
             + self
                 .spectral_windows
                 .iter()
@@ -156,6 +157,7 @@ impl Simulator {
             MosaicBeams {
                 common,
                 custom_pattern: custom.cloned(),
+                image_angles_rad: Vec::new(),
                 dishes,
                 windows,
             },

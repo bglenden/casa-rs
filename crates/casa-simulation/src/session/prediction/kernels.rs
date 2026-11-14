@@ -54,15 +54,9 @@ impl Simulator {
                         MOSAIC_SCREENS_PHASE,
                         MosaicPb::simple_screens_bytes(geometry, windows).map_err(raised)?,
                     )?;
-                    let pattern = beams
-                        .custom_pattern
-                        .as_ref()
-                        .map(super::super::voltage_patterns::BeamSource::pattern)
-                        .transpose()?
-                        .unwrap_or_else(|| dishes[0].pattern());
-                    let screens =
-                        MosaicPb::simple_pattern_screens(geometry, polarization, &pattern, windows)
-                            .map_err(raised)?;
+                    let screens = beams
+                        .simple_screens(geometry, polarization)
+                        .map_err(model_error)?;
                     let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
                     let set = screens.finish().map_err(raised)?;
                     drop(screening);

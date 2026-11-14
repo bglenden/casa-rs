@@ -58,9 +58,13 @@ def inputs_for(inputs, reverse_jones=False, reference_pixel=0.):
     beam_image(inputs / "jones.image", values[:, :, ::-1, :] if reverse_jones else values, True, reference_pixel)
 
 
-def revisit_base(path):
+def revisit_base(path, window_visits=False):
     sm = make_session(path, stokes="XX XY YX YY")
-    assert sm.observe(sourcename="target", spwname="band6", starttime="14363s", stoptime="14383s")
+    if window_visits:
+        assert sm.setspwindow(spwname="band3", freq="100GHz", deltafreq="15.625MHz",
+            freqresolution="15.625MHz", refcode="TOPO", nchannels=4, stokes="XX XY YX YY")
+    assert sm.observe(sourcename="offset" if window_visits else "target",
+        spwname="band3" if window_visits else "band6", starttime="14363s", stoptime="14383s")
     sm.close()
     tb = table()
     tb.open(str(path / "OBSERVATION"), nomodify=False)
@@ -100,16 +104,34 @@ def main():
     parser.add_argument("--reference-pixel", type=float, default=0.)
     parser.add_argument("--nondefault-pole", action="store_true")
     parser.add_argument("--revisit", action="store_true")
+    parser.add_argument("--mosaic", action="store_true")
+    parser.add_argument("--intrinsic", action="store_true")
+    parser.add_argument("--window-visits", action="store_true")
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
     inputs_for(inputs, args.reverse_jones, args.reference_pixel)
-    if args.revisit:
+    if args.revisit or args.window_visits:
         args.base = inputs / "revisit.ms"
-        revisit_base(args.base)
+        revisit_base(args.base, args.window_visits)
     sky_image = args.sky / "sky.image"
+    if args.window_visits:
+        ia = image()
+        ia.open(str(sky_image))
+        values, cs = ia.getchunk(), ia.coordsys()
+        starts = [(values.shape[axis]-32)//2 for axis in (0, 1)]
+        reference = cs.referencepixel()["numeric"]
+        reference[:2] -= starts
+        cs.setreferencepixel(reference)
+        sky_image = inputs / "compact.image"
+        ia.done()
+        ia.fromarray(outfile=str(sky_image), pixels=values[starts[0]:starts[0]+32,
+            starts[1]:starts[1]+32], csys=cs.torecord())
+        ia.setbrightnessunit("Jy/pixel")
+        ia.done()
+        cs.done()
     if args.nondefault_pole:
         ia = image()
         ia.open(str(sky_image))
@@ -148,7 +170,7 @@ def main():
         assert vp.setpbimage(telescope="ALMA", **parameters)
         voltage_table = inputs / f"{beam}.vp"
         assert vp.saveastable(str(voltage_table))
-        for operation in ("image", "components"):
+        for operation in (("mosaic",) if args.mosaic else ("image", "components")):
             if (args.full_stokes or args.nondefault_pole or args.revisit) and operation != "image":
                 continue
             name = f"{beam}_{operation}" + ("_full_stokes" if args.full_stokes else "")
@@ -158,17 +180,28 @@ def main():
                 name += "_pole"
             if args.revisit:
                 name += "_revisit"
+            if args.window_visits:
+                name += "_window_visits"
             path = root / f"{name}.ms"
             shutil.copytree(args.base, path, ignore=shutil.ignore_patterns("table.lock"))
             before = snapshot(path)
             sm = simulator()
             assert sm.openfromms(str(path))
-            assert sm.setvp(dovp=True, usedefaultvp=False, vptable=str(voltage_table), dosquint=False)
-            assert sm.setdata(fieldid=[0, 1] if args.revisit else [0])
-            assert sm.predict(**{"imagename" if operation == "image" else "complist":
-                str(sky_image if operation == "image" else args.sky / "sky.cl")}, incremental=False)
-            sm.close()
+            if args.mosaic:
+                assert sm.setoptions(ftmachine="mosaic")
+            assert sm.setvp(dovp=not args.intrinsic, usedefaultvp=False, vptable=str(voltage_table), dosquint=False)
+            query = "FIELD_ID == 0 || DATA_DESC_ID == 1" if args.window_visits else ""
+            assert sm.setdata(spwid=[], fieldid=[] if args.window_visits else ([0, 1] if args.revisit else [0]), msselect=query)
+            assert sm.predict(**{"complist" if operation == "components" else "imagename":
+                str(args.sky / "sky.cl" if operation == "components" else sky_image)}, incremental=False)
             case = dict(name=name, beam=beam, operation=operation, before=before, after=snapshot(path))
+            if args.mosaic:
+                case["cleanup"] = "not returned"
+            if args.intrinsic:
+                case["dovp"] = False
+            if args.window_visits:
+                case.update(base_ms="revisit.ms", sky_image="compact.image",
+                    all_fields_selected=True, query=query, inputs="window_visits", operation="mosaic_window_visits")
             if args.full_stokes:
                 case["sky_image"] = "full_stokes.image"
             if args.nondefault_pole:
@@ -190,13 +223,21 @@ def main():
             assert all(np.isfinite(v) for row in case["after"]["rows"] for pair in row["data"] for v in pair), name
             assert any(v for row in case["after"]["rows"] if row["field"] == 0
                 for pair in row["data"] for v in pair), name
+            if args.window_visits:
+                assert any(v for row in case["after"]["rows"] if row["data_desc_id"] == 1
+                    for pair in row["data"] for v in pair), name
             if operation == "components":
                 correct_component_phase(case)
             cases.append(case)
             write(args.fixture, dict(casa_version=version_string(),
                 recipe="tools/simulation/sm_image_beams_oracle.py", cases=cases))
             print(name, "passed", flush=True)
-    if args.full_stokes or args.beam or args.reverse_jones or args.reference_pixel or args.nondefault_pole or args.revisit:
+            sm.close()
+            if args.mosaic:
+                case["cleanup"] = "returned"
+                write(args.fixture, dict(casa_version=version_string(),
+                    recipe="tools/simulation/sm_image_beams_oracle.py", cases=cases))
+    if args.full_stokes or args.beam or args.reverse_jones or args.reference_pixel or args.nondefault_pole or args.revisit or args.mosaic:
         return
     # Independent C++ controls expose the image/component Jones-index
     # discrepancy and the lost polarization of a one-Stokes input image.
@@ -227,6 +268,23 @@ def main():
             for case in json.load(stream)["cases"]:
                 case["inputs"] = label
                 cases.append(case)
+    # SimplePBConvFunc can abort at close after producing complete DATA.
+    # Save each actual reference before that known cleanup failure.
+    for beam, flags in (("real", []), ("jones", ["--intrinsic"]),
+            ("real", ["--intrinsic", "--window-visits"])):
+        label = "window_visits" if "--window-visits" in flags else f"mosaic_{beam}"
+        output, log = root / f"{label}.json.gz", root / f"{label}.log"
+        with log.open("w") as stream:
+            result = subprocess.run([sys.executable, __file__, "--out", str(root / label),
+                "--fixture", str(output), "--base", str(args.base), "--sky", str(args.sky),
+                "--beam", beam, "--mosaic", *flags], stdout=stream, stderr=subprocess.STDOUT)
+        with gzip.open(output, "rt") as stream:
+            additions = json.load(stream)["cases"]
+        assert not result.returncode or "Pure virtual function called" in log.read_text(), log
+        if "--window-visits" in flags:
+            shutil.copytree(root / label / "inputs", inputs / label,
+                ignore=shutil.ignore_patterns("table.lock"))
+        cases.extend(additions)
     write(args.fixture, dict(casa_version=version_string(),
         recipe="tools/simulation/sm_image_beams_oracle.py", cases=cases))
 
