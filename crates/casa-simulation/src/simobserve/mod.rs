@@ -42,6 +42,10 @@
 //!   predicts from the two lists' names joined by a comma, which is not a
 //!   table, so its `predict` fails and the MeasurementSet is left
 //!   unpredicted. casa-rs predicts both lists.
+//! - **Failed frequency conversions.** CASA ignores `predict=False` for
+//!   Undefined output frames and REST component predictions, leaving a
+//!   successful-looking zero MS. casa-rs reports the simulator's cause
+//!   before publishing that unpredicted MS; REST images remain supported.
 //! - **`<stem>.noisier.T.cal`.** CASA deletes the Tsys table `tsys-atm`
 //!   writes beside `.noisy.ms` and `.noisy.sd.ms` but leaves the one beside
 //!   `.noisier.ms`; casa-rs writes none.
