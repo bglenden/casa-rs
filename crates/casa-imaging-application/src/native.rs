@@ -9,7 +9,7 @@ use std::sync::Arc;
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
-use casa_imaging_model::{CompiledProblem, GeometryPlan, RestoringBeamPolicy};
+use casa_imaging_model::{CompiledProblem, GeometryPlan, InstrumentResponse, RestoringBeamPolicy};
 use casa_imaging_products::{
     AnalyticPrimaryBeam, ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse,
     PlannedContinuumGeneration, ProductStoragePlan, ProductsError, PublishedContinuumGeneration,
@@ -305,18 +305,32 @@ pub(crate) fn prepare(
         && input.minor_cycle_image_response.is_none()
         && problem.reconstruction().controls().max_minor_iterations() == 0
         && let Some(saved) = &input.existing
-        && saved.reads_taylor_residual()
     {
-        // Restoration consumes the saved Taylor moments and residuals.
-        // Their on-disk Float PSFs need no normalization round trip.
-        publication.controls = publication
-            .controls
-            .preserving_saved_psfs(
-                saved.psf_beams().is_none()
-                    && problem.products().restoring_beam() != RestoringBeamPolicy::None,
-                false,
-            )
-            .preserving_saved_residuals();
+        let beam_policy = problem.products().restoring_beam();
+        let operator = problem.science().measurement_equation();
+        if saved.reads_taylor_residual() {
+            // CASA keeps the saved Taylor moments and residuals. It fits
+            // and persists a missing principal PSF beam during restore.
+            publication.controls = publication
+                .controls
+                .preserving_saved_psfs(
+                    saved.psf_beams().is_none() && beam_policy != RestoringBeamPolicy::None,
+                    false,
+                )
+                .preserving_saved_residuals();
+        } else if saved.reads_cube_residual()
+            && operator.instrument_response() == InstrumentResponse::Scalar
+            && operator.w_projection().is_none()
+            && beam_policy == RestoringBeamPolicy::Common
+            && saved.psf_beams().is_some()
+        {
+            // SIImageStore::restore gets the common beam from the saved
+            // grid and attaches it only to the restored image.
+            publication.controls = publication
+                .controls
+                .preserving_saved_psfs(false, false)
+                .preserving_saved_residuals();
+        }
     }
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()
