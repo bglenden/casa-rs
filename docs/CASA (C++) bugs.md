@@ -3474,7 +3474,11 @@ finishes natural-weighted, same-frame standard dirty and Högbom cubes with
 nearest-channel sampling. For `refim_point.ms`, independent CASA faceted
 MFS runs of the selected channels verify the PSFs, residuals, restored
 images, models, masks and facet weights. An unfaceted CASA cube on those
-same channels verifies the frequency axis and cube PB (#1063).
+same channels verifies the frequency axis and cube PB (#1063). When the
+first facet has no usable weight on a channel, casa-rs takes that
+channel's PSF from the first populated facet. This extends its scalar
+facet behavior to cubes. CASA's normalizer always uses facet zero,
+whose empty PSF cannot guide deconvolution in the populated facets.
 
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 
