@@ -1254,6 +1254,128 @@ fn imported_aw_runtime_pa_rotation_changes_the_residual_and_psf() {
     assert!(!observation.scratch(&format!("{name}.image")).exists());
 }
 
+/// A shared rotation schedule serves the Taylor kernels of two
+/// simultaneously observed windows with the same antenna-0 feed.
+#[test]
+fn imported_aw_runtime_rotation_cleans_two_window_mtmfs() {
+    use casa_ms::MeasurementSet;
+    use casa_types::{ScalarValue, Value as CellValue};
+
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let mut feed = ms.feed_mut().unwrap();
+    let table = feed.table_mut();
+    let mut other_feed = table.row_accessor().row(0).unwrap().clone();
+    other_feed.upsert(
+        "SPECTRAL_WINDOW_ID",
+        CellValue::Scalar(ScalarValue::Int32(1)),
+    );
+    let other_feed_row = table.row_count();
+    table.add_row(other_feed).unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0,1", &cache, &surface);
+    native["niter"] = json!(0);
+    native["wprojplanes"] = json!(1);
+    native["wbawp"] = json!(true);
+    observation.image("generate-wideband-rotation-cache", native);
+    let mut imported = json!({
+        "spw": "0,1", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": 1, "weighting": "natural", "wbawp": true,
+        "deconvolver": "mtmfs", "nterms": 2, "niter": 4, "cycleniter": 2,
+        "scales": [0], "reffreq": "1.45GHz",
+    });
+    let (_, static_products) = observation.image("static-wideband-cache", imported.clone());
+    imported["rotatepastep"] = json!(0.5);
+    let (run, rotated) = observation.image("rotated-wideband-cache", imported.clone());
+    assert!(run.major_cycles > 1 && run.minor_iterations > 0);
+    assert_eq!(rotated.suffixes(), static_products.suffixes());
+    for suffix in [".psf.tt0", ".psf.tt2", ".residual.tt0"] {
+        assert_ne!(
+            rotated.get(suffix).values(),
+            static_products.get(suffix).values()
+        );
+    }
+
+    imported["wbawp"] = json!(false);
+    assert_rotation_refused(&observation, "rotated-narrowband-mtmfs", imported.clone());
+    imported["wbawp"] = json!(true);
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let mut feed = ms.feed_mut().unwrap();
+    let table = feed.table_mut();
+    table
+        .row_accessor_mut()
+        .set_cell(
+            other_feed_row,
+            "RECEPTOR_ANGLE",
+            CellValue::Array(casa_types::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(vec![2], vec![0.2, 0.0]).unwrap(),
+            )),
+        )
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    assert_rotation_refused(&observation, "rotated-different-feed", imported.clone());
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let mut feed = ms.feed_mut().unwrap();
+    let feed = feed.table_mut();
+    feed.row_accessor_mut()
+        .set_cell(
+            other_feed_row,
+            "RECEPTOR_ANGLE",
+            CellValue::Array(casa_types::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(vec![2], vec![0.0, 0.0]).unwrap(),
+            )),
+        )
+        .unwrap();
+    let first_window_one_time = (0..ms.row_count())
+        .find_map(|row| {
+            let table = ms.main_table();
+            let desc = table.cell_accessor(row, "DATA_DESC_ID").unwrap();
+            (*desc.scalar().unwrap() == ScalarValue::Int32(1)).then(|| {
+                table
+                    .cell_accessor(row, "TIME")
+                    .unwrap()
+                    .scalar()
+                    .unwrap()
+                    .clone()
+            })
+        })
+        .expect("second window is present");
+    for row in 0..ms.row_count() {
+        let table = ms.main_table();
+        if *table
+            .cell_accessor(row, "DATA_DESC_ID")
+            .unwrap()
+            .scalar()
+            .unwrap()
+            == ScalarValue::Int32(1)
+            && *table.cell_accessor(row, "TIME").unwrap().scalar().unwrap() == first_window_one_time
+        {
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(row, "FLAG_ROW", CellValue::Scalar(ScalarValue::Bool(true)))
+                .unwrap();
+        }
+    }
+    ms.save().unwrap();
+    drop(ms);
+    assert_rotation_refused(&observation, "rotated-different-times", imported);
+}
+
+fn assert_rotation_refused(observation: &Observation, name: &str, controls: Value) {
+    let Err(error) = observation.try_image(name, controls) else {
+        panic!("{name}: rotation unexpectedly ran");
+    };
+    assert!(error.contains("rotatepastep currently supports"), "{error}");
+    assert!(!observation.scratch(&format!("{name}.image.tt0")).exists());
+}
+
 /// A native cache is generated over all covered PA groups and reopened
 /// through the same sorted selection rule.
 #[test]
