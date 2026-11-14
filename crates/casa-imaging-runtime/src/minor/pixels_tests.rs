@@ -13,7 +13,9 @@ use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, Stok
 use casa_imaging_model::{
     HogbomIterationAccounting, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionControls,
 };
-use casa_imaging_products::{AnalyticPrimaryBeam, AnalyticPrimaryBeamModel};
+use casa_imaging_products::{
+    AnalyticPrimaryBeam, AnalyticPrimaryBeamModel, MinorCycleImageResponse,
+};
 use problems::{empty_final_model, model_lifecycle};
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
 
@@ -78,6 +80,7 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
+            saved_taylor_residual: false,
             nsigma: 3.0,
             noise: NoiseEstimate::Fast,
             automask: true,
@@ -205,4 +208,66 @@ fn channel_support_keeps_each_polarizations_own_valid_pixels() {
     assert_eq!(second.support, [false, true, false, true]);
     assert_eq!(second.within.unwrap(), [false, false, false, true]);
     assert_eq!(beam.support, [true, true, false, true]);
+}
+
+/// An automatic mask reads the same saved principal Taylor residual as
+/// the solver. A new major cycle's raw residual takes the weight and PB
+/// normalization again.
+#[test]
+fn automatic_mask_reads_the_saved_taylor_residual_in_image_units() {
+    let width = 16;
+    let problem = problems::reconstruction_problem(
+        31,
+        width,
+        1,
+        ReconstructionBasis::Taylor { terms: 2 },
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        ReconstructionControls::new(100, 0.1, 0.0),
+    );
+    let scene = Scene::new(&problem).with_weights(vec![4.0, -0.2, 0.4]);
+    let lifecycle = model_lifecycle(&problem);
+    let mut cycle = MajorCycle::initial(
+        &problem,
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
+    )
+    .unwrap();
+    let (model, mut pass) = cycle.parts();
+    let mut images = scene.pass_images(model, true);
+    let peak = (width / 2) * width + width / 2;
+    images.residual[peak] = 2.0;
+    pass.append(images).unwrap();
+    let completion = cycle.finish_read().unwrap();
+    let mut setup = MinorCycleSetup {
+        psf_cutoff: 0.35,
+        psf_beams: None,
+        mask_beams: None,
+        algorithm: problem.reconstruction().algorithm().clone(),
+        accounting: HogbomIterationAccounting::Strict,
+        response: Some(
+            MinorCycleImageResponse::new(
+                casa_imaging_model::ProductNormalization::FlatNoise,
+                problems::validity().primary_beam(),
+            )
+            .unwrap(),
+        ),
+        saved_taylor_residual: true,
+        nsigma: 0.0,
+        noise: NoiseEstimate::Fast,
+        automask: true,
+        primary_beam: None,
+        residual_pixel_mask: false,
+        pbmask: 0.0,
+    };
+    let read = |setup: &MinorCycleSetup| {
+        super::super::taylor_principal_residual(completion.normal_state(), setup, 0, peak)
+            .unwrap()
+            .0[peak]
+    };
+    assert_eq!(read(&setup), 2.0);
+    setup.saved_taylor_residual = false;
+    assert_eq!(read(&setup), 0.5);
 }

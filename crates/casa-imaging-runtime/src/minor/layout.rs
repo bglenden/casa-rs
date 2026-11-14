@@ -505,6 +505,7 @@ mod tests {
             algorithm,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
+            saved_taylor_residual: false,
             nsigma: 0.0,
             noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
             automask: false,

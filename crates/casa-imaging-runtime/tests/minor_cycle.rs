@@ -80,6 +80,7 @@ fn setup(
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,
         response,
+        saved_taylor_residual: false,
         nsigma: 0.0,
         noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
         automask: false,

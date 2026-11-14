@@ -191,7 +191,7 @@ impl Run<'_> {
     /// through the PB (flat noise) or PB² (pbsquare) of `normal`'s weights
     /// where that supports them and zero elsewhere (`divideModelByWeight`),
     /// as the minor cycle maps solved values to the physical model.
-    fn physical_generation(
+    pub(super) fn physical_generation(
         &mut self,
         start: &StartModel,
         normal: &FinalNormalState,

@@ -524,6 +524,7 @@ fn minor_setup<'a>(
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: controls.hogbom_iteration_accounting(),
         response,
+        saved_taylor_residual: false,
         nsigma: controls.noise_sigma().unwrap_or(0.0),
         noise: controls.noise_estimate(),
         automask: matches!(
@@ -808,16 +809,35 @@ impl<'a> Run<'a> {
         // pass refreshes; the pass adds its scratch and the new residual,
         // and the minor cycle's charge covers its terms until the model
         // holds them.
-        let (normal_state, model) = completion.into_parts();
+        let (normal_state, mut model) = completion.into_parts();
+        let saved_seed = self.reseed.filter(|_| {
+            normal_state.sample_count() == 0
+                && !self.forms.residual
+                && self
+                    .existing
+                    .as_ref()
+                    .and_then(ExistingProducts::taylor_mask_read_bytes)
+                    .is_some()
+        });
+        let seeding = saved_seed.map_or(0, |_| self.seeding_bytes());
         let Admitted {
             value: plan,
             reservation: mut pass,
         } = self.admit_pass(
             ModeSet::DATA,
             true,
-            self.write_bytes(last),
+            self.write_bytes(last) + seeding,
             self.writes(last),
         )?;
+        if let Some(response) = saved_seed {
+            let _seeding = pass.split(seeding);
+            let start = self
+                .start_model
+                .clone()
+                .expect("a restart model to convert");
+            drop(model);
+            model = self.physical_generation(&start, &normal_state, response)?;
+        }
         let model = if dense.is_empty() {
             self.lifecycle.prepare_final_model(model, terms)?
         } else {

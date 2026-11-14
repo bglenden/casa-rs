@@ -47,6 +47,8 @@ pub(crate) struct ExistingProducts {
     residual: bool,
     /// Scratch for reading one saved Taylor residual's pixel mask.
     taylor_mask_read_bytes: Option<u64>,
+    /// A default mask exists on at least one saved Taylor residual.
+    masked_taylor_residual: Option<PathBuf>,
     /// Saved PB reader. The mosaic's normal-state sensitivity also comes
     /// from the saved `.weight` when this reader is present.
     mosaic_beam: Option<SavedMosaicBeam>,
@@ -79,6 +81,7 @@ impl ExistingProducts {
         let mut mosaic_beam = None;
         let mut taylor_mask_read_bytes =
             (residual && weight && matches!(family, Family::Taylor { .. })).then_some(0);
+        let mut masked_taylor_residual = None;
         let mut bases = Vec::new();
         if psf {
             bases.extend(["psf", "sumwt"]);
@@ -106,6 +109,7 @@ impl ExistingProducts {
                     && let Some(bytes) = &mut taylor_mask_read_bytes
                     && image.default_mask_name().is_some()
                 {
+                    masked_taylor_residual.get_or_insert_with(|| path.clone());
                     let backing = image.mask_slice_working_bytes().map_err(|error| {
                         PrepareError::Restart {
                             path: path.clone(),
@@ -146,6 +150,7 @@ impl ExistingProducts {
             psf,
             residual,
             taylor_mask_read_bytes,
+            masked_taylor_residual,
             mosaic_beam,
             psf_beams: None,
             psf_pixel_beams: None,
@@ -279,6 +284,11 @@ impl ExistingProducts {
     /// reading the saved pixel mask of one term at a time.
     pub(crate) const fn taylor_mask_read_bytes(&self) -> Option<u64> {
         self.taylor_mask_read_bytes
+    }
+
+    /// The first masked Taylor residual a CLEAN continuation would use.
+    pub(crate) fn masked_taylor_residual(&self) -> Option<&Path> {
+        self.masked_taylor_residual.as_deref()
     }
 
     /// Saved PB and mask, independent of the new residual cutoff.

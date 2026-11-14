@@ -422,3 +422,62 @@ pub(super) fn l_band_observation(
     generate_synthetic_observation_ms(&request).expect("synthesise the EVLA MS");
     measurement_set
 }
+
+/// The restart reads saved Taylor images and converts its nonempty model
+/// before the first prediction. Both phases stay within admission (#1070).
+#[test]
+fn aw_mtmfs_saved_residual_clean_stays_within_its_admission() {
+    if !alone("aw::aw_mtmfs_saved_residual_clean_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = evla_observation(root.path());
+    warm(&measurement_set, root.path());
+    let mut values = json!({
+        "vis": measurement_set,
+        "imagename": root.path().join("aw"),
+        "imsize": 512,
+        "cell": "10arcsec",
+        "gridder": "awproject",
+        "wprojplanes": 1,
+        "aw_cf_source": "native-evla",
+        "native_cf_cache": root.path().join("native-cf"),
+        "evla_surface": evla_surface(root.path()),
+        "native_cf_policy": "generate-missing",
+        "native_cf_working_size": 1024,
+        "native_cf_oversampling": 4,
+        "native_cf_cache_bytes": 2_147_483_648_u64,
+        "native_cf_maximum_cells": 128,
+        "cf_resident_mb": "auto",
+        "normtype": "flatnoise",
+        "pblimit": -0.01,
+    });
+    values
+        .as_object_mut()
+        .unwrap()
+        .extend(mtmfs_controls().as_object().unwrap().clone());
+    values["pbcor"] = json!(false);
+    values["write_pb"] = json!(true);
+    values["threshold"] = json!("0Jy");
+    values["niter"] = json!(1);
+    let mut breaches = Vec::new();
+    let first = check(
+        &mut breaches,
+        "seed AW model",
+        &imaging::request(values.clone()),
+        1,
+        AMPLE,
+    );
+    assert_eq!(first.outcome.as_ref().unwrap().total_minor_iterations, 1);
+    drop(first);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    let restart = imaging::request(values).with_tclean_restart().unwrap();
+    let resumed = check(&mut breaches, "saved AW Taylor CLEAN", &restart, 1, AMPLE);
+    let outcome = resumed.outcome.as_ref().unwrap();
+    assert_eq!(
+        (outcome.total_minor_iterations, outcome.major_cycle_count),
+        (1, 1)
+    );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}

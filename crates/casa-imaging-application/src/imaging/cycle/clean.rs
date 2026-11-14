@@ -26,11 +26,16 @@ pub(super) fn run(
         mut outcome,
         mut mvc,
         controls,
-        setup,
+        mut setup,
         mut mask_plans,
         cancel,
         diagnostics,
     } = inputs;
+    setup.saved_taylor_residual = run
+        .existing
+        .as_ref()
+        .and_then(ExistingProducts::taylor_mask_read_bytes)
+        .is_some();
     let mut controller = Controller::new(&controls);
     let mut cache = if !run.forms.psf
         && outcome.scientific.normal_state().basis()
@@ -191,6 +196,7 @@ pub(super) fn run(
                 run.refresh(scientific, (minor.terms, minor.dense, minor.results), last)
             }
         })?;
+        setup.saved_taylor_residual = false;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
