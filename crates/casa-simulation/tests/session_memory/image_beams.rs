@@ -97,6 +97,7 @@ fn measured(
         use_default_vp: false,
         vp_table: beam.to_string_lossy().into_owned(),
         do_squint: radial,
+        parallactic_angle_increment_deg: if radial { 0.001 } else { 360. },
         ..VoltagePatternSpec::default()
     })
     .unwrap();
@@ -236,5 +237,76 @@ fn squinted_polarized_image_grids_keep_their_admission() {
             assert!(predicted.kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES);
             assert!(closed.heap <= closed.admitted + ALLOWANCE_BYTES);
         }
+    }
+}
+
+#[test]
+fn timed_image_visits_charge_growth_before_retaining_many_orientations() {
+    if !alone("image_beams::timed_image_visits_charge_growth_before_retaining_many_orientations") {
+        return;
+    }
+    let policy = resources(BUDGET_320);
+    charge_process_caches(policy.host(), policy.policy()).unwrap();
+    let measures = casa_test_support::deterministic_measures_provider();
+    let directory = tempfile::tempdir().unwrap();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_squint");
+    let mut small = 0;
+    for integrations in [64, 8192] {
+        let path = directory.path().join(format!("{integrations}.ms"));
+        let mut sm = configured_with_beam(
+            &path,
+            &measures,
+            BUDGET_320,
+            4,
+            &[25.],
+            "RR RL LR LL",
+            ("VLA", 1.4e9),
+        );
+        sm.observe(&scan(integrations)).unwrap();
+        sm.set_vp(&VoltagePatternSpec {
+            use_default_vp: false,
+            vp_table: data
+                .join("custom_gaussian.vp")
+                .to_string_lossy()
+                .into_owned(),
+            parallactic_angle_increment_deg: 0.000001,
+            ..VoltagePatternSpec::default()
+        })
+        .unwrap();
+        let reserved = reserved_memory();
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        let window = ReservationWindow::open();
+        let before = excess_now();
+        EXCESS.store(before, Ordering::Relaxed);
+        sm.predict(&PredictSpec {
+            images: vec![data.join("vla_polarized.image")],
+            ..PredictSpec::default()
+        })
+        .unwrap();
+        let during = Closed {
+            heap: PEAK.load(Ordering::Relaxed) - baseline,
+            admitted: window.close() - reserved,
+        };
+        let kept = Closed {
+            heap: LIVE.load(Ordering::Relaxed).saturating_sub(baseline),
+            admitted: reserved_memory() - reserved,
+        };
+        let beyond = EXCESS.load(Ordering::Relaxed) - before;
+        println!(
+            "{integrations} timed image orientations: peak {during:?}; kept {kept:?}; excess {beyond}"
+        );
+        assert!(beyond <= ALLOWANCE_BYTES as i64);
+        assert!(during.heap <= during.admitted + ALLOWANCE_BYTES);
+        assert!(kept.unadmitted().unsigned_abs() <= ALLOWANCE_BYTES);
+        if integrations == 8192 {
+            assert!(kept.heap > small + ALLOWANCE_BYTES);
+        } else {
+            small = kept.heap;
+        }
+        // This law measures retained time states; the 96/512 law above
+        // exercises close, avoiding an unrelated large MS output here.
+        drop(window);
+        drop(sm);
     }
 }
