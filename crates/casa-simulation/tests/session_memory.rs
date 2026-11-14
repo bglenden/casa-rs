@@ -88,6 +88,9 @@
 //! the blocks that are not a write batch's ([`heap`]); the counters are the
 //! process's, so each law runs alone in a process of its own ([`alone`]).
 
+#[path = "session_memory/single_dish_model.rs"]
+mod single_dish_model;
+
 #[path = "session_memory/apply.rs"]
 mod apply;
 #[path = "session_memory/apply_frequency.rs"]
@@ -108,6 +111,8 @@ mod field_grids;
 mod focus;
 #[path = "session_memory/frequency_curves.rs"]
 mod frequency_curves;
+#[path = "session_memory/ft_modes.rs"]
+mod ft_modes;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
 #[path = "session_memory/heap.rs"]
@@ -124,6 +129,7 @@ mod jones;
 mod mixed_correlations;
 #[path = "session_memory/mixed_creation.rs"]
 mod mixed_creation;
+
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
 #[path = "session_memory/noise_tables.rs"]
@@ -1386,39 +1392,6 @@ fn predict_single_dish(model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Pr
     predicted
 }
 
-/// A model of `planes` planes, one per channel of the law's window, with
-/// [`write_model`]'s points in every plane.
-fn write_cube(path: &Path, planes: usize) {
-    let mut coordinates = ImageCoordinates::new();
-    coordinates.add_coordinate(DirectionCoordinate::new(
-        DirectionRef::J2000,
-        Projection::new(ProjectionType::SIN),
-        CENTRE_RAD,
-        [-CELL_RAD, CELL_RAD],
-        [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
-    ));
-    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
-    coordinates.add_coordinate(SpectralCoordinate::new(
-        FrequencyRef::LSRK,
-        FREQUENCY_HZ,
-        CHANNEL_HZ,
-        0.0,
-        FREQUENCY_HZ,
-    ));
-    let shape = vec![PIXELS, PIXELS, 1, planes];
-    let mut image =
-        PagedImage::<f32>::create(shape.clone(), coordinates, path).expect("create model");
-    let mut pixels = ArrayD::zeros(IxDyn(&shape));
-    for plane in 0..planes {
-        for (x, y, flux) in [(32, 32, 1.0_f32), (41, 28, 0.5), (12, 50, 0.25)] {
-            pixels[IxDyn(&[x, y, 0, plane])] = flux;
-        }
-    }
-    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
-    image.set_units("Jy/pixel").expect("units");
-    image.save().expect("save model");
-}
-
 /// `predict` through `SDGrid` admits its samples and its preparation (the
 /// kernel, as tabulated and as kept, the plane read and each pointing's
 /// scratch) before it forms them (#874, #841 Phase 2): while it runs, the
@@ -1438,9 +1411,9 @@ fn a_total_power_predict_keeps_what_it_charges() {
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
     let plane = root.path().join("model.image");
-    write_model(&plane, SINGLE_DISH_CHANNELS);
+    single_dish_model::write_model(&plane, 1);
     let cube = root.path().join("cube.image");
-    write_cube(&cube, SINGLE_DISH_CHANNELS);
+    single_dish_model::write_model(&cube, SINGLE_DISH_CHANNELS);
     for model in [plane, cube] {
         total_power_holds_its_admission(&model, &measures);
     }

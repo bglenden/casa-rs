@@ -173,6 +173,9 @@ pub struct Simulator {
     jones_tables: Vec<(PathBuf, Arc<HeldTerm>)>,
     /// `predict`'s `GridFT` grid padding (`setoptions`).
     padding: PaddingFactor,
+    grid_box: bool,
+    joint_grid: bool,
+    ft_refusal: Option<&'static str>,
     /// FTMachine direction-conversion position, independent of the array.
     prediction_location_itrf_m: [f64; 3],
     /// `setoptions(ftmachine='wproject', wprojplanes=…)`: the planes
@@ -241,6 +244,9 @@ impl Simulator {
             jones_terms: Vec::new(),
             jones_tables: Vec::new(),
             padding: PaddingFactor::SIMULATOR,
+            grid_box: false,
+            joint_grid: false,
+            ft_refusal: None,
             prediction_location_itrf_m: [0.; 3],
             w_projection_planes: None,
             mosaic: false,

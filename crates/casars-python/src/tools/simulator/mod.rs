@@ -554,13 +554,14 @@ impl PySimulator {
         prediction::predict(self, py, imagename.0, complist, incremental)
     }
 
-    /// Set how `predict` grids: `GridFT` (`ftmachine='ft'`) with the
-    /// spheroidal `gridfunction='SF'` and its `padding`, `WProjectFT`
-    /// (`ftmachine='wproject'`) with `wprojplanes` planes, which CASA pads
-    /// by 1 whatever `padding` says, and total power through `SDGrid`
-    /// (`ftmachine='sd'`) with `gridfunction` `'PB'`, `'BOX'` or `'SF'`, are
-    /// implemented. `WProjectFT` and `SDGrid` predict on the CPU. Other
-    /// FTMachines and grid functions raise `NotImplementedError`.
+    /// Set how `predict` grids. GridFT (`ft`) uses BOX or the default SF
+    /// and the requested padding; WProjectFT (`wproject`) uses `wprojplanes`
+    /// with padding 1. These and `mosaic` support CPU and Metal prediction.
+    /// Total power (`sd`) accepts PB, BOX, SF, GAUSS and GJINC. The joint
+    /// mode (`both`) combines that sampler with SF interferometric prediction.
+    /// `pbwproject` records its options but returns False at `predict`, as
+    /// CASA's required pointing-error term is disabled. Unknown total-power
+    /// kernels also return False at prediction; ordinary GridFT falls back to SF.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (

@@ -9,8 +9,8 @@
 //! - Autocorrelations predict zero (`WProjectFT` is built with `usezero`
 //!   off).
 //! - A later `setoptions(ftmachine='ft')` predicts through `GridFT` again.
-//! - `close` predicts W on the CPU when the backend is `auto` on a host with
-//!   a Metal device; an explicit `metal` backend is refused at `predict`.
+//! - CPU, auto and an available Metal device predict the same W model
+//!   within the scientific tolerance.
 //! - Fewer than two planes are refused: one plane as CASA's
 //!   `WPConvFunc` refuses it, none or fewer raised where CASA's simulator
 //!   crashes. More than 65,536, the planes casa-rs's kernel key indexes,
@@ -144,57 +144,50 @@ fn setoptions_ft_after_wproject_predicts_through_gridft() {
     assert_ne!(bits(&gridft), bits(&w), "the two machines differ");
 }
 
-/// A pinned host claiming a Metal device, with `backend`.
-fn metal_host(backend: BackendRequest) -> SessionResources {
-    SessionResources::pinned(
-        HostResources {
-            threads: 8,
-            performance_cores: 8,
-            available_memory: 8 << 30,
-            metal: true,
-        },
-        ResourcePolicy::Explicit {
-            workers: 2,
-            memory: 2 << 30,
-        },
-        backend,
-    )
-    .expect("resources")
-}
-
 #[test]
-fn w_projection_predicts_on_the_cpu_and_refuses_an_explicit_metal_backend() {
-    let directory = tempfile::tempdir().expect("temporary directory");
+fn w_projection_runs_on_every_available_backend() {
+    let directory = tempfile::tempdir().unwrap();
     let model = extended_model(directory.path(), "model.image");
-    // `auto` on a Metal host: `close` predicts W on the CPU, bit for bit as
-    // the CPU reference (Metal's sums differ in the last bits, and a host
-    // without the device it claims fails on it).
-    let path = directory.path().join("auto.ms");
-    let sm = session(&path, "ALMA", "XX YY", metal_host(BackendRequest::Auto));
-    predicted(sm, &model, &[wproject(8, 1.3)], false).expect("predicted");
-    let (rows, _) = read_main(&path);
-    let expected = reference_through(
-        &rows,
-        &model,
-        &[Correlation::XX, Correlation::YY],
-        None,
-        FtMachine::WProject(8),
-    );
-    assert_eq!(
-        bits(&data(&rows)),
-        bits(&expected),
-        "auto predicts W on the CPU"
-    );
-
-    let sm = session(
-        &directory.path().join("metal.ms"),
-        "ALMA",
-        "XX YY",
-        metal_host(BackendRequest::Metal),
-    );
-    let (outcome, message) = refusal(predicted(sm, &model, &[wproject(8, 1.3)], false));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("Metal"), "{message}");
+    let host = HostResources::detect().unwrap();
+    let mut backends = vec![BackendRequest::Cpu, BackendRequest::Auto];
+    if host.metal {
+        backends.push(BackendRequest::Metal);
+    }
+    for (index, backend) in backends.into_iter().enumerate() {
+        let resources = SessionResources::pinned(
+            host,
+            ResourcePolicy::Explicit {
+                workers: 2,
+                memory: 2 << 30,
+            },
+            backend,
+        )
+        .unwrap();
+        let path = directory.path().join(format!("{index}.ms"));
+        let sm = session(&path, "ALMA", "XX YY", resources);
+        predicted(sm, &model, &[wproject(8, 1.3)], false).unwrap();
+        let (rows, _) = read_main(&path);
+        let expected = reference_through(
+            &rows,
+            &model,
+            &[Correlation::XX, Correlation::YY],
+            None,
+            FtMachine::WProject(8),
+        );
+        let actual = data(&rows);
+        let error: f64 = actual
+            .iter()
+            .flatten()
+            .zip(expected.iter().flatten())
+            .map(|(a, b)| f64::from((*a - *b).norm_sqr()))
+            .sum();
+        let norm: f64 = expected
+            .iter()
+            .flatten()
+            .map(|value| f64::from(value.norm_sqr()))
+            .sum();
+        assert!((error / norm).sqrt() < 1e-3, "{backend:?}");
+    }
 }
 
 /// More planes than casa-rs's kernel key indexes (65,536) are refused

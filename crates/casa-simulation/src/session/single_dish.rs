@@ -78,7 +78,10 @@ impl Simulator {
                         ))
                     })?,
             ),
-            SingleDishKernel::Box | SingleDishKernel::Spheroidal => None,
+            SingleDishKernel::Box
+            | SingleDishKernel::Spheroidal
+            | SingleDishKernel::Gauss
+            | SingleDishKernel::Gjinc => None,
         };
         let windows: Vec<SingleDishWindow> = self
             .spectral_windows
@@ -106,6 +109,7 @@ impl Simulator {
                 memory: held
                     + SingleDishPrediction::preparation_bytes(
                         &model,
+                        kernel,
                         kernel_pattern.as_ref(),
                         (&windows, &pointings),
                     ),
@@ -125,8 +129,13 @@ impl Simulator {
         // goes first.
         drop(model);
         drop(preparation);
-        let prediction = prediction
-            .map_err(|error| SimulatorError::raised(format!("Caught exception: {error}")))?;
+        let prediction = prediction.map_err(|error| {
+            if matches!(error, crate::predict::PredictError::InvalidModel(_)) {
+                SimulatorError::refused(format!("Caught exception: {error}"))
+            } else {
+                SimulatorError::raised(format!("Caught exception: {error}"))
+            }
+        })?;
         tracing::info!(
             ?kernel,
             pointings = count,
