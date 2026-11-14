@@ -280,8 +280,7 @@ enum Slot {
 /// every row ([`ConvolutionFunctionSet::pointing_ramp`]). An imported row
 /// uses the first sorted PA buffer within the strict compute tolerance.
 /// The supported runtime rotation regrids the saved aperture at each
-/// rotation epoch. Densely spaced imported headers and further rotation
-/// combinations remain open in #1070.
+/// rotation epoch. Further rotation combinations remain open in #1070.
 ///
 /// # Panics
 ///
@@ -454,7 +453,12 @@ impl AwCatalog {
                     "runtime rotation needs one PA buffer with axis-aligned linear cells (#1070)",
                 ));
             }
-            rotation.schedule(pa_deg[0])
+            rotation.schedule(pa_deg[0]).ok_or_else(|| {
+                cache_error(
+                    &root,
+                    "runtime rotation needs the same effective PA schedule across wideband passes (#1070)",
+                )
+            })?
         } else {
             Vec::new()
         };

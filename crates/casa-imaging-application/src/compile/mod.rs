@@ -1198,6 +1198,9 @@ fn aw_rotation(
     {
         return Err(PrepareError::AwRotationScope);
     }
+    if multi_term && !one_rotation_traversal_per_window(surveyed) {
+        return Err(PrepareError::AwRotationScope);
+    }
     let epochs = surveyed.survey.window_epochs(first);
     // CASA walks each spectral window's buffers separately. A time-only
     // rotation key is shared by windows with the same usable timeline.
@@ -1224,8 +1227,30 @@ fn aw_rotation(
     }
     Ok(Some(casa_imaging_operator::AwPaRotation {
         step_rad: f64::from(aw.rotatepastep as f32).to_radians(),
+        require_repeatable_schedule: multi_term,
         samples: samples.into(),
     }))
+}
+
+// CASA walks ARRAY_ID then DATA_DESC_ID before TIME. The survey merges
+// partition epochs by time, so require one chronological traversal per
+// window for the Taylor passes that share the rotation schedule.
+fn one_rotation_traversal_per_window(surveyed: &Surveyed<'_>) -> bool {
+    let selected = &surveyed.survey.partitions;
+    if surveyed.stores.len() != 1 || selected.len() != surveyed.survey.spectral_windows.len() {
+        return false;
+    }
+    surveyed.msv2.is_none_or(|ms| {
+        let Some(array) = selected
+            .first()
+            .and_then(|first| ms.array_id(first.partition()))
+        else {
+            return false;
+        };
+        selected
+            .iter()
+            .all(|part| ms.array_id(part.partition()) == Some(array))
+    })
 }
 
 fn rotation_times(epochs: &[survey::Epoch]) -> impl Iterator<Item = (f64, i32)> + '_ {

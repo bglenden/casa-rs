@@ -347,9 +347,10 @@ fn rotation_epochs_key_the_current_group_and_bound_memory() {
 
     let rotation = AwPaRotation {
         step_rad: 0.125,
+        require_repeatable_schedule: false,
         samples: Arc::new([(1.0, 0.0), (2.0, 0.25), (3.0, 0.5)]),
     };
-    catalog.rotations = rotation.schedule(0.0);
+    catalog.rotations = rotation.schedule(0.0).unwrap();
     catalog.indexing.rotation = Some(rotation);
     let slots = &mut catalog.lru.get_mut().unwrap().slots;
     let original_slots = slots.capacity();

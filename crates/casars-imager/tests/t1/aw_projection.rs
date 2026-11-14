@@ -1365,7 +1365,24 @@ fn imported_aw_runtime_rotation_cleans_two_window_mtmfs() {
     }
     ms.save().unwrap();
     drop(ms);
-    assert_rotation_refused(&observation, "rotated-different-times", imported);
+    assert_rotation_refused(&observation, "rotated-different-times", imported.clone());
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    for row in 0..ms.row_count() {
+        let desc = ms.main_table().cell_accessor(row, "DATA_DESC_ID").unwrap();
+        if *desc.scalar().unwrap() == ScalarValue::Int32(1) {
+            let mut output = ms.main_table_mut().row_accessor_mut();
+            output
+                .set_cell(row, "FLAG_ROW", CellValue::Scalar(ScalarValue::Bool(false)))
+                .unwrap();
+            output
+                .set_cell(row, "ARRAY_ID", CellValue::Scalar(ScalarValue::Int32(1)))
+                .unwrap();
+        }
+    }
+    ms.save().unwrap();
+    drop(ms);
+    assert_rotation_refused(&observation, "rotated-different-arrays", imported);
 }
 
 fn assert_rotation_refused(observation: &Observation, name: &str, controls: Value) {

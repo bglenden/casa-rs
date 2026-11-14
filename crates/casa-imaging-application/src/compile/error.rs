@@ -497,7 +497,7 @@ pub enum PrepareError {
     NativeAwPaSpacing,
     /// Runtime rotation's remaining imaging combinations.
     #[error(
-        "rotatepastep currently supports fresh imported AW continuum on one VLA or EVLA field with the aperture, default computepastep and recomputed PSF and residual: dirty or Högbom with one spectral window, or wideband MT-MFS with common feed angle and valid integration times across windows (#1070)"
+        "rotatepastep currently supports fresh imported AW continuum on one VLA or EVLA field with the aperture, default computepastep and recomputed PSF and residual: dirty or Högbom with one spectral window, or wideband MT-MFS with one partition per window, a common array and feed angle, and matching valid integration times (#1070)"
     )]
     AwRotationScope,
     /// `cf_resident_mb` is larger than the address space.
