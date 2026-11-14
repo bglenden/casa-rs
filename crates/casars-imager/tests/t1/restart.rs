@@ -236,6 +236,42 @@ fn a_mosaic_restores_the_saved_residual_and_uses_its_mask_to_stop_cleaning() {
 }
 
 #[test]
+fn a_mosaic_resumed_with_positive_cutoff_copies_the_saved_pb_mask_after_gridding() {
+    let (observation, mut controls) = mosaic_run(false);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    controls["pblimit"] = json!(-0.65);
+    let (_, seed) = observation.image("mosaic-cutoff", controls.clone());
+    assert!(seed.get(".residual").mask().is_none());
+    let mut pb = PagedImage::<f32>::open(observation.scratch("mosaic-cutoff.pb")).unwrap();
+    let mut mask = pb.get_mask().unwrap().unwrap();
+    // A saved mask may have a smaller footprint than the new PB cutoff.
+    // Leave one valid pixel away from the sources and the saved CLEAN peak.
+    let sentinel = [10, 20, 0, 0];
+    mask.fill(false);
+    mask[sentinel] = true;
+    pb.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    pb.save().unwrap();
+    drop(pb);
+
+    controls["niter"] = json!(12);
+    controls["cycleniter"] = json!(2);
+    controls["threshold"] = json!("0.01Jy");
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    controls["pblimit"] = json!(0.2);
+    let (resumed, products) = observation.image("mosaic-cutoff", controls);
+    assert_eq!(
+        resumed.major_cycles, 1,
+        "the saved PB masks the sources after gridding"
+    );
+    assert!(resumed.minor_iterations > 0 && resumed.minor_iterations < 12);
+    for suffix in [".residual", ".image"] {
+        assert_eq!(products.get(suffix).mask().as_ref(), Some(&mask));
+    }
+}
+
+#[test]
 fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
     let point = Component {
         offset_px: [6, -4],

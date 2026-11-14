@@ -92,7 +92,7 @@ pub(super) fn run(
                 )?;
                 let (saved_mask, saved_mask_charge) =
                     if outcome.major_cycle_count == 0 || (read_mosaic_residual && use_pb_mask) {
-                        read_saved_mask(&run, mvc.as_ref())?
+                        read_saved_mask(&run, mvc.as_ref(), outcome.major_cycle_count > 0)?
                     } else {
                         (None, Reservation::none())
                     };
@@ -238,11 +238,13 @@ pub(super) fn run(
     Ok(outcome)
 }
 
-/// In CASA the stored pixel mask determines the peak at the first CLEAN
-/// boundary. The solver gets its own saved CLEAN mask.
+/// CASA's pixel mask determines the peak independent of the solver's
+/// CLEAN support. If the first positive-cutoff major cycle sees an
+/// unmasked residual, it copies the saved PB's support to the residual.
 fn read_saved_mask(
     run: &Run<'_>,
     mvc: Option<&MvcState<'_>>,
+    refreshed: bool,
 ) -> Result<(Option<casa_imaging_deconvolution::Support>, Reservation), ImagingError> {
     let saved = mvc
         .and_then(MvcState::saved_taylor)
@@ -252,6 +254,18 @@ fn read_saved_mask(
     };
     let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
     if bytes == 0 {
+        if refreshed && let Some(beam) = saved.mosaic_beam() {
+            let charge = run.admit("saved PB for residual mask", beam.reading_bytes())?;
+            let [nx, ny, _, _] = beam.shape();
+            let pixels = beam
+                .read_mask(0, 0)
+                .map_err(casa_imaging_runtime::MinorCycleRunError::from)?;
+            let mask = casa_imaging_deconvolution::Support::new(
+                casa_imaging_deconvolution::PlaneShape::new(nx, ny),
+                pixels,
+            );
+            return Ok((Some(mask), charge));
+        }
         return Ok((None, Reservation::none()));
     }
     let charge = run.admit("saved residual mask", bytes)?;
