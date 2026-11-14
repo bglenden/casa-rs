@@ -71,11 +71,14 @@ INPUTS = {
     "flatone.single.ptg.txt": "unittest/simobserve/flatone.single.ptg.txt",
 }
 LOCAL_INPUTS = {
+    "if-polarized.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_image_layouts/iquv.image"),
+
     "schedule-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_ft_modes/large.image"),
     "schedule-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_telescope_beams/sky.cl"),
     "schedule-ot.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-ot.ptg.txt"),
     "schedule-untimed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-untimed.ptg.txt"),
     "schedule-timed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-timed.ptg.txt"),
+
     "sd-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/pb_alma.image"),
     "sd-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/point.cl"),
     "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
@@ -111,14 +114,46 @@ SD_CORE = dict(skymodel="inputs/sd-sky.image", setpointings=True, integration="1
     direction="J2000 10h00m00 34d00m00", mapsize=["20arcsec", "20arcsec"],
     pointingspacing="10arcsec", totaltime="120s", refdate="2024/06/01", thermalnoise="")
 
+IF_CORE = dict(SD_CORE, obsmode="int", antennalist="vla.d.cfg",
+    incenter="8GHz", inwidth="20MHz", totaltime="60s")
+
 SCHEDULE = dict(skymodel="inputs/schedule-sky.image", setpointings=True,
     integration="6s", maptype="square", obsmode="int", antennalist="aca.i.cfg",
     direction="J2000 10h00m00 34d00m00", mapsize=["20arcsec", "16arcsec"],
     pointingspacing="8arcsec", totaltime="2", refdate="2024/06/01", thermalnoise="")
 
+
 # The cases: CASA's parameters (graphics off, overwrite on), with paths
 # relative to OUT. `complist_from` makes a component list in CASA first.
 CASES = [
+    {"name": "if_image_rest", "params": dict(IF_CORE, outframe="REST")},
+    {"name": "if_image_undefined", "prediction_failure": 'Transformations to/from frame "Undefined" are not possible.',
+        "params": dict(IF_CORE, outframe="Undefined")},
+    {"name": "if_components_rest", "prediction_failure": "No MeasFrame specified for conversion of Frequency",
+        "params": dict(IF_CORE, skymodel="",
+        complist="inputs/sd-components.cl", compwidth="20MHz", outframe="REST")},
+    {"name": "if_components_undefined", "prediction_failure": 'Transformations to/from frame "Undefined" are not possible.',
+        "params": dict(IF_CORE, skymodel="",
+        complist="inputs/sd-components.cl", compwidth="20MHz", outframe="Undefined")},
+    {"name": "if_joint_rest", "prediction_failure": "No MeasFrame specified for conversion of Frequency",
+        "params": dict(IF_CORE, complist="inputs/sd-components.cl", outframe="REST")},
+    {"name": "if_joint_manual",
+        "complist_from": {"name": "if-vla-star.cl", "dir": "J2000 10h00m00 34d00m00", "flux": 0.7, "freq": "8GHz"},
+        "params": dict(IF_CORE, mapsize=["1arcsec", "1arcsec"],
+        incell="0.5arcsec", inbright="0.02Jy/pixel",
+        thermalnoise="tsys-manual", tau0=0.065, t_sky=20.0, t_ground=275.0,
+        leakage=0.025, integration="10s", totaltime="600s", hourangle="30min")},
+    {"name": "if_joint_polarized", "joint_control": True,
+        "params": dict(IF_CORE, skymodel="inputs/if-polarized.image",
+        complist="inputs/sd-components.cl", totaltime="60s")},
+    {"name": "if_joint_atmosphere", "casa_only": [".noisier.T.cal"],
+        "complist_from": {"name": "if-star.cl", "dir": "J2000 10h00m00 -23d00m00", "flux": 0.2, "freq": "230GHz"},
+        "params": dict(IF_CORE, antennalist="alma.out01.cfg",
+        incenter="230GHz", inwidth="15.625MHz", indirection="J2000 10h00m00 -23d00m00",
+        direction="J2000 10h00m00 -23d00m00",
+        incell="0.5arcsec", thermalnoise="tsys-atm", user_pwv=0.8, t_ground=269.0,
+        leakage=0.015, integration="10s", totaltime="600s", hourangle="-0.5")},
+
     {"name": "schedule_ot_file", "shadow_control": True, "params": dict(SCHEDULE, setpointings=False,
         ptgfile="inputs/schedule-ot.ptg.txt", integration="10s", hourangle="-30min")},
     {"name": "schedule_untimed_file", "shadow_control": True, "params": dict(SCHEDULE, setpointings=False,
@@ -145,6 +180,7 @@ CASES = [
     {"name": "schedule_sd_calibrator_ignored", "params": dict(SCHEDULE,
         obsmode="sd", sdantlist="aca.tp.cfg", sdant=0, caldirection="J2000 10h01m00 34d30m00",
         calflux="1Jy", setpointings=False, ptgfile="inputs/schedule-timed.ptg.txt")},
+
     {"name": "sd_project", "params": dict(SD_CORE)},
     {"name": "sd_project_manual", "params": dict(SD_CORE, thermalnoise="tsys-manual", totaltime="3600s")},
     {"name": "sd_project_atmosphere", "params": dict(SD_CORE, thermalnoise="tsys-atm", totaltime="3600s")},
@@ -427,6 +463,13 @@ def run_casa(t, case: dict, out: str) -> str:
     params = casa_params(case, out)
     if "complist_from" in case:
         make_complist(t, case["complist_from"], work)
+    if params.get("complist"):
+        # A failed CASA prediction can leave its input table locked. Give
+        # the independent native process a pristine copy before CASA runs.
+        native_list = os.path.join(out, "native-inputs", case["name"] + ".cl")
+        os.makedirs(os.path.dirname(native_list), exist_ok=True)
+        shutil.rmtree(native_list, ignore_errors=True)
+        shutil.copytree(params["complist"], native_list, ignore=shutil.ignore_patterns("table.lock"))
     cwd = os.getcwd()
     os.chdir(work)
     try:
@@ -501,6 +544,9 @@ def run_casars(t, case: dict, out: str, binary: str) -> tuple[str, dict]:
     params = absolute(case["params"], out)
     if "complist_from" in case:
         params["complist"] = os.path.join(out, "casa", case["complist_from"]["name"])
+    native_list = os.path.join(out, "native-inputs", case["name"] + ".cl")
+    if params.get("complist") and os.path.isdir(native_list):
+        params["complist"] = native_list
     params = casars_params(t, params)
     params.update(project=case["name"], graphics="none", overwrite=True)
     shutil.rmtree(os.path.join(work, case["name"]), ignore_errors=True)
@@ -652,6 +698,107 @@ def repredict(t, case: dict, project: str, out: str) -> None:
     sm.done()
     if merged:
         shutil.rmtree(merged)
+
+
+def correct_joint_prediction(t, case: dict, project: str, out: str) -> None:
+    """Independent I+C control for the documented component phase/sum bugs."""
+    raw = os.path.join(out, "casa-raw", case["name"])
+    shutil.rmtree(raw, ignore_errors=True)
+    shutil.copytree(project, raw)
+    source = stem_of(project, ".ms")
+    controls = os.path.join(out, "casa-controls")
+    os.makedirs(controls, exist_ok=True)
+    tb, sm, cl = t["tb"], t["sm"], t["cl"]
+    tb.open(source)
+    assert not np.any(tb.getcol("FLAG_ROW")), "this control uses an unflagged array"
+    tb.close()
+    params = casa_params(case, out)
+    cl.open(params["complist"])
+    assert cl.length() == 1
+    component = cl.getcomponent(0)
+    assert component["spectrum"]["type"] == "Constant"
+    i, q, u, v = component["flux"]["value"]
+    cl.close()
+    flux = {5: i+v, 6: complex(q, u), 7: complex(q, -u), 8: i-v,
+            9: i+q, 10: complex(u, v), 11: complex(u, -v), 12: i-q}
+    tb.open(source + "/POLARIZATION")
+    codes = tb.getcell("CORR_TYPE", 0)
+    tb.close()
+    phases = np.asarray([flux[code]/abs(flux[code]) if flux[code] else 1.0 for code in codes])
+    values = []
+    for kind in ("image", "components"):
+        path = os.path.join(controls, case["name"] + "-" + kind + ".ms")
+        shutil.rmtree(path, ignore_errors=True)
+        shutil.copytree(source, path, ignore=shutil.ignore_patterns("table.lock"))
+        assert sm.openfromms(path)
+        assert sm.setdata(fieldid=[])
+        assert sm.setvp(dovp=True, usedefaultvp=False)
+        assert sm.predict(**({"imagename": stem_of(project, ".skymodel")} if kind == "image"
+                             else {"complist": params["complist"]}))
+        sm.done()
+        tb.open(path)
+        values.append(tb.getcol("DATA"))
+        tb.close()
+    corrected = np.asarray(values[0] + values[1]/phases[:, None, None], dtype=np.complex64)
+    tb.open(source, nomodify=False)
+    try:
+        for column in ("DATA", "CORRECTED_DATA"):
+            if column in tb.colnames():
+                tb.putcol(column, corrected)
+    finally:
+        tb.close()
+
+
+def compare_prediction_failure(t, case: dict, casa: str, casars: str, out: str, outcome: dict) -> dict:
+    """Keep CASA's raw zero-MS failure; require native to report its cause."""
+    report = {"name": case["name"], "differences": [], "native_error": outcome.get("error")}
+    failures = report["differences"]
+    source = stem_of(casa, ".ms")
+    if source is None:
+        failures.append("CASA did not reach the expected failed-prediction stage")
+        return report
+    tb, sm = t["tb"], t["sm"]
+    tb.open(source)
+    report["casa_zero_data"] = bool(np.all(tb.getcol("DATA") == 0))
+    report["casa_rows"] = tb.nrows()
+    tb.close()
+    if not report["casa_zero_data"]:
+        failures.append("CASA's failed prediction unexpectedly has nonzero DATA")
+    control = os.path.join(out, "casa-controls", case["name"] + ".ms")
+    os.makedirs(os.path.dirname(control), exist_ok=True)
+    shutil.rmtree(control, ignore_errors=True)
+    shutil.copytree(source, control, ignore=shutil.ignore_patterns("table.lock"))
+    assert sm.openfromms(control)
+    try:
+        assert sm.setdata(fieldid=[])
+        assert sm.setvp(dovp=True, usedefaultvp=False)
+        arguments = {}
+        if case["params"].get("skymodel"):
+            arguments["imagename"] = stem_of(casa, ".skymodel")
+        if casa_params(case, out).get("complist"):
+            arguments["complist"] = casa_params(case, out)["complist"]
+        report["casa_prediction_returned"] = bool(sm.predict(**arguments))
+    finally:
+        sm.done()
+    if report["casa_prediction_returned"]:
+        failures.append("the independent CASA simulator unexpectedly accepted the frame")
+    if outcome.get("error") != case["prediction_failure"]:
+        failures.append(f"native did not report CASA's prediction failure: {outcome}")
+    # The corrected native task stops before publishing the unpredicted MS.
+    expected = [name for name in products(casa) if not name.endswith(".ms")]
+    actual = products(casars) if os.path.isdir(casars) else []
+    if expected != actual:
+        failures.append(f"pre-prediction products differ: CASA {expected}, native {actual}")
+    for suffix in (".skymodel", ".skymodel.flat", ".compskymodel", ".compskymodel.flat"):
+        a, b = stem_of(casa, suffix), stem_of(casars, suffix)
+        if a and b:
+            failures.extend(compare_images(t, a, b))
+    a, b = stem_of(casa, ".ptg.txt"), stem_of(casars, ".ptg.txt")
+    if a and b:
+        with open(a, "rb") as one, open(b, "rb") as two:
+            if one.read() != two.read():
+                failures.append("pointing files differ before prediction refusal")
+    return report
 
 
 def noise_term(t, params: dict, ms: str, uvmode: bool) -> dict:
@@ -880,11 +1027,15 @@ def main() -> int:
                 casa_s = time.perf_counter() - started
                 if case.get("repredict"):
                     repredict(t, case, casa, out)
+                if case.get("joint_control"):
+                    correct_joint_prediction(t, case, casa, out)
+
                 if case.get("shadow_control"):
                     # CASA's flagger shadows the antenna behind, correcting
                     # its simulator's documented front-antenna defect.
                     correct_shadow_flags(casa)
                     repredict(t, case, casa, out)
+
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))
@@ -893,7 +1044,9 @@ def main() -> int:
             with open(error_file, encoding="utf-8") as handle:
                 casa_error = handle.read()
         casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
-        if casa_error is not None or "error" in outcome:
+        if case.get("prediction_failure") and casa_error is None:
+            report = compare_prediction_failure(t, case, casa, casars, out, outcome)
+        elif casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
             if not case.get("expect_refusal", False):
                 report["differences"].append("expected a successful simulation, not a refusal")
