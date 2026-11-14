@@ -12,6 +12,54 @@ use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::path::Path;
 
+fn beam_spec(case: &Value, data: &Path, temporary: &Path) -> VoltagePatternSpec {
+    let component = case["operation"] == "component";
+    let increment = if component {
+        &case["spec"]["beam_increment_deg"]
+    } else {
+        &case["beam_increment_deg"]
+    };
+    let mut spec = VoltagePatternSpec {
+        do_squint: case["squint"].as_bool().unwrap_or(false),
+        parallactic_angle_increment_deg: increment.as_f64().unwrap(),
+        ..VoltagePatternSpec::default()
+    };
+    if let Some(input) = case["vp_table"].as_str() {
+        let source = data.join(input);
+        let path = temporary.join("beam.vp");
+        copy(&source, &path);
+        let mut table = casa_tables::Table::open(casa_tables::TableOptions::new(&path)).unwrap();
+        let mut record = table
+            .cell_accessor(0, "pbdescription")
+            .unwrap()
+            .record()
+            .unwrap();
+        for key in ["realimage", "imagimage", "compleximage"] {
+            if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(value))) =
+                record.get_mut(key)
+                && !value.is_empty()
+            {
+                let name = Path::new(value).file_name().unwrap().to_owned();
+                *value = source
+                    .parent()
+                    .unwrap()
+                    .join(name)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+        table
+            .cell_accessor_mut(0, "pbdescription")
+            .unwrap()
+            .set_record(record)
+            .unwrap();
+        table.flush().unwrap();
+        spec.use_default_vp = false;
+        spec.vp_table = path.to_string_lossy().into_owned();
+    }
+    spec
+}
+
 #[test]
 fn time_dependent_beam_frames_match_casa() {
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
@@ -24,12 +72,17 @@ fn time_dependent_beam_frames_match_casa() {
         let mut failures = Vec::new();
         for case in fixture["cases"].as_array().unwrap() {
             let name = case["name"].as_str().unwrap();
-            if std::env::var("CASA_RS_FRAME_BEAM_CASE").is_ok_and(|selected| selected != name) {
+            if std::env::var("CASA_RS_FRAME_BEAM_CASE")
+                .is_ok_and(|selected| !selected.split(',').any(|value| value == name))
+            {
                 continue;
             }
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("beam.ms");
-            copy(&data.join("sm_image_layouts/base.ms"), &path);
+            copy(
+                &data.join(case["base"].as_str().unwrap_or("sm_image_layouts/base.ms")),
+                &path,
+            );
             let mut sm = Simulator::open_from_ms(
                 &path,
                 SimulatorOptions {
@@ -48,17 +101,8 @@ fn time_dependent_beam_frames_match_casa() {
             }
             sm.set_data(&[], &[0], "").unwrap();
             let component = case["operation"] == "component";
-            let increment = if component {
-                &case["spec"]["beam_increment_deg"]
-            } else {
-                &case["beam_increment_deg"]
-            };
-            sm.set_vp(&VoltagePatternSpec {
-                do_squint: false,
-                parallactic_angle_increment_deg: increment.as_f64().unwrap(),
-                ..VoltagePatternSpec::default()
-            })
-            .unwrap();
+            sm.set_vp(&beam_spec(case, &data, directory.path()))
+                .unwrap();
             let input = data.join(case["input"].as_str().unwrap());
             let spec = if component {
                 PredictSpec {

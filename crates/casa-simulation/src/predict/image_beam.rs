@@ -49,6 +49,12 @@ impl ImageBeam {
                 reference_hz,
             } => {
                 let frequency = model.plane_frequency_hz(plane);
+                // PBMath1D converts POINTING before applying the squint;
+                // displacement axes belong to the image's native frame.
+                let centre = frame.map_or_else(
+                    || Ok(pointing),
+                    |frame| model.native_pointing_with_frame(pointing, frame),
+                )?;
                 let [right, left] = [1., -1.].map(|sign| {
                     // BeamSquint::getPointingDirection quantizes the
                     // frequency scale before rotating the saved AZEL offset.
@@ -56,12 +62,16 @@ impl ImageBeam {
                     let [sx, sy] = offset.map(|v| v * scale);
                     let (sin, cos) = (-angle).sin_cos();
                     let (dx, dy) = (-(sx * cos + sy * sin), -sx * sin + sy * cos);
-                    let [ra, dec] = pointing;
+                    let [ra, dec] = centre;
                     let direction = [
                         ra + dx.sin().atan2(dx.cos() * (dec + dy).cos()),
                         (dx.cos() * (dec + dy).sin()).asin(),
                     ];
-                    pixel_of(direction)
+                    if frame.is_some() {
+                        model.pixel_of_native(direction)
+                    } else {
+                        model.pixel_of(direction)
+                    }
                 });
                 let centres = [right?, left?, pixel_of(pointing)?];
                 Ok(radial_plane(model, plane, images, &pattern.value, centres))

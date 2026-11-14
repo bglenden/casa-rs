@@ -33,6 +33,8 @@ def scenarios():
         ("image-refresh", image + ["--case", "frame_azel_beam", "--location",
                                    "ARRAY", "--refresh-beam"]),
         ("image-geocentre", image + ["--case", "frame_hadec_beam"]),
+        ("image-squint", image + ["--case", "frame_hadec_beam", "--location", "ARRAY", "--squint"]),
+        ("component-jones", component + ["--only", "frame_hadec", "--jones-beam"]),
     ]
     return jobs
 
@@ -65,6 +67,19 @@ def collect(root, results, destination):
                 original, target = source / "model.image", destination / (name + ".image")
             shutil.copytree(original, target, ignore=shutil.ignore_patterns("table.lock"))
             case["input"] = str(target.relative_to(root / "crates/casa-simulation/tests/data"))
+            if case.get("circular"):
+                base = destination / (name + ".ms")
+                shutil.copytree(source / "base.ms", base, ignore=shutil.ignore_patterns("table.lock"))
+                case["base"] = str(base.relative_to(root / "crates/casa-simulation/tests/data"))
+            if case.get("vp_table"):
+                beam = destination / (name + "-beam")
+                beam.mkdir()
+                shutil.copytree(source / case["vp_table"], beam / "beam.vp",
+                                ignore=shutil.ignore_patterns("table.lock"))
+                if case.get("jones_beam"):
+                    shutil.copytree(source / "jones.image", beam / "jones.image",
+                                    ignore=shutil.ignore_patterns("table.lock"))
+                case["vp_table"] = str((beam / "beam.vp").relative_to(root / "crates/casa-simulation/tests/data"))
             cases.append(case)
     return cases
 

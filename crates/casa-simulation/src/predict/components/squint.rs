@@ -149,7 +149,7 @@ impl Squint {
         } else {
             frame.clone()
         };
-        if dynamic && self.config.radial() {
+        if dynamic {
             let centre = MDirection::from_angles(pointing[0], pointing[1], DirectionRef::J2000)
                 .convert_to(direction.refer(), &frame)
                 .map_err(error)?

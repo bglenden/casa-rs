@@ -8,7 +8,7 @@ import shutil
 import numpy as np
 
 from casatasks import version_string
-from casatools import componentlist, measures, simulator, table
+from casatools import componentlist, measures, simulator, table, vpmanager
 
 from sm_apply_time_oracle import write
 from sm_existing_append_oracle import snapshot
@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--beam", action="store_true")
     parser.add_argument("--beam-observer", choices=("ALMA", "ARRAY"), default="ALMA")
     parser.add_argument("--refresh-beam", action="store_true")
+    parser.add_argument("--jones-beam", action="store_true")
     parser.add_argument("--base", type=Path,
         default=Path(__file__).resolve().parents[2] /
         "crates/casa-simulation/tests/data/sm_image_layouts/base.ms")
@@ -48,6 +49,14 @@ def main():
     root = args.out.resolve()
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
+    if args.jones_beam:
+        assert args.beam
+        from sm_image_beams_oracle import inputs_for
+        inputs_for(inputs)
+        vp = vpmanager()
+        assert vp.reset()
+        assert vp.setpbimage(telescope="ALMA", compleximage=str(inputs / "jones.image"))
+        assert vp.saveastable(str(inputs / "jones.vp"))
     cases = []
     frame_measures = measures()
     location = frame_measures.observatory("ALMA")
@@ -71,6 +80,8 @@ def main():
             name += "_beam_" + args.beam_observer.lower()
             if args.refresh_beam:
                 name += "_refresh"
+            if args.jones_beam:
+                name += "_jones"
         component = inputs / f"{name}.cl"
         cl = componentlist()
         arguments = dict(flux=[1., .15, -.08, .03], fluxunit="Jy",
@@ -132,14 +143,19 @@ def main():
         else:
             assert sm.setdata(fieldid=[0])
         if args.beam:
-            assert sm.setvp(dovp=True, dosquint=False,
+            settings = dict(dovp=True, dosquint=False,
                 parangleinc=f"{spec['beam_increment_deg']}deg")
+            if args.jones_beam:
+                settings.update(usedefaultvp=False, vptable=str(inputs / "jones.vp"))
+            assert sm.setvp(**settings)
         assert sm.predict(complist=str(component), incremental=False)
         if spec.get("incremental"):
             assert sm.predict(complist=str(component), incremental=True)
         sm.close()
         case = dict(name=name, spec=spec, returned=True, before=before, after=snapshot(path),
             native_created="distance" in spec)
+        if args.jones_beam:
+            case.update(jones_beam=True, vp_table="jones.vp")
         if "frame" in spec:
             itrf = frame_measures.measure(location, "ITRF")
             lon, lat, radius = [itrf[f"m{i}"]["value"] for i in range(3)]

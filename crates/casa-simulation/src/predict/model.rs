@@ -342,9 +342,13 @@ impl SkyModel {
                 })?
                 .as_angles()
         };
+        self.pixel_of_native([direction.0, direction.1])
+    }
+
+    pub(super) fn pixel_of_native(&self, direction: [f64; 2]) -> Result<[f64; 2], PredictError> {
         let pixel = self.coordinates.to_pixel(&[
-            direction.0,
-            direction.1,
+            direction[0],
+            direction[1],
             self.coordinates.coordinate(1).to_world(&[0.])?[0],
             self.first_spectral_world,
         ])?;
