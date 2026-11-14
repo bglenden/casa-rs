@@ -119,6 +119,25 @@ fn mtmfs_two_terms_recover_flux_and_spectral_index() {
     );
 }
 
+/// Keep the parent PB mask on joined Taylor images, including the CASA
+/// subimage-copy correction documented in "CASA (C++) bugs.md".
+#[test]
+fn taylor_facets_keep_the_parent_primary_beam_mask() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let (_, products) = observation.image(
+        "faceted-taylor-mask",
+        json!({
+            "deconvolver": "mtmfs", "nterms": 2, "facets": 2,
+            "niter": 0, "write_pb": true, "pblimit": PBLIMIT,
+        }),
+    );
+    let pb = products.get(".pb.tt0").mask().expect("PB mask");
+    assert!(pb.iter().any(|valid| !valid));
+    for name in [".residual.tt0", ".residual.tt1", ".image.tt0", ".image.tt1"] {
+        assert_eq!(products.get(name).mask().as_ref(), Some(&pb), "{name}");
+    }
+}
+
 #[test]
 fn mtmfs_three_terms_publish_spectral_curvature_on_alpha_support() {
     let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);

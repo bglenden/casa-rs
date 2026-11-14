@@ -3429,8 +3429,8 @@ CASA's would be once the full mask existed.
 
 - Date noted: 2026-11-02
 - Status: CASA bug; casa-rs masks a faceted residual and restored image
-  where the primary beam is under `pblimit`, as CASA masks every other
-  image (#980)
+  where the primary beam is under `pblimit`, including every Taylor
+  coefficient (#980, #1063)
 - Affected build/code: CASA 6.7.6.14, casatools
   `synthesis/ImagerObjects/SynthesisNormalizer.cc`
   (`divideResidualByWeight`) and `SIImageStore.cc`
@@ -3449,6 +3449,13 @@ pixels. On `refim_twopoints_twochan.ms` (`imsize=200`, `cell='8.0arcsec'`,
 masks 2,471 pixels below `pblimit` 0.2 and its `.image` and `.residual`
 mask none; casa-rs's `.pb`, `.image` and `.residual` mask those 2,471
 pixels, and every pixel value agrees (normalized RMS 8e-7 and 3e-6).
+
+The named `test_multifield_facets_mtmfs` case on the same input with
+`deconvolver='mtmfs'` and `nterms=2` has the same 2,471 PB mask pixels
+on each joined residual and restored Taylor plane. Stock CASA omits
+all four masks. casa-rs copies its PB mask to each plane. A comparison
+of the full pixel arrays, including the masked pixels, agrees within
+5.38e-6 normalized RMS across this case's products.
 
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 

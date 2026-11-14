@@ -133,6 +133,7 @@ fn blank_mvc_is_scoped_and_never_hides_nonzero_planes() {
         0.1,
         RestoringBeamPolicy::None,
         1,
+        FacetLayout::Single,
     );
     let blank = completion(&one_term, "one-term");
     assert!(

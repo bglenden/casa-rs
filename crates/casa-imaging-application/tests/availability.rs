@@ -404,10 +404,10 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
     check(&mosaic, asked, None, &host(true)).expect("mosaic on Metal");
 }
 
-/// Facets (#664, #1063) run with the standard or W kernel set and a
-/// constant basis; Taylor bases and AW kernel sets stay refused.
+/// Constant-basis facets run with the standard or W kernel set, and
+/// natural Stokes I Taylor facets use the standard set (#1063).
 #[test]
-fn facets_run_with_the_standard_set_and_a_constant_basis() {
+fn facets_admit_standard_continuum_and_bounded_w_and_taylor_modes() {
     let faceted = || ProblemFixture {
         facets: FacetLayout::Regular {
             columns: 2,
@@ -423,16 +423,35 @@ fn facets_run_with_the_standard_set_and_a_constant_basis() {
     );
     on_cpu(&problem).expect("standard facets on the CPU");
     check(&problem, BackendChoice::Metal, None, &host(true)).expect("standard facets on Metal");
-    let taylor = ProblemFixture {
+    let taylor = || ProblemFixture {
         basis: ReconstructionBasis::Taylor { terms: 2 },
         algorithm: ReconstructionAlgorithm::Mtmfs {
             scales_px: vec![0.0],
             small_scale_bias: 0.0,
         },
         ..faceted()
+    };
+    on_cpu(&taylor().compile()).expect("standard natural Stokes I Taylor facets");
+    let unverified = [
+        ProblemFixture {
+            basis: ReconstructionBasis::Taylor { terms: 3 },
+            ..taylor()
+        },
+        ProblemFixture {
+            weighting: WeightingScheme::Uniform,
+            ..taylor()
+        },
+        ProblemFixture {
+            polarizations: vec![
+                PolarizationCoordinate::StokesI,
+                PolarizationCoordinate::StokesQ,
+            ],
+            ..taylor()
+        },
+    ];
+    for fixture in unverified {
+        assert_exactly_unsupported(on_cpu(&fixture.compile()), [Unsupported::FacetedBasis]);
     }
-    .compile();
-    assert_exactly_unsupported(on_cpu(&taylor), [Unsupported::FacetedBasis]);
     let mut w = faceted();
     w.measurement_equation = w.measurement_equation.with_w_projection(
         WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).expect("W contract"),

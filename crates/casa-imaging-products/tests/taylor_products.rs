@@ -8,6 +8,8 @@
 #[path = "taylor_products/blank.rs"]
 mod blank;
 mod common;
+#[path = "taylor_products/facets.rs"]
+mod facets;
 use common::observation::source;
 use common::synthetic_pass::{Scene, two_cycle_round};
 use common::{GeneratedMember, GeneratedProducts, ImageOutput, full_window};
@@ -107,6 +109,7 @@ fn taylor_problem_with_beam(
         taylor_fraction,
         restoring_beam,
         TERMS,
+        FacetLayout::Single,
     )
 }
 
@@ -117,6 +120,7 @@ fn taylor_problem_with_beam_terms(
     taylor_fraction: f32,
     restoring_beam: RestoringBeamPolicy,
     terms: usize,
+    facets: FacetLayout,
 ) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -131,7 +135,7 @@ fn taylor_problem_with_beam_terms(
             ImageDomainRole::Main,
             ImageShape::new(SHAPE[0], SHAPE[1]),
             direction,
-            FacetLayout::Single,
+            facets,
             AxisOrder::new([
                 ImageAxis::DirectionLongitude,
                 ImageAxis::DirectionLatitude,

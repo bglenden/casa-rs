@@ -32,16 +32,19 @@ pub(crate) fn pass_images(
         .expect("a pass forms data or PSF images");
     let (height, width) = first_image.dim();
     let first = images.first_plane as usize;
-    let mut residual = Vec::with_capacity(images.planes.len() * images.data_terms * images.pols);
+    let cells = height * width;
+    let planes = images.planes.len() * images.pols;
+    let mut residual = Vec::with_capacity(planes * images.data_terms * cells);
     for plane in &images.planes {
         for image in &plane.data {
             push_x_major(&mut residual, image);
         }
     }
     let (psf, sum_weights, published_sum_weights, weight) = if initial {
-        let mut psf = Vec::new();
-        let mut sum_weights = Vec::new();
-        let mut published_sum_weights = Vec::new();
+        let moments = planes * images.psf_terms;
+        let mut psf = Vec::with_capacity(moments * cells);
+        let mut sum_weights = Vec::with_capacity(moments);
+        let mut published_sum_weights = Vec::with_capacity(moments);
         let mut weight = Vec::new();
         for (index, plane) in images.planes.iter().enumerate() {
             for image in &plane.psf {
