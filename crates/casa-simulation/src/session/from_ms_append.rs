@@ -321,6 +321,7 @@ impl Simulator {
             voltage_pattern,
             voltage_pattern_table,
             squint,
+            beam_angle_increment_rad,
             data_plan
         );
         segment

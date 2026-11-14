@@ -1288,6 +1288,21 @@ rows by dividing selected correlations by that original unit-phase factor.
 No scientific tolerance changes; the remaining documented LSRK-label error
 is below the existing 1e-3 threshold in these controls.
 
+## EVLA component dosquint is a no-op
+
+CASA 6.7.6.14 accepts `sm.setvp(dosquint=True)` for EVLA, but logs
+"No Beam Squint". The synthetic 14.5 GHz controls in
+`sm_squint_oracle.py` produce identical DATA with squint disabled, enabled
+and a 0.01 degree angle-refresh threshold. The corresponding VLA controls
+change by 0.00760 and 0.00923 NRMS, so the workload measures both effects.
+
+`PBMath1DEVLA` declares its own private `squint_p`; its frequency-selection
+code updates that member, while the inherited `PBMath1D::apply` reads the
+base class's zero offset. casa-rs preserves the observed EVLA response for
+CASA equivalence. Applying a physically different EVLA correction would
+change existing results and is outside this comparison target. VLA band
+offsets and its angle-refresh behavior are implemented separately.
+
 ## A single spectral index is read past its end
 
 - Date noted: 2026-10-23

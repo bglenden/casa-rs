@@ -185,11 +185,11 @@ pub struct VoltagePatternSpec {
     pub use_default_vp: bool,
     /// `vptable`: a voltage-pattern table, read when not `usedefaultvp`.
     pub vp_table: String,
-    /// `dosquint`: beam squint, which CASA's VLA and EVLA patterns have but
-    /// which does not reach a Stokes I model, the only one predicted
-    /// ([`PrimaryBeam`]).
+    /// `dosquint`: apply CASA's VLA component squint. Its EVLA implementation
+    /// accepts the flag with no effect. Stokes images stay unsquinted.
     pub do_squint: bool,
-    /// `parangleinc`, degrees (CASA's 360 for `[]`), logged only.
+    /// `parangleinc`, degrees (CASA's 360 for `[]`): threshold for
+    /// refreshing the component beam's feed angle.
     pub parallactic_angle_increment_deg: f64,
 }
 
@@ -554,6 +554,7 @@ impl Simulator {
         self.voltage_pattern = spec.dovp;
         self.voltage_pattern_table = table;
         self.squint = spec.do_squint;
+        self.beam_angle_increment_rad = spec.parallactic_angle_increment_deg.to_radians();
         Ok(())
     }
 
@@ -670,12 +671,13 @@ impl Simulator {
             }
             return Ok(());
         }
-        let component_frame_epoch = list.as_ref().is_some_and(|(_, list, _)| {
-            list.components().iter().any(|component| {
-                component.shape().reference_direction().refer()
-                    != casa_types::measures::direction::DirectionRef::J2000
-            })
-        });
+        let component_frame_epoch = (self.squint && beam.is_some_and(PrimaryBeam::squints))
+            || list.as_ref().is_some_and(|(_, list, _)| {
+                list.components().iter().any(|component| {
+                    component.shape().reference_direction().refer()
+                        != casa_types::measures::direction::DirectionRef::J2000
+                })
+            });
         let phase_centres = if list.is_some() {
             super::from_ms::polynomial::selected_centres(self, false, component_frame_epoch)?
         } else {
@@ -870,17 +872,17 @@ impl Simulator {
         beam: Option<PrimaryBeam>,
         phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<ComponentPrediction> {
-        // CASA squints the VLA's and EVLA's beams for a component list (RR
-        // and LL beams apart); casa-rs's patterns are unsquinted.
-        if self.squint
-            && let Some(beam) = beam.filter(|beam| beam.squints())
-        {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict(complist='{label}') under the {beam:?} primary beam with beam squint \
-                 is not yet implemented in casa-rs (#1053): CASA squints the RR and LL beams \
-                 for components; setvp(dosquint=False) predicts them unsquinted"
-            )));
-        }
+        let squint = (self.squint && self.voltage_pattern_table.is_none())
+            .then_some(beam)
+            .flatten()
+            .filter(|beam| beam.squints())
+            .map(|beam| {
+                (
+                    beam,
+                    self.reference_frequency_hz(),
+                    self.beam_angle_increment_rad,
+                )
+            });
         if self
             .antennas
             .windows(2)
@@ -952,6 +954,15 @@ impl Simulator {
             pointing_of_scan: &pointing_of_scan,
             beam: pattern.as_ref(),
             frame: &frame,
+            squint,
+            workers: self
+                .options
+                .resources
+                .close_cores(
+                    self.options.resources.prediction_backend()
+                        == casa_imaging_runtime::pass::BackendChoice::Metal,
+                )
+                .streaming_workers,
         };
         let resources = &self.options.resources;
         let preparation = ComponentTargets::preparation_bytes(list.len());

@@ -192,6 +192,8 @@ pub struct Simulator {
     /// Whether that beam squints (`setvp(dosquint)`), as CASA's VLA and
     /// EVLA patterns then do for a component list.
     squint: bool,
+    /// BeamSkyJones's threshold for refreshing the feed angle.
+    beam_angle_increment_rad: f64,
     /// The DATA steps (`predict`, `corrupt`), applied at `close`.
     data_plan: DataPlan,
     /// The MeasurementSet `openfromms` opened, whose rows `close` patches;
@@ -246,6 +248,7 @@ impl Simulator {
             voltage_pattern: false,
             voltage_pattern_table: None,
             squint: false,
+            beam_angle_increment_rad: std::f64::consts::TAU,
             data_plan: DataPlan::default(),
             opened: None,
             noise_row_offset: 0,

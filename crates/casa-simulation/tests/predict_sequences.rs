@@ -534,11 +534,11 @@ fn component_lists_predict_as_one_list() {
     assert!(message.contains("missing.cl not readable"), "{message}");
 }
 
-/// CASA squints the VLA's and the EVLA's beams for a component list, moving
-/// the RR and LL beams apart; casa-rs's patterns are unsquinted, so it
-/// refuses the list under them with squint, and predicts it without.
+/// The default beam accepts components; a later setvp disables squint for
+/// a replacing prediction. Active VLA offsets and angle refresh are checked
+/// against CASA by squint.rs, including CASA's accepted EVLA no-op.
 #[test]
-fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
+fn components_under_default_beams_can_disable_squint() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let points = directory.path().join("points.cl");
     write_points(&points);
@@ -556,9 +556,7 @@ fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
             incremental: false,
         };
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        let (outcome, message) = refusal(sm.predict(&list));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{telescope}");
-        assert!(message.contains("squint"), "{telescope}: {message}");
+        sm.predict(&list).expect("default beam: predicted");
         sm.set_vp(&VoltagePatternSpec {
             do_squint: false,
             ..VoltagePatternSpec::default()

@@ -2,8 +2,9 @@
 //! CASA's default primary beams, as `PBMath` gives them by telescope name
 //! and frequency, and their radial power patterns.
 //!
-//! CASA gives the VLA's and the EVLA's patterns a beam squint, which moves
-//! the RR and LL beams apart. It reaches only an image with RR and LL
+//! CASA's VLA patterns can move the RR and LL beams apart. Its EVLA
+//! implementation currently leaves them unsquinted. Squint reaches an image
+//! with RR and LL
 //! planes: a Stokes I image is one plane, and CASA applies the unsquinted
 //! pattern to it (measured on CASA 6.7.6: RR and LL agree, whatever the
 //! offset's direction). These patterns are unsquinted.
@@ -11,6 +12,7 @@
 use crate::{AnnularApertureVoltageTable, EvlaPowerPattern, VlaBand};
 
 mod gaussian;
+mod squint;
 use gaussian::GaussianVoltageTable;
 
 /// A primary-beam voltage pattern of CASA's.
@@ -112,12 +114,12 @@ impl PrimaryBeam {
         }
     }
 
-    /// Whether CASA gives this pattern a beam squint: the VLA's and the
-    /// EVLA's (`PBMath1D` with `squint_p` set), which moves the RR and LL
-    /// beams apart for a component.
+    /// Whether CASA applies squint to this pattern. Its VLA band profiles
+    /// can move RR/LL apart; the NVSS and EVLA implementations stay
+    /// unsquinted, including when the caller requests `dosquint=True`.
     #[must_use]
     pub fn squints(self) -> bool {
-        self == Self::VLA || self == Self::VLA_NVSS || self == Self::Evla
+        self == Self::VLA
     }
 
     /// The radius the pattern is tabulated to, in arcmin times GHz
