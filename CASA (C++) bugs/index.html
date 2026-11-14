@@ -5374,6 +5374,12 @@ CASA AW control uses the eight in-band frequencies. The three
 weightings pass all 51 dirty and clean products and 144 beams, with
 exact masks and controller counts. Maximum product normalized RMS is
 9.32e-7 and MODEL_DATA normalized RMS is 1.32e-6 (#1121).</p>
+<p>The BARY-to-tracked-BARY cubic case uses the same BARY data and
+50.01 MHz width. Each buffer again places eight LSRK samples inside the
+image after two lower halo samples. The matching-cache AW replay agrees
+for natural, Briggs and uniform weighting across 51 products and 144
+beams, with exact masks and controller counts. The largest normalized
+RMS values are 9.62e-7 for products and 1.08e-6 for MODEL_DATA (#1121).</p>
 <h2 id="aw-pointing-can-read-an-uninitialized-frame-on-an-ephemeris-field">AW pointing can read an uninitialized frame on an ephemeris field<a class="headerlink" href="#aw-pointing-can-read-an-uninitialized-frame-on-an-ephemeris-field" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14's <code>PointingOffsets</code> owns a default-constructed
 <code>VisBufferUtil</code>. With <code>usepointing=False</code>, its first field direction
