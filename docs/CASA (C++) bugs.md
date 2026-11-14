@@ -4518,6 +4518,17 @@ weighted dirty and clean pairs agree across 51 products and 132 beams
 with exact masks and controller counts. The largest normalized RMS is
 8.80e-7 for products and 8.98e-7 for MODEL_DATA (#1121).
 
+For TOPO input on a tracked BARY axis, CASA refuses a 50 MHz output
+width because the selected native width converts to 50.0024 MHz. At
+50.01 MHz, all six buffers have two cubic halo samples before the
+eight in-band LSRK frequencies. CASA AW nearest with those in-band
+samples and the original cache reproduces the dirty and clean
+natural-weighted products. The reported BARY WCS comes from direct
+CASA, and the clean control predicts on the original channels before
+resampling the residual. All 17 products and 48 beam comparisons pass,
+with exact masks and controller counts. Maximum normalized RMS is
+9.72e-7 for products and 9.26e-7 for MODEL_DATA (#1121).
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed
