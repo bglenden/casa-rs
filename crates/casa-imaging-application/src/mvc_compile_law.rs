@@ -810,6 +810,7 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
         taylor_problem: &taylor,
         taylor_model: &taylor_model,
         mean_pb: &mean_pb,
+        saved_pb: None,
         expansion_reference_hz: view.expansion_reference_hz,
         controls,
         centres: None,

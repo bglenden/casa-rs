@@ -81,7 +81,11 @@ impl Run<'_> {
     /// is one (its residual) and from an empty model otherwise; it writes
     /// visibilities when it is also final. A run that reads its PSF or
     /// residual forms what it does not read ([`super::continuation`]).
-    pub(super) fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
+    pub(super) fn initial(&mut self, last: bool, mvc_start: bool) -> Result<Major, ImagingError> {
+        if mvc_start {
+            self.measure_row_work()?;
+            return self.psf_pass();
+        }
         match (self.forms.psf, self.forms.residual) {
             (true, true) => {}
             (true, false) => {
