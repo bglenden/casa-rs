@@ -94,7 +94,7 @@ fn aw_mtmfs_restores_normalized_residuals_with_a_standard_psf() {
     assert!(error.contains("aw.residual.tt1"), "{error}");
     fs::rename(withheld, residual_path).unwrap();
 
-    let (summary, restored) = observation.image("aw", controls);
+    let (summary, restored) = observation.image("aw", controls.clone());
     assert_eq!(summary.minor_iterations, 0);
     assert_eq!(summary.major_cycles, 0);
     for (suffix, path, bytes) in &saved {
@@ -121,6 +121,60 @@ fn aw_mtmfs_restores_normalized_residuals_with_a_standard_psf() {
         assert_eq!(
             restored.get(&format!(".model.tt{term}")).pixels[[x, y]],
             flux
+        );
+    }
+}
+
+/// CASA's lattice maximum for alpha uses the active default mask regardless
+/// of name. Its image store copies only mask0 to the restored image.
+#[test]
+fn aw_saved_taylor_alpha_uses_a_user_named_default_residual_mask() {
+    let (observation, mut controls) = two_term_aw_restart();
+    let (_, dirty) = observation.image("aw", controls.clone());
+    let residual_path = observation.scratch("aw.residual.tt0");
+    let mut residual = PagedImage::<f32>::open(residual_path).unwrap();
+    let mut mask = dirty.get(".residual.tt0").mask().unwrap();
+    let image0 = &dirty.get(".image.tt0").pixels;
+    let brightest = image0
+        .indexed_iter()
+        .filter(|&((x, y), _)| mask[[x, y, 0, 0]])
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .unwrap();
+    let ((x, y), &maximum) = brightest;
+    assert!(maximum > 0.0);
+    mask[[x, y, 0, 0]] = false;
+    let next = image0
+        .indexed_iter()
+        .filter(|&((x, y), _)| mask[[x, y, 0, 0]])
+        .map(|(_, &value)| value)
+        .reduce(f32::max)
+        .unwrap();
+    assert!(maximum > next && next > 0.0);
+    residual
+        .put_mask_slice("user_mask", &mask, &[0; 4])
+        .unwrap();
+    residual.set_default_mask("user_mask").unwrap();
+    residual.save().unwrap();
+
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    let (_, restored) = observation.image("aw", controls);
+    assert!(restored.get(".image.tt0").mask().is_none());
+    let alpha_mask = restored.get(".alpha").mask().unwrap();
+    assert!(alpha_mask[[x, y, 0, 0]]);
+    let between_thresholds = image0
+        .indexed_iter()
+        .filter(|&(_, &value)| value > next * 0.1 + 2e-6 && value < maximum * 0.1 - 2e-6)
+        .map(|((x, y), _)| [x, y, 0, 0])
+        .collect::<Vec<_>>();
+    assert!(
+        !between_thresholds.is_empty(),
+        "the fixture must distinguish the cutoffs"
+    );
+    for index in between_thresholds {
+        assert!(
+            alpha_mask[index],
+            "alpha must use the named residual mask for the peak"
         );
     }
 }

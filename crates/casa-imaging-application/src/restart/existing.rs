@@ -104,7 +104,7 @@ impl ExistingProducts {
                 }
                 if base == "residual"
                     && let Some(bytes) = &mut taylor_mask_read_bytes
-                    && image.default_mask_name().as_deref() == Some("mask0")
+                    && image.default_mask_name().is_some()
                 {
                     let backing = image.mask_slice_working_bytes().map_err(|error| {
                         PrepareError::Restart {

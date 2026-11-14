@@ -642,7 +642,7 @@ impl<'a> SolvedFamily<'a> {
                 // in SIImageStoreMultiTerm::calculateAlphaBeta. The alpha
                 // support itself comes from the restored intensity.
                 let peak_mask = if planned.saved_taylor_mask_read_bytes.is_some() {
-                    output.saved_taylor_residual_mask(domain_role, 0)?
+                    output.saved_taylor_residual_mask(domain_role, 0, false)?
                 } else {
                     None
                 };

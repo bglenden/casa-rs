@@ -356,11 +356,13 @@ impl CasaImageWriter {
         Ok(())
     }
 
-    /// Read the residual term's CASA-generated pixel mask for restoration.
+    /// Read the default residual mask. Image restoration only propagates
+    /// CASA's generated mask0. The spectral-index cutoff uses any default.
     pub(crate) fn saved_taylor_residual_mask(
         &self,
         domain: &ImageDomainRole,
         term: usize,
+        restoring_image: bool,
     ) -> Result<Option<Vec<bool>>, ProductsError> {
         let mut name = self.output(domain).base.clone().into_os_string();
         name.push(format!(".residual.tt{term}"));
@@ -371,7 +373,7 @@ impl CasaImageWriter {
         };
         let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
         // SIImageStore::copyMask propagates only the generated mask0.
-        if image.default_mask_name().as_deref() != Some("mask0") {
+        if restoring_image && image.default_mask_name().as_deref() != Some("mask0") {
             return Ok(None);
         }
         let mask = image

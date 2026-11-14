@@ -551,7 +551,7 @@ fn produce_taylor_members(
             ProductRole::RestoredImage(ProductTerm::Taylor(term))
                 if planned.saved_taylor_mask_read_bytes.is_some() =>
             {
-                Some(output.saved_taylor_residual_mask(member.axes().domain(), term)?)
+                Some(output.saved_taylor_residual_mask(member.axes().domain(), term, true)?)
             }
             _ => None,
         };
