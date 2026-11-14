@@ -106,6 +106,22 @@ impl Input {
         self.0.images_bytes(channels)
     }
 
+    /// Charge for reading and keeping the saved residual's pixel mask.
+    #[must_use]
+    pub fn residual_mask_bytes(&self) -> Option<u64> {
+        self.0.saved_residual_mask_bytes()
+    }
+
+    /// Read the saved single-plane residual mask through the production reader.
+    ///
+    /// # Errors
+    /// The residual or its mask cannot be opened.
+    pub fn residual_mask(
+        &self,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, casa_images::ImageError> {
+        self.0.residual_mask()
+    }
+
     /// Read `channels` as the production reader does.
     ///
     /// # Errors

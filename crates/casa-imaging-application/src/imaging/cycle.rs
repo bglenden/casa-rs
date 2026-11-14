@@ -549,7 +549,7 @@ fn minor_setup<'a>(
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: controls.hogbom_iteration_accounting(),
         response,
-        saved_taylor_residual: false,
+        saved_weighted_residual: false,
         nsigma: controls.noise_sigma().unwrap_or(0.0),
         noise: controls.noise_estimate(),
         automask: matches!(
@@ -850,8 +850,7 @@ impl<'a> Run<'a> {
                 && self
                     .existing
                     .as_ref()
-                    .and_then(ExistingProducts::taylor_mask_read_bytes)
-                    .is_some()
+                    .is_some_and(ExistingProducts::residual_in_image_units)
         });
         let seeding = saved_seed.map_or(0, |_| self.seeding_bytes());
         let Admitted {

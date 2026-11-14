@@ -121,8 +121,8 @@ pub struct MinorCycleSetup<'a> {
     /// CASA's flat-noise or flat-sky residual units, for a direction-dependent
     /// response (mosaic, A-projection).
     pub response: Option<MinorCycleImageResponse>,
-    /// Whether the current Taylor residual was read in its saved image units.
-    pub saved_taylor_residual: bool,
+    /// Whether the current weighted residual was read in its saved image units.
+    pub saved_weighted_residual: bool,
     /// The `nsigma` multiplier; zero when off.
     pub nsigma: f64,
     /// How the `nsigma` threshold's noise is estimated (`fastnoise`).
@@ -223,6 +223,7 @@ pub struct PreparedMinorCycle {
     blank: Vec<(PlaneKey, PlaneStatistics)>,
     /// A single plane's load, kept for its solve ([`Self::retained_bytes`]).
     retained: Option<RetainedPlane>,
+    residual_mask: Option<Support>,
     /// The measurements of every plane and field, for the controller.
     pub statistics: ResidualStatistics,
 }
@@ -381,6 +382,7 @@ pub fn run_minor_cycle(
         planes,
         mut blank,
         retained,
+        residual_mask,
         ..
     } = prepared;
     let normal = completion.normal_state();
@@ -390,6 +392,7 @@ pub fn run_minor_cycle(
         masks: &masks,
         setup,
         taylor: is_taylor(normal),
+        residual_mask: residual_mask.as_ref(),
     };
     let admission = (host, policy);
     let fft_threads = scale_fft_threads(planes.len(), team.workers());
@@ -703,6 +706,7 @@ struct Inputs<'a> {
     setup: &'a MinorCycleSetup<'a>,
     /// Whether the normal state holds Taylor families.
     taylor: bool,
+    residual_mask: Option<&'a Support>,
 }
 
 /// A direction-dependent response bound to one plane's weights: what turns
@@ -780,6 +784,7 @@ fn load<'a>(
         masks,
         setup,
         taylor,
+        ..
     } = *inputs;
     let shape = plane_shape(normal, key);
     if !holds_data(normal, taylor, key) {
@@ -876,6 +881,9 @@ fn single_residual<'a>(
     let residual = raw
         .enumerate()
         .map(|(index, value)| {
+            if setup.saved_weighted_residual {
+                return Ok(value);
+            }
             bound.normalize_weighted_residual_sample(
                 value,
                 index,
@@ -957,7 +965,7 @@ fn read_taylor(
             term.iter()
                 .enumerate()
                 .map(|(index, value)| {
-                    if setup.saved_taylor_residual {
+                    if setup.saved_weighted_residual {
                         return Ok(value.re);
                     }
                     bound.normalize_weighted_residual_sample(
@@ -1020,7 +1028,7 @@ fn taylor_principal_residual(
         .iter()
         .enumerate()
         .map(|(index, value)| {
-            if setup.saved_taylor_residual {
+            if setup.saved_weighted_residual {
                 return Ok(value.re);
             }
             bound.normalize_weighted_residual_sample(
@@ -1158,6 +1166,9 @@ fn solve(
     // it skipped.
     let end_residual = std::mem::take(&mut outcome.end_residual);
     let peak_no_mask = match end_residual.first() {
+        Some(residual) if let Some(mask) = inputs.residual_mask.filter(|_| !inputs.taylor) => {
+            peak_magnitude(residual, mask)
+        }
         Some(residual) if setup.residual_pixel_mask => {
             let pixels = plane_pixels(inputs, key, &plane)?;
             peak_magnitude(residual, pixels.residual_mask(true))

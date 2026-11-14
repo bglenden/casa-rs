@@ -75,6 +75,27 @@ fn produce_plane_members(
     };
     let restoring_beams = restoring_beams(inputs, &fitted_beams)?;
     for member in &planned.members {
+        let saved_mask = match member.role {
+            ProductRole::RestoredImage(ProductTerm::Single)
+                if planned.saved_residual_mask_read_bytes.is_some() =>
+            {
+                Some(output.saved_residual_mask(
+                    member.axes().domain(),
+                    ProductTerm::Single,
+                    true,
+                )?)
+            }
+            ProductRole::Residual(ProductTerm::Single)
+                if planned.saved_residual_mask_read_bytes.is_some() =>
+            {
+                Some(output.saved_residual_mask(
+                    member.axes().domain(),
+                    ProductTerm::Single,
+                    false,
+                )?)
+            }
+            _ => None,
+        };
         let windows = MemberWindows::new(
             planned,
             member,
@@ -88,9 +109,13 @@ fn produce_plane_members(
             windows.layout,
             &planned.beams_for_member(member, &fitted_beams, &restoring_beams),
             planned.uses_weight_image,
-            None,
+            saved_mask.as_ref().map(Option::is_some),
         )?;
-        windows.write(ProductMemberWriter::new(windows.layout, image), execution)?;
+        windows.write(
+            ProductMemberWriter::new(windows.layout, image),
+            execution,
+            saved_mask.as_ref().map(|mask| mask.as_deref()),
+        )?;
     }
     Ok(planned.published(fitted_beams, restoring_beams))
 }
@@ -279,6 +304,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         &self,
         mut writer: ProductMemberWriter<'_>,
         execution: &impl ProductWindowExecutor,
+        saved_mask: Option<Option<&[bool]>>,
     ) -> Result<(), ProductsError> {
         let channels = self.inputs.normal_state().channel_count();
         let window_channels = self.layout.maximum_channels();
@@ -289,7 +315,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 .collect();
             execution.prepare(&mut slots, &|index| {
                 let start = (wave_start + index) * window_channels;
-                self.window(start..(start + window_channels).min(channels))
+                self.window(start..(start + window_channels).min(channels), saved_mask)
             })?;
             for slot in slots {
                 writer.write(slot.expect("the executor fills every slot"))?;
@@ -299,7 +325,11 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
     }
 
     /// One window: every polarization plane of its channels.
-    fn window(&self, channels: Range<usize>) -> Result<ProductWindow, ProductsError> {
+    fn window(
+        &self,
+        channels: Range<usize>,
+        saved_mask: Option<Option<&[bool]>>,
+    ) -> Result<ProductWindow, ProductsError> {
         let mut window = self.layout.window(channels.clone())?;
         let reconstruction_only = matches!(
             self.member.role,
@@ -319,7 +349,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                         &plane,
                     );
                 } else {
-                    self.normal_plane(&mut window, channel, polarization, local)?;
+                    self.normal_plane(&mut window, (channel, polarization, local), saved_mask)?;
                 }
             }
         }
@@ -367,7 +397,9 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             polarization,
             self.plane_shape,
         )?;
-        if self.planned.primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+        if self.planned.primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+            || self.planned.preserves_saved_residual
+        {
             return Ok(model);
         }
         let plane =
@@ -389,9 +421,8 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
     fn normal_plane(
         &self,
         window: &mut ProductWindow,
-        channel: usize,
-        polarization: usize,
-        local_channel: usize,
+        (channel, polarization, local_channel): (usize, usize, usize),
+        saved_mask: Option<Option<&[bool]>>,
     ) -> Result<(), ProductsError> {
         let plane =
             self.inputs
@@ -430,6 +461,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             domain_ordinal: self.domain_ordinal,
             polarization,
             reuses_single_psf: self.planned.reuses_single_psf,
+            saved_weighted_residual: self.planned.preserves_saved_residual,
             fitted_beam: self.fitted_beams.get(beam_index).copied().flatten(),
             restoring_beam: self.restoring_beams.get(beam_index).copied().flatten(),
             primary_beam_model: self.planned.primary_beam_model,
@@ -466,8 +498,14 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         if self.member.validity != ProductValidityRule::All {
             zero_invalid_plane_values(&mut values, &validity(self.member.validity)?);
         }
-        if let ProductPixelMask::Explicit(rule) = self.member.storage.pixel_mask() {
-            let support = validity(rule)?;
+        let support = match (saved_mask, self.member.storage.pixel_mask()) {
+            (Some(mask), _) => mask.map(std::borrow::Cow::Borrowed),
+            (None, ProductPixelMask::Explicit(rule)) => {
+                Some(std::borrow::Cow::Owned(validity(rule)?))
+            }
+            (None, ProductPixelMask::Absent) => None,
+        };
+        if let Some(support) = support {
             self.scatter(
                 &mut window.validity,
                 &window.shape,
@@ -554,9 +592,13 @@ fn produce_taylor_members(
         }
         let saved_residual_mask = match member.role {
             ProductRole::RestoredImage(ProductTerm::Taylor(term))
-                if planned.saved_taylor_mask_read_bytes.is_some() =>
+                if planned.saved_residual_mask_read_bytes.is_some() =>
             {
-                Some(output.saved_taylor_residual_mask(member.axes().domain(), term, true)?)
+                Some(output.saved_residual_mask(
+                    member.axes().domain(),
+                    ProductTerm::Taylor(term),
+                    true,
+                )?)
             }
             _ => None,
         };

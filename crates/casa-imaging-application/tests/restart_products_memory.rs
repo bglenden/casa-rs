@@ -142,8 +142,8 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_keeps_the_psf() {
         );
         assert!(held <= holding, "images held {held}, charged {holding}");
 
-        // The PSF stays in image units. The residual is scaled by sumwt
-        // to recover the gridded units of the normal state.
+        // The PSF stays in image units. A scalar residual is scaled by
+        // sumwt. A weighted residual stays in its saved image units.
         assert_eq!(images.channels, 2..2 + window);
         assert_eq!(images.weight.is_some(), mosaic);
         let cells = SIDE * SIDE;
@@ -161,7 +161,8 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_keeps_the_psf() {
                     psf(&at),
                     "PSF at {at:?}"
                 );
-                let residual_value = images.residual[index] / weight as f32;
+                let residual_value =
+                    images.residual[index] / if mosaic { 1.0 } else { weight as f32 };
                 assert!(
                     (residual_value - residual(&at)).abs() <= 1e-6 * residual(&at).abs().max(1.0),
                     "residual at {at:?}"
@@ -407,4 +408,39 @@ fn a_saved_residual_beam_grid_fits_its_reading_and_resident_charges() {
     assert!((beam.major_fwhm_rad() - (1e-5 + (PLANES - 1) as f64 * 1e-10) / 1e-5).abs() < 1e-12);
     assert_eq!(beam.minor_fwhm_rad(), 0.5);
     assert!((beam.position_angle_rad() - 0.1).abs() < 1e-12);
+}
+
+#[test]
+fn a_saved_mosaic_residual_pixel_mask_fits_its_charge() {
+    let root = tempfile::tempdir().unwrap();
+    let prefix = root.path().join("earlier");
+    let shape = [SIDE, SIDE, 1, 1];
+    for suffix in ["psf", "weight", "pb", "residual"] {
+        write(&prefix.with_extension(suffix), &shape, |_| 1.0);
+    }
+    write(&prefix.with_extension("sumwt"), &[1; 4], |_| 9.0);
+    let path = prefix.with_extension("residual");
+    let mut image = PagedImage::<f32>::open(&path).unwrap();
+    let mask = ArrayD::from_shape_fn(IxDyn(&shape), |index| index[0] > 2 * index[1]);
+    image.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    image.set_default_mask("mask0").unwrap();
+    image.save().unwrap();
+    drop(image);
+
+    let input = Input::open(&prefix, None, ([SIDE, SIDE], 1, 1), (true, true)).unwrap();
+    let admission = input.residual_mask_bytes().unwrap();
+    PEAK.store(0, Ordering::Relaxed);
+    let baseline = LIVE.load(Ordering::Relaxed);
+    BASELINE.store(baseline, Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    let saved = input.residual_mask().unwrap().unwrap();
+    MEASURING.store(false, Ordering::Relaxed);
+    let peak = PEAK.load(Ordering::Relaxed);
+    let held = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
+    eprintln!("saved mosaic residual mask: peak {peak}/{admission}, retained {held}");
+    assert!(peak <= admission, "peak {peak}, admission {admission}");
+    assert!(held <= (SIDE * SIDE) as u64);
+    for (index, value) in mask.iter().enumerate() {
+        assert_eq!(saved.contains(index), *value);
+    }
 }

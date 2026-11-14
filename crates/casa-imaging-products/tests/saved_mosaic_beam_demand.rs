@@ -60,7 +60,8 @@ fn taylor_restoration_charges_one_saved_residual_mask_at_publication() {
     let output = ImageOutput::for_problem(&problem);
     let storage = ProductStoragePlan::new(1, 8).unwrap();
     let demand = |read_bytes| {
-        let controls = ContinuumProductControls::default().preserving_taylor_residuals(read_bytes);
+        let controls =
+            ContinuumProductControls::default().preserving_weighted_residuals(read_bytes);
         let plan = PlannedContinuumGeneration::for_problem(&problem, &controls).unwrap();
         plan.planned_demand(&problem, storage, &output).unwrap()
     };
@@ -77,4 +78,33 @@ fn taylor_restoration_charges_one_saved_residual_mask_at_publication() {
         larger.algorithm_scratch_bytes() - smaller.algorithm_scratch_bytes(),
         growth
     );
+}
+
+#[test]
+fn refreshing_a_mosaic_residual_admits_its_kept_mask() {
+    let problem = continuum_problem_with_reconstruction(
+        97,
+        &[
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+        ],
+        RestoringBeamPolicy::PerPlane,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+    );
+    let output = ImageOutput::for_problem(&problem);
+    let storage = ProductStoragePlan::new(1, 1).unwrap();
+    let scratch = |read_bytes| {
+        let controls = ContinuumProductControls::default().with_saved_residual_mask(read_bytes);
+        let plan = PlannedContinuumGeneration::for_problem(&problem, &controls).unwrap();
+        assert_eq!(plan.members().len(), 3);
+        plan.planned_demand(&problem, storage, &output)
+            .unwrap()
+            .algorithm_scratch_bytes()
+    };
+    let growth = 701_000;
+    assert_eq!(scratch(growth) - scratch(0), growth);
 }

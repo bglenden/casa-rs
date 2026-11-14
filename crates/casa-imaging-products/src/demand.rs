@@ -271,7 +271,7 @@ impl PlannedContinuumGeneration {
             let building = checked_add(
                 stages.building,
                 self.saved_mosaic_beam_read_bytes
-                    .max(self.saved_taylor_mask_read_bytes.unwrap_or(0)),
+                    .max(self.saved_residual_mask_read_bytes.unwrap_or(0)),
                 "Taylor saved image mask",
             )?;
             let publishing = [
@@ -280,7 +280,7 @@ impl PlannedContinuumGeneration {
                 bounds.window_payload,
                 bounds.window_validity,
                 writer_bytes,
-                self.saved_taylor_mask_read_bytes.unwrap_or(0),
+                self.saved_residual_mask_read_bytes.unwrap_or(0),
             ]
             .into_iter()
             .try_fold(stages.retained, |sum, bytes| {
@@ -383,14 +383,15 @@ impl PlannedContinuumGeneration {
             checked_add(
                 bytes,
                 self.saved_mosaic_beam_read_bytes
-                    .max(self.saved_taylor_mask_read_bytes.unwrap_or(0)),
+                    .max(self.saved_residual_mask_read_bytes.unwrap_or(0)),
                 "saved Taylor product",
             )?
         } else {
             checked_add(
                 bytes,
-                self.saved_mosaic_beam_read_bytes,
-                "saved primary beam",
+                self.saved_mosaic_beam_read_bytes
+                    .max(self.saved_residual_mask_read_bytes.unwrap_or(0)),
+                "saved primary beam or residual mask",
             )?
         };
         bytes = checked_add(

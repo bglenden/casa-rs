@@ -42,7 +42,8 @@ pub struct ContinuumProductControls {
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     saved_mosaic_beam_read_bytes: Option<u64>,
     saved_higher_primary_beam: bool,
-    saved_taylor_mask_read_bytes: Option<u64>,
+    saved_residual_mask_read_bytes: Option<u64>,
+    preserves_saved_residual: bool,
 }
 
 impl ContinuumProductControls {
@@ -83,12 +84,20 @@ impl ContinuumProductControls {
         self
     }
 
-    /// Restore from Taylor residuals that were read in their published
-    /// units. Leave their saved pixels and metadata in place. Charge
-    /// `mask_read_bytes` to copy one residual mask to its restored image.
+    /// Restore from weighted residuals read in their published units.
+    /// Leave the saved residuals in place. Charge `mask_read_bytes` for
+    /// copying a residual's pixel mask to its restored image.
     #[must_use]
-    pub const fn preserving_taylor_residuals(mut self, mask_read_bytes: u64) -> Self {
-        self.saved_taylor_mask_read_bytes = Some(mask_read_bytes);
+    pub const fn preserving_weighted_residuals(mut self, mask_read_bytes: u64) -> Self {
+        self.preserves_saved_residual = true;
+        self.with_saved_residual_mask(mask_read_bytes)
+    }
+
+    /// Use the existing single-term residual pixel mask when publishing a
+    /// refreshed residual and its restored image.
+    #[must_use]
+    pub const fn with_saved_residual_mask(mut self, mask_read_bytes: u64) -> Self {
+        self.saved_residual_mask_read_bytes = Some(mask_read_bytes);
         self
     }
 
@@ -162,7 +171,8 @@ impl Default for ContinuumProductControls {
             primary_beam_model: None,
             saved_mosaic_beam_read_bytes: None,
             saved_higher_primary_beam: false,
-            saved_taylor_mask_read_bytes: None,
+            saved_residual_mask_read_bytes: None,
+            preserves_saved_residual: false,
         }
     }
 }
@@ -196,7 +206,8 @@ pub struct PlannedContinuumGeneration {
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     pub(crate) uses_weight_image: bool,
     pub(crate) saved_mosaic_beam_read_bytes: u64,
-    pub(crate) saved_taylor_mask_read_bytes: Option<u64>,
+    pub(crate) saved_residual_mask_read_bytes: Option<u64>,
+    pub(crate) preserves_saved_residual: bool,
     pub(crate) members: Box<[PlannedMember]>,
 }
 
@@ -247,8 +258,7 @@ impl PlannedContinuumGeneration {
             {
                 continue;
             }
-            if controls.saved_taylor_mask_read_bytes.is_some()
-                && matches!(entry.role(), ProductRole::Residual(ProductTerm::Taylor(_)))
+            if controls.preserves_saved_residual && matches!(entry.role(), ProductRole::Residual(_))
             {
                 continue;
             }
@@ -296,7 +306,8 @@ impl PlannedContinuumGeneration {
                 ),
             primary_beam_model: controls.primary_beam_model(),
             saved_mosaic_beam_read_bytes: controls.saved_mosaic_beam_read_bytes.unwrap_or(0),
-            saved_taylor_mask_read_bytes: controls.saved_taylor_mask_read_bytes,
+            saved_residual_mask_read_bytes: controls.saved_residual_mask_read_bytes,
+            preserves_saved_residual: controls.preserves_saved_residual,
             uses_weight_image: list
                 .entries()
                 .iter()
