@@ -29,6 +29,7 @@
     "skymodel-fixture",
     "model-overrides-20261111",
     "main-integration-20261111",
+    "interferometric-projects-20261114",
     "project-lifecycle-20261114"
    ],
    "behaviors": [
@@ -42,7 +43,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -57,7 +59,8 @@
     "parity-20261103",
     "skymodel-fixture",
     "model-overrides-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -72,7 +75,8 @@
     "parity-20261103",
     "skymodel-fixture",
     "model-overrides-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -85,7 +89,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -98,7 +103,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -113,7 +119,8 @@
     "parity-20261103",
     "skymodel-fixture",
     "model-overrides-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -348,7 +355,8 @@
     "task-tests",
     "parity-20261103",
     "uvw-long-baselines-20261112",
-    "array-configuration-controls"
+    "array-configuration-controls",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "antennas"
@@ -382,7 +390,7 @@
   },
   "outframe": {
    "status": "Implemented",
-   "scope": "The spectral frame written. LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB have scoped CASA task comparisons; REST and Undefined and combinations with other observation modes remain unverified.",
+   "scope": "The spectral frame written. LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB have scoped CASA task comparisons. Interferometric REST image prediction is supported; Undefined image/component predictions and REST component or joint predictions report CASA simulator failure before publishing an unpredicted MS, correcting the task's ignored predict=False outcome. Frame combinations with other observation modes are outside these receipts.",
    "evidence": [
     "signature",
     "task-tests",
@@ -390,6 +398,7 @@
     "frequency-frames-20261106",
     "additional-frames-20261111",
     "main-integration-20261111",
+    "interferometric-projects-20261114",
     "project-lifecycle-20261114"
    ],
    "behaviors": [
@@ -405,6 +414,7 @@
     "parity-20261103",
     "casa-suite-20261103",
     "noise-seeds-20261103",
+    "interferometric-projects-20261114",
     "project-lifecycle-20261114"
    ],
    "behaviors": [
@@ -419,7 +429,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "noise-seeds-20261103"
+    "noise-seeds-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -431,7 +442,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -443,7 +455,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -457,7 +470,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "noise-seeds-20261103"
+    "noise-seeds-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -484,6 +498,7 @@
     "signature",
     "task-tests",
     "parity-20261103",
+    "interferometric-projects-20261114",
     "project-lifecycle-20261114"
    ],
    "behaviors": [
@@ -548,12 +563,13 @@
    "title": "Sky model and component list",
    "status": "Partial",
    "scope": "skymodel through modifymodel and flatimage with inbright, indirection, incell, incenter and inwidth; complist with compwidth and comp_nchan, alone or with a sky model.",
-   "gap": "Paired task evidence now covers scalar indirection and incell overrides, separately and together, and a four-channel component-only model. Additional combinations (such as overrides with combined image/component input and multi-channel image models) remain outside this receipt; the behavior remains Partial.",
+   "gap": "Scoped CASA task evidence covers scalar indirection and incell overrides separately and together, four-channel component-only models, combined image/component inputs with brightness/cell/direction/frequency overrides, and a polarized four-Stokes, four-channel image with components. The receipts cover these representative workflows, not an exhaustive Cartesian product of inputs.",
    "evidence": [
     "task-tests",
     "parity-20261103",
     "model-overrides-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ]
   },
   {
@@ -602,7 +618,7 @@
    "title": "Observation and prediction",
    "status": "Partial",
    "scope": "obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.",
-   "gap": "Earlier image-model prediction receipts cover LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. Stateful project controls now cover continuation of REST image and BARY MeasurementSets, an ignored Undefined output-frame request, single-dish continuation, manual/atmospheric noise and CASA's ignored leakage in obsmode=\"\". These controls preserve the original MS spectral frame; they do not claim additional new-prediction frame combinations.",
+   "gap": "Image-model interferometry has scoped CASA comparisons for LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. REST image prediction succeeds; Undefined image/component predictions and REST component or joint predictions resolve to documented failures before native MS publication. Stateful controls also cover continuation of REST image and BARY MeasurementSets, an ignored Undefined output-frame request, single-dish continuation, manual/atmospheric noise and ignored leakage with prediction disabled; original MS spectral frames are preserved. These are scoped workflows rather than an exhaustive Cartesian product of inputs.",
    "evidence": [
     "task-tests",
     "parity-20261103",
@@ -610,6 +626,7 @@
     "additional-frames-20261111",
     "main-integration-20261111",
     "uvw-long-baselines-20261112",
+    "interferometric-projects-20261114",
     "project-lifecycle-20261114"
    ]
   },
@@ -754,6 +771,19 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
+  },
+  {
+   "id": "report-failed-frequency-predictions",
+   "inputs": "Interferometric simobserve with Undefined output frames, or REST frames and component inputs/calibrators.",
+   "casa": "The simulator rejects frequency conversion with predict=False; simobserve ignores it, succeeds and publishes zero unpredicted DATA.",
+   "ours": "Report the simulator failure cause before close publishes an unpredicted MS; preserve prepared model/pointing products and support valid REST image prediction.",
+   "rationale": "A rejected prediction cannot produce a valid simulated science dataset. Do not hide the failure behind a successful zero-MS task result.",
+   "impact": "Scripts now receive the calculation error instead of silently continuing with invalid DATA. Valid other frame/model combinations are unchanged.",
+   "evidence": [
+    "interferometric-projects-20261114"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: where CASA loses/corrupts data or contradicts its evident intent, casa-rs corrects it. This applies that existing policy to ignored predict=False outcomes."
   }
  ],
  "evidence": {
@@ -1051,6 +1081,23 @@
    "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --only schedule_ot_file schedule_untimed_file schedule_alma_nyquist schedule_cycle0_pb schedule_list_components schedule_calibrator_file schedule_calibrator_partial schedule_calibrator_components schedule_sd_calibrator_ignored",
    "receipt": "resources/casa-compat/evidence/simobserve-schedules-20261114.json",
    "source_revision": "cc592d3ad005e5255084179fd57f8109fe56a64c"
+  },
+  "interferometric-projects-20261114": {
+   "kind": "CASA-paired interferometric projects and simulator refusal controls",
+   "state": "passed",
+   "scope": "SIM-21 remaining REST/Undefined image/component/joint outcomes, VLA/ALMA sky overrides, polarized joint prediction, manual/atmospheric noise with leakage and environment settings.",
+   "result": "8/8 agree: four successful projects (eight native MS C++ readbacks) and four corrected failed-prediction outcomes. Model DATA NRMS <=3.06e-4 under 1e-3; leakage and noise gates pass, KS p 0.18/0.31. Products, images, pointings, scans, source/field/spectral metadata pass; numerical quick-PSF regressions retained.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/compare_sm_ms.py",
+    "crates/casa-simulation/src/simobserve/observe.rs",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "64b576b487c48236a4c14977a844352e8a40e15a",
+   "source_revision": "35f6705616f5aef85e53ae879e413b86959b0005",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --atmosphere-model TARGET/debug/examples/at_tool_quantities --only if_image_rest if_image_undefined if_components_rest if_components_undefined if_joint_manual if_joint_polarized if_joint_atmosphere if_joint_rest",
+   "receipt": "resources/casa-compat/evidence/simobserve-interferometric-20261114.json"
   },
   "project-lifecycle-20261114": {
    "kind": "CASA-paired stateful simulation project scenarios",

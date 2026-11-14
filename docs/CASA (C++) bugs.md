@@ -1329,6 +1329,14 @@ rows by dividing selected correlations by that original unit-phase factor.
 No scientific tolerance changes; the remaining documented LSRK-label error
 is below the existing 1e-3 threshold in these controls.
 
+The interferometric `simobserve` control `if_joint_polarized` also exercises
+this defect in circular products and the joint-sum defect described below.
+It keeps the raw project, predicts its image and component separately with
+CASA, removes the component's extra original unit-phase factor, and adds
+the independent terms. The component is a single constant-spectrum source;
+the reference asserts that domain rather than applying one phase to an
+arbitrary component list.
+
 ## An uncovered first mosaic image suppresses a valid model
 
 CASA 6.7.6.14 accepts `sm.predict(imagename=[outside, inside])` but produces
@@ -2901,6 +2909,30 @@ reruns the same CASA task with its final queued `observemany` flushed when
 schedule and writes the scans. The calibrator component-list comparison
 allows only the already documented `cl.addcomponent` float32 rounding of
 flux; direction and frequency tolerances stay unchanged.
+
+## simobserve ignores failed frequency-frame predictions
+
+- Date noted: 2026-11-14
+- Status: CASA error-propagation defect; casa-rs corrects it under the standing deviation policy (#1301).
+- Affected code: `casatasks/src/private/task_simobserve.py`, the unchecked `sm.predict` calls.
+
+With `outframe='Undefined'`, CASA 6.7.6.14's simulator returns False and
+logs `Transformations to/from frame "Undefined" are not possible.` For a
+component prediction in `outframe='REST'`, it returns False and logs
+`No MeasFrame specified for conversion of Frequency`: the task supplies no
+radial-velocity frame. The task ignores both failures, reports success and
+publishes an entirely unpredicted zero-DATA MeasurementSet. Image-only REST
+prediction succeeds and is retained.
+
+casa-rs reports the same prediction cause before publishing the invalid MS.
+The project can retain the model and pointing products prepared before the
+failure. This prevents apparent successful science from a rejected calculation.
+The `if_*_undefined` and `if_components_rest` controls retain CASA's raw task
+projects, require all raw DATA to be zero, independently verify False from
+CASA's simulator, and require the native error and matching pre-prediction
+products with no native MS. This is a corrected failure outcome, not a claim
+that CASA's task itself raises that error.
+
 
 ## simobserve leaves `<stem>.noisier.T.cal`
 

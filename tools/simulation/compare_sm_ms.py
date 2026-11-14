@@ -1275,8 +1275,18 @@ def table_differences(casa: dict, casars: dict) -> list[str]:
     for key in ("shapes", "flags"):
         if casa[key] != casars[key]:
             found.append(f"{key} differ")
-    if casa.get("windows") != casars.get("windows"):
-        found.append(f"SPECTRAL_WINDOW {casa.get('windows')} against {casars.get('windows')}")
+    a, b = casa.get("windows", []), casars.get("windows", [])
+    if len(a) != len(b):
+        found.append(f"SPECTRAL_WINDOW has {len(a)} windows against {len(b)}")
+    for row, (one, two) in enumerate(zip(a, b)):
+        if one[0] != two[0]:
+            found.append(f"SPECTRAL_WINDOW row {row}: NUM_CHAN differs")
+        for index, column in ((1, "CHAN_FREQ"), (2, "CHAN_WIDTH")):
+            # Use the same numeric comparison as MS columns; one floating
+            # ULP from quantity conversion is not a changed channel axis.
+            aspect, _, note = compare_values([one[index]], [two[index]], DEFAULT_TOLERANCE)
+            if aspect:
+                found.append(f"SPECTRAL_WINDOW row {row}: {column} {note}")
     return found
 
 
