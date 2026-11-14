@@ -467,3 +467,62 @@ fn the_area_sums_the_integer_taps_over_the_half_open_support() {
     let area = cf_area(&plane, shape, [2, 2], 2);
     assert_eq!(area, Complex64::new(16.0, 1.0));
 }
+
+#[test]
+fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
+    use super::cell_image::{CellMisc, write_cell};
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("CFS_0.im");
+    let side = 24;
+    let values = (0..side * side)
+        .map(|index| Complex32::new((index % side) as f32, (index / side) as f32))
+        .collect::<Vec<_>>();
+    let plane = NativeAwPlane {
+        size: side,
+        support: 1,
+        values: &values,
+    };
+    let grid = casa_imaging_model::NativeAwGrid {
+        size: 32,
+        sky_increment_rad: [-1e-4, 1e-4],
+        oversampling: 5,
+    };
+    let misc = CellMisc {
+        sampling: 5.0,
+        pa_deg: 0.0,
+        mueller: 0,
+        w_value: 0.0,
+        w_increment: 1.0,
+        conjugate_frequency: 1.5e9,
+        conjugate_mueller: 15,
+        diameter_m: 25.0,
+        sky_increment_rad: 1e-4,
+        working_size: 32,
+    };
+    write_cell(&path, &plane, 1.5e9, grid, &misc).unwrap();
+    let header = read_header(&path).unwrap();
+    assert_eq!(header.sampling, 5);
+
+    let cell = dense_cell_padded(&[(values, header.shape, header.support)], [1, 1], 5);
+    // CASA's endpoints are three fine pixels on each side at sampling 5.
+    // One tile has nine taps, with its centre tap at index four.
+    assert_eq!(cell.data().len(), 7 * 7 * 9);
+    assert_eq!(cell.data()[4], Complex32::new(9.0, 9.0));
+    assert_eq!(cell.data()[(3 * 7 + 3) * 9 + 4], Complex32::new(12.0, 12.0));
+    assert_eq!(cell.data()[(6 * 7 + 6) * 9 + 4], Complex32::new(15.0, 15.0));
+    assert_eq!(cell.bytes() as u64, dense_cell_bytes(1, 5, [1, 1]));
+
+    let mut catalog = catalog_with_groups(Vec::new());
+    catalog.oversampling = 5;
+    catalog.cells = vec![CellFiles {
+        imaging: header.clone(),
+        weight: header,
+    }];
+    let footprint = catalog.tap_footprint();
+    assert_eq!(footprint.cells, 2);
+    assert_eq!(
+        footprint.norm_bytes,
+        2 * 7 * 7 * size_of::<Complex64>() as u64
+    );
+}

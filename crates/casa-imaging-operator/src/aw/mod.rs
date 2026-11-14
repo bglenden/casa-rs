@@ -1058,7 +1058,7 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// The catalog pages its cells, so its taps are its cache's bound; the
     /// norms and the count are every cell's, imaging and weight.
     fn tap_footprint(&self) -> TapFootprint {
-        let rows = u64::from(self.oversampling) + 1;
+        let rows = crate::geometry::CellLocation::fine_rows(self.oversampling) as u64;
         let planes = self.mueller_elements.len() as u64;
         let cells = 2 * self.cells.len() * (self.rotations.len() + 1);
         TapFootprint {

@@ -21,6 +21,7 @@ use super::{
     STAGING_PREFIX, cache_error,
 };
 use crate::convolution::DenseCell;
+use crate::geometry::CellLocation;
 
 /// `CFCache::getCFParams`: the cell's coordinates and misc info.
 pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
@@ -53,15 +54,8 @@ pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
     }
     let misc = image.misc_info();
     let sampling = required_f64(&misc, "Sampling", path)?;
-    if sampling.fract() != 0.0
-        || sampling < 2.0
-        || sampling > f64::from(u16::MAX)
-        || sampling % 2.0 != 0.0
-    {
-        return Err(cache_error(
-            path,
-            "Sampling must be a positive even integer",
-        ));
+    if sampling.fract() != 0.0 || sampling < 1.0 || sampling > f64::from(u16::MAX) {
+        return Err(cache_error(path, "Sampling must be a positive integer"));
     }
     let support = [
         required_support(&misc, "Xsupport", path)?,
@@ -282,8 +276,8 @@ pub(super) fn dense_cell_padded(
 ) -> DenseCell {
     let support = [2 * half[0] + 1, 2 * half[1] + 1];
     let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
-    let rows = usize::from(sampling) + 1;
-    let fine_half = i64::from(sampling / 2);
+    let rows = CellLocation::fine_rows(sampling);
+    let fine_half = i64::from(CellLocation::fine_centre(sampling));
     let mut data = Vec::with_capacity(rows * rows * planes.len() * sx * sy);
     for oy in 0..rows {
         let off_y = oy as i64 - fine_half;
