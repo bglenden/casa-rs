@@ -13,7 +13,7 @@ use casa_coordinates::{
 use casa_images::{PagedImage, regrid::regrid_complex_plane};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
-use num_complex::{Complex32, Complex64};
+use num_complex::Complex32;
 
 use super::rotation::pixel_rotation;
 use super::{
@@ -187,34 +187,9 @@ fn read_plane(header: &CellHeader) -> Result<Vec<Complex32>, AwCatalogError> {
     Ok(plane)
 }
 
-/// `AWConvFunc::cfArea`: `Σ` over `[−support, support)` of the integer taps
-/// about `shape/2`.
-pub(super) fn cf_area(
-    plane: &[Complex32],
-    shape: [usize; 2],
-    support: [u16; 2],
-    sampling: u16,
-) -> Complex64 {
-    let origin = [shape[0] / 2, shape[1] / 2];
-    let mut area = Complex64::default();
-    for iy in -i64::from(support[1])..i64::from(support[1]) {
-        for ix in -i64::from(support[0])..i64::from(support[0]) {
-            let x = origin[0] as i64 + ix * i64::from(sampling);
-            let y = origin[1] as i64 + iy * i64::from(sampling);
-            if x < 0 || y < 0 || x as usize >= shape[0] || y as usize >= shape[1] {
-                continue;
-            }
-            let value = plane[y as usize * shape[0] + x as usize];
-            area += Complex64::new(f64::from(value.re), f64::from(value.im));
-        }
-    }
-    area
-}
-
-/// Load one group's Mueller planes (its `cells`, at `group`'s supports)
-/// into an imaging and a weight cell:
-/// every plane normalised by its own area (`AWConvFunc::cfArea`), tiled at
-/// its kind's largest support with zero beyond a smaller plane's image.
+/// Load one group's persisted imaging and weight cells and tile them at
+/// each kind's largest support. CASA normalizes the cells while generating
+/// them; `CFCache::getCFParams` reads their saved pixels as-is.
 pub(super) fn load_group(
     cells: &[CellFiles],
     group: &Group,
@@ -229,13 +204,8 @@ pub(super) fn load_group(
         let mut planes = Vec::with_capacity(headers.len());
         for header in &headers {
             let mut plane = read_plane(header)?;
-            let area = cf_area(&plane, header.shape, header.support, header.sampling);
-            if !(area.norm().is_finite() && area.norm() > 0.0) {
-                return Err(cache_error(&header.path, "cell area is not positive"));
-            }
-            let scale = Complex32::new((1.0 / area).re as f32, (1.0 / area).im as f32);
-            for value in &mut plane {
-                *value *= scale;
+            if plane.iter().any(|value| !value.is_finite()) {
+                return Err(cache_error(&header.path, "cell pixels must be finite"));
             }
             if let Some(matrix) = rotation {
                 plane = regrid_complex_plane(&plane, header.shape, matrix);

@@ -31,7 +31,7 @@ pub use pa::{first_covered_pa, stored_pa_rad};
 pub use rotation::AwPaRotation;
 
 #[cfg(test)]
-use cell_image::{cf_area, convolution_origin, dense_cell_padded};
+use cell_image::{convolution_origin, dense_cell_padded};
 use cell_image::{load_group, read_header};
 use native_cache::{STAGING_PREFIX, write_manifest};
 

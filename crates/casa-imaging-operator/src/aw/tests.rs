@@ -458,17 +458,6 @@ fn an_odd_cell_is_read_about_casas_origin() {
 }
 
 #[test]
-fn the_area_sums_the_integer_taps_over_the_half_open_support() {
-    let shape = [12, 12];
-    let plane = (0..144)
-        .map(|index| Complex32::new(1.0, if index == 6 * 12 + 6 { 1.0 } else { 0.0 }))
-        .collect::<Vec<_>>();
-    // support 2, sampling 2: ix, iy ∈ {−2, −1, 0, 1} → 16 taps.
-    let area = cf_area(&plane, shape, [2, 2], 2);
-    assert_eq!(area, Complex64::new(16.0, 1.0));
-}
-
-#[test]
 fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
     use super::cell_image::{CellMisc, write_cell};
 
@@ -504,7 +493,14 @@ fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
     let header = read_header(&path).unwrap();
     assert_eq!(header.sampling, 5);
 
-    let cell = dense_cell_padded(&[(values, header.shape, header.support)], [1, 1], 5);
+    let files = CellFiles {
+        imaging: header.clone(),
+        weight: header,
+    };
+    let group = Group::new(std::slice::from_ref(&files), [false; 2]);
+    let loaded = load_group(std::slice::from_ref(&files), &group, 5, 0.0).unwrap();
+    let cell = &loaded.imaging;
+    assert_eq!(loaded.weight.data(), cell.data());
     // CASA's endpoints are three fine pixels on each side at sampling 5.
     // One tile has nine taps, with its centre tap at index four.
     assert_eq!(cell.data().len(), 7 * 7 * 9);
@@ -515,10 +511,7 @@ fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
 
     let mut catalog = catalog_with_groups(Vec::new());
     catalog.oversampling = 5;
-    catalog.cells = vec![CellFiles {
-        imaging: header.clone(),
-        weight: header,
-    }];
+    catalog.cells = vec![files];
     let footprint = catalog.tap_footprint();
     assert_eq!(footprint.cells, 2);
     assert_eq!(
