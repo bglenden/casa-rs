@@ -681,3 +681,82 @@ fn same_prefix_restart_reuses_each_fields_model_and_outlier_mask() {
     }
     assert_unchanged(&before, &snapshot(&directory));
 }
+
+/// CASA blanks a shared sky component in earlier fields for prediction
+/// and restores it in their published model images after the major cycle.
+#[test]
+fn same_prefix_restart_predicts_a_shared_component_once() {
+    use super::fixture::PHASE_CENTER_RAD;
+
+    let observation = Observation::synthesise(&[(
+        "point",
+        Component {
+            offset_px: [0, 0],
+            flux_jy: 1.0,
+            fwhm_px: None,
+            spectral_index: 0.0,
+        },
+    )]);
+    let directory = observation.scratch("overlap");
+    fs::create_dir(&directory).unwrap();
+    let geometry = observation.geometry();
+    let phase = format!(
+        "J2000 {}rad {}rad",
+        PHASE_CENTER_RAD[0], PHASE_CENTER_RAD[1]
+    );
+    let definition = directory.join("outliers.txt");
+    fs::write(
+        &definition,
+        format!("imagename=field\nphasecenter={phase}\n"),
+    )
+    .unwrap();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": "main", "outlierfile": definition,
+        "imsize": geometry.image_size, "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        "phasecenter": phase, "niter": 0, "backend": "cpu",
+    });
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(&directory, values.clone());
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    };
+    run(&values);
+    let [x, y] = geometry.centre();
+    let sample = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), 0.5_f32);
+    for name in ["main.model", "field.model"] {
+        let mut model = PagedImage::<f32>::open(directory.join(name)).unwrap();
+        model.put_slice(&sample, &[x, y, 0, 0]).unwrap();
+        model.save().unwrap();
+    }
+    run(&values);
+    let read = |name: &str| {
+        PagedImage::<f32>::open(directory.join(name))
+            .unwrap()
+            .get()
+            .unwrap()
+    };
+    assert_eq!(read("main.model")[[x, y, 0, 0]], 0.5);
+    assert_eq!(read("field.model")[[x, y, 0, 0]], 0.5);
+
+    fs::rename(
+        directory.join("field.model"),
+        directory.join("single.model"),
+    )
+    .unwrap();
+    values.as_object_mut().unwrap().remove("outlierfile");
+    values["imagename"] = json!("single");
+    run(&values);
+    let single = read("single.residual");
+    for name in ["main.residual", "field.residual"] {
+        let residual = read(name);
+        let error: f64 = residual
+            .iter()
+            .zip(&single)
+            .map(|(both, one)| f64::from(both - one).powi(2))
+            .sum();
+        let power: f64 = single.iter().map(|one| f64::from(*one).powi(2)).sum();
+        assert!(
+            (error / power).sqrt() < 0.001,
+            "{name} subtracts the shared source more than once"
+        );
+    }
+}
