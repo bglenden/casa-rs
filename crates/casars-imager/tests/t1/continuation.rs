@@ -149,16 +149,46 @@ fn taylor_family_continues(terms: usize) {
         "{terms} terms"
     );
     step(json!({"niter": 0, "calcpsf": false, "restoration": false}));
+    let saved = [
+        family("psf", moments),
+        family("sumwt", moments),
+        family("residual", terms),
+    ]
+    .concat();
+    let snapshots = || {
+        saved
+            .iter()
+            .map(|name| {
+                let path = prefix.with_extension(name);
+                let mut files = super::restart::snapshot(&path);
+                files.retain(|name, _| {
+                    name.file_name().unwrap() != "table.lock"
+                        && !name.components().any(|part| part.as_os_str() == "logtable")
+                });
+                files
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = snapshots();
     let (restored_report, restored) = step(json!({
         "niter": 0, "calcpsf": false, "calcres": false,
     }));
     assert_eq!(restored_report.major_cycles, 0);
     let (_, dirty) = observation.image(&format!("{label}-dirty"), with(&base, json!({"niter": 0})));
     let images = [family(".residual", terms), family(".image", terms)].concat();
-    for suffix in images.iter().chain(&family(".psf", moments)) {
-        let error = nrms(&restored, &dirty, suffix);
+    for suffix in family(".image", terms) {
+        let error = nrms(&restored, &dirty, &suffix);
         assert!(error < 1e-5, "{terms} terms, {suffix}: {error}");
     }
+    for (previous, current) in before.iter().zip(&snapshots()) {
+        super::restart::assert_unchanged(previous, current);
+    }
+    let reported = restored.suffixes();
+    assert!(
+        saved
+            .iter()
+            .all(|name| !reported.contains(&format!(".{name}")))
+    );
     assert_eq!(inventory(&prefix).contains("alpha"), terms > 1);
 
     let (cleaned_report, cleaned) = step(json!({

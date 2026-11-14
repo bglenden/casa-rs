@@ -349,6 +349,11 @@ impl ExistingProducts {
         self.residual
     }
 
+    /// Whether restoration reads this saved Taylor residual family.
+    pub(crate) const fn reads_taylor_residual(&self) -> bool {
+        self.residual && matches!(self.family, Family::Taylor { .. })
+    }
+
     /// A direction-dependent saved residual is already in the image
     /// units CASA restores and passes to its next minor cycle.
     pub(crate) const fn residual_in_image_units(&self) -> bool {

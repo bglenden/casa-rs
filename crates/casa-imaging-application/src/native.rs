@@ -300,6 +300,23 @@ pub(crate) fn prepare(
             input.forms.residual,
         );
     }
+    if mvc_taylor.is_none()
+        && !input.forms.psf
+        && !input.forms.residual
+        && input.minor_cycle_image_response.is_none()
+        && problem.reconstruction().controls().max_minor_iterations() == 0
+        && input
+            .existing
+            .as_ref()
+            .is_some_and(|saved| saved.reads_taylor_residual())
+    {
+        // Restoration consumes the saved Taylor moments and residuals.
+        // Their on-disk Float PSFs need no normalization round trip.
+        publication.controls = publication
+            .controls
+            .preserving_saved_psfs(false, false)
+            .preserving_saved_residuals();
+    }
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()
         == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam;
