@@ -6022,6 +6022,32 @@ its existing pointwise comparison. When both runs use the corrected
 CASA dirty inputs and the saved standard-gridder PSFs, all 19 CLEAN
 products agree to 5.02e-7 NRMS or better, with exact masks, ten iterations
 and one major cycle. <a href="https://github.com/bglenden/casa-rs/issues/1070">Issue #1070</a>.</p>
+<h2 id="aw-float-tap-products-perturb-cancelling-taylor-sensitivities">AW Float tap products perturb cancelling Taylor sensitivities<a class="headerlink" href="#aw-float-tap-products-perturb-cancelling-taylor-sensitivities" title="Permanent link">&para;</a></h2>
+<p><code>AWVisResampler::DataToGridImpl_p</code> multiplies the saved weight
+convolution tap by a Float complex pointing phasor, then by a Float
+imaging weight. Both products round before the double-complex grid
+accumulation. <code>PhaseGrad::ComputeFieldPointingGrad</code> also stores the
+product of the rounded axis phasors as Float complex. The higher Taylor
+orders can expose this rounding where frequency contributions nearly
+cancel, and the principal sensitivity can round across a sharp PB cut.</p>
+<p>In CASA 6.7.6-14, the original one-group MT-MFS case on
+<code>refim_heterogeneous_pointings.ms</code> has 40 Taylor moment matrices
+outside PB support that fail the PSD bound. One pixel crosses the
+original <code>abs(pblimit)=0.01</code> when compared with casa-rs. In the
+four-corner case with CASA's baseline group assignment corrected, the
+odd weight misses its existing pointwise limit by a factor of 88.
+Both differences are already present in the grids before the FFT.</p>
+<p>An independent replay using the saved CASA kernels, measured Taylor
+frequencies and source Float arithmetic reproduces the three captured
+grids to at most 5.8e-8 NRMS. A second replay retains the Taylor
+coefficients and widens the pointing and weighted tap products to
+double. Feeding only its weight grids back through CASA's FFT and
+product pipeline clears both failures at the original frequency and
+cutoff. Against this control, casa-rs agrees on all 18 dirty products
+for each selection, with exact masks, sums of weights and controller
+counts. Worst product NRMS is 2.25e-6. The odd weight passes the same
+pointwise and PSD checks. The native operator retains its double
+arithmetic. <a href="https://github.com/bglenden/casa-rs/issues/1070">Issue #1070</a>.</p>
 <h2 id="awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff">AWP2's Float sensitivity FFT can flip the primary-beam cutoff<a class="headerlink" href="#awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff" title="Permanent link">&para;</a></h2>
 <p>AWPLPG accumulates the sensitivity grid in double precision.
 <code>MosaicFT::finalizeToSky</code> converts that grid to Float for its inverse FFT.
