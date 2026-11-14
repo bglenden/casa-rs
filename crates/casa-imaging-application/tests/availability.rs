@@ -437,6 +437,12 @@ fn facets_admit_standard_continuum_and_bounded_w_and_taylor_modes() {
         ..taylor()
     };
     on_cpu(&briggs_taylor.compile()).expect("standard Briggs Stokes I Taylor facets");
+    use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+    let full_stokes_taylor = || ProblemFixture {
+        polarizations: vec![StokesI, StokesQ, StokesU, StokesV],
+        ..taylor()
+    };
+    on_cpu(&full_stokes_taylor().compile()).expect("standard natural Stokes IQUV Taylor facets");
     let unverified = [
         ProblemFixture {
             basis: ReconstructionBasis::Taylor { terms: 3 },
@@ -445,6 +451,10 @@ fn facets_admit_standard_continuum_and_bounded_w_and_taylor_modes() {
         ProblemFixture {
             weighting: WeightingScheme::Uniform,
             ..taylor()
+        },
+        ProblemFixture {
+            weighting: WeightingScheme::Briggs { robust: 0.5 },
+            ..full_stokes_taylor()
         },
         ProblemFixture {
             polarizations: vec![
