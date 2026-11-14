@@ -1115,16 +1115,18 @@ fn rotate_t(r: &[[f64; 3]; 3], v: &[f64; 3]) -> [f64; 3] {
 // Constant rotation matrices
 // ---------------------------------------------------------------------------
 
-/// ICRS-to-J2000 frame tie rotation matrix (IAU 2006).
+/// ICRS-to-J2000 frame tie rotation matrix (IAU 2000).
 ///
 /// The frame tie between ICRS and the dynamical mean equator/equinox at
 /// J2000.0 is a tiny rotation (~17 mas). We extract the frame bias matrix
-/// `rb` from `sofars::pnp::bp06` evaluated at J2000.0.
+/// `rb` from `sofars::pnp::bp00` evaluated at J2000.0, as casacore's
+/// `MeasTable::ICRSToJ2000` uses `frameBias00`. The IAU 2006 matrix differs
+/// by about 0.3 microarcseconds, observable in simulated FIELD directions.
 ///
 /// v_J2000 = ICRS_TO_J2000 * v_ICRS
 fn icrs_to_j2000_matrix() -> [[f64; 3]; 3] {
-    // bp06 returns (rb, rp, rbp) where rb is the frame bias
-    let (rb, _, _) = sofars::pnp::bp06(MJD_OFFSET, 51544.5);
+    // bp00 returns (rb, rp, rbp) where rb is the frame bias.
+    let (rb, _, _) = sofars::pnp::bp00(MJD_OFFSET, 51544.5);
     rb
 }
 
@@ -2296,6 +2298,23 @@ mod tests {
         let back = icrs.convert_to(DirectionRef::J2000, &frame).unwrap();
         let sep = sofars::vm::sepp(&d.cosines(), &back.cosines());
         assert!(sep < 1e-12, "roundtrip sep = {} rad", sep);
+    }
+
+    #[test]
+    fn icrs_calibrator_direction_matches_casa_frame_bias() {
+        // CASA 6.7.6.14 me.measure(me.direction('ICRS', '10h01m00',
+        // '34d30m00'), 'J2000'), the SIM-23 calibrator metadata control.
+        let direction = MDirection::from_angles(
+            150.25_f64.to_radians(),
+            34.5_f64.to_radians(),
+            DirectionRef::ICRS,
+        );
+        let converted = direction
+            .convert_to(DirectionRef::J2000, &MeasFrame::new())
+            .unwrap();
+        let (ra, dec) = converted.as_angles();
+        assert!((ra - 2.622_357_224_702_305_7).abs() < 5e-15);
+        assert!((dec - 0.602_138_645_476_905_5).abs() < 5e-15);
     }
 
     #[test]
