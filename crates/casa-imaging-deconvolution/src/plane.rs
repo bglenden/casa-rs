@@ -193,7 +193,7 @@ pub fn peak_magnitude(values: &[f64], support: &Support) -> f64 {
 /// upper bounds are exclusive, as in casacore, and an axis no longer than
 /// the patch is searched from 0 to its last pixel exclusive.
 #[must_use]
-pub fn psf_peak(psf: &[f64], shape: PlaneShape) -> Option<usize> {
+pub fn psf_peak<T: Copy + Into<f64>>(psf: &[T], shape: PlaneShape) -> Option<usize> {
     let support = beam_patch(0.0, shape);
     let bounds = |extent: usize| {
         if extent > support {
@@ -208,7 +208,7 @@ pub fn psf_peak(psf: &[f64], shape: PlaneShape) -> Option<usize> {
     for y in y0..y1 {
         for x in x0..x1 {
             let index = shape.index(x, y);
-            let magnitude = psf[index].abs();
+            let magnitude = psf[index].into().abs();
             if best.is_none_or(|(_, peak)| magnitude > peak) {
                 best = Some((index, magnitude));
             }

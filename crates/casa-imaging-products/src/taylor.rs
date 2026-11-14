@@ -2,7 +2,7 @@
 
 //! Product-local completion of one released MT-MFS normal family.
 
-use casa_imaging_deconvolution::FinalNormalStateWindow;
+use casa_imaging_deconvolution::{FinalNormalStateWindow, PlaneShape};
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, TaylorSupportReference,
@@ -257,7 +257,9 @@ impl TaylorFamily {
 }
 
 /// The Taylor normal block at the PSF peak, inverted, and the principal
-/// solution's residuals it gives.
+/// solution's residuals it gives. Direct AW restoration selects the peak
+/// in the central patch used by `MatrixCleaner::validatePsf`. An off-axis
+/// grating lobe can be brighter than the central peak.
 ///
 /// CASA forms the block from the published PSFs, every term divided by the
 /// term-0 PSF's peak (`SIImageStore::normPSF`, then
@@ -267,14 +269,23 @@ impl TaylorFamily {
 fn principal_residuals(
     psf: &[Vec<f32>],
     residual: &[Vec<f32>],
+    central_patch: Option<PlaneShape>,
 ) -> Result<(Vec<f64>, Vec<Vec<f32>>), ProductsError> {
     let terms = residual.len();
-    let peak = psf[0]
-        .iter()
-        .enumerate()
-        .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
-        .map(|(index, _)| index)
-        .expect("a PSF plane has pixels");
+    let peak = if let Some(shape) = central_patch {
+        casa_imaging_deconvolution::psf_peak(&psf[0], shape)
+            .filter(|&peak| psf[0][peak].is_finite() && psf[0][peak] > 0.0)
+            .ok_or_else(|| {
+                ProductsError::BeamFitFailed("no positive central Taylor PSF peak".into())
+            })?
+    } else {
+        psf[0]
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+            .map(|(index, _)| index)
+            .expect("a PSF plane has pixels")
+    };
     let psf_scale = f64::from(psf_peak(psf[0].iter().copied())?);
     let mut normal = vec![0.0; terms * terms];
     for row in 0..terms {
@@ -537,7 +548,15 @@ impl<'a> SolvedFamily<'a> {
             .iter()
             .map(|value| *value as f32)
             .collect::<Vec<_>>();
-        let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
+        let [nx, ny] = state.shape();
+        let central_patch = inputs
+            .problem()
+            .science()
+            .measurement_equation()
+            .aw_projection()
+            .map(|_| PlaneShape::new(nx, ny));
+        let (inverse, principal_residual) =
+            principal_residuals(&family.psf, &family.residual, central_patch)?;
         let list = inputs.problem().product_list();
         let needs_beam = list.publication().members().iter().any(|id| {
             list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
@@ -1052,6 +1071,24 @@ mod tests {
         )
         .expect("scale-invariant PB spectral correction");
         assert_eq!(scaled, corrected);
+    }
+
+    #[test]
+    fn aw_principal_taylor_solution_uses_the_central_psf_patch() {
+        let shape = super::PlaneShape::new(100, 100);
+        let mut psf = vec![vec![0.0; shape.len()]; 3];
+        let central = shape.index(49, 50);
+        let outer = shape.index(9, 50);
+        for (moment, (inner, outside)) in
+            psf.iter_mut().zip([(0.5, 1.0), (0.125, 0.0), (0.25, 0.5)])
+        {
+            moment[central] = inner;
+            moment[outer] = outside;
+        }
+        let residual = vec![vec![1.5; shape.len()], vec![1.25; shape.len()]];
+        let (_, restored) = super::principal_residuals(&psf, &residual, Some(shape)).unwrap();
+        assert_eq!(restored[0][central], 2.0);
+        assert_eq!(restored[1][central], 4.0);
     }
 
     #[test]
