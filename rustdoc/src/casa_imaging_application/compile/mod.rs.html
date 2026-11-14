@@ -1186,7 +1186,7 @@
 <a href=#1186 id=1186 data-nosnippet>1186</a>        || aw.computepastep != <span class="number">360.0
 <a href=#1187 id=1187 data-nosnippet>1187</a>        </span>|| surveyed.survey.fields.len() != <span class="number">1
 <a href=#1188 id=1188 data-nosnippet>1188</a>        </span>|| request.specmode != SpecMode::Mfs
-<a href=#1189 id=1189 data-nosnippet>1189</a>        || request.solves()
+<a href=#1189 id=1189 data-nosnippet>1189</a>        || (request.solves() &amp;&amp; request.deconvolver != Deconvolver::Hogbom)
 <a href=#1190 id=1190 data-nosnippet>1190</a>        || request.predicts_final_model()
 <a href=#1191 id=1191 data-nosnippet>1191</a>        || request.tclean_restart
 <a href=#1192 id=1192 data-nosnippet>1192</a>        || request.has_start_model()

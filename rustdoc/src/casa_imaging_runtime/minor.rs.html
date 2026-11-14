@@ -53,7 +53,7 @@
 <a href=#53 id=53 data-nosnippet>53</a>    run_bytes_for,
 <a href=#54 id=54 data-nosnippet>54</a>};
 <a href=#55 id=55 data-nosnippet>55</a><span class="kw">use </span>mem::{dense_result_bytes, dense_result_slots, solve_mem};
-<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>psfs::{measure_psfs, saved_beam, saved_psf_beam};
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>psfs::{measure_psfs, saved_beam, saved_psf_beam, single_psf_peak};
 <a href=#57 id=57 data-nosnippet>57</a><span class="kw">pub use </span>rows::PlaneCycleRow;
 <a href=#58 id=58 data-nosnippet>58</a>
 <a href=#59 id=59 data-nosnippet>59</a><span class="doccomment">/// Component records kept per minor cycle for diagnostics.
@@ -1045,439 +1045,438 @@
 <a href=#1045 id=1045 data-nosnippet>1045</a>    key: PlaneKey,
 <a href=#1046 id=1046 data-nosnippet>1046</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlaneTerms&lt;<span class="lifetime">'a</span>&gt;, MinorCycleRunError&gt; {
 <a href=#1047 id=1047 data-nosnippet>1047</a>    <span class="kw">let </span>plane = normal.read_reconstruction_plane(key.domain, key.channel, key.polarization)<span class="question-mark">?</span>;
-<a href=#1048 id=1048 data-nosnippet>1048</a>    <span class="kw">let </span>shape = plane_shape(normal, key);
-<a href=#1049 id=1049 data-nosnippet>1049</a>    <span class="kw">let </span>psf = plane
-<a href=#1050 id=1050 data-nosnippet>1050</a>        .normal_approximation()
-<a href=#1051 id=1051 data-nosnippet>1051</a>        .iter()
-<a href=#1052 id=1052 data-nosnippet>1052</a>        .map(|value| value.re)
-<a href=#1053 id=1053 data-nosnippet>1053</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#1054 id=1054 data-nosnippet>1054</a>    <span class="kw">let </span>peak = psf_peak_value(<span class="kw-2">&amp;</span>psf, shape)<span class="question-mark">?</span>;
-<a href=#1055 id=1055 data-nosnippet>1055</a>    <span class="kw">let </span>(residual, response) = single_residual(
-<a href=#1056 id=1056 data-nosnippet>1056</a>        normal,
-<a href=#1057 id=1057 data-nosnippet>1057</a>        setup,
-<a href=#1058 id=1058 data-nosnippet>1058</a>        key,
-<a href=#1059 id=1059 data-nosnippet>1059</a>        plane.residual().iter().map(|value| value.re),
-<a href=#1060 id=1060 data-nosnippet>1060</a>        plane.sum_weight(),
-<a href=#1061 id=1061 data-nosnippet>1061</a>    )<span class="question-mark">?</span>;
-<a href=#1062 id=1062 data-nosnippet>1062</a>    <span class="comment">// CASA normalizes the PSF by its own peak (SIImageStore::normPSF).
-<a href=#1063 id=1063 data-nosnippet>1063</a>    </span><span class="prelude-val">Ok</span>(PlaneTerms {
-<a href=#1064 id=1064 data-nosnippet>1064</a>        residual: <span class="macro">vec!</span>[residual],
-<a href=#1065 id=1065 data-nosnippet>1065</a>        psf: <span class="macro">vec!</span>[normalise(psf, peak)],
-<a href=#1066 id=1066 data-nosnippet>1066</a>        psf_peak: peak,
-<a href=#1067 id=1067 data-nosnippet>1067</a>        response,
-<a href=#1068 id=1068 data-nosnippet>1068</a>    })
-<a href=#1069 id=1069 data-nosnippet>1069</a>}
-<a href=#1070 id=1070 data-nosnippet>1070</a>
-<a href=#1071 id=1071 data-nosnippet>1071</a><span class="doccomment">/// A single-term plane's residual in the units the minor cycle cleans, from
-<a href=#1072 id=1072 data-nosnippet>1072</a>/// its raw real values `raw` and its sum of weights: divided by the sum
-<a href=#1073 id=1073 data-nosnippet>1073</a>/// (`SIImageStore::divideResidualByWeight`), or with a response in CASA's
-<a href=#1074 id=1074 data-nosnippet>1074</a>/// units, with the response bound to the plane's weights.
-<a href=#1075 id=1075 data-nosnippet>1075</a></span><span class="kw">fn </span>single_residual&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#1076 id=1076 data-nosnippet>1076</a>    normal: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>FinalNormalState,
-<a href=#1077 id=1077 data-nosnippet>1077</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1078 id=1078 data-nosnippet>1078</a>    key: PlaneKey,
-<a href=#1079 id=1079 data-nosnippet>1079</a>    raw: <span class="kw">impl </span>Iterator&lt;Item = f64&gt;,
-<a href=#1080 id=1080 data-nosnippet>1080</a>    sum_weight: f64,
-<a href=#1081 id=1081 data-nosnippet>1081</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;f64&gt;, <span class="prelude-ty">Option</span>&lt;ResponseBinding&lt;<span class="lifetime">'a</span>&gt;&gt;), MinorCycleRunError&gt; {
-<a href=#1082 id=1082 data-nosnippet>1082</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
-<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((raw.map(|value| value / sum_weight).collect(), <span class="prelude-val">None</span>));
-<a href=#1084 id=1084 data-nosnippet>1084</a>    };
-<a href=#1085 id=1085 data-nosnippet>1085</a>    <span class="kw">let </span>weights = normal.read_plane(key.domain, key.channel, key.polarization)<span class="question-mark">?</span>;
-<a href=#1086 id=1086 data-nosnippet>1086</a>    <span class="kw">let </span>sensitivity = weights.read_sensitivity()<span class="question-mark">?</span>;
-<a href=#1087 id=1087 data-nosnippet>1087</a>    <span class="kw">let </span>normal_weight = weights.sum_weight();
-<a href=#1088 id=1088 data-nosnippet>1088</a>    <span class="kw">let </span>published_weight = weights.published_sum_weight();
-<a href=#1089 id=1089 data-nosnippet>1089</a>    <span class="kw">let </span>bound = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(normal_weight)<span class="question-mark">?</span>;
-<a href=#1090 id=1090 data-nosnippet>1090</a>    <span class="kw">let </span>residual = raw
-<a href=#1091 id=1091 data-nosnippet>1091</a>        .enumerate()
-<a href=#1092 id=1092 data-nosnippet>1092</a>        .map(|(index, value)| {
-<a href=#1093 id=1093 data-nosnippet>1093</a>            bound.normalize_weighted_residual_sample(
-<a href=#1094 id=1094 data-nosnippet>1094</a>                value,
-<a href=#1095 id=1095 data-nosnippet>1095</a>                index,
-<a href=#1096 id=1096 data-nosnippet>1096</a>                response.normalization(),
-<a href=#1097 id=1097 data-nosnippet>1097</a>                ResidualFamily::Single,
-<a href=#1098 id=1098 data-nosnippet>1098</a>                published_weight,
-<a href=#1099 id=1099 data-nosnippet>1099</a>                response.policy(),
-<a href=#1100 id=1100 data-nosnippet>1100</a>            )
-<a href=#1101 id=1101 data-nosnippet>1101</a>        })
-<a href=#1102 id=1102 data-nosnippet>1102</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#1103 id=1103 data-nosnippet>1103</a>    <span class="prelude-val">Ok</span>((
-<a href=#1104 id=1104 data-nosnippet>1104</a>        residual,
-<a href=#1105 id=1105 data-nosnippet>1105</a>        <span class="prelude-val">Some</span>(ResponseBinding {
-<a href=#1106 id=1106 data-nosnippet>1106</a>            sensitivity,
-<a href=#1107 id=1107 data-nosnippet>1107</a>            response,
-<a href=#1108 id=1108 data-nosnippet>1108</a>            sum_weight: normal_weight,
-<a href=#1109 id=1109 data-nosnippet>1109</a>        }),
-<a href=#1110 id=1110 data-nosnippet>1110</a>    ))
-<a href=#1111 id=1111 data-nosnippet>1111</a>}
-<a href=#1112 id=1112 data-nosnippet>1112</a>
-<a href=#1113 id=1113 data-nosnippet>1113</a><span class="doccomment">/// Polarization `polarization`'s Taylor family: its residual terms and
-<a href=#1114 id=1114 data-nosnippet>1114</a>/// `2·N_t − 1` PSF moments. Every moment divides by the zeroth moment's
-<a href=#1115 id=1115 data-nosnippet>1115</a>/// peak, with or without a response (`SIImageStore::normPSF`, which
-<a href=#1116 id=1116 data-nosnippet>1116</a>/// `SDAlgorithmMSMFS::initializeDeconvolver` reads, #704). Without a
-<a href=#1117 id=1117 data-nosnippet>1117</a>/// response the residuals divide by the same peak; with one they take
-<a href=#1118 id=1118 data-nosnippet>1118</a>/// CASA's units and the components convert back over the zeroth moment's
-<a href=#1119 id=1119 data-nosnippet>1119</a>/// sum weight.
-<a href=#1120 id=1120 data-nosnippet>1120</a></span><span class="kw">fn </span>read_taylor(
-<a href=#1121 id=1121 data-nosnippet>1121</a>    normal: <span class="kw-2">&amp;</span>FinalNormalState,
-<a href=#1122 id=1122 data-nosnippet>1122</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1123 id=1123 data-nosnippet>1123</a>    polarization: usize,
-<a href=#1124 id=1124 data-nosnippet>1124</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlaneTerms&lt;<span class="lifetime">'static</span>&gt;, MinorCycleRunError&gt; {
-<a href=#1125 id=1125 data-nosnippet>1125</a>    <span class="kw">let </span>window = normal.read_window(normal.slab().core_range())<span class="question-mark">?</span>;
-<a href=#1126 id=1126 data-nosnippet>1126</a>    <span class="kw">let </span>[nx, ny] = normal.shape();
-<a href=#1127 id=1127 data-nosnippet>1127</a>    <span class="kw">let </span>shape = PlaneShape::new(nx, ny);
-<a href=#1128 id=1128 data-nosnippet>1128</a>    <span class="kw">let </span>principal = window
-<a href=#1129 id=1129 data-nosnippet>1129</a>        .normal_moment(<span class="number">0</span>, polarization)
-<a href=#1130 id=1130 data-nosnippet>1130</a>        .expect(<span class="string">"a Taylor family has its zeroth moment"</span>);
-<a href=#1131 id=1131 data-nosnippet>1131</a>    <span class="kw">let </span>moments = (<span class="number">0</span>..normal.normal_moment_count())
-<a href=#1132 id=1132 data-nosnippet>1132</a>        .map(|moment| {
-<a href=#1133 id=1133 data-nosnippet>1133</a>            window
-<a href=#1134 id=1134 data-nosnippet>1134</a>                .normal_moment(moment, polarization)
-<a href=#1135 id=1135 data-nosnippet>1135</a>                .expect(<span class="string">"every normal moment is present"</span>)
-<a href=#1136 id=1136 data-nosnippet>1136</a>                .normal_approximation()
-<a href=#1137 id=1137 data-nosnippet>1137</a>                .iter()
-<a href=#1138 id=1138 data-nosnippet>1138</a>                .map(|value| value.re)
-<a href=#1139 id=1139 data-nosnippet>1139</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#1140 id=1140 data-nosnippet>1140</a>        })
-<a href=#1141 id=1141 data-nosnippet>1141</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#1142 id=1142 data-nosnippet>1142</a>    <span class="kw">let </span>raw = (<span class="number">0</span>..normal.coefficient_term_count()).map(|term| {
-<a href=#1143 id=1143 data-nosnippet>1143</a>        window
-<a href=#1144 id=1144 data-nosnippet>1144</a>            .coefficient_term(term, polarization)
-<a href=#1145 id=1145 data-nosnippet>1145</a>            .expect(<span class="string">"every coefficient term is present"</span>)
-<a href=#1146 id=1146 data-nosnippet>1146</a>            .residual()
-<a href=#1147 id=1147 data-nosnippet>1147</a>    });
-<a href=#1148 id=1148 data-nosnippet>1148</a>    <span class="kw">let </span>peak = psf_peak_value(<span class="kw-2">&amp;</span>moments[<span class="number">0</span>], shape)<span class="question-mark">?</span>;
-<a href=#1149 id=1149 data-nosnippet>1149</a>    <span class="kw">let </span>psf = moments
-<a href=#1150 id=1150 data-nosnippet>1150</a>        .into_iter()
-<a href=#1151 id=1151 data-nosnippet>1151</a>        .map(|moment| normalise(moment, peak))
-<a href=#1152 id=1152 data-nosnippet>1152</a>        .collect();
-<a href=#1153 id=1153 data-nosnippet>1153</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
-<a href=#1154 id=1154 data-nosnippet>1154</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PlaneTerms {
-<a href=#1155 id=1155 data-nosnippet>1155</a>            residual: raw
-<a href=#1156 id=1156 data-nosnippet>1156</a>                .map(|term| term.iter().map(|value| value.re / peak).collect())
-<a href=#1157 id=1157 data-nosnippet>1157</a>                .collect(),
-<a href=#1158 id=1158 data-nosnippet>1158</a>            psf,
-<a href=#1159 id=1159 data-nosnippet>1159</a>            psf_peak: peak,
-<a href=#1160 id=1160 data-nosnippet>1160</a>            response: <span class="prelude-val">None</span>,
-<a href=#1161 id=1161 data-nosnippet>1161</a>        });
-<a href=#1162 id=1162 data-nosnippet>1162</a>    };
-<a href=#1163 id=1163 data-nosnippet>1163</a>    <span class="kw">let </span>normal_weight = principal.sum_weight();
-<a href=#1164 id=1164 data-nosnippet>1164</a>    <span class="kw">let </span>published_weight = window
-<a href=#1165 id=1165 data-nosnippet>1165</a>        .published_sum_weight(<span class="number">0</span>, polarization)
-<a href=#1166 id=1166 data-nosnippet>1166</a>        .expect(<span class="string">"a Taylor family has its zeroth sum of weights"</span>);
-<a href=#1167 id=1167 data-nosnippet>1167</a>    <span class="kw">let </span>sensitivity = principal.sensitivity().to_vec();
-<a href=#1168 id=1168 data-nosnippet>1168</a>    <span class="kw">let </span>bound = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(normal_weight)<span class="question-mark">?</span>;
-<a href=#1169 id=1169 data-nosnippet>1169</a>    <span class="kw">let </span>residual = raw
-<a href=#1170 id=1170 data-nosnippet>1170</a>        .map(|term| {
-<a href=#1171 id=1171 data-nosnippet>1171</a>            term.iter()
-<a href=#1172 id=1172 data-nosnippet>1172</a>                .enumerate()
-<a href=#1173 id=1173 data-nosnippet>1173</a>                .map(|(index, value)| {
-<a href=#1174 id=1174 data-nosnippet>1174</a>                    bound.normalize_weighted_residual_sample(
-<a href=#1175 id=1175 data-nosnippet>1175</a>                        value.re,
-<a href=#1176 id=1176 data-nosnippet>1176</a>                        index,
-<a href=#1177 id=1177 data-nosnippet>1177</a>                        response.normalization(),
-<a href=#1178 id=1178 data-nosnippet>1178</a>                        ResidualFamily::Taylor,
-<a href=#1179 id=1179 data-nosnippet>1179</a>                        published_weight,
-<a href=#1180 id=1180 data-nosnippet>1180</a>                        response.policy(),
-<a href=#1181 id=1181 data-nosnippet>1181</a>                    )
-<a href=#1182 id=1182 data-nosnippet>1182</a>                })
-<a href=#1183 id=1183 data-nosnippet>1183</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#1184 id=1184 data-nosnippet>1184</a>        })
-<a href=#1185 id=1185 data-nosnippet>1185</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#1186 id=1186 data-nosnippet>1186</a>    <span class="prelude-val">Ok</span>(PlaneTerms {
-<a href=#1187 id=1187 data-nosnippet>1187</a>        residual,
-<a href=#1188 id=1188 data-nosnippet>1188</a>        psf,
-<a href=#1189 id=1189 data-nosnippet>1189</a>        psf_peak: peak,
-<a href=#1190 id=1190 data-nosnippet>1190</a>        response: <span class="prelude-val">Some</span>(ResponseBinding {
-<a href=#1191 id=1191 data-nosnippet>1191</a>            sensitivity: Cow::Owned(sensitivity),
-<a href=#1192 id=1192 data-nosnippet>1192</a>            response,
-<a href=#1193 id=1193 data-nosnippet>1193</a>            sum_weight: normal_weight,
-<a href=#1194 id=1194 data-nosnippet>1194</a>        }),
-<a href=#1195 id=1195 data-nosnippet>1195</a>    })
-<a href=#1196 id=1196 data-nosnippet>1196</a>}
-<a href=#1197 id=1197 data-nosnippet>1197</a>
-<a href=#1198 id=1198 data-nosnippet>1198</a><span class="doccomment">/// The zeroth Taylor term's residual of polarization `polarization` in the
-<a href=#1199 id=1199 data-nosnippet>1199</a>/// units the minor cycle cleans, as [`read_taylor`] gives it, read alone,
-<a href=#1200 id=1200 data-nosnippet>1200</a>/// with the response bound to the family's weights: an automatic mask reads
-<a href=#1201 id=1201 data-nosnippet>1201</a>/// that term and, of the zeroth PSF moment, its value at its measured
-<a href=#1202 id=1202 data-nosnippet>1202</a>/// `peak`, not the whole family.
-<a href=#1203 id=1203 data-nosnippet>1203</a></span><span class="kw">fn </span>taylor_principal_residual(
-<a href=#1204 id=1204 data-nosnippet>1204</a>    normal: <span class="kw-2">&amp;</span>FinalNormalState,
-<a href=#1205 id=1205 data-nosnippet>1205</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1206 id=1206 data-nosnippet>1206</a>    polarization: usize,
-<a href=#1207 id=1207 data-nosnippet>1207</a>    peak: usize,
-<a href=#1208 id=1208 data-nosnippet>1208</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;f64&gt;, <span class="prelude-ty">Option</span>&lt;ResponseBinding&lt;<span class="lifetime">'static</span>&gt;&gt;), MinorCycleRunError&gt; {
-<a href=#1209 id=1209 data-nosnippet>1209</a>    <span class="kw">let </span>window = normal.read_window(normal.slab().core_range())<span class="question-mark">?</span>;
-<a href=#1210 id=1210 data-nosnippet>1210</a>    <span class="kw">let </span>principal = window
-<a href=#1211 id=1211 data-nosnippet>1211</a>        .normal_moment(<span class="number">0</span>, polarization)
-<a href=#1212 id=1212 data-nosnippet>1212</a>        .expect(<span class="string">"a Taylor family has its zeroth moment"</span>);
-<a href=#1213 id=1213 data-nosnippet>1213</a>    <span class="kw">let </span>scale = principal.normal_approximation()[peak].re;
-<a href=#1214 id=1214 data-nosnippet>1214</a>    <span class="kw">if </span>!(scale.is_finite() &amp;&amp; scale &gt; <span class="number">0.0</span>) {
-<a href=#1215 id=1215 data-nosnippet>1215</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(casa_imaging_deconvolution::Error::PsfPeak.into());
-<a href=#1216 id=1216 data-nosnippet>1216</a>    }
-<a href=#1217 id=1217 data-nosnippet>1217</a>    <span class="kw">let </span>term = window
-<a href=#1218 id=1218 data-nosnippet>1218</a>        .coefficient_term(<span class="number">0</span>, polarization)
-<a href=#1219 id=1219 data-nosnippet>1219</a>        .expect(<span class="string">"a Taylor family has its zeroth term"</span>)
-<a href=#1220 id=1220 data-nosnippet>1220</a>        .residual();
-<a href=#1221 id=1221 data-nosnippet>1221</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
-<a href=#1222 id=1222 data-nosnippet>1222</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((term.iter().map(|value| value.re / scale).collect(), <span class="prelude-val">None</span>));
-<a href=#1223 id=1223 data-nosnippet>1223</a>    };
-<a href=#1224 id=1224 data-nosnippet>1224</a>    <span class="kw">let </span>normal_weight = principal.sum_weight();
-<a href=#1225 id=1225 data-nosnippet>1225</a>    <span class="kw">let </span>published_weight = window
-<a href=#1226 id=1226 data-nosnippet>1226</a>        .published_sum_weight(<span class="number">0</span>, polarization)
-<a href=#1227 id=1227 data-nosnippet>1227</a>        .expect(<span class="string">"a Taylor family has its zeroth sum of weights"</span>);
-<a href=#1228 id=1228 data-nosnippet>1228</a>    <span class="kw">let </span>sensitivity = principal.sensitivity().to_vec();
-<a href=#1229 id=1229 data-nosnippet>1229</a>    <span class="kw">let </span>bound = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(normal_weight)<span class="question-mark">?</span>;
-<a href=#1230 id=1230 data-nosnippet>1230</a>    <span class="kw">let </span>residual = term
-<a href=#1231 id=1231 data-nosnippet>1231</a>        .iter()
-<a href=#1232 id=1232 data-nosnippet>1232</a>        .enumerate()
-<a href=#1233 id=1233 data-nosnippet>1233</a>        .map(|(index, value)| {
-<a href=#1234 id=1234 data-nosnippet>1234</a>            bound.normalize_weighted_residual_sample(
-<a href=#1235 id=1235 data-nosnippet>1235</a>                value.re,
-<a href=#1236 id=1236 data-nosnippet>1236</a>                index,
-<a href=#1237 id=1237 data-nosnippet>1237</a>                response.normalization(),
-<a href=#1238 id=1238 data-nosnippet>1238</a>                ResidualFamily::Taylor,
-<a href=#1239 id=1239 data-nosnippet>1239</a>                published_weight,
-<a href=#1240 id=1240 data-nosnippet>1240</a>                response.policy(),
-<a href=#1241 id=1241 data-nosnippet>1241</a>            )
-<a href=#1242 id=1242 data-nosnippet>1242</a>        })
-<a href=#1243 id=1243 data-nosnippet>1243</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#1244 id=1244 data-nosnippet>1244</a>    <span class="prelude-val">Ok</span>((
-<a href=#1245 id=1245 data-nosnippet>1245</a>        residual,
-<a href=#1246 id=1246 data-nosnippet>1246</a>        <span class="prelude-val">Some</span>(ResponseBinding {
-<a href=#1247 id=1247 data-nosnippet>1247</a>            sensitivity: Cow::Owned(sensitivity),
-<a href=#1248 id=1248 data-nosnippet>1248</a>            response,
-<a href=#1249 id=1249 data-nosnippet>1249</a>            sum_weight: normal_weight,
-<a href=#1250 id=1250 data-nosnippet>1250</a>        }),
-<a href=#1251 id=1251 data-nosnippet>1251</a>    ))
-<a href=#1252 id=1252 data-nosnippet>1252</a>}
-<a href=#1253 id=1253 data-nosnippet>1253</a>
-<a href=#1254 id=1254 data-nosnippet>1254</a><span class="kw">fn </span>psf_peak_value(psf: <span class="kw-2">&amp;</span>[f64], shape: PlaneShape) -&gt; <span class="prelude-ty">Result</span>&lt;f64, MinorCycleRunError&gt; {
-<a href=#1255 id=1255 data-nosnippet>1255</a>    <span class="kw">let </span>peak = casa_imaging_deconvolution::psf_peak(psf, shape)
-<a href=#1256 id=1256 data-nosnippet>1256</a>        .map(|index| psf[index])
-<a href=#1257 id=1257 data-nosnippet>1257</a>        .filter(|value| value.is_finite() &amp;&amp; <span class="kw-2">*</span>value &gt; <span class="number">0.0</span>)
-<a href=#1258 id=1258 data-nosnippet>1258</a>        .ok_or(casa_imaging_deconvolution::Error::PsfPeak)<span class="question-mark">?</span>;
-<a href=#1259 id=1259 data-nosnippet>1259</a>    <span class="prelude-val">Ok</span>(peak)
-<a href=#1260 id=1260 data-nosnippet>1260</a>}
-<a href=#1261 id=1261 data-nosnippet>1261</a>
-<a href=#1262 id=1262 data-nosnippet>1262</a><span class="kw">fn </span>normalise(<span class="kw-2">mut </span>plane: Vec&lt;f64&gt;, scale: f64) -&gt; Vec&lt;f64&gt; {
-<a href=#1263 id=1263 data-nosnippet>1263</a>    <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;mut </span>plane {
-<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="kw-2">*</span>value /= scale;
-<a href=#1265 id=1265 data-nosnippet>1265</a>    }
-<a href=#1266 id=1266 data-nosnippet>1266</a>    plane
-<a href=#1267 id=1267 data-nosnippet>1267</a>}
-<a href=#1268 id=1268 data-nosnippet>1268</a>
-<a href=#1269 id=1269 data-nosnippet>1269</a><span class="doccomment">/// A plane's solve: its outcome, model terms keyed by model order, and the
-<a href=#1270 id=1270 data-nosnippet>1270</a>/// first component records.
-<a href=#1271 id=1271 data-nosnippet>1271</a>/// One solved plane: its outcome without the model update, which its terms
-<a href=#1272 id=1272 data-nosnippet>1272</a>/// hold, and their charge.
-<a href=#1273 id=1273 data-nosnippet>1273</a></span><span class="kw">struct </span>Solved {
-<a href=#1274 id=1274 data-nosnippet>1274</a>    outcome: PlaneOutcome,
-<a href=#1275 id=1275 data-nosnippet>1275</a>    <span class="doccomment">/// The residual's peak over the plane's pixels once the plane is done.
-<a href=#1276 id=1276 data-nosnippet>1276</a>    </span>peak_no_mask: f64,
-<a href=#1277 id=1277 data-nosnippet>1277</a>    terms: Vec&lt;(usize, ModelDeltaTerm)&gt;,
-<a href=#1278 id=1278 data-nosnippet>1278</a>    dense: <span class="prelude-ty">Option</span>&lt;DenseModelPlane&gt;,
-<a href=#1279 id=1279 data-nosnippet>1279</a>    mem_alpha: <span class="prelude-ty">Option</span>&lt;f32&gt;,
-<a href=#1280 id=1280 data-nosnippet>1280</a>    trace: Vec&lt;TracedComponent&gt;,
-<a href=#1281 id=1281 data-nosnippet>1281</a>    charge: Reservation,
-<a href=#1282 id=1282 data-nosnippet>1282</a>}
-<a href=#1283 id=1283 data-nosnippet>1283</a>
-<a href=#1284 id=1284 data-nosnippet>1284</a><span class="doccomment">/// Read and clean one plane, or clean the load preparation kept for it, and
-<a href=#1285 id=1285 data-nosnippet>1285</a>/// admit its terms on `host` under `policy` before forming them. Clark
-<a href=#1286 id=1286 data-nosnippet>1286</a>/// takes `clark`'s refresh, when it serves this PSF, and leaves its own
-<a href=#1287 id=1287 data-nosnippet>1287</a>/// there for the next cycle; the scale solvers transform on `fft_threads`
-<a href=#1288 id=1288 data-nosnippet>1288</a>/// threads.
-<a href=#1289 id=1289 data-nosnippet>1289</a></span><span class="attr">#[allow(clippy::too_many_arguments)]
-<a href=#1290 id=1290 data-nosnippet>1290</a></span><span class="kw">fn </span>solve(
-<a href=#1291 id=1291 data-nosnippet>1291</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1292 id=1292 data-nosnippet>1292</a>    (host, policy): (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
-<a href=#1293 id=1293 data-nosnippet>1293</a>    (key, retained): (PlaneKey, <span class="prelude-ty">Option</span>&lt;RetainedPlane&gt;),
-<a href=#1294 id=1294 data-nosnippet>1294</a>    summary: <span class="kw-2">&amp;</span>PsfSummary,
-<a href=#1295 id=1295 data-nosnippet>1295</a>    statistics: <span class="kw-2">&amp;</span>PlaneStatistics,
-<a href=#1296 id=1296 data-nosnippet>1296</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
-<a href=#1297 id=1297 data-nosnippet>1297</a>    (clark, fft_threads): (<span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;LinearRefresh&gt;, usize),
-<a href=#1298 id=1298 data-nosnippet>1298</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Solved, MinorCycleRunError&gt; {
-<a href=#1299 id=1299 data-nosnippet>1299</a>    <span class="kw">let </span>setup = inputs.setup;
-<a href=#1300 id=1300 data-nosnippet>1300</a>    <span class="kw">let </span>plane = <span class="kw">match </span>retained {
-<a href=#1301 id=1301 data-nosnippet>1301</a>        <span class="prelude-val">Some</span>(kept) <span class="kw">if </span>kept.key == key =&gt; PlaneData {
-<a href=#1302 id=1302 data-nosnippet>1302</a>            shape: kept.support.shape(),
-<a href=#1303 id=1303 data-nosnippet>1303</a>            residual: kept.residual,
-<a href=#1304 id=1304 data-nosnippet>1304</a>            psf: kept.psf,
-<a href=#1305 id=1305 data-nosnippet>1305</a>            psf_peak: kept.psf_peak,
-<a href=#1306 id=1306 data-nosnippet>1306</a>            support: kept.support,
-<a href=#1307 id=1307 data-nosnippet>1307</a>            valid: kept.valid,
-<a href=#1308 id=1308 data-nosnippet>1308</a>            response: <span class="prelude-val">None</span>,
-<a href=#1309 id=1309 data-nosnippet>1309</a>        },
-<a href=#1310 id=1310 data-nosnippet>1310</a>        <span class="kw">_ </span>=&gt; load(inputs, key)<span class="question-mark">?</span>.expect(<span class="string">"prepared planes have valid data"</span>),
-<a href=#1311 id=1311 data-nosnippet>1311</a>    };
-<a href=#1312 id=1312 data-nosnippet>1312</a>    <span class="kw">let </span>view = MinorCycleView {
-<a href=#1313 id=1313 data-nosnippet>1313</a>        shape: plane.shape,
-<a href=#1314 id=1314 data-nosnippet>1314</a>        residual: <span class="kw-2">&amp;</span>plane.residual,
-<a href=#1315 id=1315 data-nosnippet>1315</a>        psf: <span class="kw-2">&amp;</span>plane.psf,
-<a href=#1316 id=1316 data-nosnippet>1316</a>        summary,
-<a href=#1317 id=1317 data-nosnippet>1317</a>        support: <span class="kw-2">&amp;</span>plane.support,
-<a href=#1318 id=1318 data-nosnippet>1318</a>    };
-<a href=#1319 id=1319 data-nosnippet>1319</a>    <span class="kw">if </span><span class="macro">matches!</span>(setup.algorithm, ReconstructionAlgorithm::Mem) {
-<a href=#1320 id=1320 data-nosnippet>1320</a>        <span class="kw">return </span>solve_mem(
-<a href=#1321 id=1321 data-nosnippet>1321</a>            inputs,
-<a href=#1322 id=1322 data-nosnippet>1322</a>            (host, policy),
-<a href=#1323 id=1323 data-nosnippet>1323</a>            key,
-<a href=#1324 id=1324 data-nosnippet>1324</a>            <span class="kw-2">&amp;</span>plane,
-<a href=#1325 id=1325 data-nosnippet>1325</a>            <span class="kw-2">&amp;</span>view,
-<a href=#1326 id=1326 data-nosnippet>1326</a>            statistics,
-<a href=#1327 id=1327 data-nosnippet>1327</a>            controls,
-<a href=#1328 id=1328 data-nosnippet>1328</a>        );
-<a href=#1329 id=1329 data-nosnippet>1329</a>    }
-<a href=#1330 id=1330 data-nosnippet>1330</a>    <span class="kw">let </span>outcome = <span class="kw">match </span><span class="kw-2">&amp;</span>setup.algorithm {
-<a href=#1331 id=1331 data-nosnippet>1331</a>        ReconstructionAlgorithm::Hogbom =&gt; clean(
-<a href=#1332 id=1332 data-nosnippet>1332</a>            <span class="kw-2">&amp;</span>Hogbom::new(setup.accounting == HogbomIterationAccounting::CasaInclusive),
-<a href=#1333 id=1333 data-nosnippet>1333</a>            <span class="kw-2">&amp;</span>view,
-<a href=#1334 id=1334 data-nosnippet>1334</a>            controls,
-<a href=#1335 id=1335 data-nosnippet>1335</a>            statistics,
-<a href=#1336 id=1336 data-nosnippet>1336</a>        )<span class="question-mark">?</span>,
-<a href=#1337 id=1337 data-nosnippet>1337</a>        ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes =&gt; {
-<a href=#1338 id=1338 data-nosnippet>1338</a>            <span class="kw">let </span>solver = Clark::new(clark.take());
-<a href=#1339 id=1339 data-nosnippet>1339</a>            <span class="kw">let </span>outcome = clean(<span class="kw-2">&amp;</span>solver, <span class="kw-2">&amp;</span>view, controls, statistics);
-<a href=#1340 id=1340 data-nosnippet>1340</a>            <span class="kw-2">*</span>clark = solver.into_refresh();
-<a href=#1341 id=1341 data-nosnippet>1341</a>            outcome<span class="question-mark">?
-<a href=#1342 id=1342 data-nosnippet>1342</a>        </span>}
-<a href=#1343 id=1343 data-nosnippet>1343</a>        ReconstructionAlgorithm::Multiscale {
-<a href=#1344 id=1344 data-nosnippet>1344</a>            scales_px,
-<a href=#1345 id=1345 data-nosnippet>1345</a>            small_scale_bias,
-<a href=#1346 id=1346 data-nosnippet>1346</a>        } =&gt; clean(
-<a href=#1347 id=1347 data-nosnippet>1347</a>            <span class="kw-2">&amp;</span>Multiscale::new(scales_px.clone(), <span class="kw-2">*</span>small_scale_bias).with_fft_threads(fft_threads),
-<a href=#1348 id=1348 data-nosnippet>1348</a>            <span class="kw-2">&amp;</span>view,
-<a href=#1349 id=1349 data-nosnippet>1349</a>            controls,
-<a href=#1350 id=1350 data-nosnippet>1350</a>            statistics,
-<a href=#1351 id=1351 data-nosnippet>1351</a>        )<span class="question-mark">?</span>,
-<a href=#1352 id=1352 data-nosnippet>1352</a>        ReconstructionAlgorithm::Mtmfs {
-<a href=#1353 id=1353 data-nosnippet>1353</a>            scales_px,
-<a href=#1354 id=1354 data-nosnippet>1354</a>            small_scale_bias,
-<a href=#1355 id=1355 data-nosnippet>1355</a>        } =&gt; clean(
-<a href=#1356 id=1356 data-nosnippet>1356</a>            <span class="kw-2">&amp;</span>Taylor::new(plane.residual.len(), scales_px.clone(), <span class="kw-2">*</span>small_scale_bias)
-<a href=#1357 id=1357 data-nosnippet>1357</a>                .with_fft_threads(fft_threads),
-<a href=#1358 id=1358 data-nosnippet>1358</a>            <span class="kw-2">&amp;</span>view,
-<a href=#1359 id=1359 data-nosnippet>1359</a>            controls,
-<a href=#1360 id=1360 data-nosnippet>1360</a>            statistics,
-<a href=#1361 id=1361 data-nosnippet>1361</a>        )<span class="question-mark">?</span>,
-<a href=#1362 id=1362 data-nosnippet>1362</a>        algorithm =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(MinorCycleRunError::Algorithm(algorithm.clone())),
-<a href=#1363 id=1363 data-nosnippet>1363</a>    };
-<a href=#1364 id=1364 data-nosnippet>1364</a>    <span class="kw">let </span><span class="kw-2">mut </span>outcome = outcome;
-<a href=#1365 id=1365 data-nosnippet>1365</a>    <span class="comment">// CASA reads this after a plane it cleaned, and keeps the entry's for one
-<a href=#1366 id=1366 data-nosnippet>1366</a>    // it skipped.
-<a href=#1367 id=1367 data-nosnippet>1367</a>    </span><span class="kw">let </span>end_residual = std::mem::take(<span class="kw-2">&amp;mut </span>outcome.end_residual);
-<a href=#1368 id=1368 data-nosnippet>1368</a>    <span class="kw">let </span>peak_no_mask = <span class="kw">match </span>end_residual.first() {
-<a href=#1369 id=1369 data-nosnippet>1369</a>        <span class="prelude-val">Some</span>(residual) <span class="kw">if </span>setup.residual_pixel_mask =&gt; {
-<a href=#1370 id=1370 data-nosnippet>1370</a>            <span class="kw">let </span>pixels = plane_pixels(inputs, key, <span class="kw-2">&amp;</span>plane)<span class="question-mark">?</span>;
-<a href=#1371 id=1371 data-nosnippet>1371</a>            peak_magnitude(residual, pixels.residual_mask(<span class="bool-val">true</span>))
-<a href=#1372 id=1372 data-nosnippet>1372</a>        }
-<a href=#1373 id=1373 data-nosnippet>1373</a>        <span class="prelude-val">Some</span>(residual) =&gt; peak_magnitude(residual, <span class="kw-2">&amp;</span>plane.valid),
-<a href=#1374 id=1374 data-nosnippet>1374</a>        <span class="prelude-val">None </span>=&gt; statistics.peak_no_mask,
-<a href=#1375 id=1375 data-nosnippet>1375</a>    };
-<a href=#1376 id=1376 data-nosnippet>1376</a>    drop(end_residual);
-<a href=#1377 id=1377 data-nosnippet>1377</a>    <span class="kw">let </span>delta = std::mem::take(<span class="kw-2">&amp;mut </span>outcome.delta);
-<a href=#1378 id=1378 data-nosnippet>1378</a>    <span class="kw">let </span>entries = (<span class="number">0</span>..delta.term_count())
-<a href=#1379 id=1379 data-nosnippet>1379</a>        .map(|term| delta.term(term).count())
-<a href=#1380 id=1380 data-nosnippet>1380</a>        .sum();
-<a href=#1381 id=1381 data-nosnippet>1381</a>    <span class="kw">let </span>charge = admit(
-<a href=#1382 id=1382 data-nosnippet>1382</a>        host,
-<a href=#1383 id=1383 data-nosnippet>1383</a>        policy,
-<a href=#1384 id=1384 data-nosnippet>1384</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#1385 id=1385 data-nosnippet>1385</a>            phase: <span class="string">"minor-cycle results"</span>,
-<a href=#1386 id=1386 data-nosnippet>1386</a>            memory: result_bytes(entries),
-<a href=#1387 id=1387 data-nosnippet>1387</a>        },
-<a href=#1388 id=1388 data-nosnippet>1388</a>    )<span class="question-mark">?</span>;
-<a href=#1389 id=1389 data-nosnippet>1389</a>    <span class="kw">let </span>terms = model_terms(<span class="kw-2">&amp;</span>delta, entries, <span class="kw-2">&amp;</span>plane, inputs, key)<span class="question-mark">?</span>;
-<a href=#1390 id=1390 data-nosnippet>1390</a>    <span class="kw">let </span>trace = trace(<span class="kw-2">&amp;</span>outcome.trace, <span class="kw-2">&amp;</span>plane, inputs, key);
-<a href=#1391 id=1391 data-nosnippet>1391</a>    <span class="prelude-val">Ok</span>(Solved {
-<a href=#1392 id=1392 data-nosnippet>1392</a>        outcome,
-<a href=#1393 id=1393 data-nosnippet>1393</a>        peak_no_mask,
-<a href=#1394 id=1394 data-nosnippet>1394</a>        terms,
-<a href=#1395 id=1395 data-nosnippet>1395</a>        dense: <span class="prelude-val">None</span>,
-<a href=#1396 id=1396 data-nosnippet>1396</a>        mem_alpha: <span class="prelude-val">None</span>,
-<a href=#1397 id=1397 data-nosnippet>1397</a>        trace,
-<a href=#1398 id=1398 data-nosnippet>1398</a>        charge,
-<a href=#1399 id=1399 data-nosnippet>1399</a>    })
-<a href=#1400 id=1400 data-nosnippet>1400</a>}
-<a href=#1401 id=1401 data-nosnippet>1401</a>
-<a href=#1402 id=1402 data-nosnippet>1402</a><span class="doccomment">/// [`run_plane`] with the cycle's trace length.
-<a href=#1403 id=1403 data-nosnippet>1403</a></span><span class="kw">fn </span>clean&lt;S: Solver&gt;(
-<a href=#1404 id=1404 data-nosnippet>1404</a>    solver: <span class="kw-2">&amp;</span>S,
-<a href=#1405 id=1405 data-nosnippet>1405</a>    view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1406 id=1406 data-nosnippet>1406</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
-<a href=#1407 id=1407 data-nosnippet>1407</a>    statistics: <span class="kw-2">&amp;</span>PlaneStatistics,
-<a href=#1408 id=1408 data-nosnippet>1408</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlaneOutcome, MinorCycleRunError&gt; {
-<a href=#1409 id=1409 data-nosnippet>1409</a>    <span class="prelude-val">Ok</span>(run_plane(solver, view, controls, statistics, TRACE)<span class="question-mark">?</span>)
-<a href=#1410 id=1410 data-nosnippet>1410</a>}
-<a href=#1411 id=1411 data-nosnippet>1411</a>
-<a href=#1412 id=1412 data-nosnippet>1412</a><span class="doccomment">/// The model coefficient a plane's term `term` goes to: the Taylor term, or
-<a href=#1413 id=1413 data-nosnippet>1413</a>/// the channel of a cube plane.
-<a href=#1414 id=1414 data-nosnippet>1414</a></span><span class="kw">const fn </span>coefficient(inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;, key: PlaneKey, term: usize) -&gt; usize {
-<a href=#1415 id=1415 data-nosnippet>1415</a>    <span class="kw">if </span>inputs.taylor { term } <span class="kw">else </span>{ key.channel }
-<a href=#1416 id=1416 data-nosnippet>1416</a>}
-<a href=#1417 id=1417 data-nosnippet>1417</a>
-<a href=#1418 id=1418 data-nosnippet>1418</a><span class="doccomment">/// The plane's components as model terms keyed by model order, in a vector
-<a href=#1419 id=1419 data-nosnippet>1419</a>/// with room for `delta`'s `entries`.
-<a href=#1420 id=1420 data-nosnippet>1420</a></span><span class="kw">fn </span>model_terms(
-<a href=#1421 id=1421 data-nosnippet>1421</a>    delta: <span class="kw-2">&amp;</span>Delta,
-<a href=#1422 id=1422 data-nosnippet>1422</a>    entries: usize,
-<a href=#1423 id=1423 data-nosnippet>1423</a>    plane: <span class="kw-2">&amp;</span>PlaneData,
-<a href=#1424 id=1424 data-nosnippet>1424</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1425 id=1425 data-nosnippet>1425</a>    key: PlaneKey,
-<a href=#1426 id=1426 data-nosnippet>1426</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(usize, ModelDeltaTerm)&gt;, MinorCycleRunError&gt; {
-<a href=#1427 id=1427 data-nosnippet>1427</a>    <span class="kw">let </span><span class="kw-2">mut </span>terms = Vec::with_capacity(entries);
-<a href=#1428 id=1428 data-nosnippet>1428</a>    <span class="kw">let </span>physical = plane.physical()<span class="question-mark">?</span>;
-<a href=#1429 id=1429 data-nosnippet>1429</a>    <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..delta.term_count() {
-<a href=#1430 id=1430 data-nosnippet>1430</a>        <span class="kw">for </span>(index, flux) <span class="kw">in </span>delta.term(term) {
-<a href=#1431 id=1431 data-nosnippet>1431</a>            <span class="kw">let </span>value = physical.apply(flux, index)<span class="question-mark">?</span>;
-<a href=#1432 id=1432 data-nosnippet>1432</a>            <span class="kw">if </span>value == <span class="number">0.0 </span>{
-<a href=#1433 id=1433 data-nosnippet>1433</a>                <span class="kw">continue</span>;
-<a href=#1434 id=1434 data-nosnippet>1434</a>            }
-<a href=#1435 id=1435 data-nosnippet>1435</a>            <span class="kw">let </span>cell = ModelCell::new(
-<a href=#1436 id=1436 data-nosnippet>1436</a>                key.domain,
-<a href=#1437 id=1437 data-nosnippet>1437</a>                coefficient(inputs, key, term),
-<a href=#1438 id=1438 data-nosnippet>1438</a>                key.polarization,
-<a href=#1439 id=1439 data-nosnippet>1439</a>                plane.shape.pixel(index),
-<a href=#1440 id=1440 data-nosnippet>1440</a>            );
-<a href=#1441 id=1441 data-nosnippet>1441</a>            <span class="kw">let </span>flat = inputs
-<a href=#1442 id=1442 data-nosnippet>1442</a>                .base
-<a href=#1443 id=1443 data-nosnippet>1443</a>                .shape()
-<a href=#1444 id=1444 data-nosnippet>1444</a>                .flat_index(cell)
-<a href=#1445 id=1445 data-nosnippet>1445</a>                .ok_or(ModelLifecycleError::CellOutsideShape)<span class="question-mark">?</span>;
-<a href=#1446 id=1446 data-nosnippet>1446</a>            terms.push((
-<a href=#1447 id=1447 data-nosnippet>1447</a>                flat,
-<a href=#1448 id=1448 data-nosnippet>1448</a>                ModelDeltaTerm::new(
-<a href=#1449 id=1449 data-nosnippet>1449</a>                    cell,
-<a href=#1450 id=1450 data-nosnippet>1450</a>                    ModelValue::new(value).map_err(ModelLifecycleError::Contract)<span class="question-mark">?</span>,
-<a href=#1451 id=1451 data-nosnippet>1451</a>                ),
-<a href=#1452 id=1452 data-nosnippet>1452</a>            ));
-<a href=#1453 id=1453 data-nosnippet>1453</a>        }
-<a href=#1454 id=1454 data-nosnippet>1454</a>    }
-<a href=#1455 id=1455 data-nosnippet>1455</a>    <span class="prelude-val">Ok</span>(terms)
-<a href=#1456 id=1456 data-nosnippet>1456</a>}
-<a href=#1457 id=1457 data-nosnippet>1457</a>
-<a href=#1458 id=1458 data-nosnippet>1458</a><span class="kw">fn </span>trace(
-<a href=#1459 id=1459 data-nosnippet>1459</a>    components: <span class="kw-2">&amp;</span>[Component],
-<a href=#1460 id=1460 data-nosnippet>1460</a>    plane: <span class="kw-2">&amp;</span>PlaneData,
-<a href=#1461 id=1461 data-nosnippet>1461</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1462 id=1462 data-nosnippet>1462</a>    key: PlaneKey,
-<a href=#1463 id=1463 data-nosnippet>1463</a>) -&gt; Vec&lt;TracedComponent&gt; {
-<a href=#1464 id=1464 data-nosnippet>1464</a>    <span class="kw">let </span>scales = <span class="kw">match </span><span class="kw-2">&amp;</span>inputs.setup.algorithm {
-<a href=#1465 id=1465 data-nosnippet>1465</a>        ReconstructionAlgorithm::Multiscale { scales_px, .. }
-<a href=#1466 id=1466 data-nosnippet>1466</a>        | ReconstructionAlgorithm::Mtmfs { scales_px, .. } =&gt; scales_px.as_slice(),
-<a href=#1467 id=1467 data-nosnippet>1467</a>        <span class="kw">_ </span>=&gt; <span class="kw-2">&amp;</span>[],
-<a href=#1468 id=1468 data-nosnippet>1468</a>    };
-<a href=#1469 id=1469 data-nosnippet>1469</a>    components
-<a href=#1470 id=1470 data-nosnippet>1470</a>        .iter()
-<a href=#1471 id=1471 data-nosnippet>1471</a>        .map(|component| TracedComponent {
-<a href=#1472 id=1472 data-nosnippet>1472</a>            cell: ModelCell::new(
-<a href=#1473 id=1473 data-nosnippet>1473</a>                key.domain,
-<a href=#1474 id=1474 data-nosnippet>1474</a>                coefficient(inputs, key, component.term),
-<a href=#1475 id=1475 data-nosnippet>1475</a>                key.polarization,
-<a href=#1476 id=1476 data-nosnippet>1476</a>                plane.shape.pixel(component.index),
-<a href=#1477 id=1477 data-nosnippet>1477</a>            ),
-<a href=#1478 id=1478 data-nosnippet>1478</a>            flux: component.flux,
-<a href=#1479 id=1479 data-nosnippet>1479</a>            scale_px: scales.get(component.scale).copied().unwrap_or(<span class="number">0.0</span>),
-<a href=#1480 id=1480 data-nosnippet>1480</a>        })
-<a href=#1481 id=1481 data-nosnippet>1481</a>        .collect()
-<a href=#1482 id=1482 data-nosnippet>1482</a>}
+<a href=#1048 id=1048 data-nosnippet>1048</a>    <span class="kw">let </span>psf = plane
+<a href=#1049 id=1049 data-nosnippet>1049</a>        .normal_approximation()
+<a href=#1050 id=1050 data-nosnippet>1050</a>        .iter()
+<a href=#1051 id=1051 data-nosnippet>1051</a>        .map(|value| value.re)
+<a href=#1052 id=1052 data-nosnippet>1052</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#1053 id=1053 data-nosnippet>1053</a>    <span class="kw">let </span>peak = single_psf_peak(<span class="kw-2">&amp;</span>psf)<span class="question-mark">?</span>;
+<a href=#1054 id=1054 data-nosnippet>1054</a>    <span class="kw">let </span>(residual, response) = single_residual(
+<a href=#1055 id=1055 data-nosnippet>1055</a>        normal,
+<a href=#1056 id=1056 data-nosnippet>1056</a>        setup,
+<a href=#1057 id=1057 data-nosnippet>1057</a>        key,
+<a href=#1058 id=1058 data-nosnippet>1058</a>        plane.residual().iter().map(|value| value.re),
+<a href=#1059 id=1059 data-nosnippet>1059</a>        plane.sum_weight(),
+<a href=#1060 id=1060 data-nosnippet>1060</a>    )<span class="question-mark">?</span>;
+<a href=#1061 id=1061 data-nosnippet>1061</a>    <span class="comment">// CASA normalizes the PSF by its own peak (SIImageStore::normPSF).
+<a href=#1062 id=1062 data-nosnippet>1062</a>    </span><span class="prelude-val">Ok</span>(PlaneTerms {
+<a href=#1063 id=1063 data-nosnippet>1063</a>        residual: <span class="macro">vec!</span>[residual],
+<a href=#1064 id=1064 data-nosnippet>1064</a>        psf: <span class="macro">vec!</span>[normalise(psf, peak)],
+<a href=#1065 id=1065 data-nosnippet>1065</a>        psf_peak: peak,
+<a href=#1066 id=1066 data-nosnippet>1066</a>        response,
+<a href=#1067 id=1067 data-nosnippet>1067</a>    })
+<a href=#1068 id=1068 data-nosnippet>1068</a>}
+<a href=#1069 id=1069 data-nosnippet>1069</a>
+<a href=#1070 id=1070 data-nosnippet>1070</a><span class="doccomment">/// A single-term plane's residual in the units the minor cycle cleans, from
+<a href=#1071 id=1071 data-nosnippet>1071</a>/// its raw real values `raw` and its sum of weights: divided by the sum
+<a href=#1072 id=1072 data-nosnippet>1072</a>/// (`SIImageStore::divideResidualByWeight`), or with a response in CASA's
+<a href=#1073 id=1073 data-nosnippet>1073</a>/// units, with the response bound to the plane's weights.
+<a href=#1074 id=1074 data-nosnippet>1074</a></span><span class="kw">fn </span>single_residual&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#1075 id=1075 data-nosnippet>1075</a>    normal: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>FinalNormalState,
+<a href=#1076 id=1076 data-nosnippet>1076</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1077 id=1077 data-nosnippet>1077</a>    key: PlaneKey,
+<a href=#1078 id=1078 data-nosnippet>1078</a>    raw: <span class="kw">impl </span>Iterator&lt;Item = f64&gt;,
+<a href=#1079 id=1079 data-nosnippet>1079</a>    sum_weight: f64,
+<a href=#1080 id=1080 data-nosnippet>1080</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;f64&gt;, <span class="prelude-ty">Option</span>&lt;ResponseBinding&lt;<span class="lifetime">'a</span>&gt;&gt;), MinorCycleRunError&gt; {
+<a href=#1081 id=1081 data-nosnippet>1081</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
+<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((raw.map(|value| value / sum_weight).collect(), <span class="prelude-val">None</span>));
+<a href=#1083 id=1083 data-nosnippet>1083</a>    };
+<a href=#1084 id=1084 data-nosnippet>1084</a>    <span class="kw">let </span>weights = normal.read_plane(key.domain, key.channel, key.polarization)<span class="question-mark">?</span>;
+<a href=#1085 id=1085 data-nosnippet>1085</a>    <span class="kw">let </span>sensitivity = weights.read_sensitivity()<span class="question-mark">?</span>;
+<a href=#1086 id=1086 data-nosnippet>1086</a>    <span class="kw">let </span>normal_weight = weights.sum_weight();
+<a href=#1087 id=1087 data-nosnippet>1087</a>    <span class="kw">let </span>published_weight = weights.published_sum_weight();
+<a href=#1088 id=1088 data-nosnippet>1088</a>    <span class="kw">let </span>bound = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(normal_weight)<span class="question-mark">?</span>;
+<a href=#1089 id=1089 data-nosnippet>1089</a>    <span class="kw">let </span>residual = raw
+<a href=#1090 id=1090 data-nosnippet>1090</a>        .enumerate()
+<a href=#1091 id=1091 data-nosnippet>1091</a>        .map(|(index, value)| {
+<a href=#1092 id=1092 data-nosnippet>1092</a>            bound.normalize_weighted_residual_sample(
+<a href=#1093 id=1093 data-nosnippet>1093</a>                value,
+<a href=#1094 id=1094 data-nosnippet>1094</a>                index,
+<a href=#1095 id=1095 data-nosnippet>1095</a>                response.normalization(),
+<a href=#1096 id=1096 data-nosnippet>1096</a>                ResidualFamily::Single,
+<a href=#1097 id=1097 data-nosnippet>1097</a>                published_weight,
+<a href=#1098 id=1098 data-nosnippet>1098</a>                response.policy(),
+<a href=#1099 id=1099 data-nosnippet>1099</a>            )
+<a href=#1100 id=1100 data-nosnippet>1100</a>        })
+<a href=#1101 id=1101 data-nosnippet>1101</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#1102 id=1102 data-nosnippet>1102</a>    <span class="prelude-val">Ok</span>((
+<a href=#1103 id=1103 data-nosnippet>1103</a>        residual,
+<a href=#1104 id=1104 data-nosnippet>1104</a>        <span class="prelude-val">Some</span>(ResponseBinding {
+<a href=#1105 id=1105 data-nosnippet>1105</a>            sensitivity,
+<a href=#1106 id=1106 data-nosnippet>1106</a>            response,
+<a href=#1107 id=1107 data-nosnippet>1107</a>            sum_weight: normal_weight,
+<a href=#1108 id=1108 data-nosnippet>1108</a>        }),
+<a href=#1109 id=1109 data-nosnippet>1109</a>    ))
+<a href=#1110 id=1110 data-nosnippet>1110</a>}
+<a href=#1111 id=1111 data-nosnippet>1111</a>
+<a href=#1112 id=1112 data-nosnippet>1112</a><span class="doccomment">/// Polarization `polarization`'s Taylor family: its residual terms and
+<a href=#1113 id=1113 data-nosnippet>1113</a>/// `2·N_t − 1` PSF moments. Every moment divides by the zeroth moment's
+<a href=#1114 id=1114 data-nosnippet>1114</a>/// peak, with or without a response (`SIImageStore::normPSF`, which
+<a href=#1115 id=1115 data-nosnippet>1115</a>/// `SDAlgorithmMSMFS::initializeDeconvolver` reads, #704). Without a
+<a href=#1116 id=1116 data-nosnippet>1116</a>/// response the residuals divide by the same peak; with one they take
+<a href=#1117 id=1117 data-nosnippet>1117</a>/// CASA's units and the components convert back over the zeroth moment's
+<a href=#1118 id=1118 data-nosnippet>1118</a>/// sum weight.
+<a href=#1119 id=1119 data-nosnippet>1119</a></span><span class="kw">fn </span>read_taylor(
+<a href=#1120 id=1120 data-nosnippet>1120</a>    normal: <span class="kw-2">&amp;</span>FinalNormalState,
+<a href=#1121 id=1121 data-nosnippet>1121</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1122 id=1122 data-nosnippet>1122</a>    polarization: usize,
+<a href=#1123 id=1123 data-nosnippet>1123</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlaneTerms&lt;<span class="lifetime">'static</span>&gt;, MinorCycleRunError&gt; {
+<a href=#1124 id=1124 data-nosnippet>1124</a>    <span class="kw">let </span>window = normal.read_window(normal.slab().core_range())<span class="question-mark">?</span>;
+<a href=#1125 id=1125 data-nosnippet>1125</a>    <span class="kw">let </span>[nx, ny] = normal.shape();
+<a href=#1126 id=1126 data-nosnippet>1126</a>    <span class="kw">let </span>shape = PlaneShape::new(nx, ny);
+<a href=#1127 id=1127 data-nosnippet>1127</a>    <span class="kw">let </span>principal = window
+<a href=#1128 id=1128 data-nosnippet>1128</a>        .normal_moment(<span class="number">0</span>, polarization)
+<a href=#1129 id=1129 data-nosnippet>1129</a>        .expect(<span class="string">"a Taylor family has its zeroth moment"</span>);
+<a href=#1130 id=1130 data-nosnippet>1130</a>    <span class="kw">let </span>moments = (<span class="number">0</span>..normal.normal_moment_count())
+<a href=#1131 id=1131 data-nosnippet>1131</a>        .map(|moment| {
+<a href=#1132 id=1132 data-nosnippet>1132</a>            window
+<a href=#1133 id=1133 data-nosnippet>1133</a>                .normal_moment(moment, polarization)
+<a href=#1134 id=1134 data-nosnippet>1134</a>                .expect(<span class="string">"every normal moment is present"</span>)
+<a href=#1135 id=1135 data-nosnippet>1135</a>                .normal_approximation()
+<a href=#1136 id=1136 data-nosnippet>1136</a>                .iter()
+<a href=#1137 id=1137 data-nosnippet>1137</a>                .map(|value| value.re)
+<a href=#1138 id=1138 data-nosnippet>1138</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#1139 id=1139 data-nosnippet>1139</a>        })
+<a href=#1140 id=1140 data-nosnippet>1140</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#1141 id=1141 data-nosnippet>1141</a>    <span class="kw">let </span>raw = (<span class="number">0</span>..normal.coefficient_term_count()).map(|term| {
+<a href=#1142 id=1142 data-nosnippet>1142</a>        window
+<a href=#1143 id=1143 data-nosnippet>1143</a>            .coefficient_term(term, polarization)
+<a href=#1144 id=1144 data-nosnippet>1144</a>            .expect(<span class="string">"every coefficient term is present"</span>)
+<a href=#1145 id=1145 data-nosnippet>1145</a>            .residual()
+<a href=#1146 id=1146 data-nosnippet>1146</a>    });
+<a href=#1147 id=1147 data-nosnippet>1147</a>    <span class="kw">let </span>peak = psf_peak_value(<span class="kw-2">&amp;</span>moments[<span class="number">0</span>], shape)<span class="question-mark">?</span>;
+<a href=#1148 id=1148 data-nosnippet>1148</a>    <span class="kw">let </span>psf = moments
+<a href=#1149 id=1149 data-nosnippet>1149</a>        .into_iter()
+<a href=#1150 id=1150 data-nosnippet>1150</a>        .map(|moment| normalise(moment, peak))
+<a href=#1151 id=1151 data-nosnippet>1151</a>        .collect();
+<a href=#1152 id=1152 data-nosnippet>1152</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
+<a href=#1153 id=1153 data-nosnippet>1153</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PlaneTerms {
+<a href=#1154 id=1154 data-nosnippet>1154</a>            residual: raw
+<a href=#1155 id=1155 data-nosnippet>1155</a>                .map(|term| term.iter().map(|value| value.re / peak).collect())
+<a href=#1156 id=1156 data-nosnippet>1156</a>                .collect(),
+<a href=#1157 id=1157 data-nosnippet>1157</a>            psf,
+<a href=#1158 id=1158 data-nosnippet>1158</a>            psf_peak: peak,
+<a href=#1159 id=1159 data-nosnippet>1159</a>            response: <span class="prelude-val">None</span>,
+<a href=#1160 id=1160 data-nosnippet>1160</a>        });
+<a href=#1161 id=1161 data-nosnippet>1161</a>    };
+<a href=#1162 id=1162 data-nosnippet>1162</a>    <span class="kw">let </span>normal_weight = principal.sum_weight();
+<a href=#1163 id=1163 data-nosnippet>1163</a>    <span class="kw">let </span>published_weight = window
+<a href=#1164 id=1164 data-nosnippet>1164</a>        .published_sum_weight(<span class="number">0</span>, polarization)
+<a href=#1165 id=1165 data-nosnippet>1165</a>        .expect(<span class="string">"a Taylor family has its zeroth sum of weights"</span>);
+<a href=#1166 id=1166 data-nosnippet>1166</a>    <span class="kw">let </span>sensitivity = principal.sensitivity().to_vec();
+<a href=#1167 id=1167 data-nosnippet>1167</a>    <span class="kw">let </span>bound = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(normal_weight)<span class="question-mark">?</span>;
+<a href=#1168 id=1168 data-nosnippet>1168</a>    <span class="kw">let </span>residual = raw
+<a href=#1169 id=1169 data-nosnippet>1169</a>        .map(|term| {
+<a href=#1170 id=1170 data-nosnippet>1170</a>            term.iter()
+<a href=#1171 id=1171 data-nosnippet>1171</a>                .enumerate()
+<a href=#1172 id=1172 data-nosnippet>1172</a>                .map(|(index, value)| {
+<a href=#1173 id=1173 data-nosnippet>1173</a>                    bound.normalize_weighted_residual_sample(
+<a href=#1174 id=1174 data-nosnippet>1174</a>                        value.re,
+<a href=#1175 id=1175 data-nosnippet>1175</a>                        index,
+<a href=#1176 id=1176 data-nosnippet>1176</a>                        response.normalization(),
+<a href=#1177 id=1177 data-nosnippet>1177</a>                        ResidualFamily::Taylor,
+<a href=#1178 id=1178 data-nosnippet>1178</a>                        published_weight,
+<a href=#1179 id=1179 data-nosnippet>1179</a>                        response.policy(),
+<a href=#1180 id=1180 data-nosnippet>1180</a>                    )
+<a href=#1181 id=1181 data-nosnippet>1181</a>                })
+<a href=#1182 id=1182 data-nosnippet>1182</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#1183 id=1183 data-nosnippet>1183</a>        })
+<a href=#1184 id=1184 data-nosnippet>1184</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#1185 id=1185 data-nosnippet>1185</a>    <span class="prelude-val">Ok</span>(PlaneTerms {
+<a href=#1186 id=1186 data-nosnippet>1186</a>        residual,
+<a href=#1187 id=1187 data-nosnippet>1187</a>        psf,
+<a href=#1188 id=1188 data-nosnippet>1188</a>        psf_peak: peak,
+<a href=#1189 id=1189 data-nosnippet>1189</a>        response: <span class="prelude-val">Some</span>(ResponseBinding {
+<a href=#1190 id=1190 data-nosnippet>1190</a>            sensitivity: Cow::Owned(sensitivity),
+<a href=#1191 id=1191 data-nosnippet>1191</a>            response,
+<a href=#1192 id=1192 data-nosnippet>1192</a>            sum_weight: normal_weight,
+<a href=#1193 id=1193 data-nosnippet>1193</a>        }),
+<a href=#1194 id=1194 data-nosnippet>1194</a>    })
+<a href=#1195 id=1195 data-nosnippet>1195</a>}
+<a href=#1196 id=1196 data-nosnippet>1196</a>
+<a href=#1197 id=1197 data-nosnippet>1197</a><span class="doccomment">/// The zeroth Taylor term's residual of polarization `polarization` in the
+<a href=#1198 id=1198 data-nosnippet>1198</a>/// units the minor cycle cleans, as [`read_taylor`] gives it, read alone,
+<a href=#1199 id=1199 data-nosnippet>1199</a>/// with the response bound to the family's weights: an automatic mask reads
+<a href=#1200 id=1200 data-nosnippet>1200</a>/// that term and, of the zeroth PSF moment, its value at its measured
+<a href=#1201 id=1201 data-nosnippet>1201</a>/// `peak`, not the whole family.
+<a href=#1202 id=1202 data-nosnippet>1202</a></span><span class="kw">fn </span>taylor_principal_residual(
+<a href=#1203 id=1203 data-nosnippet>1203</a>    normal: <span class="kw-2">&amp;</span>FinalNormalState,
+<a href=#1204 id=1204 data-nosnippet>1204</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1205 id=1205 data-nosnippet>1205</a>    polarization: usize,
+<a href=#1206 id=1206 data-nosnippet>1206</a>    peak: usize,
+<a href=#1207 id=1207 data-nosnippet>1207</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;f64&gt;, <span class="prelude-ty">Option</span>&lt;ResponseBinding&lt;<span class="lifetime">'static</span>&gt;&gt;), MinorCycleRunError&gt; {
+<a href=#1208 id=1208 data-nosnippet>1208</a>    <span class="kw">let </span>window = normal.read_window(normal.slab().core_range())<span class="question-mark">?</span>;
+<a href=#1209 id=1209 data-nosnippet>1209</a>    <span class="kw">let </span>principal = window
+<a href=#1210 id=1210 data-nosnippet>1210</a>        .normal_moment(<span class="number">0</span>, polarization)
+<a href=#1211 id=1211 data-nosnippet>1211</a>        .expect(<span class="string">"a Taylor family has its zeroth moment"</span>);
+<a href=#1212 id=1212 data-nosnippet>1212</a>    <span class="kw">let </span>scale = principal.normal_approximation()[peak].re;
+<a href=#1213 id=1213 data-nosnippet>1213</a>    <span class="kw">if </span>!(scale.is_finite() &amp;&amp; scale &gt; <span class="number">0.0</span>) {
+<a href=#1214 id=1214 data-nosnippet>1214</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(casa_imaging_deconvolution::Error::PsfPeak.into());
+<a href=#1215 id=1215 data-nosnippet>1215</a>    }
+<a href=#1216 id=1216 data-nosnippet>1216</a>    <span class="kw">let </span>term = window
+<a href=#1217 id=1217 data-nosnippet>1217</a>        .coefficient_term(<span class="number">0</span>, polarization)
+<a href=#1218 id=1218 data-nosnippet>1218</a>        .expect(<span class="string">"a Taylor family has its zeroth term"</span>)
+<a href=#1219 id=1219 data-nosnippet>1219</a>        .residual();
+<a href=#1220 id=1220 data-nosnippet>1220</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
+<a href=#1221 id=1221 data-nosnippet>1221</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((term.iter().map(|value| value.re / scale).collect(), <span class="prelude-val">None</span>));
+<a href=#1222 id=1222 data-nosnippet>1222</a>    };
+<a href=#1223 id=1223 data-nosnippet>1223</a>    <span class="kw">let </span>normal_weight = principal.sum_weight();
+<a href=#1224 id=1224 data-nosnippet>1224</a>    <span class="kw">let </span>published_weight = window
+<a href=#1225 id=1225 data-nosnippet>1225</a>        .published_sum_weight(<span class="number">0</span>, polarization)
+<a href=#1226 id=1226 data-nosnippet>1226</a>        .expect(<span class="string">"a Taylor family has its zeroth sum of weights"</span>);
+<a href=#1227 id=1227 data-nosnippet>1227</a>    <span class="kw">let </span>sensitivity = principal.sensitivity().to_vec();
+<a href=#1228 id=1228 data-nosnippet>1228</a>    <span class="kw">let </span>bound = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(normal_weight)<span class="question-mark">?</span>;
+<a href=#1229 id=1229 data-nosnippet>1229</a>    <span class="kw">let </span>residual = term
+<a href=#1230 id=1230 data-nosnippet>1230</a>        .iter()
+<a href=#1231 id=1231 data-nosnippet>1231</a>        .enumerate()
+<a href=#1232 id=1232 data-nosnippet>1232</a>        .map(|(index, value)| {
+<a href=#1233 id=1233 data-nosnippet>1233</a>            bound.normalize_weighted_residual_sample(
+<a href=#1234 id=1234 data-nosnippet>1234</a>                value.re,
+<a href=#1235 id=1235 data-nosnippet>1235</a>                index,
+<a href=#1236 id=1236 data-nosnippet>1236</a>                response.normalization(),
+<a href=#1237 id=1237 data-nosnippet>1237</a>                ResidualFamily::Taylor,
+<a href=#1238 id=1238 data-nosnippet>1238</a>                published_weight,
+<a href=#1239 id=1239 data-nosnippet>1239</a>                response.policy(),
+<a href=#1240 id=1240 data-nosnippet>1240</a>            )
+<a href=#1241 id=1241 data-nosnippet>1241</a>        })
+<a href=#1242 id=1242 data-nosnippet>1242</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#1243 id=1243 data-nosnippet>1243</a>    <span class="prelude-val">Ok</span>((
+<a href=#1244 id=1244 data-nosnippet>1244</a>        residual,
+<a href=#1245 id=1245 data-nosnippet>1245</a>        <span class="prelude-val">Some</span>(ResponseBinding {
+<a href=#1246 id=1246 data-nosnippet>1246</a>            sensitivity: Cow::Owned(sensitivity),
+<a href=#1247 id=1247 data-nosnippet>1247</a>            response,
+<a href=#1248 id=1248 data-nosnippet>1248</a>            sum_weight: normal_weight,
+<a href=#1249 id=1249 data-nosnippet>1249</a>        }),
+<a href=#1250 id=1250 data-nosnippet>1250</a>    ))
+<a href=#1251 id=1251 data-nosnippet>1251</a>}
+<a href=#1252 id=1252 data-nosnippet>1252</a>
+<a href=#1253 id=1253 data-nosnippet>1253</a><span class="kw">fn </span>psf_peak_value(psf: <span class="kw-2">&amp;</span>[f64], shape: PlaneShape) -&gt; <span class="prelude-ty">Result</span>&lt;f64, MinorCycleRunError&gt; {
+<a href=#1254 id=1254 data-nosnippet>1254</a>    <span class="kw">let </span>peak = casa_imaging_deconvolution::psf_peak(psf, shape)
+<a href=#1255 id=1255 data-nosnippet>1255</a>        .map(|index| psf[index])
+<a href=#1256 id=1256 data-nosnippet>1256</a>        .filter(|value| value.is_finite() &amp;&amp; <span class="kw-2">*</span>value &gt; <span class="number">0.0</span>)
+<a href=#1257 id=1257 data-nosnippet>1257</a>        .ok_or(casa_imaging_deconvolution::Error::PsfPeak)<span class="question-mark">?</span>;
+<a href=#1258 id=1258 data-nosnippet>1258</a>    <span class="prelude-val">Ok</span>(peak)
+<a href=#1259 id=1259 data-nosnippet>1259</a>}
+<a href=#1260 id=1260 data-nosnippet>1260</a>
+<a href=#1261 id=1261 data-nosnippet>1261</a><span class="kw">fn </span>normalise(<span class="kw-2">mut </span>plane: Vec&lt;f64&gt;, scale: f64) -&gt; Vec&lt;f64&gt; {
+<a href=#1262 id=1262 data-nosnippet>1262</a>    <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;mut </span>plane {
+<a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="kw-2">*</span>value /= scale;
+<a href=#1264 id=1264 data-nosnippet>1264</a>    }
+<a href=#1265 id=1265 data-nosnippet>1265</a>    plane
+<a href=#1266 id=1266 data-nosnippet>1266</a>}
+<a href=#1267 id=1267 data-nosnippet>1267</a>
+<a href=#1268 id=1268 data-nosnippet>1268</a><span class="doccomment">/// A plane's solve: its outcome, model terms keyed by model order, and the
+<a href=#1269 id=1269 data-nosnippet>1269</a>/// first component records.
+<a href=#1270 id=1270 data-nosnippet>1270</a>/// One solved plane: its outcome without the model update, which its terms
+<a href=#1271 id=1271 data-nosnippet>1271</a>/// hold, and their charge.
+<a href=#1272 id=1272 data-nosnippet>1272</a></span><span class="kw">struct </span>Solved {
+<a href=#1273 id=1273 data-nosnippet>1273</a>    outcome: PlaneOutcome,
+<a href=#1274 id=1274 data-nosnippet>1274</a>    <span class="doccomment">/// The residual's peak over the plane's pixels once the plane is done.
+<a href=#1275 id=1275 data-nosnippet>1275</a>    </span>peak_no_mask: f64,
+<a href=#1276 id=1276 data-nosnippet>1276</a>    terms: Vec&lt;(usize, ModelDeltaTerm)&gt;,
+<a href=#1277 id=1277 data-nosnippet>1277</a>    dense: <span class="prelude-ty">Option</span>&lt;DenseModelPlane&gt;,
+<a href=#1278 id=1278 data-nosnippet>1278</a>    mem_alpha: <span class="prelude-ty">Option</span>&lt;f32&gt;,
+<a href=#1279 id=1279 data-nosnippet>1279</a>    trace: Vec&lt;TracedComponent&gt;,
+<a href=#1280 id=1280 data-nosnippet>1280</a>    charge: Reservation,
+<a href=#1281 id=1281 data-nosnippet>1281</a>}
+<a href=#1282 id=1282 data-nosnippet>1282</a>
+<a href=#1283 id=1283 data-nosnippet>1283</a><span class="doccomment">/// Read and clean one plane, or clean the load preparation kept for it, and
+<a href=#1284 id=1284 data-nosnippet>1284</a>/// admit its terms on `host` under `policy` before forming them. Clark
+<a href=#1285 id=1285 data-nosnippet>1285</a>/// takes `clark`'s refresh, when it serves this PSF, and leaves its own
+<a href=#1286 id=1286 data-nosnippet>1286</a>/// there for the next cycle; the scale solvers transform on `fft_threads`
+<a href=#1287 id=1287 data-nosnippet>1287</a>/// threads.
+<a href=#1288 id=1288 data-nosnippet>1288</a></span><span class="attr">#[allow(clippy::too_many_arguments)]
+<a href=#1289 id=1289 data-nosnippet>1289</a></span><span class="kw">fn </span>solve(
+<a href=#1290 id=1290 data-nosnippet>1290</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1291 id=1291 data-nosnippet>1291</a>    (host, policy): (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
+<a href=#1292 id=1292 data-nosnippet>1292</a>    (key, retained): (PlaneKey, <span class="prelude-ty">Option</span>&lt;RetainedPlane&gt;),
+<a href=#1293 id=1293 data-nosnippet>1293</a>    summary: <span class="kw-2">&amp;</span>PsfSummary,
+<a href=#1294 id=1294 data-nosnippet>1294</a>    statistics: <span class="kw-2">&amp;</span>PlaneStatistics,
+<a href=#1295 id=1295 data-nosnippet>1295</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
+<a href=#1296 id=1296 data-nosnippet>1296</a>    (clark, fft_threads): (<span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;LinearRefresh&gt;, usize),
+<a href=#1297 id=1297 data-nosnippet>1297</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Solved, MinorCycleRunError&gt; {
+<a href=#1298 id=1298 data-nosnippet>1298</a>    <span class="kw">let </span>setup = inputs.setup;
+<a href=#1299 id=1299 data-nosnippet>1299</a>    <span class="kw">let </span>plane = <span class="kw">match </span>retained {
+<a href=#1300 id=1300 data-nosnippet>1300</a>        <span class="prelude-val">Some</span>(kept) <span class="kw">if </span>kept.key == key =&gt; PlaneData {
+<a href=#1301 id=1301 data-nosnippet>1301</a>            shape: kept.support.shape(),
+<a href=#1302 id=1302 data-nosnippet>1302</a>            residual: kept.residual,
+<a href=#1303 id=1303 data-nosnippet>1303</a>            psf: kept.psf,
+<a href=#1304 id=1304 data-nosnippet>1304</a>            psf_peak: kept.psf_peak,
+<a href=#1305 id=1305 data-nosnippet>1305</a>            support: kept.support,
+<a href=#1306 id=1306 data-nosnippet>1306</a>            valid: kept.valid,
+<a href=#1307 id=1307 data-nosnippet>1307</a>            response: <span class="prelude-val">None</span>,
+<a href=#1308 id=1308 data-nosnippet>1308</a>        },
+<a href=#1309 id=1309 data-nosnippet>1309</a>        <span class="kw">_ </span>=&gt; load(inputs, key)<span class="question-mark">?</span>.expect(<span class="string">"prepared planes have valid data"</span>),
+<a href=#1310 id=1310 data-nosnippet>1310</a>    };
+<a href=#1311 id=1311 data-nosnippet>1311</a>    <span class="kw">let </span>view = MinorCycleView {
+<a href=#1312 id=1312 data-nosnippet>1312</a>        shape: plane.shape,
+<a href=#1313 id=1313 data-nosnippet>1313</a>        residual: <span class="kw-2">&amp;</span>plane.residual,
+<a href=#1314 id=1314 data-nosnippet>1314</a>        psf: <span class="kw-2">&amp;</span>plane.psf,
+<a href=#1315 id=1315 data-nosnippet>1315</a>        summary,
+<a href=#1316 id=1316 data-nosnippet>1316</a>        support: <span class="kw-2">&amp;</span>plane.support,
+<a href=#1317 id=1317 data-nosnippet>1317</a>    };
+<a href=#1318 id=1318 data-nosnippet>1318</a>    <span class="kw">if </span><span class="macro">matches!</span>(setup.algorithm, ReconstructionAlgorithm::Mem) {
+<a href=#1319 id=1319 data-nosnippet>1319</a>        <span class="kw">return </span>solve_mem(
+<a href=#1320 id=1320 data-nosnippet>1320</a>            inputs,
+<a href=#1321 id=1321 data-nosnippet>1321</a>            (host, policy),
+<a href=#1322 id=1322 data-nosnippet>1322</a>            key,
+<a href=#1323 id=1323 data-nosnippet>1323</a>            <span class="kw-2">&amp;</span>plane,
+<a href=#1324 id=1324 data-nosnippet>1324</a>            <span class="kw-2">&amp;</span>view,
+<a href=#1325 id=1325 data-nosnippet>1325</a>            statistics,
+<a href=#1326 id=1326 data-nosnippet>1326</a>            controls,
+<a href=#1327 id=1327 data-nosnippet>1327</a>        );
+<a href=#1328 id=1328 data-nosnippet>1328</a>    }
+<a href=#1329 id=1329 data-nosnippet>1329</a>    <span class="kw">let </span>outcome = <span class="kw">match </span><span class="kw-2">&amp;</span>setup.algorithm {
+<a href=#1330 id=1330 data-nosnippet>1330</a>        ReconstructionAlgorithm::Hogbom =&gt; clean(
+<a href=#1331 id=1331 data-nosnippet>1331</a>            <span class="kw-2">&amp;</span>Hogbom::new(setup.accounting == HogbomIterationAccounting::CasaInclusive),
+<a href=#1332 id=1332 data-nosnippet>1332</a>            <span class="kw-2">&amp;</span>view,
+<a href=#1333 id=1333 data-nosnippet>1333</a>            controls,
+<a href=#1334 id=1334 data-nosnippet>1334</a>            statistics,
+<a href=#1335 id=1335 data-nosnippet>1335</a>        )<span class="question-mark">?</span>,
+<a href=#1336 id=1336 data-nosnippet>1336</a>        ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes =&gt; {
+<a href=#1337 id=1337 data-nosnippet>1337</a>            <span class="kw">let </span>solver = Clark::new(clark.take());
+<a href=#1338 id=1338 data-nosnippet>1338</a>            <span class="kw">let </span>outcome = clean(<span class="kw-2">&amp;</span>solver, <span class="kw-2">&amp;</span>view, controls, statistics);
+<a href=#1339 id=1339 data-nosnippet>1339</a>            <span class="kw-2">*</span>clark = solver.into_refresh();
+<a href=#1340 id=1340 data-nosnippet>1340</a>            outcome<span class="question-mark">?
+<a href=#1341 id=1341 data-nosnippet>1341</a>        </span>}
+<a href=#1342 id=1342 data-nosnippet>1342</a>        ReconstructionAlgorithm::Multiscale {
+<a href=#1343 id=1343 data-nosnippet>1343</a>            scales_px,
+<a href=#1344 id=1344 data-nosnippet>1344</a>            small_scale_bias,
+<a href=#1345 id=1345 data-nosnippet>1345</a>        } =&gt; clean(
+<a href=#1346 id=1346 data-nosnippet>1346</a>            <span class="kw-2">&amp;</span>Multiscale::new(scales_px.clone(), <span class="kw-2">*</span>small_scale_bias).with_fft_threads(fft_threads),
+<a href=#1347 id=1347 data-nosnippet>1347</a>            <span class="kw-2">&amp;</span>view,
+<a href=#1348 id=1348 data-nosnippet>1348</a>            controls,
+<a href=#1349 id=1349 data-nosnippet>1349</a>            statistics,
+<a href=#1350 id=1350 data-nosnippet>1350</a>        )<span class="question-mark">?</span>,
+<a href=#1351 id=1351 data-nosnippet>1351</a>        ReconstructionAlgorithm::Mtmfs {
+<a href=#1352 id=1352 data-nosnippet>1352</a>            scales_px,
+<a href=#1353 id=1353 data-nosnippet>1353</a>            small_scale_bias,
+<a href=#1354 id=1354 data-nosnippet>1354</a>        } =&gt; clean(
+<a href=#1355 id=1355 data-nosnippet>1355</a>            <span class="kw-2">&amp;</span>Taylor::new(plane.residual.len(), scales_px.clone(), <span class="kw-2">*</span>small_scale_bias)
+<a href=#1356 id=1356 data-nosnippet>1356</a>                .with_fft_threads(fft_threads),
+<a href=#1357 id=1357 data-nosnippet>1357</a>            <span class="kw-2">&amp;</span>view,
+<a href=#1358 id=1358 data-nosnippet>1358</a>            controls,
+<a href=#1359 id=1359 data-nosnippet>1359</a>            statistics,
+<a href=#1360 id=1360 data-nosnippet>1360</a>        )<span class="question-mark">?</span>,
+<a href=#1361 id=1361 data-nosnippet>1361</a>        algorithm =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(MinorCycleRunError::Algorithm(algorithm.clone())),
+<a href=#1362 id=1362 data-nosnippet>1362</a>    };
+<a href=#1363 id=1363 data-nosnippet>1363</a>    <span class="kw">let </span><span class="kw-2">mut </span>outcome = outcome;
+<a href=#1364 id=1364 data-nosnippet>1364</a>    <span class="comment">// CASA reads this after a plane it cleaned, and keeps the entry's for one
+<a href=#1365 id=1365 data-nosnippet>1365</a>    // it skipped.
+<a href=#1366 id=1366 data-nosnippet>1366</a>    </span><span class="kw">let </span>end_residual = std::mem::take(<span class="kw-2">&amp;mut </span>outcome.end_residual);
+<a href=#1367 id=1367 data-nosnippet>1367</a>    <span class="kw">let </span>peak_no_mask = <span class="kw">match </span>end_residual.first() {
+<a href=#1368 id=1368 data-nosnippet>1368</a>        <span class="prelude-val">Some</span>(residual) <span class="kw">if </span>setup.residual_pixel_mask =&gt; {
+<a href=#1369 id=1369 data-nosnippet>1369</a>            <span class="kw">let </span>pixels = plane_pixels(inputs, key, <span class="kw-2">&amp;</span>plane)<span class="question-mark">?</span>;
+<a href=#1370 id=1370 data-nosnippet>1370</a>            peak_magnitude(residual, pixels.residual_mask(<span class="bool-val">true</span>))
+<a href=#1371 id=1371 data-nosnippet>1371</a>        }
+<a href=#1372 id=1372 data-nosnippet>1372</a>        <span class="prelude-val">Some</span>(residual) =&gt; peak_magnitude(residual, <span class="kw-2">&amp;</span>plane.valid),
+<a href=#1373 id=1373 data-nosnippet>1373</a>        <span class="prelude-val">None </span>=&gt; statistics.peak_no_mask,
+<a href=#1374 id=1374 data-nosnippet>1374</a>    };
+<a href=#1375 id=1375 data-nosnippet>1375</a>    drop(end_residual);
+<a href=#1376 id=1376 data-nosnippet>1376</a>    <span class="kw">let </span>delta = std::mem::take(<span class="kw-2">&amp;mut </span>outcome.delta);
+<a href=#1377 id=1377 data-nosnippet>1377</a>    <span class="kw">let </span>entries = (<span class="number">0</span>..delta.term_count())
+<a href=#1378 id=1378 data-nosnippet>1378</a>        .map(|term| delta.term(term).count())
+<a href=#1379 id=1379 data-nosnippet>1379</a>        .sum();
+<a href=#1380 id=1380 data-nosnippet>1380</a>    <span class="kw">let </span>charge = admit(
+<a href=#1381 id=1381 data-nosnippet>1381</a>        host,
+<a href=#1382 id=1382 data-nosnippet>1382</a>        policy,
+<a href=#1383 id=1383 data-nosnippet>1383</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#1384 id=1384 data-nosnippet>1384</a>            phase: <span class="string">"minor-cycle results"</span>,
+<a href=#1385 id=1385 data-nosnippet>1385</a>            memory: result_bytes(entries),
+<a href=#1386 id=1386 data-nosnippet>1386</a>        },
+<a href=#1387 id=1387 data-nosnippet>1387</a>    )<span class="question-mark">?</span>;
+<a href=#1388 id=1388 data-nosnippet>1388</a>    <span class="kw">let </span>terms = model_terms(<span class="kw-2">&amp;</span>delta, entries, <span class="kw-2">&amp;</span>plane, inputs, key)<span class="question-mark">?</span>;
+<a href=#1389 id=1389 data-nosnippet>1389</a>    <span class="kw">let </span>trace = trace(<span class="kw-2">&amp;</span>outcome.trace, <span class="kw-2">&amp;</span>plane, inputs, key);
+<a href=#1390 id=1390 data-nosnippet>1390</a>    <span class="prelude-val">Ok</span>(Solved {
+<a href=#1391 id=1391 data-nosnippet>1391</a>        outcome,
+<a href=#1392 id=1392 data-nosnippet>1392</a>        peak_no_mask,
+<a href=#1393 id=1393 data-nosnippet>1393</a>        terms,
+<a href=#1394 id=1394 data-nosnippet>1394</a>        dense: <span class="prelude-val">None</span>,
+<a href=#1395 id=1395 data-nosnippet>1395</a>        mem_alpha: <span class="prelude-val">None</span>,
+<a href=#1396 id=1396 data-nosnippet>1396</a>        trace,
+<a href=#1397 id=1397 data-nosnippet>1397</a>        charge,
+<a href=#1398 id=1398 data-nosnippet>1398</a>    })
+<a href=#1399 id=1399 data-nosnippet>1399</a>}
+<a href=#1400 id=1400 data-nosnippet>1400</a>
+<a href=#1401 id=1401 data-nosnippet>1401</a><span class="doccomment">/// [`run_plane`] with the cycle's trace length.
+<a href=#1402 id=1402 data-nosnippet>1402</a></span><span class="kw">fn </span>clean&lt;S: Solver&gt;(
+<a href=#1403 id=1403 data-nosnippet>1403</a>    solver: <span class="kw-2">&amp;</span>S,
+<a href=#1404 id=1404 data-nosnippet>1404</a>    view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1405 id=1405 data-nosnippet>1405</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
+<a href=#1406 id=1406 data-nosnippet>1406</a>    statistics: <span class="kw-2">&amp;</span>PlaneStatistics,
+<a href=#1407 id=1407 data-nosnippet>1407</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlaneOutcome, MinorCycleRunError&gt; {
+<a href=#1408 id=1408 data-nosnippet>1408</a>    <span class="prelude-val">Ok</span>(run_plane(solver, view, controls, statistics, TRACE)<span class="question-mark">?</span>)
+<a href=#1409 id=1409 data-nosnippet>1409</a>}
+<a href=#1410 id=1410 data-nosnippet>1410</a>
+<a href=#1411 id=1411 data-nosnippet>1411</a><span class="doccomment">/// The model coefficient a plane's term `term` goes to: the Taylor term, or
+<a href=#1412 id=1412 data-nosnippet>1412</a>/// the channel of a cube plane.
+<a href=#1413 id=1413 data-nosnippet>1413</a></span><span class="kw">const fn </span>coefficient(inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;, key: PlaneKey, term: usize) -&gt; usize {
+<a href=#1414 id=1414 data-nosnippet>1414</a>    <span class="kw">if </span>inputs.taylor { term } <span class="kw">else </span>{ key.channel }
+<a href=#1415 id=1415 data-nosnippet>1415</a>}
+<a href=#1416 id=1416 data-nosnippet>1416</a>
+<a href=#1417 id=1417 data-nosnippet>1417</a><span class="doccomment">/// The plane's components as model terms keyed by model order, in a vector
+<a href=#1418 id=1418 data-nosnippet>1418</a>/// with room for `delta`'s `entries`.
+<a href=#1419 id=1419 data-nosnippet>1419</a></span><span class="kw">fn </span>model_terms(
+<a href=#1420 id=1420 data-nosnippet>1420</a>    delta: <span class="kw-2">&amp;</span>Delta,
+<a href=#1421 id=1421 data-nosnippet>1421</a>    entries: usize,
+<a href=#1422 id=1422 data-nosnippet>1422</a>    plane: <span class="kw-2">&amp;</span>PlaneData,
+<a href=#1423 id=1423 data-nosnippet>1423</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1424 id=1424 data-nosnippet>1424</a>    key: PlaneKey,
+<a href=#1425 id=1425 data-nosnippet>1425</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(usize, ModelDeltaTerm)&gt;, MinorCycleRunError&gt; {
+<a href=#1426 id=1426 data-nosnippet>1426</a>    <span class="kw">let </span><span class="kw-2">mut </span>terms = Vec::with_capacity(entries);
+<a href=#1427 id=1427 data-nosnippet>1427</a>    <span class="kw">let </span>physical = plane.physical()<span class="question-mark">?</span>;
+<a href=#1428 id=1428 data-nosnippet>1428</a>    <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..delta.term_count() {
+<a href=#1429 id=1429 data-nosnippet>1429</a>        <span class="kw">for </span>(index, flux) <span class="kw">in </span>delta.term(term) {
+<a href=#1430 id=1430 data-nosnippet>1430</a>            <span class="kw">let </span>value = physical.apply(flux, index)<span class="question-mark">?</span>;
+<a href=#1431 id=1431 data-nosnippet>1431</a>            <span class="kw">if </span>value == <span class="number">0.0 </span>{
+<a href=#1432 id=1432 data-nosnippet>1432</a>                <span class="kw">continue</span>;
+<a href=#1433 id=1433 data-nosnippet>1433</a>            }
+<a href=#1434 id=1434 data-nosnippet>1434</a>            <span class="kw">let </span>cell = ModelCell::new(
+<a href=#1435 id=1435 data-nosnippet>1435</a>                key.domain,
+<a href=#1436 id=1436 data-nosnippet>1436</a>                coefficient(inputs, key, term),
+<a href=#1437 id=1437 data-nosnippet>1437</a>                key.polarization,
+<a href=#1438 id=1438 data-nosnippet>1438</a>                plane.shape.pixel(index),
+<a href=#1439 id=1439 data-nosnippet>1439</a>            );
+<a href=#1440 id=1440 data-nosnippet>1440</a>            <span class="kw">let </span>flat = inputs
+<a href=#1441 id=1441 data-nosnippet>1441</a>                .base
+<a href=#1442 id=1442 data-nosnippet>1442</a>                .shape()
+<a href=#1443 id=1443 data-nosnippet>1443</a>                .flat_index(cell)
+<a href=#1444 id=1444 data-nosnippet>1444</a>                .ok_or(ModelLifecycleError::CellOutsideShape)<span class="question-mark">?</span>;
+<a href=#1445 id=1445 data-nosnippet>1445</a>            terms.push((
+<a href=#1446 id=1446 data-nosnippet>1446</a>                flat,
+<a href=#1447 id=1447 data-nosnippet>1447</a>                ModelDeltaTerm::new(
+<a href=#1448 id=1448 data-nosnippet>1448</a>                    cell,
+<a href=#1449 id=1449 data-nosnippet>1449</a>                    ModelValue::new(value).map_err(ModelLifecycleError::Contract)<span class="question-mark">?</span>,
+<a href=#1450 id=1450 data-nosnippet>1450</a>                ),
+<a href=#1451 id=1451 data-nosnippet>1451</a>            ));
+<a href=#1452 id=1452 data-nosnippet>1452</a>        }
+<a href=#1453 id=1453 data-nosnippet>1453</a>    }
+<a href=#1454 id=1454 data-nosnippet>1454</a>    <span class="prelude-val">Ok</span>(terms)
+<a href=#1455 id=1455 data-nosnippet>1455</a>}
+<a href=#1456 id=1456 data-nosnippet>1456</a>
+<a href=#1457 id=1457 data-nosnippet>1457</a><span class="kw">fn </span>trace(
+<a href=#1458 id=1458 data-nosnippet>1458</a>    components: <span class="kw-2">&amp;</span>[Component],
+<a href=#1459 id=1459 data-nosnippet>1459</a>    plane: <span class="kw-2">&amp;</span>PlaneData,
+<a href=#1460 id=1460 data-nosnippet>1460</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1461 id=1461 data-nosnippet>1461</a>    key: PlaneKey,
+<a href=#1462 id=1462 data-nosnippet>1462</a>) -&gt; Vec&lt;TracedComponent&gt; {
+<a href=#1463 id=1463 data-nosnippet>1463</a>    <span class="kw">let </span>scales = <span class="kw">match </span><span class="kw-2">&amp;</span>inputs.setup.algorithm {
+<a href=#1464 id=1464 data-nosnippet>1464</a>        ReconstructionAlgorithm::Multiscale { scales_px, .. }
+<a href=#1465 id=1465 data-nosnippet>1465</a>        | ReconstructionAlgorithm::Mtmfs { scales_px, .. } =&gt; scales_px.as_slice(),
+<a href=#1466 id=1466 data-nosnippet>1466</a>        <span class="kw">_ </span>=&gt; <span class="kw-2">&amp;</span>[],
+<a href=#1467 id=1467 data-nosnippet>1467</a>    };
+<a href=#1468 id=1468 data-nosnippet>1468</a>    components
+<a href=#1469 id=1469 data-nosnippet>1469</a>        .iter()
+<a href=#1470 id=1470 data-nosnippet>1470</a>        .map(|component| TracedComponent {
+<a href=#1471 id=1471 data-nosnippet>1471</a>            cell: ModelCell::new(
+<a href=#1472 id=1472 data-nosnippet>1472</a>                key.domain,
+<a href=#1473 id=1473 data-nosnippet>1473</a>                coefficient(inputs, key, component.term),
+<a href=#1474 id=1474 data-nosnippet>1474</a>                key.polarization,
+<a href=#1475 id=1475 data-nosnippet>1475</a>                plane.shape.pixel(component.index),
+<a href=#1476 id=1476 data-nosnippet>1476</a>            ),
+<a href=#1477 id=1477 data-nosnippet>1477</a>            flux: component.flux,
+<a href=#1478 id=1478 data-nosnippet>1478</a>            scale_px: scales.get(component.scale).copied().unwrap_or(<span class="number">0.0</span>),
+<a href=#1479 id=1479 data-nosnippet>1479</a>        })
+<a href=#1480 id=1480 data-nosnippet>1480</a>        .collect()
+<a href=#1481 id=1481 data-nosnippet>1481</a>}
 </code></pre></div></section></main></body></html>
