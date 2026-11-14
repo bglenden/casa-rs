@@ -2240,6 +2240,29 @@ negative flux comes out positive. Probed with CASA 6.7.6: a −0.4 Jy point
 20 arcsec from the pointing centre predicts −0.4 Jy without the beam and
 +0.4 Jy times the beam with it. casa-rs keeps the sign;
 <code>sm_components_scenarios.json</code> keeps negative components away from the beam.</p>
+<p>The same defect doubles the phase of complex correlations. In a linear
+window, a component with nonzero Stokes U and V has XY = U+iV. The beam path
+multiplies each channel's sampled XY by the original XY/abs(XY), rotating it
+again; YX acquires the conjugate rotation. In the SIM-10 VP-table controls,
+both points have the same original Stokes flux [1, 0.1, 0.02, 0.03] Jy.
+CASA's auto-baseline crosshands show exactly this extra unit-phase factor,
+while I and Q agree. casa-rs preserves the requested correlation phase.
+<code>sm_voltage_patterns_oracle.py</code> retains raw CASA rows and supplies corrected
+rows by dividing selected correlations by that original unit-phase factor.
+No scientific tolerance changes; the remaining documented LSRK-label error
+is below the existing 1e-3 threshold in these controls.</p>
+<h2 id="evla-component-dosquint-is-a-no-op">EVLA component dosquint is a no-op<a class="headerlink" href="#evla-component-dosquint-is-a-no-op" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 accepts <code>sm.setvp(dosquint=True)</code> for EVLA, but logs
+"No Beam Squint". The synthetic 14.5 GHz controls in
+<code>sm_squint_oracle.py</code> produce identical DATA with squint disabled, enabled
+and a 0.01 degree angle-refresh threshold. The corresponding VLA controls
+change by 0.00760 and 0.00923 NRMS, so the workload measures both effects.</p>
+<p><code>PBMath1DEVLA</code> declares its own private <code>squint_p</code>; its frequency-selection
+code updates that member, while the inherited <code>PBMath1D::apply</code> reads the
+base class's zero offset. casa-rs preserves the observed EVLA response for
+CASA equivalence. Applying a physically different EVLA correction would
+change existing results and is outside this comparison target. VLA band
+offsets and its angle-refresh behavior are implemented separately.</p>
 <h2 id="a-single-spectral-index-is-read-past-its-end">A single spectral index is read past its end<a class="headerlink" href="#a-single-spectral-index-is-read-past-its-end" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
@@ -2674,14 +2697,14 @@ offset times a source's distance from the phase centre.</p>
 <p>Evidence on the CPU and on Metal:
 - <code>components-moved-pointing</code> in <code>tools/simulation/sm_components_scenarios.json</code>, an image and a component list without a beam: 8.36e-6 normalized RMS;
 - the <code>openfromms-moved-pointing-*</code> scenarios of <code>sm_openfromms_scenarios.json</code>: 0 and 7e-11.</p>
-<p>A primary beam on a moved pointing is a separate matter, and casa-rs
-refuses it (<a href="#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points">the next entry</a>).</p>
+<p>A primary beam follows POINTING independently of FIELD's phase centre
+(<a href="#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points">the next entry</a>).</p>
 <h2 id="the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points">The beam on a moved pointing stays where the field's first row points<a class="headerlink" href="#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-24</li>
-<li>Status: CASA bug; resumed simulations centre each integration's beam and
-  mosaic kernels on its stored POINTING. Fresh moved <code>observemany</code> beams
-  remain explicitly refused (#884, #1294).</li>
+<li>Status: CASA bug; fresh and resumed interferometric simulations centre
+  each integration's beam and mosaic kernels on POINTING (#884, #1294,
+  #1297). Fresh total-power beam offsets remain on #1299.</li>
 <li>Affected code: <code>synthesis/TransformMachines/BeamSkyJones.cc</code> (<code>changed</code>,
   <code>update</code>) and <code>synthesis/MeasurementEquations/Simulator.cc</code>
   (<code>makeVisSet</code>'s sort)</li>
@@ -2707,12 +2730,16 @@ points, whichever direction a later pointing of the field was moved to.</p>
   stays where the first row pointed. With one antenna, a constant model and
   the BOX kernel, CASA's moved samples are 0.671.</p>
 <p>None of these is the beam the moved pointing sees, which follows the
-antennas. Resumed simulations now separate FIELD's visibility phase from
+antennas. Fresh and resumed simulations separate FIELD's visibility phase from
 POINTING's beam and total-power sample direction. For changing pointings,
 <code>tools/simulation/sm_offset_pointings_oracle.py</code> retains the raw CASA output
 and records a second independent CASA control with a distinct, equal-phase
 FIELD identity per integration, forcing the stale cache to refresh. Native
-beam and mosaic predictions agree with that control. Native total power
+beam and mosaic predictions agree with that control. Fresh fixed/changing
+<code>observemany</code> controls in <code>sm_fresh_pointings_oracle.py</code> use the same
+independent cache reset and capture CASA's IERS inputs; CPU and Metal image,
+component and mosaic DATA agree below 3e-7 NRMS with unchanged tolerances.
+Native total power
 continues to use autocorrelations only, correcting the separate <code>SDGrid</code>
 cross-correlation defect documented above. Incomplete or disagreeing antenna
 pointings are explicitly refused before changing the DATA plan.</p>
@@ -5413,6 +5440,14 @@ at each epoch. The clean control predicts on the stored channels,
 resamples the native residual, and restores with CASA. All 17 products
 and 12 beams agree with exact masks and controller counts. Maximum
 product normalized RMS is 3.29e-7 and MODEL_DATA is 3.54e-7 (#1121).</p>
+<p>The same native-ordinal problem affects an eight-plane REST cube with
+cubic interpolation. The 20-channel VLA fixture selects channels 3–14
+and asks for a 1.275 GHz start and 50.01 MHz spacing. The frame-initialized
+CASA AW run differs by 0.191 in PSF normalized RMS and 0.549 in residual
+normalized RMS. The CASA GridFT capture and wavelength-preserving
+same-cache replay agree on all 17 dirty and cleaned products and 48 beams.
+Masks and controller counts match exactly. Maximum product normalized
+RMS is 4.30e-5 and stored-channel MODEL_DATA is 1.82e-6 (#1121).</p>
 <h2 id="casa-discards-zero-dimensional-floating-quantity-record-values">CASA discards zero-dimensional floating quantity-record values<a class="headerlink" href="#casa-discards-zero-dimensional-floating-quantity-record-values" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
