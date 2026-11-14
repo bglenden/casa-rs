@@ -386,7 +386,7 @@ fn outlier_preflight_preserves_a_trailing_slash_and_does_not_allocate_its_mask()
         directory.path(),
         json!({
             "vis": "absent.ms", "imagename": directory.path().join("main"),
-            "cell": "1arcsec", "outlierfile": outliers, "backend": "cpu",
+            "cell": "1arcsec", "outlierfile": outliers, "backend": "cpu", "calcpsf": false,
         }),
     );
     match reply {
@@ -550,5 +550,213 @@ fn restart_false_numbers_the_main_and_outliers_together() {
     let after = snapshot(&dir);
     for (path, bytes) in before {
         assert_eq!(after.get(&path), Some(&bytes), "{}", path.display());
+    }
+}
+
+/// CASA opens each field's image store at its own prefix. Resuming with
+/// no new mask keeps the outlier's support and starts from both models.
+#[test]
+fn same_prefix_restart_reuses_each_fields_model_and_outlier_mask() {
+    use super::fixture::{PHASE_CENTER_RAD, Setup};
+
+    let main_component = Component {
+        offset_px: [6, -4],
+        flux_jy: 2.0,
+        fwhm_px: None,
+        spectral_index: 0.0,
+    };
+    let outlier_component = Component {
+        offset_px: [70, 7],
+        flux_jy: 1.0,
+        ..main_component
+    };
+    let observation =
+        Observation::synthesise(&[("main", main_component), ("outlier", outlier_component)]);
+    let directory = observation.scratch("continue-outlier");
+    fs::create_dir(&directory).unwrap();
+    let geometry = observation.geometry();
+    let field_centre = Setup::pointing([
+        -f64::from(outlier_component.offset_px[0]) * geometry.cell_rad()[0],
+        f64::from(outlier_component.offset_px[1]) * geometry.cell_rad()[1],
+    ]);
+    let definition = directory.join("outliers.txt");
+    let field = format!(
+        "imagename=field\nimsize=40\nphasecenter=J2000 {}rad {}rad\n",
+        field_centre[0], field_centre[1]
+    );
+    fs::write(
+        &definition,
+        format!("{field}mask=circle[[20pix,20pix],4pix]\n"),
+    )
+    .unwrap();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": "main", "outlierfile": definition,
+        "imsize": geometry.image_size, "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        "phasecenter": format!("J2000 {}rad {}rad", PHASE_CENTER_RAD[0], PHASE_CENTER_RAD[1]),
+        "niter": 12, "cycleniter": 3, "backend": "cpu", "gain": 0.2,
+    });
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(&directory, values.clone());
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    };
+    let read = |name: &str| {
+        PagedImage::<f32>::open(directory.join(name))
+            .unwrap()
+            .get()
+            .unwrap()
+    };
+    run(&values);
+    let main_before = read("main.model");
+    let field_before = read("field.model");
+    let support = read("field.mask");
+    assert!(main_before.sum() > 0.2 && field_before.sum() > 0.2);
+    assert_eq!(support.sum(), 49.0);
+    fs::write(&definition, &field).unwrap();
+    let beam_of = |name: &str| {
+        PagedImage::<f32>::open(directory.join(name))
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set
+            .single_beam()
+            .unwrap()
+    };
+    let main_beam = beam_of("main.psf");
+    let field_beam = casa_images::GaussianBeam {
+        major: 10.0 * geometry.cell_rad()[0],
+        minor: 8.0 * geometry.cell_rad()[0],
+        position_angle: 0.25,
+    };
+    {
+        let mut psf = PagedImage::<f32>::open(directory.join("field.psf")).unwrap();
+        let mut info = psf.image_info().unwrap();
+        info.beam_set = casa_images::ImageBeamSet::new(field_beam);
+        psf.set_image_info(&info).unwrap();
+        psf.save().unwrap();
+    }
+
+    // Recompute the dirty products from the two saved models before
+    // applying any new components.
+    values["niter"] = json!(0);
+    run(&values);
+    assert_eq!(read("main.model"), main_before);
+    assert_eq!(read("field.model"), field_before);
+    assert_eq!(read("field.mask"), support);
+    assert_eq!(beam_of("main.psf"), main_beam);
+    assert_eq!(beam_of("field.psf"), field_beam);
+    assert_eq!(beam_of("field.image"), field_beam);
+
+    values["niter"] = json!(4);
+    run(&values);
+    assert_eq!(read("field.mask"), support);
+    let after = read("field.model");
+    let mut changed = 0.0;
+    for ((before, after), mask) in field_before.iter().zip(&after).zip(support.iter()) {
+        if *mask == 0.0 {
+            assert_eq!(before, after, "continued CLEAN went outside the saved mask");
+        } else {
+            changed += (before - after).abs();
+        }
+    }
+    assert!(changed > 0.005, "the outlier did not CLEAN: {changed}");
+
+    // An outlier may already exist when the new main image has never run.
+    let mut outlier_only = values.clone();
+    outlier_only["imagename"] = json!("new-main");
+    outlier_only["niter"] = json!(0);
+    run(&outlier_only);
+    assert_eq!(read("field.model"), after);
+    assert_eq!(beam_of("field.psf"), field_beam);
+
+    fs::write(&definition, field.replace("imsize=40", "imsize=42")).unwrap();
+    let before = snapshot(&directory);
+    match json_run_with(&directory, values, true) {
+        TaskReply::Failed { message, .. } => {
+            assert!(
+                message.contains("field.") && message.contains("shape mismatch"),
+                "{message}"
+            );
+        }
+        reply => panic!("incompatible outlier should fail before publication: {reply:?}"),
+    }
+    assert_unchanged(&before, &snapshot(&directory));
+}
+
+/// CASA blanks a shared sky component in earlier fields for prediction
+/// and restores it in their published model images after the major cycle.
+#[test]
+fn same_prefix_restart_predicts_a_shared_component_once() {
+    use super::fixture::PHASE_CENTER_RAD;
+
+    let observation = Observation::synthesise(&[(
+        "point",
+        Component {
+            offset_px: [0, 0],
+            flux_jy: 1.0,
+            fwhm_px: None,
+            spectral_index: 0.0,
+        },
+    )]);
+    let directory = observation.scratch("overlap");
+    fs::create_dir(&directory).unwrap();
+    let geometry = observation.geometry();
+    let phase = format!(
+        "J2000 {}rad {}rad",
+        PHASE_CENTER_RAD[0], PHASE_CENTER_RAD[1]
+    );
+    let definition = directory.join("outliers.txt");
+    fs::write(
+        &definition,
+        format!("imagename=field\nphasecenter={phase}\n"),
+    )
+    .unwrap();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": "main", "outlierfile": definition,
+        "imsize": geometry.image_size, "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        "phasecenter": phase, "niter": 0, "backend": "cpu",
+    });
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(&directory, values.clone());
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    };
+    run(&values);
+    let [x, y] = geometry.centre();
+    let sample = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), 0.5_f32);
+    for name in ["main.model", "field.model"] {
+        let mut model = PagedImage::<f32>::open(directory.join(name)).unwrap();
+        model.put_slice(&sample, &[x, y, 0, 0]).unwrap();
+        model.save().unwrap();
+    }
+    run(&values);
+    let read = |name: &str| {
+        PagedImage::<f32>::open(directory.join(name))
+            .unwrap()
+            .get()
+            .unwrap()
+    };
+    assert_eq!(read("main.model")[[x, y, 0, 0]], 0.5);
+    assert_eq!(read("field.model")[[x, y, 0, 0]], 0.5);
+
+    fs::rename(
+        directory.join("field.model"),
+        directory.join("single.model"),
+    )
+    .unwrap();
+    values.as_object_mut().unwrap().remove("outlierfile");
+    values["imagename"] = json!("single");
+    run(&values);
+    let single = read("single.residual");
+    for name in ["main.residual", "field.residual"] {
+        let residual = read(name);
+        let error: f64 = residual
+            .iter()
+            .zip(&single)
+            .map(|(both, one)| f64::from(both - one).powi(2))
+            .sum();
+        let power: f64 = single.iter().map(|one| f64::from(*one).powi(2)).sum();
+        assert!(
+            (error / power).sqrt() < 0.001,
+            "{name} subtracts the shared source more than once"
+        );
     }
 }

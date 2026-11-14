@@ -171,6 +171,7 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
         let setup = MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            outlier_psf_beams: Vec::new(),
             mask_beams: None,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
@@ -277,6 +278,7 @@ fn a_solve_measuring_through_a_beam_holds_at_most_its_admission() {
     let setup = MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        outlier_psf_beams: Vec::new(),
         mask_beams: None,
         algorithm: ReconstructionAlgorithm::Hogbom,
         accounting: HogbomIterationAccounting::Strict,
@@ -695,6 +697,7 @@ fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
         let setup = MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            outlier_psf_beams: Vec::new(),
             mask_beams: None,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
@@ -777,6 +780,7 @@ fn automask_setup<'a>(
     MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        outlier_psf_beams: Vec::new(),
         mask_beams: None,
         algorithm,
         accounting: HogbomIterationAccounting::Strict,
@@ -890,6 +894,7 @@ fn measure_clark(
     let setup = MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        outlier_psf_beams: Vec::new(),
         mask_beams: None,
         algorithm,
         accounting: HogbomIterationAccounting::Strict,
@@ -1020,6 +1025,7 @@ fn settling_a_refused_psf_fits_its_admission() {
         let setup = MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            outlier_psf_beams: Vec::new(),
             mask_beams: None,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
@@ -1110,6 +1116,7 @@ fn a_dense_mem_cycle_stays_within_solve_and_result_admissions() {
         let setup = MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            outlier_psf_beams: Vec::new(),
             mask_beams: None,
             algorithm: ReconstructionAlgorithm::Mem,
             accounting: HogbomIterationAccounting::Strict,

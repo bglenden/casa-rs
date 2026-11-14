@@ -115,15 +115,55 @@ pub(crate) fn mvc_cube_product(suffix: &str) -> bool {
 
 /// Check that `request` can continue on what exists at its `imagename`.
 /// Task entry points call this before creating a run summary.
-pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
+pub(crate) fn check(request: &ImagingRequest) -> Result<(bool, bool), PrepareError> {
     let existing = products(&request.imagename)?;
-    if let (Some(path), Some(_)) = (existing.first(), &request.outlierfile) {
+    let outliers = request
+        .outlierfile
+        .as_deref()
+        .map(crate::compile::outlier_output_prefixes)
+        .transpose()?
+        .unwrap_or_default();
+    let mut all = vec![(request.imagename.as_path(), existing)];
+    for output in &outliers {
+        all.push((output, products(output)?));
+    }
+    let continuing = all.iter().any(|(_, paths)| !paths.is_empty());
+    if !outliers.is_empty()
+        && !supports_outlier_restart(request)
+        && let Some(path) = all.iter().find_map(|(_, paths)| paths.first())
+    {
         return Err(PrepareError::ExistingImageProduct { path: path.clone() });
     }
     let family = Family::of(request);
+    let mut model = false;
+    for (prefix, paths) in all {
+        model |= check_products(request, family, prefix, &paths)?;
+    }
+    check_inputs(request, continuing)?;
+    Ok((continuing, model))
+}
+
+fn supports_outlier_restart(request: &ImagingRequest) -> bool {
+    matches!(request.gridder, Gridder::Standard { facets } if facets.get() == 1)
+        && request.specmode == crate::SpecMode::Mfs
+        && request.deconvolver == Deconvolver::Hogbom
+        && request.weighting == crate::Weighting::Natural
+        && request.stokes == [crate::PolarizationCoordinate::StokesI]
+        && request.usemask == UseMask::User
+        && request.calcpsf
+        && request.calcres
+}
+
+fn check_products(
+    request: &ImagingRequest,
+    family: Family,
+    prefix: &Path,
+    paths: &[PathBuf],
+) -> Result<bool, PrepareError> {
     let mvc = request.mvc_output_channels.is_some() || request.mvc_auto_channels;
-    for path in &existing {
-        let suffix = suffix(&request.imagename, path);
+    let mut has_model = false;
+    for path in paths {
+        let suffix = suffix(prefix, path);
         let refuse = |reason: String| PrepareError::Restart {
             path: path.clone(),
             reason,
@@ -131,13 +171,16 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
         let cube_product = mvc && mvc_cube_product(&suffix);
         if !family.admits(&suffix) && !cube_product {
             return Err(refuse(format!(
-                "it is not a product of this run's {family} images; choose a new imagename"
+                "it is not a product of this run's {family} images; choose a new imagename (#944)"
             )));
         }
-        if suffix.starts_with("model") && !(mvc && suffix == "model") && request.has_start_model() {
-            return Err(refuse(
-                "startmodel cannot be supplied when the output model already exists".into(),
-            ));
+        if suffix.starts_with("model") && !(mvc && suffix == "model") {
+            has_model |= path.exists();
+            if request.has_start_model() {
+                return Err(refuse(
+                    "startmodel cannot be supplied when the output model already exists".into(),
+                ));
+            }
         }
         if suffix == "mask" && request.niter > 0 {
             if request.usemask == UseMask::AutoMultithresh {
@@ -146,9 +189,10 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
                         .into(),
                 ));
             }
-            if request.mask_image.is_some()
-                || !request.mask_box.is_empty()
-                || request.explicit_empty_mask
+            if prefix == request.imagename
+                && (request.mask_image.is_some()
+                    || !request.mask_box.is_empty()
+                    || request.explicit_empty_mask)
             {
                 return Err(refuse(
                     "merging a new mask into an existing CLEAN mask is not implemented yet".into(),
@@ -156,11 +200,7 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
             }
         }
     }
-    check_inputs(request, !existing.is_empty())?;
-    if let Some(path) = &request.outlierfile {
-        super::compile::check_outlier_outputs(path)?;
-    }
-    Ok(())
+    Ok(has_model)
 }
 
 /// Whether a direction-dependent run reuses its PSF, weight and PB
@@ -302,15 +342,6 @@ pub(crate) fn reads_residual(request: &ImagingRequest) -> bool {
             .all(|name| product_path(&request.imagename, name).exists())
 }
 
-/// Whether a continuation starts from the model an earlier run left.
-pub(crate) fn continues_model(request: &ImagingRequest) -> bool {
-    request.tclean_restart
-        && Family::of(request)
-            .names("model")
-            .iter()
-            .any(|name| product_path(&request.imagename, name).exists())
-}
-
 /// Whether the run forms or reads a residual, and so writes the residual,
 /// the model and, with `restoration`, the restored image.
 pub(crate) fn has_residual(request: &ImagingRequest) -> bool {
@@ -372,16 +403,20 @@ pub(crate) fn products(prefix: &Path) -> Result<Vec<PathBuf>, PrepareError> {
     let Some(stem) = model.file_name() else {
         return Ok(products);
     };
-    let stem = stem.to_string_lossy();
-    let stem = stem.strip_suffix(".model").expect("appended suffix");
+    let stem = stem.as_encoded_bytes();
+    let stem = stem.strip_suffix(b".model").expect("appended suffix");
     for entry in entries {
         let entry = entry.map_err(|source| PrepareError::InspectOutputDirectory {
             path: directory.into(),
             source,
         })?;
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let Some(suffix) = name.strip_prefix(stem).and_then(|s| s.strip_prefix('.')) else {
+        let Some(suffix) = name
+            .as_encoded_bytes()
+            .strip_prefix(stem)
+            .and_then(|name| name.strip_prefix(b"."))
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        else {
             continue;
         };
         // Includes Taylor terms and derived products (.image.tt0.pbcor),
@@ -403,7 +438,7 @@ pub(crate) fn products(prefix: &Path) -> Result<Vec<PathBuf>, PrepareError> {
                     | "gridwt"
             )
         ) {
-            products.push(entry.path());
+            products.push(product_path(prefix, suffix));
         }
     }
     products.sort();

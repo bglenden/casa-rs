@@ -52,7 +52,11 @@ pub fn prepare_minor_cycle_with_residual_mask(
     }
     let base = completion.final_model();
     let taylor = is_taylor(normal);
-    for beams in [&setup.psf_beams, &setup.mask_beams].into_iter().flatten() {
+    for beams in [&setup.psf_beams, &setup.mask_beams]
+        .into_iter()
+        .chain(&setup.outlier_psf_beams)
+        .flatten()
+    {
         let channels = if taylor {
             1
         } else {

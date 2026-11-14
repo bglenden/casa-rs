@@ -76,6 +76,7 @@ fn setup(
     MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        outlier_psf_beams: Vec::new(),
         mask_beams: None,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,

@@ -501,6 +501,7 @@ mod tests {
         MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            outlier_psf_beams: Vec::new(),
             mask_beams: None,
             algorithm,
             accounting: HogbomIterationAccounting::Strict,

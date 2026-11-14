@@ -654,7 +654,7 @@ impl ImagingRequest {
     /// field's existing product, an unreadable output directory, an invalid
     /// outlier-name file, or an earlier PSF or residual that is missing.
     pub fn check_tclean_output_prefixes(&self) -> Result<(), crate::PrepareError> {
-        crate::restart::check(self)
+        crate::restart::check(self).map(|_| ())
     }
 
     /// Clone this request with task continuation enabled after output preflight.
@@ -663,10 +663,10 @@ impl ImagingRequest {
     /// # Errors
     /// An unsupported existing product or a conflicting explicit start model.
     pub fn with_tclean_restart(&self) -> Result<Self, crate::PrepareError> {
-        self.check_tclean_output_prefixes()?;
+        let (continuing, model) = crate::restart::check(self)?;
         let mut request = self.clone();
-        request.tclean_restart = !crate::restart::products(&self.imagename)?.is_empty();
-        request.continued_model = crate::restart::continues_model(&request);
+        request.tclean_restart = continuing;
+        request.continued_model = model;
         Ok(request)
     }
 

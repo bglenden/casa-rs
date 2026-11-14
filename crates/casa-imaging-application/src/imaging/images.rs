@@ -106,7 +106,7 @@ fn push_x_major(out: &mut Vec<f32>, image: &Array2<f32>) {
 /// a facet's `window` when it has one (each CASA facet mapper degrids its
 /// own window, `SIMapperCollection::degrid`): one plane per output channel
 /// of a channel-local basis, the Taylor terms of one plane otherwise.
-/// Pixels outside the model's support predict nothing.
+/// Pixels outside the model's support or owned by a later field predict nothing.
 pub(crate) fn model_images(
     generation: &ModelGeneration,
     (domain, window): (usize, Option<FacetBox>),
@@ -131,7 +131,7 @@ pub(crate) fn model_images(
         for term in 0..terms {
             let coefficient = if channel_local { plane as usize } else { term };
             for pol in 0..pols {
-                let samples = generation.read_plane(domain, coefficient, pol)?;
+                let samples = generation.prediction_plane(domain, coefficient, pol)?;
                 images.push(Array2::from_shape_fn((height, width), |(y, x)| {
                     let sample = samples[(origin[1] + y) * full_width + origin[0] + x];
                     match sample.support() {
