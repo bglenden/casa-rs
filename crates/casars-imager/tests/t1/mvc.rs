@@ -762,7 +762,7 @@ fn mvc_restart_keeps_the_saved_psf_and_primary_beam_families() {
     let mut controls = json!({
         "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
         "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
-        "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+        "niter": 1, "cycleniter": 1, "pbcor": true, "pblimit": 0.1,
     });
     let (_, seed) = observation.image(name, controls.clone());
     let path = |suffix: &str| observation.scratch(&format!("{name}{suffix}"));
@@ -775,6 +775,7 @@ fn mvc_restart_keeps_the_saved_psf_and_primary_beam_families() {
     let saved = [
         ".pb",
         ".pb.tt0",
+        ".pb.tt1",
         ".psf",
         ".psf.tt0",
         ".psf.tt1",
@@ -821,6 +822,20 @@ fn mvc_restart_keeps_the_saved_psf_and_primary_beam_families() {
     let actual = f64::from(resumed.get(".image.tt1").pixels[point])
         - f64::from(seed.get(".image.tt1").pixels[point]);
     assert!((actual - expected).abs() < 1e-5, "{actual} vs {expected}");
+    let pb = super::fixture::Product::open(&path(".pb.tt0"));
+    let saved_mask = pb.mask().expect("saved Taylor PB mask");
+    let pixels = pb.values();
+    let refreshed_mask = ndarray::Zip::from(&saved_mask)
+        .and(&pixels)
+        .map_collect(|&valid, &value| valid && value > 0.1);
+    assert_ne!(saved_mask, refreshed_mask);
+    for term in 0..2 {
+        for suffix in [format!(".residual.tt{term}"), format!(".image.tt{term}")] {
+            assert_eq!(resumed.get(&suffix).mask().as_ref(), Some(&refreshed_mask));
+        }
+        let corrected = format!(".image.tt{term}.pbcor");
+        assert_eq!(resumed.get(&corrected).mask().as_ref(), Some(&saved_mask));
+    }
 }
 
 /// CASA copies the common Taylor PB support onto MVC's restored and

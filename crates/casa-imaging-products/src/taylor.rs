@@ -801,11 +801,16 @@ impl TaylorProducts {
     }
 
     /// The pixels `rule` holds valid, in [`Self::payload`]'s order.
-    pub(crate) fn validity(&self, rule: ProductValidityRule) -> Result<Vec<bool>, ProductsError> {
+    pub(crate) fn validity(
+        &self,
+        role: ProductRole,
+        rule: ProductValidityRule,
+        refresh_mvc_mask: bool,
+    ) -> Result<Vec<bool>, ProductsError> {
         Ok(interleave(
             self.planes
                 .iter()
-                .map(|plane| plane.validity(rule, self.shape))
+                .map(|plane| plane.validity(role, rule, self.shape, refresh_mvc_mask))
                 .collect::<Result<_, _>>()?,
         ))
     }
@@ -903,12 +908,31 @@ impl TaylorPlane {
 
     fn validity(
         &self,
+        role: ProductRole,
         rule: ProductValidityRule,
         shape: [usize; 2],
+        refresh_mvc_mask: bool,
     ) -> Result<Vec<bool>, ProductsError> {
         match rule {
             ProductValidityRule::All | ProductValidityRule::FinalNormalState => {
                 Ok(vec![true; shape[0] * shape[1]])
+            }
+            ProductValidityRule::PrimaryBeam(policy)
+                if refresh_mvc_mask
+                    && matches!(
+                        role,
+                        ProductRole::Residual(_) | ProductRole::RestoredImage(_)
+                    ) =>
+            {
+                // MVC's cube2tt recreates each residual and applies the
+                // current cutoff to the saved PB lattice. Restore copies
+                // this mask; pbcor separately uses the saved PB mask.
+                Ok(self
+                    .primary_beam_validity
+                    .iter()
+                    .zip(&self.primary_beam[0])
+                    .map(|(&valid, &pb)| valid && pb > policy.cutoff())
+                    .collect())
             }
             ProductValidityRule::PrimaryBeam(_) => Ok(self.primary_beam_validity.clone()),
             ProductValidityRule::Taylor(_) => Ok(self.spectral_index_validity()?.to_vec()),
