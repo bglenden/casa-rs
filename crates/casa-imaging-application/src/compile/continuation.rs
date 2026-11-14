@@ -170,10 +170,13 @@ fn read_domain(
                         .into(),
             });
         }
+        let use_existing_mask =
+            request.usemask == UseMask::User && domain.mask == DomainMask::FullPlane;
+        let seed_automatic = request.usemask == UseMask::AutoMultithresh
+            && restart::supports_saved_automask(request);
         if suffix == "mask"
             && (request.niter > 0 || mvc_start.is_some())
-            && request.usemask == UseMask::User
-            && domain.mask == DomainMask::FullPlane
+            && (use_existing_mask || seed_automatic)
         {
             let input = restart::MaskInput::open(&path)?;
             let mut charge = admit(
@@ -186,10 +189,14 @@ fn read_domain(
             )?;
             let (planes, support) = input.read()?;
             charge.retain(restart::MaskInput::retained_bytes(planes, nx * ny));
-            domain.mask = DomainMask::PixelSupport {
-                planes,
-                support: support.into(),
-            };
+            if let DomainMask::AutoMultithresh { previous, .. } = &mut domain.mask {
+                *previous = Some((planes, support.into()));
+            } else {
+                domain.mask = DomainMask::PixelSupport {
+                    planes,
+                    support: support.into(),
+                };
+            }
             continuation.mask_resident.join(charge);
         }
     }

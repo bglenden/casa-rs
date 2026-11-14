@@ -193,7 +193,7 @@ fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
         json!({"cell": geometry.cell_arcsec.map(|cell| format!("{}arcsec", cell * 2.0))}),
         json!({"stokes": "Q"}),
         json!({"mask": "box[[1pix,1pix],[10pix,10pix]]"}),
-        json!({"usemask": "auto-multithresh"}),
+        json!({"usemask": "auto-multithresh", "calcpsf": false}),
     ] {
         let mut rejected = values.clone();
         rejected
@@ -840,4 +840,53 @@ fn restart_reads_a_replacement_mask_named_beside_its_products() {
     let reply = json_run_with(&directory, values, true);
     assert!(matches!(reply, TaskReply::Failed { .. }), "{reply:?}");
     assert_unchanged(&previous, &snapshot(&directory));
+}
+
+/// CASA starts the next auto-multithresh boundary with the binary CLEAN
+/// support on disk. An old isolated pixel survives alongside new support.
+#[test]
+fn a_saved_automask_seeds_the_first_resumed_boundary() {
+    let observation = Observation::synthesise(&[(
+        "point",
+        Component {
+            offset_px: [6, -4],
+            flux_jy: 2.0,
+            fwhm_px: None,
+            spectral_index: 0.0,
+        },
+    )]);
+    let directory = observation.scratch("saved-automask");
+    fs::create_dir(&directory).unwrap();
+    let geometry = observation.geometry();
+    let values = json!({
+        "vis": observation.measurement_set(), "imagename": "image",
+        "imsize": geometry.image_size, "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        "backend": "cpu", "usemask": "auto-multithresh", "fastnoise": false,
+        "niter": 4, "cycleniter": 2,
+    });
+    let run = || {
+        let result = json_run(&directory, values.clone());
+        assert!(matches!(result, TaskReply::Succeeded { .. }), "{result:?}");
+    };
+    run();
+    let path = directory.join("image.mask");
+    let sentinel = [8, 10, 0, 0];
+    let initial;
+    {
+        let mut mask = PagedImage::<f32>::open(&path).unwrap();
+        initial = mask.get().unwrap();
+        assert_eq!(initial[sentinel], 0.0);
+        let pixel = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), 1.0_f32);
+        mask.put_slice(&pixel, &sentinel).unwrap();
+        mask.save().unwrap();
+    }
+    let model_path = directory.join("image.model");
+    let before = PagedImage::<f32>::open(&model_path).unwrap().get().unwrap();
+    run();
+    let after = PagedImage::<f32>::open(&model_path).unwrap().get().unwrap();
+    let mask = PagedImage::<f32>::open(&path).unwrap().get().unwrap();
+    assert_eq!(mask[sentinel], 1.0);
+    let [centre_x, centre_y] = geometry.centre();
+    assert_eq!(mask[[centre_x + 6, centre_y - 4, 0, 0]], 1.0);
+    assert!(after.sum() > before.sum());
 }

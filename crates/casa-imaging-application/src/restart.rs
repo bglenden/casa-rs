@@ -154,6 +154,16 @@ fn supports_outlier_restart(request: &ImagingRequest) -> bool {
         && request.calcres
 }
 
+pub(crate) fn supports_saved_automask(request: &ImagingRequest) -> bool {
+    matches!(request.gridder, Gridder::Standard { facets } if facets.get() == 1)
+        && request.specmode == crate::SpecMode::Mfs
+        && request.deconvolver == Deconvolver::Hogbom
+        && request.stokes == [crate::PolarizationCoordinate::StokesI]
+        && request.outlierfile.is_none()
+        && request.calcpsf
+        && request.calcres
+}
+
 fn check_products(
     request: &ImagingRequest,
     family: Family,
@@ -183,9 +193,9 @@ fn check_products(
             }
         }
         if suffix == "mask" && request.niter > 0 {
-            if request.usemask == UseMask::AutoMultithresh {
+            if request.usemask == UseMask::AutoMultithresh && !supports_saved_automask(request) {
                 return Err(refuse(
-                    "continuing auto-multithresh on an existing CLEAN mask is not implemented yet"
+                    "continuing auto-multithresh on an existing CLEAN mask is not implemented for these controls (#944)"
                         .into(),
                 ));
             }
@@ -628,12 +638,12 @@ mod tests {
     }
 
     #[test]
-    fn a_new_or_automatic_mask_over_an_existing_one_is_refused_only_when_cleaning() {
+    fn an_existing_mask_refuses_explicit_masks_and_unsupported_automatic_modes_while_cleaning() {
         let directory = tempfile::tempdir().unwrap();
         let prefix = directory.path().join("result");
         fs::create_dir(directory.path().join("result.mask")).unwrap();
         for overrides in [
-            serde_json::json!({"usemask": "auto-multithresh"}),
+            serde_json::json!({"usemask": "auto-multithresh", "specmode": "cube"}),
             serde_json::json!({"mask": "box[[1pix,1pix],[4pix,4pix]]"}),
         ] {
             let mut cleaning = overrides.clone();
