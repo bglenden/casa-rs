@@ -87,12 +87,10 @@ fn read<T: ImagePixel + Copy>(
         unreachable!()
     };
     let spectral = coords.coordinate(2);
-    let frequency_hz = casa_types::quanta::Quantity::new(
-        spectral.to_world(&[0.]).map_err(raised)?[0],
-        &spectral.axis_units()[0],
-    )
-    .and_then(|value| value.get_value_in(&casa_types::quanta::Unit::new("Hz")?))
-    .map_err(raised)?;
+    let frequency_hz =
+        casa_types::quanta::Quantity::new(spectral.reference_value()[0], &spectral.axis_units()[0])
+            .and_then(|value| value.get_value_in(&casa_types::quanta::Unit::new("Hz")?))
+            .map_err(raised)?;
     if !frequency_hz.is_finite() || frequency_hz <= 0. {
         return Err(raised("invalid Jones image frequency"));
     }

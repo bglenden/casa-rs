@@ -263,6 +263,7 @@ struct JonesFieldModel {
     model: SkyModel,
     image: Arc<crate::predict::jones::JonesImage>,
     centres: Vec<(([u64; 2], usize), f64)>,
+    visits: Vec<(image_beams::VisitKey, usize)>,
 }
 
 /// Where the grids of a field come from: a set prepared at `predict`, or

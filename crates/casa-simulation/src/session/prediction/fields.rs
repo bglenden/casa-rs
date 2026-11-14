@@ -8,12 +8,10 @@ impl Prediction {
         match &self.grids {
             StepGrids::Prepared(..) => 0,
             StepGrids::Jones(held) => held
-                .centres
-                .binary_search_by_key(
-                    &(scan.pointing_rad.map(f64::to_bits), scan.field_id),
-                    |(key, _)| *key,
-                )
-                .expect("prepared Jones pointing"),
+                .visits
+                .binary_search_by_key(&image_beams::visit_key(scan), |(key, _)| *key)
+                .map(|index| held.visits[index].1)
+                .expect("prepared Jones visit"),
             StepGrids::PerField(held) => held
                 .centres
                 .binary_search_by_key(&scan.pointing_rad.map(f64::to_bits), |(direction, _)| {

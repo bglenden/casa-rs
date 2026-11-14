@@ -1334,6 +1334,15 @@ compensate for CASA's image indexing. Those actual C++ rows are the
 corrected reference, with the usual 1e-3 threshold unchanged. The scalar
 real, real/imaginary and complex beam controls require no such correction.
 
+`PBMath2DImage::updateJones` also returns its cached beam when the sky
+coordinates and shape are unchanged, without testing the pointing or
+parallactic angle. An A/B/A observation separated by four hours therefore
+keeps the first visit's attenuation for every field. casa-rs refreshes the
+beam on each pointing/field transition and retains the visit's orientation
+when reusing prediction grids. The `real_image_revisit` control preserves
+CASA's raw cached output and compares with actual CASA predictions made
+using a fresh simulator for each visit, removing that stale cache.
+
 ## EVLA component dosquint is a no-op
 
 CASA 6.7.6.14 accepts `sm.setvp(dosquint=True)` for EVLA, but logs

@@ -199,9 +199,10 @@ impl Segment {
                     && predictions[step].matches_correlations(correlations)
             }))
             && original.pointing_rad.map(f64::to_bits) == scan.pointing_rad.map(f64::to_bits)
-            && steps.into_iter().all(|step| {
-                predictions[step].phase_centre(original).map(f64::to_bits)
-                    == predictions[step].phase_centre(scan).map(f64::to_bits)
+            && self.steps.iter().copied().all(|step| {
+                predictions[step].grid_id(original) == predictions[step].grid_id(scan)
+                    && predictions[step].phase_centre(original).map(f64::to_bits)
+                        == predictions[step].phase_centre(scan).map(f64::to_bits)
             })
     }
 }

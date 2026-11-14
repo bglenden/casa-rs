@@ -47,9 +47,16 @@ fn run(operation: &str) {
                 continue;
             }
             let name = case["name"].as_str().unwrap();
+            let inputs = case["inputs"]
+                .as_str()
+                .map_or_else(|| inputs.clone(), |name| inputs.join(name));
             let temporary = tempfile::tempdir().unwrap();
             let path = temporary.path().join("signals.ms");
-            copy(&data.join("sm_image_layouts/base.ms"), &path);
+            let base = case["base_ms"].as_str().map_or_else(
+                || data.join("sm_image_layouts/base.ms"),
+                |name| inputs.join(name),
+            );
+            copy(&base, &path);
             let mut sm = Simulator::open_from_ms(
                 &path,
                 SimulatorOptions {
@@ -100,7 +107,16 @@ fn run(operation: &str) {
                 ..VoltagePatternSpec::default()
             })
             .unwrap();
-            sm.set_data(&[], &[0], "").unwrap();
+            sm.set_data(
+                &[],
+                if case["all_fields_selected"] == true {
+                    &[]
+                } else {
+                    &[0]
+                },
+                "",
+            )
+            .unwrap();
             let mut prediction = PredictSpec::default();
             if case["operation"] != "components" {
                 prediction.images.push(

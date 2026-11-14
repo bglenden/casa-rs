@@ -72,6 +72,8 @@ impl ImagePlane {
             increments,
             [pixel[0], pixel[1]],
         )
+        .with_longpole(source.longpole())
+        .with_latpole(source.latpole())
         // CASA's setLinearTransform rotates the intermediate world axes.
         // with_pc_matrix precedes pixel increments, so use D^-1 R D.
         .with_pc_matrix(ndarray::arr2(&[
