@@ -3705,6 +3705,17 @@ narrower than the shift, `test_cube_D2`, images in LSRK, where casa-rs and
 CASA select the same channels at every time (its edge plane keeps 2460.56 of
 5020.51 in both).
 
+
+The tuned bounds also pass through `SynthesisImager::doubleToString`,
+which uses `std::to_string`. Its six fractional digits are part of
+the channel selection. On the LSRK input cubic AW fixture with BARY
+output, CASA converts the upper tuned edge to 1524999999.9999998 Hz
+and passes 1525000000.000000 Hz to the iterator. A stored channel
+starting at that rounded edge is included. The same TOPO request
+already has an upper edge 2.4 μHz above it. casa-rs applies the
+observed rounding before the inclusive channel intersection. A
+channel whose edge remains beyond the rounded bound stays outside.
+
 ## A TOPO cube can gain or lose an endpoint with CASA's aberration cache history
 
 In CASA 6.7.6.14, the image's TOPO spectral coordinate has an LSRK conversion
