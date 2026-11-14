@@ -72,5 +72,4 @@ impl PySimutil {
     ) -> PyResult<Py<PyAny>> {
         stub("imtclean")
     }
-
 }
