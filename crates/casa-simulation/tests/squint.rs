@@ -89,6 +89,19 @@ fn component_squint_and_angle_refresh_match_casa() {
         &include_bytes!("data/sm_squint_casa.json.gz")[..],
     ))
     .unwrap();
+    compare_squint_cases(fixture);
+}
+
+#[test]
+fn saved_radial_beams_on_polarized_images_match_casa() {
+    let fixture: Value = serde_json::from_reader(GzDecoder::new(
+        &include_bytes!("data/sm_polarized_squint_casa.json.gz")[..],
+    ))
+    .unwrap();
+    compare_squint_cases(fixture);
+}
+
+fn compare_squint_cases(fixture: Value) {
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_squint");
     let mut failures = Vec::new();

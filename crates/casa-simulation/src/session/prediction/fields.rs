@@ -7,11 +7,11 @@ impl Prediction {
     pub(crate) fn grid_id(&self, scan: &super::super::observe::Scan) -> usize {
         match &self.grids {
             StepGrids::Prepared(..) => 0,
-            StepGrids::Jones(held) => held
+            StepGrids::ImageBeam(held) => held
                 .visits
                 .binary_search_by_key(&image_beams::visit_key(scan), |(key, _)| *key)
                 .map(|index| held.visits[index].1)
-                .expect("prepared Jones visit"),
+                .expect("prepared image-beam visit"),
             StepGrids::PerField(held) => held
                 .centres
                 .binary_search_by_key(&scan.pointing_rad.map(f64::to_bits), |(direction, _)| {
@@ -29,7 +29,7 @@ impl Prediction {
                 .is_none_or(|grid_field| grid_field == field)
                 .then_some(FieldGrids::Prepared(grids)),
             StepGrids::PerField(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
-            StepGrids::Jones(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
+            StepGrids::ImageBeam(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
         }
     }
 
@@ -38,14 +38,14 @@ impl Prediction {
     pub(crate) fn prepared_bytes(&self) -> u64 {
         match &self.grids {
             StepGrids::Prepared(_, grids) => grids.bytes(),
-            StepGrids::PerField(_) | StepGrids::Jones(_) => 0,
+            StepGrids::PerField(_) | StepGrids::ImageBeam(_) => 0,
         }
     }
 
     /// Whether `close` prepares each field's grids
     /// ([`Self::prepare_field`]).
     pub(crate) fn per_field(&self) -> bool {
-        matches!(self.grids, StepGrids::PerField(_) | StepGrids::Jones(_))
+        matches!(self.grids, StepGrids::PerField(_) | StepGrids::ImageBeam(_))
     }
 
     /// Bytes one set of grids holds ([`PreparedModelGrids::bytes`]).
@@ -60,9 +60,9 @@ impl Prediction {
     pub(crate) fn preparation_bytes(&self, workers: usize) -> u64 {
         match &self.grids {
             StepGrids::Prepared(..) => 0,
-            StepGrids::Jones(held) => {
+            StepGrids::ImageBeam(held) => {
                 workers.clamp(1, held.model.planes().max(1)) as u64
-                    * self.model.jones_scratch_bytes(&held.model)
+                    * self.model.image_beam_scratch_bytes(&held.model)
             }
             StepGrids::PerField(held) => {
                 workers.clamp(1, held.model.planes().max(1)) as u64
@@ -87,14 +87,14 @@ impl Prediction {
         field: usize,
         team: &WorkerTeam,
     ) -> SimulatorResult<PreparedModelGrids> {
-        if let StepGrids::Jones(held) = &self.grids {
+        if let StepGrids::ImageBeam(held) = &self.grids {
             let (key, angle) = held
                 .centres
                 .get(field)
-                .ok_or_else(|| SimulatorError::raised("Jones pointing was not prepared"))?;
+                .ok_or_else(|| SimulatorError::raised("image-beam pointing was not prepared"))?;
             return self
                 .model
-                .prepare_jones(
+                .prepare_image_beam(
                     &held.model,
                     &held.image,
                     key.0.map(f64::from_bits),

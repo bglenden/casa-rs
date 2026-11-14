@@ -49,6 +49,7 @@
 
 mod beam;
 mod components;
+pub(crate) mod image_beam;
 pub(crate) mod jones;
 mod jones_mosaic;
 mod model;
@@ -206,7 +207,10 @@ pub(crate) struct ModelLayout {
 }
 
 impl ModelLayout {
-    pub(crate) fn with_jones(mut self, correlations: &[Correlation]) -> Result<Self, PredictError> {
+    pub(crate) fn with_full_stokes(
+        mut self,
+        correlations: &[Correlation],
+    ) -> Result<Self, PredictError> {
         use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
         self.polarization =
             PolarizationRouting::compile(correlations, &[StokesI, StokesQ, StokesU, StokesV])?;
@@ -341,15 +345,15 @@ pub(crate) struct ModelOperator {
 }
 
 impl ModelOperator {
-    pub(crate) fn jones_scratch_bytes(&self, model: &SkyModel) -> u64 {
+    pub(crate) fn image_beam_scratch_bytes(&self, model: &SkyModel) -> u64 {
         let [nx, ny] = model.shape();
         self.plane_scratch_bytes(model) + (4 * nx * ny * size_of::<f32>() + 1024) as u64
     }
 
-    pub(crate) fn prepare_jones(
+    pub(crate) fn prepare_image_beam(
         &self,
         model: &SkyModel,
-        image: &jones::JonesImage,
+        image: &image_beam::ImageBeam,
         pointing: [f64; 2],
         angle: f64,
         team: &WorkerTeam,

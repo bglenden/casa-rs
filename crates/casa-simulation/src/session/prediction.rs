@@ -190,7 +190,8 @@ pub struct VoltagePatternSpec {
     /// `vptable`: a voltage-pattern table, read when not `usedefaultvp`.
     pub vp_table: String,
     /// `dosquint`: apply CASA's VLA component squint. Its EVLA implementation
-    /// accepts the flag with no effect. Stokes images stay unsquinted.
+    /// accepts the flag with no effect. Stokes-I images stay unsquinted;
+    /// polarized circular-feed images use separate RR/LL pointing offsets.
     pub do_squint: bool,
     /// `parangleinc`, degrees (CASA's 360 for `[]`): threshold for
     /// refreshing the component beam's feed angle.
@@ -247,7 +248,7 @@ enum StepGrids {
     /// One set per observed field under the beam, centred on the field,
     /// which `close` prepares ([`Prediction::prepare_field`]).
     PerField(Box<FieldModel>),
-    Jones(Box<JonesFieldModel>),
+    ImageBeam(Box<ImageBeamModel>),
 }
 
 /// What `close` prepares a field's grids from: the model with its planes
@@ -259,9 +260,9 @@ struct FieldModel {
     centres: Vec<([u64; 2], [f64; 2])>,
 }
 
-struct JonesFieldModel {
+struct ImageBeamModel {
     model: SkyModel,
-    image: Arc<crate::predict::jones::JonesImage>,
+    image: crate::predict::image_beam::ImageBeam,
     centres: Vec<(([u64; 2], usize), f64)>,
     visits: Vec<(image_beams::VisitKey, usize)>,
 }
@@ -277,7 +278,7 @@ impl std::fmt::Debug for Prediction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fields: Vec<Option<usize>> = match &self.grids {
             StepGrids::Prepared(field, _) => vec![*field],
-            StepGrids::Jones(held) => held
+            StepGrids::ImageBeam(held) => held
                 .centres
                 .iter()
                 .enumerate()
@@ -577,7 +578,7 @@ impl Simulator {
         let beam = component_beam.map(|beam| &beam.pattern);
         frame_epoch |= selected_beam
             .as_ref()
-            .is_some_and(|beam| beam.pattern.image().is_some());
+            .is_some_and(|beam| beam.pattern.image().is_some() || beam.squint.is_some());
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
@@ -724,17 +725,7 @@ impl Simulator {
     ) -> SimulatorResult<Prediction> {
         use casa_types::measures::direction::DirectionRef;
         let beam = selected_beam.map(|beam| &beam.pattern);
-        if !self.mosaic
-            && selected_beam.is_some_and(|beam| beam.squint.is_some())
-            && model
-                .polarizations()
-                .iter()
-                .any(|pol| *pol != casa_imaging_model::PolarizationCoordinate::StokesI)
-        {
-            return Err(SimulatorError::not_yet_implemented(
-                "custom beam squint on polarized model images (#1297)",
-            ));
-        }
+        let transformed_beam = self.transformed_image_beam(&model, correlations, selected_beam)?;
         let fixed_celestial_frame = matches!(
             model.tangent_direction().refer(),
             DirectionRef::J2000
@@ -809,12 +800,11 @@ impl Simulator {
         };
         let layout = ModelLayout::new(&model, correlations, machine, beams)
             .map_err(|error| correlation_error(error, correlations))?;
-        let layout =
-            if beam.is_some_and(|beam| beam.image().is_some()) && machine != FtMachine::Mosaic {
-                layout.with_jones(correlations).map_err(model_error)?
-            } else {
-                layout
-            };
+        let layout = if transformed_beam.is_some() {
+            layout.with_full_stokes(correlations).map_err(model_error)?
+        } else {
+            layout
+        };
         let (kernels, mut kernel_reservation) = self.admitted_kernels(&layout)?;
         // The operator drops the layout's beams.
         let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
@@ -834,18 +824,17 @@ impl Simulator {
             .last()
             .filter(|field| field.distance_m != 0.)
             .map_or(model.distance_m, |field| field.distance_m);
-        let mut prediction =
-            if let Some(image) = image_beam.and_then(super::voltage_patterns::BeamSource::image) {
-                self.prepare_jones_image(
-                    model,
-                    operator,
-                    image.clone(),
-                    kernel_reservation,
-                    phase_centres.as_ref(),
-                )?
-            } else {
-                self.prepare(model, operator, image_beam, kernel_reservation)?
-            };
+        let mut prediction = if let Some(image) = transformed_beam {
+            self.prepare_image_beam(
+                model,
+                operator,
+                image,
+                kernel_reservation,
+                phase_centres.as_ref(),
+            )?
+        } else {
+            self.prepare(model, operator, image_beam, kernel_reservation)?
+        };
         prediction.distance_m = distance_m;
         prediction.phase_centres = phase_centres;
         prediction.pointings = pointings;
