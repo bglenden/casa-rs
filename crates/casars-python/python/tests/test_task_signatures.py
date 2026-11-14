@@ -13,6 +13,7 @@ behavioral and scientific equivalence require their own evidence (#980).
 from __future__ import annotations
 
 import inspect
+import builtins
 import json
 from pathlib import Path
 import sys
@@ -20,6 +21,7 @@ import sys
 import pytest
 
 from casars import tasks
+from casars.tasks import _runner
 
 REPO = Path(__file__).resolve().parents[4]
 INVENTORY = REPO / "resources" / "casa-compat" / "casa-6.7.6.14" / "tasks"
@@ -99,6 +101,9 @@ def requests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("CASARS_SIMOBSERVE_BIN", str(fake))
     monkeypatch.setenv("FAKE_TASK_LOG", str(log))
     monkeypatch.chdir(tmp_path)
+    # This provider only records arguments and returns no figures. Keep its
+    # signature tests independent of the optional presentation dependency.
+    monkeypatch.setattr(_runner, "_require_plotting", lambda: None)
 
     def read() -> list[dict]:
         return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
@@ -126,3 +131,21 @@ def test_mutable_defaults_stay_fresh(requests) -> None:
     assert mapsize == ["1arcmin", "1arcmin"]
     assert signature.parameters["mapsize"].default == ["", ""]
     assert signature.parameters["direction"].default == []
+
+
+def test_missing_plot_dependency_fails_before_starting_the_task(tmp_path, monkeypatch):
+    original = builtins.__import__
+
+    def missing_plot(name, *args, **kwargs):
+        if name == "matplotlib" or name.startswith("matplotlib."):
+            raise ModuleNotFoundError("plot dependency unavailable")
+        return original(name, *args, **kwargs)
+
+    def unexpected_task(*args):
+        pytest.fail("the task started without its rendering dependency")
+
+    monkeypatch.setattr(builtins, "__import__", missing_plot)
+    monkeypatch.setattr(_runner, "_execute_task", unexpected_task)
+    with pytest.raises(ModuleNotFoundError, match="plot dependency unavailable"):
+        tasks.run("simobserve", workspace=tmp_path, project="untouched", graphics="file")
+    assert list(tmp_path.iterdir()) == []

@@ -427,6 +427,7 @@ fn shared_plot_panel(panel: &MsPlotDataPanel) -> PlotDocumentPanel {
     PlotDocumentPanel {
         id: panel.id.clone(),
         title: panel.title.clone(),
+        title_font_size: None,
         axes: panel
             .axes
             .iter()
@@ -478,6 +479,8 @@ fn shared_plot_panel(panel: &MsPlotDataPanel) -> PlotDocumentPanel {
             })
             .collect(),
         annotations: Vec::new(),
+        aspect: None,
+        frame_visible: None,
     }
 }
 
@@ -500,6 +503,7 @@ fn base_document(
         annotations,
         panels,
         show_legend: true,
+        layout: None,
     }
 }
 
@@ -625,6 +629,8 @@ fn point_layer(spec: PointLayerSpec<'_>) -> PlotDocumentLayer {
         source_sample_count,
         payload_strategy: PlotPayloadStrategy::PointCloud,
         provenance_summary: spec.provenance_summary,
+        data: None,
+        style: None,
     }
 }
 
@@ -667,6 +673,8 @@ fn interval_layer(spec: IntervalLayerSpec<'_>) -> PlotDocumentLayer {
         source_sample_count,
         payload_strategy: PlotPayloadStrategy::Intervals,
         provenance_summary: spec.provenance_summary,
+        data: None,
+        style: None,
     }
 }
 

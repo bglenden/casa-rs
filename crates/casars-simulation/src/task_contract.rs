@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 
 /// Stable protocol name advertised by `simobserve --protocol-info`.
 pub const SIMOBSERVE_TASK_PROTOCOL_NAME: &str = "casa_simobserve_task";
-/// Protocol version advertised by `simobserve --protocol-info`: 3 for
-/// CASA's parameters at contract 5.
-pub const SIMOBSERVE_TASK_PROTOCOL_VERSION: u32 = 3;
+/// Protocol version advertised by `simobserve --protocol-info`: 4 adds
+/// native-prepared figures and explicitly pending renderer products.
+pub const SIMOBSERVE_TASK_PROTOCOL_VERSION: u32 = 4;
 
 /// simobserve's protocol descriptor.
 pub fn simobserve_protocol_descriptor() -> ProviderProtocolDescriptor {
@@ -103,6 +103,9 @@ pub struct SimobserveRunTaskResult {
     /// The files written in the project directory, each with whether it
     /// exists after the run.
     pub artifacts: Vec<SimobserveArtifact>,
+    /// Native figure documents; arrays belong to the host's payload file.
+    #[serde(default)]
+    pub plots: Vec<casa_ms::plot_document::PlotFigure>,
 }
 
 /// The report of one completed run.
@@ -129,6 +132,9 @@ pub struct SimobserveArtifact {
     pub path: String,
     /// Whether it exists after the run.
     pub exists: bool,
+    /// The native run prepared this figure; the host still has to render it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub render_pending: bool,
     /// What it is.
     pub resource_kind: RunProductKind,
 }

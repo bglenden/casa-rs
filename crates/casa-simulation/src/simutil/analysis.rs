@@ -131,6 +131,9 @@ pub struct ImageStatistics {
     /// The rms of the unmasked pixels of the first quarter of each direction
     /// axis, through every plane; 0 when all of those are masked.
     pub rms: f64,
+    /// Number of unmasked samples in that corner. CASA uses its absence
+    /// to fall back to the full extrema when choosing plot colour limits.
+    pub corner_samples: usize,
     /// The brightness unit.
     pub unit: String,
 }
@@ -183,6 +186,7 @@ pub fn statim(image: &Path) -> Result<ImageStatistics, AnalysisError> {
         } else {
             (sum_squares / count as f64).sqrt()
         },
+        corner_samples: count,
         unit: image.units().to_string(),
     })
 }

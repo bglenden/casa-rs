@@ -286,6 +286,87 @@ pub(crate) fn task_outcome<'py>(
     Ok(view)
 }
 
+/// Decode the native simulation figures and check every array before Python
+/// maps the caller-owned payload. Failed processes have no figures to render.
+#[pyfunction]
+pub(crate) fn task_plot_documents<'py>(
+    py: Python<'py>,
+    surface_id: &str,
+    returncode: i32,
+    stdout: &str,
+    payload_bytes: u64,
+) -> PyResult<Bound<'py, PyAny>> {
+    let plots = py
+        .detach(|| plot_documents(surface_id, returncode, stdout, payload_bytes))
+        .map_err(|reason| reason_error(py, reason))?;
+    to_python(py, &plots)
+}
+
+fn plot_documents(
+    surface_id: &str,
+    returncode: i32,
+    stdout: &str,
+    payload_bytes: u64,
+) -> Result<Vec<casa_ms::plot_document::PlotFigure>, String> {
+    if surface_id != "simobserve" || returncode != 0 {
+        return Ok(Vec::new());
+    }
+    let TaskOutcome::Succeeded {
+        surface, result, ..
+    } = classify_task_exit(
+        TaskExit {
+            code: Some(0),
+            signal: None,
+        },
+        stdout,
+    )
+    else {
+        return Ok(Vec::new());
+    };
+    if surface != surface_id {
+        return Ok(Vec::new());
+    }
+    #[derive(serde::Deserialize)]
+    struct PlotReply {
+        #[serde(default)]
+        plots: Vec<casa_ms::plot_document::PlotFigure>,
+        #[serde(default)]
+        artifacts: Vec<casars_simulation::SimobserveArtifact>,
+    }
+    let reply: PlotReply =
+        serde_json::from_value(result).map_err(|e| format!("simulation plot reply: {e}"))?;
+    for plot in &reply.plots {
+        plot.document
+            .validate_payload(payload_bytes)
+            .map_err(|e| e.to_string())?;
+        if let Some(path) = &plot.output_file
+            && reply
+                .artifacts
+                .iter()
+                .filter(|a| {
+                    a.render_pending
+                        && a.resource_kind == RunProductKind::File
+                        && Path::new(&a.path) == path
+                })
+                .count()
+                != 1
+        {
+            return Err("a simulation figure needs one declared pending file product".into());
+        }
+    }
+    for artifact in reply.artifacts.iter().filter(|a| a.render_pending) {
+        let figures = reply
+            .plots
+            .iter()
+            .filter(|plot| plot.output_file.as_deref() == Some(Path::new(&artifact.path)))
+            .count();
+        if artifact.resource_kind != RunProductKind::File || figures != 1 {
+            return Err("a pending plot artifact needs exactly one matching figure".into());
+        }
+    }
+    Ok(reply.plots)
+}
+
 #[cfg(test)]
 #[path = "tasks_tests.rs"]
 mod tests;

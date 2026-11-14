@@ -20,6 +20,7 @@ import signal
 import subprocess
 import sys
 import threading
+import tempfile
 from typing import Any, TypeAlias
 
 from ..parameters import (
@@ -230,10 +231,33 @@ def _signature_defaults(wrapper: Callable[..., Any]) -> dict[str, Any]:
     }
 
 
+def _require_plotting() -> None:
+    """Fail before creating scientific products when plotting is unavailable."""
+
+    from matplotlib import pyplot as _plt  # noqa: F401
+
+
 def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
+    if task == "simobserve" and resolved.get("graphics") in {"file", "screen", "both"}:
+        # Import the renderer before the task creates scientific products.
+        _require_plotting()
+
+        with tempfile.TemporaryDirectory(prefix="casars-plots-") as directory:
+            payload = Path(directory) / "arrays.bin"
+            payload.touch()
+            return _execute_task(task, resolved, workspace, payload)
+    return _execute_task(task, resolved, workspace, None)
+
+
+def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None) -> TaskCompletion:
     invocation = resolved.provider_invocation()
     executable = _task_executable(task)
     command = (executable, *invocation.args)
+    environment = dict(os.environ)
+    if task == "simobserve":
+        environment.pop("CASARS_PLOT_PAYLOAD", None)
+    if payload is not None:
+        environment["CASARS_PLOT_PAYLOAD"] = str(payload)
     try:
         # The task runs in its own session, so a terminal's Ctrl-C reaches
         # Python alone, which passes it on once, in a terminal as in a
@@ -248,10 +272,18 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
             encoding="utf-8",
             errors="replace",
             start_new_session=True,
+            env=environment,
         )
     except OSError as error:
         raise TaskInvocationError(f"cannot start {task} ({executable}): {error}") from error
     stdout, stderr = _communicate(process, invocation.stdin or "")
+
+    if payload is not None:
+        try:
+            plots = _native().task_plot_documents(task, process.returncode, stdout, payload.stat().st_size)
+            _render_task_plots(plots, payload, workspace)
+        except Exception as error:
+            raise TaskResultError(f"{task} plot rendering failed: {error}") from error
 
     values = [
         (name, _display_value(state.value))
@@ -289,6 +321,49 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
     if not completion.successful:
         raise TaskExecutionError(completion)
     return completion
+
+
+def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
+    """Draw validated native artists, then release the temporary array file."""
+
+    if not plots:
+        return
+    import numpy as np
+
+    from matplotlib import pyplot as plt
+    from .._plot_document import render_document
+
+    # NumPy owns the mapping for as long as any view needs it, including
+    # views retained in an artist's exception traceback. Explicit mmap.close
+    # could invalidate those arrays while their Python objects are still live.
+    mapped = np.memmap(payload, dtype="u1", mode="r")
+    try:
+        for plot in plots:
+            figure, _ = render_document(plot["document"], payload=mapped)
+            completed = False
+            try:
+                if plot["output_file"] is not None:
+                    _save_figure(figure, workspace / plot["output_file"])
+                if plot["show"]:
+                    figure.show()
+                completed = True
+            finally:
+                if not plot["show"] or not completed:
+                    plt.close(figure)
+    finally:
+        del mapped
+
+
+def _save_figure(figure, destination: Path) -> None:
+    """Publish a complete PNG, preserving the previous figure on failure."""
+
+    with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=".png", dir=destination.parent, delete=False) as staged:
+        path = Path(staged.name)
+    try:
+        figure.savefig(path)
+        path.replace(destination)
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def _communicate(process: subprocess.Popen[str], request: str) -> tuple[str, str]:

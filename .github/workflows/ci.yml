@@ -125,7 +125,7 @@ jobs:
           python-version: "3.10"
 
       - name: Test Python package
-        run: scripts/test-python-package.sh
+        run: scripts/test-python-package.sh --plot
 
   perf_tools:
     runs-on: ubuntu-latest

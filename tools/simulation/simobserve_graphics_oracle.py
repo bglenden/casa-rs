@@ -60,19 +60,29 @@ def artists(figure):
 
     panels = []
     for axis in figure.axes:
+        def circle_record(p):
+            return {"center": list(p.center), "radius": p.radius, "fill": p.get_fill(),
+                    "line_width": p.get_linewidth(), "edge_color": list(p.get_edgecolor()),
+                    "face_color": list(p.get_facecolor())}
+
         panels.append({
             "title": axis.get_title(), "xlabel": axis.get_xlabel(), "ylabel": axis.get_ylabel(),
             "xlim": list(axis.get_xlim()), "ylim": list(axis.get_ylim()), "aspect": axis.get_aspect(),
+            "frame_on": axis.get_frame_on(),
+            "font_sizes": {"title": axis.title.get_fontsize(), "xlabel": axis.xaxis.label.get_fontsize(), "ylabel": axis.yaxis.label.get_fontsize()},
+            "tick_font_sizes": {"x": sorted({label.get_fontsize() for label in axis.get_xticklabels() if label.get_visible()}),
+                                "y": sorted({label.get_fontsize() for label in axis.get_yticklabels() if label.get_visible()})},
             "lines": [{"x": line.get_xdata().tolist(), "y": line.get_ydata().tolist(),
                        "color": line.get_color(), "marker": line.get_marker(),
-                       "linestyle": line.get_linestyle()} for line in axis.lines],
+                       "linestyle": line.get_linestyle(), "line_width": line.get_linewidth()} for line in axis.lines],
             "images": [{"pixels": np.asarray(im.get_array()).tolist(), "extent": list(im.get_extent()),
                         "clim": list(im.get_clim()), "origin": im.origin,
                         "interpolation": im.get_interpolation(), "cmap": im.get_cmap().name}
                        for im in axis.images],
-            "circles": [{"center": list(p.center), "radius": p.radius, "fill": p.get_fill()}
-                        for p in axis.patches if isinstance(p, Circle)],
-            "texts": [{"position": list(t.get_position()), "text": t.get_text()}
+            "circles": [circle_record(p) for p in axis.patches if isinstance(p, Circle)],
+            "anchored_circles": [circle_record(p) for p in axis.findobj(Circle) if p not in axis.patches],
+            "texts": [{"position": list(t.get_position()), "text": t.get_text(),
+                       "font_size": t.get_fontsize(), "horizontal_alignment": t.get_ha(), "vertical_alignment": t.get_va()}
                       for t in axis.texts],
         })
     return panels
@@ -122,6 +132,7 @@ def main():
         for name, extra in [
             ("int_image", {}),
             ("int_components", {"skymodel": "", "complist": str(root / "point.cl"), "compwidth": "1GHz"}),
+            ("int_dense_pointings", {"mapsize": "16arcsec", "pointingspacing": "1arcsec", "maptype": "hexagonal"}),
             ("sd_image", {"obsmode": "sd", "antennalist": "", "sdantlist": str(config), "maptype": "square", "incell": "2arcsec"}),
         ]:
             shutil.rmtree(name, ignore_errors=True)

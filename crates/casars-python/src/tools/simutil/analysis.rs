@@ -13,9 +13,8 @@
 //! - `convimage`: `None`, having written `<modelflat>.regrid` and
 //!   `<modelflat>.regrid.conv`.
 //!
-//! `statim`'s plot is not drawn yet (#1025): with `plot=True`, CASA's
-//! default, it says so and returns the statistics. `convimage` with a
-//! `complist` is refused (#1053).
+//! `statim` draws its native-prepared plane through the shared Python
+//! renderer. `convimage` with a `complist` is refused (#1053).
 
 use std::path::PathBuf;
 
@@ -23,14 +22,15 @@ use casa_images::PagedImage;
 use casa_simulation::simutil::analysis::{
     AnalysisError, cell_size, convimage, is_total_power, statim,
 };
+use casa_simulation::simutil::graphics::{ImagePlotOptions, image_plot};
+use casa_simulation::{ExecutionControls, SessionResources};
 use numpy::IntoPyArray;
 use pyo3::exceptions::{PyNotImplementedError, PyOSError, PyRuntimeError};
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyList, PyTuple};
 
-use super::{LOGGER, PySimutil};
+use super::{PySimutil, graphics};
 use crate::convert::value::CasaValue;
-use crate::tools::{LogLine, emit};
 
 /// A refusal CASA raises through `simutil.msg(..., priority='error')` is a
 /// `RuntimeError` with its message; a file that cannot be read an `OSError`.
@@ -81,9 +81,10 @@ impl PySimutil {
     }
 
     /// The image's minimum, maximum, the rms of its lower-left quarter and
-    /// its brightness unit, as CASA's `statim` gives them. `plot`, CASA's
-    /// default, draws nothing yet (#1025); `incell`, `disprange`, `bar` and
-    /// `showstats` only shape that plot.
+    /// its brightness unit, as CASA's `statim` gives them. By default draw
+    /// the complete plane, with CASA's display range, colour scale and
+    /// statistics. An empty `disprange` list receives its computed limits.
+    /// `incell` is unused in CASA and here.
     #[pyo3(
         signature = (image, plot = true, incell = None, disprange = None, bar = true, showstats = true),
         text_signature = "($self, image, plot=True, incell=None, disprange=None, bar=True, showstats=True)"
@@ -100,16 +101,50 @@ impl PySimutil {
         bar: bool,
         showstats: bool,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        if plot {
-            emit(
-                py,
-                LOGGER,
-                &[LogLine::warning(
-                    "statim's plot is not yet implemented in casa-rs (#1025): no figure is drawn",
-                )],
-            )?;
+        let range_list = disprange.and_then(|value| value.cast::<PyList>().ok());
+        let display_range = disprange
+            .map(|value| {
+                if let Some(list) = range_list {
+                    list.extract::<Vec<f64>>()
+                } else {
+                    value.extract::<f64>().map(|value| vec![value])
+                }
+            })
+            .transpose()?;
+        if display_range
+            .as_ref()
+            .is_some_and(|values| values.len() > 2)
+        {
+            return Err(PyRuntimeError::new_err(
+                "statim disprange has too many elements",
+            ));
         }
-        let stats = py.detach(|| statim(&image)).map_err(analysis_raised)?;
+        let return_range = range_list.is_some_and(|list| list.is_empty());
+        let stats = if plot || return_range {
+            let file = tempfile::NamedTempFile::new()?;
+            let options = ImagePlotOptions {
+                display_range,
+                bar,
+                show_statistics: showstats,
+            };
+            let (document, limits, stats) = py.detach(|| {
+                let resources = SessionResources::from_controls(&ExecutionControls::default())
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                image_plot(&image, file.path(), &options, resources)
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            })?;
+            if return_range {
+                for limit in limits {
+                    range_list.expect("empty caller list").append(limit)?;
+                }
+            }
+            if plot {
+                graphics::draw(py, &document, file.path(), false)?;
+            }
+            stats
+        } else {
+            py.detach(|| statim(&image)).map_err(analysis_raised)?
+        };
         let zero_d = |value: f64| ndarray::arr0(value).into_pyarray(py).into_any();
         PyTuple::new(
             py,

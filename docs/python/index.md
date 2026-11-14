@@ -26,6 +26,10 @@
   sky-model helpers `modifymodel` and `flatimage`, and the analysis helpers
   `ismstp`, `cellsize`, `statim` and `convimage`, the geodesy helpers, and
   `msg`, the report helpers, `dir_s2m`, `is4d`, `spectral` and `setcfg`.
+  Its plotting methods `newfig`, `nextfig`, `endfig`, `plotants`,
+  `ephemeris` and the default `statim(plot=True)` use the `plot` extra.
+  Rust prepares all scientific arrays; Matplotlib draws onto the current
+  figure and panel, so scripts can annotate and save them as in CASA.
   Its other methods have
   CASA's signatures and raise `NotImplementedError` naming the issue that
   records them. `from casars import simutil` is its public import.
@@ -99,6 +103,15 @@ available as `casars.data.measurement_set_plot(...)` and are drawn with
 Matplotlib by `casars.data.plot_matplotlib(...)`. `casars.imexplore` reads
 image planes as NumPy arrays (`casars.imexplore.data(...)`) and draws them with
 Matplotlib (`casars.imexplore.imshow(...)`).
+
+Install `casa-rs-python[plot]` for simulation graphics. `tasks.simobserve`
+honours `graphics='file'`, `'screen'`, `'both'` and `'none'`: it saves the
+model/pointing and observation figures, displays them, does both, or skips
+graphics. Figures include the complete model and UV samples. The
+interferometric quick PSF is a CASA image beside the MeasurementSet.
+The generic `tasks.run('simobserve', ...)` completion lists PNG files after
+they have been rendered. Displaying figures uses the Python session's
+Matplotlib backend.
 
 See [Task Parameter Profiles](../task-parameters.md) for sparse TOML,
 managed Last paths, source precedence, and examples.
