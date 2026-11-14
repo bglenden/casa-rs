@@ -221,7 +221,7 @@
   },
   "setvp": {
    "status": "Partial",
-   "scope": "Records default voltage patterns of ALMA, ACA, VLA, EVLA, NGVLA, ATA and SMA and saved Gaussian/Airy VPManager tables. predict reads VPLIST_DEFAULTS and the selected beam record; usedefaultvp overrides a supplied table. VLA components apply squint and parangleinc refresh; EVLA follows CASA’s accepted no-op. Other saved pattern forms and remaining telescope defaults remain unfinished on #1297. Image beams keep their existing squint behavior.",
+   "scope": "Records default voltage patterns of ALMA, ACA, VLA, EVLA, NGVLA, ATA and SMA and saved Gaussian/Airy VPManager tables. predict reads VPLIST_DEFAULTS and the selected beam record; usedefaultvp overrides a supplied table. VLA components apply squint and parangleinc refresh; EVLA follows CASA’s accepted no-op. Other saved pattern forms and remaining telescope defaults remain unfinished on #1297. Image beams keep their existing squint behavior. Saved custom Gaussian/Airy tables also supply intrinsic mosaic kernels with dovp either true or false. A VPLIST_DEFAULTS value of -1 retains the standard beam and its VLA squint. Uniform equatorial component feeds keep zero rotation; uniform alt-az/rotator feeds track parallactic angle. Other or mixed mount classes remain explicitly refused for active squint on #1297.",
    "evidence": [
     "signature",
     "binding-tests",

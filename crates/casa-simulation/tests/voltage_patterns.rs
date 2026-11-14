@@ -3,7 +3,8 @@
 mod existing_ms_calculations;
 
 use casa_simulation::{
-    BackendRequest, PredictSpec, SessionResources, Simulator, SimulatorOptions, VoltagePatternSpec,
+    BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
+    VoltagePatternSpec,
 };
 use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
@@ -55,6 +56,13 @@ fn saved_voltage_patterns_match_casa_simulated_signals() {
                 },
             )
             .unwrap();
+            if case["operation"] == "mosaic" {
+                sm.set_options(&PredictionOptions {
+                    ftmachine: "mosaic".into(),
+                    ..PredictionOptions::default()
+                })
+                .unwrap();
+            }
             let beam = case["beam"].as_str().unwrap();
             let default_override = beam == "default_override";
             let table = if default_override {
@@ -63,6 +71,7 @@ fn saved_voltage_patterns_match_casa_simulated_signals() {
                 beam
             };
             sm.set_vp(&VoltagePatternSpec {
+                dovp: case["dovp"].as_bool().unwrap_or(true),
                 use_default_vp: default_override,
                 vp_table: inputs
                     .join(format!("{table}.vp"))
@@ -74,7 +83,7 @@ fn saved_voltage_patterns_match_casa_simulated_signals() {
             .unwrap();
             sm.set_data(&[], &[0], "").unwrap();
             let mut prediction = PredictSpec::default();
-            if case["operation"] == "image" {
+            if case["operation"] != "components" {
                 prediction.images.push(inputs.join("sky.image"));
             } else {
                 prediction.component_lists.push(inputs.join("sky.cl"));

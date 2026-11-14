@@ -638,7 +638,9 @@ impl Simulator {
                 "total-power prediction over different correlation setups is not yet implemented in casa-rs (#1299)",
             ));
         }
-        let beam = self.voltage_pattern_beam()?;
+        let selected_beam = self.voltage_pattern_beam()?;
+        let component_beam = selected_beam.filter(|_| self.voltage_pattern);
+        let beam = component_beam.map(|beam| beam.pattern);
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
@@ -681,7 +683,12 @@ impl Simulator {
         };
         let components = list
             .map(|(label, list, held)| {
-                self.prepare_components(&label, (list, held), beam, phase_centres.as_ref())
+                self.prepare_components(
+                    &label,
+                    (list, held),
+                    component_beam,
+                    phase_centres.as_ref(),
+                )
             })
             .transpose()?;
         let image_centres = if model.is_some() {
@@ -704,7 +711,7 @@ impl Simulator {
                 predictions.push(self.prepare_image(
                     model?,
                     correlations,
-                    beam,
+                    selected_beam,
                     image_centres.clone(),
                 )?);
             }
@@ -763,10 +770,11 @@ impl Simulator {
         &self,
         model: SkyModel,
         correlations: &[Correlation],
-        beam: Option<PrimaryBeam>,
+        selected_beam: Option<super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
         use casa_types::measures::direction::DirectionRef;
+        let beam = selected_beam.map(|beam| beam.pattern);
         let fixed_celestial_frame = matches!(
             model.tangent_direction().refer(),
             DirectionRef::J2000
@@ -810,7 +818,11 @@ impl Simulator {
                 )
                 .map_err(SimulatorError::admission)?;
                 mosaic_state = Some((reservation, kept));
-                let (beams, antenna_types) = self.mosaic_beams()?;
+                let (beams, antenna_types) = self.mosaic_beams(
+                    selected_beam
+                        .filter(|beam| !beam.standard)
+                        .map(|beam| beam.pattern),
+                )?;
                 (Some(beams), antenna_types, self.mosaic_pointings(&model)?)
             }
             FtMachine::Grid(_) | FtMachine::WProject(_) => {
@@ -865,20 +877,23 @@ impl Simulator {
         &self,
         label: &str,
         (list, held_list): (ComponentList, Reservation),
-        beam: Option<PrimaryBeam>,
+        selected_beam: Option<super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<ComponentPrediction> {
-        let squint = (self.squint && self.voltage_pattern_table.is_none())
-            .then_some(beam)
-            .flatten()
+        let squint = selected_beam
+            .filter(|beam| self.squint && beam.standard)
+            .map(|beam| beam.pattern)
             .filter(|beam| beam.squints())
-            .map(|beam| {
-                (
+            .map(|beam| -> SimulatorResult<_> {
+                Ok((
                     beam,
                     self.reference_frequency_hz(),
                     self.beam_angle_increment_rad,
-                )
-            });
+                    super::voltage_patterns::squint_mount(self)?,
+                ))
+            })
+            .transpose()?;
+        let beam = selected_beam.map(|beam| beam.pattern);
         if self
             .antennas
             .windows(2)
@@ -1018,8 +1033,10 @@ impl Simulator {
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION
     /// row 0's telescope at spectral window 0's REF_FREQUENCY
     /// (`VPSkyJones`).
-    fn voltage_pattern_beam(&self) -> SimulatorResult<Option<PrimaryBeam>> {
-        if !self.voltage_pattern {
+    fn voltage_pattern_beam(
+        &self,
+    ) -> SimulatorResult<Option<super::voltage_patterns::ResolvedBeam>> {
+        if !self.voltage_pattern && !(self.mosaic && self.voltage_pattern_table.is_some()) {
             return Ok(None);
         }
         if let Some(path) = &self.voltage_pattern_table {
@@ -1034,7 +1051,10 @@ impl Simulator {
                      and SMA are"
                 ))
             })?;
-        Ok(Some(beam))
+        Ok(Some(super::voltage_patterns::ResolvedBeam {
+            pattern: beam,
+            standard: true,
+        }))
     }
 
     /// OBSERVATION row 0's telescope, whose patterns CASA's `VPSkyJones`

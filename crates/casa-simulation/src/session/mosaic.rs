@@ -71,10 +71,14 @@ impl Simulator {
     /// Not yet implemented: a telescope without a supported default beam,
     /// a heterogeneous-array antenna without a dish, or more than 255 dish
     /// diameters.
-    pub(super) fn mosaic_beams(&self) -> SimulatorResult<(MosaicBeams, Vec<u8>)> {
+    pub(super) fn mosaic_beams(
+        &self,
+        custom: Option<PrimaryBeam>,
+    ) -> SimulatorResult<(MosaicBeams, Vec<u8>)> {
         let telescope = self.observing_telescope();
-        let common = !MOSAIC_TELESCOPES.contains(&telescope);
-        let default = PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz());
+        let common = custom.is_some() || !MOSAIC_TELESCOPES.contains(&telescope);
+        let default =
+            custom.or_else(|| PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz()));
         if common && default.is_none() {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict with setoptions(ftmachine='mosaic') for telescope {telescope} is not \

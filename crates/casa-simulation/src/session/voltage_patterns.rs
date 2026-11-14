@@ -60,7 +60,44 @@ fn table_bytes(path: &Path) -> SimulatorResult<u64> {
     Ok(bytes)
 }
 
-pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<PrimaryBeam> {
+/// Preserve how VPManager resolved the record: standard VLA patterns carry
+/// band squint, while custom records choose common-beam mosaic kernels.
+#[derive(Clone, Copy)]
+pub(super) struct ResolvedBeam {
+    pub(super) pattern: PrimaryBeam,
+    pub(super) standard: bool,
+}
+
+/// MSDerivedValues::parAngle leaves equatorial feeds fixed. The component
+/// cache currently shares one rotation across antennas; reject other or
+/// mixed mounting geometries instead of silently applying alt-az rotation.
+pub(super) fn squint_mount(session: &Simulator) -> SimulatorResult<bool> {
+    let kind = |name: &str| {
+        if name.is_empty()
+            || name.eq_ignore_ascii_case("alt-az")
+            || name.eq_ignore_ascii_case("alt-az+rotator")
+        {
+            Ok(true)
+        } else if name.eq_ignore_ascii_case("equatorial") {
+            Ok(false)
+        } else {
+            Err(SimulatorError::not_yet_implemented(format!(
+                "squinted component prediction with antenna mount {name} (#1297)"
+            )))
+        }
+    };
+    let first = kind(&session.antennas[0].mount)?;
+    for antenna in &session.antennas {
+        if kind(&antenna.mount)? != first {
+            return Err(SimulatorError::not_yet_implemented(
+                "squinted component prediction with mixed antenna mount classes (#1297)",
+            ));
+        }
+    }
+    Ok(first)
+}
+
+pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<ResolvedBeam> {
     let _root_memory = reserve(session, table_bytes(path)?)?;
     let table = Table::open(TableOptions::new(path)).map_err(raised)?;
     let Some(Value::TableRef(reference)) = table.keywords().get("VPLIST_DEFAULTS") else {
@@ -90,13 +127,16 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<PrimaryB
     let selected =
         selected.ok_or_else(|| raised(format!("no default for telescope {telescope}")))?;
     if selected == -1 {
-        return PrimaryBeam::for_telescope(telescope, session.reference_frequency_hz()).ok_or_else(
-            || {
+        return PrimaryBeam::for_telescope(telescope, session.reference_frequency_hz())
+            .map(|pattern| ResolvedBeam {
+                pattern,
+                standard: true,
+            })
+            .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
                     "default simulation beam for {telescope} (#1297)"
                 ))
-            },
-        );
+            });
     }
     let index = usize::try_from(selected).map_err(raised)?;
     if index >= table.row_count() {
@@ -117,7 +157,10 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<PrimaryB
             ));
         }
     }
-    from_record(&record)
+    from_record(&record).map(|pattern| ResolvedBeam {
+        pattern,
+        standard: false,
+    })
 }
 
 fn text<'a>(record: &'a RecordValue, field: &str) -> SimulatorResult<&'a str> {

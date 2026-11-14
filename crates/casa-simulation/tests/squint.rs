@@ -38,7 +38,7 @@ fn observation(path: &Path, case: &Value, resources: SessionResources) -> Simula
         z: coordinates(2, 24.),
         dish_diameter: vec![25.],
         offset: vec![0.],
-        mount: vec!["alt-az".into()],
+        mount: vec![case["mount"].as_str().unwrap_or("alt-az").into()],
         antenna_names: vec!["VA".into()],
         pad_names: vec!["A".into()],
         coordinate_system: CoordinateSystem::Global,
@@ -118,6 +118,12 @@ fn component_squint_and_angle_refresh_match_casa() {
             let path = directory.path().join("squint.ms");
             let mut sm = observation(&path, case, resources);
             sm.set_vp(&VoltagePatternSpec {
+                use_default_vp: case["saved_standard"] != true,
+                vp_table: if case["saved_standard"] == true {
+                    data.join("standard.vp").to_string_lossy().into_owned()
+                } else {
+                    String::new()
+                },
                 do_squint: case["squint"].as_bool().unwrap(),
                 parallactic_angle_increment_deg: case["increment_deg"].as_f64().unwrap(),
                 ..VoltagePatternSpec::default()
@@ -129,6 +135,18 @@ fn component_squint_and_angle_refresh_match_casa() {
                 ..PredictSpec::default()
             })
             .unwrap_or_else(|error| panic!("{name}: {error}"));
+            if case["replace_squint"] == true {
+                sm.set_vp(&VoltagePatternSpec {
+                    do_squint: false,
+                    ..VoltagePatternSpec::default()
+                })
+                .unwrap();
+                sm.predict(&PredictSpec {
+                    component_lists: vec![data.join(format!("{telescope}.cl"))],
+                    ..PredictSpec::default()
+                })
+                .unwrap();
+            }
             sm.close().unwrap();
             if let Some(export) = std::env::var_os("CASA_RS_SQUINT_OUT") {
                 copy(

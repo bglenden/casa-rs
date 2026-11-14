@@ -14,7 +14,7 @@ from sm_existing_append_oracle import snapshot
 from sm_multiple_models_oracle import CENTRE
 
 
-def observation(path, telescope, frequency):
+def observation(path, telescope, frequency, mount="alt-az"):
     sm, me = simulator(), measures()
     assert sm.open(str(path))
     centre = [-1601185., -5041977., 3554875.]
@@ -23,7 +23,7 @@ def observation(path, telescope, frequency):
     # Keep the 25 m dishes unshadowed: shadow flags have their own
     # documented simulator/flagger convention, independent of beam squint.
     assert sm.setconfig(telescopename=telescope, x=xyz[0], y=xyz[1], z=xyz[2],
-        dishdiameter=[25.], offset=[0.], mount=["alt-az"], antname=["VA"],
+        dishdiameter=[25.], offset=[0.], mount=[mount], antname=["VA"],
         padname=["A"], coordsystem="global", referencelocation=me.observatory("VLA"))
     assert sm.setspwindow(spwname="beam", freq=f"{frequency}Hz",
         deltafreq=f"{frequency*.01}Hz", freqresolution=f"{frequency*.01}Hz",

@@ -459,9 +459,13 @@ impl ComponentPrediction {
             let mut epoch = None;
             for (row, (uvw_m, time_s)) in rows.clone().enumerate() {
                 let angle = match (&self.squint, &mut beam_context) {
-                    (Some(squint), Some(context)) => {
-                        context.advance(time_s, &terms.phase, &self.frame, squint.config.2)?
-                    }
+                    (Some(squint), Some(context)) => context.advance(
+                        time_s,
+                        &terms.phase,
+                        &self.frame,
+                        squint.config.2,
+                        squint.config.3,
+                    )?,
                     _ => 0.,
                 };
                 if direction.refer() != DirectionRef::J2000 && epoch != Some(time_s) {

@@ -8,7 +8,7 @@ use num_complex::Complex64;
 
 use super::{BeamPattern, PrimaryBeam, separation_rad};
 
-pub(super) type Config = (PrimaryBeam, f64, f64);
+pub(super) type Config = (PrimaryBeam, f64, f64, bool);
 
 #[derive(Clone, Copy, Debug, Default)]
 struct History {
@@ -54,13 +54,18 @@ impl BeamContext {
         phase: &MDirection,
         frame: &MeasFrame,
         increment: f64,
+        alt_az: bool,
     ) -> Result<f64, ComponentError> {
         let changed = self.history.key != Some(self.key) || self.history.angle.is_none();
         if changed || (self.history.time_s != Some(time_s) && increment < std::f64::consts::TAU) {
-            let frame = frame
-                .clone()
-                .with_epoch(MEpoch::from_mjd(time_s / 86400., EpochRef::UTC));
-            let angle = f64::from(phase.parallactic_angle(&frame).map_err(error)? as f32);
+            let angle = if alt_az {
+                let frame = frame
+                    .clone()
+                    .with_epoch(MEpoch::from_mjd(time_s / 86400., EpochRef::UTC));
+                f64::from(phase.parallactic_angle(&frame).map_err(error)? as f32)
+            } else {
+                0.
+            };
             if changed
                 || self
                     .history
@@ -130,7 +135,7 @@ impl Squint {
         };
         let mut context = initial;
         for time in times {
-            context.advance(time, phase, frame, self.config.2)?;
+            context.advance(time, phase, frame, self.config.2, self.config.3)?;
         }
         *history = context.history;
         Ok(initial)
