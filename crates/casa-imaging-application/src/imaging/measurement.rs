@@ -680,6 +680,9 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
             to_lsrk,
             to_reporting,
         );
+        if spectral.source_frame() == casa_imaging_model::FrequencyFrame::Lsrk {
+            axis = axis.with_exact_width_from_below();
+        }
     }
     Ok(SpectralResampler::channel_local(axis, kernel)
         .with_terminal_plane_outside(spectral.terminal_plane_outside()))

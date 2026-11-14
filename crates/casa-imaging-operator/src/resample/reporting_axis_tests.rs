@@ -51,3 +51,21 @@ fn padded_density_rounds_after_conversion_to_reported_pixel() {
     let midpoint = to_lsrk.convert_hz(1_450_000_000.0);
     assert_eq!(padded.nearest_channel(midpoint), Some(3));
 }
+
+#[test]
+fn width_tie_uses_fewer_samples_without_rounding_a_nonintegral_ratio() {
+    let axis = SpectralAxis::new(1.025e9, 100.0e6, 2)
+        .expect("wide axis")
+        .with_exact_width_from_below();
+    let native_step = 50.0e6_f64;
+    for (spacing, expected) in [
+        (native_step.next_up(), 2),
+        (native_step, 2),
+        (native_step.next_down(), 4),
+    ] {
+        for sign in [1.0, -1.0] {
+            let grid = FineGrid::compile(axis, spacing * sign).expect("fine grid");
+            assert_eq!(grid.count(), expected, "spacing {spacing}, sign {sign}");
+        }
+    }
+}

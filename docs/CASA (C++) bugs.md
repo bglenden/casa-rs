@@ -3940,6 +3940,21 @@ and its PSFs differ by 7e-4 to 1.3e-3 normalized RMS, the returned
 on is rounding, which casa-rs does not reproduce (`AGENTS.md`: a near-tie
 broken the other way is equally valid).
 
+For the channel-index TOPO cube on LSRK data in #1256, that ratio
+can differ for the whole track. In the five-channel VLA fixture, stock
+CASA uses one sample per plane at `width=2`. With fresh aberration
+coefficients in both runs, changing only the cached UT1−UTC value to
+the value at the image epoch changes the ratio from just below two to
+exactly two, doubling the sample count.
+
+For a standard, natural-weighted, linear channel-index TOPO cube on
+LSRK data, casa-rs evaluates the grid in LSRK and takes the lower
+sample count at an exact integral ratio above one. Ratios on either
+side still use CASA's floor. Strict interpolation bounds continue to
+apply to every gridded sample. The width-two control agrees with stock
+CASA, and the width-one control still agrees.
+[Trace and controls in #1256](https://github.com/bglenden/casa-rs/issues/1256#issuecomment-6881726364).
+
 ## A cube without a per-channel density leaves `<imagename>.gridwt` behind
 
 - Date noted: 2026-11-03

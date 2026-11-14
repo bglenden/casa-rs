@@ -1511,14 +1511,11 @@ fn canonicalize_spectral(
         };
         let last = first + channels.saturating_sub(1) as f64 * step;
         let valid_source = match spectral.source_frame {
-            FrequencyFrame::Lsrk => {
-                grid.reporting_conversions.is_none()
-                    && matches!(
-                        spectral.doppler_convention,
-                        DopplerConvention::Radio | DopplerConvention::NotApplicable
-                    )
-            }
-            FrequencyFrame::Topocentric => {
+            FrequencyFrame::Lsrk if grid.reporting_conversions.is_none() => matches!(
+                spectral.doppler_convention,
+                DopplerConvention::Radio | DopplerConvention::NotApplicable
+            ),
+            FrequencyFrame::Topocentric | FrequencyFrame::Lsrk => {
                 grid.reporting_conversions.is_some()
                     && matches!(spectral.anchor, SpectralFrameAnchor::Conversion { .. })
                     && !grid.terminal_plane_outside

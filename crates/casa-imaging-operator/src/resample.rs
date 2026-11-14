@@ -12,6 +12,7 @@
 //! lies between, except that a one-channel image or a one-channel row
 //! bypasses interpolation and maps like `nearest`.
 
+mod fine_grid;
 mod prediction;
 #[cfg(test)]
 mod reporting_axis_tests;
@@ -22,6 +23,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use casa_types::measures::PreparedFrequencyConversion;
 use num_complex::{Complex32, Complex64};
 
+use self::fine_grid::{FineGrid, linear_samples};
 pub use self::prediction::{PlacedRow, PredictionScratch};
 use crate::accumulator::PlaneRange;
 use crate::convolution::{CellHold, ConvolutionFunctionSet, GridEdge, RowContext};
@@ -123,6 +125,7 @@ pub struct SpectralAxis {
     increment_hz: f64,
     channels: u32,
     reporting_axis: Option<ReportingAxis>,
+    exact_width_from_below: bool,
 }
 
 /// A retained LSRK axis's reported image coordinate and its conversion.
@@ -160,6 +163,7 @@ impl SpectralAxis {
             increment_hz,
             channels,
             reporting_axis: None,
+            exact_width_from_below: false,
         })
     }
 
@@ -285,106 +289,6 @@ impl SpectralAxis {
         (frequency_hz < high + limit && frequency_hz > high - 0.5 * width)
             || (frequency_hz < low + 0.5 * width && frequency_hz > low - limit)
     }
-}
-
-/// CASA's fine frequency grid for linear interpolation: the output centres
-/// when output channels are no wider than native ones, otherwise
-/// `floor(width ratio)` points per output channel.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct FineGrid {
-    start_hz: f64,
-    increment_hz: f64,
-    per_output: usize,
-    direct_centres: bool,
-    output: SpectralAxis,
-}
-
-impl FineGrid {
-    fn compile(output: SpectralAxis, native_increment_hz: f64) -> Option<Self> {
-        let output_increment_hz = output.increment_hz;
-        if native_increment_hz == 0.0 || !native_increment_hz.is_finite() {
-            return None;
-        }
-        let width = output_increment_hz.abs() / native_increment_hz.abs();
-        if width <= 1.0 {
-            let increment_hz = output_increment_hz.abs().copysign(native_increment_hz);
-            let start_hz = if increment_hz.signum() == output_increment_hz.signum() {
-                output.first_hz
-            } else {
-                output.last_hz()
-            };
-            return Some(Self {
-                start_hz,
-                increment_hz,
-                per_output: 1,
-                direct_centres: output.reporting_axis.is_some(),
-                output,
-            });
-        }
-        let per_output = width.floor() as usize;
-        let fine_abs = output_increment_hz.abs() / per_output as f64;
-        let first_edge = output.first_hz - output_increment_hz / 2.0;
-        let last_edge = output.last_hz() + output_increment_hz / 2.0;
-        let low_edge = first_edge.min(last_edge);
-        let high_edge = first_edge.max(last_edge);
-        let increment_hz = fine_abs.copysign(native_increment_hz);
-        let start_hz = if increment_hz > 0.0 {
-            low_edge + fine_abs / 2.0
-        } else {
-            high_edge - fine_abs / 2.0
-        };
-        Some(Self {
-            start_hz,
-            increment_hz,
-            per_output,
-            direct_centres: false,
-            output,
-        })
-    }
-
-    fn count(self) -> usize {
-        self.per_output * self.output.channels as usize
-    }
-
-    fn frequency_hz(self, ordinal: usize) -> f64 {
-        if self.direct_centres {
-            self.output.centre_hz(self.output_channel(ordinal))
-        } else {
-            self.start_hz + ordinal as f64 * self.increment_hz
-        }
-    }
-
-    fn output_channel(self, ordinal: usize) -> u32 {
-        let output_ordinal = (ordinal / self.per_output) as u32;
-        if self.increment_hz.signum() == self.output.increment_hz.signum() {
-            output_ordinal
-        } else {
-            self.output.channels - 1 - output_ordinal
-        }
-    }
-}
-
-/// The most fine-grid points a row of `spectrum` visits against an output
-/// axis of `channels` channels `increment_hz` apart.
-///
-/// [`FineGrid`] takes `p = max(1, floor(|width| / first spacing))` points
-/// per output channel, `|width| / p` apart, and a row visits each point at
-/// most once and only within its span: at most `p · channels` points and
-/// `floor(span / spacing) + 1` of them, plus one for rounding. For evenly
-/// spaced channels that is about one per channel or per output plane. A
-/// one-channel axis or row maps like `nearest`, one sample per channel.
-fn linear_samples(increment_hz: f64, channels: usize, spectrum: RowSpectrum) -> usize {
-    if channels <= 1 || spectrum.channels <= 1 {
-        return spectrum.channels;
-    }
-    if spectrum.first_spacing_hz <= 0.0 {
-        return spectrum.channels.max(channels) + 1;
-    }
-    let width = increment_hz.abs();
-    let per_output = (width / spectrum.first_spacing_hz).floor().max(1.0);
-    let within = (spectrum.span_hz * per_output / width).floor() + 2.0;
-    // Saturating: a bound past the address space fails its allocation.
-    (per_output * channels as f64).min(within) as usize
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

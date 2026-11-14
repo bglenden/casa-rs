@@ -854,7 +854,9 @@ fn cube_law(
             doppler_convention(request.veltype)?,
         ),
     };
-    let source_lsrk_grid = if exact_aw_grid && output_channels > 1 {
+    let source_lsrk_grid = if output_channels > 1
+        && (exact_aw_grid || wide_topo_cube(request, &axis, survey.source_frequency_reference))
+    {
         Some(tracked_cube_grid(
             frame,
             reference_frequency_hz,
@@ -905,6 +907,21 @@ fn tracked_aw_cube_density(
         && request.weighting.per_channel_density()
 }
 
+/// This channel-index TOPO cube uses its LSRK image coordinate for the
+/// fine-grid width ratio. The natural-weight standard route has no separate
+/// per-channel density grid to account for.
+fn wide_topo_cube(request: &ImagingRequest, axis: &CubeAxisConfig, source: FrequencyRef) -> bool {
+    matches!(request.gridder, Gridder::Standard { .. })
+        && request.specmode == SpecMode::Cube
+        && request.weighting == Weighting::Natural
+        && axis.interpolation == CubeInterpolation::Linear
+        && axis.outframe == FrequencyRef::TOPO
+        && source == FrequencyRef::LSRK
+        && axis.veltype == DopplerRef::RADIO
+        && matches!(axis.start, None | Some(CubeAxisValue::Channel(_)))
+        && matches!(axis.width, Some(CubeAxisValue::Channel(width)) if width.unsigned_abs() > 1)
+}
+
 /// `MSTransformRegridder::convertGridPars` reads frequency quantities
 /// through `Quantum::getValue`, which divides by the ratio of unit scales.
 /// The last bit matters when a converted centre falls between two density
@@ -920,7 +937,7 @@ fn casa_cube_frequency(value: &mut Option<CubeAxisValue>, text: Option<&str>) {
 
 /// `FTMachine` samples the image coordinate in LSRK and subtracts the
 /// first two world frequencies for its interpolation step. Retain that
-/// axis for a tracked cubic AW cube using per-channel density.
+/// axis for tracked TOPO cubes that need the measured spacing.
 fn tracked_cube_grid(
     frame: &FrameContext<'_>,
     first_hz: f64,
