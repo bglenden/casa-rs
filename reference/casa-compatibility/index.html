@@ -1126,6 +1126,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#pointing-calibrators-20261114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pointing-calibrators-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5603,6 +5614,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#pointing-calibrators-20261114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pointing-calibrators-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9776,7 +9798,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>True</code>; <code>setpointings</code> → <code>setpointings</code></td>
 <td>Implemented</td>
 <td>Lays the pointings out, or reads ptgfile. <a href="#simobserve-behavior-pointings">pointings</a><br>Catalog domain: <code>bool</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>ptgfile</code></td>
@@ -9784,7 +9806,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'$project.ptg.txt'</code>; <code>ptgfile</code> → <code>ptgfile</code></td>
 <td>Implemented</td>
 <td>CASA's pointing file, read or written. <a href="#simobserve-behavior-pointings">pointings</a><br>Catalog domain: <code>path</code> (any)</td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>integration</code></td>
@@ -9792,7 +9814,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'10s'</code>; <code>integration</code> → <code>integration</code></td>
 <td>Implemented</td>
 <td>The integration time; one summing to zero pointing time is refused (decision). <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>direction</code></td>
@@ -9800,7 +9822,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>[]</code>; <code>direction</code> → <code>direction</code></td>
 <td>Implemented</td>
 <td>The map centre, or a list of pointings; a list of one is rounded to its mean as CASA does (decision). <a href="#simobserve-behavior-pointings">pointings</a><br>Catalog domain: list[<code>string</code>], length 0..many; scalar allowed</td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>mapsize</code></td>
@@ -9808,7 +9830,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>['', '']</code>; <code>mapsize</code> → <code>mapsize</code></td>
 <td>Implemented</td>
 <td>The map's size. <a href="#simobserve-behavior-pointings">pointings</a><br>Catalog domain: list[<code>string</code>], length 0..many; scalar allowed</td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>maptype</code></td>
@@ -9816,7 +9838,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'hexagonal'</code>; <code>maptype</code> → <code>maptype</code></td>
 <td>Implemented</td>
 <td>hexagonal, square and ALMA tilings. <a href="#simobserve-behavior-pointings">pointings</a><br>Catalog domain: <code>ALMA</code>, <code>ALMA-OT</code>, <code>ALMA2012</code>, <code>alma</code>, <code>hex</code>, <code>hexagonal</code>, <code>square</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>pointingspacing</code></td>
@@ -9824,7 +9846,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code>; <code>pointingspacing</code> → <code>pointingspacing</code></td>
 <td>Implemented</td>
 <td>The spacing, or a fraction of the primary beam. <a href="#simobserve-behavior-pointings">pointings</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>caldirection</code></td>
@@ -9832,7 +9854,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code>; <code>caldirection</code> → <code>caldirection</code></td>
 <td>Implemented</td>
 <td>A calibrator's direction. <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>calflux</code></td>
@@ -9840,7 +9862,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'1Jy'</code>; <code>calflux</code> → <code>calflux</code></td>
 <td>Implemented</td>
 <td>The calibrator's flux. <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>obsmode</code></td>
@@ -9856,7 +9878,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'2014/01/01'</code>; <code>refdate</code> → <code>refdate</code></td>
 <td>Implemented</td>
 <td>The observation date. <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>hourangle</code></td>
@@ -9864,7 +9886,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'transit'</code>; <code>hourangle</code> → <code>hourangle</code></td>
 <td>Implemented</td>
 <td>'transit' or an hour angle. <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-scheduling-20261111">scheduling-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-sidereal-20261112">uvw-sidereal-20261112</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>totaltime</code></td>
@@ -9872,7 +9894,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'7200s'</code>; <code>totaltime</code> → <code>totaltime</code></td>
 <td>Implemented</td>
 <td>The total time; a pass the time does not complete is observed in part (decision). <a href="#simobserve-behavior-schedule">schedule</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-pointings-20261111">pointings-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-pointing-calibrators-20261114">pointing-calibrators-20261114</a></td>
 </tr>
 <tr>
 <td><code>antennalist</code></td>
@@ -10317,6 +10339,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><strong>CASA-paired installed native task controls — recorded.</strong> CASA 6.7.6.14 and the installed native task agree for alma.out01.cfg, alma;0.078arcsec (out20), and project-local custom.cfg. Each writes 1,225 rows; names, stations, mounts, dish sizes, row IDs, scan numbers and TIME agree exactly. Maximum position/UVW differences are 4.66e-10/8.22e-8 m; DATA NRMS is zero. Standard runtime discovery and a separate runtime with 253 public configurations from casarundata-2026.10.27-1 both pass. Existing measures tables are held constant between implementations. Configuration discovery and resulting array/observation metadata. Public configuration files remain external runtime inputs; no new bundled-data policy or updater changes.</p>
 <ul>
 <li><a href="https://github.com/bglenden/casa-rs/issues/1293">https://github.com/bglenden/casa-rs/issues/1293</a></li>
+</ul>
+<p><a id="simobserve-evidence-pointing-calibrators-20261114"></a></p>
+<h5 id="pointing-calibrators-20261114">pointing-calibrators-20261114<a class="headerlink" href="#pointing-calibrators-20261114" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-paired pointing and calibrator projects — passed.</strong> 9/9 projects agree on products, byte-identical pointing lists, scan timing, source/field metadata, flags and DATA. Maximum DATA NRMS 1.80e-7; direction difference 2.23e-16 rad; UVW difference 6.85e-9 m. Existing scientific tolerances and documented corrections retained. SIM-20/SIM-23: OT and untimed files, ALMA/ALMA2012 tilings, explicit component-map directions, variable dwell times and whole/partial calibrator schedules, mJy flux, ICRS, hour angle/date, and ignored single-dish calibrators.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cc592d3ad005e5255084179fd57f8109fe56a64c/tools/simulation/simobserve_parity.py">tools/simulation/simobserve_parity.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cc592d3ad005e5255084179fd57f8109fe56a64c/tools/simulation/test_simobserve_parity.py">tools/simulation/test_simobserve_parity.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cc592d3ad005e5255084179fd57f8109fe56a64c/crates/casa-types/src/measures/direction.rs">crates/casa-types/src/measures/direction.rs</a></li>
+<li>Revision: <code>cc592d3ad005e5255084179fd57f8109fe56a64c</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --only schedule_ot_file schedule_untimed_file schedule_alma_nyquist schedule_cycle0_pb schedule_list_components schedule_calibrator_file schedule_calibrator_partial schedule_calibrator_components schedule_sd_calibrator_ignored</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simobserve-schedules-20261114.json</code>.</li>
 </ul>
 <h3 id="split">split<a class="headerlink" href="#split" title="Permanent link">&para;</a></h3>
 <ul>

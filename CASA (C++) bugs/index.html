@@ -1999,6 +1999,11 @@ does the blocking. CASA's own flagger (<code>FlagAgentShadow</code>, since casap
 flags the antenna behind. casa-rs's simulator flags the antenna behind
 (<code>casa_ms::shadowing::ShadowedAntenna::Behind</code>); the CASA convention remains
 available as <code>CasaSimulatorFront</code>.</p>
+<p>The compact-array scheduling cases in <code>tools/simulation/simobserve_parity.py</code>
+retain the raw task projects under <code>casa-raw</code>. Their independent control uses
+CASA's <code>agentflagger</code> tool to clear flags and apply its behind-antenna shadow
+agent, then predicts again so newly unflagged rows carry the sky signal.
+Calling the tool avoids adding unrelated task HISTORY to the reference.</p>
 <h2 id="setspwindow-relabels-every-spectral-windows-frame"><code>setspwindow</code> relabels every spectral window's frame<a class="headerlink" href="#setspwindow-relabels-every-spectral-windows-frame" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-21</li>
@@ -3783,6 +3788,12 @@ list of their components (<code>PredictSpec::component_lists</code>).</p>
 CASA's own simulator doing what the task meant: CASA's MeasurementSet
 predicted again over every field, from the model image and the lists
 merged into one. DATA agrees to an NRMS of 5.3e-9 and 5.5e-9.</p>
+<p>The <code>schedule_calibrator_partial</code> control also retains the raw project and
+reruns the same CASA task with its final queued <code>observemany</code> flushed when
+<code>srces</code> is nonempty. Only that condition changes: CASA still constructs the
+schedule and writes the scans. The calibrator component-list comparison
+allows only the already documented <code>cl.addcomponent</code> float32 rounding of
+flux; direction and frequency tolerances stay unchanged.</p>
 <h2 id="simobserve-leaves-stemnoisiertcal">simobserve leaves <code>&lt;stem&gt;.noisier.T.cal</code><a class="headerlink" href="#simobserve-leaves-stemnoisiertcal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-27</li>
