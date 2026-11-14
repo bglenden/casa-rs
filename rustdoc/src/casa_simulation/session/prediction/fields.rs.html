@@ -125,36 +125,44 @@
 <a href=#125 id=125 data-nosnippet>125</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
 <a href=#126 id=126 data-nosnippet>126</a>    ) -&gt; SimulatorResult&lt;PreparedModelGrids&gt; {
 <a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">if let </span>StepGrids::ImageBeam(held) = <span class="kw-2">&amp;</span><span class="self">self</span>.grids {
-<a href=#128 id=128 data-nosnippet>128</a>            <span class="kw">let </span>(key, angle) = held
+<a href=#128 id=128 data-nosnippet>128</a>            <span class="kw">let </span>(key, angle, time) = held
 <a href=#129 id=129 data-nosnippet>129</a>                .centres
 <a href=#130 id=130 data-nosnippet>130</a>                .get(field)
 <a href=#131 id=131 data-nosnippet>131</a>                .ok_or_else(|| SimulatorError::raised(<span class="string">"image-beam pointing was not prepared"</span>))<span class="question-mark">?</span>;
-<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">return </span><span class="self">self
-<a href=#133 id=133 data-nosnippet>133</a>                </span>.model
-<a href=#134 id=134 data-nosnippet>134</a>                .prepare_image_beam(
-<a href=#135 id=135 data-nosnippet>135</a>                    <span class="kw-2">&amp;</span>held.model,
-<a href=#136 id=136 data-nosnippet>136</a>                    <span class="kw-2">&amp;</span>held.image,
-<a href=#137 id=137 data-nosnippet>137</a>                    key.<span class="number">0</span>.map(f64::from_bits),
-<a href=#138 id=138 data-nosnippet>138</a>                    <span class="kw-2">*</span>angle,
-<a href=#139 id=139 data-nosnippet>139</a>                    team,
-<a href=#140 id=140 data-nosnippet>140</a>                )
-<a href=#141 id=141 data-nosnippet>141</a>                .map_err(model_error);
-<a href=#142 id=142 data-nosnippet>142</a>        }
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">let </span>StepGrids::PerField(held) = <span class="kw-2">&amp;</span><span class="self">self</span>.grids <span class="kw">else </span>{
-<a href=#144 id=144 data-nosnippet>144</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
-<a href=#145 id=145 data-nosnippet>145</a>                <span class="string">"the step's grids were prepared at predict"</span>,
-<a href=#146 id=146 data-nosnippet>146</a>            ));
-<a href=#147 id=147 data-nosnippet>147</a>        };
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">let </span>centre = held
-<a href=#149 id=149 data-nosnippet>149</a>            .centres
-<a href=#150 id=150 data-nosnippet>150</a>            .get(field)
-<a href=#151 id=151 data-nosnippet>151</a>            .map(|(<span class="kw">_</span>, centre)| <span class="kw-2">*</span>centre)
-<a href=#152 id=152 data-nosnippet>152</a>            .ok_or_else(|| {
-<a href=#153 id=153 data-nosnippet>153</a>                SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"predict did not observe field {field}"</span>))
-<a href=#154 id=154 data-nosnippet>154</a>            })<span class="question-mark">?</span>;
-<a href=#155 id=155 data-nosnippet>155</a>        <span class="self">self</span>.model
-<a href=#156 id=156 data-nosnippet>156</a>            .prepare(<span class="kw-2">&amp;</span>held.model, <span class="prelude-val">Some</span>((<span class="kw-2">&amp;</span>held.pattern, centre)), <span class="prelude-val">Some</span>(team))
-<a href=#157 id=157 data-nosnippet>157</a>            .map_err(model_error)
-<a href=#158 id=158 data-nosnippet>158</a>    }
-<a href=#159 id=159 data-nosnippet>159</a>}
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">let </span>frame = held.observer_position_itrf_m.map(|[x, y, z]| {
+<a href=#133 id=133 data-nosnippet>133</a>                <span class="kw">use </span>casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+<a href=#134 id=134 data-nosnippet>134</a>                MeasFrame::new()
+<a href=#135 id=135 data-nosnippet>135</a>                    .with_measures(<span class="self">self</span>.frame_measures.clone())
+<a href=#136 id=136 data-nosnippet>136</a>                    .with_position(MPosition::new_itrf(x, y, z))
+<a href=#137 id=137 data-nosnippet>137</a>                    .with_epoch(MEpoch::from_mjd(time / <span class="number">86400.</span>, EpochRef::UTC))
+<a href=#138 id=138 data-nosnippet>138</a>            });
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw">return </span><span class="self">self
+<a href=#140 id=140 data-nosnippet>140</a>                </span>.model
+<a href=#141 id=141 data-nosnippet>141</a>                .prepare_image_beam(
+<a href=#142 id=142 data-nosnippet>142</a>                    <span class="kw-2">&amp;</span>held.model,
+<a href=#143 id=143 data-nosnippet>143</a>                    <span class="kw-2">&amp;</span>held.image,
+<a href=#144 id=144 data-nosnippet>144</a>                    key.<span class="number">0</span>.map(f64::from_bits),
+<a href=#145 id=145 data-nosnippet>145</a>                    <span class="kw-2">*</span>angle,
+<a href=#146 id=146 data-nosnippet>146</a>                    frame.as_ref(),
+<a href=#147 id=147 data-nosnippet>147</a>                    team,
+<a href=#148 id=148 data-nosnippet>148</a>                )
+<a href=#149 id=149 data-nosnippet>149</a>                .map_err(model_error);
+<a href=#150 id=150 data-nosnippet>150</a>        }
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span>StepGrids::PerField(held) = <span class="kw-2">&amp;</span><span class="self">self</span>.grids <span class="kw">else </span>{
+<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::raised(
+<a href=#153 id=153 data-nosnippet>153</a>                <span class="string">"the step's grids were prepared at predict"</span>,
+<a href=#154 id=154 data-nosnippet>154</a>            ));
+<a href=#155 id=155 data-nosnippet>155</a>        };
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">let </span>centre = held
+<a href=#157 id=157 data-nosnippet>157</a>            .centres
+<a href=#158 id=158 data-nosnippet>158</a>            .get(field)
+<a href=#159 id=159 data-nosnippet>159</a>            .map(|(<span class="kw">_</span>, centre)| <span class="kw-2">*</span>centre)
+<a href=#160 id=160 data-nosnippet>160</a>            .ok_or_else(|| {
+<a href=#161 id=161 data-nosnippet>161</a>                SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"predict did not observe field {field}"</span>))
+<a href=#162 id=162 data-nosnippet>162</a>            })<span class="question-mark">?</span>;
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="self">self</span>.model
+<a href=#164 id=164 data-nosnippet>164</a>            .prepare(<span class="kw-2">&amp;</span>held.model, <span class="prelude-val">Some</span>((<span class="kw-2">&amp;</span>held.pattern, centre)), <span class="prelude-val">Some</span>(team))
+<a href=#165 id=165 data-nosnippet>165</a>            .map_err(model_error)
+<a href=#166 id=166 data-nosnippet>166</a>    }
+<a href=#167 id=167 data-nosnippet>167</a>}
 </code></pre></div></section></main></body></html>

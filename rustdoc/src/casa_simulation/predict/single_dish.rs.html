@@ -335,99 +335,100 @@
 <a href=#335 id=335 data-nosnippet>335</a>                            sky.clone(),
 <a href=#336 id=336 data-nosnippet>336</a>                            direction,
 <a href=#337 id=337 data-nosnippet>337</a>                            angles[pointing],
-<a href=#338 id=338 data-nosnippet>338</a>                        )<span class="question-mark">?</span>;
-<a href=#339 id=339 data-nosnippet>339</a>                        <span class="kw-2">&amp;</span>apparent
-<a href=#340 id=340 data-nosnippet>340</a>                    }
-<a href=#341 id=341 data-nosnippet>341</a>                    <span class="prelude-val">None </span>=&gt; <span class="kw-2">&amp;</span>sky,
-<a href=#342 id=342 data-nosnippet>342</a>                };
-<a href=#343 id=343 data-nosnippet>343</a>                <span class="kw">let </span><span class="kw-2">mut </span>sampled = [<span class="number">0_f32</span>; <span class="number">4</span>];
-<a href=#344 id=344 data-nosnippet>344</a>                <span class="kw">for </span>(sample, values) <span class="kw">in </span>sampled.iter_mut().zip(values) {
-<a href=#345 id=345 data-nosnippet>345</a>                    <span class="kw-2">*</span>sample = <span class="kw">match </span>voltage_pattern {
-<a href=#346 id=346 data-nosnippet>346</a>                        <span class="prelude-val">Some</span>(pattern) =&gt; {
-<a href=#347 id=347 data-nosnippet>347</a>                            <span class="kw">let </span>apparent =
-<a href=#348 id=348 data-nosnippet>348</a>                                values * <span class="kw-2">&amp;</span><span class="kw">super</span>::beam::power_plane(pattern, model, plane, pixel);
-<a href=#349 id=349 data-nosnippet>349</a>                            kernel.degrid(apparent.view(), pixel)
-<a href=#350 id=350 data-nosnippet>350</a>                        }
-<a href=#351 id=351 data-nosnippet>351</a>                        <span class="prelude-val">None </span>=&gt; kernel.degrid(values.view(), pixel),
-<a href=#352 id=352 data-nosnippet>352</a>                    };
-<a href=#353 id=353 data-nosnippet>353</a>                }
-<a href=#354 id=354 data-nosnippet>354</a>                <span class="kw">for </span>(((cells, window), planes), route) <span class="kw">in </span>samples[pointing]
-<a href=#355 id=355 data-nosnippet>355</a>                    .iter_mut()
-<a href=#356 id=356 data-nosnippet>356</a>                    .zip(windows)
-<a href=#357 id=357 data-nosnippet>357</a>                    .zip(<span class="kw-2">&amp;</span>planes_of)
-<a href=#358 id=358 data-nosnippet>358</a>                    .zip(<span class="kw-2">&amp;</span>routing)
-<a href=#359 id=359 data-nosnippet>359</a>                {
-<a href=#360 id=360 data-nosnippet>360</a>                    <span class="kw">let </span>correlations = window.correlations.len();
-<a href=#361 id=361 data-nosnippet>361</a>                    <span class="kw">for </span>(channel, <span class="kw">_</span>) <span class="kw">in </span>planes
-<a href=#362 id=362 data-nosnippet>362</a>                        .iter()
-<a href=#363 id=363 data-nosnippet>363</a>                        .enumerate()
-<a href=#364 id=364 data-nosnippet>364</a>                        .filter(|(<span class="kw">_</span>, mapped)| <span class="kw-2">**</span>mapped == <span class="prelude-val">Some</span>(plane))
-<a href=#365 id=365 data-nosnippet>365</a>                    {
-<a href=#366 id=366 data-nosnippet>366</a>                        <span class="kw">for </span>(cell, <span class="kw-2">&amp;</span>gpol) <span class="kw">in </span>cells[channel * correlations..][..correlations]
-<a href=#367 id=367 data-nosnippet>367</a>                            .iter_mut()
-<a href=#368 id=368 data-nosnippet>368</a>                            .zip(route.pol_map())
-<a href=#369 id=369 data-nosnippet>369</a>                        {
-<a href=#370 id=370 data-nosnippet>370</a>                            <span class="kw">if let </span><span class="prelude-val">Some</span>(gpol) = gpol {
-<a href=#371 id=371 data-nosnippet>371</a>                                <span class="kw">for </span>(polarization, <span class="kw-2">&amp;</span>value) <span class="kw">in
-<a href=#372 id=372 data-nosnippet>372</a>                                    </span>sampled.iter().take(stokes.len()).enumerate()
-<a href=#373 id=373 data-nosnippet>373</a>                                {
-<a href=#374 id=374 data-nosnippet>374</a>                                    <span class="comment">// dgridsd conjugates the sampled complex model.
-<a href=#375 id=375 data-nosnippet>375</a>                                    </span><span class="kw">let </span>coefficient = route
-<a href=#376 id=376 data-nosnippet>376</a>                                        .from_requested(usize::from(gpol), polarization)
-<a href=#377 id=377 data-nosnippet>377</a>                                        .conj();
-<a href=#378 id=378 data-nosnippet>378</a>                                    <span class="kw-2">*</span>cell += Complex32::new(
-<a href=#379 id=379 data-nosnippet>379</a>                                        coefficient.re <span class="kw">as </span>f32,
-<a href=#380 id=380 data-nosnippet>380</a>                                        coefficient.im <span class="kw">as </span>f32,
-<a href=#381 id=381 data-nosnippet>381</a>                                    ) * value;
-<a href=#382 id=382 data-nosnippet>382</a>                                }
-<a href=#383 id=383 data-nosnippet>383</a>                            }
-<a href=#384 id=384 data-nosnippet>384</a>                        }
-<a href=#385 id=385 data-nosnippet>385</a>                    }
-<a href=#386 id=386 data-nosnippet>386</a>                }
-<a href=#387 id=387 data-nosnippet>387</a>            }
-<a href=#388 id=388 data-nosnippet>388</a>        }
-<a href=#389 id=389 data-nosnippet>389</a>        <span class="macro">tracing::debug!</span>(
-<a href=#390 id=390 data-nosnippet>390</a>            support = kernel.support(),
-<a href=#391 id=391 data-nosnippet>391</a>            bytes = kernel.bytes(),
-<a href=#392 id=392 data-nosnippet>392</a>            <span class="string">"single-dish kernel"
-<a href=#393 id=393 data-nosnippet>393</a>        </span>);
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#395 id=395 data-nosnippet>395</a>            samples,
-<a href=#396 id=396 data-nosnippet>396</a>            of_scan,
-<a href=#397 id=397 data-nosnippet>397</a>            visits,
-<a href=#398 id=398 data-nosnippet>398</a>            _reservation: reservation,
-<a href=#399 id=399 data-nosnippet>399</a>        })
-<a href=#400 id=400 data-nosnippet>400</a>    }
-<a href=#401 id=401 data-nosnippet>401</a>
-<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>needs_epoch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#403 id=403 data-nosnippet>403</a>        !<span class="self">self</span>.visits.is_empty()
-<a href=#404 id=404 data-nosnippet>404</a>    }
-<a href=#405 id=405 data-nosnippet>405</a>
-<a href=#406 id=406 data-nosnippet>406</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>samples_at(
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#408 id=408 data-nosnippet>408</a>        scan: usize,
-<a href=#409 id=409 data-nosnippet>409</a>        window: usize,
-<a href=#410 id=410 data-nosnippet>410</a>        time: f64,
-<a href=#411 id=411 data-nosnippet>411</a>        antenna: usize,
-<a href=#412 id=412 data-nosnippet>412</a>    ) -&gt; <span class="kw-2">&amp;</span>[Complex32] {
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">if </span><span class="self">self</span>.visits.is_empty() {
-<a href=#414 id=414 data-nosnippet>414</a>            <span class="kw">return </span><span class="self">self</span>.samples(scan, window);
-<a href=#415 id=415 data-nosnippet>415</a>        }
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="self">self</span>.visits
-<a href=#417 id=417 data-nosnippet>417</a>            .binary_search_by_key(<span class="kw-2">&amp;</span>(scan, time.to_bits(), antenna), |v| v.<span class="number">0</span>)
-<a href=#418 id=418 data-nosnippet>418</a>            .ok()
-<a href=#419 id=419 data-nosnippet>419</a>            .map_or(<span class="kw-2">&amp;</span>[], |index| <span class="kw-2">&amp;</span><span class="self">self</span>.samples[<span class="self">self</span>.visits[index].<span class="number">1</span>][window])
-<a href=#420 id=420 data-nosnippet>420</a>    }
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="doccomment">/// The samples of scan `scan`'s pointing in window `window`,
-<a href=#423 id=423 data-nosnippet>423</a>    /// `[channel][correlation]`; empty for a scan not prepared.
-<a href=#424 id=424 data-nosnippet>424</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>samples(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize, window: usize) -&gt; <span class="kw-2">&amp;</span>[Complex32] {
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="self">self</span>.of_scan
-<a href=#426 id=426 data-nosnippet>426</a>            .get(scan)
-<a href=#427 id=427 data-nosnippet>427</a>            .map_or(<span class="kw-2">&amp;</span>[], |<span class="kw-2">&amp;</span>pointing| <span class="self">self</span>.samples[pointing][window].as_slice())
-<a href=#428 id=428 data-nosnippet>428</a>    }
-<a href=#429 id=429 data-nosnippet>429</a>}
-<a href=#430 id=430 data-nosnippet>430</a>
-<a href=#431 id=431 data-nosnippet>431</a><span class="attr">#[cfg(test)]
-<a href=#432 id=432 data-nosnippet>432</a></span><span class="kw">mod </span>tests;
+<a href=#338 id=338 data-nosnippet>338</a>                            <span class="prelude-val">None</span>,
+<a href=#339 id=339 data-nosnippet>339</a>                        )<span class="question-mark">?</span>;
+<a href=#340 id=340 data-nosnippet>340</a>                        <span class="kw-2">&amp;</span>apparent
+<a href=#341 id=341 data-nosnippet>341</a>                    }
+<a href=#342 id=342 data-nosnippet>342</a>                    <span class="prelude-val">None </span>=&gt; <span class="kw-2">&amp;</span>sky,
+<a href=#343 id=343 data-nosnippet>343</a>                };
+<a href=#344 id=344 data-nosnippet>344</a>                <span class="kw">let </span><span class="kw-2">mut </span>sampled = [<span class="number">0_f32</span>; <span class="number">4</span>];
+<a href=#345 id=345 data-nosnippet>345</a>                <span class="kw">for </span>(sample, values) <span class="kw">in </span>sampled.iter_mut().zip(values) {
+<a href=#346 id=346 data-nosnippet>346</a>                    <span class="kw-2">*</span>sample = <span class="kw">match </span>voltage_pattern {
+<a href=#347 id=347 data-nosnippet>347</a>                        <span class="prelude-val">Some</span>(pattern) =&gt; {
+<a href=#348 id=348 data-nosnippet>348</a>                            <span class="kw">let </span>apparent =
+<a href=#349 id=349 data-nosnippet>349</a>                                values * <span class="kw-2">&amp;</span><span class="kw">super</span>::beam::power_plane(pattern, model, plane, pixel);
+<a href=#350 id=350 data-nosnippet>350</a>                            kernel.degrid(apparent.view(), pixel)
+<a href=#351 id=351 data-nosnippet>351</a>                        }
+<a href=#352 id=352 data-nosnippet>352</a>                        <span class="prelude-val">None </span>=&gt; kernel.degrid(values.view(), pixel),
+<a href=#353 id=353 data-nosnippet>353</a>                    };
+<a href=#354 id=354 data-nosnippet>354</a>                }
+<a href=#355 id=355 data-nosnippet>355</a>                <span class="kw">for </span>(((cells, window), planes), route) <span class="kw">in </span>samples[pointing]
+<a href=#356 id=356 data-nosnippet>356</a>                    .iter_mut()
+<a href=#357 id=357 data-nosnippet>357</a>                    .zip(windows)
+<a href=#358 id=358 data-nosnippet>358</a>                    .zip(<span class="kw-2">&amp;</span>planes_of)
+<a href=#359 id=359 data-nosnippet>359</a>                    .zip(<span class="kw-2">&amp;</span>routing)
+<a href=#360 id=360 data-nosnippet>360</a>                {
+<a href=#361 id=361 data-nosnippet>361</a>                    <span class="kw">let </span>correlations = window.correlations.len();
+<a href=#362 id=362 data-nosnippet>362</a>                    <span class="kw">for </span>(channel, <span class="kw">_</span>) <span class="kw">in </span>planes
+<a href=#363 id=363 data-nosnippet>363</a>                        .iter()
+<a href=#364 id=364 data-nosnippet>364</a>                        .enumerate()
+<a href=#365 id=365 data-nosnippet>365</a>                        .filter(|(<span class="kw">_</span>, mapped)| <span class="kw-2">**</span>mapped == <span class="prelude-val">Some</span>(plane))
+<a href=#366 id=366 data-nosnippet>366</a>                    {
+<a href=#367 id=367 data-nosnippet>367</a>                        <span class="kw">for </span>(cell, <span class="kw-2">&amp;</span>gpol) <span class="kw">in </span>cells[channel * correlations..][..correlations]
+<a href=#368 id=368 data-nosnippet>368</a>                            .iter_mut()
+<a href=#369 id=369 data-nosnippet>369</a>                            .zip(route.pol_map())
+<a href=#370 id=370 data-nosnippet>370</a>                        {
+<a href=#371 id=371 data-nosnippet>371</a>                            <span class="kw">if let </span><span class="prelude-val">Some</span>(gpol) = gpol {
+<a href=#372 id=372 data-nosnippet>372</a>                                <span class="kw">for </span>(polarization, <span class="kw-2">&amp;</span>value) <span class="kw">in
+<a href=#373 id=373 data-nosnippet>373</a>                                    </span>sampled.iter().take(stokes.len()).enumerate()
+<a href=#374 id=374 data-nosnippet>374</a>                                {
+<a href=#375 id=375 data-nosnippet>375</a>                                    <span class="comment">// dgridsd conjugates the sampled complex model.
+<a href=#376 id=376 data-nosnippet>376</a>                                    </span><span class="kw">let </span>coefficient = route
+<a href=#377 id=377 data-nosnippet>377</a>                                        .from_requested(usize::from(gpol), polarization)
+<a href=#378 id=378 data-nosnippet>378</a>                                        .conj();
+<a href=#379 id=379 data-nosnippet>379</a>                                    <span class="kw-2">*</span>cell += Complex32::new(
+<a href=#380 id=380 data-nosnippet>380</a>                                        coefficient.re <span class="kw">as </span>f32,
+<a href=#381 id=381 data-nosnippet>381</a>                                        coefficient.im <span class="kw">as </span>f32,
+<a href=#382 id=382 data-nosnippet>382</a>                                    ) * value;
+<a href=#383 id=383 data-nosnippet>383</a>                                }
+<a href=#384 id=384 data-nosnippet>384</a>                            }
+<a href=#385 id=385 data-nosnippet>385</a>                        }
+<a href=#386 id=386 data-nosnippet>386</a>                    }
+<a href=#387 id=387 data-nosnippet>387</a>                }
+<a href=#388 id=388 data-nosnippet>388</a>            }
+<a href=#389 id=389 data-nosnippet>389</a>        }
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="macro">tracing::debug!</span>(
+<a href=#391 id=391 data-nosnippet>391</a>            support = kernel.support(),
+<a href=#392 id=392 data-nosnippet>392</a>            bytes = kernel.bytes(),
+<a href=#393 id=393 data-nosnippet>393</a>            <span class="string">"single-dish kernel"
+<a href=#394 id=394 data-nosnippet>394</a>        </span>);
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#396 id=396 data-nosnippet>396</a>            samples,
+<a href=#397 id=397 data-nosnippet>397</a>            of_scan,
+<a href=#398 id=398 data-nosnippet>398</a>            visits,
+<a href=#399 id=399 data-nosnippet>399</a>            _reservation: reservation,
+<a href=#400 id=400 data-nosnippet>400</a>        })
+<a href=#401 id=401 data-nosnippet>401</a>    }
+<a href=#402 id=402 data-nosnippet>402</a>
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>needs_epoch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#404 id=404 data-nosnippet>404</a>        !<span class="self">self</span>.visits.is_empty()
+<a href=#405 id=405 data-nosnippet>405</a>    }
+<a href=#406 id=406 data-nosnippet>406</a>
+<a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>samples_at(
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#409 id=409 data-nosnippet>409</a>        scan: usize,
+<a href=#410 id=410 data-nosnippet>410</a>        window: usize,
+<a href=#411 id=411 data-nosnippet>411</a>        time: f64,
+<a href=#412 id=412 data-nosnippet>412</a>        antenna: usize,
+<a href=#413 id=413 data-nosnippet>413</a>    ) -&gt; <span class="kw-2">&amp;</span>[Complex32] {
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">if </span><span class="self">self</span>.visits.is_empty() {
+<a href=#415 id=415 data-nosnippet>415</a>            <span class="kw">return </span><span class="self">self</span>.samples(scan, window);
+<a href=#416 id=416 data-nosnippet>416</a>        }
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="self">self</span>.visits
+<a href=#418 id=418 data-nosnippet>418</a>            .binary_search_by_key(<span class="kw-2">&amp;</span>(scan, time.to_bits(), antenna), |v| v.<span class="number">0</span>)
+<a href=#419 id=419 data-nosnippet>419</a>            .ok()
+<a href=#420 id=420 data-nosnippet>420</a>            .map_or(<span class="kw-2">&amp;</span>[], |index| <span class="kw-2">&amp;</span><span class="self">self</span>.samples[<span class="self">self</span>.visits[index].<span class="number">1</span>][window])
+<a href=#421 id=421 data-nosnippet>421</a>    }
+<a href=#422 id=422 data-nosnippet>422</a>
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="doccomment">/// The samples of scan `scan`'s pointing in window `window`,
+<a href=#424 id=424 data-nosnippet>424</a>    /// `[channel][correlation]`; empty for a scan not prepared.
+<a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>samples(<span class="kw-2">&amp;</span><span class="self">self</span>, scan: usize, window: usize) -&gt; <span class="kw-2">&amp;</span>[Complex32] {
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="self">self</span>.of_scan
+<a href=#427 id=427 data-nosnippet>427</a>            .get(scan)
+<a href=#428 id=428 data-nosnippet>428</a>            .map_or(<span class="kw-2">&amp;</span>[], |<span class="kw-2">&amp;</span>pointing| <span class="self">self</span>.samples[pointing][window].as_slice())
+<a href=#429 id=429 data-nosnippet>429</a>    }
+<a href=#430 id=430 data-nosnippet>430</a>}
+<a href=#431 id=431 data-nosnippet>431</a>
+<a href=#432 id=432 data-nosnippet>432</a><span class="attr">#[cfg(test)]
+<a href=#433 id=433 data-nosnippet>433</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>
