@@ -39,6 +39,7 @@ CASA behaviours casa-rs does not follow:
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
 [`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
+[AW baseline pointing groups](#aw-projection-can-use-another-antenna-groups-pointing),
 [a mosaic's single-precision weight image](#a-mosaics-weight-image-is-transformed-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [the standard gridder dropping the final Fourier-grid row and column](#the-standard-gridder-drops-the-final-fourier-grid-row-and-column),
@@ -5242,6 +5243,36 @@ NRMS. An independent CASA control that grows the holder before
 180). All eight products then agree with casa-rs within 2.50e-7 NRMS,
 with exact masks and sum of weights. casa-rs always centres the PA
 planes. [Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
+
+## AW projection can use another antenna group's pointing
+
+`BaselineType::findAntennaGroups` writes group means into an array indexed
+by the antennas' positions in the sorted selection. `makeVBRow2BLGMap`
+passes the two baseline group ordinals to
+`PhaseGrad::ComputeFieldPointingGrad`, which indexes that antenna array
+with them. A one-group selection works because every antenna holds the
+same mean. With several groups, a group's ordinal can select an antenna
+from another group.
+
+The CASA 6.7.6-14 four-corner MT-MFS test on
+`refim_heterogeneous_pointings.ms` selects even-even and odd-odd
+baselines at two times, with `usepointing=True` and
+`pointingoffsetsigdev=[20,20]`. In the first time's image the even
+antennas point at (924,1124), but CASA sends (924,924) to
+`PointingOffsets::gradPerPixel` for their baseline. Odd-antenna baselines
+receive (924,1124). Both groups' y coordinates are likewise exchanged at
+the second time, at x=1124. Casa-rs takes the group mean of each baseline's
+actual antenna pair.
+
+A local CASA debugger control substitutes only the correct per-baseline
+pointing pixels at `gradPerPixel`. Using the original saved CASA
+convolution functions, the principal dirty PSF goes from 1.33 NRMS
+against casa-rs to 1.08e-7. Seventeen dirty products pass, with exact
+masks and sums of weights. The near-zero odd Taylor weight still fails
+its existing pointwise comparison. When both runs use the corrected
+CASA dirty inputs and the saved standard-gridder PSFs, all 19 CLEAN
+products agree to 5.02e-7 NRMS or better, with exact masks, ten iterations
+and one major cycle. [Issue #1070](https://github.com/bglenden/casa-rs/issues/1070).
 
 ## AWP2's Float sensitivity FFT can flip the primary-beam cutoff
 
