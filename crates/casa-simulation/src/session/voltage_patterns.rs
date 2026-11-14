@@ -13,7 +13,37 @@ use super::{
     Simulator, VoltagePatternSpec,
     error::{SimulatorError, SimulatorResult},
 };
-use crate::predict::PrimaryBeam;
+use crate::predict::{BeamPattern, PrimaryBeam};
+
+#[derive(Clone)]
+pub(crate) enum BeamSource {
+    Configured(PrimaryBeam),
+    Tabulated(Arc<Admitted<BeamPattern>>),
+}
+
+impl std::fmt::Debug for BeamSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Configured(beam) => std::fmt::Debug::fmt(beam, f),
+            Self::Tabulated(_) => f.write_str("saved radial voltage curve"),
+        }
+    }
+}
+
+impl BeamSource {
+    pub(crate) fn configured(&self) -> Option<PrimaryBeam> {
+        match self {
+            Self::Configured(beam) => Some(*beam),
+            Self::Tabulated(_) => None,
+        }
+    }
+    pub(crate) fn pattern(&self) -> BeamPattern {
+        match self {
+            Self::Configured(beam) => beam.pattern(),
+            Self::Tabulated(pattern) => pattern.value.clone(),
+        }
+    }
+}
 
 fn raised(error: impl ToString) -> SimulatorError {
     SimulatorError::raised(format!("voltage-pattern table: {}", error.to_string()))
@@ -62,9 +92,9 @@ fn table_bytes(path: &Path) -> SimulatorResult<u64> {
 
 /// Preserve how VPManager resolved the record: standard VLA patterns carry
 /// band squint, while custom records choose common-beam mosaic kernels.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct ResolvedBeam {
-    pub(super) pattern: PrimaryBeam,
+    pub(super) pattern: BeamSource,
     pub(super) standard: bool,
 }
 
@@ -129,7 +159,7 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
     if selected == -1 {
         return PrimaryBeam::for_telescope(telescope, session.reference_frequency_hz())
             .map(|pattern| ResolvedBeam {
-                pattern,
+                pattern: BeamSource::Configured(pattern),
                 standard: true,
             })
             .ok_or_else(|| {
@@ -157,10 +187,76 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
             ));
         }
     }
-    from_record(&record).map(|pattern| ResolvedBeam {
+    let name = text(&record, "name")?;
+    let pattern = if matches!(name, "POLY" | "IPOLY" | "COSPOLY" | "NUMERIC") {
+        saved_curve(session, &record)?
+    } else {
+        BeamSource::Configured(from_record(&record)?)
+    };
+    Ok(ResolvedBeam {
         pattern,
         standard: false,
     })
+}
+
+fn numbers(record: &RecordValue, name: &str) -> SimulatorResult<Vec<f64>> {
+    match record.get(name) {
+        Some(Value::Array(casa_types::ArrayValue::Float64(values))) if values.ndim() == 1 => {
+            Ok(values.iter().copied().collect())
+        }
+        _ => Err(raised(format!("missing numeric vector {name}"))),
+    }
+}
+
+fn saved_curve(session: &Simulator, record: &RecordValue) -> SimulatorResult<BeamSource> {
+    let ghz = quantity(record, "reffreq", "GHz")?;
+    let radius = quantity(record, "maxrad", "arcmin")? * ghz;
+    if !ghz.is_finite() || ghz <= 0. || !radius.is_finite() || radius <= 0. {
+        return Err(raised(
+            "reference frequency and support must be finite and positive",
+        ));
+    }
+    let voltage = boolean(record, "isthisvp")?;
+    let mut reservation = reserve(session, 2 * BeamPattern::BYTES + 256)?;
+    let pattern = match text(record, "name")? {
+        "POLY" | "IPOLY" => {
+            if record.get("fitfreqs").is_some() {
+                return Err(SimulatorError::not_yet_implemented(
+                    "saved frequency-dependent inverse-polynomial beam records (#1297)",
+                ));
+            }
+            BeamPattern::polynomial(
+                radius,
+                &numbers(record, "coeff")?,
+                text(record, "name")? == "IPOLY",
+                voltage,
+            )
+        }
+        "COSPOLY" => BeamPattern::cosine_polynomial(
+            radius,
+            &numbers(record, "coeff")?,
+            &numbers(record, "scale")?
+                .into_iter()
+                .map(|scale| scale / ghz)
+                .collect::<Vec<_>>(),
+            voltage,
+        ),
+        "NUMERIC" => BeamPattern::numeric(
+            radius,
+            &numbers(record, "vect")?
+                .into_iter()
+                .map(|v| v as f32)
+                .collect::<Vec<_>>(),
+            voltage,
+        ),
+        _ => unreachable!("the selected radial curve form"),
+    }
+    .ok_or_else(|| raised("invalid support, coefficients or voltage samples"))?;
+    reservation.retain(BeamPattern::BYTES + 128);
+    Ok(BeamSource::Tabulated(Arc::new(Admitted {
+        value: pattern,
+        reservation,
+    })))
 }
 
 fn text<'a>(record: &'a RecordValue, field: &str) -> SimulatorResult<&'a str> {

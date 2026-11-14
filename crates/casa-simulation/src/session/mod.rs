@@ -56,7 +56,7 @@ mod test_trop;
 mod tests;
 mod troposphere;
 mod tsys_atm;
-mod voltage_patterns;
+pub(crate) mod voltage_patterns;
 
 pub use apply::ApplySpec;
 pub use corruption::{AtmosphereSpec, DEFAULT_SEED, NoiseSpec, TsysParameters};
