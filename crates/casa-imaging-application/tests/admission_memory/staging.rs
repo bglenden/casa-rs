@@ -36,3 +36,39 @@ fn a_large_product_plane_stays_within_its_staging_admission() {
         admission_breach("large product staging", &measured).unwrap_or_default()
     );
 }
+
+/// Keep the normal Taylor product admission while staging one previously
+/// saved PSF with a fitted beam.
+#[test]
+fn a_saved_taylor_psf_beam_stays_within_staging_admission() {
+    if !alone("staging::a_saved_taylor_psf_beam_stays_within_staging_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation(root.path(), 4);
+    warm(&ms, root.path());
+    let prefix = root.path().join("taylor");
+    let initial = request(
+        &ms,
+        &prefix,
+        512,
+        json!({"deconvolver": "mtmfs", "nterms": 2, "niter": 0, "restoration": false}),
+    );
+    assert!(measure(&initial, 2, AMPLE).outcome.is_ok());
+    let path = prefix.with_extension("psf.tt0");
+    let mut psf = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    assert!(psf.remove_restoring_beams().unwrap());
+    psf.save().unwrap();
+    drop(psf);
+
+    let mut restart = initial.with_tclean_restart().unwrap();
+    restart.calcpsf = false;
+    restart.calcres = false;
+    restart.restoration = true;
+    let mut breaches = Vec::new();
+    let measured = check(&mut breaches, "saved Taylor PSF beam", &restart, 2, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    assert_eq!(measured.outcome.unwrap().major_cycle_count, 0);
+    let psf = casa_images::PagedImage::<f32>::open(path).unwrap();
+    assert!(!psf.image_info().unwrap().beam_set.is_empty());
+}

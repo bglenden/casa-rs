@@ -493,17 +493,7 @@ impl CasaImageWriter {
         Ok(mask.map(pixel_mask_planes))
     }
 
-    /// Create one member's image in private staging beside its target, with
-    /// its units, beams and metadata.
-    pub(crate) fn begin(
-        &self,
-        member: &PlannedMember,
-        layout: ProductWindowLayout,
-        beams: &[Option<RestoringBeam>],
-        uses_weight_image: bool,
-        explicit_mask: Option<bool>,
-    ) -> Result<MemberImage<'_>, ProductsError> {
-        let started = Instant::now();
+    fn stage(&self, member: &PlannedMember) -> Result<StagedImage, ProductsError> {
         let output = self.output(member.axes().domain());
         let mut target = output.base.clone().into_os_string();
         target.push(member.name());
@@ -526,8 +516,76 @@ impl CasaImageWriter {
             .tempdir_in(parent)
             .map_err(io("staging", parent))?;
         let staging = directory.path().join("image");
+        Ok(StagedImage {
+            _directory: directory,
+            staging,
+            target,
+        })
+    }
+
+    /// Attach a fitted beam without reading or normalizing the saved Float
+    /// samples. Use the ordinary staging and replacement path.
+    pub(crate) fn stage_saved_psf_beam(
+        &self,
+        member: &PlannedMember,
+        beams: &[Option<RestoringBeam>],
+    ) -> Result<(), ProductsError> {
+        let staged = self.stage(member)?;
+        copy_directory(&staged.target, &staged.staging).map_err(|source| ProductsError::Io {
+            operation: "staging saved PSF",
+            path: staged.target.clone(),
+            source,
+        })?;
+        {
+            let image_error = |source| ProductsError::Image {
+                path: staged.target.clone(),
+                source,
+            };
+            let mut image = PagedImage::<f32>::open_with_cache(&staged.staging, 64 * 1024)
+                .map_err(image_error)?;
+            let mut info = image.image_info().map_err(image_error)?;
+            info.beam_set = persisted_beam_set(beams, member.axes().spectral().output_channels())?;
+            image.set_image_info(&info).map_err(image_error)?;
+            image.save().map_err(image_error)?;
+        }
+        // PagedImage serializes table.info when it edits keywords. Retain
+        // the original file, including formatting from a CASA writer.
+        fs::copy(
+            staged.target.join("table.info"),
+            staged.staging.join("table.info"),
+        )
+        .map_err(|source| ProductsError::Io {
+            operation: "retaining saved PSF table info",
+            path: staged.target.clone(),
+            source,
+        })?;
+        self.keep_staged(staged);
+        Ok(())
+    }
+
+    fn keep_staged(&self, image: StagedImage) {
+        self.staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(image);
+    }
+
+    /// Create one member's image in private staging beside its target, with
+    /// its units, beams and metadata.
+    pub(crate) fn begin(
+        &self,
+        member: &PlannedMember,
+        layout: ProductWindowLayout,
+        beams: &[Option<RestoringBeam>],
+        uses_weight_image: bool,
+        explicit_mask: Option<bool>,
+    ) -> Result<MemberImage<'_>, ProductsError> {
+        let started = Instant::now();
+        let staged = self.stage(member)?;
+        let target = &staged.target;
+        let output = self.output(member.axes().domain());
         let image_error = |source| ProductsError::Image {
-            path: target.clone(),
+            path: target.to_path_buf(),
             source,
         };
         let mut tile = layout.shape();
@@ -536,7 +594,7 @@ impl CasaImageWriter {
             layout.shape().to_vec(),
             tile.to_vec(),
             self.member_coordinates(member).clone(),
-            &staging,
+            &staged.staging,
             layout.maximum_values() * size_of::<f32>(),
         )
         .map_err(image_error)?;
@@ -603,11 +661,7 @@ impl CasaImageWriter {
                 ProductPixelMask::Explicit(_)
             )),
             writer: self,
-            staged: StagedImage {
-                _directory: directory,
-                staging,
-                target,
-            },
+            staged,
             begin_nanos: started.elapsed().as_nanos(),
             window_nanos: 0,
         })
@@ -689,11 +743,7 @@ impl MemberImage<'_> {
             finish_nanos = started.elapsed().as_nanos(),
             "product image staged"
         );
-        writer
-            .staged
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(staged);
+        writer.keep_staged(staged);
         Ok(())
     }
 }
