@@ -46,6 +46,7 @@ pub struct ContinuumProductInputs<'a> {
     vla_selection_hz: Option<f64>,
     facet_sum_weights: Option<&'a FacetSumWeights>,
     saved_psf_beams: Option<&'a [RestoringBeam]>,
+    saved_outlier_psf_beams: &'a [Option<std::sync::Arc<[RestoringBeam]>>],
     saved_mosaic_beam: Option<&'a crate::SavedMosaicBeam>,
 }
 
@@ -122,6 +123,7 @@ impl<'a> ContinuumProductInputs<'a> {
             vla_selection_hz: None,
             facet_sum_weights: None,
             saved_psf_beams: None,
+            saved_outlier_psf_beams: &[],
             saved_mosaic_beam: None,
         }
     }
@@ -264,6 +266,28 @@ impl<'a> ContinuumProductInputs<'a> {
         Ok(self)
     }
 
+    /// Bind saved PSF beams in outlier-domain order.
+    ///
+    /// # Errors
+    /// An included grid does not cover its domain's channels and polarizations.
+    pub fn with_saved_outlier_psf_beams(
+        mut self,
+        beams: &'a [Option<std::sync::Arc<[RestoringBeam]>>],
+    ) -> Result<Self, crate::ProductsError> {
+        let channels = self.normal_state.channel_count();
+        let expected = channels * self.normal_state.polarization_count();
+        for grid in beams.iter().flatten() {
+            if grid.len() != expected {
+                return Err(crate::ProductsError::BeamGrid {
+                    beams: grid.len(),
+                    channels,
+                });
+            }
+        }
+        self.saved_outlier_psf_beams = beams;
+        Ok(self)
+    }
+
     /// Bind an earlier direction-dependent run's PB and pixel mask for
     /// the products of a continuation, with x-major image planes.
     ///
@@ -300,8 +324,12 @@ impl<'a> ContinuumProductInputs<'a> {
     }
 
     /// The main image's saved PSF beams, channel-major.
-    pub(crate) fn saved_psf_beams(&self) -> Option<&'a [RestoringBeam]> {
-        self.saved_psf_beams
+    pub(crate) fn saved_psf_beams(&self, domain: usize) -> Option<&'a [RestoringBeam]> {
+        if domain == 0 {
+            self.saved_psf_beams
+        } else {
+            self.saved_outlier_psf_beams.get(domain - 1)?.as_deref()
+        }
     }
 
     /// Bind each faceted domain's facets' own sums of weights, which its

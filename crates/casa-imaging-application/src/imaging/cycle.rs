@@ -54,6 +54,7 @@ mod prediction;
 mod separate_psf;
 pub(crate) use separate_psf::form as form_separate_psf;
 mod seeding;
+type BeamGrid = Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>;
 use crate::restart::ExistingProducts;
 use crate::{
     AwCatalogDeployment, Awp2Deployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
@@ -66,8 +67,9 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
     pub(crate) mvc: Option<MvcCycleSpec<'a>>,
     pub(crate) psf_cutoff: f32,
-    pub(crate) psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
-    pub(crate) mask_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    pub(crate) psf_beams: BeamGrid,
+    pub(crate) outlier_psf_beams: Vec<BeamGrid>,
+    pub(crate) mask_beams: BeamGrid,
     /// The observation's batches the passes read.
     pub(crate) source: &'a BatchRoute,
     pub(crate) separate_psf: Option<Admitted<Vec<f32>>>,
@@ -75,6 +77,7 @@ pub(crate) struct ImagingInputs<'a> {
     /// The main domain's start model, which the initial pass seeds the
     /// model from.
     pub(crate) start_model: Option<StartModel>,
+    pub(crate) outlier_models: Vec<Option<StartModel>>,
     /// The PSF, sums of weights and residual an earlier run left, which the
     /// run reads where it does not form them.
     pub(crate) existing: Option<ExistingProducts>,
@@ -179,6 +182,7 @@ struct Run<'a> {
     /// The start model the initial generation is seeded from; with one,
     /// the initial pass grids the residual of its prediction.
     start_model: Option<StartModel>,
+    outlier_models: Vec<Option<StartModel>>,
     /// The flat-noise response the start model is made physical with,
     /// after an initial pass without it has formed the weights
     /// ([`seeding`]); `None` when it is physical already.
@@ -196,7 +200,7 @@ struct Run<'a> {
     visibility_write_bytes: u64,
     /// Planes per wave of the most finely waved pass so far.
     planes_per_wave: Option<u32>,
-    /// Each main-image plane's start-model flux, in `.model`'s units.
+    /// Each image plane's start-model flux, in `.model`'s units.
     start_model_flux: Vec<([usize; 3], f64)>,
     /// Whether the initial pass also grids the sensitivity image
     /// (`Mode::Weight`): a kernel set with weight taps on any domain.
@@ -272,7 +276,7 @@ impl ImagingOutcome {
 /// completes and the stop reason. A cancelled run stops at the next block
 /// boundary of a pass or before the next phase.
 pub(crate) fn run(
-    inputs: ImagingInputs<'_>,
+    mut inputs: ImagingInputs<'_>,
     summary: &mut RunSummary,
 ) -> Result<ImagingOutcome, ImagingError> {
     let problem = inputs.problem;
@@ -298,7 +302,10 @@ pub(crate) fn run(
             Some(saved) => saved.taylor.psf_pixel_beams(),
             None => inputs.psf_beams.clone(),
         },
-        inputs.mask_beams.clone(),
+        (
+            inputs.mask_beams.clone(),
+            std::mem::take(&mut inputs.outlier_psf_beams),
+        ),
     );
     let mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
@@ -527,14 +534,18 @@ fn minor_setup<'a>(
     ),
     masks: &ImageDomainReconstructionMaskPlans,
     psf_cutoff: f32,
-    psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
-    mask_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    psf_beams: BeamGrid,
+    (mask_beams, outlier_psf_beams): (
+        BeamGrid,
+        Vec<Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
+    ),
 ) -> MinorCycleSetup<'a> {
     let controls = problem.reconstruction().controls();
     MinorCycleSetup {
         psf_cutoff,
         psf_beams,
         mask_beams,
+        outlier_psf_beams,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: controls.hogbom_iteration_accounting(),
         response,
@@ -549,6 +560,16 @@ fn minor_setup<'a>(
         residual_pixel_mask: problem.products().validity().uncorrected_mask()
             == UncorrectedImageMaskPolicy::PrimaryBeam,
         pbmask: controls.primary_beam_mask(),
+    }
+}
+
+impl ImagingInputs<'_> {
+    fn seeding_bytes(&self, reseeds: bool) -> Option<u64> {
+        seeding::model_bytes(self.start_model.as_ref(), &self.outlier_models, reseeds)
+    }
+
+    fn has_model_seed(&self) -> bool {
+        self.start_model.is_some() || self.outlier_models.iter().any(Option::is_some)
     }
 }
 
@@ -604,7 +625,6 @@ impl<'a> Run<'a> {
                 reason: "visibilities are written back for one image domain",
             });
         }
-        let cancel = inputs.cancel;
         let channel_local = matches!(domains[0].operator.basis(), Basis::ChannelLocal { .. });
         let planes = domains[0].operator.basis().planes();
         let pointing_ramp = domains
@@ -646,12 +666,10 @@ impl<'a> Run<'a> {
                 ModelLifecycle::new(problem, ModelStoragePlan::resident(usize::MAX)?)
                     .resident_bytes()
             },
-            start_model: inputs.start_model.as_ref().map(|start| {
-                start.seeding_bytes() + reseed.map_or(0, |_| start.conversion_bytes())
-            }),
+            start_model: inputs.seeding_bytes(reseed.is_some()),
             reseeds: reseed.is_some(),
             write: inputs.visibility_write.as_ref().map(|_| {
-                let seeded = (inputs.start_model.is_some(), reseed.is_some());
+                let seeded = (inputs.has_model_seed(), reseed.is_some());
                 let (modes, with_model) = write_pass(problem, inputs.forms, initial, seeded);
                 (modes, with_model, visibility_write_bytes)
             }),
@@ -670,6 +688,7 @@ impl<'a> Run<'a> {
             source: inputs.products.1,
             free: free_memory(&host, &policy),
         };
+        let cancel = inputs.cancel;
         let choice = setup::fit_workers(ceiling, demand.free, |cores| demand.bytes(cores))?;
         *chosen = Some(choice.clone());
         // The products run after the passes: a run whose products do not
@@ -756,6 +775,7 @@ impl<'a> Run<'a> {
             cube,
             lifecycle,
             start_model: inputs.start_model,
+            outlier_models: inputs.outlier_models,
             reseed,
             existing: inputs.existing,
             forms: inputs.forms,
@@ -786,7 +806,7 @@ impl<'a> Run<'a> {
             self.problem,
             self.forms,
             self.initial_modes(),
-            (self.start_model.is_some(), self.reseed.is_some()),
+            (self.has_model_seed(), self.reseed.is_some()),
         );
         // Without a minor cycle the first major cycle writes, and seeds
         // beside it.

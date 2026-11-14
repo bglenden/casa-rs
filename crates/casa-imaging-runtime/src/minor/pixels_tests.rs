@@ -76,6 +76,7 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
         let setup = MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            outlier_psf_beams: Vec::new(),
             mask_beams: None,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
@@ -244,6 +245,7 @@ fn automatic_mask_reads_the_saved_taylor_residual_in_image_units() {
     let mut setup = MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        outlier_psf_beams: Vec::new(),
         mask_beams: None,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,

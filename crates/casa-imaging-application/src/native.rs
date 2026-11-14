@@ -62,6 +62,8 @@ pub(crate) struct NativeInput {
     pub(crate) virtual_model: Vec<crate::virtual_model::VirtualModelPlan>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     pub(crate) start_model: Option<crate::compile::StartModel>,
+    pub(crate) outlier_models: Vec<Option<crate::compile::StartModel>>,
+    pub(crate) outlier_psfs: Vec<Option<crate::restart::ExistingProducts>>,
     /// What the run reads in place of forming it ([`imaging::Forms`]).
     pub(crate) existing: Option<crate::restart::ExistingProducts>,
     pub(crate) forms: imaging::Forms,
@@ -158,6 +160,8 @@ pub(crate) struct NativeRun {
     products: u64,
     masks: ImageDomainReconstructionMaskPlans,
     start_model: Option<crate::compile::StartModel>,
+    outlier_models: Vec<Option<crate::compile::StartModel>>,
+    outlier_psfs: Vec<Option<crate::restart::ExistingProducts>>,
     existing: Option<crate::restart::ExistingProducts>,
     forms: imaging::Forms,
     image_response: Option<MinorCycleImageResponse>,
@@ -336,11 +340,63 @@ pub(crate) fn prepare(
         products,
         masks: input.masks,
         start_model: input.start_model,
+        outlier_models: input.outlier_models,
+        outlier_psfs: input.outlier_psfs,
         existing: input.existing,
         forms: input.forms,
         image_response: input.minor_cycle_image_response,
         virtual_model: input.virtual_model,
     })
+}
+
+struct SavedBeams {
+    mosaic: Option<casa_imaging_products::SavedMosaicBeam>,
+    psf: Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    psf_pixels: Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    outliers: Vec<Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
+    outlier_pixels: Vec<Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
+    mask_pixels: Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+}
+
+impl SavedBeams {
+    fn read(
+        existing: Option<&crate::restart::ExistingProducts>,
+        outlier_psfs: &[Option<crate::restart::ExistingProducts>],
+    ) -> Self {
+        use crate::restart::ExistingProducts;
+        Self {
+            mosaic: existing.and_then(ExistingProducts::mosaic_beam).cloned(),
+            psf: existing.and_then(ExistingProducts::psf_beams),
+            psf_pixels: existing.and_then(ExistingProducts::psf_pixel_beams),
+            outliers: outlier_psfs
+                .iter()
+                .map(|saved| saved.as_ref().and_then(ExistingProducts::psf_beams))
+                .collect(),
+            outlier_pixels: outlier_psfs
+                .iter()
+                .map(|saved| saved.as_ref().and_then(ExistingProducts::psf_pixel_beams))
+                .collect(),
+            mask_pixels: existing.and_then(ExistingProducts::mask_beams),
+        }
+    }
+}
+
+fn saved_psf_controls(
+    mut publication: ApplicationPublication,
+    forms: imaging::Forms,
+    missing_beam: bool,
+    problem: &CompiledProblem,
+) -> Result<ApplicationPublication, ProductsError> {
+    if !forms.psf && missing_beam && problem.reconstruction().controls().max_minor_iterations() > 0
+    {
+        publication.controls = publication
+            .controls
+            .with_psf_cutoff(casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF)?;
+    }
+    if !forms.psf {
+        publication.controls = publication.controls.with_reused_single_psf();
+    }
+    Ok(publication)
 }
 
 /// Run the major-cycle passes, the minor cycles between them and any
@@ -364,38 +420,24 @@ pub(crate) fn run(
         products,
         masks,
         start_model,
+        outlier_models,
+        outlier_psfs,
         existing,
         forms,
         image_response,
         virtual_model,
     } = run;
-    let saved_mosaic_beam = existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::mosaic_beam)
-        .cloned();
-    let saved_psf_beams = existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::psf_beams);
-    let psf_beams = existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::psf_pixel_beams);
-    let mask_beams = existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::mask_beams);
+    let SavedBeams {
+        mosaic: saved_mosaic_beam,
+        psf: saved_psf_beams,
+        psf_pixels: psf_beams,
+        outliers: outlier_psf_beams,
+        outlier_pixels: outlier_psf_pixel_beams,
+        mask_pixels: mask_beams,
+    } = SavedBeams::read(existing.as_ref(), &outlier_psfs);
     // An unlabelled saved PSF is fitted by getBeamSet's default cutoff at
     // minor-cycle initialization. Publication must reuse that fit's cutoff.
-    let mut publication = publication;
-    if !forms.psf
-        && psf_beams.is_none()
-        && problem.reconstruction().controls().max_minor_iterations() > 0
-    {
-        publication.controls = publication
-            .controls
-            .with_psf_cutoff(casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF)?;
-    }
-    if !forms.psf {
-        publication.controls = publication.controls.with_reused_single_psf();
-    }
+    let publication = saved_psf_controls(publication, forms, psf_beams.is_none(), problem)?;
     let vla_selection_hz = publication
         .vla_selection_store
         .map(|store| vla_selection_frequency(problem, &route, store));
@@ -443,11 +485,13 @@ pub(crate) fn run(
                 publication.controls.psf_cutoff()
             },
             psf_beams,
+            outlier_psf_beams: outlier_psf_pixel_beams,
             mask_beams,
             source: &route,
             separate_psf,
             masks,
             start_model,
+            outlier_models,
             existing: existing.clone(),
             forms,
             image_response,
@@ -496,6 +540,7 @@ pub(crate) fn run(
                         facet_sum_weights: outcome.facet_sum_weights,
                         mem_alpha: outcome.mem_alpha,
                         saved_psf_beams,
+                        outlier_psf_beams,
                         vla_selection_hz,
                         primary_beam: saved_mosaic_beam
                             .as_ref()
@@ -699,6 +744,7 @@ struct ProductSource<'a> {
     facet_sum_weights: FacetSumWeights,
     mem_alpha: Option<f32>,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    outlier_psf_beams: Vec<Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
     vla_selection_hz: Option<f64>,
     /// A separately admitted PB, borrowed until the family is staged.
     primary_beam: Option<ProductPrimaryBeam<'a>>,
@@ -836,6 +882,7 @@ fn publish_mvc_products(
         facet_sum_weights,
         mem_alpha: _,
         saved_psf_beams,
+        outlier_psf_beams,
         vla_selection_hz,
         primary_beam: _,
     } = cube;
@@ -855,6 +902,7 @@ fn publish_mvc_products(
             facet_sum_weights,
             mem_alpha: None,
             saved_psf_beams,
+            outlier_psf_beams,
             vla_selection_hz,
             primary_beam: Some(ProductPrimaryBeam::MvcCube(
                 &primary_beam,
@@ -876,6 +924,7 @@ fn publish_mvc_products(
             facet_sum_weights: Default::default(),
             mem_alpha: None,
             saved_psf_beams: saved.and_then(|saved| saved.taylor.psf_beams()),
+            outlier_psf_beams: Vec::new(),
             vla_selection_hz: None,
             primary_beam: Some(ProductPrimaryBeam::MvcTaylor(&primary_beam, saved)),
         },
@@ -943,6 +992,7 @@ fn stage_products(
         facet_sum_weights,
         mem_alpha: _,
         saved_psf_beams,
+        outlier_psf_beams,
         vla_selection_hz,
         primary_beam,
     } = source;
@@ -979,6 +1029,9 @@ fn stage_products(
     }
     if let Some(beams) = saved_psf_beams.as_deref() {
         inputs = inputs.with_saved_psf_beams(beams)?;
+    }
+    if !outlier_psf_beams.is_empty() {
+        inputs = inputs.with_saved_outlier_psf_beams(&outlier_psf_beams)?;
     }
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {

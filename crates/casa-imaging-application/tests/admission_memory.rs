@@ -46,6 +46,8 @@ mod synthetic_observation;
 mod aw;
 #[path = "admission_memory/mvc_view.rs"]
 mod mvc_view;
+#[path = "admission_memory/outliers.rs"]
+mod outliers;
 #[path = "admission_memory/staging.rs"]
 mod staging;
 use synthetic_observation::{CELL_ARCSEC, observation, observation_as};
@@ -302,6 +304,10 @@ impl tracing::field::Visit for PhaseName {
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PhaseRecorder {
     fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() == "casa_imaging::model_seed" {
+            outliers::record_seed(event);
+            return;
+        }
         if event.metadata().target() != casa_imaging_runtime::STAGE_TIMING {
             return;
         }

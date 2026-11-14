@@ -24,6 +24,7 @@ pub(crate) fn form(
             mvc: None,
             psf_cutoff: casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF,
             psf_beams: None,
+            outlier_psf_beams: Vec::new(),
             mask_beams: None,
             source,
             separate_psf: None,
@@ -31,6 +32,7 @@ pub(crate) fn form(
                 coordinate: domain.direction(),
             }])?,
             start_model: None,
+            outlier_models: Vec::new(),
             existing: None,
             forms: Forms {
                 psf: true,

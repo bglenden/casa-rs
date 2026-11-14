@@ -24,7 +24,7 @@ use casa_imaging_operator::{Basis, ModeSet};
 use casa_imaging_runtime::pass::Residency;
 use casa_imaging_runtime::{Admitted, Cancelled};
 
-use super::{Major, Run, seeding};
+use super::{Major, Run};
 use crate::imaging::ImagingError;
 use crate::restart::ExistingProducts;
 
@@ -96,14 +96,11 @@ impl Run<'_> {
             self.lifecycle.resident_bytes() + seeding,
             false,
         )?;
-        let generation = match &self.start_model {
-            Some(start) if seed_model => {
-                let _seeding = charge.split(seeding);
-                let samples = start.main_samples().map_err(ImagingError::StartModel)?;
-                self.start_model_flux = seeding::plane_fluxes(self.problem, start, &samples);
-                self.lifecycle.initial_from_start_model(&samples)?
-            }
-            _ => self.lifecycle.initial_empty()?,
+        let generation = if seed_model {
+            let _seeding = charge.split(seeding);
+            self.seed_generation()?
+        } else {
+            self.lifecycle.initial_empty()?
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let mut cycle =
@@ -153,14 +150,9 @@ impl Run<'_> {
             self.lifecycle.resident_bytes() + seeding,
             false,
         )?;
-        let generation = match &self.start_model {
-            Some(start) => {
-                let _seeding = pass.split(seeding);
-                let samples = start.main_samples().map_err(ImagingError::StartModel)?;
-                self.start_model_flux = seeding::plane_fluxes(self.problem, start, &samples);
-                self.lifecycle.initial_from_start_model(&samples)?
-            }
-            None => self.lifecycle.initial_empty()?,
+        let generation = {
+            let _seeding = pass.split(seeding);
+            self.seed_generation()?
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;

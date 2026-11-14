@@ -57,7 +57,16 @@ pub(super) fn saved_psf_beam(
     setup: &MinorCycleSetup<'_>,
     key: PlaneKey,
 ) -> Option<RestoringBeam> {
-    saved_beam(normal, &setup.psf_beams, key)
+    if key.domain == 0 {
+        saved_beam(normal, &setup.psf_beams, key)
+    } else {
+        setup
+            .outlier_psf_beams
+            .get(key.domain - 1)?
+            .as_ref()?
+            .get(key.channel * normal.polarization_count() + key.polarization)
+            .copied()
+    }
 }
 
 pub(super) fn saved_beam(

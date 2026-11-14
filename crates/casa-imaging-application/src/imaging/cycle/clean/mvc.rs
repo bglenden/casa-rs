@@ -189,7 +189,7 @@ fn seed(
             .main_samples()
             .map_err(ImagingError::StartModel)?;
         run.start_model_flux =
-            super::super::seeding::plane_fluxes(spec.taylor_problem, &start.model, &samples);
+            super::super::seeding::plane_fluxes(spec.taylor_problem, &start.model, &samples, 0);
         lifecycle.prepare_final_model(lifecycle.initial_from_start_model(&samples)?, [])?
     };
     let Some((cube_pb, taylor_pb)) = &start.projection_beams else {

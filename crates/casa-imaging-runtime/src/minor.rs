@@ -110,6 +110,8 @@ pub struct MinorCycleSetup<'a> {
     pub psf_cutoff: f32,
     /// A complete saved PSF beam grid in pixels, channel-major, for the main image.
     pub psf_beams: Option<Arc<[RestoringBeam]>>,
+    /// Complete saved PSF beam grids in pixels, in outlier-domain order.
+    pub outlier_psf_beams: Vec<Option<Arc<[RestoringBeam]>>>,
     /// Saved residual beams in pixels, preferred by automatic masking.
     pub mask_beams: Option<Arc<[RestoringBeam]>>,
     /// The deconvolver.

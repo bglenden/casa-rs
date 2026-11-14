@@ -563,7 +563,7 @@ impl<'a> SolvedFamily<'a> {
         });
         let fit = if !needs_beam {
             PlaneBeam::Blank
-        } else if let Some(saved) = inputs.saved_psf_beams() {
+        } else if let Some(saved) = inputs.saved_psf_beams(0) {
             PlaneBeam::Fitted(saved[polarization])
         } else {
             fit_plane_beam(

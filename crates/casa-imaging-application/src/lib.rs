@@ -256,7 +256,7 @@ impl ImagingOutcome {
 /// Each plane's part of each minor cycle (CASA's `summaryminor`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlaneRows {
-    /// Each main-image plane's start-model flux, in `.model`'s units, sorted
+    /// Each image plane's start-model flux, in `.model`'s units, sorted
     /// by `[domain, channel, polarization]`; a plane absent starts from zero.
     pub start_model_flux: Vec<([usize; 3], f64)>,
     /// Each minor cycle's rows, in order.
@@ -524,6 +524,8 @@ fn compile_run(
         virtual_model: prepared.virtual_model,
         masks: prepared.masks,
         start_model: prepared.start_model,
+        outlier_models: prepared.outlier_models,
+        outlier_psfs: prepared.outlier_psfs,
         existing: prepared.existing,
         forms: imaging::Forms {
             psf: request.calcpsf,

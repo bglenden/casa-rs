@@ -95,6 +95,8 @@ pub(crate) struct Prepared {
     pub(crate) mask_resident: casa_imaging_runtime::Reservation,
     /// The main domain's start model ([`StartModel`]).
     pub(crate) start_model: Option<StartModel>,
+    pub(crate) outlier_models: Vec<Option<StartModel>>,
+    pub(crate) outlier_psfs: Vec<Option<crate::restart::ExistingProducts>>,
     /// The PSF, sums of weights and residual an earlier run left, which the
     /// run reads in place of forming them (`calcpsf`, `calcres`).
     pub(crate) existing: Option<crate::restart::ExistingProducts>,
@@ -141,15 +143,6 @@ pub(crate) fn outlier_output_prefixes(
     path: &std::path::Path,
 ) -> Result<Vec<std::path::PathBuf>, PrepareError> {
     outliers::read_output_prefixes(path)
-}
-
-/// Check outlier output prefixes with the same parser compile uses (#944).
-pub(crate) fn check_outlier_outputs(path: &std::path::Path) -> Result<(), PrepareError> {
-    let outputs = outliers::read_output_prefixes(path)?;
-    for output in outputs {
-        crate::restart::check_prefix(&output)?;
-    }
-    Ok(())
 }
 
 /// Compile `request` against its MeasurementSets.
@@ -318,7 +311,7 @@ pub(crate) fn prepare_with_view_hooks(
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
     let continuation = continuation::prepare(
         request,
-        &mut domains[0],
+        &mut domains,
         (spectral.output_channels, reconstruction_planes),
         mvc_taylor.as_ref().and_then(|view| view.start.as_ref()),
         context,
@@ -357,13 +350,13 @@ pub(crate) fn prepare_with_view_hooks(
         geometry,
         psf_view,
         mvc_taylor,
-        model_lifecycle: ModelLifecycleRequirements::new(
-            ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)?,
-            NumericPrecision::F64,
-        ),
+        model_lifecycle: model_bounds(model_samples)?,
+
         masks,
         mask_resident,
         start_model: continuation.start_model,
+        outlier_models: continuation.outlier_models,
+        outlier_psfs: continuation.outlier_psfs,
         existing: continuation.existing,
         minor_cycle_image_response: match &request.gridder {
             Gridder::Mosaic { .. } | Gridder::Awproject(_) | Gridder::Awp2 { .. } => {
@@ -387,6 +380,13 @@ pub(crate) fn prepare_with_view_hooks(
         deployment,
         survey: survey_charge,
     })
+}
+
+fn model_bounds(samples: usize) -> Result<ModelLifecycleRequirements, PrepareError> {
+    Ok(ModelLifecycleRequirements::new(
+        ModelBounds::new(samples, samples, f64::MAX, f64::MAX)?,
+        NumericPrecision::F64,
+    ))
 }
 
 /// The virtual model of `savemodel='virtual'` of each store: CASA saves
