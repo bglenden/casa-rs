@@ -138,6 +138,8 @@ impl FtMachine {
 /// and the spectral windows predicted.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MosaicBeams {
+    /// SimplePBConvFunc uses one common telescope beam for all antennas.
+    pub(crate) common: bool,
     /// One dish's Airy pattern per class, in class order.
     pub(crate) dishes: Vec<PrimaryBeam>,
     /// The windows of the scans predicted, every channel selected.
@@ -261,6 +263,15 @@ impl ModelLayout {
                 &self.polarization,
                 WPlaneCount::Fixed(planes),
             )?),
+            (FtMachine::Mosaic, Some(beams)) if beams.common => Box::new(
+                MosaicPb::simple_screens(
+                    &self.geometry,
+                    &self.polarization,
+                    beams.dishes[0],
+                    &beams.windows,
+                )?
+                .finish()?,
+            ),
             (FtMachine::Mosaic, Some(beams)) => Box::new(MosaicPb::new(
                 MosaicRules::Simulator,
                 &self.geometry,

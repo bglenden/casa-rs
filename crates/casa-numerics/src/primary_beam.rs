@@ -12,12 +12,16 @@
 use crate::{AnnularApertureVoltageTable, EvlaPowerPattern, VlaBand};
 
 mod gaussian;
+mod sma;
 mod squint;
 use gaussian::GaussianVoltageTable;
+use sma::SmaVoltageTable;
 
 /// A primary-beam voltage pattern of CASA's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PrimaryBeam {
+    /// SMA's spheroidal power samples, sinc interpolated by PBMath1DNumeric.
+    Sma,
     /// CASA `PBMath1DAiry`: an Airy pattern for a dish with a central
     /// blockage, tabulated out to a maximum radius.
     Airy {
@@ -82,6 +86,20 @@ impl PrimaryBeam {
         maximum_radius_arcmin_ghz: 0.8564 * 60.0,
     };
 
+    /// CASA's 18 m, unblocked ngVLA aperture, supported to 1.5° at 1 GHz.
+    pub const NGVLA: Self = Self::Airy {
+        dish_diameter_m: 18.,
+        blockage_diameter_m: 0.,
+        maximum_radius_arcmin_ghz: 90.,
+    };
+
+    /// CASA's ATA aperture: 6 m diameter, 0.5 m blockage, 3.568° at 1 GHz.
+    pub const ATA: Self = Self::Airy {
+        dish_diameter_m: 6.,
+        blockage_diameter_m: 0.5,
+        maximum_radius_arcmin_ghz: 3.568 * 60.,
+    };
+
     /// CASA's default voltage pattern for `telescope`, the OBSERVATION
     /// table's TELESCOPE_NAME, at `reference_frequency_hz`, spectral window
     /// 0's REF_FREQUENCY (`VPSkyJones`), where it is one of these patterns.
@@ -92,7 +110,8 @@ impl PrimaryBeam {
     /// - `VLA`, whose pattern follows the band of the reference frequency
     ///   ([`VlaBand::of`], `PBMath::whichCommonPBtoUse`): [`Self::VLA`] in
     ///   the bands CASA recognises and [`Self::VLA_NVSS`] between them;
-    /// - `EVLA`: [`Self::Evla`], which picks its fit per frequency.
+    /// - `EVLA`: [`Self::Evla`], which picks its fit per frequency;
+    /// - `NGVLA`, `ATA`, and `SMA`: their Airy or sampled spheroidal beams.
     ///
     /// `None` for every other telescope, whose patterns casa-rs does not yet
     /// have.
@@ -109,6 +128,12 @@ impl PrimaryBeam {
             })
         } else if telescope.starts_with("EVLA") {
             Some(Self::Evla)
+        } else if telescope.starts_with("NGVLA") {
+            Some(Self::NGVLA)
+        } else if telescope.starts_with("SMA") {
+            Some(Self::Sma)
+        } else if telescope.starts_with("ATA") {
+            Some(Self::ATA)
         } else {
             None
         }
@@ -127,6 +152,7 @@ impl PrimaryBeam {
     #[must_use]
     pub const fn maximum_radius_arcmin_ghz(self) -> f64 {
         match self {
+            Self::Sma => SmaVoltageTable::MAXIMUM_RADIUS,
             Self::Airy {
                 maximum_radius_arcmin_ghz,
                 ..
@@ -156,6 +182,7 @@ impl PrimaryBeam {
     #[must_use]
     pub fn pattern(self) -> BeamPattern {
         BeamPattern(match self {
+            Self::Sma => Lookup::Sma(SmaVoltageTable::new()),
             Self::Airy {
                 dish_diameter_m,
                 blockage_diameter_m,
@@ -185,6 +212,7 @@ pub struct BeamPattern(Lookup);
 
 #[derive(Clone)]
 enum Lookup {
+    Sma(SmaVoltageTable),
     /// An Airy pattern's voltage table.
     Airy(AnnularApertureVoltageTable),
     /// The EVLA's fits, picked per frequency.
@@ -201,6 +229,7 @@ impl BeamPattern {
     #[must_use]
     pub fn at_frequency(&self, frequency_hz: f64) -> FrequencyPattern<'_> {
         FrequencyPattern(match &self.0 {
+            Lookup::Sma(table) => FrequencyLookup::Sma(table),
             Lookup::Airy(table) => FrequencyLookup::Airy(table),
             Lookup::Evla => FrequencyLookup::Evla(EvlaPowerPattern::at(frequency_hz)),
             Lookup::Gaussian(table) => FrequencyLookup::Gaussian(table),
@@ -237,6 +266,7 @@ impl BeamPattern {
     #[must_use]
     pub fn support_pixels(&self, increment_x_rad: f64, frequency_hz: f64) -> usize {
         let maximum_arcmin_ghz = match &self.0 {
+            Lookup::Sma(_) => SmaVoltageTable::MAXIMUM_RADIUS,
             Lookup::Airy(table) => table.maximum_radius(),
             Lookup::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
             Lookup::Gaussian(table) => table.maximum_radius(),
@@ -257,6 +287,7 @@ fn support_pixels(maximum_arcmin_ghz: f64, increment_x_rad: f64, frequency_hz: f
 pub struct FrequencyPattern<'a>(FrequencyLookup<'a>);
 
 enum FrequencyLookup<'a> {
+    Sma(&'a SmaVoltageTable),
     Airy(&'a AnnularApertureVoltageTable),
     Evla(EvlaPowerPattern),
     Gaussian(&'a GaussianVoltageTable),
@@ -279,6 +310,7 @@ impl FrequencyPattern<'_> {
     #[must_use]
     pub fn voltage(&self, radius_arcmin_ghz: f64) -> f32 {
         match &self.0 {
+            FrequencyLookup::Sma(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Airy(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Evla(fit) => fit.voltage(radius_arcmin_ghz),
             FrequencyLookup::Gaussian(table) => table.evaluate(radius_arcmin_ghz),
@@ -305,7 +337,7 @@ mod tests {
         assert_eq!(beam("VLA", 3.0), Some(PrimaryBeam::VLA_NVSS));
         assert_eq!(beam("EVLA", 1.4), Some(PrimaryBeam::Evla));
         assert_eq!(beam("EVLA", 18.5), Some(PrimaryBeam::Evla));
-        for other in ["alma", "Unknown", "", "SMA", "AL", "NGVLA"] {
+        for other in ["alma", "Unknown", "", "AL"] {
             assert_eq!(beam(other, 1.4), None, "{other}");
         }
     }

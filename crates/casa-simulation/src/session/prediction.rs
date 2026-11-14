@@ -574,7 +574,7 @@ impl Simulator {
     ///   casa-components does not evaluate), scans whose windows differ in
     ///   correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
-    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has), or
+    ///   does not have (it supports ALMA, ACA, VLA, EVLA, ngVLA, ATA and SMA), or
     ///   a fresh total-power prediction with a displaced beam pointing.
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
@@ -1030,7 +1030,8 @@ impl Simulator {
             .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
                     "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
-                     casa-rs (#1053); the default patterns of ALMA, ACA, VLA and EVLA are"
+                     casa-rs (#1297); the default patterns of ALMA, ACA, VLA, EVLA, NGVLA, ATA \
+                     and SMA are"
                 ))
             })?;
         Ok(Some(beam))
@@ -1121,6 +1122,20 @@ impl Simulator {
             FtMachine::Mosaic => {
                 let beams = layout.beams().expect("a mosaic layout has its beams");
                 let (dishes, windows) = (&beams.dishes, &beams.windows);
+                if beams.common {
+                    let screening = admitted(
+                        MOSAIC_SCREENS_PHASE,
+                        MosaicPb::simple_screens_bytes(geometry, windows).map_err(raised)?,
+                    )?;
+                    let screens =
+                        MosaicPb::simple_screens(geometry, polarization, dishes[0], windows)
+                            .map_err(raised)?;
+                    let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
+                    let set = screens.finish().map_err(raised)?;
+                    drop(screening);
+                    kernels.retain(set.resident_bytes());
+                    return Ok((Box::new(set), kernels));
+                }
                 let (rules, frequency_hz) = (MosaicRules::Simulator, layout.image_frequency_hz());
                 tracing::info!("Performing Mosaic gridding for model images (uv convolution)");
                 let screening = admitted(

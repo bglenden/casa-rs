@@ -568,10 +568,10 @@ fn components_under_default_beams_can_disable_squint() {
 fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
-    // The SMA's default voltage pattern is not one casa-rs has.
+    // An unknown telescope has no default voltage-pattern model.
     let mut vla = session(
-        &directory.path().join("sma.ms"),
-        "SMA",
+        &directory.path().join("unknown.ms"),
+        "Unknown",
         "RR LL",
         resources(2, 2 << 30),
     );
@@ -581,7 +581,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(
-        message.contains("SMA") && message.contains("#1053"),
+        message.contains("Unknown") && message.contains("#1297"),
         "{message}"
     );
     vla.set_vp(&VoltagePatternSpec {
