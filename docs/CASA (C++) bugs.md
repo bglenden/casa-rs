@@ -588,6 +588,20 @@ the saved cell and uses the selected epoch for both prediction and
 gridding. It matches all eight CLEAN products, masks, and iteration
 counts, with worst NRMS 2.384e-4 over the full field (#1070).
 
+The wideband two-term case on the 1.2, 1.5 and 1.8 GHz windows of
+the same field runs the rotation chain separately during the Taylor
+passes. The stock CASA run repeats exactly but differs from casa-rs
+by 2.769e-3 NRMS in `residual.tt0` and 3.726e-3 in `residual.tt1`.
+Fourteen alpha-mask pixels differ. In a CASA control,
+`AzElAperture::rotate2` keeps the same trigger and output angle but
+hands `rotateComplexArray` the original cell pixels and original
+angle on every call. With just that intervention, both residuals
+agree within 1.192e-6 NRMS, both alpha masks agree exactly, and all 19
+products pass, including the weak odd Taylor weight check. A
+debugger run without the intervention reproduces all 19 stock
+products exactly. The three windows share a feed angle and usable
+integration times, so casa-rs uses one schedule for all three.
+
 ## AW pointing can reuse the origin of an earlier convolution buffer
 
 - Date noted: 2026-11-12

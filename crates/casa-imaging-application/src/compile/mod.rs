@@ -1168,9 +1168,6 @@ fn aw_rotation(
     if aw.rotatepastep == 360.0 {
         return Ok(None);
     }
-    let [window] = surveyed.survey.spectral_windows.as_slice() else {
-        return Err(PrepareError::AwRotationScope);
-    };
     let Some(feed) = feed else {
         return Err(PrepareError::AwRotationScope);
     };
@@ -1181,12 +1178,17 @@ fn aw_rotation(
             .get(id as usize)
             .is_some_and(|observation| matches!(observation.telescope.trim(), "EVLA" | "VLA"))
     });
-    if !evla
+    let windows = &surveyed.survey.spectral_windows;
+    let multi_term = request.deconvolver == Deconvolver::Mtmfs && aw.wbawp;
+    let first = windows.first().ok_or(PrepareError::AwRotationScope)?.spw_id;
+    let feed_angle = feed[first];
+    if (!multi_term && windows.len() != 1)
+        || !evla
         || !aw.aterm
         || aw.computepastep != 360.0
         || surveyed.survey.fields.len() != 1
         || request.specmode != SpecMode::Mfs
-        || (request.solves() && request.deconvolver != Deconvolver::Hogbom)
+        || (request.solves() && !multi_term && request.deconvolver != Deconvolver::Hogbom)
         || request.predicts_final_model()
         || request.tclean_restart
         || request.has_start_model()
@@ -1196,7 +1198,19 @@ fn aw_rotation(
     {
         return Err(PrepareError::AwRotationScope);
     }
-    let epochs = surveyed.survey.window_epochs(window.spw_id);
+    if multi_term && !one_rotation_traversal_per_window(surveyed) {
+        return Err(PrepareError::AwRotationScope);
+    }
+    let epochs = surveyed.survey.window_epochs(first);
+    // CASA walks each spectral window's buffers separately. A time-only
+    // rotation key is shared by windows with the same usable timeline.
+    if windows.iter().skip(1).any(|window| {
+        feed[window.spw_id] != feed_angle
+            || rotation_times(epochs)
+                .ne(rotation_times(surveyed.survey.window_epochs(window.spw_id)))
+    }) {
+        return Err(PrepareError::AwRotationScope);
+    }
     // The vector and the Arc slice can coexist while converting it.
     let _admission = casa_imaging_runtime::admit(
         &context.host,
@@ -1207,17 +1221,41 @@ fn aw_rotation(
         },
     )?;
     let mut samples = Vec::with_capacity(epochs.len());
-    for epoch in epochs.iter().filter(|epoch| epoch.has_unflagged_cross) {
-        let pa = native_aw::feed_pa(
-            surveyed,
-            epoch.time_mjd_seconds,
-            epoch.field_id,
-            feed[window.spw_id],
-        )?;
-        samples.push((epoch.time_mjd_seconds, pa));
+    for (time, field) in rotation_times(epochs) {
+        let pa = native_aw::feed_pa(surveyed, time, field, feed_angle)?;
+        samples.push((time, pa));
     }
     Ok(Some(casa_imaging_operator::AwPaRotation {
         step_rad: f64::from(aw.rotatepastep as f32).to_radians(),
+        require_repeatable_schedule: multi_term,
         samples: samples.into(),
     }))
+}
+
+// CASA walks ARRAY_ID then DATA_DESC_ID before TIME. The survey merges
+// partition epochs by time, so require one chronological traversal per
+// window for the Taylor passes that share the rotation schedule.
+fn one_rotation_traversal_per_window(surveyed: &Surveyed<'_>) -> bool {
+    let selected = &surveyed.survey.partitions;
+    if surveyed.stores.len() != 1 || selected.len() != surveyed.survey.spectral_windows.len() {
+        return false;
+    }
+    surveyed.msv2.is_none_or(|ms| {
+        let Some(array) = selected
+            .first()
+            .and_then(|first| ms.array_id(first.partition()))
+        else {
+            return false;
+        };
+        selected
+            .iter()
+            .all(|part| ms.array_id(part.partition()) == Some(array))
+    })
+}
+
+fn rotation_times(epochs: &[survey::Epoch]) -> impl Iterator<Item = (f64, i32)> + '_ {
+    epochs
+        .iter()
+        .filter(|epoch| epoch.has_unflagged_cross)
+        .map(|epoch| (epoch.time_mjd_seconds, epoch.field_id))
 }
