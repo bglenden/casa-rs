@@ -156,21 +156,31 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
     Ok(())
 }
 
-/// Whether a direction-dependent run reuses its PSF, weight and PB products
-/// while forming a new residual (`calcpsf=False, calcres=True`).
+/// Whether a direction-dependent run reuses its PSF, weight and PB
+/// products for a residual pass or saved-product restoration.
 pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
-    if request.calcpsf || !request.calcres {
+    if request.calcpsf {
         return false;
     }
     match (&request.gridder, Family::of(request)) {
         (Gridder::Mosaic { .. }, Family::Single) => {
-            matches!(
-                request.specmode,
-                crate::SpecMode::Mfs | crate::SpecMode::Cube
-            )
+            request.calcres
+                && matches!(
+                    request.specmode,
+                    crate::SpecMode::Mfs | crate::SpecMode::Cube
+                )
         }
         (Gridder::Awproject(_), Family::Taylor { terms }) => {
-            request.specmode == crate::SpecMode::Mfs && (!request.pbcor || terms == 2)
+            request.specmode == crate::SpecMode::Mfs
+                && if request.calcres {
+                    !request.pbcor || terms == 2
+                } else {
+                    terms == 2
+                        && request.restoration
+                        && request.niter == 0
+                        && request.savemodel == crate::SaveModel::None
+                        && !request.pbcor
+                }
         }
         _ => false,
     }
@@ -245,14 +255,18 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         }
     }
     if !request.calcres
-        && request.niter > 0
+        && (request.niter > 0 || reuses_direction_dependent_psf(request))
         && let Some(path) = missing("residual")
     {
         return refuse(
             path,
-            "calcres=False with niter > 0 cleans the residual an earlier run left at imagename, \
-             and this one does not exist"
-                .into(),
+            if request.niter > 0 {
+                "calcres=False with niter > 0 cleans the residual an earlier run left at imagename, \
+                 and this one does not exist"
+            } else {
+                "calcres=False restoration requires the saved residual at imagename"
+            }
+            .into(),
         );
     }
     Ok(())

@@ -36,3 +36,45 @@ fn a_saved_mosaic_beam_read_is_charged_per_product_lane() {
     let per_plane = 701_000;
     assert_eq!(scratch(per_plane) - scratch(0), 2 * per_plane);
 }
+
+#[test]
+fn taylor_restoration_charges_one_saved_residual_mask_at_publication() {
+    let problem = continuum_problem_with_reconstruction(
+        96,
+        &[
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+            ProductKind::TaylorTerms,
+        ],
+        RestoringBeamPolicy::PerPlane,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::Taylor { terms: 2 },
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        1,
+    );
+    let output = ImageOutput::for_problem(&problem);
+    let storage = ProductStoragePlan::new(1, 8).unwrap();
+    let demand = |read_bytes| {
+        let controls = ContinuumProductControls::default().preserving_taylor_residuals(read_bytes);
+        let plan = PlannedContinuumGeneration::for_problem(&problem, &controls).unwrap();
+        plan.planned_demand(&problem, storage, &output).unwrap()
+    };
+    // Make mask publication dominate restoration, and check its exact
+    // slope as the mask's backing store grows.
+    let smaller = demand(128 * 1024 * 1024);
+    let growth = 701_000;
+    let larger = demand(128 * 1024 * 1024 + growth);
+    assert_eq!(
+        larger.peak_residency_bytes() - smaller.peak_residency_bytes(),
+        growth
+    );
+    assert_eq!(
+        larger.algorithm_scratch_bytes() - smaller.algorithm_scratch_bytes(),
+        growth
+    );
+}

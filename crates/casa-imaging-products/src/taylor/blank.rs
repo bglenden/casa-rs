@@ -30,7 +30,7 @@ pub(super) fn build(
     {
         return Err(ProductsError::InvalidTaylorMomentReduction);
     }
-    let family = TaylorFamily::read(inputs, (state, 0), primary_beam_model, None, 1.0)?;
+    let family = TaylorFamily::read(inputs, (state, 0), primary_beam_model, None, None)?;
     if family.sum_weights.iter().any(|value| *value != 0.0)
         || family.psf.iter().flatten().any(|value| *value != 0.0)
         || family.residual.iter().flatten().any(|value| *value != 0.0)

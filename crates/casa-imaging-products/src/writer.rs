@@ -356,6 +356,32 @@ impl CasaImageWriter {
         Ok(())
     }
 
+    /// Read the default residual mask. Image restoration only propagates
+    /// CASA's generated mask0. The spectral-index cutoff uses any default.
+    pub(crate) fn saved_taylor_residual_mask(
+        &self,
+        domain: &ImageDomainRole,
+        term: usize,
+        restoring_image: bool,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        let mut name = self.output(domain).base.clone().into_os_string();
+        name.push(format!(".residual.tt{term}"));
+        let path = PathBuf::from(name);
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        // SIImageStore::copyMask propagates only the generated mask0.
+        if restoring_image && image.default_mask_name().as_deref() != Some("mask0") {
+            return Ok(None);
+        }
+        let mask = image
+            .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
+            .map_err(image_error)?;
+        Ok(mask.map(|mask| mask.iter().copied().collect()))
+    }
+
     /// Create one member's image in private staging beside its target, with
     /// its units, beams and metadata.
     pub(crate) fn begin(
@@ -364,6 +390,7 @@ impl CasaImageWriter {
         layout: ProductWindowLayout,
         beams: &[Option<RestoringBeam>],
         uses_weight_image: bool,
+        explicit_mask: Option<bool>,
     ) -> Result<MemberImage<'_>, ProductsError> {
         let started = Instant::now();
         let output = self.output(member.axes().domain());
@@ -460,7 +487,10 @@ impl CasaImageWriter {
             .map_err(image_error)?;
         Ok(MemberImage {
             image,
-            explicit_mask: matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)),
+            explicit_mask: explicit_mask.unwrap_or(matches!(
+                storage.pixel_mask(),
+                ProductPixelMask::Explicit(_)
+            )),
             writer: self,
             staged: StagedImage {
                 _directory: directory,

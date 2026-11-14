@@ -45,6 +45,8 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
+    /// Scratch for reading one saved Taylor residual's pixel mask.
+    taylor_mask_read_bytes: Option<u64>,
     /// Saved PB reader. The mosaic's normal-state sensitivity also comes
     /// from the saved `.weight` when this reader is present.
     mosaic_beam: Option<SavedMosaicBeam>,
@@ -75,6 +77,8 @@ impl ExistingProducts {
         };
         let mut tile_bytes = 0;
         let mut mosaic_beam = None;
+        let mut taylor_mask_read_bytes =
+            (residual && weight && matches!(family, Family::Taylor { .. })).then_some(0);
         let mut bases = Vec::new();
         if psf {
             bases.extend(["psf", "sumwt"]);
@@ -97,6 +101,24 @@ impl ExistingProducts {
                         }
                     })?);
                     continue;
+                }
+                if base == "residual"
+                    && let Some(bytes) = &mut taylor_mask_read_bytes
+                    && image.default_mask_name().is_some()
+                {
+                    let backing = image.mask_slice_working_bytes().map_err(|error| {
+                        PrepareError::Restart {
+                            path: path.clone(),
+                            reason: error.to_string(),
+                        }
+                    })?;
+                    // One mask slice and its packed CASA-order copy, plus
+                    // the reader's table metadata and mask backing.
+                    *bytes = (*bytes).max(
+                        2 * image.shape().iter().product::<usize>() as u64
+                            + backing
+                            + CACHE_BYTES as u64,
+                    );
                 }
                 tile_bytes = image
                     .tile_shape()
@@ -123,6 +145,7 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
+            taylor_mask_read_bytes,
             mosaic_beam,
             psf_beams: None,
             psf_pixel_beams: None,
@@ -250,6 +273,12 @@ impl ExistingProducts {
     /// Whether the residual is read.
     pub(crate) const fn reads_residual(&self) -> bool {
         self.residual
+    }
+
+    /// For restoration from normalized Taylor residuals, the scratch for
+    /// reading the saved pixel mask of one term at a time.
+    pub(crate) const fn taylor_mask_read_bytes(&self) -> Option<u64> {
+        self.taylor_mask_read_bytes
     }
 
     /// Saved PB and mask, independent of the new residual cutoff.
@@ -392,7 +421,9 @@ impl ExistingProducts {
     /// the PSF alone), to the residual read times the sum of weights that
     /// normalizes it: each plane's own, or a Taylor family's principal one
     /// for every term (`SIImageStoreMultiTerm::divideResidualByWeight`).
-    /// Without a residual read it is zero.
+    /// A direction-dependent Taylor restoration instead reads the saved
+    /// normalized residual as-is (`SDAlgorithmMSMFS::restore`). Without a
+    /// residual read it is zero.
     pub(crate) fn fill_residual(&self, images: &mut PassImages) -> Result<(), ImageError> {
         let (_, moments) = self.terms();
         let pols = images.polarizations;
@@ -440,7 +471,9 @@ impl ExistingProducts {
         if !self.residual {
             return Ok(residual);
         }
+        let normalized = self.taylor_mask_read_bytes().is_some();
         let scale = |channel: usize, pol: usize| match self.family {
+            _ if normalized => 1.0,
             Family::Single => principal(channel, pol),
             Family::Taylor { .. } => principal(0, pol),
         };

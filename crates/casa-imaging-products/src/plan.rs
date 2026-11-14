@@ -42,6 +42,7 @@ pub struct ContinuumProductControls {
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     saved_mosaic_beam_read_bytes: Option<u64>,
     saved_higher_primary_beam: bool,
+    saved_taylor_mask_read_bytes: Option<u64>,
 }
 
 impl ContinuumProductControls {
@@ -79,6 +80,15 @@ impl ContinuumProductControls {
     ) -> Self {
         self.saved_mosaic_beam_read_bytes = Some(read_bytes);
         self.saved_higher_primary_beam = saved_higher_primary_beam;
+        self
+    }
+
+    /// Restore from Taylor residuals that were read in their published
+    /// units. Leave their saved pixels and metadata in place. Charge
+    /// `mask_read_bytes` to copy one residual mask to its restored image.
+    #[must_use]
+    pub const fn preserving_taylor_residuals(mut self, mask_read_bytes: u64) -> Self {
+        self.saved_taylor_mask_read_bytes = Some(mask_read_bytes);
         self
     }
 
@@ -152,6 +162,7 @@ impl Default for ContinuumProductControls {
             primary_beam_model: None,
             saved_mosaic_beam_read_bytes: None,
             saved_higher_primary_beam: false,
+            saved_taylor_mask_read_bytes: None,
         }
     }
 }
@@ -185,6 +196,7 @@ pub struct PlannedContinuumGeneration {
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     pub(crate) uses_weight_image: bool,
     pub(crate) saved_mosaic_beam_read_bytes: u64,
+    pub(crate) saved_taylor_mask_read_bytes: Option<u64>,
     pub(crate) members: Box<[PlannedMember]>,
 }
 
@@ -235,6 +247,11 @@ impl PlannedContinuumGeneration {
             {
                 continue;
             }
+            if controls.saved_taylor_mask_read_bytes.is_some()
+                && matches!(entry.role(), ProductRole::Residual(ProductTerm::Taylor(_)))
+            {
+                continue;
+            }
             ensure_producible(entry.role())?;
             let needs_primary_beam = |rule| {
                 matches!(
@@ -279,6 +296,7 @@ impl PlannedContinuumGeneration {
                 ),
             primary_beam_model: controls.primary_beam_model(),
             saved_mosaic_beam_read_bytes: controls.saved_mosaic_beam_read_bytes.unwrap_or(0),
+            saved_taylor_mask_read_bytes: controls.saved_taylor_mask_read_bytes,
             uses_weight_image: list
                 .entries()
                 .iter()
