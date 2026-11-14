@@ -453,8 +453,8 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
 }
 
 /// The joined, faceted Taylor product retains each moment separately for
-/// every Stokes plane. CASA fills each plane's PSF and sum weights from
-/// its first correlation in this parallel-hand observation.
+/// every Stokes plane. CASA replicates the Stokes I PSF and the first
+/// correlation's sum weights across IQUV.
 #[test]
 fn full_stokes_taylor_facets_publish_every_moment_on_every_stokes_plane() {
     let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
