@@ -57,6 +57,7 @@ fn region_owners_take_the_largest_chunks_that_fit() {
         block,
         chunk_placements: CHUNK_PLACEMENTS,
         chunk_sets: 1,
+        stitched_bytes_per_channel: 0,
     };
     let regions = [PassDomain {
         operator: &operator,
@@ -154,6 +155,40 @@ fn a_one_plane_metal_budget_gives_one_plane_waves() {
     one_plane_budget(BackendChoice::Metal, GridPrecision::F32);
 }
 
+#[test]
+fn a_cube_wave_admits_stitched_images_for_each_channel_it_holds() {
+    let operator = operator_of_planes();
+    let resampler = nearest_cube();
+    let rows = Rows::random(50, 17, operator.geometry());
+    let domains = [planes(&operator, &resampler, 1)];
+    let demand = WaveDemand {
+        domains: &domains,
+        modes: ModeSet::DATA_PSF,
+        with_model: false,
+        native_spacing_hz: WIDTH_HZ,
+        workers: 1,
+        backend: BackendChoice::Cpu,
+        block: rows.maximum_block(),
+        chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
+        stitched_bytes_per_channel: 0,
+    };
+    // A charge comparable to the full pass makes the extra per-channel
+    // storage decisive at this budget.
+    let stitched = demand.bytes(3);
+    let budget = 2 * stitched;
+    assert_eq!(Residency::plan(&demand, budget), Residency::All);
+    let faceted = WaveDemand {
+        stitched_bytes_per_channel: stitched,
+        ..demand
+    };
+    assert!(faceted.bytes(1) <= budget && faceted.bytes(2) > budget);
+    assert_eq!(
+        Residency::plan(&faceted, budget),
+        Residency::Waves { planes_per_wave: 1 }
+    );
+}
+
 fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
     let operator = operator(precision, Basis::ChannelLocal { planes: 3 });
     let resampler = nearest_cube();
@@ -174,6 +209,7 @@ fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
             block: rows.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
             chunk_sets: 1,
+            stitched_bytes_per_channel: 0,
         };
         let one = demand.bytes(1);
         assert_eq!(
@@ -425,6 +461,7 @@ fn metal_owners_and_predictors_are_charged_their_kernel_copies() {
         block: rows.maximum_block(),
         chunk_placements: CHUNK_PLACEMENTS,
         chunk_sets: 1,
+        stitched_bytes_per_channel: 0,
     };
     let kernels = casa_imaging_metal::kernel_bytes(operator.cf());
     assert!(kernels > 0, "the spheroidal's rows are charged");

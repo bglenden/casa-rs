@@ -250,6 +250,8 @@ pub struct WaveDemand<'a> {
     /// Sets of row chunks the wave places into
     /// ([`super::MajorCyclePass::chunk_sets`]): 1, or [`Self::plan_chunks`].
     pub chunk_sets: usize,
+    /// Bytes per channel to assemble the images of this wave before appending.
+    pub stitched_bytes_per_channel: u64,
 }
 
 impl WaveDemand<'_> {
@@ -332,7 +334,7 @@ impl WaveDemand<'_> {
         stages.held
             + (stages.gridding + chunks)
                 .max(stages.finishing + chunks + transforms)
-                .max(stages.appending)
+                .max(stages.appending + self.stitched_bytes_per_channel * u64::from(planes))
     }
 
     /// Placements a row chunk of a wave of `planes` planes takes, and the
