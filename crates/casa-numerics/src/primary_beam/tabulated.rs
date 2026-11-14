@@ -69,7 +69,7 @@ impl BeamPattern {
         })
     }
 
-    /// PBMath1DCosPoly: sum c[j] cos(scale[j] r)^(j+1).
+    /// PBMath1DCosPoly: `sum c[j] cos(scale[j] r)^(j+1)`.
     #[must_use]
     pub fn cosine_polynomial(
         maximum_radius: f64,
