@@ -2323,7 +2323,12 @@ keeps the first visit's attenuation for every field. casa-rs refreshes the
 beam on each pointing/field transition and retains the visit's orientation
 when reusing prediction grids. The <code>real_image_revisit</code> control preserves
 CASA's raw cached output and compares with actual CASA predictions made
-using a fresh simulator for each visit, removing that stale cache.</p>
+using a fresh simulator for each visit, removing that stale cache. The same
+cache suppresses within-scan orientation refresh: the four-integration
+<code>sm_image_beam_refresh_oracle.py</code> control preserves the raw output and
+uses a fresh simulator for each integration. casa-rs refreshes when the
+requested angle threshold is crossed; the independent refreshed signal
+differs from a frozen beam by 0.56%.</p>
 <h2 id="evla-component-dosquint-is-a-no-op">EVLA component dosquint is a no-op<a class="headerlink" href="#evla-component-dosquint-is-a-no-op" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 accepts <code>sm.setvp(dosquint=True)</code> for EVLA, but logs
 "No Beam Squint". The synthetic 14.5 GHz controls in
