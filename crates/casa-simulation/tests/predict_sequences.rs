@@ -232,7 +232,7 @@ fn predict_refuses_as_casa_does() {
 /// yet, so a beam over a model image, a component list or total power, and
 /// the mosaic machine, refuse a moved pointing; each predicts it without.
 #[test]
-fn a_beam_on_a_moved_pointing_is_refused() {
+fn displaced_interferometric_beams_are_accepted_and_total_power_stays_explicit() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
     let points = directory.path().join("points.cl");
@@ -270,25 +270,22 @@ fn a_beam_on_a_moved_pointing_is_refused() {
             sm.set_options(options).expect("setoptions");
         }
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        let (outcome, message) = refusal(sm.predict(&predict));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
-        assert!(
-            message.contains("pointed away") && message.contains("#1053"),
-            "{what}: {message}"
-        );
+        if options.is_some() {
+            let (outcome, message) = refusal(sm.predict(&predict));
+            assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
+            assert!(message.contains("pointed away"), "{message}");
+        } else {
+            sm.predict(&predict)
+                .unwrap_or_else(|error| panic!("{what}: {error}"));
+        }
         sm.set_vp(&no_beam).expect("setvp");
         sm.predict(&predict)
             .unwrap_or_else(|error| panic!("{what} without the beam: {error}"));
     }
     let mut sm = moved_pointing(&directory.path().join("mosaic.ms"));
     sm.set_options(&mosaic).expect("setoptions");
-    let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
-    assert_eq!(
-        outcome,
-        CasaOutcome::NotYetImplemented,
-        "the mosaic machine"
-    );
-    assert!(message.contains("pointed away"), "{message}");
+    sm.predict(&spec(&[&model]))
+        .expect("mosaic predicts the moved pointing");
     sm.set_options(&PredictionOptions::default())
         .expect("setoptions");
     sm.predict(&spec(&[&model]))
@@ -534,11 +531,11 @@ fn component_lists_predict_as_one_list() {
     assert!(message.contains("missing.cl not readable"), "{message}");
 }
 
-/// CASA squints the VLA's and the EVLA's beams for a component list, moving
-/// the RR and LL beams apart; casa-rs's patterns are unsquinted, so it
-/// refuses the list under them with squint, and predicts it without.
+/// The default beam accepts components; a later setvp disables squint for
+/// a replacing prediction. Active VLA offsets and angle refresh are checked
+/// against CASA by squint.rs, including CASA's accepted EVLA no-op.
 #[test]
-fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
+fn components_under_default_beams_can_disable_squint() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let points = directory.path().join("points.cl");
     write_points(&points);
@@ -556,9 +553,7 @@ fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
             incremental: false,
         };
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        let (outcome, message) = refusal(sm.predict(&list));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{telescope}");
-        assert!(message.contains("squint"), "{telescope}: {message}");
+        sm.predict(&list).expect("default beam: predicted");
         sm.set_vp(&VoltagePatternSpec {
             do_squint: false,
             ..VoltagePatternSpec::default()
@@ -573,10 +568,10 @@ fn components_under_a_squinting_beam_are_refused_unless_squint_is_off() {
 fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
-    // The SMA's default voltage pattern is not one casa-rs has.
+    // An unknown telescope has no default voltage-pattern model.
     let mut vla = session(
-        &directory.path().join("sma.ms"),
-        "SMA",
+        &directory.path().join("unknown.ms"),
+        "Unknown",
         "RR LL",
         resources(2, 2 << 30),
     );
@@ -586,7 +581,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(
-        message.contains("SMA") && message.contains("#1053"),
+        message.contains("Unknown") && message.contains("#1297"),
         "{message}"
     );
     vla.set_vp(&VoltagePatternSpec {
@@ -595,13 +590,21 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     })
     .expect("setvp");
     vla.predict(&spec(&[&model])).expect("no beam: predicted");
-    // A voltage-pattern table, other FTMachines and grid functions.
-    let (outcome, _) = refusal(vla.set_vp(&VoltagePatternSpec {
+    // setvp records a table path; predict opens it, as in CASA.
+    vla.set_vp(&VoltagePatternSpec {
         use_default_vp: false,
-        vp_table: "vp.tab".to_string(),
+        vp_table: directory
+            .path()
+            .join("missing.vp")
+            .to_string_lossy()
+            .into_owned(),
         ..VoltagePatternSpec::default()
-    }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    })
+    .expect("setvp records the path");
+    let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
+    assert_eq!(outcome, CasaOutcome::Raises);
+    assert!(message.contains("voltage-pattern table"), "{message}");
+    // Other FTMachines and grid functions.
     let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
         ftmachine: "both".to_string(),
         ..PredictionOptions::default()

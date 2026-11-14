@@ -25,6 +25,8 @@ use num_complex::{Complex32, Complex64};
 
 mod cells;
 mod screen;
+mod simple;
+pub use simple::SimpleMosaicScreens;
 
 use cells::FrequencyCells;
 use screen::{

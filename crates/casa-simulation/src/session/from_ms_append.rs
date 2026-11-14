@@ -319,7 +319,9 @@ impl Simulator {
             mosaic,
             single_dish,
             voltage_pattern,
+            voltage_pattern_table,
             squint,
+            beam_angle_increment_rad,
             data_plan
         );
         segment

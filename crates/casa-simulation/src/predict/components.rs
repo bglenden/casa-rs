@@ -50,7 +50,11 @@ use casa_types::measures::{EpochRef, MEpoch, MeasFrame, UvwMachine};
 use num_complex::{Complex32, Complex64};
 use std::sync::Arc;
 
-use super::BeamPattern;
+use super::{BeamPattern, PrimaryBeam};
+
+mod squint;
+pub(crate) use squint::BeamContext;
+use squint::Squint;
 
 /// The speed of light, m/s.
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -99,6 +103,8 @@ pub(crate) struct ComponentTargets<'a> {
     pub(crate) pointing_of_scan: &'a [usize],
     pub(crate) beam: Option<&'a BeamPattern>,
     pub(crate) frame: &'a MeasFrame,
+    pub(crate) squint: Option<squint::Config>,
+    pub(crate) workers: usize,
 }
 
 impl ComponentTargets<'_> {
@@ -108,7 +114,14 @@ impl ComponentTargets<'_> {
         let samples: usize = self
             .windows
             .iter()
-            .map(|window| window.channels * window.correlations.len())
+            .map(|window| {
+                window.channels
+                    * if self.squint.is_some() {
+                        4
+                    } else {
+                        window.correlations.len()
+                    }
+            })
             .sum();
         let channels: usize = self.windows.iter().map(|window| window.channels).sum();
         let field_slots = self
@@ -118,7 +131,7 @@ impl ComponentTargets<'_> {
             .max()
             .unwrap_or(0);
         let per_field = components * size_of::<UvwMachine>()
-            + self.beam.map_or(0, |_| {
+            + self.beam.filter(|_| self.squint.is_none()).map_or(0, |_| {
                 self.windows.len() * size_of::<Vec<f32>>()
                     + components * channels * size_of::<f32>()
             });
@@ -130,6 +143,16 @@ impl ComponentTargets<'_> {
             + field_slots * size_of::<Option<FieldTerms>>()
             + self.pointings.len() * per_field
             + size_of_val(self.pointing_of_scan)) as u64
+            + self.squint.map_or(0, |_| {
+                Squint::bytes(
+                    self.workers,
+                    self.windows
+                        .iter()
+                        .map(|window| window.channels)
+                        .max()
+                        .unwrap_or(0),
+                )
+            })
     }
 
     /// Bytes [`ComponentPrediction::new`] holds only while it prepares
@@ -144,6 +167,7 @@ impl ComponentTargets<'_> {
 pub(crate) struct ComponentPrediction {
     directions: Vec<MDirection>,
     frame: MeasFrame,
+    squint: Option<Box<Squint>>,
     /// Each component's shape transform.
     transforms: Vec<ShapeTransform>,
     windows: Vec<PreparedWindow>,
@@ -163,6 +187,8 @@ struct PreparedWindow {
     step_hz: f64,
     channels: usize,
     correlations: usize,
+    basis: Polarisation,
+    products: [usize; 4],
     /// The components' fluxes in the window's correlations, Jy:
     /// `[component][channel][correlation]`.
     fluxes: Vec<Complex64>,
@@ -171,6 +197,7 @@ struct PreparedWindow {
 #[derive(Debug)]
 struct FieldTerms {
     phase: MDirection,
+    beam_centre: [f64; 2],
     /// Each component's rotation from the field's direction.
     projections: Vec<UvwMachine>,
     /// `[window]`: the beam's power `[component][channel]`, with
@@ -230,7 +257,7 @@ impl ComponentPrediction {
         let windows = targets
             .windows
             .iter()
-            .map(|window| prepare_window(components, window))
+            .map(|window| prepare_window(components, window, targets.squint.is_some()))
             .collect::<Result<Vec<_>, _>>()?;
         let directions: Vec<MDirection> = components
             .iter()
@@ -252,24 +279,29 @@ impl ComponentPrediction {
                         .map_err(|error| refused(error.to_string()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let powers = targets.beam.map(|pattern| {
-                targets
-                    .windows
-                    .iter()
-                    .map(|window| {
-                        let mut powers = Vec::with_capacity(directions_rad.len() * window.channels);
-                        for component in &directions_rad {
-                            let separation = separation_rad(*component, beam_centre);
-                            powers.extend((0..window.channels).map(|channel| {
-                                pattern.power_at(separation, window.frequency_hz(channel))
-                            }));
-                        }
-                        powers
-                    })
-                    .collect()
-            });
+            let powers = targets
+                .beam
+                .filter(|_| targets.squint.is_none())
+                .map(|pattern| {
+                    targets
+                        .windows
+                        .iter()
+                        .map(|window| {
+                            let mut powers =
+                                Vec::with_capacity(directions_rad.len() * window.channels);
+                            for component in &directions_rad {
+                                let separation = separation_rad(*component, beam_centre);
+                                powers.extend((0..window.channels).map(|channel| {
+                                    pattern.power_at(separation, window.frequency_hz(channel))
+                                }));
+                            }
+                            powers
+                        })
+                        .collect()
+                });
             fields[field] = Some(FieldTerms {
                 phase,
+                beam_centre,
                 projections,
                 powers,
             });
@@ -277,6 +309,19 @@ impl ComponentPrediction {
         Ok(Self {
             directions,
             frame: targets.frame.clone(),
+            squint: targets.squint.map(|config| {
+                Box::new(Squint::new(
+                    config,
+                    targets.beam.expect("squint has a beam"),
+                    targets.workers,
+                    targets
+                        .windows
+                        .iter()
+                        .map(|window| window.channels)
+                        .max()
+                        .unwrap_or(0),
+                ))
+            }),
             transforms,
             windows,
             fields,
@@ -319,12 +364,42 @@ impl ComponentPrediction {
             + windows
             + fields
             + self.of_scan.len() * size_of::<usize>()) as u64
+            + self
+                .squint
+                .as_ref()
+                .map_or(0, |squint| squint.resident_bytes())
     }
 
     pub(crate) fn needs_epoch(&self) -> bool {
-        self.directions
-            .iter()
-            .any(|direction| direction.refer() != DirectionRef::J2000)
+        self.squint.is_some()
+            || self
+                .directions
+                .iter()
+                .any(|direction| direction.refer() != DirectionRef::J2000)
+    }
+
+    pub(crate) fn covers_scan(&self, scan: usize) -> bool {
+        scan < self.of_scan.len()
+    }
+
+    pub(crate) fn has_squint(&self) -> bool {
+        self.squint.is_some()
+    }
+
+    pub(crate) fn prepare_beam_job(
+        &self,
+        scan: usize,
+        field: usize,
+        times: impl Iterator<Item = f64>,
+    ) -> Result<Option<BeamContext>, casa_components::ComponentError> {
+        self.squint
+            .as_ref()
+            .map(|squint| {
+                let pointing = self.of_scan[scan];
+                let terms = self.fields[pointing].as_ref().expect("prepared pointing");
+                squint.prepare_job((field, pointing), times, &terms.phase, &self.frame)
+            })
+            .transpose()
     }
 
     /// Add to `out` the visibilities of `rows` (each row's raw uvw in
@@ -337,6 +412,8 @@ impl ComponentPrediction {
         (scan, description): (usize, usize),
         rows: impl Iterator<Item = ([f64; 3], f64)> + Clone,
         out: &mut [Complex32],
+        context: Option<BeamContext>,
+        worker: usize,
     ) -> Result<(), casa_components::ComponentError> {
         let Some(terms) = self
             .of_scan
@@ -355,13 +432,42 @@ impl ComponentPrediction {
             .powers
             .as_ref()
             .map(|powers| powers[description].as_slice());
+        let mut workspace = self
+            .squint
+            .as_ref()
+            .map(|squint| squint.workspace(worker))
+            .transpose()?;
         for (component, (transform, initial_projection)) in
             self.transforms.iter().zip(&terms.projections).enumerate()
         {
             let direction = &self.directions[component];
+            let physical = if self.squint.is_some() {
+                let (ra, dec) = direction
+                    .convert_to(DirectionRef::J2000, &self.frame)
+                    .map_err(|error| casa_components::ComponentError::Visibility {
+                        shape: "component beam",
+                        reason: error.to_string(),
+                    })?
+                    .as_angles();
+                [ra, dec]
+            } else {
+                [0.; 2]
+            };
+            let mut beam_context = context;
+            let mut flux_angle = None;
             let mut projection = *initial_projection;
             let mut epoch = None;
             for (row, (uvw_m, time_s)) in rows.clone().enumerate() {
+                let angle = match (&self.squint, &mut beam_context) {
+                    (Some(squint), Some(context)) => context.advance(
+                        time_s,
+                        &terms.phase,
+                        &self.frame,
+                        squint.config.2,
+                        squint.config.3,
+                    )?,
+                    _ => 0.,
+                };
                 if direction.refer() != DirectionRef::J2000 && epoch != Some(time_s) {
                     let current = self
                         .frame
@@ -385,9 +491,35 @@ impl ComponentPrediction {
                     -std::f64::consts::TAU * phase_shift_m / SPEED_OF_LIGHT_M_PER_S;
                 let mut phasor = Complex64::from_polar(1.0, radians_per_hz * prepared.first_hz);
                 let step = Complex64::from_polar(1.0, radians_per_hz * prepared.step_hz);
-                let fluxes = &prepared.fluxes[component * channels * correlations..]
-                    [..channels * correlations];
+                let stored = if self.squint.is_some() {
+                    4
+                } else {
+                    correlations
+                };
+                let fluxes = &prepared.fluxes[component * channels * stored..][..channels * stored];
                 let powers = powers.map(|powers| &powers[component * channels..][..channels]);
+                if let Some(squint) = &self.squint
+                    && flux_angle != Some(angle)
+                {
+                    let workspace = workspace.as_mut().expect("squint has a workspace");
+                    for channel in 0..channels {
+                        let frequency = prepared.stored_frequencies.as_ref().map_or_else(
+                            || prepared.first_hz + channel as f64 * prepared.step_hz,
+                            |values| values.value[channel],
+                        );
+                        let circular = std::array::from_fn(|product| fluxes[channel * 4 + product]);
+                        let flux = squint.flux(
+                            circular,
+                            physical,
+                            terms.beam_centre,
+                            angle,
+                            frequency,
+                            prepared.basis,
+                        );
+                        workspace[channel * 4..(channel + 1) * 4].copy_from_slice(&flux);
+                    }
+                    flux_angle = Some(angle);
+                }
                 for channel in 0..channels {
                     let frequency_hz = prepared.stored_frequencies.as_ref().map_or_else(
                         || prepared.first_hz + channel as f64 * prepared.step_hz,
@@ -403,10 +535,24 @@ impl ComponentPrediction {
                         scale *= f64::from(powers[channel]);
                     }
                     let value = channel_phasor * scale;
-                    let cells = channel * correlations..(channel + 1) * correlations;
-                    for (cell, flux) in samples[cells.clone()].iter_mut().zip(&fluxes[cells]) {
-                        let sample = flux * value;
-                        *cell += Complex32::new(sample.re as f32, sample.im as f32);
+                    let cells = &mut samples[channel * correlations..(channel + 1) * correlations];
+                    if self.squint.is_some() {
+                        let flux = &workspace.as_ref().expect("squint workspace")
+                            [channel * 4..(channel + 1) * 4];
+                        for (cell, &product) in
+                            cells.iter_mut().zip(&prepared.products[..correlations])
+                        {
+                            let sample = flux[product] * value;
+                            *cell += Complex32::new(sample.re as f32, sample.im as f32);
+                        }
+                    } else {
+                        for (cell, flux) in cells
+                            .iter_mut()
+                            .zip(&fluxes[channel * stored..(channel + 1) * stored])
+                        {
+                            let sample = flux * value;
+                            *cell += Complex32::new(sample.re as f32, sample.im as f32);
+                        }
                     }
                     phasor *= step;
                 }
@@ -421,6 +567,7 @@ impl ComponentPrediction {
 fn prepare_window(
     components: &[SkyComponent],
     window: &ComponentWindow,
+    squinted: bool,
 ) -> Result<PreparedWindow, ComponentRefusal> {
     let refused = ComponentRefusal::NotYetImplemented;
     let basis = |code: i32| match code {
@@ -444,13 +591,25 @@ fn prepare_window(
     let polarisation = mapped
         .first()
         .map_or(Polarisation::Circular, |(basis, _)| *basis);
-    let mut fluxes = Vec::with_capacity(components.len() * window.channels * mapped.len());
+    let stored = if squinted { 4 } else { mapped.len() };
+    let mut fluxes = Vec::with_capacity(components.len() * window.channels * stored);
     for (index, component) in components.iter().enumerate() {
         for channel in 0..window.channels {
             let flux = component
-                .flux_in(window.frequency_hz(channel), polarisation)
+                .flux_in(
+                    window.frequency_hz(channel),
+                    if squinted {
+                        Polarisation::Circular
+                    } else {
+                        polarisation
+                    },
+                )
                 .map_err(|error| refused(format!("component {index}: {error}")))?;
-            fluxes.extend(mapped.iter().map(|&(_, basis)| flux[basis]));
+            if squinted {
+                fluxes.extend(flux);
+            } else {
+                fluxes.extend(mapped.iter().map(|&(_, basis)| flux[basis]));
+            }
         }
     }
     Ok(PreparedWindow {
@@ -459,6 +618,8 @@ fn prepare_window(
         step_hz: window.step_hz,
         channels: window.channels,
         correlations: mapped.len(),
+        basis: polarisation,
+        products: std::array::from_fn(|index| mapped.get(index).map_or(0, |&(_, product)| product)),
         fluxes,
     })
 }

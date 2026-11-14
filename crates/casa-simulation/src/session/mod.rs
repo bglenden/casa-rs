@@ -56,6 +56,7 @@ mod test_trop;
 mod tests;
 mod troposphere;
 mod tsys_atm;
+mod voltage_patterns;
 
 pub use apply::ApplySpec;
 pub use corruption::{AtmosphereSpec, DEFAULT_SEED, NoiseSpec, TsysParameters};
@@ -186,9 +187,13 @@ pub struct Simulator {
     single_dish: Option<SingleDishKernel>,
     /// Whether `predict` applies the primary beam (`setvp(dovp)`).
     voltage_pattern: bool,
+    /// Saved VPManager table, read when prediction prepares its beam.
+    voltage_pattern_table: Option<Arc<casa_imaging_runtime::Admitted<String>>>,
     /// Whether that beam squints (`setvp(dosquint)`), as CASA's VLA and
     /// EVLA patterns then do for a component list.
     squint: bool,
+    /// BeamSkyJones's threshold for refreshing the feed angle.
+    beam_angle_increment_rad: f64,
     /// The DATA steps (`predict`, `corrupt`), applied at `close`.
     data_plan: DataPlan,
     /// The MeasurementSet `openfromms` opened, whose rows `close` patches;
@@ -241,7 +246,9 @@ impl Simulator {
             mosaic: false,
             single_dish: None,
             voltage_pattern: false,
+            voltage_pattern_table: None,
             squint: false,
+            beam_angle_increment_rad: std::f64::consts::TAU,
             data_plan: DataPlan::default(),
             opened: None,
             noise_row_offset: 0,

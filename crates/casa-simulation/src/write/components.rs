@@ -18,7 +18,7 @@ use crate::session::plan::DataPhase as DataPlan;
 pub(super) const JOB_ROWS: usize = 256;
 
 /// Bytes of one job.
-pub(super) const JOB_BYTES: usize = size_of::<Job<'static>>();
+pub(super) const JOB_BYTES: usize = size_of::<Job<'static>>() + size_of::<&mut [Job<'static>]>();
 
 struct Job<'a> {
     /// The scan's index in the session.
@@ -26,6 +26,7 @@ struct Job<'a> {
     scan: &'a Scan,
     rows: &'a [RowGeometry],
     cells: &'a mut [Complex32],
+    beam: Option<crate::predict::BeamContext>,
 }
 
 /// Add the component lists `plan` predicts to `data`, the batch's DATA of
@@ -65,23 +66,69 @@ pub(super) fn add_components(
                     scan: &scans[scan],
                     rows: &rows[start + offset..start + offset + take],
                     cells,
+                    beam: None,
                 });
             }
             offset += take;
         }
     }
-    team.for_each_mut(&mut jobs, |_, job| {
-        for components in plan.components_for_scan(job.index) {
-            components
-                .add_rows(
-                    (job.index, job.scan.data_description_id),
-                    job.rows.iter().map(|row| (row.uvw_m, row.time_s)),
-                    job.cells,
-                )
-                .map_err(|error| {
-                    SimulatorError::raised(format!("component prediction: {error}"))
-                })?;
+    if !plan
+        .components_for_scan(0)
+        .any(|components| components.has_squint())
+    {
+        return team.for_each_mut(&mut jobs, |worker, job| {
+            for components in plan.components_for_scan(job.index) {
+                components
+                    .add_rows(
+                        (job.index, job.scan.data_description_id),
+                        job.rows.iter().map(|row| (row.uvw_m, row.time_s)),
+                        job.cells,
+                        None,
+                        worker,
+                    )
+                    .map_err(|error| {
+                        SimulatorError::raised(format!("component prediction: {error}"))
+                    })?;
+            }
+            Ok::<_, SimulatorError>(())
+        });
+    }
+    // Every component prediction covers a prefix of scans. Visit sources in
+    // their original order, freezing each job's beam-angle history in row
+    // order before workers evaluate independent numerical cells.
+    for components in plan.components_for_scan(0) {
+        for job in &mut jobs {
+            if components.covers_scan(job.index) {
+                job.beam = components
+                    .prepare_beam_job(
+                        job.index,
+                        job.scan.field_id,
+                        job.rows.iter().map(|row| row.time_s),
+                    )
+                    .map_err(|error| SimulatorError::raised(format!("component beam: {error}")))?;
+            }
         }
-        Ok::<_, SimulatorError>(())
-    })
+        let chunk_rows = jobs.len().div_ceil(team.workers()).max(1);
+        let mut chunks: Vec<_> = jobs.chunks_mut(chunk_rows).collect();
+        team.for_each_mut(&mut chunks, |slot, chunk| {
+            for job in chunk.iter_mut() {
+                if !components.covers_scan(job.index) {
+                    continue;
+                }
+                components
+                    .add_rows(
+                        (job.index, job.scan.data_description_id),
+                        job.rows.iter().map(|row| (row.uvw_m, row.time_s)),
+                        job.cells,
+                        job.beam,
+                        slot,
+                    )
+                    .map_err(|error| {
+                        SimulatorError::raised(format!("component prediction: {error}"))
+                    })?;
+            }
+            Ok::<_, SimulatorError>(())
+        })?;
+    }
+    Ok(())
 }

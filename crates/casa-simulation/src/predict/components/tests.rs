@@ -59,6 +59,8 @@ fn prepare(
         pointing_of_scan: &[0],
         beam,
         frame: &frame,
+        squint: None,
+        workers: 1,
     };
     ComponentPrediction::new(list, targets, Reservation::none())
 }
@@ -80,6 +82,8 @@ fn a_point_at_the_phase_centre_adds_its_flux_in_the_windows_basis() {
                 .into_iter()
                 .map(|row| (row, 0.)),
             &mut out,
+            None,
+            0,
         )
         .unwrap();
     for (sample, value) in out.iter().enumerate() {
@@ -105,7 +109,13 @@ fn the_beam_scales_each_component_by_its_power_at_its_separation() {
     let mut out = vec![Complex32::new(0.0, 0.0); 2 * 2];
     // The zero spacing: the flux times the beam, whatever the phase.
     prediction
-        .add_rows((0, 0), [([0.0, 0.0, 0.0], 0.)].into_iter(), &mut out)
+        .add_rows(
+            (0, 0),
+            [([0.0, 0.0, 0.0], 0.)].into_iter(),
+            &mut out,
+            None,
+            0,
+        )
         .unwrap();
     let separation = separation_rad(offset, CENTRE);
     assert!((separation - 1.0e-4 * CENTRE[1].cos()).abs() < 1.0e-12);
@@ -219,7 +229,13 @@ fn a_rows_channels_predict_as_each_components_visibility_one_channel_at_a_time()
     let samples = window.channels * 4;
     let mut out = vec![Complex32::new(0.0, 0.0); rows.len() * samples];
     prediction
-        .add_rows((0, 0), rows.into_iter().map(|row| (row, 0.)), &mut out)
+        .add_rows(
+            (0, 0),
+            rows.into_iter().map(|row| (row, 0.)),
+            &mut out,
+            None,
+            0,
+        )
         .unwrap();
     for (row, uvw_m) in rows.into_iter().enumerate() {
         let expected = direct(
@@ -264,6 +280,8 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
             pointing_of_scan: &[2, 0, 2],
             beam,
             frame: &frame,
+            squint: None,
+            workers: 1,
         };
         let prediction =
             ComponentPrediction::new(&listed, targets, Reservation::none()).expect("prepared");

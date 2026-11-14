@@ -137,6 +137,8 @@ mod polynomial_fields;
 mod selection;
 #[path = "selection/input.rs"]
 mod selection_input;
+#[path = "session_memory/squint.rs"]
+mod squint;
 #[path = "session_memory/troposphere.rs"]
 mod troposphere;
 #[path = "session_memory/tsys.rs"]
@@ -479,6 +481,26 @@ fn configured_with_products(
     dishes: &[f64],
     stokes: &str,
 ) -> Simulator {
+    configured_with_beam(
+        ms,
+        measures,
+        budget,
+        channels,
+        dishes,
+        stokes,
+        ("ALMA", FREQUENCY_HZ),
+    )
+}
+
+fn configured_with_beam(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
+    stokes: &str,
+    (telescope, frequency): (&str, f64),
+) -> Simulator {
     let mut sm = Simulator::open(
         ms,
         SimulatorOptions {
@@ -495,7 +517,7 @@ fn configured_with_products(
             .collect()
     };
     sm.set_config(&ArrayConfig {
-        telescope: "ALMA".to_string(),
+        telescope: telescope.to_string(),
         x: along(0, 50.0),
         y: along(1, -15.0),
         z: along(2, 30.0),
@@ -509,7 +531,7 @@ fn configured_with_products(
     .expect("setconfig");
     sm.set_spectral_window(&SpectralWindowSpec {
         name: "band6".to_string(),
-        start_frequency_hz: FREQUENCY_HZ,
+        start_frequency_hz: frequency,
         channel_width_hz: CHANNEL_HZ,
         resolution_hz: CHANNEL_HZ,
         frame: FrequencyRef::TOPO,

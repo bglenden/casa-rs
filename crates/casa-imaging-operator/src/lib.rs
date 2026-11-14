@@ -79,7 +79,8 @@ pub use edge::{CellBox, Reach, clipped_kernel_sum};
 pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 pub use mosaic::{
-    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicRules, MosaicScreens, MosaicWindow, pair_plane,
+    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicRules, MosaicScreens, MosaicWindow,
+    SimpleMosaicScreens, pair_plane,
 };
 pub use native::{
     DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, STENCIL,

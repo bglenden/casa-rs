@@ -1276,6 +1276,33 @@ negative flux comes out positive. Probed with CASA 6.7.6: a −0.4 Jy point
 +0.4 Jy times the beam with it. casa-rs keeps the sign;
 `sm_components_scenarios.json` keeps negative components away from the beam.
 
+The same defect doubles the phase of complex correlations. In a linear
+window, a component with nonzero Stokes U and V has XY = U+iV. The beam path
+multiplies each channel's sampled XY by the original XY/abs(XY), rotating it
+again; YX acquires the conjugate rotation. In the SIM-10 VP-table controls,
+both points have the same original Stokes flux [1, 0.1, 0.02, 0.03] Jy.
+CASA's auto-baseline crosshands show exactly this extra unit-phase factor,
+while I and Q agree. casa-rs preserves the requested correlation phase.
+`sm_voltage_patterns_oracle.py` retains raw CASA rows and supplies corrected
+rows by dividing selected correlations by that original unit-phase factor.
+No scientific tolerance changes; the remaining documented LSRK-label error
+is below the existing 1e-3 threshold in these controls.
+
+## EVLA component dosquint is a no-op
+
+CASA 6.7.6.14 accepts `sm.setvp(dosquint=True)` for EVLA, but logs
+"No Beam Squint". The synthetic 14.5 GHz controls in
+`sm_squint_oracle.py` produce identical DATA with squint disabled, enabled
+and a 0.01 degree angle-refresh threshold. The corresponding VLA controls
+change by 0.00760 and 0.00923 NRMS, so the workload measures both effects.
+
+`PBMath1DEVLA` declares its own private `squint_p`; its frequency-selection
+code updates that member, while the inherited `PBMath1D::apply` reads the
+base class's zero offset. casa-rs preserves the observed EVLA response for
+CASA equivalence. Applying a physically different EVLA correction would
+change existing results and is outside this comparison target. VLA band
+offsets and its angle-refresh behavior are implemented separately.
+
 ## A single spectral index is read past its end
 
 - Date noted: 2026-10-23
@@ -1747,15 +1774,15 @@ Evidence on the CPU and on Metal:
 - `components-moved-pointing` in `tools/simulation/sm_components_scenarios.json`, an image and a component list without a beam: 8.36e-6 normalized RMS;
 - the `openfromms-moved-pointing-*` scenarios of `sm_openfromms_scenarios.json`: 0 and 7e-11.
 
-A primary beam on a moved pointing is a separate matter, and casa-rs
-refuses it ([the next entry](#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)).
+A primary beam follows POINTING independently of FIELD's phase centre
+([the next entry](#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)).
 
 ## The beam on a moved pointing stays where the field's first row points
 
 - Date noted: 2026-10-24
-- Status: CASA bug; resumed simulations centre each integration's beam and
-  mosaic kernels on its stored POINTING. Fresh moved `observemany` beams
-  remain explicitly refused (#884, #1294).
+- Status: CASA bug; fresh and resumed interferometric simulations centre
+  each integration's beam and mosaic kernels on POINTING (#884, #1294,
+  #1297). Fresh total-power beam offsets remain on #1299.
 - Affected code: `synthesis/TransformMachines/BeamSkyJones.cc` (`changed`,
   `update`) and `synthesis/MeasurementEquations/Simulator.cc`
   (`makeVisSet`'s sort)
@@ -1784,12 +1811,16 @@ Measured on CASA 6.7.6, ALMA at 230 GHz, a second pointing moved 10.4″ east:
   the BOX kernel, CASA's moved samples are 0.671.
 
 None of these is the beam the moved pointing sees, which follows the
-antennas. Resumed simulations now separate FIELD's visibility phase from
+antennas. Fresh and resumed simulations separate FIELD's visibility phase from
 POINTING's beam and total-power sample direction. For changing pointings,
 `tools/simulation/sm_offset_pointings_oracle.py` retains the raw CASA output
 and records a second independent CASA control with a distinct, equal-phase
 FIELD identity per integration, forcing the stale cache to refresh. Native
-beam and mosaic predictions agree with that control. Native total power
+beam and mosaic predictions agree with that control. Fresh fixed/changing
+`observemany` controls in `sm_fresh_pointings_oracle.py` use the same
+independent cache reset and capture CASA's IERS inputs; CPU and Metal image,
+component and mosaic DATA agree below 3e-7 NRMS with unchanged tolerances.
+Native total power
 continues to use autocorrelations only, correcting the separate `SDGrid`
 cross-correlation defect documented above. Incomplete or disagreeing antenna
 pointings are explicitly refused before changing the DATA plan.

@@ -72,18 +72,19 @@ def model(path, name):
     cs.done()
 
 
-def make_session(path, stokes="XX YY"):
+def make_session(path, stokes="XX YY", *, telescope="ALMA", dishes=(12.,),
+                 frequency=FREQUENCY, channel=CHANNEL):
     from casatools import measures, simulator
 
     sm, me = simulator(), measures()
     sm.open(str(path))
     centre = [-1601185.0, -5041977.0, 3554875.0]
     xyz = [[centre[axis] + step * i for i in range(8)] for axis, step in enumerate([20.0, -6.0, 12.0])]
-    assert sm.setconfig(telescopename="ALMA", x=xyz[0], y=xyz[1], z=xyz[2], dishdiameter=[12.0],
+    assert sm.setconfig(telescopename=telescope, x=xyz[0], y=xyz[1], z=xyz[2], dishdiameter=list(dishes),
                         offset=[0.0], mount=["alt-az"], antname=["DA"], padname=["A"], coordsystem="global",
                         referencelocation=me.observatory("ALMA"))
-    assert sm.setspwindow(spwname="band6", freq="230GHz", deltafreq="15.625MHz",
-                          freqresolution="15.625MHz", refcode="TOPO", nchannels=4, stokes=stokes)
+    assert sm.setspwindow(spwname="band6", freq=f"{frequency}Hz", deltafreq=f"{channel}Hz",
+                          freqresolution=f"{channel}Hz", refcode="TOPO", nchannels=4, stokes=stokes)
     assert sm.setfeed(mode="perfect X Y")
     for name, direction in (("target", CENTRE), ("offset", OFFSET)):
         assert sm.setfield(sourcename=name, sourcedirection=me.direction(

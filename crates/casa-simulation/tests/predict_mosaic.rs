@@ -10,8 +10,7 @@ mod predict_support;
 use std::path::Path;
 
 use casa_simulation::{
-    CasaOutcome, ObserveManySpec, Pointing, PredictionOptions, Simulator, SimulatorResult,
-    VoltagePatternSpec,
+    CasaOutcome, PredictionOptions, Simulator, SimulatorResult, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use predict_support::{
@@ -109,10 +108,9 @@ fn the_mosaic_beams_are_in_its_kernels_whatever_setvp_says() {
     );
 }
 
-/// What the mosaic machine refuses: a telescope other than ALMA and ACA
-/// (CASA's `MosaicFTNew` keeps `SimplePBConvFunc` of the VLA's beam), a
-/// field pointed outside the model (for which CASA predicts nothing), and a
-/// pointing `observemany` moved off its field. The session closes after.
+/// An unknown telescope and a pointing outside the model remain unsupported.
+/// VLA's common beam and pointings displaced from FIELD are implemented and
+/// checked against CASA by `telescope_beams` and `fresh_pointings`.
 #[test]
 fn the_mosaic_refuses_what_casa_rs_does_not_build_yet() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -127,8 +125,8 @@ fn the_mosaic_refuses_what_casa_rs_does_not_build_yet() {
         sm.close().expect("close");
     };
     refused(
-        observed(&directory.path().join("vla.ms"), "VLA"),
-        "telescope VLA",
+        observed(&directory.path().join("unknown.ms"), "UNKNOWN"),
+        "telescope UNKNOWN",
     );
 
     let mut far = session(&directory.path().join("far.ms"), "ALMA");
@@ -142,26 +140,4 @@ fn the_mosaic_refuses_what_casa_rs_does_not_build_yet() {
     far.observe(&scan("far", 0.0, 60.0)).expect("observe");
     far.set_options(&mosaic()).expect("setoptions");
     refused(far, "outside the model image");
-
-    let mut moved = session(&directory.path().join("moved.ms"), "ALMA");
-    let base = scan("target", 0.0, 20.0);
-    let pointing = |start_s: f64, direction: Option<MDirection>| Pointing {
-        source: "target".to_string(),
-        start_s,
-        stop_s: start_s + 20.0,
-        direction,
-    };
-    let off = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
-    moved
-        .observe_many(&ObserveManySpec {
-            pointings: vec![pointing(0.0, None), pointing(20.0, Some(off))],
-            spectral_window: base.spectral_window.clone(),
-            add_observation: false,
-            state: base.state.clone(),
-            observer: base.observer.clone(),
-            project: base.project.clone(),
-        })
-        .expect("observemany");
-    moved.set_options(&mosaic()).expect("setoptions");
-    refused(moved, "pointed away");
 }

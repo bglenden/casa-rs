@@ -185,11 +185,11 @@ pub struct VoltagePatternSpec {
     pub use_default_vp: bool,
     /// `vptable`: a voltage-pattern table, read when not `usedefaultvp`.
     pub vp_table: String,
-    /// `dosquint`: beam squint, which CASA's VLA and EVLA patterns have but
-    /// which does not reach a Stokes I model, the only one predicted
-    /// ([`PrimaryBeam`]).
+    /// `dosquint`: apply CASA's VLA component squint. Its EVLA implementation
+    /// accepts the flag with no effect. Stokes images stay unsquinted.
     pub do_squint: bool,
-    /// `parangleinc`, degrees (CASA's 360 for `[]`), logged only.
+    /// `parangleinc`, degrees (CASA's 360 for `[]`): threshold for
+    /// refreshing the component beam's feed angle.
     pub parallactic_angle_increment_deg: f64,
 }
 
@@ -536,16 +536,10 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// Not yet implemented: a voltage-pattern table (`vptable` without
-    /// `usedefaultvp`). Nothing is recorded then.
+    /// Admission fails before retaining the optional voltage-pattern path.
+    /// Like CASA, the table itself is read by `predict`.
     pub fn set_vp(&mut self, spec: &VoltagePatternSpec) -> SimulatorResult<()> {
-        if !spec.use_default_vp && !spec.vp_table.is_empty() {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setvp(vptable='{}') is not yet implemented in casa-rs (#1053); the default \
-                 voltage patterns are",
-                spec.vp_table
-            )));
-        }
+        let table = super::voltage_patterns::capture_path(self, spec)?;
         tracing::info!("Setting voltage pattern parameters");
         if spec.use_default_vp {
             tracing::info!("Using system default voltage patterns for each telescope");
@@ -558,7 +552,9 @@ impl Simulator {
             );
         }
         self.voltage_pattern = spec.dovp;
+        self.voltage_pattern_table = table;
         self.squint = spec.do_squint;
+        self.beam_angle_increment_rad = spec.parallactic_angle_increment_deg.to_radians();
         Ok(())
     }
 
@@ -578,8 +574,8 @@ impl Simulator {
     ///   casa-components does not evaluate), scans whose windows differ in
     ///   correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
-    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
-    ///   for pointings `observemany` moved off their fields.
+    ///   does not have (it supports ALMA, ACA, VLA, EVLA, ngVLA, ATA and SMA), or
+    ///   a fresh total-power prediction with a displaced beam pointing.
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
@@ -642,18 +638,16 @@ impl Simulator {
                 "total-power prediction over different correlation setups is not yet implemented in casa-rs (#1299)",
             ));
         }
-        let beam = self.voltage_pattern_beam()?;
+        let selected_beam = self.voltage_pattern_beam()?;
+        let component_beam = selected_beam.filter(|_| self.voltage_pattern);
+        let beam = component_beam.map(|beam| beam.pattern);
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
-        // A primary beam, over a model image, a component list or total
-        // power, and the mosaic machine's kernels are centred on each
-        // scan's field here, which a pointing `observemany` moved does not
-        // point at (#884).
-        if model.is_some() && self.mosaic {
-            self.check_pointings_on_fields("setoptions(ftmachine='mosaic')")?;
-        }
-        if beam.is_some() {
+        // Interferometric images/components and mosaic kernels keep phase
+        // and pointing separately. Fresh total-power beam offsets await
+        // their dedicated integration controls.
+        if beam.is_some() && self.single_dish.is_some() {
             self.check_pointings_on_fields("setvp(dovp=True)")?;
         }
         if let Some(kernel) = self.single_dish {
@@ -675,12 +669,13 @@ impl Simulator {
             }
             return Ok(());
         }
-        let component_frame_epoch = list.as_ref().is_some_and(|(_, list, _)| {
-            list.components().iter().any(|component| {
-                component.shape().reference_direction().refer()
-                    != casa_types::measures::direction::DirectionRef::J2000
-            })
-        });
+        let component_frame_epoch = (self.squint && beam.is_some_and(PrimaryBeam::squints))
+            || list.as_ref().is_some_and(|(_, list, _)| {
+                list.components().iter().any(|component| {
+                    component.shape().reference_direction().refer()
+                        != casa_types::measures::direction::DirectionRef::J2000
+                })
+            });
         let phase_centres = if list.is_some() {
             super::from_ms::polynomial::selected_centres(self, false, component_frame_epoch)?
         } else {
@@ -688,7 +683,12 @@ impl Simulator {
         };
         let components = list
             .map(|(label, list, held)| {
-                self.prepare_components(&label, (list, held), beam, phase_centres.as_ref())
+                self.prepare_components(
+                    &label,
+                    (list, held),
+                    component_beam,
+                    phase_centres.as_ref(),
+                )
             })
             .transpose()?;
         let image_centres = if model.is_some() {
@@ -711,7 +711,7 @@ impl Simulator {
                 predictions.push(self.prepare_image(
                     model?,
                     correlations,
-                    beam,
+                    selected_beam,
                     image_centres.clone(),
                 )?);
             }
@@ -770,10 +770,11 @@ impl Simulator {
         &self,
         model: SkyModel,
         correlations: &[Correlation],
-        beam: Option<PrimaryBeam>,
+        selected_beam: Option<super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
         use casa_types::measures::direction::DirectionRef;
+        let beam = selected_beam.map(|beam| beam.pattern);
         let fixed_celestial_frame = matches!(
             model.tangent_direction().refer(),
             DirectionRef::J2000
@@ -817,7 +818,11 @@ impl Simulator {
                 )
                 .map_err(SimulatorError::admission)?;
                 mosaic_state = Some((reservation, kept));
-                let (beams, antenna_types) = self.mosaic_beams()?;
+                let (beams, antenna_types) = self.mosaic_beams(
+                    selected_beam
+                        .filter(|beam| !beam.standard)
+                        .map(|beam| beam.pattern),
+                )?;
                 (Some(beams), antenna_types, self.mosaic_pointings(&model)?)
             }
             FtMachine::Grid(_) | FtMachine::WProject(_) => {
@@ -872,20 +877,23 @@ impl Simulator {
         &self,
         label: &str,
         (list, held_list): (ComponentList, Reservation),
-        beam: Option<PrimaryBeam>,
+        selected_beam: Option<super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<ComponentPrediction> {
-        // CASA squints the VLA's and EVLA's beams for a component list (RR
-        // and LL beams apart); casa-rs's patterns are unsquinted.
-        if self.squint
-            && let Some(beam) = beam.filter(|beam| beam.squints())
-        {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "predict(complist='{label}') under the {beam:?} primary beam with beam squint \
-                 is not yet implemented in casa-rs (#1053): CASA squints the RR and LL beams \
-                 for components; setvp(dosquint=False) predicts them unsquinted"
-            )));
-        }
+        let squint = selected_beam
+            .filter(|beam| self.squint && beam.standard)
+            .map(|beam| beam.pattern)
+            .filter(|beam| beam.squints())
+            .map(|beam| -> SimulatorResult<_> {
+                Ok((
+                    beam,
+                    self.reference_frequency_hz(),
+                    self.beam_angle_increment_rad,
+                    super::voltage_patterns::squint_mount(self)?,
+                ))
+            })
+            .transpose()?;
+        let beam = selected_beam.map(|beam| beam.pattern);
         if self
             .antennas
             .windows(2)
@@ -925,9 +933,8 @@ impl Simulator {
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
         // A scan is phased on its field's phase centre, as CASA's
-        // `VisBuffer` phases it, and the beam centred there: a beam on a
-        // pointing `observemany` moved was refused above (#884). Scans at
-        // one centre share a pointing.
+        // `VisBuffer` phases it, with the beam centred independently on
+        // POINTING. Only equal phase/beam pairs share prepared terms.
         let mut pointings: Vec<(usize, [f64; 2], [f64; 2])> = Vec::new();
         let pointing_of_scan: Vec<usize> = self
             .scans
@@ -957,6 +964,15 @@ impl Simulator {
             pointing_of_scan: &pointing_of_scan,
             beam: pattern.as_ref(),
             frame: &frame,
+            squint,
+            workers: self
+                .options
+                .resources
+                .close_cores(
+                    self.options.resources.prediction_backend()
+                        == casa_imaging_runtime::pass::BackendChoice::Metal,
+                )
+                .streaming_workers,
         };
         let resources = &self.options.resources;
         let preparation = ComponentTargets::preparation_bytes(list.len());
@@ -1017,19 +1033,28 @@ impl Simulator {
     /// The primary beam `setvp` asks for: the default pattern of OBSERVATION
     /// row 0's telescope at spectral window 0's REF_FREQUENCY
     /// (`VPSkyJones`).
-    fn voltage_pattern_beam(&self) -> SimulatorResult<Option<PrimaryBeam>> {
-        if !self.voltage_pattern {
+    fn voltage_pattern_beam(
+        &self,
+    ) -> SimulatorResult<Option<super::voltage_patterns::ResolvedBeam>> {
+        if !self.voltage_pattern && !(self.mosaic && self.voltage_pattern_table.is_some()) {
             return Ok(None);
+        }
+        if let Some(path) = &self.voltage_pattern_table {
+            return super::voltage_patterns::read(self, Path::new(&path.value)).map(Some);
         }
         let telescope = self.observing_telescope();
         let beam = PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz())
             .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
                     "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
-                     casa-rs (#1053); the default patterns of ALMA, ACA, VLA and EVLA are"
+                     casa-rs (#1297); the default patterns of ALMA, ACA, VLA, EVLA, NGVLA, ATA \
+                     and SMA are"
                 ))
             })?;
-        Ok(Some(beam))
+        Ok(Some(super::voltage_patterns::ResolvedBeam {
+            pattern: beam,
+            standard: true,
+        }))
     }
 
     /// OBSERVATION row 0's telescope, whose patterns CASA's `VPSkyJones`
@@ -1050,12 +1075,11 @@ impl Simulator {
             .map_or(0.0, |window| window.reference_frequency_hz)
     }
 
-    /// That every scan points at its field, as `what` needs here: a primary
-    /// beam, or the mosaic machine's kernels, centred on each scan's field.
-    /// CASA's beam on a pointing `observemany` moved off its field is
-    /// centred where the first row of the field it visits points, which
-    /// `BeamSkyJones` keeps for the field's other rows (#884, `docs/CASA
-    /// (C++) bugs.md`); casa-rs does not follow it yet.
+    /// The remaining fresh total-power beam path requires pointings at
+    /// their fields until its displaced-pointing consumer is implemented
+    /// in SIM-12/22 (#1299). Interferometric prediction instead keeps the
+    /// phase and beam directions separately, correcting CASA's field-only
+    /// beam cache (documented in `docs/CASA (C++) bugs.md`).
     fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
         let moved = self.scans.iter().find(|scan| {
             !matches!(scan.rows, super::observe::ScanRows::OnDisk(_))
@@ -1118,6 +1142,20 @@ impl Simulator {
             FtMachine::Mosaic => {
                 let beams = layout.beams().expect("a mosaic layout has its beams");
                 let (dishes, windows) = (&beams.dishes, &beams.windows);
+                if beams.common {
+                    let screening = admitted(
+                        MOSAIC_SCREENS_PHASE,
+                        MosaicPb::simple_screens_bytes(geometry, windows).map_err(raised)?,
+                    )?;
+                    let screens =
+                        MosaicPb::simple_screens(geometry, polarization, dishes[0], windows)
+                            .map_err(raised)?;
+                    let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
+                    let set = screens.finish().map_err(raised)?;
+                    drop(screening);
+                    kernels.retain(set.resident_bytes());
+                    return Ok((Box::new(set), kernels));
+                }
                 let (rules, frequency_hz) = (MosaicRules::Simulator, layout.image_frequency_hz());
                 tracing::info!("Performing Mosaic gridding for model images (uv convolution)");
                 let screening = admitted(

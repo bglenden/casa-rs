@@ -126,7 +126,8 @@ fn compare_columns(path: &Path, case: &Value, columns: &[&str]) -> f64 {
             let correlations = flags.shape()[0];
             assert_eq!(
                 flags[[index % correlations, index / correlations]],
-                flag.as_bool().unwrap()
+                flag.as_bool().unwrap(),
+                "FLAG row {row} sample {index}"
             );
         }
         let ScalarValue::Bool(flag) = table

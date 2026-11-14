@@ -1369,8 +1369,7 @@ def test_setvp_applies_the_vla_and_evla_default_patterns(tmp_path: Path) -> None
     configure(sm, telescope="SMA")
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
     assert sm.setvp() is True
-    with pytest.raises(NotImplementedError, match="SMA"):
-        sm.predict(imagename=str(model))
+    assert sm.predict(imagename=str(model)) is True
     sm.close()
 
 
@@ -1391,8 +1390,11 @@ def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCapt
         sm.setoptions(gridfunction="BOX")
     assert sm.setvp() is True
     assert sm.setvp(dovp=False, parangleinc="5deg") is True
-    with pytest.raises(NotImplementedError, match="vptable"):
-        sm.setvp(usedefaultvp=False, vptable="vp.tab")
+    # CASA records the selected table and reads it when predicting.
+    assert sm.setvp(usedefaultvp=False, vptable=str(tmp_path / "missing.vp")) is True
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    with pytest.raises(RuntimeError, match="voltage-pattern table"):
+        sm.predict(imagename=str(sky_model(tmp_path)))
     with pytest.raises(RuntimeError, match="in converting quantity"):
         sm.setvp(parangleinc="10 furlong")
     sm.close()
