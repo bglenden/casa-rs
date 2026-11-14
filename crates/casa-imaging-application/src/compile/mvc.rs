@@ -38,6 +38,8 @@ pub(crate) fn cube_request(
     // CASA's MVC cube uses usecubebriggs=False and reuses the continuum density.
     cube.perchanweightdensity = false;
     cube.restoration = false;
+    cube.startmodel.clear();
+    cube.continued_model = false;
     cube.write_pb = true;
     Ok(casa_imaging_runtime::Admitted {
         value: cube,
@@ -93,6 +95,7 @@ pub(crate) struct TaylorView {
         casa_coordinates::CoordinateSystem,
     )>,
     pub(crate) expansion_reference_hz: f64,
+    pub(crate) start: Option<MvcStart>,
     /// Held for the lifetime of this additional view and its compiled form.
     pub(crate) reservation: casa_imaging_runtime::Reservation,
 }
@@ -109,6 +112,7 @@ pub(crate) struct CompiledTaylorView {
         casa_coordinates::CoordinateSystem,
     )>,
     pub(crate) expansion_reference_hz: f64,
+    pub(crate) start: Option<MvcStart>,
     /// The prepared and compiled view stays charged while it is resident.
     pub(crate) reservation: casa_imaging_runtime::Reservation,
 }
@@ -134,6 +138,7 @@ impl TaylorView {
             problem,
             coordinates: self.coordinates,
             expansion_reference_hz: self.expansion_reference_hz,
+            start: self.start,
             reservation: self.reservation,
         })
     }
@@ -228,6 +233,7 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     let specification =
         super::specification::specification(request, &spectral, specification_inputs)?;
     let geometry = super::geometry(request, &domains, centre, &spectral);
+    let start = prepare_start(parent, &domains[0])?;
     let samples = super::domains::model_samples(&domains, request.nterms, &request.stokes)?;
     Ok(TaylorView {
         specification,
@@ -241,13 +247,14 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
             .map(|domain| (domain.role, domain.coordinates))
             .collect(),
         expansion_reference_hz,
+        start,
         reservation,
     })
 }
 
 /// MVC forms a fresh cube and its two-term Taylor products. Cleaning uses
-/// nsigma=0 and spatial-only user boxes. Restart and side effects are
-/// outside this execution scope (#1069).
+/// nsigma=0 and spatial-only user boxes. A standard-gridder continuation
+/// may replace both Taylor terms using the saved primary beams (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
@@ -269,8 +276,7 @@ pub(super) fn check_execution_scope(
                 || request.mask_box.iter().any(|region| region.range.is_some())))
         || !request.calcpsf
         || !request.calcres
-        || request.tclean_restart
-        || request.has_start_model()
+        || ((request.tclean_restart || request.has_start_model()) && !starts_from_taylor(request))
         || request.savemodel != crate::SaveModel::None
         || request.outlierfile.is_some()
         || request.fitspw.is_some()
@@ -286,6 +292,99 @@ pub(super) fn check_execution_scope(
         return Err(super::PrepareError::MvcExecutionUnsupported);
     }
     Ok(())
+}
+
+fn starts_from_taylor(request: &ImagingRequest) -> bool {
+    request.tclean_restart
+        && request.niter > 0
+        && request.startmodel.len() == 2
+        && request.startmodel.iter().all(Option::is_some)
+        && matches!(request.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
+}
+
+/// The two model terms and the saved primary beams CASA uses before the
+/// initial resumed cube prediction.
+pub(crate) struct MvcStart {
+    pub(crate) model: super::StartModel,
+    pub(crate) cube_pb: MvcPrimaryBeam,
+    pub(crate) taylor_pb: MvcPrimaryBeam,
+}
+
+/// A saved Float PB with a bounded tile cache and its read workspace.
+pub(crate) struct MvcPrimaryBeam {
+    path: std::path::PathBuf,
+    reading_bytes: u64,
+}
+
+impl MvcPrimaryBeam {
+    const CACHE_BYTES: usize = 64 * 1024;
+
+    fn prepare(path: std::path::PathBuf) -> Result<Self, super::PrepareError> {
+        let image = casa_images::PagedImage::<f32>::open_with_cache(&path, Self::CACHE_BYTES)
+            .map_err(|error| super::PrepareError::Restart {
+                path: path.clone(),
+                reason: error.to_string(),
+            })?;
+        let tile_bytes = image
+            .tile_shape()
+            .iter()
+            .fold(4_u64, |n, &axis| n.saturating_mul(axis as u64));
+        let reading_bytes = (Self::CACHE_BYTES as u64).saturating_add(tile_bytes.saturating_mul(2));
+        Ok(Self {
+            path,
+            reading_bytes,
+        })
+    }
+
+    pub(crate) fn open(&self) -> Result<casa_images::PagedImage<f32>, casa_images::ImageError> {
+        casa_images::PagedImage::open_with_cache(&self.path, Self::CACHE_BYTES)
+    }
+
+    pub(crate) fn reading_bytes(&self) -> u64 {
+        self.reading_bytes
+    }
+}
+
+fn prepare_start(
+    request: &ImagingRequest,
+    domain: &super::domains::PreparedImageDomain,
+) -> Result<Option<MvcStart>, super::PrepareError> {
+    use crate::restart::{check_grid, mvc_cube_product, product_path, products, suffix};
+    if !starts_from_taylor(request) {
+        return Ok(None);
+    }
+    let [nx, ny] = domain.image_size;
+    let template = casa_images::RegridTemplate {
+        coordinates: domain.coordinates.clone(),
+        shape: vec![nx, ny, 1, 1],
+    };
+    let cube_pb = product_path(&request.imagename, "pb");
+    let taylor_pb = product_path(&request.imagename, "pb.tt0");
+    for path in [
+        &cube_pb,
+        &taylor_pb,
+        &product_path(&request.imagename, "psf"),
+    ] {
+        if !path.exists() {
+            return Err(super::PrepareError::Restart {
+                path: path.clone(),
+                reason: "MVC startmodel requires the saved cube PSF and both primary beams (#1069)"
+                    .into(),
+            });
+        }
+    }
+    for path in products(&request.imagename)? {
+        let name = suffix(&request.imagename, &path);
+        if !mvc_cube_product(&name) {
+            check_grid(&path, &name, &template, None)?;
+        }
+    }
+    let model = super::StartModel::prepare(&request.startmodel, domain, 1, (2, 2))?;
+    Ok(Some(MvcStart {
+        model,
+        cube_pb: MvcPrimaryBeam::prepare(cube_pb)?,
+        taylor_pb: MvcPrimaryBeam::prepare(taylor_pb)?,
+    }))
 }
 
 /// The metadata envelope below applies only to this bounded view.

@@ -544,7 +544,7 @@ fn each_image_holds_tcleans_history_and_its_source() {
 }
 
 /// `name`'s row of the plane at `[field, channel, stokes]`, as numbers.
-fn plane_row(value: &CasaValue, key: [i64; 3], name: &str) -> Vec<f64> {
+pub(super) fn plane_row(value: &CasaValue, key: [i64; 3], name: &str) -> Vec<f64> {
     let mut plane = entry(value, "summaryminor");
     for index in key {
         let CasaValue::Dict { entries } = plane else {

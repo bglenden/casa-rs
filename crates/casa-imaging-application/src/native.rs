@@ -431,6 +431,7 @@ pub(crate) fn run(
                     > 0)
                 .then_some(imaging::MvcCycleSpec {
                     taylor_problem: &view.problem,
+                    start: view.start.as_ref(),
                     expansion_reference_hz: view.expansion_reference_hz,
                     controls: publication.controls,
                     centres: publication.primary_beam_centres.as_ref(),
@@ -477,7 +478,9 @@ pub(crate) fn run(
     let mut lanes = (0, None);
     let mvc_run = mvc_taylor.is_some();
     // CASA creates the cube model when it invokes its first minor cycle.
-    let cube_model_created = outcome.mvc_taylor.is_none() || !outcome.minor_cycles.is_empty();
+    let cube_model_created = outcome.mvc_taylor.is_none()
+        || !outcome.minor_cycles.is_empty()
+        || mvc_taylor.as_ref().is_some_and(|view| view.start.is_some());
     let products: Result<_, NativeError> = run_phase(
         "products",
         &runtime.cancel,
@@ -605,6 +608,7 @@ fn publish_run_products(
             coordinates,
             expansion_reference_hz,
             reservation: _view_reservation,
+            start: _,
         } = view;
         let taylor = if let Some(taylor) = taylor_completion {
             taylor

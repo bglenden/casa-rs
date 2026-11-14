@@ -108,6 +108,11 @@ impl Family {
     }
 }
 
+/// The cube products MVC publishes beside its Taylor images.
+pub(crate) fn mvc_cube_product(suffix: &str) -> bool {
+    matches!(suffix, "model" | "pb" | "psf" | "residual" | "sumwt")
+}
+
 /// Check that `request` can continue on what exists at its `imagename`.
 /// Task entry points call this before creating a run summary.
 pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
@@ -116,18 +121,20 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
         return Err(PrepareError::ExistingImageProduct { path: path.clone() });
     }
     let family = Family::of(request);
+    let mvc = request.mvc_output_channels.is_some() || request.mvc_auto_channels;
     for path in &existing {
         let suffix = suffix(&request.imagename, path);
         let refuse = |reason: String| PrepareError::Restart {
             path: path.clone(),
             reason,
         };
-        if !family.admits(&suffix) {
+        let cube_product = mvc && mvc_cube_product(&suffix);
+        if !family.admits(&suffix) && !cube_product {
             return Err(refuse(format!(
                 "it is not a product of this run's {family} images; choose a new imagename"
             )));
         }
-        if suffix.starts_with("model") && request.has_start_model() {
+        if suffix.starts_with("model") && !(mvc && suffix == "model") && request.has_start_model() {
             return Err(refuse(
                 "startmodel cannot be supplied when the output model already exists".into(),
             ));

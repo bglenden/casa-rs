@@ -17,9 +17,10 @@ impl<'a> MvcState<'a> {
     pub(in crate::imaging::cycle) fn begin(
         spec: MvcCycleSpec<'a>,
         cube: MajorCycleCompletion,
-        run: &Run<'_>,
+        run: &mut Run<'_>,
     ) -> Result<(Self, MajorCycleCompletion), ImagingError> {
-        let taylor = crate::mvc::assemble_taylor_completion(
+        let (cube, model, seed_charge) = seed(spec, run, cube)?;
+        let taylor = crate::mvc::assemble_taylor_with_model(
             crate::mvc::TaylorAssemblyInputs {
                 cube_problem: run.problem,
                 cube: &cube,
@@ -28,8 +29,10 @@ impl<'a> MvcState<'a> {
                 controls: spec.controls,
                 centres: spec.centres,
             },
+            model,
             (&run.host, &run.policy, &run.cancel),
         )?;
+        drop(seed_charge);
         Ok((
             Self {
                 spec,
@@ -72,6 +75,7 @@ impl<'a> MvcState<'a> {
                 taylor_problem: self.spec.taylor_problem,
                 taylor_model: prepared.generation(),
                 mean_pb: &self.mean_pb,
+                saved_pb: None,
                 expansion_reference_hz: self.spec.expansion_reference_hz,
                 controls: self.spec.controls,
                 centres: self.spec.centres,
@@ -119,6 +123,75 @@ impl<'a> MvcState<'a> {
             },
         )
     }
+}
+
+/// Seed the first cube residual from the explicit Taylor images and
+/// previously published beams, before the minor cycle examines it.
+fn seed(
+    spec: MvcCycleSpec<'_>,
+    run: &mut Run<'_>,
+    cube: MajorCycleCompletion,
+) -> Result<
+    (
+        MajorCycleCompletion,
+        Option<casa_imaging_deconvolution::PreparedFinalModel>,
+        Reservation,
+    ),
+    ImagingError,
+> {
+    let Some(start) = spec.start else {
+        return Ok((cube, None, Reservation::none()));
+    };
+    let [nx, ny] = cube.normal_state().shape();
+    let lifecycle = ModelLifecycle::new(spec.taylor_problem, ModelStoragePlan::resident(nx * ny)?);
+    let held = run.admit("MVC start model", lifecycle.resident_bytes())?;
+    let model = {
+        let _reading = run.admit("MVC start model regrid", start.model.seeding_bytes())?;
+        let samples = start
+            .model
+            .main_samples()
+            .map_err(ImagingError::StartModel)?;
+        run.start_model_flux =
+            super::super::seeding::plane_fluxes(spec.taylor_problem, &start.model, &samples);
+        lifecycle.prepare_final_model(lifecycle.initial_from_start_model(&samples)?, [])?
+    };
+    let projected = {
+        // CASA reads the previous run's PB cube and the Taylor PB. Keep
+        // just the latter and one cube channel in the projection workspace.
+        let cells = (nx * ny) as u64;
+        let _reading = run.admit(
+            "saved MVC primary beams",
+            cells * (2 * size_of::<f32>()) as u64
+                + start.taylor_pb.reading_bytes()
+                + start.cube_pb.reading_bytes(),
+        )?;
+        let mean_pb = start
+            .taylor_pb
+            .open()
+            .map_err(ImagingError::Existing)?
+            .get()
+            .map_err(ImagingError::Existing)?
+            .into_iter()
+            .collect::<Vec<_>>();
+        let cube_pb = start.cube_pb.open().map_err(ImagingError::Existing)?;
+        crate::mvc::project_mvc_model(
+            crate::mvc::MvcModelProjectionInputs {
+                cube_problem: run.problem,
+                cube: &cube,
+                cube_lifecycle: &run.lifecycle,
+                taylor_problem: spec.taylor_problem,
+                taylor_model: model.generation(),
+                mean_pb: &mean_pb,
+                saved_pb: Some(&cube_pb),
+                expansion_reference_hz: spec.expansion_reference_hz,
+                controls: spec.controls,
+                centres: spec.centres,
+            },
+            (&run.host, &run.policy, &run.cancel),
+        )?
+    };
+    let seeded = run.refresh_with_projected_model(cube, projected, false)?;
+    Ok((seeded.completion, Some(model), held))
 }
 
 impl Run<'_> {

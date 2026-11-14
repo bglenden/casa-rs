@@ -35,10 +35,11 @@ pub(super) fn prepare(
     request: &ImagingRequest,
     main: &mut PreparedImageDomain,
     (channels, reconstruction_planes): (usize, usize),
+    mvc_start: bool,
     context: &RunContext,
     writer: &mut CasaImageWriter,
 ) -> Result<Continuation, PrepareError> {
-    let mut continuation = read(request, main, channels, context)?;
+    let mut continuation = read(request, main, channels, mvc_start, context)?;
     if let Some(coordinates) = continuation.psf_coordinates.take() {
         writer.set_main_psf_coordinates(coordinates);
     }
@@ -67,6 +68,7 @@ fn read(
     request: &ImagingRequest,
     main: &mut PreparedImageDomain,
     channels: usize,
+    mvc_start: bool,
     context: &RunContext,
 ) -> Result<Continuation, PrepareError> {
     let mut continuation = Continuation {
@@ -93,7 +95,15 @@ fn read(
     let saved_mosaic_psf = request.supports_separate_psf().then_some(main.direction);
     for path in restart::products(&request.imagename)? {
         let suffix = restart::suffix(&request.imagename, &path);
-        let psf_coordinates = restart::check_grid(&path, &suffix, &template, saved_mosaic_psf)?;
+        if mvc_start && suffix != "mask" && !restart::mvc_cube_product(&suffix) {
+            continue;
+        }
+        let psf_coordinates = if mvc_start && suffix == "mask" {
+            // The Taylor view checked the mask's one-channel grid.
+            None
+        } else {
+            restart::check_grid(&path, &suffix, &template, saved_mosaic_psf)?
+        };
         if request.calcpsf
             && !request.uses_separate_psf()
             && let Some(coordinates) = psf_coordinates
@@ -118,7 +128,7 @@ fn read(
         // CASA's setupMask reuses an existing mask only when no mask is
         // given; `restart::check` refused the other cleaning cases.
         if suffix == "mask"
-            && request.niter > 0
+            && (request.niter > 0 || mvc_start)
             && request.usemask == UseMask::User
             && main.mask == DomainMask::FullPlane
         {
@@ -148,7 +158,7 @@ fn read(
             path.exists().then_some(path)
         })
         .collect::<Box<[Option<PathBuf>]>>();
-    if models.iter().any(Option::is_some) {
+    if !mvc_start && models.iter().any(Option::is_some) {
         continuation.start_model = Some(StartModel::restart(
             models,
             RegridTemplate {
