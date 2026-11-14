@@ -35,7 +35,7 @@ pub(super) fn prepare(
     request: &ImagingRequest,
     main: &mut PreparedImageDomain,
     (channels, reconstruction_planes): (usize, usize),
-    mvc_start: bool,
+    mvc_start: Option<&super::MvcStart>,
     context: &RunContext,
     writer: &mut CasaImageWriter,
 ) -> Result<Continuation, PrepareError> {
@@ -68,7 +68,7 @@ fn read(
     request: &ImagingRequest,
     main: &mut PreparedImageDomain,
     channels: usize,
-    mvc_start: bool,
+    mvc_start: Option<&super::MvcStart>,
     context: &RunContext,
 ) -> Result<Continuation, PrepareError> {
     let mut continuation = Continuation {
@@ -95,10 +95,10 @@ fn read(
     let saved_mosaic_psf = request.supports_separate_psf().then_some(main.direction);
     for path in restart::products(&request.imagename)? {
         let suffix = restart::suffix(&request.imagename, &path);
-        if mvc_start && suffix != "mask" && !restart::mvc_cube_product(&suffix) {
+        if mvc_start.is_some() && suffix != "mask" && !restart::mvc_cube_product(&suffix) {
             continue;
         }
-        let psf_coordinates = if mvc_start && suffix == "mask" {
+        let psf_coordinates = if mvc_start.is_some() && suffix == "mask" {
             // The Taylor view checked the mask's one-channel grid.
             None
         } else {
@@ -128,7 +128,7 @@ fn read(
         // CASA's setupMask reuses an existing mask only when no mask is
         // given; `restart::check` refused the other cleaning cases.
         if suffix == "mask"
-            && (request.niter > 0 || mvc_start)
+            && (request.niter > 0 || mvc_start.is_some())
             && request.usemask == UseMask::User
             && main.mask == DomainMask::FullPlane
         {
@@ -158,7 +158,9 @@ fn read(
             path.exists().then_some(path)
         })
         .collect::<Box<[Option<PathBuf>]>>();
-    if !mvc_start && models.iter().any(Option::is_some) {
+    if !mvc_start.is_some_and(|start| start.projection_beams.is_some())
+        && models.iter().any(Option::is_some)
+    {
         continuation.start_model = Some(StartModel::restart(
             models,
             RegridTemplate {

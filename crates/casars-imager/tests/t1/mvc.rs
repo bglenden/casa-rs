@@ -690,6 +690,67 @@ fn mvc_start_model_uses_the_saved_cube_and_taylor_beams() {
     assert!((row("modelFlux") - tt0_flux).abs() < 1e-6);
 }
 
+/// Without explicit startmodel, CASA predicts the first resumed residual
+/// from the saved cube model and initializes CLEAN with the saved Taylor
+/// coefficients. Editing them independently makes that distinction visible.
+#[test]
+fn mvc_restart_reads_each_saved_model_on_its_own_grid() {
+    let observation = weighted_observation();
+    let name = "mvc-restart";
+    let controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+        "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+    });
+    let (_, dirty) = observation.image("mvc-before-clean", {
+        let mut values = controls.clone();
+        values["niter"] = json!(0);
+        values
+    });
+    let mut boxed = controls.clone();
+    boxed["mask"] = json!("box[[148pix,140pix],[156pix,148pix]]");
+    let (_, first) = observation.image(name, boxed);
+    let root = observation.measurement_set().parent().unwrap();
+    let point = [152, 144];
+    let (scale, taylor_scales) = (0.6, [0.8, 0.5]);
+    for (suffix, scale) in [
+        (".model", scale),
+        (".model.tt0", taylor_scales[0]),
+        (".model.tt1", taylor_scales[1]),
+    ] {
+        let mut image =
+            casa_images::PagedImage::<f32>::open(root.join(format!("{name}{suffix}"))).unwrap();
+        let pixels = image.get().unwrap().mapv(|value| value * scale);
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let mut stopped = controls;
+    stopped["threshold"] = json!("100Jy");
+    let (summary, resumed) = observation.image(name, stopped);
+    assert_eq!(summary.actual_minor_iterations, 0);
+    assert_eq!(summary.major_cycles, 1);
+    assert_eq!(resumed.get(".mask").pixels, first.get(".mask").pixels);
+    for channel in 0..3 {
+        let model = first.get(".model").plane(channel)[point];
+        assert!(model > 0.01);
+        assert_eq!(resumed.get(".model").plane(channel)[point], scale * model);
+        let uncleaned = dirty.get(".residual").plane(channel)[point];
+        let cleaned = first.get(".residual").plane(channel)[point];
+        let actual = resumed.get(".residual").plane(channel)[point];
+        let expected = uncleaned + scale * (cleaned - uncleaned);
+        assert!(
+            (actual - expected).abs() < 1e-5,
+            "{channel}: {actual} vs {expected}"
+        );
+    }
+    for (term, scale) in taylor_scales.into_iter().enumerate() {
+        let suffix = format!(".model.tt{term}");
+        let original = first.get(&suffix).pixels[point];
+        assert!(original.abs() > 0.01);
+        assert_eq!(resumed.get(&suffix).pixels[point], scale * original);
+    }
+}
+
 /// CASA copies the common Taylor PB support onto MVC's restored and
 /// residual Taylor images when pblimit is positive, while cleaning the
 /// source through repeated cube-major cycles (#1069).

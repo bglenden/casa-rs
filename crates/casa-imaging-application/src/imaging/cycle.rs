@@ -335,7 +335,13 @@ pub(crate) fn run(
         &cancel,
         diagnostics,
         summary,
-        || run.initial(!cleaning, mvc.is_some_and(|view| view.start.is_some())),
+        || {
+            run.initial(
+                !cleaning,
+                mvc.and_then(|view| view.start)
+                    .is_some_and(|start| start.projection_beams.is_some()),
+            )
+        },
     )?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
