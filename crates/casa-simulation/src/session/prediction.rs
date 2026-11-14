@@ -1055,12 +1055,17 @@ impl Simulator {
             return super::voltage_patterns::read(self, Path::new(&path.value)).map(Some);
         }
         let telescope = self.observing_telescope();
+        // PBMath aliases do not imply VPManager registered a simulator default.
+        if matches!(telescope, "BIMA" | "NRAO140FT" | "NONE") {
+            return Err(SimulatorError::refused(format!(
+                "vpmanager does not have a beam for {telescope}; supply a voltage-pattern table"
+            )));
+        }
         let beam = PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz())
             .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
                     "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
-                     casa-rs (#1297); the default patterns of ALMA, ACA, VLA, EVLA, NGVLA, ATA \
-                     and SMA are"
+                     casa-rs (#1297)"
                 ))
             })?;
         Ok(Some(super::voltage_patterns::ResolvedBeam {

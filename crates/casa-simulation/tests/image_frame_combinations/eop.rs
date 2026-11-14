@@ -12,9 +12,33 @@ struct Reference {
     samples: [[f64; 6]; 2],
     state: MeasuresProviderState,
     catalogues: Arc<dyn MeasuresProvider>,
+    observatory: Option<(String, Option<[f64; 3]>)>,
 }
 
 pub(super) fn provider(samples: &Value) -> Arc<dyn MeasuresProvider> {
+    reference(samples, None)
+}
+
+/// Use the captured CASA observatory alongside its EOP samples.
+#[allow(
+    dead_code,
+    reason = "only telescope-default controls override the catalogue"
+)]
+pub(super) fn with_observatory(
+    samples: &Value,
+    name: &str,
+    position: &Value,
+) -> Arc<dyn MeasuresProvider> {
+    let position = position
+        .as_array()
+        .map(|values| std::array::from_fn(|i| values[i].as_f64().unwrap()));
+    reference(samples, Some((name.to_owned(), position)))
+}
+
+fn reference(
+    samples: &Value,
+    observatory: Option<(String, Option<[f64; 3]>)>,
+) -> Arc<dyn MeasuresProvider> {
     let data = std::array::from_fn(|row| {
         std::array::from_fn(|column| samples[row][column].as_f64().unwrap())
     });
@@ -22,10 +46,14 @@ pub(super) fn provider(samples: &Value) -> Arc<dyn MeasuresProvider> {
     let mut identity = Sha256::new();
     identity.update(serde_json::to_vec(samples).unwrap());
     identity.update(37_f64.to_le_bytes());
+    if let Some(value) = &observatory {
+        identity.update(serde_json::to_vec(value).unwrap());
+    }
     Arc::new(Reference {
         samples: data,
         state: MeasuresProviderState::new(identity.finalize().into(), 0),
         catalogues: casa_test_support::deterministic_measures_provider(),
+        observatory,
     })
 }
 
@@ -56,6 +84,11 @@ impl MeasuresProvider for Reference {
         Ok(tai_mjd - 37. / 86400.)
     }
     fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
+        if let Some((reference, position)) = &self.observatory
+            && reference == name
+        {
+            return Ok(position.map(|[x_m, y_m, z_m]| ObservatoryPosition::Itrf { x_m, y_m, z_m }));
+        }
         self.catalogues.observatory(name)
     }
 }
