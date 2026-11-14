@@ -194,12 +194,14 @@ fn read(
         && request.niter > 0
         && restart::product_path(&request.imagename, &residual_name).exists();
     if !request.calcpsf || residual || mask_beam || psf_beam {
+        let weight = restart::reuses_direction_dependent_psf(request);
         let mut existing = ExistingProducts::new(
             &request.imagename,
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
-            restart::reuses_direction_dependent_psf(request),
+            weight,
+            weight,
         )?;
         if request.niter > 0
             && let Some(path) = existing.masked_taylor_residual()

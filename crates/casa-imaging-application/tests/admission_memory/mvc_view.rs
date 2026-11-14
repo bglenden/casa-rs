@@ -666,7 +666,7 @@ fn mvc_restart_keeps_both_saved_model_families_admitted() {
     let prefix = root.path().join("mvc-restart");
     let mut controls = json!({
         "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
-        "nchan": 3, "niter": 1, "write_pb": true, "pblimit": -0.1,
+        "nchan": 3, "niter": 1, "write_pb": true, "pblimit": 0.1,
     });
     let initial = request(&ms, &prefix, 1024, controls.clone());
     casa_imaging_application::execute(
@@ -682,15 +682,20 @@ fn mvc_restart_keeps_both_saved_model_families_admitted() {
     .expect("initial MVC");
     controls["threshold"] = json!("100Jy");
     let mut breaches = Vec::new();
-    for (label, calcpsf) in [("MVC restart", true), ("saved MVC PSF", false)] {
+    for (label, calcpsf, calcres) in [
+        ("MVC restart", true, true),
+        ("saved MVC PSF", false, true),
+        ("saved MVC residual", false, false),
+    ] {
         controls["calcpsf"] = json!(calcpsf);
+        controls["calcres"] = json!(calcres);
         let resumed = request(&ms, &prefix, 1024, controls.clone())
             .with_tclean_restart()
             .unwrap();
         let measured = check(&mut breaches, label, &resumed, 1, AMPLE);
         assert!(breaches.is_empty(), "{}", breaches.join("\n"));
         let outcome = measured.outcome.unwrap();
-        assert_eq!(outcome.major_cycle_count, 1);
+        assert_eq!(outcome.major_cycle_count, usize::from(calcres));
         assert_eq!(outcome.total_minor_iterations, 0);
         assert!(outcome.product_names().iter().any(|name| name == ".model"));
     }

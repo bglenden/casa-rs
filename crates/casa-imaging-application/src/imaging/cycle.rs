@@ -32,8 +32,8 @@ use casa_imaging_runtime::pass::{
 use casa_imaging_runtime::{
     Admitted, CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup,
     MinorLayout, PsfCache, Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes,
-    prepare_bytes, prepare_bytes_for, prepare_minor_cycle, psf_cache_bytes, run_bytes,
-    run_bytes_for, run_minor_cycle, run_phase,
+    prepare_bytes, prepare_bytes_for, prepare_minor_cycle_with_residual_mask, psf_cache_bytes,
+    run_bytes, run_bytes_for, run_minor_cycle, run_phase,
 };
 
 use super::charts::{Chart, ChartStitch, charts};

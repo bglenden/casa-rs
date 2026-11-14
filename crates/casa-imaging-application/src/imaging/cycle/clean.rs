@@ -79,12 +79,21 @@ pub(super) fn run(
                     run.teams.compute().workers(),
                 ),
             )?;
-            let prepared = prepare_minor_cycle(
+            let saved_mask = if outcome.major_cycle_count == 0 {
+                mvc.as_ref()
+                    .map(|state| state.saved_residual_mask(&run))
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            let prepared = prepare_minor_cycle_with_residual_mask(
                 &outcome.scientific,
                 &mask_plans,
                 &setup,
                 &mut cache,
                 run.teams.compute(),
+                saved_mask.as_ref().map(|mask| &mask.value),
             )?;
             let kept = preparing.split(prepared.retained_bytes());
             Ok::<_, ImagingError>((prepared, kept))
