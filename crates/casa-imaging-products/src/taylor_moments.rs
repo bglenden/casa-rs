@@ -16,9 +16,8 @@ use crate::ProductsError;
 /// An error poisons the accumulator; discard the partially written buffers.
 pub struct TaylorMomentAccumulator<'a> {
     mean_pb: &'a [f32],
-    psf: &'a mut [f32],
+    psf_and_sumwt: Option<(&'a mut [f32], &'a mut [f32; 3])>,
     residual: &'a mut [f32],
-    sumwt: &'a mut [f32; 3],
     reference_hz: f64,
     cutoff: f32,
     weight: f32,
@@ -40,9 +39,21 @@ impl<'a> TaylorMomentAccumulator<'a> {
         reference_hz: f64,
         cutoff: f32,
     ) -> Result<Self, ProductsError> {
+        Self::with_outputs(mean_pb, Some((psf, sumwt)), residual, reference_hz, cutoff)
+    }
+
+    pub(crate) fn with_outputs(
+        mean_pb: &'a [f32],
+        mut psf_and_sumwt: Option<(&'a mut [f32], &'a mut [f32; 3])>,
+        residual: &'a mut [f32],
+        reference_hz: f64,
+        cutoff: f32,
+    ) -> Result<Self, ProductsError> {
         let cells = mean_pb.len();
         if cells == 0
-            || cells.checked_mul(3) != Some(psf.len())
+            || psf_and_sumwt
+                .as_ref()
+                .is_some_and(|(psf, _)| cells.checked_mul(3) != Some(psf.len()))
             || cells.checked_mul(2) != Some(residual.len())
             || !reference_hz.is_finite()
             || reference_hz <= 0.0
@@ -55,14 +66,15 @@ impl<'a> TaylorMomentAccumulator<'a> {
         {
             return Err(ProductsError::InvalidTaylorMomentReduction);
         }
-        psf.fill(0.0);
+        if let Some((psf, sumwt)) = &mut psf_and_sumwt {
+            psf.fill(0.0);
+            sumwt.fill(0.0);
+        }
         residual.fill(0.0);
-        sumwt.fill(0.0);
         Ok(Self {
             mean_pb,
-            psf,
+            psf_and_sumwt,
             residual,
-            sumwt,
             reference_hz,
             cutoff,
             weight: 0.0,
@@ -86,7 +98,7 @@ impl<'a> TaylorMomentAccumulator<'a> {
     ) -> Result<(), ProductsError> {
         let cells = self.mean_pb.len();
         if self.failed
-            || psf.len() != cells
+            || (self.psf_and_sumwt.is_some() && psf.len() != cells)
             || residual.len() != cells
             || pb.len() != cells
             || !weight.is_finite()
@@ -104,37 +116,37 @@ impl<'a> TaylorMomentAccumulator<'a> {
             self.failed = true;
             return Err(ProductsError::InvalidTaylorMomentReduction);
         }
-        for (term, &factor) in factors.iter().enumerate() {
-            self.sumwt[term] += factor * weight;
-            if !self.sumwt[term].is_finite() {
-                self.failed = true;
-                return Err(ProductsError::InvalidTaylorMomentReduction);
-            }
-        }
         for pixel in 0..cells {
             let channel_pb = pb[pixel];
             if !channel_pb.is_finite()
                 || channel_pb < 0.0
                 || (channel_pb > 0.0 && channel_pb <= self.cutoff)
-                || !psf[pixel].is_finite()
                 || !residual[pixel].is_finite()
             {
                 self.failed = true;
                 return Err(ProductsError::InvalidTaylorMomentReduction);
             }
-            let psf_pb = channel_pb * psf[pixel];
             let residual_pb = channel_pb * residual[pixel];
-            for (term, &factor) in factors.iter().enumerate() {
-                let psf = &mut self.psf[term * cells + pixel];
-                *psf += factor * psf_pb;
-                if !psf.is_finite() {
+            for (term, &factor) in factors[..2].iter().enumerate() {
+                let residual = &mut self.residual[term * cells + pixel];
+                *residual += factor * residual_pb;
+                if !residual.is_finite() {
                     self.failed = true;
                     return Err(ProductsError::InvalidTaylorMomentReduction);
                 }
-                if term < 2 {
-                    let residual = &mut self.residual[term * cells + pixel];
-                    *residual += factor * residual_pb;
-                    if !residual.is_finite() {
+            }
+        }
+        if let Some((psf_moments, sumwt)) = &mut self.psf_and_sumwt {
+            for (term, &factor) in factors.iter().enumerate() {
+                sumwt[term] += factor * weight;
+                if !sumwt[term].is_finite() {
+                    self.failed = true;
+                    return Err(ProductsError::InvalidTaylorMomentReduction);
+                }
+                for (pixel, (&channel_psf, &channel_pb)) in psf.iter().zip(pb).enumerate() {
+                    let psf = &mut psf_moments[term * cells + pixel];
+                    *psf += factor * (channel_pb * channel_psf);
+                    if !psf.is_finite() {
                         self.failed = true;
                         return Err(ProductsError::InvalidTaylorMomentReduction);
                     }
@@ -156,12 +168,13 @@ impl<'a> TaylorMomentAccumulator<'a> {
             return Err(ProductsError::InvalidTaylorMomentReduction);
         }
         let cells = self.mean_pb.len();
-        for (index, value) in self
-            .psf
-            .iter_mut()
-            .chain(self.residual.iter_mut())
-            .enumerate()
-        {
+        let psf = self.psf_and_sumwt.into_iter().flat_map(|(psf, sumwt)| {
+            for value in sumwt {
+                *value /= self.weight;
+            }
+            psf
+        });
+        for (index, value) in psf.chain(self.residual.iter_mut()).enumerate() {
             let beam = self.mean_pb[index % cells];
             *value = if beam > self.cutoff {
                 *value / self.weight / beam
@@ -171,9 +184,6 @@ impl<'a> TaylorMomentAccumulator<'a> {
             if !value.is_finite() {
                 return Err(ProductsError::InvalidTaylorMomentReduction);
             }
-        }
-        for value in self.sumwt {
-            *value /= self.weight;
         }
         Ok(())
     }

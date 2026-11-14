@@ -22,8 +22,8 @@ pub use cube_state::CubeState;
 pub use minor::{
     MinorCycleOutcome, MinorCycleRunError, MinorCycleSetup, MinorCycleSummary, MinorLayout,
     PlaneCycleRow, PreparedMinorCycle, PsfCache, TracedComponent, mask_bytes, prepare_bytes,
-    prepare_bytes_for, prepare_minor_cycle, psf_cache_bytes, result_bytes, run_bytes,
-    run_bytes_for, run_minor_cycle,
+    prepare_bytes_for, prepare_minor_cycle, prepare_minor_cycle_with_residual_mask,
+    psf_cache_bytes, result_bytes, run_bytes, run_bytes_for, run_minor_cycle,
 };
 pub use resources::{
     Admission, Admitted, CoreAllocation, Demand, HostError, HostResources, Reservation,

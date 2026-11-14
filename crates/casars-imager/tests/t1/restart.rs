@@ -473,3 +473,82 @@ fn restart_false_public_run_selects_fresh_numbered_namespaces() {
         );
     }
 }
+
+/// CASA uses one suffix for all fields, even when an outlier has a
+/// higher existing suffix. A single-field call can skip the outlier.
+#[test]
+fn restart_false_numbers_the_main_and_outliers_together() {
+    use casars_imager::{ImagingParameters, resolve_request, run};
+
+    let observation = Observation::synthesise(&[(
+        "point",
+        Component {
+            offset_px: [6, -4],
+            flux_jy: 1.0,
+            fwhm_px: None,
+            spectral_index: 0.0,
+        },
+    )]);
+    let dir = observation.scratch("numbered-outliers");
+    let main = dir.join("main");
+    let fields = dir.join("fields");
+    fs::create_dir_all(&fields).unwrap();
+    let outlier = fields.join("other");
+    let definition = dir.join("outlier.txt");
+    fs::write(
+        &definition,
+        format!(
+            "imagename={}\nphasecenter=J2000 0deg -30deg\nimsize=40\n",
+            outlier.display()
+        ),
+    )
+    .unwrap();
+    let geometry = observation.geometry();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": main,
+        "imsize": geometry.image_size,
+        "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+        "backend": "cpu", "niter": 0, "restart": true,
+    });
+    let execute = |values: &serde_json::Value| {
+        let (parameters, request) =
+            resolve_request(&ImagingParameters(values.as_object().unwrap().clone())).unwrap();
+        run(parameters, &request)
+    };
+    values["outlierfile"] = json!(definition);
+    execute(&values).unwrap();
+    // The outlier's higher existing scientific name determines the common
+    // next suffix. Its unrelated orphan must itself be left intact.
+    fs::write(fields.join("other_6.psf"), b"preserve old outlier").unwrap();
+    let blocked = fields.join("other_7.pb");
+    fs::write(&blocked, b"preserve orphan").unwrap();
+    values["restart"] = json!(false);
+    let before = snapshot(&dir);
+    let error = execute(&values).unwrap_err();
+    assert!(error.contains("other_7.pb"), "{error}");
+    assert_unchanged(&before, &snapshot(&dir));
+    fs::remove_file(blocked).unwrap();
+    let before = snapshot(&dir);
+    let both = execute(&values).unwrap();
+    for (prefix, output) in [(dir.join("main_7"), &both), (fields.join("other_7"), &both)] {
+        assert!(
+            output
+                .artifacts
+                .iter()
+                .any(|image| image.path == format!("{}.psf", prefix.display()))
+        );
+    }
+
+    let mut main_only = values.clone();
+    main_only.as_object_mut().unwrap().remove("outlierfile");
+    execute(&main_only).unwrap();
+    execute(&values).unwrap();
+    assert!(dir.join("main_8.psf").exists());
+    assert!(!fields.join("other_8.psf").exists());
+    assert!(dir.join("main_9.psf").exists());
+    assert!(fields.join("other_9.psf").exists());
+    let after = snapshot(&dir);
+    for (path, bytes) in before {
+        assert_eq!(after.get(&path), Some(&bytes), "{}", path.display());
+    }
+}

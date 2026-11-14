@@ -162,7 +162,24 @@ pub(super) fn prepare_domains(
         facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
-        for outlier in read_outlier_domains(path, request.imsize, request.cell)? {
+        let mut outliers = read_outlier_domains(path, request.imsize, request.cell)?;
+        if let Some(outputs) = &request.numbered_outlier_outputs {
+            if outputs.len() != outliers.len()
+                || outliers
+                    .iter()
+                    .zip(outputs)
+                    .any(|(outlier, (input, _))| outlier.output.as_os_str() != input.as_os_str())
+            {
+                return Err(PrepareError::Restart {
+                    path: path.into(),
+                    reason: "outlier file changed after image numbering (#944)".into(),
+                });
+            }
+            for (outlier, (_, output)) in outliers.iter_mut().zip(outputs) {
+                outlier.output.clone_from(output);
+            }
+        }
+        for outlier in outliers {
             let centre = parse_phase_center_direction(&outlier.phase_center)?;
             super::direction::refuse_ncp_at_equator(request.projection, centre.latitude_rad())?;
             // An outlier field projects as the main image: CASA's outlier

@@ -32,8 +32,8 @@ use casa_imaging_runtime::pass::{
 use casa_imaging_runtime::{
     Admitted, CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup,
     MinorLayout, PsfCache, Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes,
-    prepare_bytes, prepare_bytes_for, prepare_minor_cycle, psf_cache_bytes, run_bytes,
-    run_bytes_for, run_minor_cycle, run_phase,
+    prepare_bytes, prepare_bytes_for, prepare_minor_cycle_with_residual_mask, psf_cache_bytes,
+    run_bytes, run_bytes_for, run_minor_cycle, run_phase,
 };
 
 use super::charts::{Chart, ChartStitch, charts};
@@ -291,7 +291,13 @@ pub(crate) fn run(
         (minor_response, inputs.primary_beam),
         &inputs.masks,
         inputs.psf_cutoff,
-        inputs.psf_beams.clone(),
+        match mvc
+            .and_then(|view| view.start)
+            .and_then(|start| start.saved_psf.as_ref())
+        {
+            Some(saved) => saved.taylor.psf_pixel_beams(),
+            None => inputs.psf_beams.clone(),
+        },
         inputs.mask_beams.clone(),
     );
     let mask_plans = inputs.masks.clone();
@@ -335,7 +341,13 @@ pub(crate) fn run(
         &cancel,
         diagnostics,
         summary,
-        || run.initial(!cleaning, mvc.is_some_and(|view| view.start.is_some())),
+        || {
+            run.initial(
+                !cleaning,
+                mvc.and_then(|view| view.start)
+                    .is_some_and(|start| start.projection_beams.is_some()),
+            )
+        },
     )?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {

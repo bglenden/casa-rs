@@ -57,6 +57,7 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -97,6 +98,8 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
     let mut published = Vec::new();
     let result = publish_mvc_products(
         MvcProductSource {
+            saved: None,
+            saved_residual_mask_bytes: None,
             cube_problem: &cube,
             cube_model_created: true,
             cube: ProductSource {
@@ -222,6 +225,7 @@ fn mvc_native_publication_honours_precancel_before_admission() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -234,6 +238,8 @@ fn mvc_native_publication_honours_precancel_before_admission() {
     let mut published = Vec::new();
     let result = publish_mvc_products(
         MvcProductSource {
+            saved: None,
+            saved_residual_mask_bytes: None,
             cube_problem: &cube,
             cube_model_created: true,
             cube: ProductSource {
@@ -303,6 +309,7 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -311,6 +318,8 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         publish_mvc_products(
             MvcProductSource {
+                saved: None,
+                saved_residual_mask_bytes: None,
                 cube_problem: &cube,
                 cube_model_created: true,
                 cube: ProductSource {
@@ -414,6 +423,7 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -455,6 +465,8 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
     let mut published = Vec::new();
     let result = publish_mvc_products(
         MvcProductSource {
+            saved: None,
+            saved_residual_mask_bytes: None,
             cube_problem: &cube,
             cube_model_created: true,
             cube: ProductSource {

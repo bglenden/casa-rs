@@ -34,6 +34,7 @@ impl Input {
             (shape, polarizations, channels),
             (true, residual),
             weight,
+            weight,
         )
         .map(Self)
     }

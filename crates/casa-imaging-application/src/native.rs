@@ -504,6 +504,7 @@ pub(crate) fn run(
                     taylor_view: mvc_taylor,
                     taylor_completion: outcome.mvc_taylor,
                     cube_model_created,
+                    major_cycles: outcome.major_cycle_count,
                 },
                 &runtime,
                 publication_after_cycles(publication, existing.as_ref(), outcome.major_cycle_count),
@@ -584,6 +585,7 @@ struct RunProductInputs<'a> {
     taylor_view: Option<crate::compile::CompiledTaylorView>,
     taylor_completion: Option<Admitted<crate::mvc::TaylorCompletion>>,
     cube_model_created: bool,
+    major_cycles: usize,
 }
 
 /// Reduce MVC's cube before staging both families, or publish an ordinary run.
@@ -601,6 +603,7 @@ fn publish_run_products(
         taylor_view,
         taylor_completion,
         cube_model_created,
+        major_cycles,
     } = inputs;
     if let Some(view) = taylor_view {
         let crate::compile::CompiledTaylorView {
@@ -608,8 +611,9 @@ fn publish_run_products(
             coordinates,
             expansion_reference_hz,
             reservation: _view_reservation,
-            start: _,
+            start,
         } = view;
+        let saved = start.as_ref().and_then(|start| start.saved_psf.as_ref());
         let taylor = if let Some(taylor) = taylor_completion {
             taylor
         } else {
@@ -621,6 +625,7 @@ fn publish_run_products(
                     expansion_reference_hz,
                     controls: publication.controls,
                     centres: publication.primary_beam_centres.as_ref(),
+                    read_saved_residual: false,
                 },
                 (&runtime.host, &runtime.resource_policy, &runtime.cancel),
             )?
@@ -633,6 +638,10 @@ fn publish_run_products(
                 taylor_problem: &taylor_problem,
                 taylor,
                 taylor_coordinates: coordinates,
+                saved,
+                saved_residual_mask_bytes: (major_cycles == 0)
+                    .then(|| saved.and_then(|saved| saved.taylor.taylor_mask_read_bytes()))
+                    .flatten(),
             },
             runtime,
             publication,
@@ -675,8 +684,12 @@ struct Products {
 /// reconstruction masks and the faceted domains' facets' own sums of
 /// weights.
 enum ProductPrimaryBeam<'a> {
-    MvcCube(&'a [f32]),
-    MvcTaylor(&'a [f32]),
+    MvcCube(
+        &'a [f32],
+        Option<&'a casa_imaging_products::SavedMosaicBeam>,
+        bool,
+    ),
+    MvcTaylor(&'a [f32], Option<&'a crate::compile::MvcSavedPsf>),
     SavedMosaic(&'a casa_imaging_products::SavedMosaicBeam),
 }
 
@@ -762,6 +775,8 @@ struct MvcProductSource<'a> {
     cube: ProductSource<'a>,
     taylor_problem: &'a CompiledProblem,
     taylor: Admitted<crate::mvc::TaylorCompletion>,
+    saved: Option<&'a crate::compile::MvcSavedPsf>,
+    saved_residual_mask_bytes: Option<u64>,
     taylor_coordinates: Vec<(
         casa_imaging_model::ImageDomainRole,
         casa_coordinates::CoordinateSystem,
@@ -804,6 +819,8 @@ fn publish_mvc_products(
         taylor_problem,
         taylor,
         taylor_coordinates,
+        saved,
+        saved_residual_mask_bytes,
     } = source;
     let Admitted {
         value:
@@ -823,7 +840,9 @@ fn publish_mvc_products(
         primary_beam: _,
     } = cube;
     let taylor_publication = ApplicationPublication {
-        controls: publication.controls,
+        controls: saved_residual_mask_bytes.map_or(publication.controls, |bytes| {
+            publication.controls.preserving_taylor_residuals(bytes)
+        }),
         primary_beam_centres: publication.primary_beam_centres.clone(),
         vla_selection_store: None,
         writer: publication.writer.with_coordinates(taylor_coordinates),
@@ -837,7 +856,11 @@ fn publish_mvc_products(
             mem_alpha: None,
             saved_psf_beams,
             vla_selection_hz,
-            primary_beam: Some(ProductPrimaryBeam::MvcCube(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcCube(
+                &primary_beam,
+                saved.map(|saved| &saved.cube_pb),
+                saved_residual_mask_bytes.is_some(),
+            )),
         },
         runtime,
         &publication,
@@ -852,9 +875,9 @@ fn publish_mvc_products(
             masks,
             facet_sum_weights: Default::default(),
             mem_alpha: None,
-            saved_psf_beams: None,
+            saved_psf_beams: saved.and_then(|saved| saved.taylor.psf_beams()),
             vla_selection_hz: None,
-            primary_beam: Some(ProductPrimaryBeam::MvcTaylor(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcTaylor(&primary_beam, saved)),
         },
         runtime,
         &taylor_publication,
@@ -923,15 +946,33 @@ fn stage_products(
         vla_selection_hz,
         primary_beam,
     } = source;
+    let mut controls = publication.controls;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
+    let mut preserve_cube_residual = false;
     if let Some(beam) = primary_beam {
-        inputs = match beam {
-            ProductPrimaryBeam::MvcCube(beam) => inputs.with_cube_taylor_primary_beam(beam)?,
-            ProductPrimaryBeam::MvcTaylor(beam) => inputs
-                .with_taylor_primary_beam(beam)?
-                .with_taylor_residual_sum_weight(1.0)?,
-            ProductPrimaryBeam::SavedMosaic(beam) => inputs.with_saved_mosaic_beam(beam)?,
+        let saved = match beam {
+            ProductPrimaryBeam::MvcCube(beam, saved, preserve_residual) => {
+                preserve_cube_residual = preserve_residual;
+                if !preserve_residual {
+                    inputs = inputs.with_cube_taylor_primary_beam(beam)?;
+                }
+                saved.map(|beam| (beam, false))
+            }
+            ProductPrimaryBeam::MvcTaylor(beam, saved) => {
+                inputs = inputs
+                    .with_taylor_primary_beam(beam)?
+                    .with_taylor_residual_sum_weight(1.0)?;
+                saved.map(|saved| (&saved.taylor_pb, saved.taylor.has_higher_primary_beam()))
+            }
+            ProductPrimaryBeam::SavedMosaic(beam) => {
+                inputs = inputs.with_saved_mosaic_beam(beam)?;
+                None
+            }
         };
+        if let Some((beam, higher)) = saved {
+            inputs = inputs.with_saved_mosaic_beam(beam)?;
+            controls = controls.preserving_mosaic_products(beam.reading_bytes(), higher);
+        }
     }
     if let Some(frequency) = vla_selection_hz {
         inputs = inputs.with_vla_selection_frequency(frequency);
@@ -951,9 +992,12 @@ fn stage_products(
     if !facet_sum_weights.is_empty() {
         inputs = inputs.with_facet_sum_weights(&facet_sum_weights);
     }
-    let mut planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
+    let mut planned = PlannedContinuumGeneration::new(&inputs, &controls)?;
     if omit_uncreated_mvc_cube_model {
         planned = planned.without_uncreated_mvc_cube_model();
+    }
+    if preserve_cube_residual {
+        planned = planned.without_mvc_cube_residual();
     }
     // The products' scratch grows with their lanes, and the gridding's
     // workers were chosen without it: the products take the most lanes, up

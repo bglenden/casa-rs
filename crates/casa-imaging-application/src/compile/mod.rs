@@ -38,7 +38,7 @@ mod survey;
 mod time_selection;
 mod virtual_selection;
 
-pub(crate) use mvc::{CompiledTaylorView, MvcStart, TaylorView};
+pub(crate) use mvc::{CompiledTaylorView, MvcSavedPsf, MvcStart, TaylorView};
 pub(crate) use opening::OpenedStore;
 pub(crate) use start_model::StartModel;
 
@@ -320,7 +320,7 @@ pub(crate) fn prepare_with_view_hooks(
         request,
         &mut domains[0],
         (spectral.output_channels, reconstruction_planes),
-        mvc_taylor.as_ref().is_some_and(|view| view.start.is_some()),
+        mvc_taylor.as_ref().and_then(|view| view.start.as_ref()),
         context,
         &mut deployment.publication.writer,
     )?;

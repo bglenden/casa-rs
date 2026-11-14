@@ -322,6 +322,16 @@ impl PlannedContinuumGeneration {
         self
     }
 
+    /// Keep the cube residual on disk when an MVC restart stopped before
+    /// the major cycle that would have replaced it.
+    #[must_use]
+    pub fn without_mvc_cube_residual(mut self) -> Self {
+        let mut members = self.members.into_vec();
+        members.retain(|member| !matches!(member.role, ProductRole::Residual(ProductTerm::Single)));
+        self.members = members.into_boxed_slice();
+        self
+    }
+
     /// Return planned members in exact publication order.
     #[must_use]
     pub const fn members(&self) -> &[PlannedMember] {

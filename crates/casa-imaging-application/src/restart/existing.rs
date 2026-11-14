@@ -72,6 +72,7 @@ impl ExistingProducts {
         (shape, polarizations, channels): ([usize; 2], usize, usize),
         (psf, residual): (bool, bool),
         weight: bool,
+        read_taylor_mask: bool,
     ) -> Result<Self, PrepareError> {
         let planes = match family {
             Family::Single => channels,
@@ -80,7 +81,7 @@ impl ExistingProducts {
         let mut tile_bytes = 0;
         let mut mosaic_beam = None;
         let mut taylor_mask_read_bytes =
-            (residual && weight && matches!(family, Family::Taylor { .. })).then_some(0);
+            (residual && read_taylor_mask && matches!(family, Family::Taylor { .. })).then_some(0);
         let mut masked_taylor_residual = None;
         let mut bases = Vec::new();
         if psf {
@@ -424,6 +425,60 @@ impl ExistingProducts {
         };
         self.fill_residual(&mut images)?;
         Ok(images)
+    }
+
+    /// MVC Taylor moments already use the normalized image units of the
+    /// solver and publisher. Read each saved PSF directly in that scale.
+    pub(crate) fn mvc_taylor_psf(&self, psf: &mut [f32]) -> Result<[f32; 3], ImageError> {
+        let cells = self.shape[0] * self.shape[1];
+        let mut weights = [0.0; 3];
+        for (term, weight) in weights.iter_mut().enumerate() {
+            let plane = self.read(&format!("psf.tt{term}"), 0..1)?;
+            self.write_plane(
+                &mut psf[term * cells..(term + 1) * cells],
+                &plane,
+                (0, 0),
+                1.0,
+            );
+            let sum = self.read(&format!("sumwt.tt{term}"), 0..1)?;
+            *weight = sum[&[0, 0, 0, 0][..]];
+        }
+        Ok(weights)
+    }
+
+    /// Read the principal saved Taylor residual's default mask for
+    /// SIImageStore's initial peak measurement.
+    pub(crate) fn mvc_residual_mask(
+        &self,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
+        let image = PagedImage::<f32>::open_with_cache(
+            product_path(&self.prefix, "residual.tt0"),
+            CACHE_BYTES,
+        )?;
+        let [nx, ny] = self.shape;
+        let mask = image.get_mask_slice(&[0; 4], &[nx, ny, 1, 1], &[1; 4])?;
+        Ok(mask.map(|mask| {
+            casa_imaging_deconvolution::Support::new(
+                casa_imaging_deconvolution::PlaneShape::new(nx, ny),
+                mask.iter().copied().collect(),
+            )
+        }))
+    }
+
+    /// Read MVC's saved normalized Taylor residuals independently of the
+    /// cube. CASA's first minor cycle can use these before any cube refresh.
+    pub(crate) fn read_mvc_taylor_residual(&self, residual: &mut [f32]) -> Result<(), ImageError> {
+        let cells = self.shape[0] * self.shape[1];
+        for term in 0..2 {
+            let plane = self.read(&format!("residual.tt{term}"), 0..1)?;
+            self.write_plane(
+                &mut residual[term * cells..(term + 1) * cells],
+                &plane,
+                (0, 0),
+                1.0,
+            );
+        }
+        Ok(())
     }
 
     /// Set the residual of `images`, a pass's images of domain 0 with

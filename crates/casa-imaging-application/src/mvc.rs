@@ -10,7 +10,7 @@ use casa_imaging_model::{CompiledProblem, ModelSample, ProductNormalization, Rec
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, PlannedContinuumGeneration,
     PrimaryBeamCentres, ProductsError, encode_mvc_blank_taylor_planes, encode_mvc_taylor_planes,
-    reduce_mvc_cube,
+    reduce_mvc_cube, reduce_mvc_cube_with_common_pb,
 };
 use casa_imaging_runtime::pass::Cancel;
 use casa_imaging_runtime::{Admitted, Cancelled, Demand, HostResources, ResourcePolicy, admit};
@@ -25,6 +25,7 @@ pub(crate) struct TaylorAssemblyInputs<'a> {
     pub(crate) expansion_reference_hz: f64,
     pub(crate) controls: ContinuumProductControls,
     pub(crate) centres: Option<&'a PrimaryBeamCentres>,
+    pub(crate) read_saved_residual: bool,
 }
 
 /// The Taylor state and common PB, kept under the returned admission.
@@ -41,7 +42,7 @@ pub(crate) fn assemble_taylor_completion(
     inputs: TaylorAssemblyInputs<'_>,
     resources: (&HostResources, &ResourcePolicy, &Cancel),
 ) -> Result<Admitted<TaylorCompletion>, NativeError> {
-    assemble_taylor_with_model(inputs, None, resources)
+    assemble_taylor_with_model(inputs, None, None, resources)
 }
 
 /// Assemble the new Taylor normal state around a model prepared by its
@@ -53,6 +54,7 @@ pub(crate) fn assemble_taylor_completion(
 pub(crate) fn assemble_taylor_with_model(
     inputs: TaylorAssemblyInputs<'_>,
     model: Option<casa_imaging_deconvolution::PreparedFinalModel>,
+    saved: Option<&crate::compile::MvcSavedPsf>,
     (host, policy, cancel): (&HostResources, &ResourcePolicy, &Cancel),
 ) -> Result<Admitted<TaylorCompletion>, NativeError> {
     if cancel.is_cancelled() {
@@ -65,6 +67,7 @@ pub(crate) fn assemble_taylor_with_model(
         expansion_reference_hz,
         controls,
         centres,
+        read_saved_residual,
     } = inputs;
     if cube_problem.observation() != taylor_problem.observation() {
         return Err(NativeError::Other(
@@ -98,7 +101,18 @@ pub(crate) fn assemble_taylor_with_model(
             std::io::Error::other("MVC Taylor model does not match its view").into(),
         ));
     }
-    let memory = taylor_demand(shape, samples)?;
+    let saved_workspace = saved.map_or(0, |saved| {
+        saved
+            .cube_pb
+            .reading_bytes()
+            .max(saved.taylor_pb.reading_bytes())
+            .max(saved.taylor.reading_bytes(1))
+    });
+    let memory = taylor_demand(shape, samples)?
+        .checked_add(saved_workspace)
+        .ok_or(ProductsError::ResourceDemandOverflow(
+            "saved MVC Taylor conversion",
+        ))?;
     let reservation = admit(
         host,
         policy,
@@ -126,15 +140,35 @@ pub(crate) fn assemble_taylor_with_model(
         cube_inputs = cube_inputs.with_primary_beam_centres(centres);
     }
     let plan = PlannedContinuumGeneration::new(&cube_inputs, &controls)?;
-    reduce_mvc_cube(
-        &plan,
-        &cube_inputs,
-        expansion_reference_hz,
-        &mut mean,
-        &mut psf,
-        &mut residual,
-        &mut sumwt,
-    )?;
+    if let Some(saved) = saved {
+        mean = saved.taylor_pb.read_values(0, 0)?;
+        if read_saved_residual {
+            saved
+                .taylor
+                .read_mvc_taylor_residual(&mut residual)
+                .map_err(other)?;
+        } else {
+            let saved_cube_inputs = cube_inputs.with_saved_mosaic_beam(&saved.cube_pb)?;
+            reduce_mvc_cube_with_common_pb(
+                &plan,
+                &saved_cube_inputs,
+                expansion_reference_hz,
+                &mean,
+                &mut residual,
+            )?;
+        }
+        sumwt = saved.taylor.mvc_taylor_psf(&mut psf).map_err(other)?;
+    } else {
+        reduce_mvc_cube(
+            &plan,
+            &cube_inputs,
+            expansion_reference_hz,
+            &mut mean,
+            &mut psf,
+            &mut residual,
+            &mut sumwt,
+        )?;
+    }
     if cancel.is_cancelled() {
         return Err(Cancelled.into());
     }

@@ -19,7 +19,7 @@ pub(crate) use grid::check_grid;
 mod mask;
 pub(crate) use mask::MaskInput;
 mod numbering;
-pub(crate) use numbering::next_prefix;
+pub(crate) use numbering::next_prefixes;
 
 use std::{
     fmt, fs, io,

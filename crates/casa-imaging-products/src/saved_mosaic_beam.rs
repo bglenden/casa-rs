@@ -43,6 +43,15 @@ impl SavedMosaicBeam {
         })
     }
 
+    /// Open the saved beam with its bounded tile cache.
+    ///
+    /// # Errors
+    ///
+    /// The image cannot be opened.
+    pub fn open(&self) -> Result<PagedImage<f32>, ImageError> {
+        PagedImage::open_with_cache(&self.path, Self::CACHE_BYTES)
+    }
+
     /// CASA axis order, `[x, y, Stokes, channel]`.
     #[must_use]
     pub const fn shape(&self) -> [usize; 4] {
@@ -100,7 +109,7 @@ impl SavedMosaicBeam {
         &self,
         slice: impl FnOnce(PagedImage<f32>) -> Result<T, ImageError>,
     ) -> Result<T, ProductsError> {
-        PagedImage::open_with_cache(&self.path, Self::CACHE_BYTES)
+        self.open()
             .and_then(slice)
             .map_err(|source| ProductsError::SavedMosaicBeam {
                 path: self.path.clone(),

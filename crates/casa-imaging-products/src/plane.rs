@@ -111,7 +111,13 @@ pub(crate) fn produce_plane_member(
         ) => restored_plane(request, valid),
         ProductRole::PrimaryBeam(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane),
+        ) => primary_beam_plane(
+            primary_beam_model,
+            inputs,
+            member.axes().domain(),
+            plane,
+            request.polarization,
+        ),
         ProductRole::PbCorrectedImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
@@ -124,8 +130,13 @@ pub(crate) fn produce_plane_member(
                 let values = beam.read_values(plane.output_channel(), request.polarization)?;
                 return correct_primary_beam(&restored, &values, 0.0);
             }
-            let primary_beam =
-                primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
+            let primary_beam = primary_beam_plane(
+                primary_beam_model,
+                inputs,
+                member.axes().domain(),
+                plane,
+                request.polarization,
+            )?;
             correct_primary_beam(
                 &restored,
                 &primary_beam,
@@ -381,7 +392,7 @@ pub(crate) fn product_plane_validity(
                 return beam.read_mask(plane.output_channel(), polarization);
             }
             Ok(
-                primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?
+                primary_beam_plane(primary_beam_model, inputs, domain_role, plane, polarization)?
                     .into_iter()
                     .map(|value| match policy.comparison() {
                         ProductSupportComparison::StrictlyGreater => value > policy.cutoff(),
@@ -402,7 +413,11 @@ pub(crate) fn primary_beam_plane(
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &ImageDomainRole,
     plane: &FinalNormalPlaneReader<'_>,
+    polarization: usize,
 ) -> Result<Vec<f32>, ProductsError> {
+    if let Some(beam) = inputs.saved_mosaic_beam() {
+        return beam.read_values(plane.output_channel(), polarization);
+    }
     let model = model.expect("planning refuses a PB product or mask without a primary-beam model");
     if let Some(beam) = inputs.analytic_primary_beam(model) {
         return beam.plane(domain_role, plane.output_channel());

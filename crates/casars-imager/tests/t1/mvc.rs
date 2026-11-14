@@ -690,6 +690,270 @@ fn mvc_start_model_uses_the_saved_cube_and_taylor_beams() {
     assert!((row("modelFlux") - tt0_flux).abs() < 1e-6);
 }
 
+/// Without explicit startmodel, CASA predicts the first resumed residual
+/// from the saved cube model and initializes CLEAN with the saved Taylor
+/// coefficients. Editing them independently makes that distinction visible.
+#[test]
+fn mvc_restart_reads_each_saved_model_on_its_own_grid() {
+    let observation = weighted_observation();
+    let name = "mvc-restart";
+    let controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+        "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+    });
+    let (_, dirty) = observation.image("mvc-before-clean", {
+        let mut values = controls.clone();
+        values["niter"] = json!(0);
+        values
+    });
+    let mut boxed = controls.clone();
+    boxed["mask"] = json!("box[[148pix,140pix],[156pix,148pix]]");
+    let (_, first) = observation.image(name, boxed);
+    let root = observation.measurement_set().parent().unwrap();
+    let point = [152, 144];
+    let (scale, taylor_scales) = (0.6, [0.8, 0.5]);
+    for (suffix, scale) in [
+        (".model", scale),
+        (".model.tt0", taylor_scales[0]),
+        (".model.tt1", taylor_scales[1]),
+    ] {
+        let mut image =
+            casa_images::PagedImage::<f32>::open(root.join(format!("{name}{suffix}"))).unwrap();
+        let pixels = image.get().unwrap().mapv(|value| value * scale);
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let mut stopped = controls;
+    stopped["threshold"] = json!("100Jy");
+    let (summary, resumed) = observation.image(name, stopped);
+    assert_eq!(summary.actual_minor_iterations, 0);
+    assert_eq!(summary.major_cycles, 1);
+    assert_eq!(resumed.get(".mask").pixels, first.get(".mask").pixels);
+    for channel in 0..3 {
+        let model = first.get(".model").plane(channel)[point];
+        assert!(model > 0.01);
+        assert_eq!(resumed.get(".model").plane(channel)[point], scale * model);
+        let uncleaned = dirty.get(".residual").plane(channel)[point];
+        let cleaned = first.get(".residual").plane(channel)[point];
+        let actual = resumed.get(".residual").plane(channel)[point];
+        let expected = uncleaned + scale * (cleaned - uncleaned);
+        assert!(
+            (actual - expected).abs() < 1e-5,
+            "{channel}: {actual} vs {expected}"
+        );
+    }
+    for (term, scale) in taylor_scales.into_iter().enumerate() {
+        let suffix = format!(".model.tt{term}");
+        let original = first.get(&suffix).pixels[point];
+        assert!(original.abs() > 0.01);
+        assert_eq!(resumed.get(&suffix).pixels[point], scale * original);
+    }
+}
+
+/// Skipping makePSF preserves the cube and Taylor PSFs, beams and weights.
+#[test]
+fn mvc_restart_keeps_the_saved_psf_and_primary_beam_families() {
+    use super::restart::{assert_unchanged, snapshot};
+    use casa_images::PagedImage;
+
+    let observation = weighted_observation();
+    let name = "mvc-saved-psf";
+    let mut controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+        "niter": 1, "cycleniter": 1, "pbcor": true, "pblimit": 0.1,
+    });
+    let (_, seed) = observation.image(name, controls.clone());
+    let path = |suffix: &str| observation.scratch(&format!("{name}{suffix}"));
+    for (suffix, scale) in [(".pb", 0.8), (".pb.tt0", 0.7), (".psf.tt1", 0.5)] {
+        let mut image = PagedImage::<f32>::open(path(suffix)).unwrap();
+        let pixels = image.get().unwrap().mapv(|value| value * scale);
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let saved = [
+        ".pb",
+        ".pb.tt0",
+        ".pb.tt1",
+        ".psf",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".sumwt",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+    ]
+    .map(path);
+    let before = saved.each_ref().map(|path| snapshot(path));
+    controls["calcpsf"] = json!(false);
+    controls["threshold"] = json!("100Jy");
+    let (summary, resumed) = observation.image(name, controls);
+    assert_eq!(summary.actual_minor_iterations, 0);
+    assert_eq!(summary.major_cycles, 1);
+    assert_eq!(resumed.get(".mask").pixels, seed.get(".mask").pixels);
+    for (path, before) in saved.iter().zip(before) {
+        assert_unchanged(&before, &snapshot(path));
+    }
+    let point = [152, 144];
+    for channel in 0..3 {
+        let expected = seed.get(".residual").plane(channel)[point] * (0.7 / 0.8);
+        let actual = resumed.get(".residual").plane(channel)[point];
+        assert!(
+            (actual - expected).abs() < 1e-5,
+            "{channel}: {actual} vs {expected}"
+        );
+    }
+    // The restored image uses the inverse of the saved Taylor Hessian.
+    // The same model and restoring beam cancel between the two runs.
+    let principal_tt1 = |products: &super::fixture::Products, off_diagonal: f64| {
+        let centre = [128, 128];
+        let a = f64::from(seed.get(".psf.tt0").pixels[centre]);
+        let b = f64::from(seed.get(".psf.tt1").pixels[centre]) * off_diagonal;
+        let c = f64::from(seed.get(".psf.tt2").pixels[centre]);
+        let r0 = f64::from(products.get(".residual.tt0").pixels[point]);
+        let r1 = f64::from(products.get(".residual.tt1").pixels[point]);
+        a * (a * r1 - b * r0) / (a * c - b * b)
+    };
+    let expected = principal_tt1(&resumed, 0.5) - principal_tt1(&seed, 1.0);
+    let recomputed = principal_tt1(&resumed, 1.0) - principal_tt1(&seed, 1.0);
+    assert!((recomputed - expected).abs() > 0.1);
+    let actual = f64::from(resumed.get(".image.tt1").pixels[point])
+        - f64::from(seed.get(".image.tt1").pixels[point]);
+    assert!((actual - expected).abs() < 1e-5, "{actual} vs {expected}");
+    let pb = super::fixture::Product::open(&path(".pb.tt0"));
+    let saved_mask = pb.mask().expect("saved Taylor PB mask");
+    let pixels = pb.values();
+    let refreshed_mask = ndarray::Zip::from(&saved_mask)
+        .and(&pixels)
+        .map_collect(|&valid, &value| valid && value > 0.1);
+    assert_ne!(saved_mask, refreshed_mask);
+    for term in 0..2 {
+        for suffix in [format!(".residual.tt{term}"), format!(".image.tt{term}")] {
+            assert_eq!(resumed.get(&suffix).mask().as_ref(), Some(&refreshed_mask));
+        }
+        let corrected = format!(".image.tt{term}.pbcor");
+        assert_eq!(resumed.get(&corrected).mask().as_ref(), Some(&saved_mask));
+    }
+}
+
+/// A saved Taylor residual seeds the minor solver before any cube gridding.
+/// If the controller stops there, both residual families stay on disk and
+/// restoration copies the saved Taylor residual mask.
+#[test]
+fn mvc_cleans_the_saved_taylor_residual_before_its_first_major_cycle() {
+    use super::restart::{assert_unchanged, snapshot};
+    use casa_images::PagedImage;
+
+    let observation = weighted_observation();
+    let name = "mvc-saved-residual";
+    let mut controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+        "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": 0.1,
+    });
+    let (_, seed) = observation.image(name, controls.clone());
+    let path = |suffix: &str| observation.scratch(&format!("{name}{suffix}"));
+    let centre = [128, 128];
+    let target = seed
+        .get(".pb.tt0")
+        .pixels
+        .indexed_iter()
+        .find(|&(_, &pb)| (0.4..0.6).contains(&pb))
+        .map(|((x, y), _)| [x, y])
+        .expect("off-axis primary-beam pixel");
+    let [a, b, c] = [".psf.tt0", ".psf.tt1", ".psf.tt2"]
+        .map(|suffix| f64::from(seed.get(suffix).pixels[centre]));
+    let component = [0.75, -0.25];
+    let values = [
+        (a * component[0] + b * component[1]) / a,
+        (b * component[0] + c * component[1]) / a,
+    ];
+    let mut mask = seed.get(".pb.tt0").mask().expect("Taylor PB mask");
+    assert!(mask[[128, 128, 0, 0]]);
+    mask[[128, 128, 0, 0]] = false;
+    assert!(mask[[target[0], target[1], 0, 0]]);
+    for (term, value) in values.into_iter().enumerate() {
+        let mut residual = PagedImage::<f32>::open(path(&format!(".residual.tt{term}"))).unwrap();
+        let mut pixels = ndarray::ArrayD::zeros(ndarray::IxDyn(residual.shape()));
+        pixels[[target[0], target[1], 0, 0]] = value as f32;
+        if term == 0 {
+            pixels[[128, 128, 0, 0]] = 50.0;
+        }
+        residual.put_slice(&pixels, &[0; 4]).unwrap();
+        residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+        residual.save().unwrap();
+    }
+    let saved = [".residual", ".residual.tt0", ".residual.tt1"].map(path);
+    let before = saved.each_ref().map(|path| snapshot(path));
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    controls["threshold"] = json!("2Jy");
+    let hidden = observation.scratch("withheld-residual-tt1");
+    std::fs::rename(&saved[2], &hidden).unwrap();
+    let error = observation
+        .try_image(name, controls.clone())
+        .err()
+        .expect("missing saved Taylor residual must be refused");
+    assert!(error.contains(".residual.tt1"), "{error}");
+    std::fs::rename(hidden, &saved[2]).unwrap();
+    for (path, before) in saved.iter().zip(&before) {
+        assert_unchanged(before, &snapshot(path));
+    }
+    let (stopped, restored) = observation.image(name, controls.clone());
+    assert_eq!((stopped.minor_iterations, stopped.major_cycles), (0, 0));
+    for (path, before) in saved.iter().zip(&before) {
+        assert_unchanged(before, &snapshot(path));
+    }
+    for term in 0..2 {
+        let suffix = format!(".image.tt{term}");
+        assert_eq!(restored.get(&suffix).mask().as_ref(), Some(&mask));
+        let value = restored.get(&suffix).pixels[target] - seed.get(&suffix).pixels[target];
+        assert!(value.abs() > 0.2, "edited residual did not reach {suffix}");
+    }
+
+    // The pixel mask controls convergence. The CLEAN mask separately
+    // controls placement, so clear the masked spike before solving.
+    let mut residual = PagedImage::<f32>::open(&saved[1]).unwrap();
+    residual
+        .put_slice(
+            &ndarray::Array4::zeros((1, 1, 1, 1)).into_dyn(),
+            &[128, 128, 0, 0],
+        )
+        .unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    // An absent mask on the principal residual leaves every pixel
+    // eligible for the peak, even when term one still has a pixel mask.
+    let mut residual = PagedImage::<f32>::open(&saved[1]).unwrap();
+    residual.unset_default_mask().unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    controls["pblimit"] = json!(0.95);
+    controls["threshold"] = json!("0.25Jy");
+    let (summary, cleaned) = observation.image(name, controls);
+    assert_eq!((summary.minor_iterations, summary.major_cycles), (1, 1));
+    for (term, coefficient) in component.into_iter().enumerate() {
+        let suffix = format!(".model.tt{term}");
+        let value = cleaned.get(&suffix).pixels[target];
+        let expected = seed.get(&suffix).pixels[target] + (0.1 * coefficient) as f32;
+        assert!(
+            (value - expected).abs() < 0.001 * expected.abs(),
+            "{suffix}: {value} vs {expected}"
+        );
+        let suffix = format!(".residual.tt{term}");
+        assert_eq!(
+            cleaned.get(&suffix).mask(),
+            Some(seed.get(".pb.tt0").values().mapv(|value| value > 0.95)),
+            "the major cycle rebuilds the residual mask from the PB"
+        );
+    }
+    for (path, before) in saved.iter().zip(&before) {
+        assert_ne!(*before, snapshot(path));
+    }
+}
+
 /// CASA copies the common Taylor PB support onto MVC's restored and
 /// residual Taylor images when pblimit is positive, while cleaning the
 /// source through repeated cube-major cycles (#1069).

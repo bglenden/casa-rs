@@ -3344,7 +3344,7 @@ or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 
 - Date noted: 2026-10-31
 - Status: CASA bug; owner approved preserving the correct directory (#944).
-  Native `restart=False` numbering is still unfinished.
+  Native numbering keeps absolute paths for both the main image and outliers.
 - Affected build/code: CASA 6.7.6.14, casatasks
   `private/imagerhelpers/input_parameters.py`, `incrementImageNameList`.
 
@@ -3355,8 +3355,8 @@ absolute imagename under `/Volumes/`, this instead produces `olumes/` and
 fails to create the numbered PSF. Relative prefixes in the same probe
 correctly produce `_2` and `_3`. The exact build, parameters and failure
 are recorded on #944 and in the lifecycle receipt linked from the generated
-compatibility reference. The approved casa-rs target keeps the requested
-absolute directory; this decision is not evidence that restart is complete.
+compatibility reference. The native implementation keeps the requested absolute directory and
+uses the same suffix across the main and outlier prefixes.
 
 ## `tclean` cleans nothing with `nsigma`, `fastnoise=False` and no mask
 
@@ -5461,6 +5461,37 @@ ordinary CASA references. These controls agree with native prediction at
 5.4e-7 NRMS in the J2000 case, without changing the 1e-3 threshold. Reproduce
 a frequency control with `sm_image_layouts_oracle.py --case
 frame_j2000_mosaic --constant-frequency 210000000000 --out OUT --fixture FILE`.
+
+## MVC restoration can drop a newly generated higher-term residual mask
+
+In CASA 6.7.6.14, seed standard, two-term MVC on field 0 of
+`refim_oneshiftpoint.mosaic.ms` with 512 pixels per axis, 10 arcsec cells,
+three channels and `pblimit=0.1`. Remove both saved Taylor residual
+default masks, scale the residual planes independently, and set a 50 Jy
+off-axis pixel in term zero. Resume with `calcpsf=False, calcres=False`,
+five iterations and a 2 Jy threshold.
+
+The first major cycle replaces both Taylor residual tables and their
+masks in `PyMtmfsViaCubeSynthesisImager.cube2tt`. Tracing table identity
+and mask support shows 62,955 valid pixels on both terms immediately
+before `SDAlgorithmMSMFS::restore`. After restoration, term one's table
+header has been replaced again and its default mask is absent. Term
+zero retains all 62,955 valid pixels. The restored term one likewise
+has no mask. Restoration is meant to copy each residual's mask to its
+image and preserve the underlying residual. The observed mask loss
+occurs during restoration after the Python helper has recreated tables
+that the minor cycle also accesses.
+
+casa-rs retains the freshly generated residual mask and copies its
+support to the corresponding restored image. The masked and unmasked
+initial convergence controls follow CASA's saved term-zero mask,
+including all valid pixels when that initial mask is absent. The
+additional both-unmasked probe agrees on the controller and numeric
+products. Only the two term-one masks differ, by 199,189 pixels. Reinstating
+just those masks in CASA after restoration gives all 24 products,
+exact masks and a maximum normalized RMS of 8.309e-6.
+See [#944](https://github.com/bglenden/casa-rs/issues/944) and
+[#1414](https://github.com/bglenden/casa-rs/pull/1414).
 
 ## Simulator component-list copies lose the limb-darkening exponent
 
