@@ -173,10 +173,13 @@ impl Run<'_> {
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
         // The residual each wave takes, read beside the pass.
         let window = self.read_window(plan.residency);
-        let reading = self.existing.as_ref().map_or_else(
-            || self.residual_bytes(window),
-            |existing| existing.reading_bytes(window) + existing.images_bytes(window),
-        );
+        let reading = self
+            .existing
+            .iter()
+            .chain(&self.outlier_products)
+            .map(|saved| saved.reading_bytes(window) + saved.images_bytes(window))
+            .max()
+            .unwrap_or_else(|| self.residual_bytes(window));
         let _reading = self.admit("existing residual", reading)?;
         let major = self.reconcile(cycle, modes, false, false, plan)?;
         self.retain(&major, pass)?;

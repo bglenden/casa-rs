@@ -1106,6 +1106,15 @@ fn check_refilled_field_sum_weight(directory: &Path, mut values: serde_json::Val
 /// threshold stop before the first major cycle keeps the saved tables.
 #[test]
 fn same_prefix_restart_reuses_both_fields_saved_residuals() {
+    check_saved_outlier_residuals(false);
+}
+
+#[test]
+fn same_prefix_restart_rebuilds_both_psfs_and_uses_saved_residuals() {
+    check_saved_outlier_residuals(true);
+}
+
+fn check_saved_outlier_residuals(rebuild_psfs: bool) {
     let observation = Observation::synthesise(&[(
         "point",
         Component {
@@ -1188,7 +1197,7 @@ fn same_prefix_restart_reuses_both_fields_saved_residuals() {
         files
     };
     let before = saved.each_ref().map(|path| stable(path));
-    values["calcpsf"] = json!(false);
+    values["calcpsf"] = json!(rebuild_psfs);
     values["calcres"] = json!(false);
     values["threshold"] = json!("2.5Jy");
     let hidden = directory.join("withheld-residual");
@@ -1236,6 +1245,9 @@ fn same_prefix_restart_reuses_both_fields_saved_residuals() {
         "the major cycle replaces the residual"
     );
 
+    if rebuild_psfs {
+        return;
+    }
     let pb_mask = field_mask.mapv(|pixel| !pixel);
     let mut pb = read("field.pb");
     pb.put_mask_slice("mask0", &pb_mask, &[0; 4]).unwrap();

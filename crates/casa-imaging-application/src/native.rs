@@ -398,7 +398,7 @@ fn saved_outlier_products(
     forms: imaging::Forms,
     outliers: Vec<Option<crate::restart::ExistingProducts>>,
 ) -> Vec<crate::restart::ExistingProducts> {
-    if forms.psf {
+    if forms.psf && forms.residual {
         return Vec::new();
     }
     outliers
