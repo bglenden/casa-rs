@@ -234,7 +234,7 @@ fn predict_refuses_as_casa_does() {
 #[test]
 fn displaced_interferometric_beams_are_accepted_and_total_power_stays_explicit() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let model = extended_model(directory.path(), "model.image");
+    let model = predict_support::extended_model_of(directory.path(), "model.image", 256);
     let points = directory.path().join("points.cl");
     write_points(&points);
     let list = PredictSpec {
@@ -345,7 +345,7 @@ fn a_moved_pointing_is_phased_on_its_field() {
 #[test]
 fn total_power_samples_a_moved_pointing_at_its_own_direction() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let model = extended_model(directory.path(), "model.image");
+    let model = predict_support::extended_model_of(directory.path(), "model.image", 256);
     let (pointed, field) = moved_and_field_there(
         directory.path(),
         &model,
@@ -604,28 +604,28 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
     assert_eq!(outcome, CasaOutcome::Raises);
     assert!(message.contains("voltage-pattern table"), "{message}");
-    // Other FTMachines and grid functions.
-    let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
-        ftmachine: "both".to_string(),
-        ..PredictionOptions::default()
-    }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("#1053"), "{message}");
-    // SDGrid's Gaussian kernels.
-    for grid_function in ["GAUSS", "GJINC"] {
-        let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
-            ftmachine: "SD".to_string(),
-            grid_function: grid_function.to_string(),
+    // These modes and kernels are now supported (the CASA FT-mode fixture
+    // checks their numerical behavior and deferred refusal stages).
+    for ftmachine in ["both", "pbwproject"] {
+        vla.set_options(&PredictionOptions {
+            ftmachine: ftmachine.into(),
             ..PredictionOptions::default()
-        }));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{grid_function}");
-        assert!(message.contains("'PB', 'BOX' and 'SF' are"), "{message}");
+        })
+        .expect("setoptions");
     }
-    let (outcome, _) = refusal(vla.set_options(&PredictionOptions {
-        grid_function: "BOX".to_string(),
+    for grid_function in ["GAUSS", "GJINC"] {
+        vla.set_options(&PredictionOptions {
+            ftmachine: "SD".into(),
+            grid_function: grid_function.into(),
+            ..PredictionOptions::default()
+        })
+        .expect("setoptions");
+    }
+    vla.set_options(&PredictionOptions {
+        grid_function: "BOX".into(),
         ..PredictionOptions::default()
-    }));
-    assert_eq!(outcome, CasaOutcome::NotYetImplemented);
+    })
+    .expect("setoptions");
     vla.close().expect("close");
 
     // Three correlations raise, as CASA's visibility vectors do.

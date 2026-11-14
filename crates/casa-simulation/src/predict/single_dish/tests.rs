@@ -279,7 +279,15 @@ fn grid_functions_name_casas_kernels_in_any_case() {
         SingleDishKernel::from_grid_function("Sf"),
         Some(SingleDishKernel::Spheroidal)
     );
-    for other in ["gauss", "GJINC", "", "kb"] {
+    assert_eq!(
+        SingleDishKernel::from_grid_function("gauss"),
+        Some(SingleDishKernel::Gauss)
+    );
+    assert_eq!(
+        SingleDishKernel::from_grid_function("GJINC"),
+        Some(SingleDishKernel::Gjinc)
+    );
+    for other in ["", "kb"] {
         assert_eq!(SingleDishKernel::from_grid_function(other), None, "{other}");
     }
 }
