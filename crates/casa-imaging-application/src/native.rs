@@ -9,8 +9,7 @@ use std::sync::Arc;
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
-use casa_imaging_model::CompiledProblem;
-use casa_imaging_model::GeometryPlan;
+use casa_imaging_model::{CompiledProblem, GeometryPlan, RestoringBeamPolicy};
 use casa_imaging_products::{
     AnalyticPrimaryBeam, ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse,
     PlannedContinuumGeneration, ProductStoragePlan, ProductsError, PublishedContinuumGeneration,
@@ -299,6 +298,25 @@ pub(crate) fn prepare(
                 .any(|saved| saved.psf_beams().is_none()),
             input.forms.residual,
         );
+    }
+    if mvc_taylor.is_none()
+        && !input.forms.psf
+        && !input.forms.residual
+        && input.minor_cycle_image_response.is_none()
+        && problem.reconstruction().controls().max_minor_iterations() == 0
+        && let Some(saved) = &input.existing
+        && saved.reads_taylor_residual()
+    {
+        // Restoration consumes the saved Taylor moments and residuals.
+        // Their on-disk Float PSFs need no normalization round trip.
+        publication.controls = publication
+            .controls
+            .preserving_saved_psfs(
+                saved.psf_beams().is_none()
+                    && problem.products().restoring_beam() != RestoringBeamPolicy::None,
+                false,
+            )
+            .preserving_saved_residuals();
     }
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()

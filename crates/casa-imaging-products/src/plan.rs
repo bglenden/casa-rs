@@ -119,6 +119,13 @@ impl ContinuumProductControls {
     }
 
     /// Preserve scalar saved residuals through a zero-major restart.
+    /// Leave saved residual tables in place while publishing restoration.
+    #[must_use]
+    pub const fn preserving_saved_residuals(mut self) -> Self {
+        self.preserves_saved_residual = true;
+        self
+    }
+
     /// After a positive-cutoff refresh retain a field's original mask,
     /// or copy that field's saved PB mask when the residual had none.
     /// The scientific state still uses its own scalar sum of weights.
@@ -301,6 +308,7 @@ pub struct PlannedContinuumGeneration {
     pub(crate) field_residual_mask: Option<FieldResidualMask>,
     pub(crate) rebuilds_field_pb: bool,
     pub(crate) rebuilds_field_psfs: bool,
+    pub(crate) refits_saved_psf_beams: bool,
     pub(crate) members: Box<[PlannedMember]>,
 }
 
@@ -356,7 +364,9 @@ impl PlannedContinuumGeneration {
                 controls.preserves_saved_psfs || controls.saved_mosaic_beam_read_bytes.is_some();
             if keep_psf
                 && match entry.role() {
-                    ProductRole::Psf(_) => !controls.refits_saved_psf_beams,
+                    ProductRole::Psf(_) => {
+                        !controls.refits_saved_psf_beams || entry.beam() != ProductBeamRule::Fitted
+                    }
                     ProductRole::SumWeights(_) => !controls.refills_saved_sums,
                     ProductRole::Weight(_)
                     | ProductRole::PrimaryBeam(ProductTerm::Single | ProductTerm::Taylor(0)) => {
@@ -425,6 +435,7 @@ impl PlannedContinuumGeneration {
             field_residual_mask: controls.field_residual_mask,
             rebuilds_field_pb: controls.rebuilds_field_pb,
             rebuilds_field_psfs: controls.rebuilds_field_psfs,
+            refits_saved_psf_beams: controls.refits_saved_psf_beams,
             uses_weight_image: list
                 .entries()
                 .iter()

@@ -647,6 +647,12 @@ fn produce_taylor_members(
     let refresh_mvc_mask =
         inputs.taylor_primary_beam().is_some() && inputs.saved_mosaic_beam().is_some();
     for member in &planned.members {
+        let beams = planned.beams_for_member(member, &fitted_beams, &restoring_beams);
+        if planned.refits_saved_psf_beams && member.role == ProductRole::Psf(ProductTerm::Taylor(0))
+        {
+            output.stage_saved_psf_beam(member, &beams)?;
+            continue;
+        }
         let mut payload = products.payload(member.role)?;
         // An ordinary Taylor PB is formed at one frequency and zeroed by
         // `makePBImage`. MVC's supplied PB is the weighted cube PB: CASA
@@ -698,7 +704,7 @@ fn produce_taylor_members(
         let image = output.begin(
             member,
             layout,
-            &planned.beams_for_member(member, &fitted_beams, &restoring_beams),
+            &beams,
             planned.uses_weight_image,
             explicit_mask,
         )?;
