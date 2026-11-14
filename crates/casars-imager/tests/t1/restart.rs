@@ -964,11 +964,11 @@ fn same_prefix_restart_reuses_both_fields_saved_residuals() {
     });
     let run = |values: &serde_json::Value| {
         let reply = json_run(&directory, values.clone());
-        let TaskReply::Succeeded { value, .. } = reply else {
+        let TaskReply::Succeeded { value, result, .. } = reply else {
             panic!("{reply:?}")
         };
         let record = serde_json::to_value(value).unwrap();
-        ["iterdone", "nmajordone", "stopcode"].map(|key| {
+        let counts = ["iterdone", "nmajordone", "stopcode"].map(|key| {
             record["entries"]
                 .as_array()
                 .unwrap()
@@ -977,7 +977,18 @@ fn same_prefix_restart_reuses_both_fields_saved_residuals() {
                 .unwrap()["value"]["value"]
                 .as_i64()
                 .unwrap()
-        })
+        });
+        if !values["calcres"].as_bool().unwrap_or(true) && (counts[1] == 0 || counts[0] == 0) {
+            assert!(
+                result["artifacts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|image| image["kind"] != "residual"),
+                "a run without gridding must not publish a residual table"
+            );
+        }
+        counts
     };
     run(&values);
 
@@ -1075,6 +1086,28 @@ fn same_prefix_restart_reuses_both_fields_saved_residuals() {
         "first major copies the saved PB mask if the residual has none"
     );
     assert_eq!(read("field.image").get_mask().unwrap().unwrap(), pb_mask);
+
+    fs::remove_dir_all(directory.join("field.pb")).unwrap();
+    fs::remove_dir_all(directory.join("field.image")).unwrap();
+    values["niter"] = json!(0);
+    run(&values);
+    assert!(
+        read("field.image").get_mask().unwrap().is_none(),
+        "a new restored image has no mask without a saved PB"
+    );
+    let mut restored = read("field.image");
+    restored
+        .put_mask_slice("mask0", &field_mask, &[0; 4])
+        .unwrap();
+    restored.set_default_mask("mask0").unwrap();
+    restored.save().unwrap();
+    drop(restored);
+    run(&values);
+    assert_eq!(
+        read("field.image").get_mask().unwrap().unwrap(),
+        field_mask,
+        "without a PB, restoration keeps the previous image mask"
+    );
 }
 
 /// CASA blanks a shared sky component in earlier fields for prediction

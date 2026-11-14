@@ -358,6 +358,36 @@ impl CasaImageWriter {
         Ok(())
     }
 
+    pub(crate) fn has_saved_pb(&self, domain: &ImageDomainRole) -> bool {
+        self.saved_image_path(domain, ".pb").exists()
+    }
+
+    /// Without a PB, CASA leaves any previous restored-image mask in place.
+    pub(crate) fn existing_restored_mask(
+        &self,
+        domain: &ImageDomainRole,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        let path = self.saved_image_path(domain, ".image");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let mask = image
+            .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
+            .map_err(image_error)?;
+        Ok(mask.map(|mask| mask.iter().copied().collect()))
+    }
+
+    fn saved_image_path(&self, domain: &ImageDomainRole, suffix: &str) -> PathBuf {
+        let mut name = self.output(domain).base.clone().into_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    }
+
     /// Read the default residual mask. Image restoration only propagates
     /// CASA's generated mask0. The spectral-index cutoff uses any default.
     /// A refreshed field that had no mask takes mask0 from its saved PB.
@@ -381,9 +411,7 @@ impl CasaImageWriter {
         let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
         let image = if copy_pb_mask && image.default_mask_name().is_none() {
             drop(image);
-            let mut name = self.output(domain).base.clone().into_os_string();
-            name.push(".pb");
-            let path = PathBuf::from(name);
+            let path = self.saved_image_path(domain, ".pb");
             if !path.exists() {
                 return Ok(None);
             }

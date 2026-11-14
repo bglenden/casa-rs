@@ -793,12 +793,14 @@ struct ProductSource<'a> {
 fn saved_field_mask_bytes(
     main: Option<&crate::restart::ExistingProducts>,
     outliers: &[Option<crate::restart::ExistingProducts>],
-) -> Option<(u64, u64)> {
+) -> Option<[u64; 3]> {
     let main = main.filter(|saved| !outliers.is_empty() && saved.reads_residual())?;
     let mut before = 0;
     let mut after = 0;
+    let mut without_pb = 0;
     for saved in std::iter::once(main).chain(outliers.iter().flatten()) {
         let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
+        without_pb = without_pb.max(saved.restored_mask_without_pb_bytes());
         before = before.max(bytes);
         after = after.max(if bytes > 0 {
             bytes
@@ -806,7 +808,7 @@ fn saved_field_mask_bytes(
             saved.primary_beam_mask_bytes()
         });
     }
-    Some((before, after))
+    Some([before.max(without_pb), after.max(without_pb), without_pb])
 }
 
 /// CASA keeps the saved residual in image units until the first major
@@ -814,17 +816,16 @@ fn saved_field_mask_bytes(
 fn controls_after_cycles(
     controls: casa_imaging_products::ContinuumProductControls,
     existing: Option<&crate::restart::ExistingProducts>,
-    saved_fields: Option<(u64, u64)>,
+    saved_fields: Option<[u64; 3]>,
     major_cycles: usize,
     keeps_pb_mask: bool,
 ) -> casa_imaging_products::ContinuumProductControls {
-    if let Some((before, after)) = saved_fields {
+    if let Some([before, after, without_pb]) = saved_fields {
         return if major_cycles == 0 {
-            controls.with_saved_field_residuals(before, false)
-        } else if keeps_pb_mask {
-            controls.with_saved_field_residuals(after, true)
+            controls.with_saved_field_residuals(before, false, false)
         } else {
-            controls
+            let bytes = if keeps_pb_mask { after } else { without_pb };
+            controls.with_saved_field_residuals(bytes, true, keeps_pb_mask)
         };
     }
     let Some(existing) = existing else {

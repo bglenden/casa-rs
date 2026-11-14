@@ -79,22 +79,41 @@ fn produce_plane_members(
             ProductRole::RestoredImage(ProductTerm::Single)
                 if planned.saved_residual_mask_read_bytes.is_some() =>
             {
-                Some(output.saved_residual_mask(
-                    member.axes().domain(),
-                    ProductTerm::Single,
-                    true,
-                    planned.copies_saved_pb_mask,
-                )?)
+                let domain = member.axes().domain();
+                Some(
+                    if planned.field_residual_mask.is_some() && !output.has_saved_pb(domain) {
+                        output.existing_restored_mask(domain)?
+                    } else if planned.field_residual_mask
+                        == Some(crate::plan::FieldResidualMask::Absent)
+                    {
+                        None
+                    } else {
+                        output.saved_residual_mask(
+                            domain,
+                            ProductTerm::Single,
+                            true,
+                            planned.field_residual_mask
+                                == Some(crate::plan::FieldResidualMask::SavedOrPrimaryBeam),
+                        )?
+                    },
+                )
             }
             ProductRole::Residual(ProductTerm::Single)
                 if planned.saved_residual_mask_read_bytes.is_some() =>
             {
-                Some(output.saved_residual_mask(
-                    member.axes().domain(),
-                    ProductTerm::Single,
-                    false,
-                    planned.copies_saved_pb_mask,
-                )?)
+                Some(
+                    if planned.field_residual_mask == Some(crate::plan::FieldResidualMask::Absent) {
+                        None
+                    } else {
+                        output.saved_residual_mask(
+                            member.axes().domain(),
+                            ProductTerm::Single,
+                            false,
+                            planned.field_residual_mask
+                                == Some(crate::plan::FieldResidualMask::SavedOrPrimaryBeam),
+                        )?
+                    },
+                )
             }
             _ => None,
         };

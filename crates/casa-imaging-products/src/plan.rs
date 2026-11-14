@@ -34,6 +34,14 @@ pub enum AnalyticPrimaryBeamModel {
     MosaicSensitivity,
 }
 
+/// The mask CASA leaves on a scalar residual during a field restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldResidualMask {
+    Saved,
+    SavedOrPrimaryBeam,
+    Absent,
+}
+
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinuumProductControls {
@@ -47,7 +55,7 @@ pub struct ContinuumProductControls {
     saved_residual_mask_read_bytes: Option<u64>,
     preserves_saved_residual: bool,
     saved_weighted_residual: bool,
-    copies_saved_pb_mask: bool,
+    field_residual_mask: Option<FieldResidualMask>,
 }
 
 impl ContinuumProductControls {
@@ -107,9 +115,14 @@ impl ContinuumProductControls {
         mut self,
         mask_read_bytes: u64,
         refreshed: bool,
+        keeps_pb_mask: bool,
     ) -> Self {
         self.preserves_saved_residual = !refreshed;
-        self.copies_saved_pb_mask = refreshed;
+        self.field_residual_mask = Some(match (refreshed, keeps_pb_mask) {
+            (false, _) => FieldResidualMask::Saved,
+            (true, true) => FieldResidualMask::SavedOrPrimaryBeam,
+            (true, false) => FieldResidualMask::Absent,
+        });
         self.with_saved_residual_mask(mask_read_bytes)
     }
 
@@ -206,7 +219,7 @@ impl Default for ContinuumProductControls {
             saved_residual_mask_read_bytes: None,
             preserves_saved_residual: false,
             saved_weighted_residual: false,
-            copies_saved_pb_mask: false,
+            field_residual_mask: None,
         }
     }
 }
@@ -242,7 +255,7 @@ pub struct PlannedContinuumGeneration {
     pub(crate) saved_mosaic_beam_read_bytes: u64,
     pub(crate) saved_residual_mask_read_bytes: Option<u64>,
     pub(crate) saved_weighted_residual: bool,
-    pub(crate) copies_saved_pb_mask: bool,
+    pub(crate) field_residual_mask: Option<FieldResidualMask>,
     pub(crate) members: Box<[PlannedMember]>,
 }
 
@@ -356,7 +369,7 @@ impl PlannedContinuumGeneration {
             saved_mosaic_beam_read_bytes: controls.saved_mosaic_beam_read_bytes.unwrap_or(0),
             saved_residual_mask_read_bytes: controls.saved_residual_mask_read_bytes,
             saved_weighted_residual: controls.saved_weighted_residual,
-            copies_saved_pb_mask: controls.copies_saved_pb_mask,
+            field_residual_mask: controls.field_residual_mask,
             uses_weight_image: list
                 .entries()
                 .iter()
