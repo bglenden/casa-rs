@@ -1104,6 +1104,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite">continuum <code>briggsabs</code> at robust 0 and noise 0</a>,
 <a href="#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask"><code>nsigma</code> with <code>fastnoise=False</code> and no mask</a>,
 <a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision">single-precision Taylor weights</a>,
+<a href="#aw-projection-can-use-another-antenna-groups-pointing">AW baseline pointing groups</a>,
 <a href="#a-mosaics-weight-image-is-transformed-in-single-precision">a mosaic's single-precision weight image</a>,
 <a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>,
 <a href="#the-standard-gridder-drops-the-final-fourier-grid-row-and-column">the standard gridder dropping the final Fourier-grid row and column</a>,
@@ -5995,6 +5996,32 @@ NRMS. An independent CASA control that grows the holder before
 180). All eight products then agree with casa-rs within 2.50e-7 NRMS,
 with exact masks and sum of weights. casa-rs always centres the PA
 planes. <a href="https://github.com/bglenden/casa-rs/issues/1071">Issue #1071</a>.</p>
+<h2 id="aw-projection-can-use-another-antenna-groups-pointing">AW projection can use another antenna group's pointing<a class="headerlink" href="#aw-projection-can-use-another-antenna-groups-pointing" title="Permanent link">&para;</a></h2>
+<p><code>BaselineType::findAntennaGroups</code> writes group means into an array indexed
+by the antennas' positions in the sorted selection. <code>makeVBRow2BLGMap</code>
+passes the two baseline group ordinals to
+<code>PhaseGrad::ComputeFieldPointingGrad</code>, which indexes that antenna array
+with them. A one-group selection works because every antenna holds the
+same mean. With several groups, a group's ordinal can select an antenna
+from another group.</p>
+<p>The CASA 6.7.6-14 four-corner MT-MFS test on
+<code>refim_heterogeneous_pointings.ms</code> selects even-even and odd-odd
+baselines at two times, with <code>usepointing=True</code> and
+<code>pointingoffsetsigdev=[20,20]</code>. In the first time's image the even
+antennas point at (924,1124), but CASA sends (924,924) to
+<code>PointingOffsets::gradPerPixel</code> for their baseline. Odd-antenna baselines
+receive (924,1124). Both groups' y coordinates are likewise exchanged at
+the second time, at x=1124. Casa-rs takes the group mean of each baseline's
+actual antenna pair.</p>
+<p>A local CASA debugger control substitutes only the correct per-baseline
+pointing pixels at <code>gradPerPixel</code>. Using the original saved CASA
+convolution functions, the principal dirty PSF goes from 1.33 NRMS
+against casa-rs to 1.08e-7. Seventeen dirty products pass, with exact
+masks and sums of weights. The near-zero odd Taylor weight still fails
+its existing pointwise comparison. When both runs use the corrected
+CASA dirty inputs and the saved standard-gridder PSFs, all 19 CLEAN
+products agree to 5.02e-7 NRMS or better, with exact masks, ten iterations
+and one major cycle. <a href="https://github.com/bglenden/casa-rs/issues/1070">Issue #1070</a>.</p>
 <h2 id="awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff">AWP2's Float sensitivity FFT can flip the primary-beam cutoff<a class="headerlink" href="#awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff" title="Permanent link">&para;</a></h2>
 <p>AWPLPG accumulates the sensitivity grid in double precision.
 <code>MosaicFT::finalizeToSky</code> converts that grid to Float for its inverse FFT.
