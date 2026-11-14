@@ -41,7 +41,8 @@ pub(super) fn run(
         .existing
         .as_ref()
         .is_some_and(ExistingProducts::reads_mosaic_residual);
-    if read_mvc_residual || read_mosaic_residual {
+    let read_field_residuals = !run.forms.residual && !run.outlier_products.is_empty();
+    if read_mvc_residual || read_mosaic_residual || read_field_residuals {
         // The saved residual's own mask governs the initial measurement.
         // Without a mask, CASA measures every valid pixel.
         setup.residual_pixel_mask = false;
@@ -90,19 +91,21 @@ pub(super) fn run(
                         run.teams.compute().workers(),
                     ),
                 )?;
-                let (saved_mask, saved_mask_charge) =
-                    if outcome.major_cycle_count == 0 || (read_mosaic_residual && use_pb_mask) {
-                        read_saved_mask(&run, mvc.as_ref(), outcome.major_cycle_count > 0)?
-                    } else {
-                        (None, Reservation::none())
-                    };
-                let prepared = prepare_minor_cycle_with_residual_mask(
+                let refreshed = outcome.major_cycle_count > 0;
+                let (saved_masks, saved_mask_charge) = if !refreshed
+                    || ((read_mosaic_residual || read_field_residuals) && use_pb_mask)
+                {
+                    read_saved_masks(&run, mvc.as_ref(), refreshed)?
+                } else {
+                    (Vec::new(), Reservation::none())
+                };
+                let prepared = prepare_minor_cycle_with_residual_masks(
                     &outcome.scientific,
                     &mask_plans,
                     &setup,
                     &mut cache,
                     run.teams.compute(),
-                    saved_mask,
+                    saved_masks,
                 )?;
                 let kept = preparing.split(prepared.retained_bytes());
                 Ok::<_, ImagingError>((prepared, kept, saved_mask_charge))
@@ -215,7 +218,7 @@ pub(super) fn run(
             }
         })?;
         setup.saved_weighted_residual = false;
-        setup.residual_pixel_mask = use_pb_mask;
+        setup.residual_pixel_mask = use_pb_mask && !read_field_residuals;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
@@ -241,17 +244,58 @@ pub(super) fn run(
 /// CASA's pixel mask determines the peak independent of the solver's
 /// CLEAN support. If the first positive-cutoff major cycle sees an
 /// unmasked residual, it copies the saved PB's support to the residual.
-fn read_saved_mask(
+fn read_saved_masks(
     run: &Run<'_>,
     mvc: Option<&MvcState<'_>>,
     refreshed: bool,
-) -> Result<(Option<casa_imaging_deconvolution::Support>, Reservation), ImagingError> {
-    let saved = mvc
+) -> Result<
+    (
+        Vec<Option<casa_imaging_deconvolution::Support>>,
+        Reservation,
+    ),
+    ImagingError,
+> {
+    let Some(main) = mvc
         .and_then(MvcState::saved_taylor)
-        .or(run.existing.as_ref());
-    let Some(saved) = saved else {
-        return Ok((None, Reservation::none()));
+        .or(run.existing.as_ref())
+    else {
+        return Ok((Vec::new(), Reservation::none()));
     };
+    if main.saved_residual_mask_bytes().is_none() {
+        return Ok((Vec::new(), Reservation::none()));
+    }
+    let count = 1 + run.outlier_products.len();
+    let mut held = run.admit(
+        "saved residual mask list",
+        (count * size_of::<Option<casa_imaging_deconvolution::Support>>()) as u64,
+    )?;
+    let mut masks = Vec::with_capacity(count);
+    for (domain, saved) in std::iter::once(main)
+        .chain(&run.outlier_products)
+        .enumerate()
+    {
+        let (mask, mut charge) = read_saved_mask(run, saved, refreshed)?;
+        let pixels = mask.as_ref().map_or(0, |mask| mask.as_slice().len() as u64);
+        if pixels > 0 {
+            tracing::debug!(
+                target: "casa_imaging::saved_residual_mask",
+                domain,
+                admitted_bytes = charge.memory(),
+                "read the saved residual pixel mask"
+            );
+        }
+        charge.retain(pixels);
+        held.join(charge);
+        masks.push(mask);
+    }
+    Ok((masks, held))
+}
+
+fn read_saved_mask(
+    run: &Run<'_>,
+    saved: &ExistingProducts,
+    refreshed: bool,
+) -> Result<(Option<casa_imaging_deconvolution::Support>, Reservation), ImagingError> {
     let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
     if bytes == 0 {
         if refreshed && let Some(beam) = saved.mosaic_beam() {
@@ -265,6 +309,14 @@ fn read_saved_mask(
                 pixels,
             );
             return Ok((Some(mask), charge));
+        }
+        if refreshed && saved.primary_beam_mask_bytes() > 0 {
+            let charge = run.admit(
+                "saved PB for residual mask",
+                saved.primary_beam_mask_bytes(),
+            )?;
+            let mask = saved.primary_beam_mask().map_err(ImagingError::Existing)?;
+            return Ok((mask, charge));
         }
         return Ok((None, Reservation::none()));
     }

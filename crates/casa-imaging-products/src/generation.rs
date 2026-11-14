@@ -83,6 +83,7 @@ fn produce_plane_members(
                     member.axes().domain(),
                     ProductTerm::Single,
                     true,
+                    planned.copies_saved_pb_mask,
                 )?)
             }
             ProductRole::Residual(ProductTerm::Single)
@@ -92,6 +93,7 @@ fn produce_plane_members(
                     member.axes().domain(),
                     ProductTerm::Single,
                     false,
+                    planned.copies_saved_pb_mask,
                 )?)
             }
             _ => None,
@@ -398,7 +400,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             self.plane_shape,
         )?;
         if self.planned.primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
-            || self.planned.preserves_saved_residual
+            || self.planned.saved_weighted_residual
         {
             return Ok(model);
         }
@@ -461,7 +463,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             domain_ordinal: self.domain_ordinal,
             polarization,
             reuses_single_psf: self.planned.reuses_single_psf,
-            saved_weighted_residual: self.planned.preserves_saved_residual,
+            saved_weighted_residual: self.planned.saved_weighted_residual,
             fitted_beam: self.fitted_beams.get(beam_index).copied().flatten(),
             restoring_beam: self.restoring_beams.get(beam_index).copied().flatten(),
             primary_beam_model: self.planned.primary_beam_model,
@@ -598,6 +600,7 @@ fn produce_taylor_members(
                     member.axes().domain(),
                     ProductTerm::Taylor(term),
                     true,
+                    false,
                 )?)
             }
             _ => None,

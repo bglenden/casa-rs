@@ -54,7 +54,7 @@ pub use layout::{
     run_bytes_for,
 };
 use mem::{dense_result_bytes, dense_result_slots, solve_mem};
-pub use prepare::{prepare_minor_cycle, prepare_minor_cycle_with_residual_mask};
+pub use prepare::{prepare_minor_cycle, prepare_minor_cycle_with_residual_masks};
 use psfs::{measure_psfs, saved_beam, saved_psf_beam, single_psf_peak};
 pub use rows::PlaneCycleRow;
 
@@ -223,7 +223,7 @@ pub struct PreparedMinorCycle {
     blank: Vec<(PlaneKey, PlaneStatistics)>,
     /// A single plane's load, kept for its solve ([`Self::retained_bytes`]).
     retained: Option<RetainedPlane>,
-    residual_mask: Option<Support>,
+    residual_masks: Vec<Option<Support>>,
     /// The measurements of every plane and field, for the controller.
     pub statistics: ResidualStatistics,
 }
@@ -382,7 +382,7 @@ pub fn run_minor_cycle(
         planes,
         mut blank,
         retained,
-        residual_mask,
+        residual_masks,
         ..
     } = prepared;
     let normal = completion.normal_state();
@@ -392,7 +392,7 @@ pub fn run_minor_cycle(
         masks: &masks,
         setup,
         taylor: is_taylor(normal),
-        residual_mask: residual_mask.as_ref(),
+        residual_masks: &residual_masks,
     };
     let admission = (host, policy);
     let fft_threads = scale_fft_threads(planes.len(), team.workers());
@@ -706,7 +706,13 @@ struct Inputs<'a> {
     setup: &'a MinorCycleSetup<'a>,
     /// Whether the normal state holds Taylor families.
     taylor: bool,
-    residual_mask: Option<&'a Support>,
+    residual_masks: &'a [Option<Support>],
+}
+
+impl Inputs<'_> {
+    fn residual_mask(&self, domain: usize) -> Option<&Support> {
+        self.residual_masks.get(domain).and_then(Option::as_ref)
+    }
 }
 
 /// A direction-dependent response bound to one plane's weights: what turns
@@ -1166,7 +1172,9 @@ fn solve(
     // it skipped.
     let end_residual = std::mem::take(&mut outcome.end_residual);
     let peak_no_mask = match end_residual.first() {
-        Some(residual) if let Some(mask) = inputs.residual_mask.filter(|_| !inputs.taylor) => {
+        Some(residual)
+            if let Some(mask) = inputs.residual_mask(key.domain).filter(|_| !inputs.taylor) =>
+        {
             peak_magnitude(residual, mask)
         }
         Some(residual) if setup.residual_pixel_mask => {

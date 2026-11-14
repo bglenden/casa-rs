@@ -309,7 +309,11 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PhaseRecorder {
             return;
         }
         if event.metadata().target() == "casa_imaging::saved_products" {
-            outliers::record_read(event);
+            outliers::record_read(event, &outliers::OUTLIER_READ_BYTES);
+            return;
+        }
+        if event.metadata().target() == "casa_imaging::saved_residual_mask" {
+            outliers::record_read(event, &outliers::OUTLIER_MASK_BYTES);
             return;
         }
         if event.metadata().target() != casa_imaging_runtime::STAGE_TIMING {

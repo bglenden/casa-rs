@@ -302,10 +302,12 @@ pub(crate) fn prepare(
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()
         == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam;
+    let saved_fields = saved_field_mask_bytes(input.existing.as_ref(), &input.outlier_psfs);
     let held = |major_cycles| {
         let controls = controls_after_cycles(
             publication.controls,
             input.existing.as_ref(),
+            saved_fields,
             major_cycles,
             keeps_pb_mask,
         );
@@ -485,6 +487,7 @@ pub(crate) fn run(
     let visibility_write = route
         .write_back()
         .map(|_| imaging::VisibilityWriteTarget(&route));
+    let saved_fields = saved_field_mask_bytes(existing.as_ref(), &outlier_psfs);
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
@@ -581,6 +584,7 @@ pub(crate) fn run(
                     controls: controls_after_cycles(
                         publication.controls,
                         existing.as_ref(),
+                        saved_fields,
                         outcome.major_cycle_count,
                         problem.products().validity().uncorrected_mask()
                             == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam,
@@ -784,14 +788,45 @@ struct ProductSource<'a> {
     primary_beam: Option<ProductPrimaryBeam<'a>>,
 }
 
+/// Per-member mask admission before and after a major cycle. Each
+/// publication lane reads one field at a time.
+fn saved_field_mask_bytes(
+    main: Option<&crate::restart::ExistingProducts>,
+    outliers: &[Option<crate::restart::ExistingProducts>],
+) -> Option<(u64, u64)> {
+    let main = main.filter(|saved| !outliers.is_empty() && saved.reads_residual())?;
+    let mut before = 0;
+    let mut after = 0;
+    for saved in std::iter::once(main).chain(outliers.iter().flatten()) {
+        let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
+        before = before.max(bytes);
+        after = after.max(if bytes > 0 {
+            bytes
+        } else {
+            saved.primary_beam_mask_bytes()
+        });
+    }
+    Some((before, after))
+}
+
 /// CASA keeps the saved residual in image units until the first major
 /// cycle, then retains its mask when residual division leaves it in place.
 fn controls_after_cycles(
     controls: casa_imaging_products::ContinuumProductControls,
     existing: Option<&crate::restart::ExistingProducts>,
+    saved_fields: Option<(u64, u64)>,
     major_cycles: usize,
     keeps_pb_mask: bool,
 ) -> casa_imaging_products::ContinuumProductControls {
+    if let Some((before, after)) = saved_fields {
+        return if major_cycles == 0 {
+            controls.with_saved_field_residuals(before, false)
+        } else if keeps_pb_mask {
+            controls.with_saved_field_residuals(after, true)
+        } else {
+            controls
+        };
+    }
     let Some(existing) = existing else {
         return controls;
     };

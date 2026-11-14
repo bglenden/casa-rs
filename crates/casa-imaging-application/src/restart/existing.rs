@@ -46,9 +46,13 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
-    /// Scratch for reading a weighted saved residual's pixel mask.
+    /// Whether the saved residual already uses the solver's image units.
+    residual_in_image_units: bool,
+    /// Scratch for reading the saved residual's pixel mask.
     /// Zero when there is no default mask.
     saved_residual_mask_bytes: Option<u64>,
+    /// Scratch for the saved PB mask when a field needs it after gridding.
+    primary_beam_mask_bytes: u64,
     /// A default mask exists on at least one saved Taylor residual.
     masked_taylor_residual: Option<PathBuf>,
     /// Saved PB reader. The mosaic's normal-state sensitivity also comes
@@ -74,7 +78,7 @@ impl ExistingProducts {
         (shape, polarizations, channels): ([usize; 2], usize, usize),
         (psf, residual): (bool, bool),
         weight: bool,
-        read_taylor_mask: bool,
+        read_residual_mask: bool,
     ) -> Result<Self, PrepareError> {
         let planes = match family {
             Family::Single => channels,
@@ -82,9 +86,11 @@ impl ExistingProducts {
         };
         let mut tile_bytes = 0;
         let mut mosaic_beam = None;
-        let weighted_residual =
-            residual && (weight || (read_taylor_mask && matches!(family, Family::Taylor { .. })));
-        let mut saved_residual_mask_bytes = weighted_residual.then_some(0_u64);
+        let residual_in_image_units =
+            residual && (weight || (read_residual_mask && matches!(family, Family::Taylor { .. })));
+        let mut saved_residual_mask_bytes =
+            (residual && (weight || read_residual_mask)).then_some(0);
+        let mut primary_beam_mask_bytes = 0;
         let mut masked_taylor_residual = None;
         let mut bases = Vec::new();
         if psf {
@@ -120,7 +126,7 @@ impl ExistingProducts {
                         Family::Single if image.default_mask_name().as_deref() != Some("mask0") => {
                             return Err(PrepareError::Restart {
                                 path,
-                                reason: "the saved mosaic residual must use CASA's generated mask0 or have no default mask (#944)".into(),
+                                reason: "the saved residual must use CASA's generated mask0 or have no default mask (#944)".into(),
                             });
                         }
                         Family::Single => {}
@@ -144,6 +150,15 @@ impl ExistingProducts {
                 }
             }
         }
+        if residual && read_residual_mask && !weight && matches!(family, Family::Single) {
+            let path = product_path(prefix, "pb");
+            if path.exists() {
+                let image = open(&path)?;
+                if image.default_mask_name().as_deref() == Some("mask0") {
+                    primary_beam_mask_bytes = residual_mask_bytes(&image, &path)?;
+                }
+            }
+        }
         Ok(Self {
             prefix: prefix.to_path_buf(),
             family,
@@ -152,7 +167,9 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
+            residual_in_image_units,
             saved_residual_mask_bytes,
+            primary_beam_mask_bytes,
             masked_taylor_residual,
             mosaic_beam,
             psf_beams: None,
@@ -286,13 +303,23 @@ impl ExistingProducts {
     /// A direction-dependent saved residual is already in the image
     /// units CASA restores and passes to its next minor cycle.
     pub(crate) const fn residual_in_image_units(&self) -> bool {
-        self.saved_residual_mask_bytes.is_some()
+        self.residual_in_image_units
     }
 
-    /// Scratch for one direction-dependent saved residual mask, with zero
+    /// Scratch for one saved residual mask, with zero
     /// bytes when the residual has no pixel mask.
     pub(crate) const fn saved_residual_mask_bytes(&self) -> Option<u64> {
         self.saved_residual_mask_bytes
+    }
+
+    pub(crate) const fn primary_beam_mask_bytes(&self) -> u64 {
+        self.primary_beam_mask_bytes
+    }
+
+    pub(crate) fn primary_beam_mask(
+        &self,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
+        self.pixel_mask("pb")
     }
 
     /// Whether a saved single-term residual governs the first minor cycle.
@@ -477,6 +504,13 @@ impl ExistingProducts {
             Family::Single => "residual",
             Family::Taylor { .. } => "residual.tt0",
         };
+        self.pixel_mask(name)
+    }
+
+    fn pixel_mask(
+        &self,
+        name: &str,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
         let image =
             PagedImage::<f32>::open_with_cache(product_path(&self.prefix, name), CACHE_BYTES)?;
         let [nx, ny] = self.shape;
