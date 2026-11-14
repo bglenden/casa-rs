@@ -5472,7 +5472,9 @@ support to the corresponding restored image. The masked and unmasked
 initial convergence controls follow CASA's saved term-zero mask,
 including all valid pixels when that initial mask is absent. The
 additional both-unmasked probe agrees on the controller and numeric
-products. Only the two term-one masks differ, by 199,189 pixels.
+products. Only the two term-one masks differ, by 199,189 pixels. Reinstating
+just those masks in CASA after restoration gives all 24 products,
+exact masks and a maximum normalized RMS of 8.309e-6.
 See [#944](https://github.com/bglenden/casa-rs/issues/944) and
 [#1414](https://github.com/bglenden/casa-rs/pull/1414).
 
