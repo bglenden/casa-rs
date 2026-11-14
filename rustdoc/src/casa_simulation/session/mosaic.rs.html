@@ -17,75 +17,75 @@
 <a href=#17 id=17 data-nosnippet>17</a>//! - Every channel of each window observed is selected.
 <a href=#18 id=18 data-nosnippet>18</a>//! - A scan's beam uses POINTING independently of its FIELD phase centre;
 <a href=#19 id=19 data-nosnippet>19</a>//!   the kernels' phase ramp is its offset from the model's pixel
-<a href=#20 id=20 data-nosnippet>20</a>//!   `(nx/2, ny/2)`. CASA predicts nothing for a pointing outside the
-<a href=#21 id=21 data-nosnippet>21</a>//!   model image (`checkPBOfField`); casa-rs does not predict one yet.
-<a href=#22 id=22 data-nosnippet>22</a>
-<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">use </span>casa_imaging_operator::{AiryDish, MosaicWindow};
-<a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span><span class="kw">super</span>::Simulator;
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span><span class="kw">super</span>::error::{SimulatorError, SimulatorResult};
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span><span class="kw">crate</span>::predict::{MosaicBeams, PredictError, PrimaryBeam, SkyModel};
-<a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="doccomment">/// The telescopes whose mosaic casa-rs builds.
-<a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">const </span>MOSAIC_TELESCOPES: [<span class="kw-2">&amp;</span>str; <span class="number">3</span>] = [<span class="string">"ALMA"</span>, <span class="string">"ACA"</span>, <span class="string">"OVRO"</span>];
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a><span class="doccomment">/// A dish diameter as `String::toString(Double)` prints it, which keys
-<a href=#33 id=33 data-nosnippet>33</a>/// `HetArrayConvFunc`'s dish classes: six significant digits.
-<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">fn </span>diameter_key(diameter_m: f64) -&gt; String {
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="macro">format!</span>(<span class="string">"{diameter_m:.5e}"</span>)
-<a href=#36 id=36 data-nosnippet>36</a>}
-<a href=#37 id=37 data-nosnippet>37</a>
-<a href=#38 id=38 data-nosnippet>38</a><span class="doccomment">/// The most a diameter key's text holds: `format!` grows its string from
-<a href=#39 id=39 data-nosnippet>39</a>/// nothing, to 16 bytes for its nine to twelve characters.
-<a href=#40 id=40 data-nosnippet>40</a></span><span class="kw">const </span>DIAMETER_KEY_BYTES: usize = <span class="number">32</span>;
-<a href=#41 id=41 data-nosnippet>41</a>
-<a href=#42 id=42 data-nosnippet>42</a><span class="doccomment">/// One pointing the mosaic machine keeps: a phase centre's bits and its
-<a href=#43 id=43 data-nosnippet>43</a>/// offset.
-<a href=#44 id=44 data-nosnippet>44</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>MosaicPointing = ([u64; <span class="number">2</span>], [f64; <span class="number">2</span>]);
-<a href=#45 id=45 data-nosnippet>45</a>
-<a href=#46 id=46 data-nosnippet>46</a><span class="kw">impl </span>Simulator {
-<a href=#47 id=47 data-nosnippet>47</a>    <span class="doccomment">/// Bytes the mosaic machine's state holds, known before it is formed:
-<a href=#48 id=48 data-nosnippet>48</a>    /// what the prediction keeps (a pointing for each scan's phase centre at
-<a href=#49 id=49 data-nosnippet>49</a>    /// most, and each antenna's dish class), and what builds the beams
-<a href=#50 id=50 data-nosnippet>50</a>    /// until the kernels are built (a dish and a diameter key for each
-<a href=#51 id=51 data-nosnippet>51</a>    /// antenna at most, and every window's channel frequencies twice).
-<a href=#52 id=52 data-nosnippet>52</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mosaic_state_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u64, u64) {
-<a href=#53 id=53 data-nosnippet>53</a>        <span class="kw">let </span>kept =
-<a href=#54 id=54 data-nosnippet>54</a>            <span class="self">self</span>.scans.len() * size_of::&lt;MosaicPointing&gt;() + <span class="self">self</span>.antennas.len() * size_of::&lt;u8&gt;();
-<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>antennas = <span class="self">self</span>.antennas.len()
-<a href=#56 id=56 data-nosnippet>56</a>            * (size_of::&lt;PrimaryBeam&gt;() + size_of::&lt;String&gt;() + DIAMETER_KEY_BYTES);
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span>windows = <span class="self">self</span>.spectral_windows.len()
-<a href=#58 id=58 data-nosnippet>58</a>            * (size_of::&lt;MosaicWindow&gt;() + size_of::&lt;(u32, f64)&gt;())
-<a href=#59 id=59 data-nosnippet>59</a>            + <span class="self">self
-<a href=#60 id=60 data-nosnippet>60</a>                </span>.spectral_windows
-<a href=#61 id=61 data-nosnippet>61</a>                .iter()
-<a href=#62 id=62 data-nosnippet>62</a>                .map(|window| <span class="number">2 </span>* window.channel_count * size_of::&lt;f64&gt;())
-<a href=#63 id=63 data-nosnippet>63</a>                .sum::&lt;usize&gt;();
-<a href=#64 id=64 data-nosnippet>64</a>        (kept <span class="kw">as </span>u64, (antennas + windows) <span class="kw">as </span>u64)
-<a href=#65 id=65 data-nosnippet>65</a>    }
-<a href=#66 id=66 data-nosnippet>66</a>
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// The mosaic machine's beams for the scans observed so far, and each
-<a href=#68 id=68 data-nosnippet>68</a>    /// antenna's dish class.
-<a href=#69 id=69 data-nosnippet>69</a>    ///
-<a href=#70 id=70 data-nosnippet>70</a>    /// # Errors
-<a href=#71 id=71 data-nosnippet>71</a>    ///
-<a href=#72 id=72 data-nosnippet>72</a>    /// Not yet implemented: a telescope without a supported default beam,
-<a href=#73 id=73 data-nosnippet>73</a>    /// a heterogeneous-array antenna without a dish, or more than 255 dish
-<a href=#74 id=74 data-nosnippet>74</a>    /// diameters.
-<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mosaic_beams(
-<a href=#76 id=76 data-nosnippet>76</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#77 id=77 data-nosnippet>77</a>        custom: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">super</span>::voltage_patterns::BeamSource&gt;,
-<a href=#78 id=78 data-nosnippet>78</a>    ) -&gt; SimulatorResult&lt;(MosaicBeams, Vec&lt;u8&gt;)&gt; {
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">let </span>telescope = <span class="self">self</span>.observing_telescope();
-<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>common = custom.is_some() || !MOSAIC_TELESCOPES.contains(<span class="kw-2">&amp;</span>telescope);
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">let </span>default = <span class="kw">match </span>custom {
-<a href=#82 id=82 data-nosnippet>82</a>            <span class="prelude-val">Some</span>(beam) =&gt; beam.configured(),
-<a href=#83 id=83 data-nosnippet>83</a>            <span class="prelude-val">None </span>=&gt; PrimaryBeam::for_telescope(telescope, <span class="self">self</span>.reference_frequency_hz()),
-<a href=#84 id=84 data-nosnippet>84</a>        };
-<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">if </span>common &amp;&amp; default.is_none() &amp;&amp; custom.is_none() {
-<a href=#86 id=86 data-nosnippet>86</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#87 id=87 data-nosnippet>87</a>                <span class="string">"predict with setoptions(ftmachine='mosaic') for telescope {telescope} is not \
-<a href=#88 id=88 data-nosnippet>88</a>                 yet implemented in casa-rs (#1297)"
+<a href=#20 id=20 data-nosnippet>20</a>//!   `(nx/2, ny/2)`. Heterogeneous-array beams predict nothing for a
+<a href=#21 id=21 data-nosnippet>21</a>//!   pointing outside the model image (`checkPBOfField`); common beams
+<a href=#22 id=22 data-nosnippet>22</a>//!   keep applying the phase ramp outside the image.
+<a href=#23 id=23 data-nosnippet>23</a>
+<a href=#24 id=24 data-nosnippet>24</a></span><span class="kw">use </span>casa_imaging_operator::{AiryDish, MosaicWindow};
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span><span class="kw">super</span>::Simulator;
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span><span class="kw">super</span>::error::{SimulatorError, SimulatorResult};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span><span class="kw">crate</span>::predict::{MosaicBeams, PredictError, PrimaryBeam, SkyModel};
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a><span class="doccomment">/// The telescopes whose mosaic casa-rs builds.
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">const </span>MOSAIC_TELESCOPES: [<span class="kw-2">&amp;</span>str; <span class="number">3</span>] = [<span class="string">"ALMA"</span>, <span class="string">"ACA"</span>, <span class="string">"OVRO"</span>];
+<a href=#32 id=32 data-nosnippet>32</a>
+<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// A dish diameter as `String::toString(Double)` prints it, which keys
+<a href=#34 id=34 data-nosnippet>34</a>/// `HetArrayConvFunc`'s dish classes: six significant digits.
+<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">fn </span>diameter_key(diameter_m: f64) -&gt; String {
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="macro">format!</span>(<span class="string">"{diameter_m:.5e}"</span>)
+<a href=#37 id=37 data-nosnippet>37</a>}
+<a href=#38 id=38 data-nosnippet>38</a>
+<a href=#39 id=39 data-nosnippet>39</a><span class="doccomment">/// The most a diameter key's text holds: `format!` grows its string from
+<a href=#40 id=40 data-nosnippet>40</a>/// nothing, to 16 bytes for its nine to twelve characters.
+<a href=#41 id=41 data-nosnippet>41</a></span><span class="kw">const </span>DIAMETER_KEY_BYTES: usize = <span class="number">32</span>;
+<a href=#42 id=42 data-nosnippet>42</a>
+<a href=#43 id=43 data-nosnippet>43</a><span class="doccomment">/// One pointing the mosaic machine keeps: a phase centre's bits and its
+<a href=#44 id=44 data-nosnippet>44</a>/// offset.
+<a href=#45 id=45 data-nosnippet>45</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>MosaicPointing = ([u64; <span class="number">2</span>], <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;);
+<a href=#46 id=46 data-nosnippet>46</a>
+<a href=#47 id=47 data-nosnippet>47</a><span class="kw">impl </span>Simulator {
+<a href=#48 id=48 data-nosnippet>48</a>    <span class="doccomment">/// Bytes the mosaic machine's state holds, known before it is formed:
+<a href=#49 id=49 data-nosnippet>49</a>    /// what the prediction keeps (a pointing for each scan's phase centre at
+<a href=#50 id=50 data-nosnippet>50</a>    /// most, and each antenna's dish class), and what builds the beams
+<a href=#51 id=51 data-nosnippet>51</a>    /// until the kernels are built (a dish and a diameter key for each
+<a href=#52 id=52 data-nosnippet>52</a>    /// antenna at most, and every window's channel frequencies twice).
+<a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mosaic_state_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u64, u64) {
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>kept =
+<a href=#55 id=55 data-nosnippet>55</a>            <span class="self">self</span>.scans.len() * size_of::&lt;MosaicPointing&gt;() + <span class="self">self</span>.antennas.len() * size_of::&lt;u8&gt;();
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>antennas = <span class="self">self</span>.antennas.len()
+<a href=#57 id=57 data-nosnippet>57</a>            * (size_of::&lt;PrimaryBeam&gt;() + size_of::&lt;String&gt;() + DIAMETER_KEY_BYTES);
+<a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">let </span>windows = <span class="self">self</span>.spectral_windows.len()
+<a href=#59 id=59 data-nosnippet>59</a>            * (size_of::&lt;MosaicWindow&gt;() + size_of::&lt;(u32, f64)&gt;())
+<a href=#60 id=60 data-nosnippet>60</a>            + <span class="self">self
+<a href=#61 id=61 data-nosnippet>61</a>                </span>.spectral_windows
+<a href=#62 id=62 data-nosnippet>62</a>                .iter()
+<a href=#63 id=63 data-nosnippet>63</a>                .map(|window| <span class="number">2 </span>* window.channel_count * size_of::&lt;f64&gt;())
+<a href=#64 id=64 data-nosnippet>64</a>                .sum::&lt;usize&gt;();
+<a href=#65 id=65 data-nosnippet>65</a>        (kept <span class="kw">as </span>u64, (antennas + windows) <span class="kw">as </span>u64)
+<a href=#66 id=66 data-nosnippet>66</a>    }
+<a href=#67 id=67 data-nosnippet>67</a>
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// The mosaic machine's beams for the scans observed so far, and each
+<a href=#69 id=69 data-nosnippet>69</a>    /// antenna's dish class.
+<a href=#70 id=70 data-nosnippet>70</a>    ///
+<a href=#71 id=71 data-nosnippet>71</a>    /// # Errors
+<a href=#72 id=72 data-nosnippet>72</a>    ///
+<a href=#73 id=73 data-nosnippet>73</a>    /// Not yet implemented: a telescope without a supported default beam,
+<a href=#74 id=74 data-nosnippet>74</a>    /// a heterogeneous-array antenna without a dish, or more than 255 dish
+<a href=#75 id=75 data-nosnippet>75</a>    /// diameters.
+<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mosaic_beams(
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#78 id=78 data-nosnippet>78</a>        custom: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">super</span>::voltage_patterns::BeamSource&gt;,
+<a href=#79 id=79 data-nosnippet>79</a>    ) -&gt; SimulatorResult&lt;(MosaicBeams, Vec&lt;u8&gt;)&gt; {
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>telescope = <span class="self">self</span>.observing_telescope();
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">let </span>common = custom.is_some() || !MOSAIC_TELESCOPES.contains(<span class="kw-2">&amp;</span>telescope);
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">let </span>default = <span class="kw">match </span>custom {
+<a href=#83 id=83 data-nosnippet>83</a>            <span class="prelude-val">Some</span>(beam) =&gt; beam.configured(),
+<a href=#84 id=84 data-nosnippet>84</a>            <span class="prelude-val">None </span>=&gt; PrimaryBeam::for_telescope(telescope, <span class="self">self</span>.reference_frequency_hz()),
+<a href=#85 id=85 data-nosnippet>85</a>        };
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="kw">if </span>common &amp;&amp; default.is_none() &amp;&amp; custom.is_none() {
+<a href=#87 id=87 data-nosnippet>87</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::refused(<span class="macro">format!</span>(
+<a href=#88 id=88 data-nosnippet>88</a>                <span class="string">"Failed to create SkyEquation: vpmanager does not have a beam for {telescope}"
 <a href=#89 id=89 data-nosnippet>89</a>            </span>)));
 <a href=#90 id=90 data-nosnippet>90</a>        }
 <a href=#91 id=91 data-nosnippet>91</a>        <span class="comment">// At most one class an antenna: the capacities are the bounds
@@ -167,50 +167,44 @@
 <a href=#167 id=167 data-nosnippet>167</a>
 <a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// Each distinct pointing of the scans observed so far (its bits), where
 <a href=#169 id=169 data-nosnippet>169</a>    /// their antennas point, and its offset in `model`
-<a href=#170 id=170 data-nosnippet>170</a>    /// ([`SkyModel::pointing_offset_rad`]), sorted by the bits. The capacity
+<a href=#170 id=170 data-nosnippet>170</a>    /// ([`SkyModel::pointing_offset_and_coverage`]), sorted by the bits. The capacity
 <a href=#171 id=171 data-nosnippet>171</a>    /// is a pointing for each scan, the bound `mosaic_state_bytes` admits.
 <a href=#172 id=172 data-nosnippet>172</a>    ///
 <a href=#173 id=173 data-nosnippet>173</a>    /// # Errors
 <a href=#174 id=174 data-nosnippet>174</a>    ///
-<a href=#175 id=175 data-nosnippet>175</a>    /// Not yet implemented: a pointing outside the model image. Raised: a
-<a href=#176 id=176 data-nosnippet>176</a>    /// pointing the model's coordinates cannot convert.
-<a href=#177 id=177 data-nosnippet>177</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mosaic_pointings(
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#179 id=179 data-nosnippet>179</a>        model: <span class="kw-2">&amp;</span>SkyModel,
-<a href=#180 id=180 data-nosnippet>180</a>    ) -&gt; SimulatorResult&lt;Vec&lt;MosaicPointing&gt;&gt; {
-<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">let </span><span class="kw-2">mut </span>pointings: Vec&lt;MosaicPointing&gt; = Vec::with_capacity(<span class="self">self</span>.scans.len());
-<a href=#182 id=182 data-nosnippet>182</a>        <span class="kw">for </span>scan <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.scans {
-<a href=#183 id=183 data-nosnippet>183</a>            <span class="kw">let </span>key = scan.pointing_rad.map(f64::to_bits);
-<a href=#184 id=184 data-nosnippet>184</a>            <span class="kw">let </span>offset = model
-<a href=#185 id=185 data-nosnippet>185</a>                .pointing_offset_rad(scan.pointing_rad)
-<a href=#186 id=186 data-nosnippet>186</a>                .map_err(|error: PredictError| {
-<a href=#187 id=187 data-nosnippet>187</a>                    SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Caught exception: {error}"</span>))
-<a href=#188 id=188 data-nosnippet>188</a>                })<span class="question-mark">?
-<a href=#189 id=189 data-nosnippet>189</a>                </span>.ok_or_else(|| {
-<a href=#190 id=190 data-nosnippet>190</a>                    SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#191 id=191 data-nosnippet>191</a>                        <span class="string">"predict with setoptions(ftmachine='mosaic') for field {} pointed \
-<a href=#192 id=192 data-nosnippet>192</a>                         outside the model image is not yet implemented in casa-rs (#1053); \
-<a href=#193 id=193 data-nosnippet>193</a>                         CASA predicts nothing for it"</span>,
-<a href=#194 id=194 data-nosnippet>194</a>                        <span class="self">self</span>.fields[scan.field_id].name
-<a href=#195 id=195 data-nosnippet>195</a>                    ))
-<a href=#196 id=196 data-nosnippet>196</a>                })<span class="question-mark">?</span>;
-<a href=#197 id=197 data-nosnippet>197</a>            pointings.push((key, offset));
-<a href=#198 id=198 data-nosnippet>198</a>        }
-<a href=#199 id=199 data-nosnippet>199</a>        pointings.sort_unstable_by_key(|(key, <span class="kw">_</span>)| <span class="kw-2">*</span>key);
-<a href=#200 id=200 data-nosnippet>200</a>        pointings.dedup_by_key(|(key, <span class="kw">_</span>)| <span class="kw-2">*</span>key);
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="prelude-val">Ok</span>(pointings)
-<a href=#202 id=202 data-nosnippet>202</a>    }
-<a href=#203 id=203 data-nosnippet>203</a>}
-<a href=#204 id=204 data-nosnippet>204</a>
-<a href=#205 id=205 data-nosnippet>205</a><span class="attr">#[cfg(test)]
-<a href=#206 id=206 data-nosnippet>206</a></span><span class="kw">mod </span>tests {
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">use </span><span class="kw">super</span>::diameter_key;
-<a href=#208 id=208 data-nosnippet>208</a>
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="attr">#[test]
-<a href=#210 id=210 data-nosnippet>210</a>    </span><span class="kw">fn </span>diameters_compare_to_six_significant_digits() {
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="macro">assert_eq!</span>(diameter_key(<span class="number">12.0</span>), diameter_key(<span class="number">12.000_000_1</span>));
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="macro">assert_ne!</span>(diameter_key(<span class="number">12.0</span>), diameter_key(<span class="number">12.000_1</span>));
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="macro">assert_ne!</span>(diameter_key(<span class="number">12.0</span>), diameter_key(<span class="number">7.0</span>));
-<a href=#214 id=214 data-nosnippet>214</a>    }
-<a href=#215 id=215 data-nosnippet>215</a>}
+<a href=#175 id=175 data-nosnippet>175</a>    /// Raised: a pointing the model's coordinates cannot convert. A `None`
+<a href=#176 id=176 data-nosnippet>176</a>    /// offset records CASA's heterogeneous-array zero contribution outside
+<a href=#177 id=177 data-nosnippet>177</a>    /// the model image; common beams retain the offset.
+<a href=#178 id=178 data-nosnippet>178</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mosaic_pointings(
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#180 id=180 data-nosnippet>180</a>        model: <span class="kw-2">&amp;</span>SkyModel,
+<a href=#181 id=181 data-nosnippet>181</a>        bounded: bool,
+<a href=#182 id=182 data-nosnippet>182</a>    ) -&gt; SimulatorResult&lt;Vec&lt;MosaicPointing&gt;&gt; {
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span><span class="kw-2">mut </span>pointings: Vec&lt;MosaicPointing&gt; = Vec::with_capacity(<span class="self">self</span>.scans.len());
+<a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">for </span>scan <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.scans {
+<a href=#185 id=185 data-nosnippet>185</a>            <span class="kw">let </span>key = scan.pointing_rad.map(f64::to_bits);
+<a href=#186 id=186 data-nosnippet>186</a>            <span class="kw">let </span>(offset, inside) = model
+<a href=#187 id=187 data-nosnippet>187</a>                .pointing_offset_and_coverage(scan.pointing_rad)
+<a href=#188 id=188 data-nosnippet>188</a>                .map_err(|error: PredictError| {
+<a href=#189 id=189 data-nosnippet>189</a>                    SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Caught exception: {error}"</span>))
+<a href=#190 id=190 data-nosnippet>190</a>                })<span class="question-mark">?</span>;
+<a href=#191 id=191 data-nosnippet>191</a>            pointings.push((key, (!bounded || inside).then_some(offset)));
+<a href=#192 id=192 data-nosnippet>192</a>        }
+<a href=#193 id=193 data-nosnippet>193</a>        pointings.sort_unstable_by_key(|(key, <span class="kw">_</span>)| <span class="kw-2">*</span>key);
+<a href=#194 id=194 data-nosnippet>194</a>        pointings.dedup_by_key(|(key, <span class="kw">_</span>)| <span class="kw-2">*</span>key);
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="prelude-val">Ok</span>(pointings)
+<a href=#196 id=196 data-nosnippet>196</a>    }
+<a href=#197 id=197 data-nosnippet>197</a>}
+<a href=#198 id=198 data-nosnippet>198</a>
+<a href=#199 id=199 data-nosnippet>199</a><span class="attr">#[cfg(test)]
+<a href=#200 id=200 data-nosnippet>200</a></span><span class="kw">mod </span>tests {
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">use </span><span class="kw">super</span>::diameter_key;
+<a href=#202 id=202 data-nosnippet>202</a>
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="attr">#[test]
+<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">fn </span>diameters_compare_to_six_significant_digits() {
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="macro">assert_eq!</span>(diameter_key(<span class="number">12.0</span>), diameter_key(<span class="number">12.000_000_1</span>));
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="macro">assert_ne!</span>(diameter_key(<span class="number">12.0</span>), diameter_key(<span class="number">12.000_1</span>));
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="macro">assert_ne!</span>(diameter_key(<span class="number">12.0</span>), diameter_key(<span class="number">7.0</span>));
+<a href=#208 id=208 data-nosnippet>208</a>    }
+<a href=#209 id=209 data-nosnippet>209</a>}
 </code></pre></div></section></main></body></html>

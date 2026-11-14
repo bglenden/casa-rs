@@ -2283,6 +2283,15 @@ while I and Q agree. casa-rs preserves the requested correlation phase.
 rows by dividing selected correlations by that original unit-phase factor.
 No scientific tolerance changes; the remaining documented LSRK-label error
 is below the existing 1e-3 threshold in these controls.</p>
+<h2 id="an-uncovered-first-mosaic-image-suppresses-a-valid-model">An uncovered first mosaic image suppresses a valid model<a class="headerlink" href="#an-uncovered-first-mosaic-image-suppresses-a-valid-model" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 accepts <code>sm.predict(imagename=[outside, inside])</code> but produces
+zero DATA when all pointings lie outside the first image, even though the
+second model alone produces signal. <code>sm_mosaic_coverage_oracle.py</code> retains
+that raw result and captures the valid model alone in a fresh simulator.
+Its outside-only control is zero, so linearity independently gives the
+expected sum. casa-rs tests coverage for each image and preserves the valid
+contribution. The unchanged 1e-3 threshold applies to the actual C++ control.
+This is a data-loss defect casa-rs corrects under SIM-10 (#1297).</p>
 <h2 id="saved-jones-image-beams-lose-or-reverse-image-polarization">Saved Jones-image beams lose or reverse image polarization<a class="headerlink" href="#saved-jones-image-beams-lose-or-reverse-image-polarization" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-14</li>
