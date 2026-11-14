@@ -259,8 +259,7 @@ pub(super) struct PredictionStage<'s> {
 
 impl<'s> PredictionStage<'s> {
     /// The stage for `session`'s predict steps on cells of `(correlations,
-    /// channels)`, on `backend`, or on the CPU when a step projects w;
-    /// `None` when no step predicts.
+    /// channels)`, on the selected `backend`; `None` when no step predicts.
     ///
     /// # Errors
     ///
