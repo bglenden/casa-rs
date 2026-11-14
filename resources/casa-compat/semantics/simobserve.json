@@ -602,7 +602,7 @@
    "title": "Observation and prediction",
    "status": "Partial",
    "scope": "obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.",
-   "gap": "Image-model interferometry has scoped CASA comparisons for LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. REST and Undefined references and combinations with single dish, component models and existing-MS corruption remain outside these frame receipts.",
+   "gap": "Earlier image-model prediction receipts cover LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. Stateful project controls now cover continuation of REST image and BARY MeasurementSets, an ignored Undefined output-frame request, single-dish continuation, manual/atmospheric noise and CASA's ignored leakage in obsmode=\"\". These controls preserve the original MS spectral frame; they do not claim additional new-prediction frame combinations.",
    "evidence": [
     "task-tests",
     "parity-20261103",

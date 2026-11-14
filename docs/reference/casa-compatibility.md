@@ -417,7 +417,7 @@ Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simo
 
 **Partial** — obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.
 
-Image-model interferometry has scoped CASA comparisons for LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. REST and Undefined references and combinations with single dish, component models and existing-MS corruption remain outside these frame receipts.
+Earlier image-model prediction receipts cover LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. Stateful project controls now cover continuation of REST image and BARY MeasurementSets, an ignored Undefined output-frame request, single-dish continuation, manual/atmospheric noise and CASA's ignored leakage in obsmode="". These controls preserve the original MS spectral frame; they do not claim additional new-prediction frame combinations.
 
 Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [frequency-frames-20261106](#simobserve-evidence-frequency-frames-20261106), [additional-frames-20261111](#simobserve-evidence-additional-frames-20261111), [main-integration-20261111](#simobserve-evidence-main-integration-20261111), [uvw-long-baselines-20261112](#simobserve-evidence-uvw-long-baselines-20261112), [project-lifecycle-20261114](#simobserve-evidence-project-lifecycle-20261114).
 
