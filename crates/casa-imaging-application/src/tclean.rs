@@ -432,7 +432,12 @@ impl<'a> Tclean<'a> {
                 .get("perchanweightdensity")
                 .and_then(Value::as_bool)
                 != Some(false);
-        if specmode == "cubesource" && per_channel_density {
+        if specmode == "cubesource"
+            && per_channel_density
+            && !(gridder == "awproject"
+                && matches!(weighting, "briggs" | "uniform")
+                && self.text("interpolation")? == "cubic")
+        {
             return Err(TcleanRefusal::not_yet(
                 "perchanweightdensity",
                 format!(

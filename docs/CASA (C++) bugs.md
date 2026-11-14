@@ -4625,6 +4625,18 @@ same-cache replay agree on all 17 dirty and cleaned products and 48 beams.
 Masks and controller counts match exactly. Maximum product normalized
 RMS is 4.30e-5 and stored-channel MODEL_DATA is 1.82e-6 (#1121).
 
+For Briggs and uniform weighting of this moving-source AW cube,
+`BriggsCubeWeightor` accumulates its density through GridFT at the
+rotated baselines and REST wavelengths. Its lookup maps the native
+channel to a REST plane and uses the stored baseline and frequency for
+the density cell. CASA pads this one-field selection by one plane on
+each side. Applying the imaging AW wavelength scale to the density grid
+would move its samples to different cells. The native path keeps the
+density grid and lookup coordinates of this CASA mode. CASA's captured
+weights and original cache give 34 passing dirty and clean products,
+96 beam checks, exact masks and controller counts, maximum product
+normalized RMS 9.09e-7, and MODEL_DATA below 1.81e-6 (#1121).
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05

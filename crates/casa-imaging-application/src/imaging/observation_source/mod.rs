@@ -372,7 +372,10 @@ impl<'a> ObservationSource<'a> {
         let route: &'a BatchRoute = self.route;
         // A converted AW density axis chooses its fine-grid branch from
         // the first two iterator channels. Keep that spacing in every wave.
+        let rest_aw_density = super::rest_aw_uses_native_wavelengths(problem)
+            && problem.weighting().casa_cube_density_padding().is_some();
         let bounds = (restrict
+            && !rest_aw_density
             && problem
                 .geometry()
                 .spectral()

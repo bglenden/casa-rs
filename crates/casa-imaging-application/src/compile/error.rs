@@ -237,6 +237,12 @@ pub enum PrepareError {
          yet (#980)"
     )]
     SourceFrameCubeDensity,
+    /// The verified moving-source AW density scope.
+    #[error(
+        "Briggs and uniform AW density on a source-frame cube require one TOPO field, \
+         cubic interpolation, perchanweightdensity=True and no uv taper (#1121)"
+    )]
+    RestAwCubeDensity,
     /// A CRTF region's spectral range has an end that is not a finite pixel
     /// on the image's spectral axis.
     #[error("mask: the spectral range {range:?} has no finite pixel on the image's axis")]

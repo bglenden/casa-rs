@@ -331,6 +331,11 @@ pub(crate) fn domain_operator(
     )?;
     let basis = basis(problem)?;
     let mut resampler = resampler(problem, basis)?;
+    if super::rest_aw_uses_native_wavelengths(problem)
+        && problem.weighting().casa_cube_density_padding().is_some()
+    {
+        resampler = resampler.with_rest_aw_density();
+    }
     // The catalog uses a scaled BARY axis. Restore the reporting LSRK
     // frequency for CASA's Float rounding and retain our projected uvw.
     let spectral = problem.geometry().spectral();
