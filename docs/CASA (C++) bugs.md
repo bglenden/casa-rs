@@ -4540,6 +4540,13 @@ weightings pass all 51 dirty and clean products and 144 beams, with
 exact masks and controller counts. Maximum product normalized RMS is
 9.32e-7 and MODEL_DATA normalized RMS is 1.32e-6 (#1121).
 
+The BARY-to-tracked-BARY cubic case uses the same BARY data and
+50.01 MHz width. Each buffer again places eight LSRK samples inside the
+image after two lower halo samples. The matching-cache AW replay agrees
+for natural, Briggs and uniform weighting across 51 products and 144
+beams, with exact masks and controller counts. The largest normalized
+RMS values are 9.62e-7 for products and 1.08e-6 for MODEL_DATA (#1121).
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed
