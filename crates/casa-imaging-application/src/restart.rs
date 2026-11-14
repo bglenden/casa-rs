@@ -116,7 +116,7 @@ pub(crate) fn mvc_cube_product(suffix: &str) -> bool {
 /// Check that `request` can continue on what exists at its `imagename`.
 /// Task entry points call this before creating a run summary.
 pub(crate) fn check(request: &ImagingRequest) -> Result<(bool, bool), PrepareError> {
-    let existing = products(&request.imagename)?;
+    let existing = continuation_products(request, &request.imagename)?;
     let outliers = request
         .outlierfile
         .as_deref()
@@ -372,6 +372,27 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
         return Err(PrepareError::ExistingImageProduct { path });
     }
     Ok(())
+}
+
+/// Products to reuse on a continuation. A user may deliberately name a
+/// separate mask image such as `image.mask.dim.source` as an input. CASA
+/// opens `image.mask` as the output mask and reads the named mask independently.
+pub(crate) fn continuation_products(
+    request: &ImagingRequest,
+    prefix: &Path,
+) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut existing = products(prefix)?;
+    if let Some(input) = request
+        .mask_image
+        .as_ref()
+        .and_then(|path| fs::canonicalize(path).ok())
+    {
+        existing.retain(|path| {
+            !suffix(prefix, path).starts_with("mask.")
+                || fs::canonicalize(path).map_or(true, |path| path != input)
+        });
+    }
+    Ok(existing)
 }
 
 pub(crate) fn products(prefix: &Path) -> Result<Vec<PathBuf>, PrepareError> {
