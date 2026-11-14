@@ -1,0 +1,748 @@
+{
+ "schema": "simutil-diagnostics-receipt/1",
+ "work_issue": 1303,
+ "date": "2026-11-14",
+ "oracle": "casatasks and casatools 6.7.6.14; SciPy scalar-array control and existing independent radiometer equations with CASA receivers/ATM",
+ "native_revision": "c906e21e0f31dd0a4dc3f19169551657f9188517",
+ "source_revision": "c906e21e0f31dd0a4dc3f19169551657f9188517",
+ "commands": [
+  "CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna",
+  "NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native",
+  "CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native-image OUT/native-report.json"
+ ],
+ "summary": {
+  "api_cases": 25,
+  "api_cases_agree": 25,
+  "beam_widths": 7,
+  "ordinary_relative_limit": 0.001,
+  "maximum_raw_sensitivity_relative_difference": 0.0006163255389362021,
+  "python_tests_passed": 84,
+  "python_tests_skipped": 1,
+  "skip": "Existing optional live-CASA signature check in the native-only Python environment; independent CASA oracle commands above were run separately.",
+  "beam_relative_limit": 1e-09,
+  "maximum_beam_relative_difference": 2.4091839634365897e-14
+ },
+ "corrections": [
+  "Extract just the three length-one beam/cell/sampling scalars in the CASA beam oracle; preserve its raw NumPy-2 failures and original SciPy mathematics.",
+  "Explicit telescope/diameter/count sensitivity uses the identical-dish radiometer formula at requested elevation, with independent CASA receiver/ATM controls; the raw undefined-padnames failures are retained. No array positions are invented.",
+  "Missing manual tau0 gets a clear invalid-input error instead of CASA SystemError; no new scientific default.",
+  "Image-noise diagnostic uses the existing imaging application; raw missing-stokes and removed-clean errors are retained. Independent CASA tclean images exactly the same native-written noisy MS."
+ ],
+ "image_control": {
+  "shape": [
+   128,
+   128,
+   1,
+   1
+  ],
+  "unit": "Jy/beam",
+  "image_nrms": 1.904527532213981e-07,
+  "limit": 0.001,
+  "casa_rms_jy": 0.00035715280424348145,
+  "native_rms_jy": 0.0003571528045987353
+ },
+ "preserved_evidence": "Existing approximate synthesized beams/baselines and simulation noise, geometry, backend, performance and memory evidence are retained. No shared noise/prediction/imaging operator changes or new task family. Scalar SF profiles have bounded scratch; simulator/imaging use their existing resources.",
+ "limits": "Representative ALMA/ACA/VLA diagnostics, not an exhaustive Cartesian sweep. Explicit-array image noise requires an antenna configuration. General imclean/simutil completion, Phase6 tasks and plotting remain separate.",
+ "cases": [
+  {
+   "name": "beam_0",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3arcsec",
+    "convsupport": -2,
+    "sampling": "5arcsec"
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control": {
+    "unit": "arcsec",
+    "value": 21.21346317047702
+   },
+   "native": {
+    "name": "beam_0",
+    "ours": {
+     "unit": "arcsec",
+     "value": 21.213463170477016
+    },
+    "reference": {
+     "unit": "arcsec",
+     "value": 21.21346317047702
+    },
+    "agree": true,
+    "seconds": 0.002706614999624435
+   }
+  },
+  {
+   "name": "beam_1",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3arcsec",
+    "convsupport": -1,
+    "sampling": "5arcsec"
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control": {
+    "unit": "arcsec",
+    "value": 20.703862739960563
+   },
+   "native": {
+    "name": "beam_1",
+    "ours": {
+     "unit": "arcsec",
+     "value": 20.703862739960567
+    },
+    "reference": {
+     "unit": "arcsec",
+     "value": 20.703862739960563
+    },
+    "agree": true,
+    "seconds": 0.0006586950003111269
+   }
+  },
+  {
+   "name": "beam_2",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3arcsec",
+    "convsupport": 0,
+    "sampling": "5arcsec"
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control_error": {
+    "type": "ValueError",
+    "message": "max() iterable argument is empty"
+   },
+   "native": {
+    "name": "beam_2",
+    "ours_error": {
+     "type": "ValueError",
+     "message": "max() iterable argument is empty"
+    },
+    "reference_error": {
+     "type": "ValueError",
+     "message": "max() iterable argument is empty"
+    },
+    "agree": true,
+    "seconds": 8.337599865626544e-05
+   }
+  },
+  {
+   "name": "beam_3",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3arcsec",
+    "convsupport": 1,
+    "sampling": "5arcsec"
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control": {
+    "unit": "arcsec",
+    "value": 20.505777771059783
+   },
+   "native": {
+    "name": "beam_3",
+    "ours": {
+     "unit": "arcsec",
+     "value": 20.505777771059783
+    },
+    "reference": {
+     "unit": "arcsec",
+     "value": 20.505777771059783
+    },
+    "agree": true,
+    "seconds": 0.0007681899987801444
+   }
+  },
+  {
+   "name": "beam_4",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3arcsec",
+    "convsupport": 3,
+    "sampling": "5arcsec"
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control": {
+    "unit": "arcsec",
+    "value": 21.21346317047702
+   },
+   "native": {
+    "name": "beam_4",
+    "ours": {
+     "unit": "arcsec",
+     "value": 21.213463170477016
+    },
+    "reference": {
+     "unit": "arcsec",
+     "value": 21.21346317047702
+    },
+    "agree": true,
+    "seconds": 0.0013750859980063979
+   }
+  },
+  {
+   "name": "beam_5",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3arcsec",
+    "convsupport": 5,
+    "sampling": "5arcsec"
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control": {
+    "unit": "arcsec",
+    "value": 21.94014775715073
+   },
+   "native": {
+    "name": "beam_5",
+    "ours": {
+     "unit": "arcsec",
+     "value": 21.9401477571502
+    },
+    "reference": {
+     "unit": "arcsec",
+     "value": 21.94014775715073
+    },
+    "agree": true,
+    "seconds": 0.0018555610004113987
+   }
+  },
+  {
+   "name": "beam_6",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "1arcmin",
+    "cell": "8arcsec",
+    "convsupport": 3
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control": {
+    "unit": "arcsec",
+    "value": 62.22685376851137
+   },
+   "native": {
+    "name": "beam_6",
+    "ours": {
+     "unit": "arcsec",
+     "value": 62.22685376851133
+    },
+    "reference": {
+     "unit": "arcsec",
+     "value": 62.22685376851137
+    },
+    "agree": true,
+    "seconds": 0.007033634999970673
+   }
+  },
+  {
+   "name": "beam_7",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "0.005deg",
+    "cell": "0.5arcsec",
+    "convsupport": 4,
+    "sampling": "0.002deg"
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "only 0-dimensional arrays can be converted to Python scalars"
+   },
+   "scalar_array_control": {
+    "unit": "arcsec",
+    "value": 18.71573422601841
+   },
+   "native": {
+    "name": "beam_7",
+    "ours": {
+     "unit": "arcsec",
+     "value": 18.715734226018405
+    },
+    "reference": {
+     "unit": "arcsec",
+     "value": 18.71573422601841
+    },
+    "agree": true,
+    "seconds": 0.0007292409973160829
+   }
+  },
+  {
+   "name": "beam_8",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20Hz",
+    "cell": "3arcsec",
+    "convsupport": 3
+   },
+   "error": {
+    "type": "ValueError",
+    "message": "beam should be a quantity of antenna primary beam size (angle)"
+   },
+   "native": {
+    "name": "beam_8",
+    "ours_error": {
+     "type": "ValueError",
+     "message": "beam should be a quantity of antenna primary beam size (angle)"
+    },
+    "reference_error": {
+     "type": "ValueError",
+     "message": "beam should be a quantity of antenna primary beam size (angle)"
+    },
+    "agree": true,
+    "seconds": 5.564400271396153e-05
+   }
+  },
+  {
+   "name": "beam_9",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3s",
+    "convsupport": 3
+   },
+   "error": {
+    "type": "ValueError",
+    "message": "cell should be a quantity of image pixel size (angle)"
+   },
+   "native": {
+    "name": "beam_9",
+    "ours_error": {
+     "type": "ValueError",
+     "message": "cell should be a quantity of image pixel size (angle)"
+    },
+    "reference_error": {
+     "type": "ValueError",
+     "message": "cell should be a quantity of image pixel size (angle)"
+    },
+    "agree": true,
+    "seconds": 7.867900058045052e-05
+   }
+  },
+  {
+   "name": "beam_10",
+   "method": "sfBeam1d",
+   "params": {
+    "beam": "20arcsec",
+    "cell": "3arcsec",
+    "convsupport": 3,
+    "sampling": "5m"
+   },
+   "error": {
+    "type": "ValueError",
+    "message": "sampling should be a quantity of pointing spacing (angle)"
+   },
+   "native": {
+    "name": "beam_10",
+    "ours_error": {
+     "type": "ValueError",
+     "message": "sampling should be a quantity of pointing spacing (angle)"
+    },
+    "reference_error": {
+     "type": "ValueError",
+     "message": "sampling should be a quantity of pointing spacing (angle)"
+    },
+    "agree": true,
+    "seconds": 6.113199924584478e-05
+   }
+  },
+  {
+   "name": "alma_100",
+   "method": "sensitivity",
+   "params": {
+    "freq": "100GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "60deg",
+    "pwv": 0.5,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/alma.out01.cfg"
+   },
+   "result": 0.0001480660511158984,
+   "native": {
+    "name": "alma_100",
+    "ours": 0.00014806383061111944,
+    "reference": 0.0001480660511158984,
+    "agree": true,
+    "relative_difference": 1.4996717763615663e-05,
+    "seconds": 1.3745327459982946
+   }
+  },
+  {
+   "name": "alma_230",
+   "method": "sensitivity",
+   "params": {
+    "freq": "230GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "60deg",
+    "pwv": 0.5,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/alma.out01.cfg"
+   },
+   "result": 0.00019594757120080887,
+   "native": {
+    "name": "alma_230",
+    "ours": 0.00019599516321267227,
+    "reference": 0.00019594757120080887,
+    "agree": true,
+    "relative_difference": 0.00024288135633288022,
+    "seconds": 1.215776012999413
+   }
+  },
+  {
+   "name": "alma_650_dsb",
+   "method": "sensitivity",
+   "params": {
+    "freq": "650GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "60deg",
+    "pwv": 0.2,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/alma.out01.cfg"
+   },
+   "result": 0.001930657032302983,
+   "native": {
+    "name": "alma_650_dsb",
+    "ours": 0.001929467119067048,
+    "reference": 0.001930657032302983,
+    "agree": true,
+    "relative_difference": 0.0006163255389362021,
+    "seconds": 1.2354654080008913
+   }
+  },
+  {
+   "name": "vla_manual",
+   "method": "sensitivity",
+   "params": {
+    "freq": "8GHz",
+    "bandwidth": "20MHz",
+    "etime": "60s",
+    "elevation": "45deg",
+    "pwv": 0.5,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/vla.d.cfg",
+    "method": "tsys-manual",
+    "tau0": 0.065,
+    "t_sky": 20.0
+   },
+   "result": 0.00041926041093113013,
+   "native": {
+    "name": "vla_manual",
+    "ours": 0.0004192602936446725,
+    "reference": 0.00041926041093113013,
+    "agree": true,
+    "relative_difference": 2.797460827430598e-07,
+    "seconds": 0.7016788360015198
+   }
+  },
+  {
+   "name": "vla_atmosphere",
+   "method": "sensitivity",
+   "params": {
+    "freq": "45GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "30deg",
+    "pwv": 2.0,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/vla.d.cfg"
+   },
+   "result": 0.00021619988445487016,
+   "native": {
+    "name": "vla_atmosphere",
+    "ours": 0.00021620613873426096,
+    "reference": 0.00021619988445487016,
+    "agree": true,
+    "relative_difference": 2.892822725852895e-05,
+    "seconds": 0.6660229899971455
+   }
+  },
+  {
+   "name": "aca_100",
+   "method": "sensitivity",
+   "params": {
+    "freq": "100GHz",
+    "bandwidth": "500MHz",
+    "etime": "120s",
+    "elevation": "40deg",
+    "pwv": 1.0,
+    "integration": "2s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/aca.i.cfg"
+   },
+   "result": 0.0019103078411638553,
+   "native": {
+    "name": "aca_100",
+    "ours": 0.001910292442336318,
+    "reference": 0.0019103078411638553,
+    "agree": true,
+    "relative_difference": 8.06091416549748e-06,
+    "seconds": 0.4214639359997818
+   }
+  },
+  {
+   "name": "low_elevation",
+   "method": "sensitivity",
+   "params": {
+    "freq": "230GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "2deg",
+    "pwv": 0.5,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/alma.out01.cfg"
+   },
+   "error": {
+    "type": "Exception",
+    "message": "Elevation < ALMA limit of 3 deg"
+   },
+   "native": {
+    "name": "low_elevation",
+    "ours_error": {
+     "type": "RuntimeError",
+     "message": "Elevation < ALMA limit of 3 deg"
+    },
+    "reference_error": {
+     "type": "Exception",
+     "message": "Elevation < ALMA limit of 3 deg"
+    },
+    "agree": true,
+    "seconds": 0.00023105400032363832
+   }
+  },
+  {
+   "name": "bad_method",
+   "method": "sensitivity",
+   "params": {
+    "freq": "230GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "60deg",
+    "pwv": 0.5,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/alma.out01.cfg",
+    "method": "bad"
+   },
+   "error": {
+    "type": "Exception",
+    "message": "Unknown calculation method bad"
+   },
+   "native": {
+    "name": "bad_method",
+    "ours_error": {
+     "type": "RuntimeError",
+     "message": "Unknown calculation method bad"
+    },
+    "reference_error": {
+     "type": "Exception",
+     "message": "Unknown calculation method bad"
+    },
+    "agree": true,
+    "seconds": 0.003589504998672055
+   }
+  },
+  {
+   "name": "explicit_array",
+   "method": "sensitivity",
+   "params": {
+    "freq": "100GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "60deg",
+    "telescope": "ALMA",
+    "diam": 12.0,
+    "nant": 4
+   },
+   "error": {
+    "type": "UnboundLocalError",
+    "message": "cannot access local variable 'padnames' where it is not associated with a value"
+   },
+   "radiometer_control": 0.0022496085661608137,
+   "native": {
+    "name": "explicit_array",
+    "ours": 0.0022496462824991553,
+    "reference": 0.0022496085661608137,
+    "agree": true,
+    "relative_difference": 1.6765733785284453e-05,
+    "seconds": 0.005116478998388629
+   }
+  },
+  {
+   "name": "manual_defaults",
+   "method": "sensitivity",
+   "params": {
+    "freq": "8GHz",
+    "bandwidth": "1GHz",
+    "etime": "60s",
+    "elevation": "60deg",
+    "pwv": 0.5,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/vla.d.cfg",
+    "method": "tsys-manual"
+   },
+   "error": {
+    "type": "SystemError",
+    "message": "<built-in function simulator_setnoise> returned a result with an exception set"
+   },
+   "native": {
+    "name": "manual_defaults",
+    "ours_error": {
+     "type": "ValueError",
+     "message": "tau0 must be supplied for tsys-manual sensitivity"
+    },
+    "reference_error": {
+     "type": "SystemError",
+     "message": "<built-in function simulator_setnoise> returned a result with an exception set"
+    },
+    "agree": true,
+    "seconds": 0.00011464999988675117
+   }
+  },
+  {
+   "name": "manual_units",
+   "method": "sensitivity",
+   "params": {
+    "freq": {
+     "value": 8.0,
+     "unit": "GHz"
+    },
+    "bandwidth": "0.02GHz",
+    "etime": "4min",
+    "elevation": "0.7853981633974483rad",
+    "pwv": 0.5,
+    "integration": "2s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/vla.d.cfg",
+    "method": "tsys-manual",
+    "tau0": 0.065,
+    "t_sky": 20.0
+   },
+   "result": 0.0002096304424815916,
+   "native": {
+    "name": "manual_units",
+    "ours": 0.0002096303931686254,
+    "reference": 0.0002096304424815916,
+    "agree": true,
+    "relative_difference": 2.3523761916166563e-07,
+    "seconds": 1.2010363529989263
+   }
+  },
+  {
+   "name": "image_noise",
+   "method": "sensitivity",
+   "params": {
+    "freq": "8GHz",
+    "bandwidth": "20MHz",
+    "etime": "60s",
+    "elevation": "45deg",
+    "pwv": 0.5,
+    "integration": "1s",
+    "antennalist": "/workspace/casa-rs/crates/casa-simulation/tests/data/readantenna/vla.d.cfg",
+    "method": "tsys-manual",
+    "tau0": 0.065,
+    "t_sky": 20.0,
+    "doimnoise": true
+   },
+   "error": {
+    "type": "TypeError",
+    "message": "simutil.imclean() missing 1 required positional argument: 'stokes'"
+   },
+   "image_argument_control_error": {
+    "type": "NameError",
+    "message": "name 'clean' is not defined"
+   },
+   "native": {
+    "name": "image_noise",
+    "ours": [
+     0.0004192602936446725,
+     0.0003571528045987353
+    ],
+    "reference": null,
+    "agree": true,
+    "diagnostic_directory": "/workspace/casa-rs/target/1303-native-api/simulation-sensitivity-5BtiHB",
+    "seconds": 2.3700286380008038
+   }
+  },
+  {
+   "name": "explicit_manual",
+   "method": "sensitivity",
+   "params": {
+    "freq": "8GHz",
+    "bandwidth": "20MHz",
+    "etime": "60s",
+    "elevation": "45deg",
+    "telescope": "VLA",
+    "diam": 25.0,
+    "nant": 27,
+    "method": "tsys-manual",
+    "tau0": 0.065,
+    "t_sky": 20.0
+   },
+   "error": {
+    "type": "UnboundLocalError",
+    "message": "cannot access local variable 'padnames' where it is not associated with a value"
+   },
+   "radiometer_control": 0.0004190392526036298,
+   "native": {
+    "name": "explicit_manual",
+    "ours": 0.0004190392141031312,
+    "reference": 0.0004190392526036298,
+    "agree": true,
+    "relative_difference": 9.18780242997741e-08,
+    "seconds": 0.003087099001277238
+   }
+  },
+  {
+   "name": "explicit_aca",
+   "method": "sensitivity",
+   "params": {
+    "freq": "100GHz",
+    "bandwidth": "500MHz",
+    "etime": "120s",
+    "integration": "2s",
+    "elevation": "40deg",
+    "pwv": 1.0,
+    "telescope": "ACA",
+    "diam": 7.0,
+    "nant": 12
+   },
+   "error": {
+    "type": "UnboundLocalError",
+    "message": "cannot access local variable 'padnames' where it is not associated with a value"
+   },
+   "radiometer_control": 0.0019106548988781283,
+   "native": {
+    "name": "explicit_aca",
+    "ours": 0.0019106572550441861,
+    "reference": 0.0019106548988781283,
+    "agree": true,
+    "relative_difference": 1.233171965875357e-06,
+    "seconds": 0.00447766499928548
+   }
+  }
+ ]
+}
