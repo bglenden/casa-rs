@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--polarized-images", action="store_true")
+    parser.add_argument("--long-scan", action="store_true")
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()
@@ -53,12 +54,18 @@ def main():
             ("components", "refresh", True, .01, "alt-az"),
             ("components", "equatorial", True, .01, "equatorial"),
             ("image", "off", False, 360., "alt-az"),
-            ("image", "on", True, 360., "alt-az")):
+            ("image", "on", True, 360., "alt-az"),
+            ("image", "refresh", True, .01, "alt-az")):
+        if operation == "image" and mode == "refresh" and not args.polarized_images:
+            continue
         if args.polarized_images and operation != "image":
             continue
-        name = f"saved_gaussian_{'polarized_' if args.polarized_images else ''}{operation}_{mode}"
+        if args.long_scan and mode == "off":
+            continue
+        name = f"saved_gaussian_{'polarized_' if args.polarized_images else ''}{'long_' if args.long_scan else ''}{operation}_{mode}"
         path = root / f"{name}.ms"
-        sm = observation(path, "VLA", 1.4e9, mount)
+        timing = dict(integration=1800., starts=(10800.,), duration=7200.) if args.long_scan else {}
+        sm = observation(path, "VLA", 1.4e9, mount, **timing)
         before = snapshot(path)
         assert sm.setvp(dovp=True, usedefaultvp=False,
             vptable=str(inputs / "custom_gaussian.vp"), dosquint=squint,
@@ -70,6 +77,8 @@ def main():
         case = dict(name=name, telescope="VLA", frequency_hz=1.4e9, mount=mount,
             squint=squint, increment_deg=increment, native_created=True,
             saved_beam="custom_gaussian.vp", before=before, after=snapshot(path))
+        if args.long_scan:
+            case.update(integration_s=1800., scan_starts_s=[10800.], scan_duration_s=7200.)
         if operation == "image":
             case["sky_image"] = sky_name
         cases.append(case)
@@ -77,9 +86,12 @@ def main():
             recipe="tools/simulation/sm_saved_squint_oracle.py", cases=cases))
         print(name, "passed", flush=True)
     signal = lambda case: np.asarray([row["data"] for row in case["after"]["rows"]])
-    for left, right in (((0, 1),) if args.polarized_images else ((0, 1), (1, 2), (2, 3), (4, 5))):
+    pairs = ((0, 1),) if args.long_scan else (((0, 1), (1, 2)) if args.polarized_images else ((0, 1), (1, 2), (2, 3), (4, 5)))
+    for left, right in pairs:
         contrast = np.linalg.norm(signal(cases[left])-signal(cases[right])) / np.linalg.norm(signal(cases[right]))
-        if not args.polarized_images:
+        if args.long_scan:
+            assert contrast > 1e-3, contrast
+        elif not args.polarized_images:
             assert contrast > 1e-3 if left < 4 else contrast < 1e-6, contrast
         print(cases[left]["name"], cases[right]["name"], "contrast", contrast, flush=True)
 

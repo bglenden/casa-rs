@@ -14,7 +14,7 @@ from sm_existing_append_oracle import snapshot
 from sm_multiple_models_oracle import CENTRE
 
 
-def observation(path, telescope, frequency, mount="alt-az"):
+def observation(path, telescope, frequency, mount="alt-az", *, integration=10., starts=(0., 3600.), duration=20.):
     sm, me = simulator(), measures()
     assert sm.open(str(path))
     centre = [-1601185., -5041977., 3554875.]
@@ -31,11 +31,11 @@ def observation(path, telescope, frequency, mount="alt-az"):
     assert sm.setfeed(mode="perfect R L")
     assert sm.setfield(sourcename="target", sourcedirection=me.direction(
         "J2000", f"{CENTRE[0]}rad", f"{CENTRE[1]}rad"))
-    assert sm.settimes(integrationtime="10s", usehourangle=False,
+    assert sm.settimes(integrationtime=f"{integration}s", usehourangle=False,
         referencetime=me.epoch("UTC", "2024/06/01/00:00:00"))
-    for start in (0., 3600.):
+    for start in starts:
         assert sm.observe(sourcename="target", spwname="beam",
-            starttime=f"{start-37}s", stoptime=f"{start-17}s")
+            starttime=f"{start-37}s", stoptime=f"{start+duration-37}s")
     me.done()
     return sm
 

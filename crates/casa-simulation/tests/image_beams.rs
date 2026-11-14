@@ -13,10 +13,12 @@ use serde_json::Value;
 use std::path::Path;
 
 fn run(operation: &str) {
-    let fixture: Value = serde_json::from_reader(GzDecoder::new(
-        &include_bytes!("data/sm_image_beams_casa.json.gz")[..],
-    ))
-    .unwrap();
+    let bytes: &[u8] = if operation == "image_refresh" {
+        include_bytes!("data/sm_image_beam_refresh_casa.json.gz")
+    } else {
+        include_bytes!("data/sm_image_beams_casa.json.gz")
+    };
+    let fixture: Value = serde_json::from_reader(GzDecoder::new(bytes)).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
     let inputs = data.join("sm_image_beams");
@@ -104,7 +106,7 @@ fn run(operation: &str) {
                 use_default_vp: false,
                 vp_table: beam_table.to_string_lossy().into_owned(),
                 do_squint: false,
-                ..VoltagePatternSpec::default()
+                parallactic_angle_increment_deg: case["increment_deg"].as_f64().unwrap_or(360.),
             })
             .unwrap();
             sm.set_data(
@@ -168,4 +170,9 @@ fn saved_jones_images_modify_intrinsic_mosaics_like_casa() {
 #[test]
 fn saved_jones_mosaics_use_each_windows_initial_orientation() {
     run("mosaic_window_visits");
+}
+
+#[test]
+fn saved_image_beams_refresh_within_a_scan_like_casa() {
+    run("image_refresh");
 }

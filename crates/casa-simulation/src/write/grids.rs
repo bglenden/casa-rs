@@ -129,7 +129,9 @@ impl<G> FieldGridCache<G> {
             return Ok(Arc::clone(grids));
         }
         let cost = self.cost(key);
-        while self.held + cost > self.capacity {
+        // Timed beam orientations can introduce keys between the scan
+        // visits. Keep their resident list within its admitted slot count.
+        while self.held + cost > self.capacity || self.resident.len() == self.visits.len() {
             let victim = self
                 .resident
                 .iter()

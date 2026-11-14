@@ -263,8 +263,9 @@ struct FieldModel {
 struct ImageBeamModel {
     model: SkyModel,
     image: crate::predict::image_beam::ImageBeam,
-    centres: Vec<(([u64; 2], usize), f64)>,
-    visits: Vec<(image_beams::VisitKey, usize)>,
+    centres: Vec<(image_beams::BeamFieldKey, f64)>,
+    visits: Vec<image_beams::BeamVisit>,
+    timed: bool,
 }
 
 /// Where the grids of a field come from: a set prepared at `predict`, or
@@ -317,6 +318,8 @@ impl Prediction {
                 .map(|index| self.pointings[index].1.is_some())
                 .expect("a mosaic step measured its scan's pointing");
         covered
+            && (!matches!(self.grids, StepGrids::ImageBeam(_))
+                || self.image_visit(scan, None).is_some())
             && (self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000
                 || super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan).is_some())
     }
