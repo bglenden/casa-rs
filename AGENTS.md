@@ -251,11 +251,13 @@ reason to stop useful work.
 - Fix a supporting defect only when a named failing scenario proves that the
   primary ticket cannot close without it. Queue other discoveries in one short
   backlog note and return to completion; do not investigate them further now.
-- Keep long work's state in one status comment on its issue, edited in
-  place. A handoff is that comment plus a startup prompt naming no model or
+- Keep one short status comment for long work and edit it in place. On a
+  parent issue, the issue body is the ordered outcome index. The comment
+  links the active child and PR and gives the latest actionable result, next
+  action, any blocker or owner decision, and the next ticket in order. Keep
+  detailed evidence, reviews and waivers on the child or PR that owns them.
+  A handoff is the status comment plus a startup prompt naming no model or
   host-specific tool. A resumed branch follows `AGENTS.md` on `origin/main`.
-  Start the next delivery with concise current context: the instructions,
-  selected behavior, issue/PR and next action. Do not replay the full history.
 - Never weaken an acceptance check to finish. Unfinished work stays open on
   its issue and the PR does not claim it; that includes relaxations
   `TESTING.md` reserves for the owner.
