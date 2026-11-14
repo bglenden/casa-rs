@@ -263,8 +263,24 @@ fn the_batch_source_holds_at_most_its_charge() {
         "weighting": "uniform",
         "perchanweightdensity": false,
     });
-    let cases: [(&str, Vec<&Path>, Value, u32, u64); 14] = [
+    let tracked_wide = json!({
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "spw": "0",
+        "start": "0",
+        "width": "2",
+        "channel_count": 12,
+        "interpolation": "linear",
+    });
+    let cases: [(&str, Vec<&Path>, Value, u32, u64); 15] = [
         ("continuum", vec![&narrow], json!({}), 1, ample),
+        (
+            "wide TOPO cube on LSRK data in waves",
+            vec![&wide],
+            tracked_wide,
+            3,
+            ample,
+        ),
         ("cube resident", vec![&narrow], cube.clone(), 16, ample),
         ("cube in waves", vec![&narrow], cube, 3, ample),
         (

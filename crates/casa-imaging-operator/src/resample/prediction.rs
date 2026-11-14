@@ -715,11 +715,7 @@ impl SpectralResampler {
         // `InterpolateArray1D`, linear or cubic).
         index_slots(axis.channels as usize);
         let width = (axis.increment_hz / (native[1] - native[0])).abs();
-        let per_channel = if width > 1.0 {
-            width.floor() as usize
-        } else {
-            1
-        };
+        let per_channel = axis.fine_samples_per_plane(width);
         let fine_increment = axis.increment_hz / per_channel as f64;
         let fine_start = if per_channel > 1 {
             axis.first_hz - axis.increment_hz / 2.0 + fine_increment / 2.0

@@ -235,6 +235,28 @@ fn predict(
         .collect()
 }
 
+/// A wide linear cube repeats each model plane over its fine-grid
+/// samples. At the #1256 tie, one sample per plane leaves the model
+/// linear across the two plane centres.
+#[test]
+fn wide_topo_prediction_uses_the_same_width_tie_as_gridding() {
+    let axis = SpectralAxis::new(1.025e9, 100.0e6, 2)
+        .expect("axis")
+        .with_exact_width_from_below();
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let model = point_model(&operator, &[2.0, 6.0]);
+    let flat = point_model(&operator, &[1.0, 1.0]);
+    let native = [1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.2e9];
+    let unit = predict(&resampler, &operator, &flat, &native);
+    let predicted = predict(&resampler, &operator, &model, &native);
+    for (channel, expected) in [(1, 3.0), (2, 5.0)] {
+        assert!(unit[channel].norm() > 0.9, "channel {channel}");
+        let error = (predicted[channel] - unit[channel] * expected).norm();
+        assert!(error < 1e-5, "channel {channel}: error {error}");
+    }
+}
+
 #[test]
 fn cubic_prediction_reproduces_a_cubic_spectrum_and_extrapolates_in_its_halo() {
     let axis = SpectralAxis::new(1.0e9, 1.0e6, 12).expect("axis");

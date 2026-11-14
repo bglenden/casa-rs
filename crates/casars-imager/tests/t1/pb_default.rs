@@ -334,6 +334,30 @@ fn topo_cube_image_epoch_follows_the_first_selected_physical_row() {
     }
 }
 
+/// CASA's stock width-two grid samples the two output centres once each
+/// on this LSRK VLA observation (#1256).
+#[test]
+fn wide_topo_cube_uses_stock_casa_linear_weights() {
+    let observation = topo_boundary_observation(1_000_000_118.0);
+    swap_first_and_last_rows(&observation);
+    let (_, products) = observation.image(
+        "topo-width-two",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 0, "width": 2, "nchan": 2,
+            "niter": 0, "outframe": "TOPO", "interpolation": "linear",
+            "weighting": "natural", "write_pb": true,
+        }),
+    );
+    let sumwt = products.get(".sumwt");
+    for (channel, expected) in [(0, 20_271.755_859_375), (1, 18_223.882_812_5)] {
+        let actual = f64::from(sumwt.plane(channel)[(0, 0)]);
+        assert!(
+            (actual - expected).abs() / expected < 5e-5,
+            "channel {channel}: sumwt {actual}, CASA {expected}"
+        );
+    }
+}
+
 /// With no explicit start, the selected band sets the first output plane.
 /// An image that extends past the selection has no data in its last plane.
 #[test]
