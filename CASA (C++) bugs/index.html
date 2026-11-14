@@ -4305,6 +4305,26 @@ on each joined residual and restored Taylor plane. Stock CASA omits
 all four masks. casa-rs copies its PB mask to each plane. A comparison
 of the full pixel arrays, including the masked pixels, agrees within
 5.38e-6 normalized RMS across this case's products.</p>
+<h2 id="casas-cube-workers-reject-facet-stores-with-no-polarization-representation">CASA's cube workers reject facet stores with no polarization representation<a class="headerlink" href="#casas-cube-workers-reject-facet-stores-with-no-polarization-representation" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>tclean</code> fails before publishing a PSF for a 2×2
+faceted, Stokes I, two-channel dirty cube on <code>refim_point.ms</code>,
+<code>refim_eptwochan.ms</code> or <code>refim_twopoints_twochan.ms</code>. The worker reports
+“data polarization type is not defined.” <code>SIImageStore::init</code> sets the
+representation to UNKNOWN. <code>SynthesisImagerVi2</code> leaves the call that
+copies the parent's representation into a facet commented out, while it
+copies the representation into channel chunks. <code>runCubeGridding</code> sends
+the unset value to <code>CubeMajorCycleAlgorithm</code>, which rejects it. The
+unfaceted control completes.</p>
+<p>Casa-rs uses the observation's polarization plan for every facet and
+finishes natural-weighted, same-frame standard dirty and Högbom cubes with
+nearest-channel sampling. For <code>refim_point.ms</code>, independent CASA faceted
+MFS runs of the selected channels verify the PSFs, residuals, restored
+images, models, masks and facet weights. An unfaceted CASA cube on those
+same channels verifies the frequency axis and cube PB (#1063). When the
+first facet has no usable weight on a channel, casa-rs takes that
+channel's PSF from the first populated facet. This extends its scalar
+facet behavior to cubes. CASA's normalizer always uses facet zero,
+whose empty PSF cannot guide deconvolution in the populated facets.</p>
 <h2 id="tclean-seeds-a-stokes-i-image-from-a-stokes-q-start-model"><code>tclean</code> seeds a Stokes I image from a Stokes Q start model<a class="headerlink" href="#tclean-seeds-a-stokes-i-image-from-a-stokes-q-start-model" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-28</li>

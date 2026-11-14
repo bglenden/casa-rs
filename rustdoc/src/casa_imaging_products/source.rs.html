@@ -52,7 +52,7 @@
 <a href=#52 id=52 data-nosnippet>52</a>
 <a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// Each faceted image domain's facets' own sums of weights, by domain
 <a href=#54 id=54 data-nosnippet>54</a>/// ordinal: per facet in CASA's order (facet `row·N + column`, facet 0 at
-<a href=#55 id=55 data-nosnippet>55</a>/// the bottom left), then by normal moment and polarization. CASA's `.sumwt`
+<a href=#55 id=55 data-nosnippet>55</a>/// the bottom left), then by channel, normal moment and polarization. CASA's `.sumwt`
 <a href=#56 id=56 data-nosnippet>56</a>/// holds each facet store's value for that moment (`SIImageStore::getSubImageStore`).
 <a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">pub type </span>FacetSumWeights = std::collections::BTreeMap&lt;usize, Vec&lt;Vec&lt;f64&gt;&gt;&gt;;
 <a href=#58 id=58 data-nosnippet>58</a>
@@ -339,7 +339,7 @@
 <a href=#339 id=339 data-nosnippet>339</a>    /// # Panics
 <a href=#340 id=340 data-nosnippet>340</a>    ///
 <a href=#341 id=341 data-nosnippet>341</a>    /// If an entry is not a faceted domain of the problem with one sum per
-<a href=#342 id=342 data-nosnippet>342</a>    /// facet, moment and polarization.
+<a href=#342 id=342 data-nosnippet>342</a>    /// facet, channel, moment and polarization.
 <a href=#343 id=343 data-nosnippet>343</a>    </span><span class="attr">#[must_use]
 <a href=#344 id=344 data-nosnippet>344</a>    </span><span class="kw">pub fn </span>with_facet_sum_weights(<span class="kw-2">mut </span><span class="self">self</span>, sums: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>FacetSumWeights) -&gt; <span class="self">Self </span>{
 <a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>domains = <span class="self">self</span>.problem.geometry().domains();
