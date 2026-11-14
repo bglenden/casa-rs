@@ -536,7 +536,7 @@ impl PySimulator {
 
     /// Predict the model image and the component list into the rows observed
     /// so far, replacing their DATA or, with `incremental`, adding to it;
-    /// written at `close`. Supports multiple CASA images (Stokes I, J2000)
+    /// written at `close`. Supports multiple CASA images with Stokes I/Q/U/V and native direction frames
     /// and J2000 point, Gaussian and disk component lists, including an
     /// increment after corruption. Limb-darkened disks and other component
     /// frames raise `NotImplementedError`.

@@ -20,9 +20,8 @@ pub(super) fn add_single_dish(
     (data, samples): (&mut [Complex32], usize),
 ) {
     for &(scan, start, count) in runs {
-        let window = scans[scan].spectral_window_id;
+        let window = scans[scan].data_description_id;
         for prediction in plan.single_dish_for_scan(scan) {
-            let values = prediction.samples(scan, window);
             for row in start..start + count {
                 let geometry = &rows[row];
                 // `SDGrid::get` predicts no row it flags, nor (here) a
@@ -30,6 +29,8 @@ pub(super) fn add_single_dish(
                 if geometry.antenna1 != geometry.antenna2 || geometry.flagged {
                     continue;
                 }
+                let values =
+                    prediction.samples_at(scan, window, geometry.time_s, geometry.antenna1);
                 for (cell, value) in data[row * samples..(row + 1) * samples]
                     .iter_mut()
                     .zip(values)

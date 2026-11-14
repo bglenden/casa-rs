@@ -11,7 +11,7 @@ import sys
 
 import numpy as np
 from casatasks import version_string
-from casatools import componentlist, measures, simulator, table
+from casatools import componentlist, image, measures, simulator, table
 
 from sm_apply_time_oracle import write
 from sm_existing_append_oracle import snapshot
@@ -20,6 +20,7 @@ from sm_multiple_models_oracle import CENTRE, OFFSET, model
 
 NAMES = [f"fixed_{op}" for op in ("image_plain", "components_plain", "image_beam", "components_beam", "mosaic")]
 NAMES += [f"changing_{op}" for op in ("image_beam", "components_beam", "mosaic")]
+NAMES += [f"{profile}_{op}" for profile in ("fixed", "changing") for op in ("sd_box", "sd_pb", "sd_beam")]
 
 
 def observation(path, profile):
@@ -76,15 +77,18 @@ def worker(root, name, corrected):
         split_later_field(path)
         sm = simulator()
         assert sm.openfromms(str(path))
-    assert sm.setoptions(ftmachine="mosaic" if operation == "mosaic" else "ft")
+    assert sm.setoptions(ftmachine="sd" if operation.startswith("sd_") else "mosaic" if operation == "mosaic" else "ft",
+        gridfunction="PB" if operation == "sd_pb" else "BOX" if operation.startswith("sd_") else "SF")
     assert sm.setvp(dovp=operation.endswith("beam"), dosquint=False)
     inputs = root / "inputs"
     arguments = {"complist" if operation.startswith("components") else "imagename":
-        str(inputs / ("sky.cl" if operation.startswith("components") else "sky.image"))}
+        str(inputs / ("sky.cl" if operation.startswith("components") else "sd.image" if operation.startswith("sd_") else "sky.image"))}
     assert sm.predict(**arguments, incremental=False)
     case = dict(name=name, profile=profile, operation=operation, native_created=True,
         returned=True, before=before, after=snapshot(path), eop=earth_orientation(before),
         cleanup="not returned")
+    if operation.startswith("sd_"):
+        case["native_single_dish"] = True
     output = root / f"{name}{'-corrected' if corrected else ''}.json.gz"
     write(output, dict(casa_version=version_string(), cases=[case]))
     sm.close()
@@ -116,6 +120,7 @@ def main():
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--worker", choices=NAMES)
     parser.add_argument("--corrected", action="store_true")
+    parser.add_argument("--only", nargs="+", choices=NAMES)
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()
@@ -125,6 +130,19 @@ def main():
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
     model(inputs / "sky.image", "a")
+    ia = image()
+    ia.open(str(inputs / "sky.image"))
+    cs = ia.coordsys()
+    ia.done()
+    pixel = cs.referencepixel()["numeric"]
+    pixel[:2] += 96
+    cs.setreferencepixel(pixel)
+    x, y = np.indices((256, 256))
+    values = (.2 + .8*np.exp(-((x-128.)**2+(y-128.)**2)/160.)).astype(np.float32)
+    ia.fromarray(outfile=str(inputs / "sd.image"), pixels=values[:, :, None, None], csys=cs.torecord())
+    ia.setbrightnessunit("Jy/pixel")
+    ia.done()
+    cs.done()
     cl = componentlist()
     for flux, direction in ((1., CENTRE), (.4, OFFSET)):
         assert cl.addcomponent(flux=flux, freq="230GHz",
@@ -133,6 +151,8 @@ def main():
     cl.done()
     cases = []
     for name in NAMES:
+        if args.only and name not in args.only:
+            continue
         case = run(root, name)
         if name.startswith("changing_"):
             control = run(root, name, True)

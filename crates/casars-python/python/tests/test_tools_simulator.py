@@ -1309,12 +1309,14 @@ def test_wproject_predicts_and_refuses_as_casa_does(
 
 
 @needs_measures
-def test_total_power_samples_the_model_at_the_pointing(tmp_path: Path) -> None:
+def test_total_power_samples_the_model_at_the_pointing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     # setoptions(ftmachine='sd') samples the model in the image plane, as
     # CASA's SDGrid does: the autocorrelations carry it and the
     # cross-correlations nothing. BOX takes the pixel nearest the pointing,
-    # the fixture's 1 Jy point; PB needs the telescope's pattern, and casa-rs's
-    # PB kernel has ALMA's and ACA's, not yet the VLA's.
+    # the fixture's 1 Jy point. PB uses the telescope's supported pattern
+    # and requires an image wider than its convolution support.
     model = sky_model(tmp_path)
     sm = simulator()
     sm.open(str(tmp_path / "sd.ms"))
@@ -1337,8 +1339,11 @@ def test_total_power_samples_the_model_at_the_pointing(tmp_path: Path) -> None:
         assert sm.setoptions(ftmachine="sd", gridfunction=kernel) is True
         assert sm.predict(imagename=str(model)) is True
     assert sm.setoptions(ftmachine="sd", gridfunction="PB") is True
-    with pytest.raises(NotImplementedError, match="telescope VLA"):
-        sm.predict(imagename=str(model))
+    # VLA is now supported. This tiny image is refused with CASA's model
+    # geometry outcome, rather than the former unsupported-telescope error.
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.predict(imagename=str(model)) is False
+    assert "smaller than or equal to gridding support" in caplog.messages[-1]
     sm.close()
 
 

@@ -558,15 +558,6 @@ impl Simulator {
             return Err(SimulatorError::refused(reason));
         }
         let correlations = self.predicted_correlations()?;
-        if self.single_dish.is_some()
-            && self.scans.iter().any(|scan| {
-                self.correlations_for_scan(scan) != self.correlations_for_scan(&self.scans[0])
-            })
-        {
-            return Err(SimulatorError::not_yet_implemented(
-                "total-power prediction over different correlation setups is not yet implemented in casa-rs (#1299)",
-            ));
-        }
         let selected_beam = self.voltage_pattern_beam()?;
         let component_beam = selected_beam.as_ref().filter(|_| self.voltage_pattern);
         let beam = component_beam.map(|beam| &beam.pattern);
@@ -576,48 +567,13 @@ impl Simulator {
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
-        // Interferometric images/components and mosaic kernels keep phase
-        // and pointing separately. Fresh total-power beam offsets await
-        // their dedicated integration controls.
-        if beam.is_some() && self.single_dish.is_some() {
-            self.check_pointings_on_fields("setvp(dovp=True)")?;
-        }
         let mut total_predictions = Vec::new();
         if let Some(kernel) = self.single_dish {
-            // Total power samples a model image; `SDGrid` with a component
-            // list is not yet here.
-            if !self.joint_grid && (model.is_none() || list.is_some()) {
-                return Err(SimulatorError::not_yet_implemented(
-                    "predict(complist=…) after setoptions(ftmachine='sd') is not yet \
-                     implemented in casa-rs (#1053); a model image is",
-                ));
-            }
-            let beam = beam
-                .map(|beam| {
-                    beam.configured().ok_or_else(|| {
-                        SimulatorError::not_yet_implemented(
-                            "single-dish consumption of saved radial curves (#1299)",
-                        )
-                    })
-                })
-                .transpose()?;
-            if self.joint_grid {
-                total_predictions = images
-                    .iter()
-                    .map(|path| SkyModel::open(path).map_err(model_error))
-                    .map(|model| self.prepare_single_dish(model?, kernel, beam))
-                    .collect::<SimulatorResult<Vec<_>>>()?;
-            } else {
-                let predictions = opened_models(model, &images)
-                    .map(|model| self.prepare_single_dish(model?, kernel, beam))
-                    .collect::<SimulatorResult<Vec<_>>>()?;
-                self.data_plan.begin_prediction(spec.incremental);
-                for prediction in predictions {
-                    self.data_plan
-                        .predict_single_dish(Arc::new(prediction), self.scans.len());
-                }
-                return Ok(());
-            }
+            total_predictions = images
+                .iter()
+                .map(|path| SkyModel::open(path).map_err(model_error))
+                .map(|model| self.prepare_single_dish(model?, kernel, component_beam))
+                .collect::<SimulatorResult<Vec<_>>>()?;
         }
 
         let component_frame_epoch = beam.is_some_and(|beam| beam.image().is_some())
@@ -652,7 +608,11 @@ impl Simulator {
         };
         let mut predictions = Vec::with_capacity(images.len() * correlations.len());
         let mut first_model = model;
-        for (group, correlations) in correlations.iter().enumerate() {
+        for (group, correlations) in correlations
+            .iter()
+            .enumerate()
+            .filter(|_| self.single_dish.is_none() || self.joint_grid)
+        {
             let first = if group == 0 {
                 first_model.take()
             } else {
@@ -1089,22 +1049,6 @@ impl Simulator {
     /// in SIM-12/22 (#1299). Interferometric prediction instead keeps the
     /// phase and beam directions separately, correcting CASA's field-only
     /// beam cache (documented in `docs/CASA (C++) bugs.md`).
-    fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
-        let moved = self.scans.iter().find(|scan| {
-            !matches!(scan.rows, super::observe::ScanRows::OnDisk(_))
-                && scan.pointing_rad != scan.phase_center_rad
-        });
-        match moved {
-            Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
-                "predict with {what} for scan {} pointed away from its field {} is not yet \
-                 implemented in casa-rs (#1053); pointings at their \
-                 fields' centres are",
-                scan.scan_number, self.fields[scan.field_id].name
-            ))),
-            None => Ok(()),
-        }
-    }
-
     /// Admit and prepare `model`'s grids: one set, without `beam` or with
     /// one field observed (the beam centred on it). With several fields
     /// under the beam, the model's planes are held for `close` to prepare
