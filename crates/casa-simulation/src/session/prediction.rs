@@ -33,6 +33,8 @@
 //! incremental predict, whose sum CASA forms through MODEL_DATA; a
 //! MeasurementSet `openfromms` opened keeps those it has in step with DATA.
 
+mod fields;
+mod image_beams;
 mod kernels;
 
 use std::path::{Path, PathBuf};
@@ -245,6 +247,7 @@ enum StepGrids {
     /// One set per observed field under the beam, centred on the field,
     /// which `close` prepares ([`Prediction::prepare_field`]).
     PerField(Box<FieldModel>),
+    Jones(Box<JonesFieldModel>),
 }
 
 /// What `close` prepares a field's grids from: the model with its planes
@@ -254,6 +257,13 @@ struct FieldModel {
     model: SkyModel,
     pattern: BeamPattern,
     centres: Vec<([u64; 2], [f64; 2])>,
+}
+
+struct JonesFieldModel {
+    model: SkyModel,
+    image: Arc<crate::predict::jones::JonesImage>,
+    centres: Vec<(([u64; 2], usize), f64)>,
+    visits: Vec<(image_beams::VisitKey, usize)>,
 }
 
 /// Where the grids of a field come from: a set prepared at `predict`, or
@@ -267,6 +277,12 @@ impl std::fmt::Debug for Prediction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fields: Vec<Option<usize>> = match &self.grids {
             StepGrids::Prepared(field, _) => vec![*field],
+            StepGrids::Jones(held) => held
+                .centres
+                .iter()
+                .enumerate()
+                .map(|(i, _)| Some(i))
+                .collect(),
             StepGrids::PerField(held) => held
                 .centres
                 .iter()
@@ -277,7 +293,7 @@ impl std::fmt::Debug for Prediction {
         formatter
             .debug_struct("Prediction")
             .field("fields", &fields)
-            .field("per_field", &matches!(self.grids, StepGrids::PerField(_)))
+            .field("per_field", &self.per_field())
             .finish_non_exhaustive()
     }
 }
@@ -318,97 +334,6 @@ impl Prediction {
 
     pub(crate) fn phase_centre(&self, scan: &super::observe::Scan) -> [f64; 2] {
         super::from_ms::polynomial::centre(self.phase_centres.as_ref(), scan)
-    }
-
-    /// Index the grids by antenna beam direction, independently of FIELD.
-    pub(crate) fn grid_id(&self, scan: &super::observe::Scan) -> usize {
-        match &self.grids {
-            StepGrids::Prepared(..) => 0,
-            StepGrids::PerField(held) => held
-                .centres
-                .binary_search_by_key(&scan.pointing_rad.map(f64::to_bits), |(direction, _)| {
-                    *direction
-                })
-                .expect("prepared pointing"),
-        }
-    }
-
-    /// Where the grids rows of `field` are predicted from come from; `None`
-    /// for a field the step did not observe.
-    pub(crate) fn grids_for(&self, field: usize) -> Option<FieldGrids<'_>> {
-        match &self.grids {
-            StepGrids::Prepared(grid_field, grids) => grid_field
-                .is_none_or(|grid_field| grid_field == field)
-                .then_some(FieldGrids::Prepared(grids)),
-            StepGrids::PerField(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
-        }
-    }
-
-    /// Bytes the grids prepared at `predict` hold: one set, or none when
-    /// `close` prepares each field's.
-    pub(crate) fn prepared_bytes(&self) -> u64 {
-        match &self.grids {
-            StepGrids::Prepared(_, grids) => grids.bytes(),
-            StepGrids::PerField(_) => 0,
-        }
-    }
-
-    /// Whether `close` prepares each field's grids
-    /// ([`Self::prepare_field`]).
-    pub(crate) fn per_field(&self) -> bool {
-        matches!(self.grids, StepGrids::PerField(_))
-    }
-
-    /// Bytes one set of grids holds ([`PreparedModelGrids::bytes`]).
-    pub(crate) fn set_bytes(&self) -> u64 {
-        self.model.grid_bytes()
-    }
-
-    /// Bytes preparing a field's grids holds beside them on `workers`
-    /// workers: a plane's scratch for each worker that has a plane
-    /// ([`ModelOperator::plane_scratch_bytes`]); none when `close` prepares
-    /// no grids.
-    pub(crate) fn preparation_bytes(&self, workers: usize) -> u64 {
-        match &self.grids {
-            StepGrids::Prepared(..) => 0,
-            StepGrids::PerField(held) => {
-                workers.clamp(1, held.model.planes().max(1)) as u64
-                    * self.model.plane_scratch_bytes(&held.model)
-            }
-        }
-    }
-
-    /// Prepare the grids of `field`, which the step observed under the
-    /// beam, on `team`: the planes held, multiplied by the beam's power
-    /// centred on the field and transformed, as `predict` prepares one
-    /// field's ([`ModelOperator::prepare`]); the same grids whatever the
-    /// workers.
-    ///
-    /// # Errors
-    ///
-    /// A raised error for a field the step did not observe or a step whose
-    /// grids were prepared at `predict`, and the operator's refusal, which
-    /// for a model `predict` read is only a transform's failure.
-    pub(crate) fn prepare_field(
-        &self,
-        field: usize,
-        team: &WorkerTeam,
-    ) -> SimulatorResult<PreparedModelGrids> {
-        let StepGrids::PerField(held) = &self.grids else {
-            return Err(SimulatorError::raised(
-                "the step's grids were prepared at predict",
-            ));
-        };
-        let centre = held
-            .centres
-            .get(field)
-            .map(|(_, centre)| *centre)
-            .ok_or_else(|| {
-                SimulatorError::raised(format!("predict did not observe field {field}"))
-            })?;
-        self.model
-            .prepare(&held.model, Some((&held.pattern, centre)), Some(team))
-            .map_err(model_error)
     }
 
     /// The offset of rows pointed at `centre_rad`, which the mosaic
@@ -643,6 +568,7 @@ impl Simulator {
         let selected_beam = self.voltage_pattern_beam()?;
         let component_beam = selected_beam.as_ref().filter(|_| self.voltage_pattern);
         let beam = component_beam.map(|beam| &beam.pattern);
+        frame_epoch |= beam.is_some_and(|beam| beam.image().is_some());
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
@@ -680,8 +606,9 @@ impl Simulator {
             }
             return Ok(());
         }
-        let component_frame_epoch = (self.squint
-            && beam.is_some_and(|beam| beam.configured().is_some_and(PrimaryBeam::squints)))
+        let component_frame_epoch = beam.is_some_and(|beam| beam.image().is_some())
+            || (self.squint
+                && beam.is_some_and(|beam| beam.configured().is_some_and(PrimaryBeam::squints)))
             || list.as_ref().is_some_and(|(_, list, _)| {
                 list.components().iter().any(|component| {
                     component.shape().reference_direction().refer()
@@ -853,6 +780,12 @@ impl Simulator {
         };
         let layout = ModelLayout::new(&model, correlations, machine, beams)
             .map_err(|error| correlation_error(error, correlations))?;
+        let layout =
+            if beam.is_some_and(|beam| beam.image().is_some()) && machine != FtMachine::Mosaic {
+                layout.with_jones(correlations).map_err(model_error)?
+            } else {
+                layout
+            };
         let (kernels, mut kernel_reservation) = self.admitted_kernels(&layout)?;
         // The operator drops the layout's beams.
         let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
@@ -872,7 +805,18 @@ impl Simulator {
             .last()
             .filter(|field| field.distance_m != 0.)
             .map_or(model.distance_m, |field| field.distance_m);
-        let mut prediction = self.prepare(model, operator, image_beam, kernel_reservation)?;
+        let mut prediction =
+            if let Some(image) = image_beam.and_then(super::voltage_patterns::BeamSource::image) {
+                self.prepare_jones_image(
+                    model,
+                    operator,
+                    image.clone(),
+                    kernel_reservation,
+                    phase_centres.as_ref(),
+                )?
+            } else {
+                self.prepare(model, operator, image_beam, kernel_reservation)?
+            };
         prediction.distance_m = distance_m;
         prediction.phase_centres = phase_centres;
         prediction.pointings = pointings;
@@ -892,12 +836,12 @@ impl Simulator {
         selected_beam: Option<&super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<ComponentPrediction> {
-        let squint = selected_beam
+        let mut squint = selected_beam
             .filter(|beam| self.squint && beam.standard)
             .and_then(|beam| beam.pattern.configured())
             .filter(|beam| beam.squints())
             .map(|beam| -> SimulatorResult<_> {
-                Ok((
+                Ok(crate::predict::ComponentBeamConfig::squint(
                     beam,
                     self.reference_frequency_hz(),
                     self.beam_angle_increment_rad,
@@ -906,6 +850,14 @@ impl Simulator {
             })
             .transpose()?;
         let beam = selected_beam.map(|beam| &beam.pattern);
+        if let Some(image) = beam.and_then(super::voltage_patterns::BeamSource::image) {
+            squint = Some(crate::predict::ComponentBeamConfig::image(
+                image.clone(),
+                self.beam_angle_increment_rad,
+                super::voltage_patterns::squint_mount(self)?,
+            ));
+        }
+        let radial = beam.filter(|beam| beam.image().is_none());
         if self
             .antennas
             .windows(2)
@@ -943,7 +895,9 @@ impl Simulator {
                 }
             })
             .collect();
-        let pattern = beam.map(super::voltage_patterns::BeamSource::pattern);
+        let pattern = radial
+            .map(super::voltage_patterns::BeamSource::pattern)
+            .transpose()?;
         // A scan is phased on its field's phase centre, as CASA's
         // `VisBuffer` phases it, with the beam centred independently on
         // POINTING. Only equal phase/beam pairs share prepared terms.
@@ -1154,7 +1108,9 @@ impl Simulator {
         pointings.sort_unstable_by_key(|direction| direction.map(f64::to_bits));
         pointings.dedup_by_key(|direction| direction.map(f64::to_bits));
         let _ = &point_memory;
-        let pattern = beam.map(super::voltage_patterns::BeamSource::pattern);
+        let pattern = beam
+            .map(super::voltage_patterns::BeamSource::pattern)
+            .transpose()?;
         let tangent = model.tangent_direction().clone();
         let (grids, reservation) = match pattern {
             Some(pattern) if pointings.len() > 1 => {

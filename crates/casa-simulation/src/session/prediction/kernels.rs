@@ -58,6 +58,7 @@ impl Simulator {
                         .custom_pattern
                         .as_ref()
                         .map(super::super::voltage_patterns::BeamSource::pattern)
+                        .transpose()?
                         .unwrap_or_else(|| dishes[0].pattern());
                     let screens =
                         MosaicPb::simple_pattern_screens(geometry, polarization, &pattern, windows)

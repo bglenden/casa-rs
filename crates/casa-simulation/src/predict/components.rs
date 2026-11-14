@@ -53,8 +53,8 @@ use std::sync::Arc;
 use super::{BeamPattern, PrimaryBeam};
 
 mod squint;
-pub(crate) use squint::BeamContext;
 use squint::Squint;
+pub(crate) use squint::{BeamContext, Config as ComponentBeamConfig};
 
 /// The speed of light, m/s.
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -94,7 +94,7 @@ pub(crate) enum ComponentRefusal {
 /// each scan's pair, and the primary beam with `setvp(dovp=True)`.
 /// FIELD determines phase; stored POINTING independently determines beam
 /// attenuation in a resumed simulation.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct ComponentTargets<'a> {
     pub(crate) windows: &'a [ComponentWindow],
     /// Slot, visibility phase centre, and antenna beam centre, J2000 rad.
@@ -143,7 +143,7 @@ impl ComponentTargets<'_> {
             + field_slots * size_of::<Option<FieldTerms>>()
             + self.pointings.len() * per_field
             + size_of_val(self.pointing_of_scan)) as u64
-            + self.squint.map_or(0, |_| {
+            + self.squint.as_ref().map_or(0, |config| {
                 Squint::bytes(
                     self.workers,
                     self.windows
@@ -151,6 +151,7 @@ impl ComponentTargets<'_> {
                         .map(|window| window.channels)
                         .max()
                         .unwrap_or(0),
+                    config.radial(),
                 )
             })
     }
@@ -226,7 +227,7 @@ impl ComponentPrediction {
         let mut transforms = Vec::with_capacity(components.len());
         for (index, component) in components.iter().enumerate() {
             let direction = component.shape().reference_direction();
-            if targets.beam.is_some()
+            if (targets.beam.is_some() || targets.squint.is_some())
                 && !matches!(
                     direction.refer(),
                     DirectionRef::J2000
@@ -312,7 +313,7 @@ impl ComponentPrediction {
             squint: targets.squint.map(|config| {
                 Box::new(Squint::new(
                     config,
-                    targets.beam.expect("squint has a beam"),
+                    targets.beam,
                     targets.workers,
                     targets
                         .windows
@@ -463,8 +464,8 @@ impl ComponentPrediction {
                         time_s,
                         &terms.phase,
                         &self.frame,
-                        squint.config.2,
-                        squint.config.3,
+                        squint.config.increment,
+                        squint.config.alt_az,
                     )?,
                     _ => 0.,
                 };
