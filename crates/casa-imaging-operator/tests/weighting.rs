@@ -161,6 +161,33 @@ fn odd_sizes_put_the_density_origin_on_the_lower_middle_cell() {
     }
 }
 
+/// The final in-band row and column still contribute to uniform cube
+/// density. CASA's density GridFT omits that sector boundary (#789).
+#[test]
+fn cube_density_keeps_the_last_in_band_row_and_column() {
+    // The cube rule uses negated UV: (375, 0) -> (7, 4),
+    // (0, -375) -> (4, 7). The baselines at 500 reach index 8.
+    let buffer = density_buffer(&[
+        (375.0, 0.0, 2.0),
+        (0.0, -375.0, 3.0),
+        (500.0, 0.0, 20.0),
+        (0.0, -500.0, 30.0),
+    ]);
+    let grid = build_density_grid(
+        std::iter::once(buffer.block()),
+        shape(DensityCellRule::Cube),
+    );
+    assert_eq!(grid.lookup(0, uv(375.0, 0.0)), Some(2.0));
+    assert_eq!(grid.lookup(0, uv(0.0, -375.0)), Some(3.0));
+    assert_eq!(grid.lookup(0, uv(500.0, 0.0)), None);
+    assert_eq!(grid.lookup(0, uv(0.0, -500.0)), None);
+    assert_eq!(grid.sum_weights(), &[5.0]);
+
+    let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+    assert_eq!(weight(&uniform, 375.0, 0.0, 1.0), 0.5);
+    assert_eq!(weight(&uniform, 0.0, -375.0, 3.0), 1.0);
+}
+
 #[test]
 fn cube_cells_round_the_negated_uv() {
     // CASA's cube weightor negates u and v (`FTMachine::negateUV` for the
