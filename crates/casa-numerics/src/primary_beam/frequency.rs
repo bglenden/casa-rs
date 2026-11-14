@@ -94,14 +94,17 @@ impl Interpolated<'_> {
                 taper += power * c;
                 power *= x2;
             }
-            if self.is_voltage {
-                if taper == 0. { 0. } else { (1. / taper) as f32 }
-            } else if taper > 0. {
-                (1. / taper.sqrt()) as f32
-            } else {
+            if taper == 0. {
                 0.
+            } else if self.is_voltage {
+                (1. / taper) as f32
+            } else {
+                (1. / taper.sqrt()) as f32
             }
         };
-        sample(self.low) * (1. - self.weight) + sample(self.high) * self.weight
+        let voltage = sample(self.low) * (1. - self.weight) + sample(self.high) * self.weight;
+        // CASA interpolates its stored Float samples first; apply's norm(vp)>0
+        // then excludes a NaN, including one contributed by either fit.
+        if voltage.is_nan() { 0. } else { voltage }
     }
 }

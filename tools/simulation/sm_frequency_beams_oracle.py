@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--sky", type=Path, required=True)
     parser.add_argument("--mosaic-worker", action="store_true")
+    parser.add_argument("--beam")
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()
@@ -39,7 +40,10 @@ def main():
     for beam, is_voltage, frequencies in (
             ("frequency_power", False, [120e9, 180e9, 240e9]),
             ("frequency_voltage", True, [120e9, 180e9, 240e9]),
-            ("frequency_single", False, [150e9])):
+            ("frequency_single", False, [150e9]),
+            ("frequency_mixed_sign", False, [120e9, 240e9])):
+        if args.beam and beam != args.beam:
+            continue
         vp = vpmanager()
         assert vp.reset()
         assert vp.setpbinvpoly(telescope="ALMA", coeff=[1., 5e-5, 1e-9, 1e-14],
@@ -54,6 +58,8 @@ def main():
         record["coeff"] = np.asarray([[1., 1.05, .97], [5e-5, 7e-5, 9e-5],
             [1e-9, .5e-9, 2e-9], [1e-14, 2e-14, .5e-14]])[:, :len(frequencies)]
         record["fitfreqs"] = np.asarray(frequencies)
+        if beam == "frequency_mixed_sign":
+            record["coeff"] = np.asarray([[1., 1.], [0., -.01], [0., 0.], [0., 0.]])
         tb.putcell("pbdescription", 0, record)
         tb.close()
         for operation in ("image", "components"):
@@ -76,6 +82,8 @@ def main():
             write(args.fixture, dict(casa_version=version_string(),
                 recipe="tools/simulation/sm_frequency_beams_oracle.py", cases=cases))
             print(name, "passed", flush=True)
+    if args.beam and args.beam != "frequency_power":
+        return
     log = root / "frequency_power_mosaic.log"
     with log.open("w") as stream:
         result = subprocess.run([sys.executable, __file__, "--out", str(root),
