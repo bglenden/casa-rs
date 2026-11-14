@@ -30,7 +30,7 @@
 <a href=#30 id=30 data-nosnippet>30</a>    {
 <a href=#31 id=31 data-nosnippet>31</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::InvalidTaylorMomentReduction);
 <a href=#32 id=32 data-nosnippet>32</a>    }
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>family = TaylorFamily::read(inputs, (state, <span class="number">0</span>), primary_beam_model, <span class="prelude-val">None</span>, <span class="number">1.0</span>)<span class="question-mark">?</span>;
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>family = TaylorFamily::read(inputs, (state, <span class="number">0</span>), primary_beam_model, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">if </span>family.sum_weights.iter().any(|value| <span class="kw-2">*</span>value != <span class="number">0.0</span>)
 <a href=#35 id=35 data-nosnippet>35</a>        || family.psf.iter().flatten().any(|value| <span class="kw-2">*</span>value != <span class="number">0.0</span>)
 <a href=#36 id=36 data-nosnippet>36</a>        || family.residual.iter().flatten().any(|value| <span class="kw-2">*</span>value != <span class="number">0.0</span>)
