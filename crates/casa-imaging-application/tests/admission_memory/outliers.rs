@@ -99,6 +99,32 @@ fn outlier_restart_seed_stays_within_admission() {
     assert_eq!(measured.outcome.unwrap().major_cycle_count, 0);
     assert!(OUTLIER_MASK_BYTES.load(Ordering::Relaxed) >= 2 * 1280 * 1280);
 
+    // An existing image may hold a user mask while restoration is
+    // staging a new outlier image without a saved PB for that field.
+    let path = outlier.with_extension("image");
+    let mut image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    image.make_mask("prior_support", true, false).unwrap();
+    image.save().unwrap();
+    drop(image);
+    let pb = outlier.with_extension("pb");
+    let withheld = root.path().join("withheld-pb");
+    std::fs::rename(&pb, &withheld).unwrap();
+    let mut restore = saved_residual.clone();
+    restore.niter = 0;
+    let measured = check(
+        &mut breaches,
+        "saved outlier image mask without PB",
+        &restore,
+        1,
+        AMPLE,
+    );
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    drop(measured);
+    let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    assert_eq!(image.default_mask_name().as_deref(), Some("prior_support"));
+    drop(image);
+    std::fs::rename(withheld, pb).unwrap();
+
     let sum_path = outlier.with_extension("sumwt");
     let mut sum = casa_images::PagedImage::<f32>::open(&sum_path).unwrap();
     let zero = sum.get().unwrap().mapv(|_| 0.0);
