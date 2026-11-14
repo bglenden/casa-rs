@@ -2288,6 +2288,13 @@ while I and Q agree. casa-rs preserves the requested correlation phase.
 rows by dividing selected correlations by that original unit-phase factor.
 No scientific tolerance changes; the remaining documented LSRK-label error
 is below the existing 1e-3 threshold in these controls.</p>
+<p>The interferometric <code>simobserve</code> control <code>if_joint_polarized</code> also exercises
+this defect in circular products and the joint-sum defect described below.
+It keeps the raw project, predicts its image and component separately with
+CASA, removes the component's extra original unit-phase factor, and adds
+the independent terms. The component is a single constant-spectrum source;
+the reference asserts that domain rather than applying one phase to an
+arbitrary component list.</p>
 <h2 id="an-uncovered-first-mosaic-image-suppresses-a-valid-model">An uncovered first mosaic image suppresses a valid model<a class="headerlink" href="#an-uncovered-first-mosaic-image-suppresses-a-valid-model" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 accepts <code>sm.predict(imagename=[outside, inside])</code> but produces
 zero DATA when all pointings lie outside the first image, even though the
@@ -3794,6 +3801,27 @@ reruns the same CASA task with its final queued <code>observemany</code> flushed
 schedule and writes the scans. The calibrator component-list comparison
 allows only the already documented <code>cl.addcomponent</code> float32 rounding of
 flux; direction and frequency tolerances stay unchanged.</p>
+<h2 id="simobserve-ignores-failed-frequency-frame-predictions">simobserve ignores failed frequency-frame predictions<a class="headerlink" href="#simobserve-ignores-failed-frequency-frame-predictions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-14</li>
+<li>Status: CASA error-propagation defect; casa-rs corrects it under the standing deviation policy (#1301).</li>
+<li>Affected code: <code>casatasks/src/private/task_simobserve.py</code>, the unchecked <code>sm.predict</code> calls.</li>
+</ul>
+<p>With <code>outframe='Undefined'</code>, CASA 6.7.6.14's simulator returns False and
+logs <code>Transformations to/from frame "Undefined" are not possible.</code> For a
+component prediction in <code>outframe='REST'</code>, it returns False and logs
+<code>No MeasFrame specified for conversion of Frequency</code>: the task supplies no
+radial-velocity frame. The task ignores both failures, reports success and
+publishes an entirely unpredicted zero-DATA MeasurementSet. Image-only REST
+prediction succeeds and is retained.</p>
+<p>casa-rs reports the same prediction cause before publishing the invalid MS.
+The project can retain the model and pointing products prepared before the
+failure. This prevents apparent successful science from a rejected calculation.
+The <code>if_*_undefined</code> and <code>if_components_rest</code> controls retain CASA's raw task
+projects, require all raw DATA to be zero, independently verify False from
+CASA's simulator, and require the native error and matching pre-prediction
+products with no native MS. This is a corrected failure outcome, not a claim
+that CASA's task itself raises that error.</p>
 <h2 id="simobserve-leaves-stemnoisiertcal">simobserve leaves <code>&lt;stem&gt;.noisier.T.cal</code><a class="headerlink" href="#simobserve-leaves-stemnoisiertcal" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-27</li>
@@ -4758,6 +4786,19 @@ and its PSFs differ by 7e-4 to 1.3e-3 normalized RMS, the returned
 <code>maxpsfsidelobe</code> by 3e-4. Which side of 2 a ratio that is 2 exactly falls
 on is rounding, which casa-rs does not reproduce (<code>AGENTS.md</code>: a near-tie
 broken the other way is equally valid).</p>
+<p>For the channel-index TOPO cube on LSRK data in #1256, that ratio
+can differ for the whole track. In the five-channel VLA fixture, stock
+CASA uses one sample per plane at <code>width=2</code>. With fresh aberration
+coefficients in both runs, changing only the cached UT1−UTC value to
+the value at the image epoch changes the ratio from just below two to
+exactly two, doubling the sample count.</p>
+<p>For a standard, natural-weighted, linear channel-index TOPO cube on
+LSRK data, casa-rs evaluates the grid in LSRK and takes the lower
+sample count at an exact integral ratio above one. Ratios on either
+side still use CASA's floor. Strict interpolation bounds continue to
+apply to every gridded sample. The width-two control agrees with stock
+CASA, and the width-one control still agrees.
+<a href="https://github.com/bglenden/casa-rs/issues/1256#issuecomment-6881726364">Trace and controls in #1256</a>.</p>
 <h2 id="a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind">A cube without a per-channel density leaves <code>&lt;imagename&gt;.gridwt</code> behind<a class="headerlink" href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-03</li>
