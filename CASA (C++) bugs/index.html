@@ -6048,6 +6048,20 @@ for each selection, with exact masks, sums of weights and controller
 counts. Worst product NRMS is 2.25e-6. The odd weight passes the same
 pointwise and PSD checks. The native operator retains its double
 arithmetic. <a href="https://github.com/bglenden/casa-rs/issues/1070">Issue #1070</a>.</p>
+<p>The same four-corner selection can move one PB cutoff pixel when both
+imagers generate their own convolution functions. The 512-square CASA
+kernel transforms use SIMD FFTW, while the native comparison used the
+scalar build. The six imaging and six weight cells differ by at most
+2.37e-7 NRMS. Their PBs at (662,1443) are 0.0099999797 and 0.0100000488
+after controlling the tap rounding described above. Setting only CASA's
+FFTW thread count to one reproduces its original kernels exactly.
+Setting <code>FFTW_NO_SIMD</code> only for the 24 kernel transforms makes all
+12 CASA kernel arrays equal to the independently generated native
+arrays. With those CASA kernels and the widened sensitivity control,
+all 18 products pass at the original cutoff, with exact masks and
+controller counts and worst NRMS 2.53e-6. This is a rounding difference
+between FFT plans. Native retains its strict cutoff and its configured
+FFT backend.</p>
 <h2 id="awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff">AWP2's Float sensitivity FFT can flip the primary-beam cutoff<a class="headerlink" href="#awp2s-float-sensitivity-fft-can-flip-the-primary-beam-cutoff" title="Permanent link">&para;</a></h2>
 <p>AWPLPG accumulates the sensitivity grid in double precision.
 <code>MosaicFT::finalizeToSky</code> converts that grid to Float for its inverse FFT.
