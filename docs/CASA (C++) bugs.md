@@ -5447,6 +5447,37 @@ ordinary CASA references. These controls agree with native prediction at
 a frequency control with `sm_image_layouts_oracle.py --case
 frame_j2000_mosaic --constant-frequency 210000000000 --out OUT --fixture FILE`.
 
+## MVC restoration can drop a newly generated higher-term residual mask
+
+In CASA 6.7.6.14, seed standard, two-term MVC on field 0 of
+`refim_oneshiftpoint.mosaic.ms` with 512 pixels per axis, 10 arcsec cells,
+three channels and `pblimit=0.1`. Remove both saved Taylor residual
+default masks, scale the residual planes independently, and set a 50 Jy
+off-axis pixel in term zero. Resume with `calcpsf=False, calcres=False`,
+five iterations and a 2 Jy threshold.
+
+The first major cycle replaces both Taylor residual tables and their
+masks in `PyMtmfsViaCubeSynthesisImager.cube2tt`. Tracing table identity
+and mask support shows 62,955 valid pixels on both terms immediately
+before `SDAlgorithmMSMFS::restore`. After restoration, term one's table
+header has been replaced again and its default mask is absent. Term
+zero retains all 62,955 valid pixels. The restored term one likewise
+has no mask. Restoration is meant to copy each residual's mask to its
+image and preserve the underlying residual. The observed mask loss
+occurs during restoration after the Python helper has recreated tables
+that the minor cycle also accesses.
+
+casa-rs retains the freshly generated residual mask and copies its
+support to the corresponding restored image. The masked and unmasked
+initial convergence controls follow CASA's saved term-zero mask,
+including all valid pixels when that initial mask is absent. The
+additional both-unmasked probe agrees on the controller and numeric
+products. Only the two term-one masks differ, by 199,189 pixels. Reinstating
+just those masks in CASA after restoration gives all 24 products,
+exact masks and a maximum normalized RMS of 8.309e-6.
+See [#944](https://github.com/bglenden/casa-rs/issues/944) and
+[#1414](https://github.com/bglenden/casa-rs/pull/1414).
+
 ## Simulator component-list copies lose the limb-darkening exponent
 
 CASA 6.7.6.14 accepts a limb-darkened disk through a component record/table.

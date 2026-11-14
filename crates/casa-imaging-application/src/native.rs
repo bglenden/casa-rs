@@ -504,6 +504,7 @@ pub(crate) fn run(
                     taylor_view: mvc_taylor,
                     taylor_completion: outcome.mvc_taylor,
                     cube_model_created,
+                    major_cycles: outcome.major_cycle_count,
                 },
                 &runtime,
                 publication_after_cycles(publication, existing.as_ref(), outcome.major_cycle_count),
@@ -584,6 +585,7 @@ struct RunProductInputs<'a> {
     taylor_view: Option<crate::compile::CompiledTaylorView>,
     taylor_completion: Option<Admitted<crate::mvc::TaylorCompletion>>,
     cube_model_created: bool,
+    major_cycles: usize,
 }
 
 /// Reduce MVC's cube before staging both families, or publish an ordinary run.
@@ -601,6 +603,7 @@ fn publish_run_products(
         taylor_view,
         taylor_completion,
         cube_model_created,
+        major_cycles,
     } = inputs;
     if let Some(view) = taylor_view {
         let crate::compile::CompiledTaylorView {
@@ -622,6 +625,7 @@ fn publish_run_products(
                     expansion_reference_hz,
                     controls: publication.controls,
                     centres: publication.primary_beam_centres.as_ref(),
+                    read_saved_residual: false,
                 },
                 (&runtime.host, &runtime.resource_policy, &runtime.cancel),
             )?
@@ -635,6 +639,9 @@ fn publish_run_products(
                 taylor,
                 taylor_coordinates: coordinates,
                 saved,
+                saved_residual_mask_bytes: (major_cycles == 0)
+                    .then(|| saved.and_then(|saved| saved.taylor.taylor_mask_read_bytes()))
+                    .flatten(),
             },
             runtime,
             publication,
@@ -680,6 +687,7 @@ enum ProductPrimaryBeam<'a> {
     MvcCube(
         &'a [f32],
         Option<&'a casa_imaging_products::SavedMosaicBeam>,
+        bool,
     ),
     MvcTaylor(&'a [f32], Option<&'a crate::compile::MvcSavedPsf>),
     SavedMosaic(&'a casa_imaging_products::SavedMosaicBeam),
@@ -768,6 +776,7 @@ struct MvcProductSource<'a> {
     taylor_problem: &'a CompiledProblem,
     taylor: Admitted<crate::mvc::TaylorCompletion>,
     saved: Option<&'a crate::compile::MvcSavedPsf>,
+    saved_residual_mask_bytes: Option<u64>,
     taylor_coordinates: Vec<(
         casa_imaging_model::ImageDomainRole,
         casa_coordinates::CoordinateSystem,
@@ -811,6 +820,7 @@ fn publish_mvc_products(
         taylor,
         taylor_coordinates,
         saved,
+        saved_residual_mask_bytes,
     } = source;
     let Admitted {
         value:
@@ -830,7 +840,9 @@ fn publish_mvc_products(
         primary_beam: _,
     } = cube;
     let taylor_publication = ApplicationPublication {
-        controls: publication.controls,
+        controls: saved_residual_mask_bytes.map_or(publication.controls, |bytes| {
+            publication.controls.preserving_taylor_residuals(bytes)
+        }),
         primary_beam_centres: publication.primary_beam_centres.clone(),
         vla_selection_store: None,
         writer: publication.writer.with_coordinates(taylor_coordinates),
@@ -847,6 +859,7 @@ fn publish_mvc_products(
             primary_beam: Some(ProductPrimaryBeam::MvcCube(
                 &primary_beam,
                 saved.map(|saved| &saved.cube_pb),
+                saved_residual_mask_bytes.is_some(),
             )),
         },
         runtime,
@@ -935,10 +948,14 @@ fn stage_products(
     } = source;
     let mut controls = publication.controls;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
+    let mut preserve_cube_residual = false;
     if let Some(beam) = primary_beam {
         let saved = match beam {
-            ProductPrimaryBeam::MvcCube(beam, saved) => {
-                inputs = inputs.with_cube_taylor_primary_beam(beam)?;
+            ProductPrimaryBeam::MvcCube(beam, saved, preserve_residual) => {
+                preserve_cube_residual = preserve_residual;
+                if !preserve_residual {
+                    inputs = inputs.with_cube_taylor_primary_beam(beam)?;
+                }
                 saved.map(|beam| (beam, false))
             }
             ProductPrimaryBeam::MvcTaylor(beam, saved) => {
@@ -978,6 +995,9 @@ fn stage_products(
     let mut planned = PlannedContinuumGeneration::new(&inputs, &controls)?;
     if omit_uncreated_mvc_cube_model {
         planned = planned.without_uncreated_mvc_cube_model();
+    }
+    if preserve_cube_residual {
+        planned = planned.without_mvc_cube_residual();
     }
     // The products' scratch grows with their lanes, and the gridding's
     // workers were chosen without it: the products take the most lanes, up

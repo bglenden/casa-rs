@@ -36,6 +36,13 @@ pub(super) fn run(
         .as_ref()
         .and_then(ExistingProducts::taylor_mask_read_bytes)
         .is_some();
+    let use_pb_mask = setup.residual_pixel_mask;
+    let read_mvc_residual = mvc.is_some() && !run.forms.residual;
+    if read_mvc_residual {
+        // The saved residual's own mask governs the initial measurement.
+        // Without a mask, CASA measures every valid pixel.
+        setup.residual_pixel_mask = false;
+    }
     let mut controller = Controller::new(&controls);
     let mut cache = if !run.forms.psf
         && outcome.scientific.normal_state().basis()
@@ -79,12 +86,21 @@ pub(super) fn run(
                     run.teams.compute().workers(),
                 ),
             )?;
-            let prepared = prepare_minor_cycle(
+            let saved_mask = if outcome.major_cycle_count == 0 {
+                mvc.as_ref()
+                    .map(|state| state.saved_residual_mask(&run))
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            let prepared = prepare_minor_cycle_with_residual_mask(
                 &outcome.scientific,
                 &mask_plans,
                 &setup,
                 &mut cache,
                 run.teams.compute(),
+                saved_mask.as_ref().map(|mask| &mask.value),
             )?;
             let kept = preparing.split(prepared.retained_bytes());
             Ok::<_, ImagingError>((prepared, kept))
@@ -197,6 +213,7 @@ pub(super) fn run(
             }
         })?;
         setup.saved_taylor_residual = false;
+        setup.residual_pixel_mask = use_pb_mask;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;

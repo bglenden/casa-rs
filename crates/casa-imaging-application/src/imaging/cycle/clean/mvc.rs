@@ -28,6 +28,7 @@ impl<'a> MvcState<'a> {
                 expansion_reference_hz: spec.expansion_reference_hz,
                 controls: spec.controls,
                 centres: spec.centres,
+                read_saved_residual: !run.forms.residual,
             },
             model,
             spec.start.and_then(|start| start.saved_psf.as_ref()),
@@ -43,6 +44,29 @@ impl<'a> MvcState<'a> {
             },
             taylor.value.scientific,
         ))
+    }
+
+    /// The saved Taylor lattice's pixel mask applies to the initial
+    /// convergence statistics. A refreshed residual supplies its own.
+    pub(super) fn saved_residual_mask(
+        &self,
+        run: &Run<'_>,
+    ) -> Result<Option<Admitted<casa_imaging_deconvolution::Support>>, ImagingError> {
+        let Some(saved) = self.spec.start.and_then(|start| start.saved_psf.as_ref()) else {
+            return Ok(None);
+        };
+        let Some(bytes) = saved.taylor.taylor_mask_read_bytes() else {
+            return Ok(None);
+        };
+        if bytes == 0 {
+            return Ok(None);
+        }
+        let reservation = run.admit("saved MVC residual mask", bytes)?;
+        let value = saved
+            .taylor
+            .mvc_residual_mask()
+            .map_err(ImagingError::Existing)?;
+        Ok(value.map(|value| Admitted { value, reservation }))
     }
 
     /// Apply a Taylor minor update, predict it through the cube, then reduce
@@ -103,6 +127,7 @@ impl<'a> MvcState<'a> {
                 expansion_reference_hz: self.spec.expansion_reference_hz,
                 controls: self.spec.controls,
                 centres: self.spec.centres,
+                read_saved_residual: false,
             },
             Some(prepared),
             saved,

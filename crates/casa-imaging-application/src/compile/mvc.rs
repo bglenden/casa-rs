@@ -288,7 +288,7 @@ pub(super) fn check_execution_scope(
             && (request.nsigma != 0.0
                 || request.mask_box.iter().any(|region| region.range.is_some())))
         || (!request.calcpsf && (!restarts_standard_clean(request) || request.has_start_model()))
-        || !request.calcres
+        || (!request.calcres && request.calcpsf)
         || ((request.tclean_restart || request.has_start_model())
             && !restarts_standard_clean(request))
         || request.savemodel != crate::SaveModel::None
@@ -459,8 +459,9 @@ fn prepare_start(
             &request.imagename,
             crate::restart::Family::Taylor { terms: 2 },
             ([nx, ny], 1, 1),
-            (true, false),
+            (true, !request.calcres),
             false,
+            !request.calcres,
         )?;
         let mut charge = casa_imaging_runtime::admit(
             &context.host,

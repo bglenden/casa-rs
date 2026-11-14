@@ -25,6 +25,7 @@ pub(crate) struct TaylorAssemblyInputs<'a> {
     pub(crate) expansion_reference_hz: f64,
     pub(crate) controls: ContinuumProductControls,
     pub(crate) centres: Option<&'a PrimaryBeamCentres>,
+    pub(crate) read_saved_residual: bool,
 }
 
 /// The Taylor state and common PB, kept under the returned admission.
@@ -66,6 +67,7 @@ pub(crate) fn assemble_taylor_with_model(
         expansion_reference_hz,
         controls,
         centres,
+        read_saved_residual,
     } = inputs;
     if cube_problem.observation() != taylor_problem.observation() {
         return Err(NativeError::Other(
@@ -140,14 +142,21 @@ pub(crate) fn assemble_taylor_with_model(
     let plan = PlannedContinuumGeneration::new(&cube_inputs, &controls)?;
     if let Some(saved) = saved {
         mean = saved.taylor_pb.read_values(0, 0)?;
-        let saved_cube_inputs = cube_inputs.with_saved_mosaic_beam(&saved.cube_pb)?;
-        reduce_mvc_cube_with_common_pb(
-            &plan,
-            &saved_cube_inputs,
-            expansion_reference_hz,
-            &mean,
-            &mut residual,
-        )?;
+        if read_saved_residual {
+            saved
+                .taylor
+                .read_mvc_taylor_residual(&mut residual)
+                .map_err(other)?;
+        } else {
+            let saved_cube_inputs = cube_inputs.with_saved_mosaic_beam(&saved.cube_pb)?;
+            reduce_mvc_cube_with_common_pb(
+                &plan,
+                &saved_cube_inputs,
+                expansion_reference_hz,
+                &mean,
+                &mut residual,
+            )?;
+        }
         sumwt = saved.taylor.mvc_taylor_psf(&mut psf).map_err(other)?;
     } else {
         reduce_mvc_cube(

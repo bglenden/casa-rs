@@ -345,6 +345,7 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls,
             centres: None,
+            read_saved_residual: false,
         },
         (&context.host, &context.policy, &context.cancel),
     );
@@ -359,6 +360,7 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls,
             centres: None,
+            read_saved_residual: false,
         },
         (&context.host, &context.policy, &context.cancel),
     )
@@ -438,7 +440,8 @@ fn assert_taylor_admission(
                 taylor_problem: taylor,
                 expansion_reference_hz: reference_hz,
                 controls,
-                centres: None
+                centres: None,
+                read_saved_residual: false,
             },
             (&context.host, &tight, &context.cancel),
         ),
@@ -455,7 +458,8 @@ fn assert_taylor_admission(
                     taylor_problem: taylor,
                     expansion_reference_hz: reference_hz,
                     controls,
-                    centres: None
+                    centres: None,
+                    read_saved_residual: false,
                 },
                 (&context.host, &tight, &cancelled),
             ),
@@ -471,7 +475,8 @@ fn assert_taylor_admission(
                 taylor_problem: taylor,
                 expansion_reference_hz: reference_hz,
                 controls,
-                centres: None
+                centres: None,
+                read_saved_residual: false,
             },
             (&context.host, &context.policy, &cancelled)
         ),
@@ -514,6 +519,7 @@ fn assert_taylor_model_is_carried(
             expansion_reference_hz: reference_hz,
             controls,
             centres: None,
+            read_saved_residual: false,
         },
         Some(prepared_model),
         None,
@@ -545,6 +551,7 @@ fn assert_taylor_model_is_carried(
             crate::mvc::TaylorAssemblyInputs {
                 cube_problem: cube, cube: cube_completion, taylor_problem: taylor,
                 expansion_reference_hz: reference_hz, controls, centres: None,
+                read_saved_residual: false,
             },
             Some(wrong_model),
             None,
@@ -785,6 +792,7 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls,
             centres: None,
+            read_saved_residual: false,
         },
         (&context.host, &context.policy, &context.cancel),
     )
