@@ -437,7 +437,10 @@ fn requested_products(
     }
     if request.pbcor && restored {
         products.push(ProductKind::PbCorrectedImage);
-        if spectral_index && matches!(request.gridder, Gridder::Mosaic { .. }) {
+        // Ordinary mosaic MT-MFS can derive the beam's spectral index from
+        // the Taylor weights. MVC has only the common cube-derived PB and
+        // SIImageStoreMultiTerm::pbcor divides both terms by that same PB.
+        if spectral_index && weight_image && matches!(request.gridder, Gridder::Mosaic { .. }) {
             products.push(ProductKind::PbCorrectedSpectralIndex);
         }
     }

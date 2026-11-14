@@ -625,6 +625,34 @@ fn mvc_clean_run_stays_within_its_held_admission() {
     );
 }
 
+/// The mosaic cube reads sensitivity while building its Taylor moments and
+/// refreshing the cube model. The overlapping state must stay admitted.
+#[test]
+fn mvc_mosaic_clean_stays_within_its_held_admission() {
+    if !alone("mvc_view::mvc_mosaic_clean_stays_within_its_held_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation_as(root.path(), 6, "ALMA");
+    warm(&ms, root.path());
+    let request = request(
+        &ms,
+        &root.path().join("mvc-mosaic"),
+        512,
+        json!({
+            "specmode": "mvc", "gridder": "mosaic", "normtype": "flatnoise",
+            "deconvolver": "mtmfs", "nterms": 2, "nchan": 3,
+            "niter": 2, "cycleniter": 1, "pblimit": 0.1, "pbcor": true,
+        }),
+    );
+    let mut breaches = Vec::new();
+    let measured = check(&mut breaches, "mosaic MVC", &request, 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    let outcome = measured.outcome.unwrap();
+    assert_eq!(outcome.total_actual_minor_iterations, 2);
+    assert!(outcome.major_cycle_count >= 3);
+}
+
 /// The first resumed cube pass overlaps a Taylor model, one saved beam
 /// channel and the previous Taylor beam, all within the run's admission.
 #[test]
