@@ -225,21 +225,7 @@ pub fn prepare_minor_cycle_with_residual_mask(
     // Both cycle controls and Clark's patch use the settled PSF beam.
     let saved = setup.psf_beams.is_some();
     beams::settle_refused_fits(normal, base, taylor, cache, saved, retained.as_ref())?;
-    // Each image domain is one CASA image store.
-    let mut statistics = ResidualStatistics::empty();
-    let domains = planes
-        .iter()
-        .map(|(key, _)| key.domain)
-        .collect::<BTreeSet<_>>();
-    for domain in domains {
-        statistics.include_store(
-            planes
-                .iter()
-                .filter(|(key, _)| key.domain == domain)
-                .map(|(key, plane)| (plane, cache.summaries[key].sidelobe())),
-            setup.nsigma,
-        );
-    }
+    let statistics = aggregate_statistics(&planes, cache, setup.nsigma);
     tracing::debug!(
         planes = planes.len(),
         psf_fits = missing,
@@ -253,4 +239,27 @@ pub fn prepare_minor_cycle_with_residual_mask(
         retained,
         statistics,
     })
+}
+
+fn aggregate_statistics(
+    planes: &[(PlaneKey, PlaneStatistics)],
+    cache: &PsfCache,
+    nsigma: f64,
+) -> ResidualStatistics {
+    // Each image domain is one CASA image store.
+    let mut statistics = ResidualStatistics::empty();
+    let domains = planes
+        .iter()
+        .map(|(key, _)| key.domain)
+        .collect::<BTreeSet<_>>();
+    for domain in domains {
+        statistics.include_store(
+            planes
+                .iter()
+                .filter(|(key, _)| key.domain == domain)
+                .map(|(key, plane)| (plane, cache.summaries[key].sidelobe())),
+            nsigma,
+        );
+    }
+    statistics
 }
