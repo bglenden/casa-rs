@@ -70,7 +70,6 @@ pub(crate) struct PointingGeometry {
     direction: DirectionCoordinate,
     shape: [usize; 2],
     increment_rad: [f64; 2],
-    observer_itrf_m: [f64; 3],
     bounded: bool,
 }
 
@@ -87,12 +86,8 @@ impl PointingGeometry {
         pointing: [f64; 2],
         frame: &MeasFrame,
     ) -> Result<Option<[f64; 2]>, PredictError> {
-        let [x, y, z] = self.observer_itrf_m;
-        let frame = frame
-            .clone()
-            .with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
         let direction = MDirection::from_angles(pointing[0], pointing[1], DirectionRef::J2000)
-            .convert_to(self.direction.direction_ref(), &frame)
+            .convert_to(self.direction.direction_ref(), frame)
             .map_err(|error| {
                 casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
             })?
@@ -153,11 +148,7 @@ impl SkyModel {
             as u64
     }
 
-    pub(crate) fn pointing_geometry(
-        &self,
-        observer_itrf_m: [f64; 3],
-        bounded: bool,
-    ) -> PointingGeometry {
+    pub(crate) fn pointing_geometry(&self, bounded: bool) -> PointingGeometry {
         let source = self.direction_coordinate();
         let reference = source.reference_value();
         let pixel = source.reference_pixel();
@@ -175,10 +166,13 @@ impl SkyModel {
             direction,
             shape: self.shape,
             increment_rad: self.increment_rad,
-            observer_itrf_m,
             bounded,
         }
     }
+    pub(crate) fn observation_telescope(&self) -> &str {
+        &self.coordinates.obs_info().telescope
+    }
+
     pub(super) fn direction_coordinate(&self) -> &casa_coordinates::DirectionCoordinate {
         let CoordinateModel::Direction(direction) = self.coordinates.coordinate(0) else {
             unreachable!()

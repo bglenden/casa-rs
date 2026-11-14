@@ -72,7 +72,8 @@ fn compare_frames(bytes: &[u8]) {
                 || vec![0],
                 |fields| fields.iter().map(|id| id.as_i64().unwrap()).collect(),
             );
-            sm.set_data(&[], &fields, "").unwrap();
+            sm.set_data(&[], &fields, case["msselect"].as_str().unwrap_or(""))
+                .unwrap();
             if case.get("location_itrf_m").is_some() || case["mosaic"] == true {
                 let position = case.get("location_itrf_m");
                 sm.set_options(&PredictionOptions {

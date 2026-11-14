@@ -134,7 +134,14 @@ fn pointing_retention(frame: DirectionRef) {
             BUDGET_MOSAIC,
             &MOSAIC_DISHES,
             |sm| {
-                for index in 0..scans {
+                for physical in 0..scans {
+                    // Reversed JMEAN scans exercise the admitted TIME-sorted
+                    // fallback; ordinary J2000 retains the original ordering.
+                    let index = if frame == DirectionRef::JMEAN {
+                        scans - 1 - physical
+                    } else {
+                        physical
+                    };
                     let source = if distinct {
                         // A grid of pointings a tenth of a cell apart, within
                         // 3.2 cells of the centre.

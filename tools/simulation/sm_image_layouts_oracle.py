@@ -152,6 +152,8 @@ def main():
     parser.add_argument("--squint", action="store_true")
     parser.add_argument("--all-fields", action="store_true")
     parser.add_argument("--long-track", action="store_true")
+    parser.add_argument("--msselect", default="")
+    parser.add_argument("--reverse-integrations", action="store_true")
     parser.add_argument("--case", required=True, choices=("canonical", "spectral_before_stokes", "direction_last", "no_stokes", "direction_only", "iquv", "iquv_beam", "frame_j2000", "frame_b1950", "frame_galactic", "frame_icrs", "frame_conversion_b1950", *("frame_"+frame.lower() for frame in EXTRA_FRAMES), *FRAME_COMBINATIONS))
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
@@ -188,6 +190,17 @@ def main():
         tb.putcell("CHAN_FREQ", 0, np.full(int(tb.getcell("NUM_CHAN", 0)), args.constant_frequency))
         tb.putcell("REF_FREQUENCY", 0, args.constant_frequency)
         tb.close()
+    if args.reverse_integrations:
+        tb = table()
+        tb.open(str(inputs / "base.ms"), nomodify=False)
+        order = list(range(36, 72)) + list(range(36)) + list(range(72, tb.nrows()))
+        for column in tb.colnames():
+            if not tb.iscelldefined(column, 0):
+                continue
+            values = [tb.getcell(column, row) for row in range(tb.nrows())]
+            for row, source_row in enumerate(order):
+                tb.putcell(column, row, values[source_row])
+        tb.close()
     model = inputs / "model.image"
     if args.location == "ARRAY":
         tb = table()
@@ -205,7 +218,7 @@ def main():
     shutil.copytree(model, run_model, ignore=shutil.ignore_patterns("table.lock"))
     sm = simulator()
     assert sm.openfromms(str(path))
-    assert sm.setdata(fieldid=[] if args.all_fields else [0])
+    assert sm.setdata(fieldid=[] if args.all_fields else [0], msselect=args.msselect)
     beam = args.case == "iquv_beam" or args.case.endswith("_beam")
     mosaic = args.case.endswith("_mosaic")
     if beam:
@@ -248,6 +261,11 @@ def main():
         case["name"] += "_all_fields"
     if args.long_track:
         case["name"] += "_long"
+    if args.msselect:
+        case["msselect"] = args.msselect
+        case["name"] += "_selected_antenna"
+    if args.reverse_integrations:
+        case["name"] += "_reordered"
     if args.constant_frequency is not None:
         case["constant_frequency_hz"] = args.constant_frequency
     elif mosaic:

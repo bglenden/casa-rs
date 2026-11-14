@@ -26,6 +26,8 @@ def main():
         ("hadec-alma", common + ["--case", "frame_hadec_mosaic", "--location", "ALMA"]),
         ("hadec-all", common + ["--case", "frame_hadec_mosaic", "--location", "ARRAY", "--all-fields"]),
         ("hadec-long", common + ["--case", "frame_hadec_mosaic", "--location", "ARRAY", "--long-track"]),
+        ("hadec-antenna", common + ["--case", "frame_hadec_mosaic", "--location", "ARRAY", "--msselect", "ANTENNA1==4"]),
+        ("hadec-reordered", common + ["--case", "frame_hadec_mosaic", "--location", "ARRAY", "--reverse-integrations"]),
     ]
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda job: run(root, scratch, job), jobs))

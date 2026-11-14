@@ -44,12 +44,15 @@ const DIAMETER_KEY_BYTES: usize = 32;
 /// offset.
 pub(super) type MosaicPointing = ([u64; 2], Option<[f64; 2]>);
 
+mod time_order;
+
 type FrameKey = (i32, usize, usize);
 
 #[derive(Default)]
 struct BufferClock {
     rows: usize,
     epoch_s: f64,
+    antenna: usize,
     last_row: Option<u64>,
 }
 
@@ -58,6 +61,8 @@ pub(super) struct MosaicGeometry {
     geometry: crate::predict::PointingGeometry,
     buffers: std::sync::Mutex<Vec<(FrameKey, BufferClock)>>,
     rows: usize,
+    observer: Option<[f64; 3]>,
+    time_order: Option<time_order::TimeOrder>,
 }
 
 impl MosaicGeometry {
@@ -73,7 +78,7 @@ impl MosaicGeometry {
 
     pub(super) fn new(
         model: &SkyModel,
-        position: [f64; 3],
+        observer: Option<[f64; 3]>,
         bounded: bool,
         centres: Option<&super::from_ms::polynomial::PhaseCentres>,
         antennas: usize,
@@ -96,7 +101,9 @@ impl MosaicGeometry {
             );
         }
         Self {
-            geometry: model.pointing_geometry(position, bounded),
+            geometry: model.pointing_geometry(bounded),
+            observer,
+            time_order: None,
             buffers: std::sync::Mutex::new(buffers),
             rows,
         }
@@ -109,13 +116,17 @@ impl MosaicGeometry {
                     * size_of::<(FrameKey, BufferClock)>()) as u64
     }
 
-    pub(super) fn epoch(
+    pub(super) fn sample(
         &self,
         scan: &super::observe::Scan,
         row: u64,
         time: f64,
-    ) -> SimulatorResult<f64> {
+        antenna: usize,
+    ) -> SimulatorResult<(f64, usize)> {
         let key = (scan.array_id, scan.field_id, scan.data_description_id);
+        if let Some(order) = &self.time_order {
+            return order.sample(key, row, time);
+        }
         let mut buffers = self
             .buffers
             .lock()
@@ -131,13 +142,14 @@ impl MosaicGeometry {
         }
         if clock.rows == 0 {
             clock.epoch_s = time;
+            clock.antenna = antenna;
         }
         clock.last_row = Some(row);
         clock.rows += 1;
         if clock.rows == self.rows {
             clock.rows = 0;
         }
-        Ok(clock.epoch_s)
+        Ok((clock.epoch_s, clock.antenna))
     }
 
     pub(super) fn offset(
@@ -145,7 +157,11 @@ impl MosaicGeometry {
         pointing: [f64; 2],
         frame: &casa_types::measures::MeasFrame,
     ) -> Result<Option<[f64; 2]>, PredictError> {
-        self.geometry.offset(pointing, frame)
+        let mut frame = frame.clone();
+        if let Some([x, y, z]) = self.observer {
+            frame = frame.with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
+        }
+        self.geometry.offset(pointing, &frame)
     }
 }
 
@@ -180,6 +196,22 @@ impl Simulator {
             kept as u64,
             (antennas + windows + if timed { 256 } else { 0 }) as u64,
         )
+    }
+
+    /// SimplePBConvFunc keeps the catalogue position only for VLA images
+    /// on a VLA-labelled observation; other buffers use their first antenna.
+    pub(super) fn mosaic_observer(&self, model: &SkyModel) -> SimulatorResult<Option<[f64; 3]>> {
+        if !model.observation_telescope().contains("VLA")
+            || !self.observing_telescope().contains("VLA")
+        {
+            return Ok(None);
+        }
+        casa_types::measures::MPosition::from_observatory_name(
+            self.observing_telescope(),
+            self.options.measures.as_ref(),
+        )
+        .map(|position| position.map(|p| p.as_itrf()))
+        .map_err(|error| SimulatorError::raised(error.to_string()))
     }
 
     /// The mosaic machine's beams for the scans observed so far, and each

@@ -369,22 +369,24 @@ impl Prediction {
         self.mosaic_geometry.is_some()
     }
 
-    pub(crate) fn mosaic_buffer_epoch(
+    pub(crate) fn mosaic_buffer_frame(
         &self,
         scan: &super::observe::Scan,
         row: u64,
         time: f64,
-    ) -> SimulatorResult<f64> {
+        antenna: usize,
+    ) -> SimulatorResult<(f64, usize)> {
         self.mosaic_geometry
             .as_ref()
             .expect("a timed mosaic")
-            .epoch(scan, row, time)
+            .sample(scan, row, time, antenna)
     }
 
     pub(crate) fn mosaic_pointing_at(
         &self,
         scan: &super::observe::Scan,
         time: f64,
+        observer: [f64; 3],
     ) -> SimulatorResult<Option<[f64; 2]>> {
         let frame = self
             .frame(scan)?
@@ -392,6 +394,8 @@ impl Prediction {
                 time / 86400.,
                 casa_types::measures::EpochRef::UTC,
             ));
+        let [x, y, z] = observer;
+        let frame = frame.with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
         self.mosaic_geometry
             .as_ref()
             .expect("a timed mosaic")
@@ -764,15 +768,23 @@ impl Simulator {
                 }
                 let timed =
                     !crate::predict::fixed_direction_frame(model.tangent_direction().refer());
-                let geometry = timed.then(|| {
+                let observer = if timed {
+                    self.mosaic_observer(&model)?
+                } else {
+                    None
+                };
+                let mut geometry = timed.then(|| {
                     Box::new(super::mosaic::MosaicGeometry::new(
                         &model,
-                        self.antennas[0].position_itrf_m,
+                        observer,
                         !beams.common,
                         phase_centres.as_ref(),
                         self.antennas.len(),
                     ))
                 });
+                if let Some(geometry) = &mut geometry {
+                    geometry.set_time_order(self, phase_centres.as_ref())?;
+                }
                 let pointings = if timed {
                     Vec::new()
                 } else {

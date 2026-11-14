@@ -19,6 +19,14 @@ pub(in crate::session) struct SelectedFrame {
     selected_rows: usize,
 }
 
+pub(in crate::session) fn selected_rows(centres: &PhaseCentres) -> usize {
+    centres
+        .value
+        .iter()
+        .map(|(_, frame)| frame.selected_rows)
+        .sum()
+}
+
 pub(in crate::session) fn first_chunk_rows(centres: Option<&PhaseCentres>) -> usize {
     centres
         .and_then(|p| p.value.iter().min_by_key(|(key, _)| (key.1, key.0, key.2)))

@@ -119,7 +119,7 @@ struct Segment {
 struct FrameProjection {
     rotation: GridFtProjection,
     pointing_offset: Option<[f64; 2]>,
-    epoch_s: Option<f64>,
+    frame_key: Option<(f64, usize)>,
 }
 
 impl FrameProjection {
@@ -129,17 +129,21 @@ impl FrameProjection {
         scan: &Scan,
         row: u64,
         time: f64,
+        antenna: usize,
+        antennas: &[crate::session::array::Antenna],
     ) -> SimulatorResult<()> {
-        let epoch = if prediction.has_timed_mosaic() {
-            prediction.mosaic_buffer_epoch(scan, row, time)?
+        let key = if prediction.has_timed_mosaic() {
+            prediction.mosaic_buffer_frame(scan, row, time, antenna)?
         } else {
-            time
+            (time, 0)
         };
-        if self.epoch_s == Some(epoch) {
+        if self.frame_key == Some(key) {
             return Ok(());
         }
+        let (epoch, antenna) = key;
         if prediction.has_timed_mosaic() {
-            self.pointing_offset = prediction.mosaic_pointing_at(scan, epoch)?;
+            self.pointing_offset =
+                prediction.mosaic_pointing_at(scan, epoch, antennas[antenna].position_itrf_m)?;
         }
         if prediction.tangent.refer() != DirectionRef::J2000 {
             let phase = prediction.phase_centre(scan);
@@ -157,7 +161,7 @@ impl FrameProjection {
                     SimulatorError::raised(format!("simulator image-frame rotation: {error}"))
                 })?;
         }
-        self.epoch_s = Some(epoch);
+        self.frame_key = Some(key);
         Ok(())
     }
 }
@@ -220,7 +224,7 @@ fn segment_of(
         projections.push(FrameProjection {
             rotation: projection,
             pointing_offset: Some(prediction.pointing_offset_rad(scan.pointing_rad)),
-            epoch_s: None,
+            frame_key: None,
         });
     }
     Ok(Segment {
@@ -261,6 +265,7 @@ impl Segment {
 /// The prediction stage's state across batches.
 pub(super) struct PredictionStage<'s> {
     scans: &'s [Scan],
+    antennas: &'s [crate::session::array::Antenna],
     backend: BackendChoice,
     correlations: usize,
     channels: usize,
@@ -464,6 +469,7 @@ impl<'s> PredictionStage<'s> {
             .unwrap_or(0);
         Ok(Some(Self {
             scans: session.scans(),
+            antennas: session.antennas(),
             backend,
             correlations,
             channels,
@@ -916,7 +922,14 @@ impl<'s> PredictionStage<'s> {
             self.projections.clear();
             for (&step, frame) in segment.steps.iter().zip(&mut segment.projections) {
                 let prediction = self.predictions[step];
-                frame.refresh(prediction, scan, first_row + offset as u64, row.time_s)?;
+                frame.refresh(
+                    prediction,
+                    scan,
+                    first_row + offset as u64,
+                    row.time_s,
+                    row.antenna1,
+                    self.antennas,
+                )?;
                 let (mut uvw_m, mut phase_shift_m) = frame.rotation.apply(row.uvw_m);
                 if let Some(focus) = &prediction.focus {
                     (uvw_m, phase_shift_m) = crate::session::focus::apply(
