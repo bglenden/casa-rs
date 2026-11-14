@@ -426,7 +426,19 @@ impl MosaicPb {
             for j in k..dishes.len() {
                 for (window_index, window) in cells.iter().enumerate() {
                     let mut lattices = Vec::with_capacity(window.frequencies_hz.len());
-                    for &frequency_hz in &window.frequencies_hz {
+                    for (channel, &frequency_hz) in window.frequencies_hz.iter().enumerate() {
+                        // Simulator HetArrayConvFunc puts its beam planes in
+                        // a linear SpectralCoordinate, even for irregular
+                        // channels. Keep their original frequencies for
+                        // routing, but sample that coordinate for the beams.
+                        let frequency_hz =
+                            if rules == MosaicRules::Simulator && window.frequencies_hz.len() > 1 {
+                                window.frequencies_hz[0]
+                                    + channel as f64
+                                        * (window.frequencies_hz[1] - window.frequencies_hz[0])
+                            } else {
+                                frequency_hz
+                            };
                         lattices.push(screen_pair(
                             &mut fft,
                             &mut screen,
