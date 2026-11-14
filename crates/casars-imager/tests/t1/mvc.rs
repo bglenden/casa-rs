@@ -856,7 +856,13 @@ fn mvc_cleans_the_saved_taylor_residual_before_its_first_major_cycle() {
     let (_, seed) = observation.image(name, controls.clone());
     let path = |suffix: &str| observation.scratch(&format!("{name}{suffix}"));
     let centre = [128, 128];
-    let target = [115, 123];
+    let target = seed
+        .get(".pb.tt0")
+        .pixels
+        .indexed_iter()
+        .find(|&(_, &pb)| (0.4..0.6).contains(&pb))
+        .map(|((x, y), _)| [x, y])
+        .expect("off-axis primary-beam pixel");
     let [a, b, c] = [".psf.tt0", ".psf.tt1", ".psf.tt2"]
         .map(|suffix| f64::from(seed.get(suffix).pixels[centre]));
     let component = [0.75, -0.25];
@@ -918,6 +924,13 @@ fn mvc_cleans_the_saved_taylor_residual_before_its_first_major_cycle() {
         .unwrap();
     residual.save().unwrap();
     drop(residual);
+    // An absent mask on the principal residual leaves every pixel
+    // eligible for the peak, even when term one still has a pixel mask.
+    let mut residual = PagedImage::<f32>::open(&saved[1]).unwrap();
+    residual.unset_default_mask().unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    controls["pblimit"] = json!(0.95);
     controls["threshold"] = json!("0.25Jy");
     let (summary, cleaned) = observation.image(name, controls);
     assert_eq!((summary.minor_iterations, summary.major_cycles), (1, 1));
@@ -932,7 +945,7 @@ fn mvc_cleans_the_saved_taylor_residual_before_its_first_major_cycle() {
         let suffix = format!(".residual.tt{term}");
         assert_eq!(
             cleaned.get(&suffix).mask(),
-            seed.get(".pb.tt0").mask(),
+            Some(seed.get(".pb.tt0").values().mapv(|value| value > 0.95)),
             "the major cycle rebuilds the residual mask from the PB"
         );
     }

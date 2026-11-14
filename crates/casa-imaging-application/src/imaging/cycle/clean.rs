@@ -36,6 +36,13 @@ pub(super) fn run(
         .as_ref()
         .and_then(ExistingProducts::taylor_mask_read_bytes)
         .is_some();
+    let use_pb_mask = setup.residual_pixel_mask;
+    let read_mvc_residual = mvc.is_some() && !run.forms.residual;
+    if read_mvc_residual {
+        // The saved residual's own mask governs the initial measurement.
+        // Without a mask, CASA measures every valid pixel.
+        setup.residual_pixel_mask = false;
+    }
     let mut controller = Controller::new(&controls);
     let mut cache = if !run.forms.psf
         && outcome.scientific.normal_state().basis()
@@ -206,6 +213,7 @@ pub(super) fn run(
             }
         })?;
         setup.saved_taylor_residual = false;
+        setup.residual_pixel_mask = use_pb_mask;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
