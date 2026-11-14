@@ -73,13 +73,15 @@ impl Simulator {
     /// diameters.
     pub(super) fn mosaic_beams(
         &self,
-        custom: Option<PrimaryBeam>,
+        custom: Option<&super::voltage_patterns::BeamSource>,
     ) -> SimulatorResult<(MosaicBeams, Vec<u8>)> {
         let telescope = self.observing_telescope();
         let common = custom.is_some() || !MOSAIC_TELESCOPES.contains(&telescope);
-        let default =
-            custom.or_else(|| PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz()));
-        if common && default.is_none() {
+        let default = match custom {
+            Some(beam) => beam.configured(),
+            None => PrimaryBeam::for_telescope(telescope, self.reference_frequency_hz()),
+        };
+        if common && default.is_none() && custom.is_none() {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict with setoptions(ftmachine='mosaic') for telescope {telescope} is not \
                  yet implemented in casa-rs (#1297)"
@@ -90,8 +92,8 @@ impl Simulator {
         let mut keys: Vec<String> = Vec::with_capacity(self.antennas.len());
         let mut dishes = Vec::with_capacity(self.antennas.len());
         let mut classes = Vec::with_capacity(self.antennas.len());
-        if common {
-            dishes.push(default.expect("a supported common telescope beam"));
+        if common && let Some(default) = default {
+            dishes.push(default);
         }
         for antenna in &self.antennas {
             if common {
@@ -153,6 +155,7 @@ impl Simulator {
         Ok((
             MosaicBeams {
                 common,
+                custom_pattern: custom.cloned(),
                 dishes,
                 windows,
             },

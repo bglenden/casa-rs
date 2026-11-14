@@ -136,10 +136,11 @@ impl FtMachine {
 /// What the simulator's mosaic machine builds its kernels from: an Airy
 /// dish per class of dish diameter (`HetArrayConvFunc::findAntennaSizes`)
 /// and the spectral windows predicted.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct MosaicBeams {
     /// SimplePBConvFunc uses one common telescope beam for all antennas.
     pub(crate) common: bool,
+    pub(crate) custom_pattern: Option<crate::session::voltage_patterns::BeamSource>,
     /// One dish's Airy pattern per class, in class order.
     pub(crate) dishes: Vec<PrimaryBeam>,
     /// The windows of the scans predicted, every channel selected.
@@ -264,10 +265,14 @@ impl ModelLayout {
                 WPlaneCount::Fixed(planes),
             )?),
             (FtMachine::Mosaic, Some(beams)) if beams.common => Box::new(
-                MosaicPb::simple_screens(
+                MosaicPb::simple_pattern_screens(
                     &self.geometry,
                     &self.polarization,
-                    beams.dishes[0],
+                    &beams
+                        .custom_pattern
+                        .as_ref()
+                        .map(crate::session::voltage_patterns::BeamSource::pattern)
+                        .unwrap_or_else(|| beams.dishes[0].pattern()),
                     &beams.windows,
                 )?
                 .finish()?,

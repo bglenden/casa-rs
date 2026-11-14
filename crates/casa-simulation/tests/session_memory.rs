@@ -133,6 +133,8 @@ mod patch;
 mod pointings;
 #[path = "session_memory/polynomial_fields.rs"]
 mod polynomial_fields;
+#[path = "session_memory/saved_curves.rs"]
+mod saved_curves;
 #[path = "session_memory/selection.rs"]
 mod selection;
 #[path = "selection/input.rs"]

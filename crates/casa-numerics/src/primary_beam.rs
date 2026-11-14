@@ -14,6 +14,7 @@ use crate::{AnnularApertureVoltageTable, EvlaPowerPattern, VlaBand};
 mod gaussian;
 mod sma;
 mod squint;
+mod tabulated;
 use gaussian::GaussianVoltageTable;
 use sma::SmaVoltageTable;
 
@@ -212,6 +213,7 @@ pub struct BeamPattern(Lookup);
 
 #[derive(Clone)]
 enum Lookup {
+    Tabulated(tabulated::VoltageTable),
     Sma(SmaVoltageTable),
     /// An Airy pattern's voltage table.
     Airy(AnnularApertureVoltageTable),
@@ -222,13 +224,14 @@ enum Lookup {
 
 impl BeamPattern {
     /// The most bytes a pattern holds: an Airy pattern's table.
-    pub const BYTES: u64 = AnnularApertureVoltageTable::BYTES as u64;
+    pub const BYTES: u64 = AnnularApertureVoltageTable::BYTES as u64 + 32;
 
     /// The pattern at `frequency_hz`: the Airy table, or the EVLA's fit of
     /// that frequency.
     #[must_use]
     pub fn at_frequency(&self, frequency_hz: f64) -> FrequencyPattern<'_> {
         FrequencyPattern(match &self.0 {
+            Lookup::Tabulated(table) => FrequencyLookup::Tabulated(table),
             Lookup::Sma(table) => FrequencyLookup::Sma(table),
             Lookup::Airy(table) => FrequencyLookup::Airy(table),
             Lookup::Evla => FrequencyLookup::Evla(EvlaPowerPattern::at(frequency_hz)),
@@ -266,6 +269,7 @@ impl BeamPattern {
     #[must_use]
     pub fn support_pixels(&self, increment_x_rad: f64, frequency_hz: f64) -> usize {
         let maximum_arcmin_ghz = match &self.0 {
+            Lookup::Tabulated(table) => table.maximum_radius,
             Lookup::Sma(_) => SmaVoltageTable::MAXIMUM_RADIUS,
             Lookup::Airy(table) => table.maximum_radius(),
             Lookup::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
@@ -287,6 +291,7 @@ fn support_pixels(maximum_arcmin_ghz: f64, increment_x_rad: f64, frequency_hz: f
 pub struct FrequencyPattern<'a>(FrequencyLookup<'a>);
 
 enum FrequencyLookup<'a> {
+    Tabulated(&'a tabulated::VoltageTable),
     Sma(&'a SmaVoltageTable),
     Airy(&'a AnnularApertureVoltageTable),
     Evla(EvlaPowerPattern),
@@ -310,6 +315,7 @@ impl FrequencyPattern<'_> {
     #[must_use]
     pub fn voltage(&self, radius_arcmin_ghz: f64) -> f32 {
         match &self.0 {
+            FrequencyLookup::Tabulated(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Sma(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Airy(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Evla(fit) => fit.voltage(radius_arcmin_ghz),

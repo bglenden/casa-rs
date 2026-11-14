@@ -33,6 +33,8 @@
 //! incremental predict, whose sum CASA forms through MODEL_DATA; a
 //! MeasurementSet `openfromms` opened keeps those it has in step with DATA.
 
+mod kernels;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -639,8 +641,8 @@ impl Simulator {
             ));
         }
         let selected_beam = self.voltage_pattern_beam()?;
-        let component_beam = selected_beam.filter(|_| self.voltage_pattern);
-        let beam = component_beam.map(|beam| beam.pattern);
+        let component_beam = selected_beam.as_ref().filter(|_| self.voltage_pattern);
+        let beam = component_beam.map(|beam| &beam.pattern);
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
@@ -659,6 +661,15 @@ impl Simulator {
                      implemented in casa-rs (#1053); a model image is",
                 ));
             }
+            let beam = beam
+                .map(|beam| {
+                    beam.configured().ok_or_else(|| {
+                        SimulatorError::not_yet_implemented(
+                            "single-dish consumption of saved radial curves (#1299)",
+                        )
+                    })
+                })
+                .transpose()?;
             let predictions = opened_models(model, &images)
                 .map(|model| self.prepare_single_dish(model?, kernel, beam))
                 .collect::<SimulatorResult<Vec<_>>>()?;
@@ -669,7 +680,8 @@ impl Simulator {
             }
             return Ok(());
         }
-        let component_frame_epoch = (self.squint && beam.is_some_and(PrimaryBeam::squints))
+        let component_frame_epoch = (self.squint
+            && beam.is_some_and(|beam| beam.configured().is_some_and(PrimaryBeam::squints)))
             || list.as_ref().is_some_and(|(_, list, _)| {
                 list.components().iter().any(|component| {
                     component.shape().reference_direction().refer()
@@ -711,7 +723,7 @@ impl Simulator {
                 predictions.push(self.prepare_image(
                     model?,
                     correlations,
-                    selected_beam,
+                    selected_beam.as_ref(),
                     image_centres.clone(),
                 )?);
             }
@@ -770,11 +782,11 @@ impl Simulator {
         &self,
         model: SkyModel,
         correlations: &[Correlation],
-        selected_beam: Option<super::voltage_patterns::ResolvedBeam>,
+        selected_beam: Option<&super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
         use casa_types::measures::direction::DirectionRef;
-        let beam = selected_beam.map(|beam| beam.pattern);
+        let beam = selected_beam.map(|beam| &beam.pattern);
         let fixed_celestial_frame = matches!(
             model.tangent_direction().refer(),
             DirectionRef::J2000
@@ -821,7 +833,7 @@ impl Simulator {
                 let (beams, antenna_types) = self.mosaic_beams(
                     selected_beam
                         .filter(|beam| !beam.standard)
-                        .map(|beam| beam.pattern),
+                        .map(|beam| &beam.pattern),
                 )?;
                 (Some(beams), antenna_types, self.mosaic_pointings(&model)?)
             }
@@ -877,12 +889,12 @@ impl Simulator {
         &self,
         label: &str,
         (list, held_list): (ComponentList, Reservation),
-        selected_beam: Option<super::voltage_patterns::ResolvedBeam>,
+        selected_beam: Option<&super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<ComponentPrediction> {
         let squint = selected_beam
             .filter(|beam| self.squint && beam.standard)
-            .map(|beam| beam.pattern)
+            .and_then(|beam| beam.pattern.configured())
             .filter(|beam| beam.squints())
             .map(|beam| -> SimulatorResult<_> {
                 Ok((
@@ -893,7 +905,7 @@ impl Simulator {
                 ))
             })
             .transpose()?;
-        let beam = selected_beam.map(|beam| beam.pattern);
+        let beam = selected_beam.map(|beam| &beam.pattern);
         if self
             .antennas
             .windows(2)
@@ -931,7 +943,7 @@ impl Simulator {
                 }
             })
             .collect();
-        let pattern = beam.map(PrimaryBeam::pattern);
+        let pattern = beam.map(super::voltage_patterns::BeamSource::pattern);
         // A scan is phased on its field's phase centre, as CASA's
         // `VisBuffer` phases it, with the beam centred independently on
         // POINTING. Only equal phase/beam pairs share prepared terms.
@@ -1052,7 +1064,7 @@ impl Simulator {
                 ))
             })?;
         Ok(Some(super::voltage_patterns::ResolvedBeam {
-            pattern: beam,
+            pattern: super::voltage_patterns::BeamSource::Configured(beam),
             standard: true,
         }))
     }
@@ -1096,92 +1108,6 @@ impl Simulator {
         }
     }
 
-    /// Build `layout`'s kernels, admitted as they are built, as imaging
-    /// admits them: the spheroidal set's bytes, or the W-projection screens
-    /// ([`WPlanes::screens_bytes`]) and then the kernels cropped from them
-    /// ([`WScreens::kernel_bytes`](casa_imaging_operator::WScreens::kernel_bytes)),
-    /// the screens released once the kernels are built. The reservation
-    /// returned keeps what the kernels hold.
-    fn admitted_kernels(
-        &self,
-        layout: &ModelLayout,
-    ) -> SimulatorResult<(Box<dyn ConvolutionFunctionSet>, Reservation)> {
-        let resources = &self.options.resources;
-        let (host, policy) = (resources.host(), resources.policy());
-        charge_process_caches(host, policy).map_err(SimulatorError::admission)?;
-        let admitted = |phase, memory| {
-            admit(host, policy, &Demand { phase, memory }).map_err(SimulatorError::admission)
-        };
-        let (geometry, polarization) = (layout.geometry(), layout.polarization());
-        let raised =
-            |error: OperatorError| SimulatorError::raised(format!("Caught exception: {error}"));
-        Ok(match layout.machine() {
-            FtMachine::Grid(_) => (
-                Box::new(Spheroidal::new(geometry, polarization)),
-                admitted(KERNEL_PHASE, Spheroidal::bytes(geometry))?,
-            ),
-            FtMachine::WProject(planes) => {
-                let count = WPlaneCount::Fixed(planes);
-                let screening = admitted(
-                    W_SCREENS_PHASE,
-                    WPlanes::screens_bytes(geometry, count).map_err(raised)?,
-                )?;
-                let screens = WPlanes::screens(geometry, polarization, count).map_err(raised)?;
-                let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
-                let set = screens.finish().map_err(raised)?;
-                drop(screening);
-                kernels.retain(set.resident_bytes());
-                tracing::info!(
-                    planes,
-                    screen = set.screen_size(),
-                    bytes = set.resident_bytes(),
-                    "W projection using {planes} planes"
-                );
-                (Box::new(set), kernels)
-            }
-            FtMachine::Mosaic => {
-                let beams = layout.beams().expect("a mosaic layout has its beams");
-                let (dishes, windows) = (&beams.dishes, &beams.windows);
-                if beams.common {
-                    let screening = admitted(
-                        MOSAIC_SCREENS_PHASE,
-                        MosaicPb::simple_screens_bytes(geometry, windows).map_err(raised)?,
-                    )?;
-                    let screens =
-                        MosaicPb::simple_screens(geometry, polarization, dishes[0], windows)
-                            .map_err(raised)?;
-                    let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
-                    let set = screens.finish().map_err(raised)?;
-                    drop(screening);
-                    kernels.retain(set.resident_bytes());
-                    return Ok((Box::new(set), kernels));
-                }
-                let (rules, frequency_hz) = (MosaicRules::Simulator, layout.image_frequency_hz());
-                tracing::info!("Performing Mosaic gridding for model images (uv convolution)");
-                let screening = admitted(
-                    MOSAIC_SCREENS_PHASE,
-                    MosaicPb::screens_bytes(rules, geometry, frequency_hz, dishes, windows)
-                        .map_err(raised)?,
-                )?;
-                let screens =
-                    MosaicPb::screens(rules, geometry, polarization, frequency_hz, dishes, windows)
-                        .map_err(raised)?;
-                let mut kernels = admitted(KERNEL_PHASE, screens.kernel_bytes())?;
-                let set = screens.finish().map_err(raised)?;
-                drop(screening);
-                kernels.retain(set.resident_bytes());
-                tracing::info!(
-                    dishes = set.dishes(),
-                    screen = set.screen_size(),
-                    bytes = set.resident_bytes(),
-                    "convolution function support: {}",
-                    set.max_half_support()[0]
-                );
-                (Box::new(set), kernels)
-            }
-        })
-    }
-
     /// Admit and prepare `model`'s grids: one set, without `beam` or with
     /// one field observed (the beam centred on it). With several fields
     /// under the beam, the model's planes are held for `close` to prepare
@@ -1194,7 +1120,7 @@ impl Simulator {
         &self,
         model: SkyModel,
         operator: ModelOperator,
-        beam: Option<PrimaryBeam>,
+        beam: Option<&super::voltage_patterns::BeamSource>,
         kernels: Reservation,
     ) -> SimulatorResult<Prediction> {
         let resources = &self.options.resources;
@@ -1223,7 +1149,7 @@ impl Simulator {
         pointings.sort_unstable_by_key(|direction| direction.map(f64::to_bits));
         pointings.dedup_by_key(|direction| direction.map(f64::to_bits));
         let _ = &point_memory;
-        let pattern = beam.map(PrimaryBeam::pattern);
+        let pattern = beam.map(super::voltage_patterns::BeamSource::pattern);
         let tangent = model.tangent_direction().clone();
         let (grids, reservation) = match pattern {
             Some(pattern) if pointings.len() > 1 => {

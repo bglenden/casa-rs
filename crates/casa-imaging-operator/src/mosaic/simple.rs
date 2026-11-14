@@ -102,8 +102,17 @@ impl MosaicPb {
         beam: PrimaryBeam,
         windows: &[MosaicWindow],
     ) -> Result<SimpleMosaicScreens, OperatorError> {
+        Self::simple_pattern_screens(geometry, polarization, &beam.pattern(), windows)
+    }
+
+    /// Construct common-beam planes from an already tabulated voltage curve.
+    pub fn simple_pattern_screens(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        pattern: &casa_numerics::BeamPattern,
+        windows: &[MosaicWindow],
+    ) -> Result<SimpleMosaicScreens, OperatorError> {
         let layout = Layout::new(geometry, windows)?;
-        let pattern = beam.pattern();
         let mut fft = PlaneFft::<f32>::new([layout.side; 2], false)?;
         let mut plane = vec![Complex32::default(); layout.side * layout.side];
         let mut planes = Vec::with_capacity(layout.windows.len());
