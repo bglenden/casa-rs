@@ -29,7 +29,7 @@ pub(super) fn visit_key(scan: &Scan) -> VisitKey {
 }
 
 impl Simulator {
-    pub(super) fn transformed_image_beam(
+    pub(in crate::session) fn transformed_image_beam(
         &self,
         model: &SkyModel,
         correlations: &[Correlation],

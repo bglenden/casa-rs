@@ -42,7 +42,7 @@ fn profile(path: &Path, n: usize) {
     image.save().unwrap();
 }
 
-fn beam_table(source: &Path, path: &Path, image: &Path) {
+pub(super) fn beam_table(source: &Path, path: &Path, image: &Path) {
     std::fs::create_dir_all(path).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();

@@ -229,10 +229,10 @@ fn predict_refuses_as_casa_does() {
 /// there for the field's other rows (`BeamSkyJones`, #884): measured on
 /// CASA 6.7.6, a field-first sequence keeps the beam on the field and a
 /// moved-first one on the moved direction. casa-rs does not follow that
-/// yet, so a beam over a model image, a component list or total power, and
-/// the mosaic machine, refuse a moved pointing; each predicts it without.
+/// stale cache: image, component and total-power predictions keep their
+/// phase centres separate from the moved beam/sample direction.
 #[test]
-fn displaced_interferometric_beams_are_accepted_and_total_power_stays_explicit() {
+fn displaced_beams_and_total_power_are_accepted() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = predict_support::extended_model_of(directory.path(), "model.image", 256);
     let points = directory.path().join("points.cl");
@@ -270,14 +270,8 @@ fn displaced_interferometric_beams_are_accepted_and_total_power_stays_explicit()
             sm.set_options(options).expect("setoptions");
         }
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        if options.is_some() {
-            let (outcome, message) = refusal(sm.predict(&predict));
-            assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
-            assert!(message.contains("pointed away"), "{message}");
-        } else {
-            sm.predict(&predict)
-                .unwrap_or_else(|error| panic!("{what}: {error}"));
-        }
+        sm.predict(&predict)
+            .unwrap_or_else(|error| panic!("{what}: {error}"));
         sm.set_vp(&no_beam).expect("setvp");
         sm.predict(&predict)
             .unwrap_or_else(|error| panic!("{what} without the beam: {error}"));

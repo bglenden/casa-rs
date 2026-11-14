@@ -255,6 +255,11 @@ fn patch_range(
             .iter()
             .flat_map(|phase| phase.noise_for_scan(0))
             .any(crate::corrupt::NoiseApplication::needs_time)
+            || plan
+                .phases()
+                .iter()
+                .flat_map(|phase| phase.single_dish_for_scan(0))
+                .any(crate::predict::SingleDishPrediction::needs_epoch)
             || plan.corrupts_by_jones()
             || plan.has_query()
             || plan

@@ -316,11 +316,19 @@ impl SkyModel {
 
     /// Fractional pixel `[x, y]` of a J2000 direction.
     pub(crate) fn pixel_of(&self, direction_rad: [f64; 2]) -> Result<[f64; 2], PredictError> {
+        self.pixel_of_with_frame(direction_rad, &self.frame)
+    }
+
+    pub(crate) fn pixel_of_with_frame(
+        &self,
+        direction_rad: [f64; 2],
+        frame: &MeasFrame,
+    ) -> Result<[f64; 2], PredictError> {
         let direction = if self.tangent.refer() == DirectionRef::J2000 {
             (direction_rad[0], direction_rad[1])
         } else {
             MDirection::from_angles(direction_rad[0], direction_rad[1], DirectionRef::J2000)
-                .convert_to(self.tangent.refer(), &self.frame)
+                .convert_to(self.tangent.refer(), frame)
                 .map_err(|error| {
                     casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
                 })?
@@ -354,21 +362,6 @@ impl SkyModel {
             ],
             inside(pixel[0], self.shape[0]) && inside(pixel[1], self.shape[1]),
         ))
-    }
-
-    /// Model plane `plane`, `[y][x]`, read from the image, or a copy of the
-    /// plane held.
-    ///
-    /// # Errors
-    ///
-    /// The pixels could not be read.
-    pub(super) fn read_plane(&self, plane: usize) -> Result<Array2<f32>, PredictError> {
-        if !self.is_stokes_i_only() {
-            return Err(PredictError::UnsupportedModel(
-                "total-power prediction currently requires Stokes I only".into(),
-            ));
-        }
-        self.read_polarized_plane(plane, 0)
     }
 
     pub(super) fn read_polarizations(

@@ -107,7 +107,7 @@ fn sampled(
     let prediction = SingleDishPrediction::new(
         model,
         kernel,
-        (Some(&pattern), voltage_pattern.then_some(&pattern)),
+        (Some(&pattern), voltage_pattern.then_some(&pattern), None),
         (&windows, pointings),
         Reservation::none(),
     )
@@ -241,7 +241,7 @@ fn channels_take_their_planes_and_cross_hands_take_none() {
     let prediction = SingleDishPrediction::new(
         &cube,
         SingleDishKernel::Pb,
-        (Some(&pattern), None),
+        (Some(&pattern), None, None),
         (&windows, pointings),
         Reservation::none(),
     )

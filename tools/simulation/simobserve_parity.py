@@ -71,6 +71,8 @@ INPUTS = {
     "flatone.single.ptg.txt": "unittest/simobserve/flatone.single.ptg.txt",
 }
 LOCAL_INPUTS = {
+    "sd-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/pb_alma.image"),
+    "sd-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/point.cl"),
     "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
 }
 
@@ -99,9 +101,20 @@ CORE = {
     "thermalnoise": "",
 }
 
+SD_CORE = dict(skymodel="inputs/sd-sky.image", setpointings=True, integration="10s",
+    maptype="square", obsmode="sd", sdantlist="aca.tp.cfg", sdant=0,
+    direction="J2000 10h00m00 34d00m00", mapsize=["20arcsec", "20arcsec"],
+    pointingspacing="10arcsec", totaltime="120s", refdate="2024/06/01", thermalnoise="")
+
 # The cases: CASA's parameters (graphics off, overwrite on), with paths
 # relative to OUT. `complist_from` makes a component list in CASA first.
 CASES = [
+    {"name": "sd_project", "params": dict(SD_CORE)},
+    {"name": "sd_project_manual", "params": dict(SD_CORE, thermalnoise="tsys-manual", totaltime="3600s")},
+    {"name": "sd_project_atmosphere", "params": dict(SD_CORE, thermalnoise="tsys-atm", totaltime="3600s")},
+    {"name": "sd_project_configuration", "params": dict(SD_CORE, sdantlist="alma.out01.cfg", sdant=2)},
+    {"name": "sd_project_frame", "params": dict(SD_CORE, indirection="GALACTIC 0deg 0deg", direction="")},
+    {"name": "sd_project_components_refused", "params": dict(SD_CORE, complist="inputs/sd-components.cl"), "expect_refusal": True},
     # The VLA protoplanetary-disk CASA Guide (CASA 5.7.0), noiseless
     # (`psimvla1`) and with tsys-manual noise (`psimvla3`).
     {"name": "psimvla1", "params": dict(PPDISK_VLA, thermalnoise="")},

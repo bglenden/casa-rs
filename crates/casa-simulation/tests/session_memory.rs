@@ -88,6 +88,9 @@
 //! the blocks that are not a write batch's ([`heap`]); the counters are the
 //! process's, so each law runs alone in a process of its own ([`alone`]).
 
+#[path = "session_memory/total_power.rs"]
+mod total_power;
+
 #[path = "session_memory/single_dish_model.rs"]
 mod single_dish_model;
 
