@@ -39,27 +39,42 @@ pub enum SingleDishKernel {
     Box,
     /// `SF`: CASA's prolate spheroid over 3 pixels.
     Spheroidal,
+    /// CASA's default Gaussian kernel.
+    Gauss,
+    /// CASA's default Gaussian-times-jinc kernel.
+    Gjinc,
 }
 
 impl SingleDishKernel {
     /// The kernel `gridfunction` names, in any case; `None` for the others
-    /// (`GAUSS` and `GJINC`, which CASA also has, among them).
+    /// (an unknown name is refused at prediction).
     #[must_use]
     pub fn from_grid_function(grid_function: &str) -> Option<Self> {
         match grid_function.to_lowercase().as_str() {
             "pb" => Some(Self::Pb),
             "box" => Some(Self::Box),
             "sf" => Some(Self::Spheroidal),
+            "gauss" => Some(Self::Gauss),
+            "gjinc" => Some(Self::Gjinc),
             _ => None,
         }
     }
 
     /// The kernel with the simulator's support, CASA's default.
-    const fn grid_function(self) -> GridFunction {
+    fn grid_function(self) -> GridFunction {
         match self {
             Self::Pb => GridFunction::PrimaryBeam,
             Self::Box => GridFunction::BOX,
             Self::Spheroidal => GridFunction::SPHEROIDAL,
+            Self::Gauss => GridFunction::Gauss {
+                hwhm: std::f64::consts::LN_2.sqrt(),
+                truncate: (3. * std::f64::consts::LN_2.sqrt()) as f32,
+            },
+            Self::Gjinc => GridFunction::Gjinc {
+                hwhm: 2.52 * std::f64::consts::LN_2.sqrt(),
+                jwidth: 1.55,
+                truncate: None,
+            },
         }
     }
 
@@ -157,15 +172,16 @@ impl SingleDishPrediction {
     ///   and sample of the plane read.
     pub(crate) fn preparation_bytes(
         model: &SkyModel,
+        kind: SingleDishKernel,
         beam: Option<&BeamPattern>,
         (windows, pointings): (&[SingleDishWindow], &SingleDishPointings),
     ) -> u64 {
-        // The PB kernel's, or the larger of BOX's and SF's.
+        // The PB kernel's extent, or the selected fixed kernel's support.
         let kernel = match beam {
             Some(beam) => GridFunction::PrimaryBeam.forming_bytes(
                 beam.support_pixels(model.increment_rad[0], model.plane_frequency_hz(0)),
             ),
-            None => GridFunction::SPHEROIDAL.forming_bytes(0),
+            None => kind.grid_function().forming_bytes(0),
         };
         let channels: usize = windows.iter().map(|w| w.frequencies_hz.len()).sum();
         let planes_of =
@@ -200,6 +216,13 @@ impl SingleDishPrediction {
             of_scan,
         } = pointings;
         let kernel = kernel.table(model, beam);
+        if model.shape().iter().any(|&n| n <= 2 * kernel.support()) {
+            return Err(PredictError::InvalidModel(format!(
+                "number of image pixels {:?} is smaller than or equal to gridding support {}; use a larger image",
+                model.shape(),
+                2 * kernel.support()
+            )));
+        }
         let axis = SpectralAxis::new(
             model.first_frequency_hz,
             model.frequency_increment_hz,

@@ -113,6 +113,13 @@ pub fn write_model_of(
 /// A model of points and a blob spread over the image, one plane spanning
 /// the band.
 pub fn extended_model(dir: &Path, name: &str) -> PathBuf {
+    extended_model_of(dir, name, N)
+}
+
+/// The same sky padded with zeros, for a kernel needing a wider image.
+pub fn extended_model_of(dir: &Path, name: &str, n: usize) -> PathBuf {
+    assert!(n >= N);
+    let shift = (n - N) / 2;
     let mut points = vec![
         (N / 2, N / 2, 1.5),
         (N / 2 + 9, N / 2 - 4, 0.75),
@@ -123,7 +130,11 @@ pub fn extended_model(dir: &Path, name: &str) -> PathBuf {
             points.push((20 + dx, 14 + dy, 0.05));
         }
     }
-    write_model(dir, name, &[points])
+    for (x, y, _) in &mut points {
+        *x += shift;
+        *y += shift;
+    }
+    write_model_of(dir, name, n, &[points])
 }
 
 /// A model with one plane per channel, each with its own flux.

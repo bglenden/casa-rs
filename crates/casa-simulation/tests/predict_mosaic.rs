@@ -56,20 +56,16 @@ fn refusal(result: SimulatorResult<()>) -> (CasaOutcome, String) {
 }
 
 #[test]
-fn setoptions_takes_the_mosaic_machine_but_not_both_or_pbwproject() {
+fn setoptions_records_mosaic_both_and_pbwproject() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let mut sm = session(&directory.path().join("options.ms"), "ALMA");
     sm.set_options(&mosaic()).expect("mosaic");
-    for machine in ["both", "pbwproject"] {
-        let (outcome, message) = refusal(sm.set_options(&PredictionOptions {
+    for machine in ["both", "pbwproject", "mosaic"] {
+        sm.set_options(&PredictionOptions {
             ftmachine: machine.to_string(),
             ..PredictionOptions::default()
-        }));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{machine}");
-        assert!(
-            message.contains(machine) && message.contains("#1053"),
-            "{message}"
-        );
+        })
+        .expect("CASA records the mode; any refusal occurs at prediction");
     }
     sm.close().expect("close");
 }

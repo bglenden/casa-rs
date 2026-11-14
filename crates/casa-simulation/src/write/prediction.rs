@@ -160,13 +160,14 @@ fn segment_of(
                 &prediction.tangent,
                 &frame,
             ),
-            FtMachine::Grid(_) | FtMachine::WProject(_) => {
-                GridFtProjection::between_directions_with_frame(
-                    &source,
-                    &prediction.tangent,
-                    &frame,
-                )
-            }
+            FtMachine::Grid(_)
+            | FtMachine::GridBox(_)
+            | FtMachine::Both(_)
+            | FtMachine::WProject(_) => GridFtProjection::between_directions_with_frame(
+                &source,
+                &prediction.tangent,
+                &frame,
+            ),
         }
         .map_err(|error| {
             SimulatorError::raised(format!("simulator image-frame projection: {error}"))
@@ -258,8 +259,7 @@ pub(super) struct PredictionStage<'s> {
 
 impl<'s> PredictionStage<'s> {
     /// The stage for `session`'s predict steps on cells of `(correlations,
-    /// channels)`, on `backend`, or on the CPU when a step projects w;
-    /// `None` when no step predicts.
+    /// channels)`, on the selected `backend`; `None` when no step predicts.
     ///
     /// # Errors
     ///
@@ -279,17 +279,6 @@ impl<'s> PredictionStage<'s> {
         if predictions.is_empty() {
             return Ok(None);
         }
-        // Metal predicts through `GridFT` only; a session that projects w
-        // predicts on the CPU (`predict` refused it on an explicit Metal
-        // backend).
-        let backend = if predictions
-            .iter()
-            .all(|prediction| prediction.model.machine().runs_on_metal())
-        {
-            backend
-        } else {
-            BackendChoice::Cpu
-        };
         let mut keys = HashMap::new();
         let mut segments: Vec<Segment> = Vec::new();
         let mut scan_segments = Vec::with_capacity(scan_scope.len());

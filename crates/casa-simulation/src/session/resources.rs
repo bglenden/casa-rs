@@ -24,12 +24,10 @@
 //! The backend is where a session predicts its model
 //! ([`SessionResources::prediction_backend`]); noise never runs on a device,
 //! so a session that predicts nothing writes the same MeasurementSet
-//! whatever the request. Metal predicts through the standard `GridFT`
-//! kernel set, which the imaging runtime's Metal laws and the simulator's
-//! own (`tests/backends.rs`) cover, so `Auto` takes the host's Metal device
-//! whenever there is one, except for a session that projects w
-//! (`setoptions(ftmachine='wproject')`): `close` predicts that on the CPU,
-//! and `predict` refuses it on an explicit `Metal`.
+//! whatever the request. GridFT, WProjectFT and mosaic prediction use the
+//! shared runtime's CPU or Metal kernels. `Auto` takes the host's Metal
+//! device whenever one is available. Total-power image sampling is prepared
+//! on the CPU, including the single-dish term in joint `both` prediction.
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;

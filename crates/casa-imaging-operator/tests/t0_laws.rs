@@ -59,13 +59,22 @@ fn adjoint_law_on(
     requested: &[PolarizationCoordinate],
     basis_factor: f64,
 ) {
-    let shape = geometry.image().shape;
     let operator = operator_on(geometry, precision, Basis::Constant, &XX_YY, requested);
+    adjoint_operator_law(operator, precision, requested.len(), basis_factor);
+}
+
+fn adjoint_operator_law(
+    operator: casa_imaging_operator::MeasurementOperator,
+    precision: GridPrecision,
+    pols: usize,
+    basis_factor: f64,
+) {
+    let shape = operator.geometry().image().shape;
     let mut rng = Rng::new(7);
     let placed = placements(operator.geometry(), 300, 1, &mut rng);
     let (values, weights) = samples(&placed, 2, &mut rng);
     let block = buffer(&placed, &values, &weights, 2);
-    let model = random_model_of(shape, requested.len(), &mut rng);
+    let model = random_model_of(shape, pols, &mut rng);
     let mut backend = CpuBackend::new();
 
     let prepared = operator
@@ -101,7 +110,7 @@ fn adjoint_law_on(
         )
         .expect("grid");
     let normal = operator.finish(acc).expect("finish");
-    let image_side = (0..requested.len())
+    let image_side = (0..pols)
         .map(|pol| {
             normal
                 .data(0, 0, pol)
@@ -651,4 +660,22 @@ fn polarized_point_source_matches_the_casa_stokes_psf() {
         worst < 1.0e-3 * flux,
         "Q dirty image differs from the shifted Q PSF by {worst}"
     );
+}
+
+#[test]
+fn boxcar_kernel_is_adjoint_in_both_precisions() {
+    use casa_imaging_operator::{Boxcar, MeasurementOperator, PolarizationRouting};
+    for precision in [GridPrecision::F32, GridPrecision::F64] {
+        let geometry = geometry();
+        let routing = PolarizationRouting::compile(&XX_YY, &STOKES_I).unwrap();
+        let kernel = Boxcar::new(&geometry, &routing);
+        let operator = MeasurementOperator::new(
+            geometry,
+            Basis::Constant,
+            routing,
+            Box::new(kernel),
+            precision,
+        );
+        adjoint_operator_law(operator, precision, 1, 1.);
+    }
 }

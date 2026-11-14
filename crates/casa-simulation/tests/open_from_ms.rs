@@ -505,7 +505,7 @@ fn write_points(path: &Path) {
 fn components_under_the_beam_and_total_power_predict_after_openfromms_as_before() {
     use casa_simulation::{PredictSpec, VoltagePatternSpec};
     let directory = tempfile::tempdir().expect("temporary directory");
-    let model = &extended_model(directory.path(), "model.image");
+    let model = &predict_support::extended_model_of(directory.path(), "model.image", 256);
     let points = &directory.path().join("points.cl");
     write_points(points);
     let both = move |sm: &mut Simulator| {

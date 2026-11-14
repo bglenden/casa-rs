@@ -68,11 +68,11 @@ pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDi
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
 use casa_imaging_operator::{
-    ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
-    MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules, MosaicWindow,
-    NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting, PredictionScratch,
-    PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal,
-    WPlaneCount, WPlanes,
+    Boxcar, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
+    ImageExtent, MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules,
+    MosaicWindow, NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting,
+    PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel,
+    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_types::Correlation;
@@ -114,6 +114,10 @@ pub enum FtMachine {
     /// grid padded by `setoptions(padding=…)`, predicting autocorrelations
     /// as the model's zero spacing.
     Grid(PaddingFactor),
+    /// GridFT with CASA's nearest-pixel BOX kernel and sinc correction.
+    GridBox(PaddingFactor),
+    /// GridBoth's interferometric term: SF GridFT with autocorrelations disabled.
+    Both(PaddingFactor),
     /// `WProjectFT` (`ftmachine='wproject'`) with `wprojplanes` planes, at
     /// least two, reaching `|w| = 0.25/|Δx|`. CASA's simulator builds it
     /// with its constructor's padding of 1, whatever `setoptions(padding=…)`
@@ -126,15 +130,6 @@ pub enum FtMachine {
     /// autocorrelations (`usezero` true). The session builds its beams from
     /// the array's dish classes and the windows observed.
     Mosaic,
-}
-
-impl FtMachine {
-    /// Whether the Metal backend predicts through this machine: `GridFT`'s
-    /// spheroidal set and `MosaicFTNew`'s beams, not the W planes.
-    #[must_use]
-    pub const fn runs_on_metal(self) -> bool {
-        matches!(self, Self::Grid(_) | Self::Mosaic)
-    }
 }
 
 /// What the simulator's mosaic machine builds its kernels from: an Airy
@@ -231,7 +226,9 @@ impl ModelLayout {
     ) -> Result<Self, PredictError> {
         let [nx, ny] = model.shape();
         let padding = match machine {
-            FtMachine::Grid(padding) => GridPadding::CasaComposite(padding),
+            FtMachine::Grid(padding) | FtMachine::GridBox(padding) | FtMachine::Both(padding) => {
+                GridPadding::CasaComposite(padding)
+            }
             FtMachine::WProject(_) => GridPadding::CasaComposite(PaddingFactor::SIMULATOR_WPROJECT),
             FtMachine::Mosaic => GridPadding::None,
         };
@@ -241,7 +238,10 @@ impl ModelLayout {
                     "the mosaic machine needs the array's dish classes and windows".into(),
                 )
             })?),
-            FtMachine::Grid(_) | FtMachine::WProject(_) => None,
+            FtMachine::Grid(_)
+            | FtMachine::GridBox(_)
+            | FtMachine::Both(_)
+            | FtMachine::WProject(_) => None,
         };
         // The pointing ramp (`pixFieldDir`) is measured from pixel
         // `(nx/2, ny/2)`, the reference pixel here.
@@ -263,8 +263,10 @@ impl ModelLayout {
         )?;
         let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Nearest);
         let resampler = match machine {
-            FtMachine::Grid(_) | FtMachine::Mosaic => resampler.predicting_autocorrelations(),
-            FtMachine::WProject(_) => resampler,
+            FtMachine::Grid(_) | FtMachine::GridBox(_) | FtMachine::Mosaic => {
+                resampler.predicting_autocorrelations()
+            }
+            FtMachine::Both(_) | FtMachine::WProject(_) => resampler,
         };
         Ok(Self {
             machine,
@@ -308,9 +310,10 @@ impl ModelLayout {
     /// The W-projection planes or the mosaic beams cannot be built.
     pub(crate) fn kernels(&self) -> Result<Box<dyn ConvolutionFunctionSet>, PredictError> {
         Ok(match (self.machine, &self.beams) {
-            (FtMachine::Grid(_), _) => {
+            (FtMachine::Grid(_) | FtMachine::Both(_), _) => {
                 Box::new(Spheroidal::new(&self.geometry, &self.polarization))
             }
+            (FtMachine::GridBox(_), _) => Box::new(Boxcar::new(&self.geometry, &self.polarization)),
             (FtMachine::WProject(planes), _) => Box::new(WPlanes::new(
                 &self.geometry,
                 &self.polarization,

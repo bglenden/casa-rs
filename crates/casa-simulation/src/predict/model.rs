@@ -3,7 +3,7 @@
 //! a time as they are prepared.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::PagedImage;
@@ -67,9 +67,14 @@ pub struct SkyModel {
 enum Pixels {
     /// The open image; planes are read under the lock, one reader at a
     /// time.
-    Image(Box<Mutex<PagedImage<f32>>>),
+    Image(Box<Mutex<InputImage>>),
     /// Every plane, `[y][x]`, read once ([`SkyModel::held`]).
     Held(Vec<Array2<f32>>),
+}
+
+struct InputImage {
+    image: PagedImage<f32>,
+    payload_cache: bool,
 }
 
 impl std::fmt::Debug for SkyModel {
@@ -119,7 +124,10 @@ impl SkyModel {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PredictError> {
         let path = path.as_ref();
         let image =
-            PagedImage::<f32>::open_with_cache(path, MODEL_CACHE_BYTES).map_err(|source| {
+            // An unbounded flat cache is lazy: header inspection allocates no
+            // pixel payload. A bounded LRU eagerly allocates its full slab.
+            // The first admitted read below opens the bounded payload cache.
+            PagedImage::<f32>::open_with_cache(path, usize::MAX).map_err(|source| {
                 PredictError::Image {
                     path: path.display().to_string(),
                     source,
@@ -216,7 +224,10 @@ impl SkyModel {
         };
         Ok(Self {
             path: path.to_path_buf(),
-            pixels: Pixels::Image(Box::new(Mutex::new(image))),
+            pixels: Pixels::Image(Box::new(Mutex::new(InputImage {
+                image,
+                payload_cache: false,
+            }))),
             shape: [nx, ny],
             planes,
             polarizations,
@@ -375,9 +386,9 @@ impl SkyModel {
             unreachable!()
         };
         let [nx, ny] = self.shape;
-        let pixels = image
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        let pixels = self
+            .payload_image(image)?
+            .image
             .get_slice(&[0, 0, 0, plane], &[nx, ny, count, 1])
             .map_err(|source| PredictError::Image {
                 path: self.path.display().to_string(),
@@ -388,6 +399,26 @@ impl SkyModel {
                 Array2::from_shape_fn((ny, nx), |(y, x)| pixels[IxDyn(&[x, y, polarization, 0])])
             })
             .collect())
+    }
+
+    /// Open the bounded payload cache only after the caller admits its
+    /// preparation. Header validation must not allocate the eager LRU slab.
+    fn payload_image<'a>(
+        &self,
+        image: &'a Mutex<InputImage>,
+    ) -> Result<MutexGuard<'a, InputImage>, PredictError> {
+        let mut input = image.lock().unwrap_or_else(PoisonError::into_inner);
+        if !input.payload_cache {
+            input.image =
+                PagedImage::open_with_cache(&self.path, MODEL_CACHE_BYTES).map_err(|source| {
+                    PredictError::Image {
+                        path: self.path.display().to_string(),
+                        source,
+                    }
+                })?;
+            input.payload_cache = true;
+        }
+        Ok(input)
     }
 
     fn read_polarized_plane(
@@ -403,8 +434,10 @@ impl SkyModel {
         };
         let [nx, ny] = self.shape;
         let pixels = {
-            let image = image.lock().unwrap_or_else(PoisonError::into_inner);
-            image.get_slice(&[0, 0, polarization, plane], &[nx, ny, 1, 1])
+            let image = self.payload_image(image)?;
+            image
+                .image
+                .get_slice(&[0, 0, polarization, plane], &[nx, ny, 1, 1])
         }
         .map_err(|source| PredictError::Image {
             path: self.path.display().to_string(),

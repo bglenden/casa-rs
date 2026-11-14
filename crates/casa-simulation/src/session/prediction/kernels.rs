@@ -23,10 +23,18 @@ impl Simulator {
         let raised =
             |error: OperatorError| SimulatorError::raised(format!("Caught exception: {error}"));
         Ok(match layout.machine() {
-            FtMachine::Grid(_) => (
+            FtMachine::Grid(_) | FtMachine::Both(_) => (
                 Box::new(Spheroidal::new(geometry, polarization)),
                 admitted(KERNEL_PHASE, Spheroidal::bytes(geometry))?,
             ),
+            FtMachine::GridBox(_) => {
+                let reservation =
+                    admitted(KERNEL_PHASE, casa_imaging_operator::Boxcar::bytes(geometry))?;
+                (
+                    Box::new(casa_imaging_operator::Boxcar::new(geometry, polarization)),
+                    reservation,
+                )
+            }
             FtMachine::WProject(planes) => {
                 let count = WPlaneCount::Fixed(planes);
                 let screening = admitted(

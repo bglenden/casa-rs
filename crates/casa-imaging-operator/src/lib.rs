@@ -34,6 +34,7 @@
 mod accumulator;
 mod aw;
 mod backend;
+mod boxcar;
 mod compensation;
 mod continuum;
 mod convolution;
@@ -113,3 +114,6 @@ pub const FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;
 pub const fn grid_planning_bytes(cells: usize) -> u64 {
     casa_fft::planning_bytes::<f64>(cells)
 }
+
+// CASA simulator GridFT BOX mode.
+pub use boxcar::Boxcar;
