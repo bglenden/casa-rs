@@ -133,6 +133,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         w_increment: 0.0,
         mueller_elements: vec![0],
         cells: Vec::new(),
+        header_opening_bytes: 0,
         groups,
         rotations: Vec::new(),
         oversampling: 2,
@@ -162,7 +163,7 @@ fn catalog_charge_counts_its_origin_selector_and_prediction_scale() {
     let feed_bytes = 2 * size_of::<f32>() + 2 * size_of::<usize>();
     assert_eq!(
         catalog.cache_charge().kept,
-        (allocated + feed_bytes + size_of::<f64>() + size_of::<bool>()) as u64
+        (allocated + feed_bytes + size_of::<f64>() + size_of::<bool>() + size_of::<usize>()) as u64
             + (catalog.mueller_elements.capacity() * size_of::<u32>()) as u64
             + catalog.mueller.bytes()
             + catalog.correction.resident_bytes()
@@ -251,6 +252,71 @@ fn imported_pa_uses_the_first_strictly_covered_buffer() {
     catalog.pa_deg = vec![53.00008538104];
     catalog.indexing.pa_tolerance_rad = 0.001;
     assert_eq!(catalog.pa_cell(0.926026_f32), None);
+}
+
+#[test]
+fn dense_pa_import_keeps_the_last_paired_buffer_and_charges_discarded_paths() {
+    let cell = |angle, element| {
+        let header = CellHeader {
+            path: PathBuf::from(format!("CFS_{angle}_{element}.im")),
+            shape: [4, 4],
+            sampling: 2,
+            support: [1, 1],
+            mueller: element,
+            w_value: 0.0,
+            working_field_rad: None,
+            w_increment: 0.0,
+            pa_deg: angle,
+            frequency_hz: 1.5e9,
+            rotatable: true,
+        };
+        CellFiles {
+            imaging: header.clone(),
+            weight: CellHeader {
+                path: PathBuf::from(format!("WTCFS_{angle}_{element}.im")),
+                ..header
+            },
+        }
+    };
+    // The 0.6° chain replaces both of its earlier members. A full
+    // degree from zero is outside CASA's strict coalescing tolerance.
+    let mut cells = vec![
+        cell(-1.2, 0),
+        cell(1.0, 0),
+        cell(-0.6, 0),
+        cell(0.0, 0),
+        cell(0.0, 15),
+        cell(178.2, 0),
+        cell(178.2_f64.next_up(), 15),
+    ];
+    // Keep the longer, discarded path in the maximum scratch charge.
+    cells[0].imaging.path.reserve(256);
+    let longest = cells[0].imaging.path.capacity() + cells[0].weight.path.capacity();
+    let discarded = longest + cells[2].imaging.path.capacity() + cells[2].weight.path.capacity();
+    let opening = coalesce_imported_pa(&mut cells);
+    let mut retained: Vec<_> = cells
+        .iter()
+        .map(|cell| {
+            assert_eq!(cell.imaging.pa_deg, cell.weight.pa_deg);
+            (cell.imaging.pa_deg, cell.imaging.mueller)
+        })
+        .collect();
+    retained.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    assert_eq!(
+        retained,
+        [
+            (0.0, 0),
+            (0.0, 15),
+            (1.0, 0),
+            (178.2_f64.next_up(), 0),
+            (178.2_f64.next_up(), 15),
+        ]
+    );
+    let mut catalog = catalog_with_groups(Vec::new());
+    catalog.cells = cells;
+    catalog.header_opening_bytes = opening;
+    assert_eq!(opening, discarded + CELL_IMAGE_RECORD_BYTES + 4 * longest);
+    assert_eq!(catalog.cache_charge().opening, opening as u64);
 }
 
 #[test]

@@ -515,9 +515,19 @@ the cold run by 2.95e-3 NRMS. Casa-rs reports a missing imported buffer
 before publication, preserving its read-only import policy (#1043).
 Field 0 is covered by the same cache, and all seven products match CASA
 with exact masks. The default 360-degree control also matches across both
-fields. CASA's separate one-degree coalescence in
-`CFCache::fillCFListFromDisk` and `CFStore2::resize` remains unverified for
-densely spaced imported headers (#1070).
+fields.
+
+CASA imports sorted PA headers through `CFStore2::resize` with a strict
+one-degree tolerance. When a new angle matches a buffer, CASA replaces its
+angle and loads the new buffer's cells. Consecutive angles within one
+degree therefore leave only the last paired buffer. The row selector then
+uses the requested compute step over the surviving angles. A one-integration
+control on `refim_mawproject.ms` uses distinct payloads at 177.8 and 178.2
+degrees. CASA's dense and later-buffer-only references are exactly equal.
+Keeping both buffers in casa-rs had changed the residual by 0.011 normalized
+RMS and flipped 82 mask pixels. The coalesced import matches all seven
+products, exact masks and controller counts, and leaves the cache files
+untouched (#1070).
 
 ## AW cache creation and reopening can select different PA buffers
 
