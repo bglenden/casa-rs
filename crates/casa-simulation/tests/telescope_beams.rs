@@ -52,11 +52,17 @@ fn telescope_beams_and_heterogeneous_mosaics_match_casa() {
                 .iter()
                 .map(|v| v.as_f64().unwrap())
                 .collect();
-            let mut sm = support::session_with_measures(
+            let mut sm = support::session_with_band(
                 &path,
                 telescope,
                 "XX XY YX YY",
-                4,
+                (
+                    4,
+                    case["frequency_hz"]
+                        .as_f64()
+                        .unwrap_or(support::FREQUENCY_HZ),
+                    case["channel_hz"].as_f64().unwrap_or(support::CHANNEL_HZ),
+                ),
                 &dishes,
                 resources,
                 eop::provider(&case["eop"]),
@@ -87,7 +93,9 @@ fn telescope_beams_and_heterogeneous_mosaics_match_casa() {
             if operation == "components" {
                 prediction.component_lists.push(inputs.join("sky.cl"));
             } else {
-                prediction.images.push(inputs.join("sky.image"));
+                prediction
+                    .images
+                    .push(inputs.join(case["image"].as_str().unwrap_or("sky.image")));
             }
             if let Err(error) = sm.predict(&prediction) {
                 failures.push(format!("{name} {prefix}: {error}"));

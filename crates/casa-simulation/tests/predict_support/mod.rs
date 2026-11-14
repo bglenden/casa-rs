@@ -233,6 +233,27 @@ pub fn session_with_measures(
     resources: SessionResources,
     measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
 ) -> Simulator {
+    session_with_band(
+        path,
+        telescope,
+        stokes,
+        (channels, FREQUENCY_HZ, CHANNEL_HZ),
+        dishes,
+        resources,
+        measures,
+    )
+}
+
+/// The same array with an explicit frequency band and reference measures.
+pub fn session_with_band(
+    path: &Path,
+    telescope: &str,
+    stokes: &str,
+    (channels, start_hz, step_hz): (usize, f64, f64),
+    dishes: &[f64],
+    resources: SessionResources,
+    measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+) -> Simulator {
     let mut session = Simulator::open(
         path,
         SimulatorOptions {
@@ -264,9 +285,9 @@ pub fn session_with_measures(
     session
         .set_spectral_window(&SpectralWindowSpec {
             name: "band6".to_string(),
-            start_frequency_hz: FREQUENCY_HZ,
-            channel_width_hz: CHANNEL_HZ,
-            resolution_hz: CHANNEL_HZ,
+            start_frequency_hz: start_hz,
+            channel_width_hz: step_hz,
+            resolution_hz: step_hz,
             frame: FrequencyRef::TOPO,
             channel_count: channels,
             stokes: stokes.to_string(),
