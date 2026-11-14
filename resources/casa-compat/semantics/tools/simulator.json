@@ -203,7 +203,8 @@
     "refusals",
     "flagged-samples-20261112",
     "selection-ordered-data-20261112",
-    "ft-modes-20261114"
+    "ft-modes-20261114",
+    "total-power-projects-20261114"
    ],
    "issue": 1053
   },
@@ -1629,6 +1630,19 @@
    "command": "CASAPY tools/simulation/sm_ft_modes_oracle.py --out OUT --fixture crates/casa-simulation/tests/data/sm_ft_modes_casa.json.gz --data crates/casa-simulation/tests/data; CASA_RS_FT_MODES_OUT=EXPORT cargo test -p casa-simulation --test ft_modes --test predict_wproject -- --nocapture; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture crates/casa-simulation/tests/data/sm_ft_modes_casa.json.gz; cargo test -p casa-imaging-operator --test t0_laws boxcar; cargo test -p casa-simulation --test session_memory ft_modes:: -- --nocapture; cargo test -p casa-imaging-metal --test metal_versus_cpu the_w_sets_sectioned_edge_placements_grid_alike",
    "revision": "e8fbf2dd8",
    "receipt": "https://github.com/bglenden/casa-rs/issues/1298#issuecomment-6874923904"
+  },
+  "total-power-projects-20261114": {
+   "kind": "Actual CASA total-power sky sampling, fresh pointings and complete single-dish projects",
+   "state": "passed",
+   "scope": "Components alone/with images; I/Q/U/V, fixed and AZEL image frames, distance metadata, aliased correlation orders, supported default PBs, saved radial/Jones beams and matched unknown-beam refusal. Six fresh fixed/changing BOX/PB/VP pointings; five successful simobserve projects and matched component-list refusal.",
+   "result": "22 sky/beam controls and6 fresh-pointing controls pass CPU W1/W3 and actual Metal. Maximum aggregate DATA NRMS1.51e-6 under1e-3; C++ reads all84 native outputs, maximum per-row1.89e-6, with quality/metadata preserved. All6 complete projects pass file/image/pointing/MS checks: noiseless DATA NRMS0; manual/atmospheric noise KS p0.35, with the existing normalized-variance/direct-radiometer gates. The96/768-pixel,8/1024-integration plain/Jones/AZEL allocation law passes all3 measured runs, maximum transient excess47,430bytes under512KiB; predict, retained data and close stay admitted. Existing image-beam/backend/W regressions, strict clippy, architecture/docs and14 parity-harness unit tests pass. Standing CASA polarization-map, Jones-index and pointing-cache corrections use independent CASA controls; raw results are retained.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1299#issuecomment-6875575775"
+   ],
+   "casa_version": "6.7.6.14",
+   "command": "CASAPY tools/simulation/sm_total_power_oracle.py --out OUT --fixture FIXTURE --data crates/casa-simulation/tests/data; CASAPY tools/simulation/sm_fresh_pointings_oracle.py --out OUT --fixture FIXTURE --only fixed_sd_box fixed_sd_pb fixed_sd_beam changing_sd_box changing_sd_pb changing_sd_beam; CASA_RS_TOTAL_POWER_OUT=EXPORT CASA_RS_FRESH_TOTAL_POWER_OUT=FRESH cargo test -p casa-simulation --test total_power --test fresh_total_power --test backends --test image_beams --test predict_wproject; CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture FIXTURE; cargo test -p casa-simulation --test session_memory total_power::; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --atmosphere-model TARGET/debug/examples/at_tool_quantities --only sd_project sd_project_manual sd_project_atmosphere sd_project_configuration sd_project_frame sd_project_components_refused",
+   "revision": "ff63f8705",
+   "receipt": "https://github.com/bglenden/casa-rs/issues/1299#issuecomment-6875575775"
   }
  }
 }
