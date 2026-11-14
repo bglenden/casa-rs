@@ -4491,6 +4491,16 @@ The Briggs and uniform controls each agree across 17 dirty and clean
 products and 48 fitted beams. The worst normalized RMS is 9.38e-7
 for products and 1.11e-6 for MODEL_DATA (#1121).
 
+With native TOPO rows and a natural-weighted tracked TOPO cubic image,
+CASA converts each visibility buffer to LSRK. At 50 MHz spacing the first
+buffer's interpolation includes two lower halo frequencies outside the
+eight image planes. The later buffers interpolate directly on the eight
+centres. Replaying the in-image samples on their LSRK grid through
+CASA AW nearest with the original cache gives the same dirty and clean
+products as casa-rs. The 17 products and 48 beams agree, the masks
+and controller counts match exactly, and the largest product and
+MODEL_DATA normalized RMS are 9.16e-7 and 9.41e-7 (#1121).
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed

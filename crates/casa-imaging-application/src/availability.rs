@@ -7,8 +7,8 @@ use std::{error::Error, fmt};
 
 use casa_imaging_model::{
     CompiledProblem, DensityCells, FrequencyFrame, InstrumentResponse, PolarizationCoordinate,
-    ProductKind, ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability, SpectralKernel,
-    WeightingScheme,
+    ProductKind, ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability,
+    SpectralFrameAnchor, SpectralKernel, WeightingScheme,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -301,6 +301,10 @@ pub fn check(
             problem.science().spectral().sampling().kernel(),
             problem.geometry().spectral().source_frame(),
             problem.geometry().spectral().output_frame(),
+            matches!(
+                problem.geometry().spectral().anchor(),
+                SpectralFrameAnchor::Conversion { .. }
+            ),
             problem.weighting().scheme(),
         )
     {
@@ -403,6 +407,7 @@ fn aw_multichannel_sampling_supported(
     kernel: SpectralKernel,
     source: FrequencyFrame,
     output: FrequencyFrame,
+    tracked: bool,
     weighting: WeightingScheme,
 ) -> bool {
     use FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
@@ -416,6 +421,7 @@ fn aw_multichannel_sampling_supported(
             output != Rest || (source == Topocentric && weighting == WeightingScheme::Natural)
         }
         SpectralKernel::Cubic => match (source, output) {
+            (Topocentric, Topocentric) => tracked && weighting == WeightingScheme::Natural,
             (Lsrk | Topocentric | Barycentric, Lsrk) | (Lsrk, Topocentric | Barycentric) => {
                 common_weighting
             }
@@ -451,6 +457,7 @@ mod tests {
                         SpectralKernel::Nearest,
                         source,
                         Rest,
+                        true,
                         weighting
                     ),
                     source == Topocentric && weighting == WeightingScheme::Natural,
@@ -473,7 +480,13 @@ mod tests {
             FrequencyFrame::Rest,
         ] {
             assert_eq!(
-                aw_multichannel_sampling_supported(SpectralKernel::Nearest, lsrk, frame, natural),
+                aw_multichannel_sampling_supported(
+                    SpectralKernel::Nearest,
+                    lsrk,
+                    frame,
+                    true,
+                    natural
+                ),
                 frame != FrequencyFrame::Rest,
             );
             for (weighting, converted) in [
@@ -495,6 +508,7 @@ mod tests {
                         SpectralKernel::Linear,
                         frame,
                         lsrk,
+                        true,
                         weighting
                     ),
                     frame == lsrk
@@ -524,6 +538,7 @@ mod tests {
                             SpectralKernel::Linear,
                             source,
                             frame,
+                            true,
                             weighting
                         ),
                         expected,
@@ -535,6 +550,7 @@ mod tests {
                 SpectralKernel::Identity,
                 lsrk,
                 frame,
+                true,
                 natural
             ));
         }
@@ -557,19 +573,34 @@ mod tests {
                             SpectralKernel::Cubic,
                             source,
                             output,
+                            true,
                             weighting
                         ),
                         supported
                             && if source == Lsrk {
                                 matches!(output, Lsrk | Topocentric | Barycentric)
                             } else {
-                                (source == Topocentric || source == Barycentric) && output == Lsrk
+                                ((source == Topocentric || source == Barycentric) && output == Lsrk)
+                                    || (source == Topocentric
+                                        && output == Topocentric
+                                        && weighting == WeightingScheme::Natural)
                             },
                         "cubic from {source:?} to {output:?} with {weighting:?}",
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn multi_channel_aw_cubic_refuses_an_untracked_topo_axis() {
+        assert!(!aw_multichannel_sampling_supported(
+            SpectralKernel::Cubic,
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            false,
+            WeightingScheme::Natural,
+        ));
     }
 
     #[test]
