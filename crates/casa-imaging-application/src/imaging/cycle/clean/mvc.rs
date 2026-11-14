@@ -155,6 +155,9 @@ fn seed(
             super::super::seeding::plane_fluxes(spec.taylor_problem, &start.model, &samples);
         lifecycle.prepare_final_model(lifecycle.initial_from_start_model(&samples)?, [])?
     };
+    let Some((cube_pb, taylor_pb)) = &start.projection_beams else {
+        return Ok((cube, Some(model), held));
+    };
     let projected = {
         // CASA reads the previous run's PB cube and the Taylor PB. Keep
         // just the latter and one cube channel in the projection workspace.
@@ -162,18 +165,17 @@ fn seed(
         let _reading = run.admit(
             "saved MVC primary beams",
             cells * (2 * size_of::<f32>()) as u64
-                + start.taylor_pb.reading_bytes()
-                + start.cube_pb.reading_bytes(),
+                + taylor_pb.reading_bytes()
+                + cube_pb.reading_bytes(),
         )?;
-        let mean_pb = start
-            .taylor_pb
+        let mean_pb = taylor_pb
             .open()
             .map_err(ImagingError::Existing)?
             .get()
             .map_err(ImagingError::Existing)?
             .into_iter()
             .collect::<Vec<_>>();
-        let cube_pb = start.cube_pb.open().map_err(ImagingError::Existing)?;
+        let cube_pb = cube_pb.open().map_err(ImagingError::Existing)?;
         crate::mvc::project_mvc_model(
             crate::mvc::MvcModelProjectionInputs {
                 cube_problem: run.problem,

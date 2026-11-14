@@ -260,7 +260,8 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
 
 /// MVC forms a fresh cube and its two-term Taylor products. Cleaning uses
 /// nsigma=0 and spatial-only user boxes. A standard-gridder continuation
-/// may replace both Taylor terms using the saved primary beams (#1069).
+/// reads both model families or projects explicit Taylor start models using
+/// the saved primary beams (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
@@ -282,7 +283,8 @@ pub(super) fn check_execution_scope(
                 || request.mask_box.iter().any(|region| region.range.is_some())))
         || !request.calcpsf
         || !request.calcres
-        || ((request.tclean_restart || request.has_start_model()) && !starts_from_taylor(request))
+        || ((request.tclean_restart || request.has_start_model())
+            && !restarts_standard_clean(request))
         || request.savemodel != crate::SaveModel::None
         || request.outlierfile.is_some()
         || request.fitspw.is_some()
@@ -300,20 +302,19 @@ pub(super) fn check_execution_scope(
     Ok(())
 }
 
-fn starts_from_taylor(request: &ImagingRequest) -> bool {
+fn restarts_standard_clean(request: &ImagingRequest) -> bool {
     request.tclean_restart
         && request.niter > 0
-        && request.startmodel.len() == 2
-        && request.startmodel.iter().all(Option::is_some)
+        && (!request.has_start_model()
+            || (request.startmodel.len() == 2 && request.startmodel.iter().all(Option::is_some)))
         && matches!(request.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
 }
 
-/// The two model terms and the saved primary beams CASA uses before the
-/// initial resumed cube prediction.
+/// The two saved Taylor terms, with beams when CASA projects an explicit
+/// start model to the cube before its first prediction.
 pub(crate) struct MvcStart {
     pub(crate) model: super::StartModel,
-    pub(crate) cube_pb: MvcPrimaryBeam,
-    pub(crate) taylor_pb: MvcPrimaryBeam,
+    pub(crate) projection_beams: Option<(MvcPrimaryBeam, MvcPrimaryBeam)>,
 }
 
 /// A saved Float PB with a bounded tile cache and its read workspace.
@@ -356,7 +357,7 @@ fn prepare_start(
     domain: &super::domains::PreparedImageDomain,
 ) -> Result<Option<MvcStart>, super::PrepareError> {
     use crate::restart::{check_grid, mvc_cube_product, product_path, products, suffix};
-    if !starts_from_taylor(request) {
+    if !restarts_standard_clean(request) {
         return Ok(None);
     }
     let [nx, ny] = domain.image_size;
@@ -364,32 +365,48 @@ fn prepare_start(
         coordinates: domain.coordinates.clone(),
         shape: vec![nx, ny, 1, 1],
     };
-    let cube_pb = product_path(&request.imagename, "pb");
-    let taylor_pb = product_path(&request.imagename, "pb.tt0");
-    for path in [
-        &cube_pb,
-        &taylor_pb,
-        &product_path(&request.imagename, "psf"),
-    ] {
-        if !path.exists() {
-            return Err(super::PrepareError::Restart {
-                path: path.clone(),
-                reason: "MVC startmodel requires the saved cube PSF and both primary beams (#1069)"
-                    .into(),
-            });
-        }
-    }
     for path in products(&request.imagename)? {
         let name = suffix(&request.imagename, &path);
         if !mvc_cube_product(&name) {
             check_grid(&path, &name, &template, None)?;
         }
     }
-    let model = super::StartModel::prepare(&request.startmodel, domain, 1, (2, 2))?;
+    let required = |name, reason: &str| {
+        let path = product_path(&request.imagename, name);
+        if path.exists() {
+            Ok(path)
+        } else {
+            Err(super::PrepareError::Restart {
+                path,
+                reason: reason.into(),
+            })
+        }
+    };
+    let (model, projection_beams) = if request.has_start_model() {
+        let reason = "MVC startmodel requires the saved cube PSF and both primary beams (#1069)";
+        required("psf", reason)?;
+        let cube_pb = MvcPrimaryBeam::prepare(required("pb", reason)?)?;
+        let taylor_pb = MvcPrimaryBeam::prepare(required("pb.tt0", reason)?)?;
+        let model = super::StartModel::prepare(&request.startmodel, domain, 1, (2, 2))?;
+        (model, Some((cube_pb, taylor_pb)))
+    } else {
+        let reason =
+            "MVC continuation requires the saved cube and both Taylor model images (#1069)";
+        required("model", reason)?;
+        let tt0 = required("model.tt0", reason)?;
+        let tt1 = required("model.tt1", reason)?;
+        let model = super::StartModel::restart(
+            Box::new([Some(tt0), Some(tt1)]),
+            casa_images::RegridTemplate {
+                shape: vec![nx, ny, 1, 2],
+                ..template
+            },
+        );
+        (model, None)
+    };
     Ok(Some(MvcStart {
         model,
-        cube_pb: MvcPrimaryBeam::prepare(cube_pb)?,
-        taylor_pb: MvcPrimaryBeam::prepare(taylor_pb)?,
+        projection_beams,
     }))
 }
 

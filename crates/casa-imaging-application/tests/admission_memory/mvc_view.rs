@@ -653,6 +653,46 @@ fn mvc_mosaic_clean_stays_within_its_held_admission() {
     assert!(outcome.major_cycle_count >= 3);
 }
 
+/// The saved cube prediction and separately saved Taylor model overlap
+/// through an ordinary restart with both normal products re-formed.
+#[test]
+fn mvc_restart_keeps_both_saved_model_families_admitted() {
+    if !alone("mvc_view::mvc_restart_keeps_both_saved_model_families_admitted") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation(root.path(), 6);
+    warm(&ms, root.path());
+    let prefix = root.path().join("mvc-restart");
+    let mut controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "niter": 1, "write_pb": true, "pblimit": -0.1,
+    });
+    let initial = request(&ms, &prefix, 1024, controls.clone());
+    casa_imaging_application::execute(
+        &initial,
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("initial MVC");
+    controls["threshold"] = json!("100Jy");
+    let resumed = request(&ms, &prefix, 1024, controls)
+        .with_tclean_restart()
+        .unwrap();
+    let mut breaches = Vec::new();
+    let measured = check(&mut breaches, "MVC restart", &resumed, 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    let outcome = measured.outcome.unwrap();
+    assert_eq!(outcome.major_cycle_count, 1);
+    assert_eq!(outcome.total_minor_iterations, 0);
+    assert!(outcome.product_names().iter().any(|name| name == ".model"));
+}
+
 /// The first resumed cube pass overlaps a Taylor model, one saved beam
 /// channel and the previous Taylor beam, all within the run's admission.
 #[test]
