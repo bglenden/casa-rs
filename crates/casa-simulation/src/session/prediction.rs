@@ -49,9 +49,9 @@ use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
 use casa_types::Correlation;
 
+use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
 use super::resources::SessionResources;
-use super::{BackendRequest, Simulator};
 use crate::predict::{
     BeamPattern, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
     FtMachine, ModelLayout, ModelOperator, PredictError, PrimaryBeam, SingleDishKernel, SkyModel,
@@ -80,10 +80,6 @@ const MOSAIC_SCREENS_PHASE: &str = "the simulator's mosaic screens";
 /// The phase the mosaic machine's pointings, dish classes and beams'
 /// inputs are admitted as.
 const MOSAIC_STATE_PHASE: &str = "the simulator's mosaic pointings and dish classes";
-
-/// The FTMachines CASA's simulator builds other than `GridFT`,
-/// `WProjectFT`, `MosaicFTNew` and `SDGrid`.
-const OTHER_FTMACHINES: [&str; 2] = ["both", "pbwproject"];
 
 /// The arguments of `sm.predict`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -147,10 +143,13 @@ impl PredictSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PredictionOptions {
     /// `ftmachine`: `WProjectFT` for `wproject`, `SDGrid` for `sd`, and
-    /// `GridFT` unless `both`, `mosaic` or `pbwproject` (case-insensitive).
+    /// joint GridFT/SDGrid for `both`, and MosaicFTNew for `mosaic`.
+    /// `pbwproject` records the mode but CASA refuses prediction because
+    /// its required pointing-error term is disabled. Names are case-insensitive.
     pub ftmachine: String,
-    /// `gridfunction`: `SF`, the spheroid, for `GridFT` and `WProjectFT`;
-    /// `PB`, `BOX` or `SF` for `SDGrid`.
+    /// `gridfunction`: GridFT uses BOX or the default spheroid; WProjectFT
+    /// and mosaics ignore it. SDGrid and the single-dish part of `both`
+    /// accept PB, BOX, SF, GAUSS and GJINC; other names refuse at prediction.
     pub grid_function: String,
     /// `padding`, `GridFT`'s; factors below 1 are ignored, as CASA ignores
     /// them. `WProjectFT` pads by 1 whatever it is.
@@ -375,35 +374,22 @@ impl Simulator {
     ///
     /// # Errors
     ///
-    /// Not yet implemented: an FTMachine other than `GridFT`, `WProjectFT`,
-    /// `MosaicFTNew` and `SDGrid` (`both`, `pbwproject`), a grid function
-    /// other than `SF` for the interferometric machines, or other than `PB`,
-    /// `BOX` and `SF` for `SDGrid`. Nothing is recorded then.
+    /// Invalid padding cannot be represented. CASA's mode/grid-function
+    /// refusals are recorded here and reported when prediction is requested.
     pub fn set_options(&mut self, options: &PredictionOptions) -> SimulatorResult<()> {
         let ftmachine = options.ftmachine.to_lowercase();
-        if OTHER_FTMACHINES.contains(&ftmachine.as_str()) {
-            return Err(SimulatorError::not_yet_implemented(format!(
-                "setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs (#1053)"
-            )));
-        }
-        let single_dish = if ftmachine == "sd" {
+        let grid_function = options.grid_function.to_lowercase();
+        let total_power = matches!(ftmachine.as_str(), "sd" | "both");
+        let single_dish = total_power
+            .then(|| SingleDishKernel::from_grid_function(&grid_function))
+            .flatten();
+        let ft_refusal = if ftmachine == "pbwproject" {
             Some(
-                SingleDishKernel::from_grid_function(&options.grid_function).ok_or_else(|| {
-                    SimulatorError::not_yet_implemented(format!(
-                        "setoptions(ftmachine='sd', gridfunction='{}') is not yet implemented \
-                         in casa-rs (#1053); 'PB', 'BOX' and 'SF' are",
-                        options.grid_function
-                    ))
-                })?,
+                "Failed to create SkyEquation: Antenna pointing related term (EPJones) not set. This is required when using pbwproject FTMachine. (pointing errors temporarily disabled)",
             )
+        } else if total_power && single_dish.is_none() {
+            Some("Caught exception: Unknown convolution function")
         } else {
-            if options.grid_function.to_lowercase() != "sf" {
-                return Err(SimulatorError::not_yet_implemented(format!(
-                    "setoptions(gridfunction='{}') is not yet implemented in casa-rs (#1053); \
-                     'SF' is",
-                    options.grid_function
-                )));
-            }
             None
         };
         tracing::info!("Setting processing options");
@@ -415,7 +401,10 @@ impl Simulator {
         }
         self.w_projection_planes = (ftmachine == "wproject").then_some(options.w_planes);
         self.mosaic = ftmachine == "mosaic";
+        self.ft_refusal = ft_refusal;
         self.single_dish = single_dish;
+        self.joint_grid = ftmachine == "both";
+        self.grid_box = !total_power && grid_function == "box";
         self.prediction_location_itrf_m = options.location_itrf_m;
         Ok(())
     }
@@ -429,13 +418,19 @@ impl Simulator {
     /// - Raised: `WProjectFT` with no planes or fewer, where CASA's
     ///   simulator crashes (`docs/CASA (C++) bugs.md`), or more than
     ///   casa-rs's [`MAX_W_PLANES`] (65,536).
-    /// - Not yet implemented: `WProjectFT` on the Metal backend.
     fn ft_machine(&self) -> SimulatorResult<FtMachine> {
         if self.mosaic {
             return Ok(FtMachine::Mosaic);
         }
+        if self.joint_grid {
+            return Ok(FtMachine::Both(self.padding));
+        }
         let Some(planes) = self.w_projection_planes else {
-            return Ok(FtMachine::Grid(self.padding));
+            return Ok(if self.grid_box {
+                FtMachine::GridBox(self.padding)
+            } else {
+                FtMachine::Grid(self.padding)
+            });
         };
         match planes {
             ..=0 => Err(SimulatorError::raised(format!(
@@ -455,13 +450,6 @@ impl Simulator {
                              builds at most 65,536 W planes"
                         ))
                     })?;
-                if self.options.resources.backend() == BackendRequest::Metal {
-                    return Err(SimulatorError::not_yet_implemented(
-                        "predict with setoptions(ftmachine='wproject') on the Metal backend is \
-                         not yet implemented in casa-rs (#1053); backend 'auto' or 'cpu' \
-                         predicts it on the CPU",
-                    ));
-                }
                 Ok(FtMachine::WProject(planes))
             }
         }
@@ -518,7 +506,7 @@ impl Simulator {
     ///   that do not fit the session's memory budget
     ///   ([`SimulatorError::admission_refused`]).
     /// - As the FTMachine `setoptions` chose refuses: `WProjectFT` with
-    ///   fewer than two planes, or on the Metal backend.
+    ///   fewer than two planes, or a disabled CASA mode/kernel.
     pub fn predict(&mut self, spec: &PredictSpec) -> SimulatorResult<()> {
         spec.check_images()?;
         let images = spec.named_images();
@@ -563,6 +551,9 @@ impl Simulator {
                  MeasurementSet.has zero selected rows",
             ));
         }
+        if let Some(reason) = self.ft_refusal {
+            return Err(SimulatorError::refused(reason));
+        }
         let correlations = self.predicted_correlations()?;
         if self.single_dish.is_some()
             && self.scans.iter().any(|scan| {
@@ -588,10 +579,11 @@ impl Simulator {
         if beam.is_some() && self.single_dish.is_some() {
             self.check_pointings_on_fields("setvp(dovp=True)")?;
         }
+        let mut total_predictions = Vec::new();
         if let Some(kernel) = self.single_dish {
             // Total power samples a model image; `SDGrid` with a component
             // list is not yet here.
-            if model.is_none() || list.is_some() {
+            if !self.joint_grid && (model.is_none() || list.is_some()) {
                 return Err(SimulatorError::not_yet_implemented(
                     "predict(complist=…) after setoptions(ftmachine='sd') is not yet \
                      implemented in casa-rs (#1053); a model image is",
@@ -606,16 +598,25 @@ impl Simulator {
                     })
                 })
                 .transpose()?;
-            let predictions = opened_models(model, &images)
-                .map(|model| self.prepare_single_dish(model?, kernel, beam))
-                .collect::<SimulatorResult<Vec<_>>>()?;
-            self.data_plan.begin_prediction(spec.incremental);
-            for prediction in predictions {
-                self.data_plan
-                    .predict_single_dish(Arc::new(prediction), self.scans.len());
+            if self.joint_grid {
+                total_predictions = images
+                    .iter()
+                    .map(|path| SkyModel::open(path).map_err(model_error))
+                    .map(|model| self.prepare_single_dish(model?, kernel, beam))
+                    .collect::<SimulatorResult<Vec<_>>>()?;
+            } else {
+                let predictions = opened_models(model, &images)
+                    .map(|model| self.prepare_single_dish(model?, kernel, beam))
+                    .collect::<SimulatorResult<Vec<_>>>()?;
+                self.data_plan.begin_prediction(spec.incremental);
+                for prediction in predictions {
+                    self.data_plan
+                        .predict_single_dish(Arc::new(prediction), self.scans.len());
+                }
+                return Ok(());
             }
-            return Ok(());
         }
+
         let component_frame_epoch = beam.is_some_and(|beam| beam.image().is_some())
             || component_beam.is_some_and(|beam| beam.squint.is_some())
             || (self.squint
@@ -679,6 +680,10 @@ impl Simulator {
         }
         self.data_plan.begin_prediction(spec.incremental);
         let scans = self.scans.len();
+        for prediction in total_predictions {
+            self.data_plan
+                .predict_single_dish(Arc::new(prediction), scans);
+        }
         if let Some(components) = components {
             self.data_plan
                 .predict_components(Arc::new(components), scans);
@@ -784,7 +789,10 @@ impl Simulator {
                 let pointings = self.mosaic_pointings(&model, !beams.common)?;
                 (Some(beams), antenna_types, pointings)
             }
-            FtMachine::Grid(_) | FtMachine::WProject(_) => {
+            FtMachine::Grid(_)
+            | FtMachine::GridBox(_)
+            | FtMachine::Both(_)
+            | FtMachine::WProject(_) => {
                 if self
                     .antennas
                     .windows(2)

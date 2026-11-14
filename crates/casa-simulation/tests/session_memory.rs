@@ -108,6 +108,8 @@ mod field_grids;
 mod focus;
 #[path = "session_memory/frequency_curves.rs"]
 mod frequency_curves;
+#[path = "session_memory/ft_modes.rs"]
+mod ft_modes;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
 #[path = "session_memory/heap.rs"]
@@ -124,6 +126,7 @@ mod jones;
 mod mixed_correlations;
 #[path = "session_memory/mixed_creation.rs"]
 mod mixed_creation;
+
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
 #[path = "session_memory/noise_tables.rs"]
