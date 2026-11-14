@@ -845,6 +845,32 @@ clean matches iteration for iteration (900, model 1.7e-7). The mosaic of
 the same cube differs by 3.3e-3 under Briggs and agrees within 1e-6 under
 natural weighting.
 
+## CASA omits the final row and column of its cube density grid
+
+`BriggsCubeWeightor::fillImgWeightCol` builds its density with `GridFT`.
+In `FTMachine::findGridSector`, a sector reaching the grid's right edge
+sets its width to `nxp - x0 - 1` while `x0` is zero-based. The function
+then makes the origin one-based for `sectggridd`, which accumulates
+through `x0 + nxsub - 1`. The final in-band column is excluded. The
+same calculation omits the final row. The weightor can look up those
+cells, but their accumulated density is zero and the visibility gets
+zero weight.
+
+On CASA 6.7.6.14, field 0 of `refim_oneshiftpoint.mosaic.ms` imaged at
+its own centre as a 512² uniform-weighted mosaic cube at 10 arcsec has
+two affected rows, one each in spectral windows 1 and 2. They map to
+the last column. CASA's captured row weights are zero for both, while
+casa-rs gives each 0.5. Changing only the cell size to 9.9 arcsec puts
+the same rows in interior columns and CASA gives both 0.5. The natural
+mosaic control agrees directly. The standard uniform control agrees
+because those rows fall outside its gridding kernel's full support.
+
+Casa-rs keeps the final in-band row and column and rejects cells
+outside the density grid. An evidence-only replay of the captured CASA
+weights through native gridding reproduces the EVLA mosaic to 7.32e-7
+normalized RMS per plane or better, with exact masks, including the ten
+pixels affected by the dropped weights (#789).
+
 ## Continuum `briggsabs` at robust 0 and noise 0 weighs every visibility infinite
 
 - Date noted: 2026-11-02
