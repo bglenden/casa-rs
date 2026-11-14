@@ -58,3 +58,23 @@ def test_optional_noise_image_returns_casa_rms():
     # Independent CASA tclean on this deterministic simulated MS, not a
     # golden generated from the native image (image NRMS 1.91e-7).
     assert value[1] == pytest.approx(0.00035715280424348145, rel=1e-3)
+
+
+@pytest.mark.parametrize("configured", [False, True])
+@pytest.mark.parametrize("change, message", [
+    ({"tau0": -100.0}, "Tsys"),
+    ({"tau0": 100.0}, "Tsys"),
+    ({"tau0": float("nan")}, "opacity must be finite"),
+    ({"elevation": {"value": float("nan"), "unit": "deg"}}, "elevation must be finite"),
+    ({"elevation": {"value": float("inf"), "unit": "deg"}}, "elevation must be finite"),
+])
+def test_invalid_noise_model_never_becomes_unit_gain_sensitivity(configured, change, message):
+    params = dict(freq="8GHz", bandwidth="20MHz", etime="60s", elevation="45deg",
+                  method="tsys-manual", tau0=0.065, t_sky=20.0)
+    if configured:
+        params["antennalist"] = str(CONFIGS / "vla.d.cfg")
+    else:
+        params.update(telescope="VLA", diam=25.0, nant=27)
+    params.update(change)
+    with pytest.raises(RuntimeError, match=message):
+        simutil().sensitivity(**params)

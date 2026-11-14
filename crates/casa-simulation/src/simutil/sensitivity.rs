@@ -75,6 +75,18 @@ pub fn sensitivity(
     spec: &SensitivitySpec,
     options: SimulatorOptions,
 ) -> Result<SensitivityOutcome, SimutilError> {
+    let integration = validate_spec(spec)?;
+    let antennas = config.x.len();
+    if antennas < 2 {
+        return Err(failed("sensitivity requires at least two antennas"));
+    }
+    configured_sensitivity(config, spec, options, integration)
+}
+
+fn validate_spec(spec: &SensitivitySpec) -> Result<f64, SimutilError> {
+    if !spec.elevation_rad.is_finite() {
+        return Err(failed("elevation must be finite"));
+    }
     if spec.elevation_rad < 3.0_f64.to_radians() {
         return Err(failed("Elevation < ALMA limit of 3 deg"));
     }
@@ -95,10 +107,25 @@ pub fn sensitivity(
             return Err(failed(format!("{name} must be positive and finite")));
         }
     }
-    let antennas = config.x.len();
-    if antennas < 2 {
-        return Err(failed("sensitivity requires at least two antennas"));
+    let used = if spec.method == "tsys-manual" {
+        vec![(spec.tau0, "opacity"), (spec.sky_k, "sky temperature")]
+    } else {
+        vec![(spec.pwv_mm, "PWV")]
+    };
+    for (value, name) in used {
+        if !value.is_finite() {
+            return Err(failed(format!("{name} must be finite")));
+        }
     }
+    Ok(integration)
+}
+
+fn configured_sensitivity(
+    config: &AntennaConfigFile,
+    spec: &SensitivitySpec,
+    options: SimulatorOptions,
+    integration: f64,
+) -> Result<SensitivityOutcome, SimutilError> {
     let mut temporary = tempfile::Builder::new();
     temporary.prefix("simulation-sensitivity-");
     let scratch = if spec.debug {
@@ -179,6 +206,7 @@ pub fn sensitivity(
     sm.close().map_err(failed)?;
     let gain = middle_gain(&table_root.with_extension("T.cal"))?;
     let integrations = spec.time_s / integration;
+    let antennas = config.x.len();
     let baselines = 0.5 * antennas as f64 * (antennas - 1) as f64;
     let theoretical = 1.0 / (f64::from(gain).powi(2) * (integrations * baselines * 2.0).sqrt());
     let image_rms_jy = spec
@@ -291,26 +319,9 @@ pub fn array_sensitivity(
     spec: &SensitivitySpec,
     resources: SessionResources,
 ) -> Result<f64, SimutilError> {
-    if spec.elevation_rad < 3.0_f64.to_radians() {
-        return Err(failed("Elevation < ALMA limit of 3 deg"));
-    }
-    if !matches!(spec.method.as_str(), "tsys-atm" | "tsys-manual") {
-        return Err(failed(format!(
-            "Unknown calculation method {}",
-            spec.method
-        )));
-    }
-    let integration = spec.integration_s.unwrap_or(spec.time_s * 0.01);
-    for value in [
-        spec.frequency_hz,
-        spec.bandwidth_hz.abs(),
-        spec.time_s,
-        integration,
-        diameter_m,
-    ] {
-        if !value.is_finite() || value <= 0.0 {
-            return Err(failed("sensitivity inputs must be positive and finite"));
-        }
+    let integration = validate_spec(spec)?;
+    if !diameter_m.is_finite() || diameter_m <= 0.0 {
+        return Err(failed("diameter must be positive and finite"));
     }
     if antennas < 2 {
         return Err(failed("sensitivity requires at least two antennas"));
@@ -323,15 +334,17 @@ pub fn array_sensitivity(
             reference_frequency_hz: spec.frequency_hz,
             channel_bandwidth_hz: spec.bandwidth_hz.abs(),
         };
-        TsysManual::new(&parameters)
-            .for_window(&window)
-            .sigma(&RowNoise {
-                time_s: 0.0,
-                antennas: [0, 1],
-                diameters_m: [diameter_m; 2],
-                airmass: [mass; 2],
-                exposure_s: integration,
-            })
+        let model = TsysManual::new(&parameters);
+        check_zenith_tsys(model.zenith_tsys(spec.frequency_hz, spec.bandwidth_hz, 1))?;
+        let model = model.for_window(&window);
+        check_gain(model.antenna_gain(diameter_m, mass, integration))?;
+        model.sigma(&RowNoise {
+            time_s: 0.0,
+            antennas: [0, 1],
+            diameters_m: [diameter_m; 2],
+            airmass: [mass; 2],
+            exposure_s: integration,
+        })
     } else {
         let atmosphere =
             AtmosphereProfile::new(&AtmosphereSpec::default().resolved(270.0)).map_err(failed)?;
@@ -360,18 +373,39 @@ pub fn array_sensitivity(
         )
         .map_err(failed)?;
         let model = TsysAtm::new(&parameters, vec![Some(window)], reservation);
+        check_zenith_tsys(model.tsys(model.window(0), 0, 1.0))?;
         let mut scales = [0.0];
-        model.antenna_scales(
+        model.antenna_gains(
             model.window(0),
             (diameter_m, mass),
             (spec.bandwidth_hz.abs(), integration),
             &mut scales,
         );
-        scales[0] * scales[0]
+        check_gain(scales[0])?;
+        let inverse = 1.0 / scales[0];
+        inverse * inverse
     };
     let integrations = spec.time_s / integration;
     let baselines = 0.5 * antennas as f64 * (antennas - 1) as f64;
     Ok(f64::from(sigma) / (integrations * baselines * 2.0).sqrt())
+}
+
+fn check_zenith_tsys(value: f32) -> Result<(), SimutilError> {
+    // Same 10^6 K admission as Simulator::set_noise, before its bad-gain
+    // neutralization. A numerical estimate must not hide an invalid model.
+    if !value.is_finite() || value <= 0.0 || value > 1e6 {
+        return Err(failed(format!(
+            "Tsys {value} poorly defined - check inputs"
+        )));
+    }
+    Ok(())
+}
+
+fn check_gain(value: f32) -> Result<(), SimutilError> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(failed("Tsys noise scale is not positive and finite"));
+    }
+    Ok(())
 }
 
 fn middle_gain(path: &std::path::Path) -> Result<f32, SimutilError> {

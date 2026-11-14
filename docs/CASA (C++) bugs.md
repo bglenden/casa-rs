@@ -5606,7 +5606,9 @@ count. Native returns the identical-dish radiometer estimate at the requested
 elevation: the existing Tsys baseline sigma divided by
 `sqrt((time/integration) * nant*(nant-1)/2 * 2)` for two polarizations. It
 uses the existing receiver and manual/ATM models without inventing antenna
-positions. Independent controls use the previously validated radiometer
+positions. Nonfinite inputs and invalid Tsys are refused before the noise
+model can neutralize a bad gain into a plausible estimate. Independent controls
+use the previously validated radiometer
 equations, CASA receiver efficiencies and CASA's ATM tool. Image noise needs
 a configuration, since diameter/count alone do not define an image's UV coverage.
 
