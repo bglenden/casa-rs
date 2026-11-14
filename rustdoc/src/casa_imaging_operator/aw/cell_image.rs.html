@@ -13,7 +13,7 @@
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_images::{PagedImage, regrid::regrid_complex_plane};
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_types::measures::frequency::FrequencyRef;
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_types::{RecordField, RecordValue, ScalarValue, Value};
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>num_complex::{Complex32, Complex64};
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>num_complex::Complex32;
 <a href=#17 id=17 data-nosnippet>17</a>
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">super</span>::rotation::pixel_rotation;
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use super</span>::{
@@ -187,280 +187,250 @@
 <a href=#187 id=187 data-nosnippet>187</a>    <span class="prelude-val">Ok</span>(plane)
 <a href=#188 id=188 data-nosnippet>188</a>}
 <a href=#189 id=189 data-nosnippet>189</a>
-<a href=#190 id=190 data-nosnippet>190</a><span class="doccomment">/// `AWConvFunc::cfArea`: `Σ` over `[−support, support)` of the integer taps
-<a href=#191 id=191 data-nosnippet>191</a>/// about `shape/2`.
-<a href=#192 id=192 data-nosnippet>192</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>cf_area(
-<a href=#193 id=193 data-nosnippet>193</a>    plane: <span class="kw-2">&amp;</span>[Complex32],
-<a href=#194 id=194 data-nosnippet>194</a>    shape: [usize; <span class="number">2</span>],
-<a href=#195 id=195 data-nosnippet>195</a>    support: [u16; <span class="number">2</span>],
+<a href=#190 id=190 data-nosnippet>190</a><span class="doccomment">/// Load one group's persisted imaging and weight cells and tile them at
+<a href=#191 id=191 data-nosnippet>191</a>/// each kind's largest support. CASA normalizes the cells while generating
+<a href=#192 id=192 data-nosnippet>192</a>/// them; `CFCache::getCFParams` reads their saved pixels as-is.
+<a href=#193 id=193 data-nosnippet>193</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_group(
+<a href=#194 id=194 data-nosnippet>194</a>    cells: <span class="kw-2">&amp;</span>[CellFiles],
+<a href=#195 id=195 data-nosnippet>195</a>    group: <span class="kw-2">&amp;</span>Group,
 <a href=#196 id=196 data-nosnippet>196</a>    sampling: u16,
-<a href=#197 id=197 data-nosnippet>197</a>) -&gt; Complex64 {
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>origin = [shape[<span class="number">0</span>] / <span class="number">2</span>, shape[<span class="number">1</span>] / <span class="number">2</span>];
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span><span class="kw-2">mut </span>area = Complex64::default();
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">for </span>iy <span class="kw">in </span>-i64::from(support[<span class="number">1</span>])..i64::from(support[<span class="number">1</span>]) {
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">for </span>ix <span class="kw">in </span>-i64::from(support[<span class="number">0</span>])..i64::from(support[<span class="number">0</span>]) {
-<a href=#202 id=202 data-nosnippet>202</a>            <span class="kw">let </span>x = origin[<span class="number">0</span>] <span class="kw">as </span>i64 + ix * i64::from(sampling);
-<a href=#203 id=203 data-nosnippet>203</a>            <span class="kw">let </span>y = origin[<span class="number">1</span>] <span class="kw">as </span>i64 + iy * i64::from(sampling);
-<a href=#204 id=204 data-nosnippet>204</a>            <span class="kw">if </span>x &lt; <span class="number">0 </span>|| y &lt; <span class="number">0 </span>|| x <span class="kw">as </span>usize &gt;= shape[<span class="number">0</span>] || y <span class="kw">as </span>usize &gt;= shape[<span class="number">1</span>] {
-<a href=#205 id=205 data-nosnippet>205</a>                <span class="kw">continue</span>;
-<a href=#206 id=206 data-nosnippet>206</a>            }
-<a href=#207 id=207 data-nosnippet>207</a>            <span class="kw">let </span>value = plane[y <span class="kw">as </span>usize * shape[<span class="number">0</span>] + x <span class="kw">as </span>usize];
-<a href=#208 id=208 data-nosnippet>208</a>            area += Complex64::new(f64::from(value.re), f64::from(value.im));
-<a href=#209 id=209 data-nosnippet>209</a>        }
-<a href=#210 id=210 data-nosnippet>210</a>    }
-<a href=#211 id=211 data-nosnippet>211</a>    area
-<a href=#212 id=212 data-nosnippet>212</a>}
-<a href=#213 id=213 data-nosnippet>213</a>
-<a href=#214 id=214 data-nosnippet>214</a><span class="doccomment">/// Load one group's Mueller planes (its `cells`, at `group`'s supports)
-<a href=#215 id=215 data-nosnippet>215</a>/// into an imaging and a weight cell:
-<a href=#216 id=216 data-nosnippet>216</a>/// every plane normalised by its own area (`AWConvFunc::cfArea`), tiled at
-<a href=#217 id=217 data-nosnippet>217</a>/// its kind's largest support with zero beyond a smaller plane's image.
-<a href=#218 id=218 data-nosnippet>218</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_group(
-<a href=#219 id=219 data-nosnippet>219</a>    cells: <span class="kw-2">&amp;</span>[CellFiles],
-<a href=#220 id=220 data-nosnippet>220</a>    group: <span class="kw-2">&amp;</span>Group,
-<a href=#221 id=221 data-nosnippet>221</a>    sampling: u16,
-<a href=#222 id=222 data-nosnippet>222</a>    rotation_rad: f64,
-<a href=#223 id=223 data-nosnippet>223</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Loaded, AwCatalogError&gt; {
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">let </span>rotation = (rotation_rad != <span class="number">0.0</span>).then(|| pixel_rotation(rotation_rad));
-<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span>build = |select: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>CellFiles) -&gt; <span class="kw-2">&amp;</span>CellHeader,
-<a href=#226 id=226 data-nosnippet>226</a>                 half: [u16; <span class="number">2</span>]|
-<a href=#227 id=227 data-nosnippet>227</a>     -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;DenseCell&gt;, AwCatalogError&gt; {
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">let </span>headers = cells.iter().map(select).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">let </span><span class="kw-2">mut </span>planes = Vec::with_capacity(headers.len());
-<a href=#230 id=230 data-nosnippet>230</a>        <span class="kw">for </span>header <span class="kw">in </span><span class="kw-2">&amp;</span>headers {
-<a href=#231 id=231 data-nosnippet>231</a>            <span class="kw">let </span><span class="kw-2">mut </span>plane = read_plane(header)<span class="question-mark">?</span>;
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">let </span>area = cf_area(<span class="kw-2">&amp;</span>plane, header.shape, header.support, header.sampling);
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="kw">if </span>!(area.norm().is_finite() &amp;&amp; area.norm() &gt; <span class="number">0.0</span>) {
-<a href=#234 id=234 data-nosnippet>234</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(cache_error(<span class="kw-2">&amp;</span>header.path, <span class="string">"cell area is not positive"</span>));
-<a href=#235 id=235 data-nosnippet>235</a>            }
-<a href=#236 id=236 data-nosnippet>236</a>            <span class="kw">let </span>scale = Complex32::new((<span class="number">1.0 </span>/ area).re <span class="kw">as </span>f32, (<span class="number">1.0 </span>/ area).im <span class="kw">as </span>f32);
-<a href=#237 id=237 data-nosnippet>237</a>            <span class="kw">for </span>value <span class="kw">in </span><span class="kw-2">&amp;mut </span>plane {
-<a href=#238 id=238 data-nosnippet>238</a>                <span class="kw-2">*</span>value <span class="kw-2">*</span>= scale;
-<a href=#239 id=239 data-nosnippet>239</a>            }
-<a href=#240 id=240 data-nosnippet>240</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(matrix) = rotation {
-<a href=#241 id=241 data-nosnippet>241</a>                plane = regrid_complex_plane(<span class="kw-2">&amp;</span>plane, header.shape, matrix);
-<a href=#242 id=242 data-nosnippet>242</a>            }
-<a href=#243 id=243 data-nosnippet>243</a>            planes.push((plane, header.shape, header.support));
-<a href=#244 id=244 data-nosnippet>244</a>        }
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="prelude-val">Ok</span>(Arc::new(dense_cell_padded(<span class="kw-2">&amp;</span>planes, half, sampling)))
-<a href=#246 id=246 data-nosnippet>246</a>    };
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="prelude-val">Ok</span>(Loaded {
-<a href=#248 id=248 data-nosnippet>248</a>        imaging: build(|cell| <span class="kw-2">&amp;</span>cell.imaging, group.imaging_half_support)<span class="question-mark">?</span>,
-<a href=#249 id=249 data-nosnippet>249</a>        weight: build(|cell| <span class="kw-2">&amp;</span>cell.weight, group.weight_half_support)<span class="question-mark">?</span>,
-<a href=#250 id=250 data-nosnippet>250</a>        last_use: <span class="number">0</span>,
-<a href=#251 id=251 data-nosnippet>251</a>    })
-<a href=#252 id=252 data-nosnippet>252</a>}
-<a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a><span class="doccomment">/// The pixel a cell's taps are read about (`AWVisResampler::DataToGrid`
-<a href=#255 id=255 data-nosnippet>255</a>/// and `GridToData`'s `convOrigin`): `shape/2` when both extents are even,
-<a href=#256 id=256 data-nosnippet>256</a>/// else `shape/2 + 1` on both axes. CASA's own crops are even
-<a href=#257 id=257 data-nosnippet>257</a>/// (`AWConvFunc::resizeCF`), but caches older CASA wrote hold odd cells,
-<a href=#258 id=258 data-nosnippet>258</a>/// centred and area-normalised at `shape/2`; CASA grids them one fine
-<a href=#259 id=259 data-nosnippet>259</a>/// sample off that centre, and so does casa-rs.
-<a href=#260 id=260 data-nosnippet>260</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>convolution_origin(shape: [usize; <span class="number">2</span>]) -&gt; [i64; <span class="number">2</span>] {
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>odd = !(shape[<span class="number">0</span>].is_multiple_of(<span class="number">2</span>) &amp;&amp; shape[<span class="number">1</span>].is_multiple_of(<span class="number">2</span>));
-<a href=#262 id=262 data-nosnippet>262</a>    shape.map(|extent| (extent / <span class="number">2 </span>+ usize::from(odd)) <span class="kw">as </span>i64)
-<a href=#263 id=263 data-nosnippet>263</a>}
-<a href=#264 id=264 data-nosnippet>264</a>
-<a href=#265 id=265 data-nosnippet>265</a><span class="doccomment">/// The dense cell of `planes` (each `[y][x]` with its own declared half
-<a href=#266 id=266 data-nosnippet>266</a>/// support) at `half` taps each side: tap `k` at fine offset `off` reads
-<a href=#267 id=267 data-nosnippet>267</a>/// pixel `origin + k·sampling + off` about the plane's
-<a href=#268 id=268 data-nosnippet>268</a>/// [`convolution_origin`] (`accumulateToGrid.inc`:
-<a href=#269 id=269 data-nosnippet>269</a>/// `convOrigin + (Int)(sampling·ix + off)`), zero outside the plane and
-<a href=#270 id=270 data-nosnippet>270</a>/// beyond the plane's own support (`AWVisResampler` takes the support per
-<a href=#271 id=271 data-nosnippet>271</a>/// Mueller cell; the crop buffer around it is not part of the kernel).
-<a href=#272 id=272 data-nosnippet>272</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>dense_cell_padded(
-<a href=#273 id=273 data-nosnippet>273</a>    planes: <span class="kw-2">&amp;</span>[(Vec&lt;Complex32&gt;, [usize; <span class="number">2</span>], [u16; <span class="number">2</span>])],
-<a href=#274 id=274 data-nosnippet>274</a>    half: [u16; <span class="number">2</span>],
-<a href=#275 id=275 data-nosnippet>275</a>    sampling: u16,
-<a href=#276 id=276 data-nosnippet>276</a>) -&gt; DenseCell {
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">let </span>support = [<span class="number">2 </span>* half[<span class="number">0</span>] + <span class="number">1</span>, <span class="number">2 </span>* half[<span class="number">1</span>] + <span class="number">1</span>];
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>[sx, sy] = [usize::from(support[<span class="number">0</span>]), usize::from(support[<span class="number">1</span>])];
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">let </span>rows = CellLocation::fine_rows(sampling);
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span>fine_half = i64::from(CellLocation::fine_centre(sampling));
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span><span class="kw-2">mut </span>data = Vec::with_capacity(rows * rows * planes.len() * sx * sy);
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">for </span>oy <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">let </span>off_y = oy <span class="kw">as </span>i64 - fine_half;
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">for </span>ox <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#285 id=285 data-nosnippet>285</a>            <span class="kw">let </span>off_x = ox <span class="kw">as </span>i64 - fine_half;
-<a href=#286 id=286 data-nosnippet>286</a>            <span class="kw">for </span>(plane, shape, plane_half) <span class="kw">in </span>planes {
-<a href=#287 id=287 data-nosnippet>287</a>                <span class="kw">let </span>origin = convolution_origin(<span class="kw-2">*</span>shape);
-<a href=#288 id=288 data-nosnippet>288</a>                <span class="kw">for </span>iy <span class="kw">in </span><span class="number">0</span>..sy {
-<a href=#289 id=289 data-nosnippet>289</a>                    <span class="kw">let </span>ky = iy <span class="kw">as </span>i64 - i64::from(half[<span class="number">1</span>]);
-<a href=#290 id=290 data-nosnippet>290</a>                    <span class="kw">let </span>y = origin[<span class="number">1</span>] + ky * i64::from(sampling) + off_y;
-<a href=#291 id=291 data-nosnippet>291</a>                    <span class="kw">for </span>ix <span class="kw">in </span><span class="number">0</span>..sx {
-<a href=#292 id=292 data-nosnippet>292</a>                        <span class="kw">let </span>kx = ix <span class="kw">as </span>i64 - i64::from(half[<span class="number">0</span>]);
-<a href=#293 id=293 data-nosnippet>293</a>                        <span class="kw">let </span>x = origin[<span class="number">0</span>] + kx * i64::from(sampling) + off_x;
-<a href=#294 id=294 data-nosnippet>294</a>                        <span class="kw">let </span>inside = kx.abs() &lt;= i64::from(plane_half[<span class="number">0</span>])
-<a href=#295 id=295 data-nosnippet>295</a>                            &amp;&amp; ky.abs() &lt;= i64::from(plane_half[<span class="number">1</span>])
-<a href=#296 id=296 data-nosnippet>296</a>                            &amp;&amp; x &gt;= <span class="number">0
-<a href=#297 id=297 data-nosnippet>297</a>                            </span>&amp;&amp; y &gt;= <span class="number">0
-<a href=#298 id=298 data-nosnippet>298</a>                            </span>&amp;&amp; (x <span class="kw">as </span>usize) &lt; shape[<span class="number">0</span>]
-<a href=#299 id=299 data-nosnippet>299</a>                            &amp;&amp; (y <span class="kw">as </span>usize) &lt; shape[<span class="number">1</span>];
-<a href=#300 id=300 data-nosnippet>300</a>                        data.push(<span class="kw">if </span>inside {
-<a href=#301 id=301 data-nosnippet>301</a>                            plane[y <span class="kw">as </span>usize * shape[<span class="number">0</span>] + x <span class="kw">as </span>usize]
-<a href=#302 id=302 data-nosnippet>302</a>                        } <span class="kw">else </span>{
-<a href=#303 id=303 data-nosnippet>303</a>                            Complex32::default()
-<a href=#304 id=304 data-nosnippet>304</a>                        });
-<a href=#305 id=305 data-nosnippet>305</a>                    }
-<a href=#306 id=306 data-nosnippet>306</a>                }
-<a href=#307 id=307 data-nosnippet>307</a>            }
-<a href=#308 id=308 data-nosnippet>308</a>        }
-<a href=#309 id=309 data-nosnippet>309</a>    }
-<a href=#310 id=310 data-nosnippet>310</a>    DenseCell::new(
-<a href=#311 id=311 data-nosnippet>311</a>        data.into_boxed_slice(),
-<a href=#312 id=312 data-nosnippet>312</a>        support,
-<a href=#313 id=313 data-nosnippet>313</a>        sampling,
-<a href=#314 id=314 data-nosnippet>314</a>        u8::try_from(planes.len()).expect(<span class="string">"Mueller planes fit u8"</span>),
-<a href=#315 id=315 data-nosnippet>315</a>    )
-<a href=#316 id=316 data-nosnippet>316</a>}
-<a href=#317 id=317 data-nosnippet>317</a>
-<a href=#318 id=318 data-nosnippet>318</a><span class="doccomment">/// The misc info `CFCell::makePersistent` writes.
-<a href=#319 id=319 data-nosnippet>319</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>CellMisc {
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">pub</span>(<span class="kw">super</span>) sampling: f64,
-<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">pub</span>(<span class="kw">super</span>) pa_deg: f64,
-<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">pub</span>(<span class="kw">super</span>) mueller: usize,
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">pub</span>(<span class="kw">super</span>) w_value: f64,
-<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">pub</span>(<span class="kw">super</span>) w_increment: f64,
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">pub</span>(<span class="kw">super</span>) conjugate_frequency: f64,
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">pub</span>(<span class="kw">super</span>) conjugate_mueller: u32,
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">pub</span>(<span class="kw">super</span>) diameter_m: f64,
-<a href=#328 id=328 data-nosnippet>328</a>    <span class="doccomment">/// The working sky increment and size the cell was generated on:
-<a href=#329 id=329 data-nosnippet>329</a>    /// private keys (`CasaRsSkyIncrement`, `CasaRsWorkingSize`) the loader
-<a href=#330 id=330 data-nosnippet>330</a>    /// checks against the image geometry so a cache is never reused for
-<a href=#331 id=331 data-nosnippet>331</a>    /// another one.
-<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) sky_increment_rad: f64,
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">pub</span>(<span class="kw">super</span>) working_size: usize,
-<a href=#334 id=334 data-nosnippet>334</a>}
-<a href=#335 id=335 data-nosnippet>335</a>
-<a href=#336 id=336 data-nosnippet>336</a><span class="doccomment">/// Write one generated plane as a CASA cell image (`CFCell::makePersistent`
-<a href=#337 id=337 data-nosnippet>337</a>/// with `SynthesisUtils::makeFTCoordSys`'s UU/VV coordinate) at `path`.
-<a href=#338 id=338 data-nosnippet>338</a>/// The image is built under [`STAGING_PREFIX`] beside it and renamed to
-<a href=#339 id=339 data-nosnippet>339</a>/// `path` only once saved, so `path` names either nothing or a complete
-<a href=#340 id=340 data-nosnippet>340</a>/// image, whenever the write stops (#739 review).
-<a href=#341 id=341 data-nosnippet>341</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_cell(
-<a href=#342 id=342 data-nosnippet>342</a>    path: <span class="kw-2">&amp;</span>Path,
-<a href=#343 id=343 data-nosnippet>343</a>    plane: <span class="kw-2">&amp;</span>NativeAwPlane&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#344 id=344 data-nosnippet>344</a>    frequency_hz: f64,
-<a href=#345 id=345 data-nosnippet>345</a>    grid: casa_imaging_model::NativeAwGrid,
-<a href=#346 id=346 data-nosnippet>346</a>    misc: <span class="kw-2">&amp;</span>CellMisc,
-<a href=#347 id=347 data-nosnippet>347</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), AwCatalogError&gt; {
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">let </span>write_error = |detail: String| AwCatalogError::Write {
-<a href=#349 id=349 data-nosnippet>349</a>        path: path.to_path_buf(),
-<a href=#350 id=350 data-nosnippet>350</a>        detail,
-<a href=#351 id=351 data-nosnippet>351</a>    };
-<a href=#352 id=352 data-nosnippet>352</a>    <span class="kw">let </span>name = path
-<a href=#353 id=353 data-nosnippet>353</a>        .file_name()
-<a href=#354 id=354 data-nosnippet>354</a>        .and_then(|name| name.to_str())
-<a href=#355 id=355 data-nosnippet>355</a>        .unwrap_or_default()
-<a href=#356 id=356 data-nosnippet>356</a>        .to_string();
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">let </span>staging = path.with_file_name(<span class="macro">format!</span>(<span class="string">"{STAGING_PREFIX}{name}"</span>));
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">if </span>staging.exists() {
-<a href=#359 id=359 data-nosnippet>359</a>        std::fs::remove_dir_all(<span class="kw-2">&amp;</span>staging)
-<a href=#360 id=360 data-nosnippet>360</a>            .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot clear a staged image: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#361 id=361 data-nosnippet>361</a>    }
-<a href=#362 id=362 data-nosnippet>362</a>    build_cell(<span class="kw-2">&amp;</span>staging, <span class="kw-2">&amp;</span>name, plane, frequency_hz, grid, misc).map_err(write_error)<span class="question-mark">?</span>;
-<a href=#363 id=363 data-nosnippet>363</a>    <span class="comment">// A cell being replaced moves aside in one rename, so its name never
-<a href=#364 id=364 data-nosnippet>364</a>    // names a half-removed image either.
-<a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">let </span>replaced = path.with_file_name(<span class="macro">format!</span>(<span class="string">"{STAGING_PREFIX}replaced-{name}"</span>));
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">if </span>path.exists() {
-<a href=#367 id=367 data-nosnippet>367</a>        std::fs::rename(path, <span class="kw-2">&amp;</span>replaced)
-<a href=#368 id=368 data-nosnippet>368</a>            .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot replace: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#369 id=369 data-nosnippet>369</a>    }
-<a href=#370 id=370 data-nosnippet>370</a>    std::fs::rename(<span class="kw-2">&amp;</span>staging, path)
-<a href=#371 id=371 data-nosnippet>371</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot publish the staged image: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">if </span>replaced.exists() {
-<a href=#373 id=373 data-nosnippet>373</a>        std::fs::remove_dir_all(<span class="kw-2">&amp;</span>replaced)
-<a href=#374 id=374 data-nosnippet>374</a>            .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot remove the replaced image: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#375 id=375 data-nosnippet>375</a>    }
-<a href=#376 id=376 data-nosnippet>376</a>    <span class="prelude-val">Ok</span>(())
-<a href=#377 id=377 data-nosnippet>377</a>}
-<a href=#378 id=378 data-nosnippet>378</a>
-<a href=#379 id=379 data-nosnippet>379</a><span class="doccomment">/// Build the cell image of [`write_cell`] at `path`, its misc info naming it
-<a href=#380 id=380 data-nosnippet>380</a>/// `name`.
-<a href=#381 id=381 data-nosnippet>381</a></span><span class="kw">fn </span>build_cell(
-<a href=#382 id=382 data-nosnippet>382</a>    path: <span class="kw-2">&amp;</span>Path,
-<a href=#383 id=383 data-nosnippet>383</a>    name: <span class="kw-2">&amp;</span>str,
-<a href=#384 id=384 data-nosnippet>384</a>    plane: <span class="kw-2">&amp;</span>NativeAwPlane&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#385 id=385 data-nosnippet>385</a>    frequency_hz: f64,
-<a href=#386 id=386 data-nosnippet>386</a>    grid: casa_imaging_model::NativeAwGrid,
-<a href=#387 id=387 data-nosnippet>387</a>    misc: <span class="kw-2">&amp;</span>CellMisc,
-<a href=#388 id=388 data-nosnippet>388</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
-<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">let </span>write_error = |detail: String| detail;
-<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">let </span>side = plane.size;
-<a href=#391 id=391 data-nosnippet>391</a>    <span class="comment">// The uv increment of one oversampled pixel over the working field.
-<a href=#392 id=392 data-nosnippet>392</a>    </span><span class="kw">let </span>increment =
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="number">1.0 </span>/ (grid.size <span class="kw">as </span>f64 * grid.sky_increment_rad[<span class="number">1</span>].abs()) / grid.oversampling <span class="kw">as </span>f64;
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#395 id=395 data-nosnippet>395</a>    coordinates.add_coordinate(
-<a href=#396 id=396 data-nosnippet>396</a>        LinearCoordinate::new(
-<a href=#397 id=397 data-nosnippet>397</a>            <span class="number">2</span>,
-<a href=#398 id=398 data-nosnippet>398</a>            <span class="macro">vec!</span>[<span class="string">"UU"</span>.to_string(), <span class="string">"VV"</span>.to_string()],
-<a href=#399 id=399 data-nosnippet>399</a>            <span class="macro">vec!</span>[<span class="string">"lambda"</span>.to_string(), <span class="string">"lambda"</span>.to_string()],
-<a href=#400 id=400 data-nosnippet>400</a>        )
-<a href=#401 id=401 data-nosnippet>401</a>        .with_reference_value(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>])
-<a href=#402 id=402 data-nosnippet>402</a>        .with_reference_pixel(<span class="macro">vec!</span>[(side / <span class="number">2</span>) <span class="kw">as </span>f64, (side / <span class="number">2</span>) <span class="kw">as </span>f64])
-<a href=#403 id=403 data-nosnippet>403</a>        .with_increment(<span class="macro">vec!</span>[-increment, increment]),
-<a href=#404 id=404 data-nosnippet>404</a>    );
-<a href=#405 id=405 data-nosnippet>405</a>    coordinates.add_coordinate(StokesCoordinate::new(<span class="macro">vec!</span>[<span class="kw">if </span>misc.mueller == <span class="number">0 </span>{
-<a href=#406 id=406 data-nosnippet>406</a>        StokesType::RR
-<a href=#407 id=407 data-nosnippet>407</a>    } <span class="kw">else </span>{
-<a href=#408 id=408 data-nosnippet>408</a>        StokesType::LL
-<a href=#409 id=409 data-nosnippet>409</a>    }]));
-<a href=#410 id=410 data-nosnippet>410</a>    coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#411 id=411 data-nosnippet>411</a>        FrequencyRef::LSRK,
-<a href=#412 id=412 data-nosnippet>412</a>        frequency_hz,
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="number">1.0</span>,
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="number">0.0</span>,
-<a href=#415 id=415 data-nosnippet>415</a>        frequency_hz,
-<a href=#416 id=416 data-nosnippet>416</a>    ));
-<a href=#417 id=417 data-nosnippet>417</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;Complex32&gt;::create(<span class="macro">vec!</span>[side, side, <span class="number">1</span>, <span class="number">1</span>], coordinates, path)
-<a href=#418 id=418 data-nosnippet>418</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot create: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">let </span><span class="kw-2">mut </span>pixels = ndarray::ArrayD::&lt;Complex32&gt;::zeros(ndarray::IxDyn(<span class="kw-2">&amp;</span>[side, side, <span class="number">1</span>, <span class="number">1</span>]));
-<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..side {
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..side {
-<a href=#422 id=422 data-nosnippet>422</a>            pixels[[x, y, <span class="number">0</span>, <span class="number">0</span>]] = plane.values[y * side + x];
-<a href=#423 id=423 data-nosnippet>423</a>        }
-<a href=#424 id=424 data-nosnippet>424</a>    }
-<a href=#425 id=425 data-nosnippet>425</a>    image
-<a href=#426 id=426 data-nosnippet>426</a>        .put_slice(<span class="kw-2">&amp;</span>pixels, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>])
-<a href=#427 id=427 data-nosnippet>427</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot write pixels: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">let </span>field = |name: <span class="kw-2">&amp;</span>str, value: ScalarValue| RecordField::new(name, Value::Scalar(value));
-<a href=#429 id=429 data-nosnippet>429</a>    image
-<a href=#430 id=430 data-nosnippet>430</a>        .set_misc_info(RecordValue::new(<span class="macro">vec!</span>[
-<a href=#431 id=431 data-nosnippet>431</a>            field(<span class="string">"Xsupport"</span>, ScalarValue::Int32(plane.support <span class="kw">as </span>i32)),
-<a href=#432 id=432 data-nosnippet>432</a>            field(<span class="string">"Ysupport"</span>, ScalarValue::Int32(plane.support <span class="kw">as </span>i32)),
-<a href=#433 id=433 data-nosnippet>433</a>            field(<span class="string">"Sampling"</span>, ScalarValue::Float64(misc.sampling)),
-<a href=#434 id=434 data-nosnippet>434</a>            field(<span class="string">"ParallacticAngle"</span>, ScalarValue::Float64(misc.pa_deg)),
-<a href=#435 id=435 data-nosnippet>435</a>            field(<span class="string">"MuellerElement"</span>, ScalarValue::Int32(misc.mueller <span class="kw">as </span>i32)),
-<a href=#436 id=436 data-nosnippet>436</a>            field(<span class="string">"WValue"</span>, ScalarValue::Float64(misc.w_value)),
-<a href=#437 id=437 data-nosnippet>437</a>            field(<span class="string">"WIncr"</span>, ScalarValue::Float64(misc.w_increment)),
-<a href=#438 id=438 data-nosnippet>438</a>            field(<span class="string">"Name"</span>, ScalarValue::String(name.to_string())),
-<a href=#439 id=439 data-nosnippet>439</a>            field(<span class="string">"ConjFreq"</span>, ScalarValue::Float64(misc.conjugate_frequency)),
-<a href=#440 id=440 data-nosnippet>440</a>            field(
-<a href=#441 id=441 data-nosnippet>441</a>                <span class="string">"ConjPoln"</span>,
-<a href=#442 id=442 data-nosnippet>442</a>                ScalarValue::Int32(misc.conjugate_mueller <span class="kw">as </span>i32),
-<a href=#443 id=443 data-nosnippet>443</a>            ),
-<a href=#444 id=444 data-nosnippet>444</a>            field(<span class="string">"TelescopeName"</span>, ScalarValue::String(<span class="string">"EVLA"</span>.to_string())),
-<a href=#445 id=445 data-nosnippet>445</a>            field(<span class="string">"BandName"</span>, ScalarValue::String(String::new())),
-<a href=#446 id=446 data-nosnippet>446</a>            field(<span class="string">"Diameter"</span>, ScalarValue::Float64(misc.diameter_m)),
-<a href=#447 id=447 data-nosnippet>447</a>            field(<span class="string">"OpCode"</span>, ScalarValue::Bool(<span class="bool-val">false</span>)),
-<a href=#448 id=448 data-nosnippet>448</a>            field(
-<a href=#449 id=449 data-nosnippet>449</a>                <span class="string">"CasaRsSkyIncrement"</span>,
-<a href=#450 id=450 data-nosnippet>450</a>                ScalarValue::Float64(misc.sky_increment_rad),
-<a href=#451 id=451 data-nosnippet>451</a>            ),
-<a href=#452 id=452 data-nosnippet>452</a>            field(
-<a href=#453 id=453 data-nosnippet>453</a>                <span class="string">"CasaRsWorkingSize"</span>,
-<a href=#454 id=454 data-nosnippet>454</a>                ScalarValue::Int32(
-<a href=#455 id=455 data-nosnippet>455</a>                    i32::try_from(misc.working_size)
-<a href=#456 id=456 data-nosnippet>456</a>                        .map_err(|<span class="kw">_</span>| write_error(<span class="string">"working size exceeds i32"</span>.to_string()))<span class="question-mark">?</span>,
-<a href=#457 id=457 data-nosnippet>457</a>                ),
-<a href=#458 id=458 data-nosnippet>458</a>            ),
-<a href=#459 id=459 data-nosnippet>459</a>        ]))
-<a href=#460 id=460 data-nosnippet>460</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot write misc info: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#461 id=461 data-nosnippet>461</a>    image
-<a href=#462 id=462 data-nosnippet>462</a>        .save()
-<a href=#463 id=463 data-nosnippet>463</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot save: {error}"</span>)))<span class="question-mark">?</span>;
-<a href=#464 id=464 data-nosnippet>464</a>    <span class="prelude-val">Ok</span>(())
-<a href=#465 id=465 data-nosnippet>465</a>}
+<a href=#197 id=197 data-nosnippet>197</a>    rotation_rad: f64,
+<a href=#198 id=198 data-nosnippet>198</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Loaded, AwCatalogError&gt; {
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>rotation = (rotation_rad != <span class="number">0.0</span>).then(|| pixel_rotation(rotation_rad));
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>build = |select: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>CellFiles) -&gt; <span class="kw-2">&amp;</span>CellHeader,
+<a href=#201 id=201 data-nosnippet>201</a>                 half: [u16; <span class="number">2</span>]|
+<a href=#202 id=202 data-nosnippet>202</a>     -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;DenseCell&gt;, AwCatalogError&gt; {
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="kw">let </span>headers = cells.iter().map(select).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span><span class="kw-2">mut </span>planes = Vec::with_capacity(headers.len());
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">for </span>header <span class="kw">in </span><span class="kw-2">&amp;</span>headers {
+<a href=#206 id=206 data-nosnippet>206</a>            <span class="kw">let </span><span class="kw-2">mut </span>plane = read_plane(header)<span class="question-mark">?</span>;
+<a href=#207 id=207 data-nosnippet>207</a>            <span class="kw">if </span>plane.iter().any(|value| !value.is_finite()) {
+<a href=#208 id=208 data-nosnippet>208</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(cache_error(<span class="kw-2">&amp;</span>header.path, <span class="string">"cell pixels must be finite"</span>));
+<a href=#209 id=209 data-nosnippet>209</a>            }
+<a href=#210 id=210 data-nosnippet>210</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(matrix) = rotation {
+<a href=#211 id=211 data-nosnippet>211</a>                plane = regrid_complex_plane(<span class="kw-2">&amp;</span>plane, header.shape, matrix);
+<a href=#212 id=212 data-nosnippet>212</a>            }
+<a href=#213 id=213 data-nosnippet>213</a>            planes.push((plane, header.shape, header.support));
+<a href=#214 id=214 data-nosnippet>214</a>        }
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="prelude-val">Ok</span>(Arc::new(dense_cell_padded(<span class="kw-2">&amp;</span>planes, half, sampling)))
+<a href=#216 id=216 data-nosnippet>216</a>    };
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="prelude-val">Ok</span>(Loaded {
+<a href=#218 id=218 data-nosnippet>218</a>        imaging: build(|cell| <span class="kw-2">&amp;</span>cell.imaging, group.imaging_half_support)<span class="question-mark">?</span>,
+<a href=#219 id=219 data-nosnippet>219</a>        weight: build(|cell| <span class="kw-2">&amp;</span>cell.weight, group.weight_half_support)<span class="question-mark">?</span>,
+<a href=#220 id=220 data-nosnippet>220</a>        last_use: <span class="number">0</span>,
+<a href=#221 id=221 data-nosnippet>221</a>    })
+<a href=#222 id=222 data-nosnippet>222</a>}
+<a href=#223 id=223 data-nosnippet>223</a>
+<a href=#224 id=224 data-nosnippet>224</a><span class="doccomment">/// The pixel a cell's taps are read about (`AWVisResampler::DataToGrid`
+<a href=#225 id=225 data-nosnippet>225</a>/// and `GridToData`'s `convOrigin`): `shape/2` when both extents are even,
+<a href=#226 id=226 data-nosnippet>226</a>/// else `shape/2 + 1` on both axes. CASA's own crops are even
+<a href=#227 id=227 data-nosnippet>227</a>/// (`AWConvFunc::resizeCF`), but caches older CASA wrote hold odd cells,
+<a href=#228 id=228 data-nosnippet>228</a>/// centred and area-normalised at `shape/2`; CASA grids them one fine
+<a href=#229 id=229 data-nosnippet>229</a>/// sample off that centre, and so does casa-rs.
+<a href=#230 id=230 data-nosnippet>230</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>convolution_origin(shape: [usize; <span class="number">2</span>]) -&gt; [i64; <span class="number">2</span>] {
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">let </span>odd = !(shape[<span class="number">0</span>].is_multiple_of(<span class="number">2</span>) &amp;&amp; shape[<span class="number">1</span>].is_multiple_of(<span class="number">2</span>));
+<a href=#232 id=232 data-nosnippet>232</a>    shape.map(|extent| (extent / <span class="number">2 </span>+ usize::from(odd)) <span class="kw">as </span>i64)
+<a href=#233 id=233 data-nosnippet>233</a>}
+<a href=#234 id=234 data-nosnippet>234</a>
+<a href=#235 id=235 data-nosnippet>235</a><span class="doccomment">/// The dense cell of `planes` (each `[y][x]` with its own declared half
+<a href=#236 id=236 data-nosnippet>236</a>/// support) at `half` taps each side: tap `k` at fine offset `off` reads
+<a href=#237 id=237 data-nosnippet>237</a>/// pixel `origin + k·sampling + off` about the plane's
+<a href=#238 id=238 data-nosnippet>238</a>/// [`convolution_origin`] (`accumulateToGrid.inc`:
+<a href=#239 id=239 data-nosnippet>239</a>/// `convOrigin + (Int)(sampling·ix + off)`), zero outside the plane and
+<a href=#240 id=240 data-nosnippet>240</a>/// beyond the plane's own support (`AWVisResampler` takes the support per
+<a href=#241 id=241 data-nosnippet>241</a>/// Mueller cell; the crop buffer around it is not part of the kernel).
+<a href=#242 id=242 data-nosnippet>242</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>dense_cell_padded(
+<a href=#243 id=243 data-nosnippet>243</a>    planes: <span class="kw-2">&amp;</span>[(Vec&lt;Complex32&gt;, [usize; <span class="number">2</span>], [u16; <span class="number">2</span>])],
+<a href=#244 id=244 data-nosnippet>244</a>    half: [u16; <span class="number">2</span>],
+<a href=#245 id=245 data-nosnippet>245</a>    sampling: u16,
+<a href=#246 id=246 data-nosnippet>246</a>) -&gt; DenseCell {
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">let </span>support = [<span class="number">2 </span>* half[<span class="number">0</span>] + <span class="number">1</span>, <span class="number">2 </span>* half[<span class="number">1</span>] + <span class="number">1</span>];
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>[sx, sy] = [usize::from(support[<span class="number">0</span>]), usize::from(support[<span class="number">1</span>])];
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">let </span>rows = CellLocation::fine_rows(sampling);
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span>fine_half = i64::from(CellLocation::fine_centre(sampling));
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span><span class="kw-2">mut </span>data = Vec::with_capacity(rows * rows * planes.len() * sx * sy);
+<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">for </span>oy <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>off_y = oy <span class="kw">as </span>i64 - fine_half;
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">for </span>ox <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">let </span>off_x = ox <span class="kw">as </span>i64 - fine_half;
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="kw">for </span>(plane, shape, plane_half) <span class="kw">in </span>planes {
+<a href=#257 id=257 data-nosnippet>257</a>                <span class="kw">let </span>origin = convolution_origin(<span class="kw-2">*</span>shape);
+<a href=#258 id=258 data-nosnippet>258</a>                <span class="kw">for </span>iy <span class="kw">in </span><span class="number">0</span>..sy {
+<a href=#259 id=259 data-nosnippet>259</a>                    <span class="kw">let </span>ky = iy <span class="kw">as </span>i64 - i64::from(half[<span class="number">1</span>]);
+<a href=#260 id=260 data-nosnippet>260</a>                    <span class="kw">let </span>y = origin[<span class="number">1</span>] + ky * i64::from(sampling) + off_y;
+<a href=#261 id=261 data-nosnippet>261</a>                    <span class="kw">for </span>ix <span class="kw">in </span><span class="number">0</span>..sx {
+<a href=#262 id=262 data-nosnippet>262</a>                        <span class="kw">let </span>kx = ix <span class="kw">as </span>i64 - i64::from(half[<span class="number">0</span>]);
+<a href=#263 id=263 data-nosnippet>263</a>                        <span class="kw">let </span>x = origin[<span class="number">0</span>] + kx * i64::from(sampling) + off_x;
+<a href=#264 id=264 data-nosnippet>264</a>                        <span class="kw">let </span>inside = kx.abs() &lt;= i64::from(plane_half[<span class="number">0</span>])
+<a href=#265 id=265 data-nosnippet>265</a>                            &amp;&amp; ky.abs() &lt;= i64::from(plane_half[<span class="number">1</span>])
+<a href=#266 id=266 data-nosnippet>266</a>                            &amp;&amp; x &gt;= <span class="number">0
+<a href=#267 id=267 data-nosnippet>267</a>                            </span>&amp;&amp; y &gt;= <span class="number">0
+<a href=#268 id=268 data-nosnippet>268</a>                            </span>&amp;&amp; (x <span class="kw">as </span>usize) &lt; shape[<span class="number">0</span>]
+<a href=#269 id=269 data-nosnippet>269</a>                            &amp;&amp; (y <span class="kw">as </span>usize) &lt; shape[<span class="number">1</span>];
+<a href=#270 id=270 data-nosnippet>270</a>                        data.push(<span class="kw">if </span>inside {
+<a href=#271 id=271 data-nosnippet>271</a>                            plane[y <span class="kw">as </span>usize * shape[<span class="number">0</span>] + x <span class="kw">as </span>usize]
+<a href=#272 id=272 data-nosnippet>272</a>                        } <span class="kw">else </span>{
+<a href=#273 id=273 data-nosnippet>273</a>                            Complex32::default()
+<a href=#274 id=274 data-nosnippet>274</a>                        });
+<a href=#275 id=275 data-nosnippet>275</a>                    }
+<a href=#276 id=276 data-nosnippet>276</a>                }
+<a href=#277 id=277 data-nosnippet>277</a>            }
+<a href=#278 id=278 data-nosnippet>278</a>        }
+<a href=#279 id=279 data-nosnippet>279</a>    }
+<a href=#280 id=280 data-nosnippet>280</a>    DenseCell::new(
+<a href=#281 id=281 data-nosnippet>281</a>        data.into_boxed_slice(),
+<a href=#282 id=282 data-nosnippet>282</a>        support,
+<a href=#283 id=283 data-nosnippet>283</a>        sampling,
+<a href=#284 id=284 data-nosnippet>284</a>        u8::try_from(planes.len()).expect(<span class="string">"Mueller planes fit u8"</span>),
+<a href=#285 id=285 data-nosnippet>285</a>    )
+<a href=#286 id=286 data-nosnippet>286</a>}
+<a href=#287 id=287 data-nosnippet>287</a>
+<a href=#288 id=288 data-nosnippet>288</a><span class="doccomment">/// The misc info `CFCell::makePersistent` writes.
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>CellMisc {
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">pub</span>(<span class="kw">super</span>) sampling: f64,
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">pub</span>(<span class="kw">super</span>) pa_deg: f64,
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">pub</span>(<span class="kw">super</span>) mueller: usize,
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">pub</span>(<span class="kw">super</span>) w_value: f64,
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">pub</span>(<span class="kw">super</span>) w_increment: f64,
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">pub</span>(<span class="kw">super</span>) conjugate_frequency: f64,
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">pub</span>(<span class="kw">super</span>) conjugate_mueller: u32,
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">pub</span>(<span class="kw">super</span>) diameter_m: f64,
+<a href=#298 id=298 data-nosnippet>298</a>    <span class="doccomment">/// The working sky increment and size the cell was generated on:
+<a href=#299 id=299 data-nosnippet>299</a>    /// private keys (`CasaRsSkyIncrement`, `CasaRsWorkingSize`) the loader
+<a href=#300 id=300 data-nosnippet>300</a>    /// checks against the image geometry so a cache is never reused for
+<a href=#301 id=301 data-nosnippet>301</a>    /// another one.
+<a href=#302 id=302 data-nosnippet>302</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) sky_increment_rad: f64,
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">pub</span>(<span class="kw">super</span>) working_size: usize,
+<a href=#304 id=304 data-nosnippet>304</a>}
+<a href=#305 id=305 data-nosnippet>305</a>
+<a href=#306 id=306 data-nosnippet>306</a><span class="doccomment">/// Write one generated plane as a CASA cell image (`CFCell::makePersistent`
+<a href=#307 id=307 data-nosnippet>307</a>/// with `SynthesisUtils::makeFTCoordSys`'s UU/VV coordinate) at `path`.
+<a href=#308 id=308 data-nosnippet>308</a>/// The image is built under [`STAGING_PREFIX`] beside it and renamed to
+<a href=#309 id=309 data-nosnippet>309</a>/// `path` only once saved, so `path` names either nothing or a complete
+<a href=#310 id=310 data-nosnippet>310</a>/// image, whenever the write stops (#739 review).
+<a href=#311 id=311 data-nosnippet>311</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_cell(
+<a href=#312 id=312 data-nosnippet>312</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#313 id=313 data-nosnippet>313</a>    plane: <span class="kw-2">&amp;</span>NativeAwPlane&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#314 id=314 data-nosnippet>314</a>    frequency_hz: f64,
+<a href=#315 id=315 data-nosnippet>315</a>    grid: casa_imaging_model::NativeAwGrid,
+<a href=#316 id=316 data-nosnippet>316</a>    misc: <span class="kw-2">&amp;</span>CellMisc,
+<a href=#317 id=317 data-nosnippet>317</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), AwCatalogError&gt; {
+<a href=#318 id=318 data-nosnippet>318</a>    <span class="kw">let </span>write_error = |detail: String| AwCatalogError::Write {
+<a href=#319 id=319 data-nosnippet>319</a>        path: path.to_path_buf(),
+<a href=#320 id=320 data-nosnippet>320</a>        detail,
+<a href=#321 id=321 data-nosnippet>321</a>    };
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">let </span>name = path
+<a href=#323 id=323 data-nosnippet>323</a>        .file_name()
+<a href=#324 id=324 data-nosnippet>324</a>        .and_then(|name| name.to_str())
+<a href=#325 id=325 data-nosnippet>325</a>        .unwrap_or_default()
+<a href=#326 id=326 data-nosnippet>326</a>        .to_string();
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">let </span>staging = path.with_file_name(<span class="macro">format!</span>(<span class="string">"{STAGING_PREFIX}{name}"</span>));
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">if </span>staging.exists() {
+<a href=#329 id=329 data-nosnippet>329</a>        std::fs::remove_dir_all(<span class="kw-2">&amp;</span>staging)
+<a href=#330 id=330 data-nosnippet>330</a>            .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot clear a staged image: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#331 id=331 data-nosnippet>331</a>    }
+<a href=#332 id=332 data-nosnippet>332</a>    build_cell(<span class="kw-2">&amp;</span>staging, <span class="kw-2">&amp;</span>name, plane, frequency_hz, grid, misc).map_err(write_error)<span class="question-mark">?</span>;
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="comment">// A cell being replaced moves aside in one rename, so its name never
+<a href=#334 id=334 data-nosnippet>334</a>    // names a half-removed image either.
+<a href=#335 id=335 data-nosnippet>335</a>    </span><span class="kw">let </span>replaced = path.with_file_name(<span class="macro">format!</span>(<span class="string">"{STAGING_PREFIX}replaced-{name}"</span>));
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">if </span>path.exists() {
+<a href=#337 id=337 data-nosnippet>337</a>        std::fs::rename(path, <span class="kw-2">&amp;</span>replaced)
+<a href=#338 id=338 data-nosnippet>338</a>            .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot replace: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#339 id=339 data-nosnippet>339</a>    }
+<a href=#340 id=340 data-nosnippet>340</a>    std::fs::rename(<span class="kw-2">&amp;</span>staging, path)
+<a href=#341 id=341 data-nosnippet>341</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot publish the staged image: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="kw">if </span>replaced.exists() {
+<a href=#343 id=343 data-nosnippet>343</a>        std::fs::remove_dir_all(<span class="kw-2">&amp;</span>replaced)
+<a href=#344 id=344 data-nosnippet>344</a>            .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot remove the replaced image: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#345 id=345 data-nosnippet>345</a>    }
+<a href=#346 id=346 data-nosnippet>346</a>    <span class="prelude-val">Ok</span>(())
+<a href=#347 id=347 data-nosnippet>347</a>}
+<a href=#348 id=348 data-nosnippet>348</a>
+<a href=#349 id=349 data-nosnippet>349</a><span class="doccomment">/// Build the cell image of [`write_cell`] at `path`, its misc info naming it
+<a href=#350 id=350 data-nosnippet>350</a>/// `name`.
+<a href=#351 id=351 data-nosnippet>351</a></span><span class="kw">fn </span>build_cell(
+<a href=#352 id=352 data-nosnippet>352</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#353 id=353 data-nosnippet>353</a>    name: <span class="kw-2">&amp;</span>str,
+<a href=#354 id=354 data-nosnippet>354</a>    plane: <span class="kw-2">&amp;</span>NativeAwPlane&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#355 id=355 data-nosnippet>355</a>    frequency_hz: f64,
+<a href=#356 id=356 data-nosnippet>356</a>    grid: casa_imaging_model::NativeAwGrid,
+<a href=#357 id=357 data-nosnippet>357</a>    misc: <span class="kw-2">&amp;</span>CellMisc,
+<a href=#358 id=358 data-nosnippet>358</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
+<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">let </span>write_error = |detail: String| detail;
+<a href=#360 id=360 data-nosnippet>360</a>    <span class="kw">let </span>side = plane.size;
+<a href=#361 id=361 data-nosnippet>361</a>    <span class="comment">// The uv increment of one oversampled pixel over the working field.
+<a href=#362 id=362 data-nosnippet>362</a>    </span><span class="kw">let </span>increment =
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="number">1.0 </span>/ (grid.size <span class="kw">as </span>f64 * grid.sky_increment_rad[<span class="number">1</span>].abs()) / grid.oversampling <span class="kw">as </span>f64;
+<a href=#364 id=364 data-nosnippet>364</a>    <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#365 id=365 data-nosnippet>365</a>    coordinates.add_coordinate(
+<a href=#366 id=366 data-nosnippet>366</a>        LinearCoordinate::new(
+<a href=#367 id=367 data-nosnippet>367</a>            <span class="number">2</span>,
+<a href=#368 id=368 data-nosnippet>368</a>            <span class="macro">vec!</span>[<span class="string">"UU"</span>.to_string(), <span class="string">"VV"</span>.to_string()],
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="macro">vec!</span>[<span class="string">"lambda"</span>.to_string(), <span class="string">"lambda"</span>.to_string()],
+<a href=#370 id=370 data-nosnippet>370</a>        )
+<a href=#371 id=371 data-nosnippet>371</a>        .with_reference_value(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>])
+<a href=#372 id=372 data-nosnippet>372</a>        .with_reference_pixel(<span class="macro">vec!</span>[(side / <span class="number">2</span>) <span class="kw">as </span>f64, (side / <span class="number">2</span>) <span class="kw">as </span>f64])
+<a href=#373 id=373 data-nosnippet>373</a>        .with_increment(<span class="macro">vec!</span>[-increment, increment]),
+<a href=#374 id=374 data-nosnippet>374</a>    );
+<a href=#375 id=375 data-nosnippet>375</a>    coordinates.add_coordinate(StokesCoordinate::new(<span class="macro">vec!</span>[<span class="kw">if </span>misc.mueller == <span class="number">0 </span>{
+<a href=#376 id=376 data-nosnippet>376</a>        StokesType::RR
+<a href=#377 id=377 data-nosnippet>377</a>    } <span class="kw">else </span>{
+<a href=#378 id=378 data-nosnippet>378</a>        StokesType::LL
+<a href=#379 id=379 data-nosnippet>379</a>    }]));
+<a href=#380 id=380 data-nosnippet>380</a>    coordinates.add_coordinate(SpectralCoordinate::new(
+<a href=#381 id=381 data-nosnippet>381</a>        FrequencyRef::LSRK,
+<a href=#382 id=382 data-nosnippet>382</a>        frequency_hz,
+<a href=#383 id=383 data-nosnippet>383</a>        <span class="number">1.0</span>,
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="number">0.0</span>,
+<a href=#385 id=385 data-nosnippet>385</a>        frequency_hz,
+<a href=#386 id=386 data-nosnippet>386</a>    ));
+<a href=#387 id=387 data-nosnippet>387</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;Complex32&gt;::create(<span class="macro">vec!</span>[side, side, <span class="number">1</span>, <span class="number">1</span>], coordinates, path)
+<a href=#388 id=388 data-nosnippet>388</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot create: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">let </span><span class="kw-2">mut </span>pixels = ndarray::ArrayD::&lt;Complex32&gt;::zeros(ndarray::IxDyn(<span class="kw-2">&amp;</span>[side, side, <span class="number">1</span>, <span class="number">1</span>]));
+<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..side {
+<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..side {
+<a href=#392 id=392 data-nosnippet>392</a>            pixels[[x, y, <span class="number">0</span>, <span class="number">0</span>]] = plane.values[y * side + x];
+<a href=#393 id=393 data-nosnippet>393</a>        }
+<a href=#394 id=394 data-nosnippet>394</a>    }
+<a href=#395 id=395 data-nosnippet>395</a>    image
+<a href=#396 id=396 data-nosnippet>396</a>        .put_slice(<span class="kw-2">&amp;</span>pixels, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>])
+<a href=#397 id=397 data-nosnippet>397</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot write pixels: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw">let </span>field = |name: <span class="kw-2">&amp;</span>str, value: ScalarValue| RecordField::new(name, Value::Scalar(value));
+<a href=#399 id=399 data-nosnippet>399</a>    image
+<a href=#400 id=400 data-nosnippet>400</a>        .set_misc_info(RecordValue::new(<span class="macro">vec!</span>[
+<a href=#401 id=401 data-nosnippet>401</a>            field(<span class="string">"Xsupport"</span>, ScalarValue::Int32(plane.support <span class="kw">as </span>i32)),
+<a href=#402 id=402 data-nosnippet>402</a>            field(<span class="string">"Ysupport"</span>, ScalarValue::Int32(plane.support <span class="kw">as </span>i32)),
+<a href=#403 id=403 data-nosnippet>403</a>            field(<span class="string">"Sampling"</span>, ScalarValue::Float64(misc.sampling)),
+<a href=#404 id=404 data-nosnippet>404</a>            field(<span class="string">"ParallacticAngle"</span>, ScalarValue::Float64(misc.pa_deg)),
+<a href=#405 id=405 data-nosnippet>405</a>            field(<span class="string">"MuellerElement"</span>, ScalarValue::Int32(misc.mueller <span class="kw">as </span>i32)),
+<a href=#406 id=406 data-nosnippet>406</a>            field(<span class="string">"WValue"</span>, ScalarValue::Float64(misc.w_value)),
+<a href=#407 id=407 data-nosnippet>407</a>            field(<span class="string">"WIncr"</span>, ScalarValue::Float64(misc.w_increment)),
+<a href=#408 id=408 data-nosnippet>408</a>            field(<span class="string">"Name"</span>, ScalarValue::String(name.to_string())),
+<a href=#409 id=409 data-nosnippet>409</a>            field(<span class="string">"ConjFreq"</span>, ScalarValue::Float64(misc.conjugate_frequency)),
+<a href=#410 id=410 data-nosnippet>410</a>            field(
+<a href=#411 id=411 data-nosnippet>411</a>                <span class="string">"ConjPoln"</span>,
+<a href=#412 id=412 data-nosnippet>412</a>                ScalarValue::Int32(misc.conjugate_mueller <span class="kw">as </span>i32),
+<a href=#413 id=413 data-nosnippet>413</a>            ),
+<a href=#414 id=414 data-nosnippet>414</a>            field(<span class="string">"TelescopeName"</span>, ScalarValue::String(<span class="string">"EVLA"</span>.to_string())),
+<a href=#415 id=415 data-nosnippet>415</a>            field(<span class="string">"BandName"</span>, ScalarValue::String(String::new())),
+<a href=#416 id=416 data-nosnippet>416</a>            field(<span class="string">"Diameter"</span>, ScalarValue::Float64(misc.diameter_m)),
+<a href=#417 id=417 data-nosnippet>417</a>            field(<span class="string">"OpCode"</span>, ScalarValue::Bool(<span class="bool-val">false</span>)),
+<a href=#418 id=418 data-nosnippet>418</a>            field(
+<a href=#419 id=419 data-nosnippet>419</a>                <span class="string">"CasaRsSkyIncrement"</span>,
+<a href=#420 id=420 data-nosnippet>420</a>                ScalarValue::Float64(misc.sky_increment_rad),
+<a href=#421 id=421 data-nosnippet>421</a>            ),
+<a href=#422 id=422 data-nosnippet>422</a>            field(
+<a href=#423 id=423 data-nosnippet>423</a>                <span class="string">"CasaRsWorkingSize"</span>,
+<a href=#424 id=424 data-nosnippet>424</a>                ScalarValue::Int32(
+<a href=#425 id=425 data-nosnippet>425</a>                    i32::try_from(misc.working_size)
+<a href=#426 id=426 data-nosnippet>426</a>                        .map_err(|<span class="kw">_</span>| write_error(<span class="string">"working size exceeds i32"</span>.to_string()))<span class="question-mark">?</span>,
+<a href=#427 id=427 data-nosnippet>427</a>                ),
+<a href=#428 id=428 data-nosnippet>428</a>            ),
+<a href=#429 id=429 data-nosnippet>429</a>        ]))
+<a href=#430 id=430 data-nosnippet>430</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot write misc info: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#431 id=431 data-nosnippet>431</a>    image
+<a href=#432 id=432 data-nosnippet>432</a>        .save()
+<a href=#433 id=433 data-nosnippet>433</a>        .map_err(|error| write_error(<span class="macro">format!</span>(<span class="string">"cannot save: {error}"</span>)))<span class="question-mark">?</span>;
+<a href=#434 id=434 data-nosnippet>434</a>    <span class="prelude-val">Ok</span>(())
+<a href=#435 id=435 data-nosnippet>435</a>}
 </code></pre></div></section></main></body></html>
