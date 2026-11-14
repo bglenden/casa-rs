@@ -15,10 +15,16 @@ use std::path::Path;
 
 #[test]
 fn accepted_image_frames_and_beams_match_casa() {
-    let fixture: Value = serde_json::from_reader(GzDecoder::new(
-        &include_bytes!("data/sm_image_frames_casa.json.gz")[..],
-    ))
-    .unwrap();
+    compare_frames(include_bytes!("data/sm_image_frames_casa.json.gz"));
+}
+
+#[test]
+fn time_dependent_mosaics_match_casa() {
+    compare_frames(include_bytes!("data/sm_frame_mosaics_casa.json.gz"));
+}
+
+fn compare_frames(bytes: &[u8]) {
+    let fixture: Value = serde_json::from_reader(GzDecoder::new(bytes)).unwrap();
     assert_eq!(fixture["casa_version"], "6.7.6.14");
     let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
     let host = casa_imaging_runtime::HostResources::detect().unwrap();
@@ -49,7 +55,10 @@ fn accepted_image_frames_and_beams_match_casa() {
             }
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("frames.ms");
-            copy(&data.join("sm_image_layouts/base.ms"), &path);
+            copy(
+                &data.join(case["base"].as_str().unwrap_or("sm_image_layouts/base.ms")),
+                &path,
+            );
             let mut sm = Simulator::open_from_ms(
                 &path,
                 SimulatorOptions {
@@ -59,7 +68,12 @@ fn accepted_image_frames_and_beams_match_casa() {
                 },
             )
             .unwrap();
-            sm.set_data(&[], &[0], "").unwrap();
+            let fields: Vec<_> = case["field_ids"].as_array().map_or_else(
+                || vec![0],
+                |fields| fields.iter().map(|id| id.as_i64().unwrap()).collect(),
+            );
+            sm.set_data(&[], &fields, case["msselect"].as_str().unwrap_or(""))
+                .unwrap();
             if case.get("location_itrf_m").is_some() || case["mosaic"] == true {
                 let position = case.get("location_itrf_m");
                 sm.set_options(&PredictionOptions {
@@ -85,7 +99,10 @@ fn accepted_image_frames_and_beams_match_casa() {
             }
             let result = sm
                 .predict(&PredictSpec {
-                    images: vec![data.join("sm_image_frames").join(format!("{name}.image"))],
+                    images: vec![case["input"].as_str().map_or_else(
+                        || data.join("sm_image_frames").join(format!("{name}.image")),
+                        |input| data.join(input),
+                    )],
                     ..PredictSpec::default()
                 })
                 .and_then(|()| sm.close());
@@ -102,7 +119,7 @@ fn accepted_image_frames_and_beams_match_casa() {
             }
             let nrms = existing_ms_calculations::compare(&path, &reference);
             println!("image frames {name} {prefix}: NRMS {nrms}");
-            if nrms >= 1e-3 {
+            if !nrms.is_finite() || nrms >= 1e-3 {
                 failures.push(format!("{name} {prefix}: NRMS {nrms}"));
             }
             if let Some(export) = std::env::var_os("CASA_RS_IMAGE_FRAMES_OUT") {

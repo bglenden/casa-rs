@@ -227,6 +227,7 @@ pub(crate) struct Prediction {
     /// `(nx/2, ny/2)`, by phase centre (its bits), sorted by the bits; empty
     /// for the others.
     pointings: Vec<super::mosaic::MosaicPointing>,
+    mosaic_geometry: Option<Box<super::mosaic::MosaicGeometry>>,
     /// The mosaic machine's dish class of each antenna; empty for the
     /// others.
     antenna_types: Vec<u8>,
@@ -362,6 +363,44 @@ impl Prediction {
             "a mosaic step predicts rows pointed at {centre_rad:?}, which it did not measure"
         );
         found.and_then(|(_, offset)| *offset).unwrap_or([0.0; 2])
+    }
+
+    pub(crate) fn has_timed_mosaic(&self) -> bool {
+        self.mosaic_geometry.is_some()
+    }
+
+    pub(crate) fn mosaic_buffer_frame(
+        &self,
+        scan: &super::observe::Scan,
+        row: u64,
+        time: f64,
+        antenna: usize,
+    ) -> SimulatorResult<(f64, usize)> {
+        self.mosaic_geometry
+            .as_ref()
+            .expect("a timed mosaic")
+            .sample(scan, row, time, antenna)
+    }
+
+    pub(crate) fn mosaic_pointing_at(
+        &self,
+        scan: &super::observe::Scan,
+        time: f64,
+        observer: [f64; 3],
+    ) -> SimulatorResult<Option<[f64; 2]>> {
+        let frame = self
+            .frame(scan)?
+            .with_epoch(casa_types::measures::MEpoch::from_mjd(
+                time / 86400.,
+                casa_types::measures::EpochRef::UTC,
+            ));
+        let [x, y, z] = observer;
+        let frame = frame.with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
+        self.mosaic_geometry
+            .as_ref()
+            .expect("a timed mosaic")
+            .offset(scan.pointing_rad, &frame)
+            .map_err(model_error)
     }
 
     /// Each antenna's dish class, which keys the mosaic machine's kernels;
@@ -694,24 +733,16 @@ impl Simulator {
     ) -> SimulatorResult<Prediction> {
         let beam = selected_beam.map(|beam| &beam.pattern);
         let transformed_beam = self.transformed_image_beam(&model, correlations, selected_beam)?;
-        let fixed_celestial_frame =
-            crate::predict::fixed_direction_frame(model.tangent_direction().refer());
-        if self.mosaic && !fixed_celestial_frame {
-            return Err(SimulatorError::not_yet_implemented(
-                "mosaic prediction with a time-dependent image direction frame needs \
-                 a valid CASA reference (#1298)",
-            ));
-        }
         let frame = self.prediction_frame(phase_centres.as_ref());
         let model = model.with_frame(frame);
         let machine = self.ft_machine()?;
         let mut mosaic_state = None;
-        let (beams, antenna_types, pointings) = match machine {
+        let (beams, antenna_types, pointings, mosaic_geometry) = match machine {
             FtMachine::Mosaic => {
                 // What the machine keeps per pointing and antenna, and its
                 // beams' inputs until the kernels are built, admitted before
                 // they are formed.
-                let (kept, building) = self.mosaic_state_bytes();
+                let (kept, building) = self.mosaic_state_bytes(&model, phase_centres.as_ref());
                 let resources = &self.options.resources;
                 let reservation = admit(
                     resources.host(),
@@ -735,8 +766,31 @@ impl Simulator {
                 {
                     beams.image_angles_rad = self.mosaic_jones_angles(phase_centres.as_ref())?;
                 }
-                let pointings = self.mosaic_pointings(&model, !beams.common)?;
-                (Some(beams), antenna_types, pointings)
+                let timed =
+                    !crate::predict::fixed_direction_frame(model.tangent_direction().refer());
+                let observer = if timed {
+                    self.mosaic_observer(&model)?
+                } else {
+                    None
+                };
+                let mut geometry = timed.then(|| {
+                    Box::new(super::mosaic::MosaicGeometry::new(
+                        &model,
+                        observer,
+                        !beams.common,
+                        phase_centres.as_ref(),
+                        self.antennas.len(),
+                    ))
+                });
+                if let Some(geometry) = &mut geometry {
+                    geometry.set_time_order(self, phase_centres.as_ref())?;
+                }
+                let pointings = if timed {
+                    Vec::new()
+                } else {
+                    self.mosaic_pointings(&model, !beams.common)?
+                };
+                (Some(beams), antenna_types, pointings, geometry)
             }
             FtMachine::Grid(_)
             | FtMachine::GridBox(_)
@@ -752,7 +806,7 @@ impl Simulator {
                          and only with option ftmachine=mosaic."
                     );
                 }
-                (None, Vec::new(), Vec::new())
+                (None, Vec::new(), Vec::new(), None)
             }
         };
         let layout = ModelLayout::new(&model, correlations, machine, beams)
@@ -768,7 +822,10 @@ impl Simulator {
         if let Some((mut reservation, kept)) = mosaic_state {
             debug_assert_eq!(
                 (pointings.capacity() * size_of::<super::mosaic::MosaicPointing>()
-                    + antenna_types.capacity()) as u64,
+                    + antenna_types.capacity()) as u64
+                    + mosaic_geometry
+                        .as_ref()
+                        .map_or(0, |geometry| geometry.bytes()),
                 kept,
                 "the mosaic state keeps what was admitted for it"
             );
@@ -795,6 +852,7 @@ impl Simulator {
         prediction.distance_m = distance_m;
         prediction.phase_centres = phase_centres;
         prediction.pointings = pointings;
+        prediction.mosaic_geometry = mosaic_geometry;
         prediction.antenna_types = antenna_types;
         Ok(prediction)
     }
@@ -1161,6 +1219,7 @@ impl Simulator {
             distance_m: 0.,
             grids,
             pointings: Vec::new(),
+            mosaic_geometry: None,
             antenna_types: Vec::new(),
             _reservation: reservation,
             _kernels: kernels,

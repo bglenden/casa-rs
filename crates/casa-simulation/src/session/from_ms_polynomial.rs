@@ -16,6 +16,21 @@ pub(in crate::session) type PhaseCentres =
 pub(in crate::session) struct SelectedFrame {
     direction: [f64; 2],
     epoch_s: f64,
+    selected_rows: usize,
+}
+
+pub(in crate::session) fn selected_rows(centres: &PhaseCentres) -> usize {
+    centres
+        .value
+        .iter()
+        .map(|(_, frame)| frame.selected_rows)
+        .sum()
+}
+
+pub(in crate::session) fn first_chunk_rows(centres: Option<&PhaseCentres>) -> usize {
+    centres
+        .and_then(|p| p.value.iter().min_by_key(|(key, _)| (key.1, key.0, key.2)))
+        .map_or(0, |(_, frame)| frame.selected_rows)
 }
 
 pub(in crate::session) fn epoch(centres: Option<&PhaseCentres>, scan: &Scan) -> Option<f64> {
@@ -115,8 +130,10 @@ pub(in crate::session) fn selected_centres(
         .transpose()?;
     let value = {
         let mut first = HashMap::<_, f64>::new();
+        let mut row_counts = HashMap::<_, usize>::new();
         if selection.has_query() {
             session.visit_selected_headers(selection, |scan, header| {
+                *row_counts.entry(key(scan)).or_default() += 1;
                 first
                     .entry(key(scan))
                     .and_modify(|v| *v = v.min(header.time_s))
@@ -128,6 +145,7 @@ pub(in crate::session) fn selected_centres(
                 if !selection.contains_scan(scan) || scan.row_count() == 0 {
                     continue;
                 }
+                *row_counts.entry(key(scan)).or_default() += scan.row_count();
                 let time = match scan.rows {
                     ScanRows::OnDisk(_) => {
                         session.opened.as_ref().expect("opened").scan_times_s[index][0]
@@ -159,12 +177,13 @@ pub(in crate::session) fn selected_centres(
                 Ok(SelectedFrame {
                     direction,
                     epoch_s: time,
+                    selected_rows: 0,
                 })
             };
             // ComponentFT uses MSIter's current chunk. Image prediction runs
             // per FIELD; its FTMachine retains that field's first frame
             // across ARRAY_ID and DD boundaries.
-            let frame_direction = if image_frame {
+            let mut frame_direction = if image_frame {
                 if let Some(&direction) = field_frames.get(&chunk.1) {
                     direction
                 } else {
@@ -175,6 +194,7 @@ pub(in crate::session) fn selected_centres(
             } else {
                 evaluate()?
             };
+            frame_direction.selected_rows = row_counts[&chunk];
             centres.push((chunk, frame_direction));
         }
         centres.sort_unstable_by_key(|v| v.0);
