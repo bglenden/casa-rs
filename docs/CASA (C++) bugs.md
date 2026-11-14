@@ -3457,6 +3457,25 @@ all four masks. casa-rs copies its PB mask to each plane. A comparison
 of the full pixel arrays, including the masked pixels, agrees within
 5.38e-6 normalized RMS across this case's products.
 
+## CASA's cube workers reject facet stores with no polarization representation
+
+In CASA 6.7.6.14, `tclean` fails before publishing a PSF for a 2×2
+faceted, Stokes I, two-channel dirty cube on `refim_point.ms`,
+`refim_eptwochan.ms` or `refim_twopoints_twochan.ms`. The worker reports
+“data polarization type is not defined.” `SIImageStore::init` sets the
+representation to UNKNOWN. `SynthesisImagerVi2` leaves the call that
+copies the parent's representation into a facet commented out, while it
+copies the representation into channel chunks. `runCubeGridding` sends
+the unset value to `CubeMajorCycleAlgorithm`, which rejects it. The
+unfaceted control completes.
+
+Casa-rs uses the observation's polarization plan for every facet and
+finishes natural-weighted, same-frame standard dirty and Högbom cubes with
+nearest-channel sampling. For `refim_point.ms`, independent CASA faceted
+MFS runs of the selected channels verify the PSFs, residuals, restored
+images, models, masks and facet weights. An unfaceted CASA cube on those
+same channels verifies the frequency axis and cube PB (#1063).
+
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 
 - Date noted: 2026-10-28

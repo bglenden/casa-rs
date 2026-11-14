@@ -52,7 +52,7 @@ pub struct ContinuumProductInputs<'a> {
 
 /// Each faceted image domain's facets' own sums of weights, by domain
 /// ordinal: per facet in CASA's order (facet `row·N + column`, facet 0 at
-/// the bottom left), then by normal moment and polarization. CASA's `.sumwt`
+/// the bottom left), then by channel, normal moment and polarization. CASA's `.sumwt`
 /// holds each facet store's value for that moment (`SIImageStore::getSubImageStore`).
 pub type FacetSumWeights = std::collections::BTreeMap<usize, Vec<Vec<f64>>>;
 
@@ -339,7 +339,7 @@ impl<'a> ContinuumProductInputs<'a> {
     /// # Panics
     ///
     /// If an entry is not a faceted domain of the problem with one sum per
-    /// facet, moment and polarization.
+    /// facet, channel, moment and polarization.
     #[must_use]
     pub fn with_facet_sum_weights(mut self, sums: &'a FacetSumWeights) -> Self {
         let domains = self.problem.geometry().domains();

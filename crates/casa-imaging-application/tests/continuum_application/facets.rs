@@ -106,3 +106,54 @@ fn facets_publish_their_own_sums_and_an_empty_facet_is_zero() {
     );
     assert!((0..4).all(|facet| window_peak(&residual, facet) > 0.0));
 }
+
+#[test]
+fn cube_facets_publish_their_own_sum_weights_for_every_channel() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let ms = alma_primary_beam_measurement_set(root.path());
+    // SPW 0 sees rows 0, 2, 4 and 6. Rows 2 and 6 land outside facets 1
+    // and 3, and row 4 has no data in the second channel.
+    set_uvw(&ms, |row| {
+        [3.0, 0.4, if row % 4 == 2 { 500.0 } else { 0.0 }]
+    });
+    let mut store = MeasurementSet::open(&ms).expect("open fixture");
+    store
+        .main_table_mut()
+        .row_accessor_mut()
+        .set_cell(
+            4,
+            "FLAG",
+            Value::Array(ArrayValue::Bool(
+                ArrayD::from_shape_vec(vec![1, 2], vec![false, true]).unwrap(),
+            )),
+        )
+        .expect("flag one channel");
+    store.save().expect("save unequal channel coverage");
+    drop(store);
+    let prefix = root.path().join("cube");
+    execute(&request(
+        &ms,
+        &prefix,
+        json!({
+            "imsize": 32, "cell": "100arcsec", "facets": 2, "niter": 0,
+            "specmode": "cubedata", "spw": "0", "channel_count": 2,
+            "start": 0, "width": 1, "interpolation": "nearest",
+        }),
+    ))
+    .expect("native-channel cube facets");
+    let sumwt = PagedImage::<f32>::open(root.path().join("cube.sumwt")).unwrap();
+    assert_eq!(sumwt.shape(), &[2, 2, 1, 2]);
+    let sums = sumwt.get_slice(&[0, 0, 0, 0], &[2, 2, 1, 2]).unwrap();
+    for y in 0..2 {
+        for (channel, expected) in [[4.0, 2.0], [3.0, 1.0]].into_iter().enumerate() {
+            for (x, weight) in expected.into_iter().enumerate() {
+                assert_eq!(
+                    sums[[x, y, 0, channel]],
+                    weight,
+                    "facet ({x}, {y}) channel {channel}"
+                );
+            }
+        }
+    }
+}

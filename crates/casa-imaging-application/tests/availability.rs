@@ -452,6 +452,20 @@ fn facets_admit_standard_continuum_and_bounded_w_and_taylor_modes() {
     for fixture in unverified {
         assert_exactly_unsupported(on_cpu(&fixture.compile()), [Unsupported::FacetedBasis]);
     }
+    let cube = || ProblemFixture {
+        basis: ReconstructionBasis::ChannelLocal { channels: 1 },
+        sampling: SpectralSamplingLaw::NEAREST,
+        ..faceted()
+    };
+    on_cpu(&cube().compile()).expect("standard natural Stokes I nearest cube facets");
+    let unverified_cube = ProblemFixture {
+        weighting: WeightingScheme::Uniform,
+        ..cube()
+    };
+    assert_exactly_unsupported(
+        on_cpu(&unverified_cube.compile()),
+        [Unsupported::FacetedBasis],
+    );
     let mut w = faceted();
     w.measurement_equation = w.measurement_equation.with_w_projection(
         WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).expect("W contract"),
@@ -601,6 +615,7 @@ fn mem_compiled_scope_cannot_bypass_the_task_guard() {
 struct ProblemFixture {
     phase_centre: PhaseCentreLaw,
     basis: ReconstructionBasis,
+    sampling: SpectralSamplingLaw,
     algorithm: ReconstructionAlgorithm,
     weighting: WeightingScheme,
     density_cells: casa_imaging_model::DensityCells,
@@ -626,6 +641,7 @@ impl ProblemFixture {
                 -0.5,
             )),
             basis: ReconstructionBasis::Constant,
+            sampling: SpectralSamplingLaw::IDENTITY,
             algorithm: ReconstructionAlgorithm::Dirty,
             weighting: WeightingScheme::Natural,
             density_cells: casa_imaging_model::DensityCells::Image,
@@ -743,7 +759,7 @@ impl ProblemFixture {
                 .collect(),
         );
         let science = ScientificContract::new(
-            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            SpectralContract::new(self.sampling, SpectralCoupling::Independent),
             self.measurement_equation,
         );
         let science = match self.instrument_model {

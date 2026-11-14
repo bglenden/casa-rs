@@ -641,6 +641,7 @@ impl<'a> Run<'a> {
             pointing_ramp,
         ));
         let stitch = ChartStitch::new(problem, charts.clone());
+        let facet_weights = stitch.reserve_weights(&host, &policy)?;
         let visibility_write_bytes = inputs
             .visibility_write
             .as_ref()
@@ -791,7 +792,7 @@ impl<'a> Run<'a> {
             planes_per_wave: None,
             start_model_flux: Vec::new(),
             weight_image,
-            retained: Reservation::none(),
+            retained: facet_weights,
             kept_weights: None,
             row_work: None,
         };
@@ -924,7 +925,7 @@ impl<'a> Run<'a> {
     /// Hand the pass's charge on to what `major` holds resident: join it to
     /// the retained charge and keep only the completion's resident bytes.
     fn retain(&mut self, major: &Major, pass: Reservation) -> Result<(), ImagingError> {
-        let resident = major.completion.resident_bytes()?;
+        let resident = major.completion.resident_bytes()? + self.stitch.weight_bytes();
         self.retained.join(pass);
         debug_assert!(
             resident <= self.retained.memory(),
@@ -1034,7 +1035,7 @@ impl<'a> Run<'a> {
     /// The waves of a pass accumulating `modes`, with a model when
     /// `with_model`, that fit the free memory beside `besides` bytes the
     /// pass also allocates (an initial model) and the faceted domains'
-    /// stitched images ([`ChartStitch::pass_bytes`]), and the reservation of
+    /// stitched images ([`ChartStitch::pass_bytes_per_channel`]), and the reservation of
     /// all three: planned once per major cycle for the pass and its normal
     /// storage. A pass that `writes` visibilities keeps one set of chunks,
     /// since it does not pipeline its owners.
@@ -1045,7 +1046,6 @@ impl<'a> Run<'a> {
         besides: u64,
         writes: bool,
     ) -> Result<Admitted<PassPlan>, ImagingError> {
-        let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
         let domains = pass_domains(&self.domains, workers, self.row_work(modes));
         let mut demand = WaveDemand {
@@ -1058,6 +1058,7 @@ impl<'a> Run<'a> {
             block: self.source.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
             chunk_sets: 1,
+            stitched_bytes_per_channel: self.stitch.pass_bytes_per_channel(modes.psf),
         };
         let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
         let residency = Residency::plan(&demand, free);

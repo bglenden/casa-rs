@@ -39,7 +39,7 @@ pub enum Unsupported {
     /// Metal grids the standard and mosaic kernel sets (#787); W and AW
     /// wait for their gate R2 rows (#653).
     KernelSetOnMetal,
-    /// Facets support constant-basis MFS and the verified standard two-term Taylor mode (#1063).
+    /// Facets support constant-basis MFS and the verified standard Taylor and cube modes (#1063).
     FacetedBasis,
     /// Facets grid with the standard or W-projection kernel set; AW and
     /// mosaic facets remain unsupported (#1063, #1070).
@@ -84,7 +84,8 @@ impl fmt::Display for Unsupported {
                  and AW projection run on the CPU",
             ),
             Self::FacetedBasis => formatter.write_str(
-                "facets image single-term MFS or standard, natural-weighted two-term Stokes I MT-MFS (#1063)",
+                "facets image single-term MFS, or standard natural-weighted Stokes I with \
+                 two-term MT-MFS or same-frame nearest-channel dirty/Högbom cubes (#1063)",
             ),
             Self::FacetedKernelSet => {
                 formatter.write_str("facets grid with standard or W projection only (#1063)")
@@ -251,12 +252,23 @@ pub fn check(
     {
         let standard = crate::imaging::standard_kernel_set(problem);
         let basis = problem.reconstruction().basis();
-        let taylor = matches!(basis, ReconstructionBasis::Taylor { terms: 2 })
-            && standard
+        let natural_standard_i = standard
             && problem.reconstruction().polarization().coordinates()
                 == [PolarizationCoordinate::StokesI]
             && problem.weighting().scheme() == WeightingScheme::Natural;
-        if !matches!(basis, ReconstructionBasis::Constant) && !taylor {
+        let taylor =
+            natural_standard_i && matches!(basis, ReconstructionBasis::Taylor { terms: 2 });
+        let spectral = problem.geometry().spectral();
+        let cube = natural_standard_i
+            && matches!(basis, ReconstructionBasis::ChannelLocal { .. })
+            && matches!(
+                problem.reconstruction().algorithm(),
+                ReconstructionAlgorithm::Dirty | ReconstructionAlgorithm::Hogbom
+            )
+            && problem.science().spectral().sampling().kernel() == SpectralKernel::Nearest
+            && spectral.source_frame() == spectral.output_frame()
+            && !matches!(spectral.anchor(), SpectralFrameAnchor::Conversion { .. });
+        if !matches!(basis, ReconstructionBasis::Constant) && !taylor && !cube {
             unsupported.push(Unsupported::FacetedBasis);
         }
         let equation = problem.science().measurement_equation();

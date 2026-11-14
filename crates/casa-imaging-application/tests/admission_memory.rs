@@ -1237,7 +1237,7 @@ fn a_seeded_mosaic_stays_within_its_admission() {
 /// full-size residual and PSF, and an eight-channel mosaic cube, whose paged
 /// state also holds each channel's weight image. Both charges are smaller
 /// than the slack of an ample admission, so this law does not resolve them
-/// alone; `a_stitch_charges_its_full_images_and_one_held_facet_psf` and
+/// alone; `a_stitch_charges_its_full_images_and_reference` and
 /// `a_dense_sensitivity_charges_a_second_invariant_plane_per_plane` pin
 /// their sizes.
 #[test]
@@ -1261,6 +1261,16 @@ fn facets_and_mosaic_cubes_stay_within_their_admission() {
         2,
         AMPLE,
     );
+    let mut faceted = cube(
+        &measurement_set,
+        &root.path().join("faceted-cube"),
+        json!({
+            "facets": 2, "deconvolver": "hogbom", "specmode": "cubedata", "channel_count": 8,
+            "interpolation": "nearest", "niter": 20,
+        }),
+    );
+    faceted.imsize = [512; 2];
+    check(&mut breaches, "faceted cube 8 × 512²", &faceted, 2, AMPLE);
     let alma = observation_as(root.path(), CUBE_CHANNELS, "ALMA");
     warm(&alma, root.path());
     let mut mosaic = cube(

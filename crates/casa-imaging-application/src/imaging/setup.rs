@@ -252,6 +252,7 @@ impl SetupDemand<'_> {
             block: self.block,
             chunk_placements: CHUNK_PLACEMENTS,
             chunk_sets: 1,
+            stitched_bytes_per_channel: self.stitch.pass_bytes_per_channel(modes.psf),
         };
         let refreshing = wave(ModeSet::DATA, true);
         // The pass that seeds holds the seeding beside its wave: the initial
@@ -262,18 +263,16 @@ impl SetupDemand<'_> {
         } else {
             (seeding, 0)
         };
-        let mut first = wave(self.modes, self.start_model.is_some() && !self.reseeds).bytes(1)
-            + self.stitch.pass_bytes(true)
-            + first_seeding;
-        let mut refresh = refreshing.bytes(1) + self.stitch.pass_bytes(false) + refresh_seeding;
+        let mut first =
+            wave(self.modes, self.start_model.is_some() && !self.reseeds).bytes(1) + first_seeding;
+        let mut refresh = refreshing.bytes(1) + refresh_seeding;
         // A run that cleans writes on its last refresh, or on a prediction
         // after it; one that does not, on its first major cycle
         // (`write_pass`), beside the seeding (#970 review). The pass that
         // writes holds every plane (#778 review).
         if let Some((modes, with_model, written)) = self.write {
             let demand = wave(modes, with_model);
-            let writing =
-                demand.bytes(demand.planes()) + self.stitch.pass_bytes(modes.psf) + written;
+            let writing = demand.bytes(demand.planes()) + written;
             let cleans = self
                 .problem
                 .reconstruction()

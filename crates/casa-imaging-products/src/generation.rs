@@ -539,6 +539,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             // cancels, as CASA's `divideResidualByWeight` reduces to.
             // A faceted domain publishes each facet store's own sum.
             let facets = self.inputs.facet_sum_weights(self.domain_ordinal);
+            let index = channel * self.inputs.normal_state().polarization_count() + polarization;
             scatter_polarization_plane_state(
                 &mut window.payload,
                 self.member.axes(),
@@ -546,7 +547,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 polarization,
                 local_channel,
                 |facet| match facets {
-                    Some(facets) => facets[facet][polarization] as f32,
+                    Some(facets) => facets[facet][index] as f32,
                     None => plane.sum_weight() as f32,
                 },
             );

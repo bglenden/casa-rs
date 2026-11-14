@@ -388,6 +388,7 @@ fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
             block: rows.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
             chunk_sets: 1,
+            stitched_bytes_per_channel: 0,
         };
         let admitted = demand.bytes(demand.planes()) + source_block_bytes(rows.maximum_block());
         let run = Run {
@@ -738,6 +739,7 @@ fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
             block: rows.maximum_block(),
             chunk_placements: 64,
             chunk_sets: 2,
+            stitched_bytes_per_channel: 0,
         };
         let admitted = demand.bytes(demand.planes()) + source_block_bytes(rows.maximum_block());
         let run = Run {
