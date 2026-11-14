@@ -61,6 +61,34 @@ pub fn produce_continuum_members(
     produced
 }
 
+fn field_or_saved_residual_mask(
+    planned: &PlannedContinuumGeneration,
+    member: &PlannedMember,
+    output: &CasaImageWriter,
+) -> Result<Option<Option<Vec<bool>>>, ProductsError> {
+    use crate::plan::FieldResidualMask;
+    let domain = member.axes().domain();
+    let restored = member.role == ProductRole::RestoredImage(ProductTerm::Single);
+    if restored
+        && planned.field_residual_mask.is_some()
+        && !planned.rebuilds_field_pb
+        && !output.has_saved_pb(domain)
+    {
+        return Ok(Some(output.existing_image_mask(domain, ".image")?));
+    }
+    if planned.field_residual_mask == Some(FieldResidualMask::Absent) {
+        return Ok(Some(None));
+    }
+    let copy_pb = planned.field_residual_mask == Some(FieldResidualMask::SavedOrPrimaryBeam);
+    let mask = output.saved_residual_mask(domain, ProductTerm::Single, restored, copy_pb)?;
+    if mask.is_none() && planned.rebuilds_field_pb && copy_pb {
+        // The new PB supplies generated validity if the previous PB had
+        // no generated mask to copy.
+        return Ok(None);
+    }
+    Ok(Some(mask))
+}
+
 fn produce_plane_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
@@ -75,45 +103,21 @@ fn produce_plane_members(
     };
     let restoring_beams = restoring_beams(inputs, &fitted_beams)?;
     for member in &planned.members {
+        if matches!(member.role, ProductRole::SumWeights(_))
+            && planned.rebuilds_field_psfs
+            && output.has_positive_saved_scalar_sum(member.axes().domain())?
+        {
+            continue;
+        }
         let saved_mask = match member.role {
             ProductRole::RestoredImage(ProductTerm::Single)
+            | ProductRole::Residual(ProductTerm::Single)
                 if planned.saved_residual_mask_read_bytes.is_some() =>
             {
-                let domain = member.axes().domain();
-                Some(
-                    if planned.field_residual_mask.is_some() && !output.has_saved_pb(domain) {
-                        output.existing_image_mask(domain, ".image")?
-                    } else if planned.field_residual_mask
-                        == Some(crate::plan::FieldResidualMask::Absent)
-                    {
-                        None
-                    } else {
-                        output.saved_residual_mask(
-                            domain,
-                            ProductTerm::Single,
-                            true,
-                            planned.field_residual_mask
-                                == Some(crate::plan::FieldResidualMask::SavedOrPrimaryBeam),
-                        )?
-                    },
-                )
+                field_or_saved_residual_mask(planned, member, output)?
             }
-            ProductRole::Residual(ProductTerm::Single)
-                if planned.saved_residual_mask_read_bytes.is_some() =>
-            {
-                Some(
-                    if planned.field_residual_mask == Some(crate::plan::FieldResidualMask::Absent) {
-                        None
-                    } else {
-                        output.saved_residual_mask(
-                            member.axes().domain(),
-                            ProductTerm::Single,
-                            false,
-                            planned.field_residual_mask
-                                == Some(crate::plan::FieldResidualMask::SavedOrPrimaryBeam),
-                        )?
-                    },
-                )
+            ProductRole::PrimaryBeam(ProductTerm::Single) if planned.rebuilds_field_pb => {
+                output.existing_pb_mask(member.axes().domain())?.map(Some)
             }
             ProductRole::PbCorrectedImage(ProductTerm::Single) => {
                 match planned.saved_cube_pbcor_mask {

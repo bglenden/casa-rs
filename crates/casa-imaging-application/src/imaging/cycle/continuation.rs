@@ -63,9 +63,18 @@ pub(super) fn set_residual(
     existing: Option<&ExistingProducts>,
     images: &mut PassImages,
     terms: usize,
+    preserve_field_sum: bool,
 ) -> Result<(), ImageError> {
     match existing {
-        Some(existing) => existing.fill_residual(images),
+        Some(existing) => {
+            // A serial standard-gridder PSF pass fills only an empty sum.
+            // It still normalizes the new PSF by its freshly gridded peak.
+            if preserve_field_sum && let Some(sum) = existing.positive_scalar_sum()? {
+                images.sum_weights[0] = sum;
+                images.published_sum_weights[0] = sum;
+            }
+            existing.fill_residual(images)
+        }
         None => {
             let cells = images.shape[0] * images.shape[1];
             images.residual =
@@ -173,10 +182,13 @@ impl Run<'_> {
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
         // The residual each wave takes, read beside the pass.
         let window = self.read_window(plan.residency);
-        let reading = self.existing.as_ref().map_or_else(
-            || self.residual_bytes(window),
-            |existing| existing.reading_bytes(window) + existing.images_bytes(window),
-        );
+        let reading = self
+            .existing
+            .iter()
+            .chain(&self.outlier_products)
+            .map(|saved| saved.reading_bytes(window) + saved.images_bytes(window))
+            .max()
+            .unwrap_or_else(|| self.residual_bytes(window));
         let _reading = self.admit("existing residual", reading)?;
         let major = self.reconcile(cycle, modes, false, false, plan)?;
         self.retain(&major, pass)?;

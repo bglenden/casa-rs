@@ -449,6 +449,18 @@ impl ExistingProducts {
         (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
     }
 
+    /// The scalar sum in this field's stored PSF normalization, if filled.
+    pub(crate) fn positive_scalar_sum(&self) -> Result<Option<f64>, ImageError> {
+        let path = product_path(&self.prefix, "sumwt");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let image = PagedImage::<f32>::open_with_cache(path, CACHE_BYTES)?;
+        let values = image.get_slice(&[0; 4], &[1; 4])?;
+        let value = f64::from(values[&[0; 4][..]]);
+        Ok((value.is_finite() && value > 0.0).then_some(value))
+    }
+
     /// The saved-residual path cannot normalize with an unfilled sum.
     /// CASA fills the sum only when it grids the field.
     pub(crate) fn nonpositive_sum_weight(&self) -> ImageError {

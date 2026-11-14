@@ -85,6 +85,20 @@ fn outlier_restart_seed_stays_within_admission() {
         mask_admitted >= 2 * 1280 * 1280,
         "outlier residual mask read held only {mask_admitted} admitted bytes"
     );
+    let mut rebuilt_psfs = saved_residual.clone();
+    rebuilt_psfs.calcpsf = true;
+    OUTLIER_MASK_BYTES.store(0, Ordering::Relaxed);
+    let measured = check(
+        &mut breaches,
+        "rebuilt outlier PSFs with saved residuals",
+        &rebuilt_psfs,
+        1,
+        AMPLE,
+    );
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    assert_eq!(measured.outcome.unwrap().major_cycle_count, 0);
+    assert!(OUTLIER_MASK_BYTES.load(Ordering::Relaxed) >= 2 * 1280 * 1280);
+
     let sum_path = outlier.with_extension("sumwt");
     let mut sum = casa_images::PagedImage::<f32>::open(&sum_path).unwrap();
     let zero = sum.get().unwrap().mapv(|_| 0.0);

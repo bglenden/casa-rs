@@ -1205,6 +1205,10 @@ impl<'a> Run<'a> {
         let team = self.teams.streaming();
         let domains = pass_domains(&self.domains, team.workers(), self.row_work(modes));
         let charts = &self.charts;
+        let saved_by_domain = |domain| match domain {
+            0 => self.existing.as_ref(),
+            index => self.outlier_products.get(index - 1),
+        };
         let refills_saved_sums = !self.forms.psf
             && self.forms.residual
             && !self.outlier_products.is_empty()
@@ -1267,10 +1271,12 @@ impl<'a> Run<'a> {
                         // A pass of the PSF alone takes the residual it does
                         // not form ([`continuation`]).
                         if !modes.data {
+                            let saved = saved_by_domain(images.domain);
                             continuation::set_residual(
-                                self.existing.as_ref(),
+                                saved,
                                 &mut images,
                                 basis.data_terms(),
+                                !self.outlier_products.is_empty(),
                             )
                             .map_err(|error| PassError::Images(Box::new(error)))?;
                         }

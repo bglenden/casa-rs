@@ -358,8 +358,35 @@ impl CasaImageWriter {
         Ok(())
     }
 
+    /// In-place CASA field rebuilds leave a filled scalar .sumwt table alone.
+    pub(crate) fn has_positive_saved_scalar_sum(
+        &self,
+        domain: &ImageDomainRole,
+    ) -> Result<bool, ProductsError> {
+        let path = self.saved_image_path(domain, ".sumwt");
+        if !path.exists() {
+            return Ok(false);
+        }
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let values = image.get_slice(&[0; 4], &[1; 4]).map_err(image_error)?;
+        let value = values[&[0; 4][..]];
+        Ok(value.is_finite() && value > 0.0)
+    }
+
     pub(crate) fn has_saved_pb(&self, domain: &ImageDomainRole) -> bool {
         self.saved_image_path(domain, ".pb").exists()
+    }
+
+    /// Read the generated mask retained when standard imaging rebuilds the PB.
+    pub(crate) fn existing_pb_mask(
+        &self,
+        domain: &ImageDomainRole,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        self.existing_mask(domain, ".pb", true)
     }
 
     /// Read a persisted mask in channel, polarization, x, y order.
@@ -367,6 +394,15 @@ impl CasaImageWriter {
         &self,
         domain: &ImageDomainRole,
         suffix: &str,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        self.existing_mask(domain, suffix, false)
+    }
+
+    fn existing_mask(
+        &self,
+        domain: &ImageDomainRole,
+        suffix: &str,
+        generated: bool,
     ) -> Result<Option<Vec<bool>>, ProductsError> {
         let path = self.saved_image_path(domain, suffix);
         if !path.exists() {
@@ -377,6 +413,9 @@ impl CasaImageWriter {
             source,
         };
         let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        if generated && image.default_mask_name().as_deref() != Some("mask0") {
+            return Ok(None);
+        }
         let mask = image
             .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
             .map_err(image_error)?;

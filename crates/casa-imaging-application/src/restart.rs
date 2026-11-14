@@ -150,11 +150,8 @@ fn supports_outlier_restart(request: &ImagingRequest) -> bool {
         && request.weighting == crate::Weighting::Natural
         && request.stokes == [crate::PolarizationCoordinate::StokesI]
         && request.usemask == UseMask::User
-        && if request.calcpsf {
-            request.calcres
-        } else {
-            request.savemodel == crate::SaveModel::None && !request.pbcor
-        }
+        && (request.calcpsf && request.calcres
+            || request.savemodel == crate::SaveModel::None && !request.pbcor)
 }
 
 pub(crate) fn supports_saved_automask(request: &ImagingRequest) -> bool {
