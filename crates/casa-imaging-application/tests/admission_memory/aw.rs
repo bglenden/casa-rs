@@ -80,6 +80,36 @@ fn check_aw_cube_admission(spw: &str, interpolation: &str) {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// The AW cube keeps its wideband kernels through Taylor reduction,
+/// model projection and refresh without exceeding the combined admission.
+#[test]
+fn aw_mvc_clean_stays_within_its_held_admission() {
+    if !alone("aw::aw_mvc_clean_stays_within_its_held_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = l_band_observation(root.path(), "EVLA", &[1.2e9, 1.5e9, 1.8e9], 1, false);
+    let surface = evla_surface(root.path());
+    warm(&ms, root.path());
+    let values = json!({
+        "vis": ms, "imagename": root.path().join("aw-mvc"),
+        "imsize": 512, "cell": "10arcsec", "specmode": "mvc",
+        "deconvolver": "mtmfs", "nterms": 2, "nchan": 3, "reffreq": "1.5GHz",
+        "weighting": "natural", "gridder": "awproject", "wprojplanes": 1,
+        "aw_cf_source": "native-evla", "native_cf_cache": root.path().join("native-cf"),
+        "evla_surface": surface, "native_cf_policy": "generate-missing",
+        "native_cf_working_size": 1024, "native_cf_oversampling": 4,
+        "native_cf_cache_bytes": 268435456, "native_cf_maximum_cells": 32,
+        "normtype": "flatnoise", "niter": 2, "cycleniter": 1, "pbcor": true,
+    });
+    let mut breaches = Vec::new();
+    let measured = check(&mut breaches, "AW MVC", &imaging::request(values), 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    let outcome = measured.outcome.unwrap();
+    assert_eq!(outcome.total_actual_minor_iterations, 2);
+    assert_eq!(outcome.major_cycle_count, 3);
+}
+
 /// #738: native A-projection MT-MFS at 1024², generating its catalog and
 /// then reusing it, is admitted close to what it holds. Generation is
 /// admitted before it starts: uncharged, it held 274 MB beyond the
