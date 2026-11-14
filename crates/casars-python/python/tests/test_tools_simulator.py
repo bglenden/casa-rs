@@ -1333,8 +1333,9 @@ def test_total_power_samples_the_model_at_the_pointing(tmp_path: Path) -> None:
     sm = opened(tmp_path)
     configure(sm)
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
-    with pytest.raises(NotImplementedError, match="gridfunction='GAUSS'"):
-        sm.setoptions(ftmachine="sd", gridfunction="GAUSS")
+    for kernel in ("GAUSS", "GJINC"):
+        assert sm.setoptions(ftmachine="sd", gridfunction=kernel) is True
+        assert sm.predict(imagename=str(model)) is True
     assert sm.setoptions(ftmachine="sd", gridfunction="PB") is True
     with pytest.raises(NotImplementedError, match="telescope VLA"):
         sm.predict(imagename=str(model))
@@ -1383,11 +1384,9 @@ def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCapt
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert sm.setoptions(location=1.0) is True
     assert caplog.messages == ["Could not convert location 1 to a Position Measures"]
-    assert sm.setoptions(ftmachine="mosaic") is True
-    with pytest.raises(NotImplementedError, match=r"both.*\(#1053\)"):
-        sm.setoptions(ftmachine="both")
-    with pytest.raises(NotImplementedError, match="gridfunction"):
-        sm.setoptions(gridfunction="BOX")
+    for machine in ("mosaic", "both", "pbwproject"):
+        assert sm.setoptions(ftmachine=machine) is True
+    assert sm.setoptions(gridfunction="BOX") is True
     assert sm.setvp() is True
     assert sm.setvp(dovp=False, parangleinc="5deg") is True
     # CASA records the selected table and reads it when predicting.
