@@ -681,16 +681,19 @@ fn mvc_restart_keeps_both_saved_model_families_admitted() {
     )
     .expect("initial MVC");
     controls["threshold"] = json!("100Jy");
-    let resumed = request(&ms, &prefix, 1024, controls)
-        .with_tclean_restart()
-        .unwrap();
     let mut breaches = Vec::new();
-    let measured = check(&mut breaches, "MVC restart", &resumed, 1, AMPLE);
-    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
-    let outcome = measured.outcome.unwrap();
-    assert_eq!(outcome.major_cycle_count, 1);
-    assert_eq!(outcome.total_minor_iterations, 0);
-    assert!(outcome.product_names().iter().any(|name| name == ".model"));
+    for (label, calcpsf) in [("MVC restart", true), ("saved MVC PSF", false)] {
+        controls["calcpsf"] = json!(calcpsf);
+        let resumed = request(&ms, &prefix, 1024, controls.clone())
+            .with_tclean_restart()
+            .unwrap();
+        let measured = check(&mut breaches, label, &resumed, 1, AMPLE);
+        assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+        let outcome = measured.outcome.unwrap();
+        assert_eq!(outcome.major_cycle_count, 1);
+        assert_eq!(outcome.total_minor_iterations, 0);
+        assert!(outcome.product_names().iter().any(|name| name == ".model"));
+    }
 }
 
 /// The first resumed cube pass overlaps a Taylor model, one saved beam

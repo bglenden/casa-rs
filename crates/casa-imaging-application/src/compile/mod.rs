@@ -38,7 +38,7 @@ mod survey;
 mod time_selection;
 mod virtual_selection;
 
-pub(crate) use mvc::{CompiledTaylorView, MvcStart, TaylorView};
+pub(crate) use mvc::{CompiledTaylorView, MvcSavedPsf, MvcStart, TaylorView};
 pub(crate) use opening::OpenedStore;
 pub(crate) use start_model::StartModel;
 

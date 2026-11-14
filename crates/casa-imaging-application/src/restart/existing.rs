@@ -426,6 +426,25 @@ impl ExistingProducts {
         Ok(images)
     }
 
+    /// MVC Taylor moments already use the normalized image units of the
+    /// solver and publisher. Read each saved PSF directly in that scale.
+    pub(crate) fn mvc_taylor_psf(&self, psf: &mut [f32]) -> Result<[f32; 3], ImageError> {
+        let cells = self.shape[0] * self.shape[1];
+        let mut weights = [0.0; 3];
+        for (term, weight) in weights.iter_mut().enumerate() {
+            let plane = self.read(&format!("psf.tt{term}"), 0..1)?;
+            self.write_plane(
+                &mut psf[term * cells..(term + 1) * cells],
+                &plane,
+                (0, 0),
+                1.0,
+            );
+            let sum = self.read(&format!("sumwt.tt{term}"), 0..1)?;
+            *weight = sum[&[0, 0, 0, 0][..]];
+        }
+        Ok(weights)
+    }
+
     /// Set the residual of `images`, a pass's images of domain 0 with
     /// their published sums of weights and no residual (a pass that formed
     /// the PSF alone), to the residual read times the sum of weights that

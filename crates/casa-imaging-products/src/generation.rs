@@ -444,6 +444,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 self.inputs,
                 self.member.axes().domain(),
                 &plane,
+                polarization,
             )?;
             let cutoff = self
                 .inputs

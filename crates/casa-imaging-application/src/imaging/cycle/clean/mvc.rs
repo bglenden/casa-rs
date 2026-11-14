@@ -30,6 +30,7 @@ impl<'a> MvcState<'a> {
                 centres: spec.centres,
             },
             model,
+            spec.start.and_then(|start| start.saved_psf.as_ref()),
             (&run.host, &run.policy, &run.cancel),
         )?;
         drop(seed_charge);
@@ -67,6 +68,14 @@ impl<'a> MvcState<'a> {
         let cube = self.cube.as_ref().ok_or(ImagingError::Unsupported {
             reason: "MVC cube state is absent",
         })?;
+        let saved = self.spec.start.and_then(|start| start.saved_psf.as_ref());
+        let saved_read = saved
+            .map(|saved| run.admit("saved MVC cube PB", saved.cube_pb.reading_bytes()))
+            .transpose()?;
+        let saved_cube_pb = saved
+            .map(|saved| saved.cube_pb.open())
+            .transpose()
+            .map_err(ImagingError::Existing)?;
         let projected = crate::mvc::project_mvc_model(
             crate::mvc::MvcModelProjectionInputs {
                 cube_problem: run.problem,
@@ -75,13 +84,15 @@ impl<'a> MvcState<'a> {
                 taylor_problem: self.spec.taylor_problem,
                 taylor_model: prepared.generation(),
                 mean_pb: &self.mean_pb,
-                saved_pb: None,
+                saved_pb: saved_cube_pb.as_ref(),
                 expansion_reference_hz: self.spec.expansion_reference_hz,
                 controls: self.spec.controls,
                 centres: self.spec.centres,
             },
             (&run.host, &run.policy, &run.cancel),
         )?;
+        drop(saved_cube_pb);
+        drop(saved_read);
         let cube = self.cube.take().expect("the cube was borrowed above");
         let major = run.refresh_with_projected_model(cube, projected, last)?;
         let taylor = crate::mvc::assemble_taylor_with_model(
@@ -94,6 +105,7 @@ impl<'a> MvcState<'a> {
                 centres: self.spec.centres,
             },
             Some(prepared),
+            saved,
             (&run.host, &run.policy, &run.cancel),
         )?;
         // The minor result's charge covers its queued Taylor update until

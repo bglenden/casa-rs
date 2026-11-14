@@ -291,7 +291,13 @@ pub(crate) fn run(
         (minor_response, inputs.primary_beam),
         &inputs.masks,
         inputs.psf_cutoff,
-        inputs.psf_beams.clone(),
+        match mvc
+            .and_then(|view| view.start)
+            .and_then(|start| start.saved_psf.as_ref())
+        {
+            Some(saved) => saved.taylor.psf_pixel_beams(),
+            None => inputs.psf_beams.clone(),
+        },
         inputs.mask_beams.clone(),
     );
     let mask_plans = inputs.masks.clone();
