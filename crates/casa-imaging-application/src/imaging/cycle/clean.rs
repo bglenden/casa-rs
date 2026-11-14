@@ -90,6 +90,7 @@ pub(super) fn run(
                     mvc.as_ref(),
                     refreshed,
                     (read_mosaic_residual || read_field_residuals) && use_pb_mask,
+                    outcome.scientific.normal_state().slab().total_channels(),
                 )?;
                 let prepared = prepare_minor_cycle_with_residual_masks(
                     &outcome.scientific,
@@ -251,6 +252,7 @@ fn read_saved_masks(
     mvc: Option<&MvcState<'_>>,
     refreshed: bool,
     keep_after_refresh: bool,
+    channels: usize,
 ) -> Result<
     (
         Vec<Option<casa_imaging_deconvolution::Support>>,
@@ -270,14 +272,6 @@ fn read_saved_masks(
     if main.saved_residual_mask_bytes().is_none() {
         return Ok((Vec::new(), Reservation::none()));
     }
-    let channels = if matches!(
-        run.domains[0].operator.basis(),
-        casa_imaging_operator::Basis::ChannelLocal { .. }
-    ) {
-        run.problem.geometry().spectral().output_channels()
-    } else {
-        1
-    };
     let count = (1 + run.outlier_products.len()) * channels;
     let mut held = run.admit(
         "saved residual mask list",
