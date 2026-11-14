@@ -124,6 +124,7 @@ impl ImagingInputs<'_> {
 #[derive(Clone, Copy)]
 pub(crate) struct MvcCycleSpec<'a> {
     pub(crate) taylor_problem: &'a CompiledProblem,
+    pub(crate) start: Option<&'a crate::compile::MvcStart>,
     pub(crate) expansion_reference_hz: f64,
     pub(crate) controls: casa_imaging_products::ContinuumProductControls,
     pub(crate) centres: Option<&'a casa_imaging_products::PrimaryBeamCentres>,
@@ -334,7 +335,7 @@ pub(crate) fn run(
         &cancel,
         diagnostics,
         summary,
-        || run.initial(!cleaning),
+        || run.initial(!cleaning, mvc.is_some_and(|view| view.start.is_some())),
     )?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
@@ -347,8 +348,9 @@ pub(crate) fn run(
         return Ok(outcome);
     }
     let mvc = if let Some(spec) = mvc {
-        let (state, taylor) = clean::MvcState::begin(spec, outcome.scientific, &run)?;
+        let (state, taylor) = clean::MvcState::begin(spec, outcome.scientific, &mut run)?;
         outcome.scientific = taylor;
+        outcome.plane_rows.start_model_flux = std::mem::take(&mut run.start_model_flux);
         Some(state)
     } else {
         None

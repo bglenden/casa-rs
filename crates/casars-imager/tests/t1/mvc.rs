@@ -554,6 +554,142 @@ fn mvc_clean_refreshes_the_cube_from_the_taylor_model() {
     }
 }
 
+/// The first resumed major cycle evaluates both supplied terms and uses
+/// the saved channel and Taylor beams before it makes any minor update.
+#[test]
+fn mvc_start_model_uses_the_saved_cube_and_taylor_beams() {
+    use super::fixture::Product;
+    use casa_coordinates::CoordinateType;
+
+    let observation = weighted_observation();
+    let name = "mvc-startmodel";
+    let controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+        "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+    });
+    let mut initial_controls = controls.clone();
+    initial_controls["mask"] = json!("box[[148pix,140pix],[156pix,148pix]]");
+    let (_, initial) = observation.image(name, initial_controls);
+    let root = observation.measurement_set().parent().unwrap();
+    let path = |suffix: &str| root.join(format!("{name}.{suffix}"));
+    let start = [root.join("seed.tt0"), root.join("seed.tt1")];
+    for (term, target) in start.iter().enumerate() {
+        std::fs::rename(path(&format!("model.tt{term}")), target).unwrap();
+    }
+    let point = [152, 144];
+    let coefficients = start
+        .each_ref()
+        .map(|model| Product::open(model).pixels[point]);
+    assert!(coefficients.iter().all(|value| value.abs() > 0.01));
+    let mut cube_beam = casa_images::PagedImage::<f32>::open(path("pb")).unwrap();
+    let spectral = cube_beam.coordinates().coordinate(
+        cube_beam
+            .coordinates()
+            .find_coordinate(CoordinateType::Spectral)
+            .unwrap(),
+    );
+    let reference = spectral.reference_value()[0];
+    let increment = spectral.increment()[0];
+    let pixel = spectral.reference_pixel()[0];
+    let beam = [0.8_f32, 0.6, 0.4];
+    for (channel, value) in beam.into_iter().enumerate() {
+        cube_beam
+            .put_slice(
+                &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), value),
+                &[point[0], point[1], 0, channel],
+            )
+            .unwrap();
+    }
+    cube_beam.save().unwrap();
+    drop(cube_beam);
+    let mut taylor_beam = casa_images::PagedImage::<f32>::open(path("pb.tt0")).unwrap();
+    taylor_beam
+        .put_slice(
+            &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), 0.9),
+            &[point[0], point[1], 0, 0],
+        )
+        .unwrap();
+    taylor_beam.save().unwrap();
+    drop(taylor_beam);
+
+    let mut resumed = controls;
+    resumed["startmodel"] = json!(start);
+    resumed["threshold"] = json!("100Jy");
+    let (summary, products) = observation.image(name, resumed.clone());
+    assert_eq!(summary.actual_minor_iterations, 0);
+    assert_eq!(summary.major_cycles, 1);
+    let old_mask = &initial.get(".mask").pixels;
+    assert!(old_mask.iter().any(|&value| value == 0.0));
+    assert!(old_mask.iter().any(|&value| value == 1.0));
+    assert_eq!(products.get(".mask").pixels, *old_mask);
+    for (channel, response) in beam.into_iter().enumerate() {
+        let hz = reference + (channel as f64 - pixel) * increment;
+        let model = (f64::from(coefficients[0])
+            + ((hz - REFERENCE_HZ) / REFERENCE_HZ) * f64::from(coefficients[1]))
+            as f32;
+        let expected = model * response / 0.9;
+        let actual = products.get(".model").plane(channel)[point];
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "channel {channel}: {actual} vs {expected}"
+        );
+    }
+    for (term, expected) in coefficients.into_iter().enumerate() {
+        assert_eq!(
+            products.get(&format!(".model.tt{term}")).pixels[point],
+            expected
+        );
+    }
+    assert_ne!(
+        products.get(".residual").pixels[point],
+        initial.get(".residual").pixels[point]
+    );
+    assert_eq!(
+        products.get(".pb").pixels[point],
+        initial.get(".pb").pixels[point],
+        "new normal products use the freshly formed beam",
+    );
+    let refused = observation
+        .try_image(name, resumed)
+        .err()
+        .expect("existing Taylor terms conflict");
+    assert!(
+        refused.contains("startmodel cannot be supplied"),
+        "{refused}"
+    );
+    for term in 0..2 {
+        std::fs::remove_dir_all(path(&format!("model.tt{term}"))).unwrap();
+    }
+    let reply = super::casa_return::json_run(
+        root,
+        json!({
+            "vis": observation.measurement_set(), "imagename": name,
+            "imsize": 256, "cell": "0.3arcsec", "backend": "cpu",
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+            "startmodel": start, "fullsummary": true,
+        }),
+    );
+    let casa_provider_contracts::TaskReply::Succeeded { value, .. } = reply else {
+        panic!("seeded tclean return: {reply:?}");
+    };
+    let row = |field| super::casa_return::plane_row(&value, [0, 0, 0], field)[0];
+    let tt0_flux: f64 = Product::open(&path("model.tt0"))
+        .pixels
+        .iter()
+        .map(|&v| f64::from(v))
+        .sum();
+    let start_flux: f64 = Product::open(&start[0])
+        .pixels
+        .iter()
+        .map(|&v| f64::from(v))
+        .sum();
+    assert!((row("startModelFlux") - start_flux).abs() < 1e-6);
+    assert!((row("modelFlux") - tt0_flux).abs() < 1e-6);
+}
+
 /// CASA copies the common Taylor PB support onto MVC's restored and
 /// residual Taylor images when pblimit is positive, while cleaning the
 /// source through repeated cube-major cycles (#1069).

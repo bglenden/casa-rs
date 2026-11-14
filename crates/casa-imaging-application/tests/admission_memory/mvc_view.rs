@@ -624,3 +624,60 @@ fn mvc_clean_run_stays_within_its_held_admission() {
         admission_breach("MVC clean run", &measured).unwrap_or_default()
     );
 }
+
+/// The first resumed cube pass overlaps a Taylor model, one saved beam
+/// channel and the previous Taylor beam, all within the run's admission.
+#[test]
+fn mvc_start_model_keeps_live_allocations_admitted() {
+    if !alone("mvc_view::mvc_start_model_keeps_live_allocations_admitted") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation(root.path(), 6);
+    warm(&ms, root.path());
+    let prefix = root.path().join("mvc-start");
+    let mut controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "niter": 1, "write_pb": true, "pblimit": -0.1,
+    });
+    let initial = request(&ms, &prefix, 256, controls.clone());
+    casa_imaging_application::execute(
+        &initial,
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("initial MVC");
+    let start = [root.path().join("seed.tt0"), root.path().join("seed.tt1")];
+    let tt0 = root.path().join("mvc-start.model.tt0");
+    let coordinates = casa_images::PagedImage::<f32>::open(&tt0)
+        .unwrap()
+        .coordinates()
+        .clone();
+    std::fs::remove_dir_all(tt0).unwrap();
+    // A start image can cover a wider field than the output. Its regrid
+    // workspace must be admitted separately from the small cube's passes.
+    let mut wide =
+        casa_images::PagedImage::<f32>::create(vec![3072, 3072, 1, 1], coordinates, &start[0])
+            .unwrap();
+    wide.set_units("Jy/pixel").unwrap();
+    wide.save().unwrap();
+    drop(wide);
+    std::fs::rename(root.path().join("mvc-start.model.tt1"), &start[1]).unwrap();
+    controls["startmodel"] = json!(start);
+    controls["threshold"] = json!("100Jy");
+    let resumed = request(&ms, &prefix, 256, controls)
+        .with_tclean_restart()
+        .unwrap();
+    let mut breaches = Vec::new();
+    let measured = check(&mut breaches, "seeded MVC", &resumed, 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    let outcome = measured.outcome.unwrap();
+    assert_eq!(outcome.major_cycle_count, 1);
+    assert_eq!(outcome.total_minor_iterations, 0);
+    assert!(outcome.product_names().iter().any(|name| name == ".model"));
+}

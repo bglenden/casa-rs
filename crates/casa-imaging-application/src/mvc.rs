@@ -302,6 +302,8 @@ pub(crate) struct MvcModelProjectionInputs<'a> {
     pub(crate) taylor_problem: &'a CompiledProblem,
     pub(crate) taylor_model: &'a casa_imaging_deconvolution::ModelGeneration,
     pub(crate) mean_pb: &'a [f32],
+    /// The cube PB from the preceding MVC run for its first resumed pass.
+    pub(crate) saved_pb: Option<&'a casa_images::PagedImage<f32>>,
     pub(crate) expansion_reference_hz: f64,
     pub(crate) controls: ContinuumProductControls,
     pub(crate) centres: Option<&'a PrimaryBeamCentres>,
@@ -332,6 +334,7 @@ pub(crate) fn project_mvc_model(
         taylor_problem,
         taylor_model,
         mean_pb,
+        saved_pb,
         expansion_reference_hz,
         controls,
         centres,
@@ -400,7 +403,14 @@ pub(crate) fn project_mvc_model(
         }
         let channel = index / cells;
         if loaded_channel != Some(channel) {
-            let pb = read_mvc_cube_primary_beam(&planned, &cube_inputs, channel)?;
+            let channel_pb = match saved_pb {
+                Some(image) => image
+                    .get_slice(&[0, 0, 0, channel], &[shape[0], shape[1], 1, 1])
+                    .map_err(other)?
+                    .into_iter()
+                    .collect(),
+                None => read_mvc_cube_primary_beam(&planned, &cube_inputs, channel)?.pixels,
+            };
             let frequency = cube_problem
                 .geometry()
                 .spectral()
@@ -408,7 +418,7 @@ pub(crate) fn project_mvc_model(
                 .ok_or_else(invalid)?;
             MvcModelChannel {
                 terms: [&terms[0], &terms[1]],
-                channel_pb: &pb.pixels,
+                channel_pb: &channel_pb,
                 mean_pb,
                 channel_hz: frequency,
                 reference_hz: expansion_reference_hz,
