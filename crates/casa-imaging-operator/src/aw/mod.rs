@@ -302,8 +302,8 @@ pub struct AwCatalog {
     /// Every cell, by group and then Mueller element: group `g`'s are
     /// `cells[g·E..(g + 1)·E]` with `E` the number of elements.
     cells: Vec<CellFiles>,
-    /// Cell path allocations present while opening before PA coalescing.
-    discarded_path_bytes: usize,
+    /// Temporary header and path storage while opening before PA coalescing.
+    header_opening_bytes: usize,
     groups: Vec<Group>,
     rotations: Vec<(f64, f64)>,
     oversampling: u16,
@@ -352,7 +352,7 @@ impl AwCatalog {
     ) -> Result<Self, AwCatalogError> {
         let root = root.as_ref().to_path_buf();
         let mut cells = read_cells(&root)?;
-        let discarded_path_bytes = coalesce_imported_pa(&mut cells);
+        let header_opening_bytes = coalesce_imported_pa(&mut cells);
         // A native cell's working field is the image field times the
         // oversampling: `working_size · working_increment = sampling · n · Δx`.
         let [grid_n, _] = geometry.grid_shape();
@@ -510,7 +510,7 @@ impl AwCatalog {
             }),
             bound: CacheBound::new(bound_bytes),
             cells,
-            discarded_path_bytes,
+            header_opening_bytes,
             groups,
             rotations,
             oversampling,
@@ -723,9 +723,7 @@ impl AwCatalog {
                 * size_of::<f64>()
             + self.mueller_elements.capacity() * size_of::<u32>()
             + lru.slots.capacity() * size_of::<Slot>();
-        let opening = (self.cells.len() * size_of::<f64>())
-            .max(self.discarded_path_bytes + CELL_IMAGE_RECORD_BYTES + 4 * paths.max().unwrap_or(0))
-            as u64;
+        let opening = (self.cells.len() * size_of::<f64>()).max(self.header_opening_bytes) as u64;
         let elements = self.mueller_elements.len();
         let group = |group: &Group| {
             dense_cell_bytes(elements, self.oversampling, group.imaging_half_support)
@@ -1090,18 +1088,27 @@ fn coalesce_imported_pa(cells: &mut Vec<CellFiles>) -> usize {
     let mut next = None::<f64>;
     let mut keep = true;
     let mut discarded = 0;
-    cells.retain(|cell| {
+    let mut max_paths = 0;
+    cells.retain_mut(|cell| {
         let angle = cell.imaging.pa_deg;
-        if next.is_none_or(|next| next.to_bits() != angle.to_bits()) {
+        let paths = cell.imaging.path.capacity() + cell.weight.path.capacity();
+        max_paths = max_paths.max(paths);
+        // CASA groups cell headers by Float degrees before the PA lookup.
+        // Use the first raw key in each bucket for all of its paired cells.
+        if next.is_none_or(|next| next as f32 != angle as f32) {
             keep = next.is_none_or(|next| stored_pa_rad(next) - stored_pa_rad(angle) >= tolerance);
             next = Some(angle);
         }
-        if !keep {
-            discarded += cell.imaging.path.capacity() + cell.weight.path.capacity();
+        if keep {
+            let angle = next.expect("every cell belongs to a PA bucket");
+            cell.imaging.pa_deg = angle;
+            cell.weight.pa_deg = angle;
+        } else {
+            discarded += paths;
         }
         keep
     });
-    discarded
+    discarded + CELL_IMAGE_RECORD_BYTES + 4 * max_paths
 }
 
 /// Every cell of the cache at `root` (`CFCache::fillCFListFromDisk`): each

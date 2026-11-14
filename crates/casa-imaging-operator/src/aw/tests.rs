@@ -133,7 +133,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         w_increment: 0.0,
         mueller_elements: vec![0],
         cells: Vec::new(),
-        discarded_path_bytes: 0,
+        header_opening_bytes: 0,
         groups,
         rotations: Vec::new(),
         oversampling: 2,
@@ -286,29 +286,37 @@ fn dense_pa_import_keeps_the_last_paired_buffer_and_charges_discarded_paths() {
         cell(-0.6, 0),
         cell(0.0, 0),
         cell(0.0, 15),
+        cell(178.2, 0),
+        cell(178.2_f64.next_up(), 15),
     ];
-    let discarded = cells[0].imaging.path.capacity()
-        + cells[0].weight.path.capacity()
-        + cells[2].imaging.path.capacity()
-        + cells[2].weight.path.capacity();
-    assert_eq!(coalesce_imported_pa(&mut cells), discarded);
-    assert_eq!(cells.len(), 3);
-    assert!(cells.iter().all(|cell| cell.imaging.pa_deg >= 0.0));
+    // Keep the longer, discarded path in the maximum scratch charge.
+    cells[0].imaging.path.reserve(256);
+    let longest = cells[0].imaging.path.capacity() + cells[0].weight.path.capacity();
+    let discarded = longest + cells[2].imaging.path.capacity() + cells[2].weight.path.capacity();
+    let opening = coalesce_imported_pa(&mut cells);
+    let mut retained: Vec<_> = cells
+        .iter()
+        .map(|cell| {
+            assert_eq!(cell.imaging.pa_deg, cell.weight.pa_deg);
+            (cell.imaging.pa_deg, cell.imaging.mueller)
+        })
+        .collect();
+    retained.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     assert_eq!(
-        cells
-            .iter()
-            .filter(|cell| cell.imaging.pa_deg == 0.0)
-            .count(),
-        2
+        retained,
+        [
+            (0.0, 0),
+            (0.0, 15),
+            (1.0, 0),
+            (178.2_f64.next_up(), 0),
+            (178.2_f64.next_up(), 15),
+        ]
     );
     let mut catalog = catalog_with_groups(Vec::new());
     catalog.cells = cells;
-    let without_discarded = catalog.cache_charge().opening;
-    catalog.discarded_path_bytes = discarded;
-    assert_eq!(
-        catalog.cache_charge().opening,
-        without_discarded + discarded as u64
-    );
+    catalog.header_opening_bytes = opening;
+    assert_eq!(opening, discarded + CELL_IMAGE_RECORD_BYTES + 4 * longest);
+    assert_eq!(catalog.cache_charge().opening, opening as u64);
 }
 
 #[test]
