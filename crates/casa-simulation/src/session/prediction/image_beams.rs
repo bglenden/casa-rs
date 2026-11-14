@@ -25,6 +25,103 @@ pub(super) fn visit_key(scan: &Scan) -> VisitKey {
 }
 
 impl Simulator {
+    pub(super) fn mosaic_jones_angles(
+        &self,
+        phase_centres: Option<&super::super::from_ms::polynomial::PhaseCentres>,
+    ) -> SimulatorResult<Vec<(u32, f64)>> {
+        let resources = &self.options.resources;
+        let _temporary = admit(
+            resources.host(),
+            resources.policy(),
+            &Demand {
+                phase: MOSAIC_STATE_PHASE,
+                memory: (self.scans.len() as u64)
+                    .saturating_mul(160)
+                    .saturating_add(16 << 10),
+            },
+        )
+        .map_err(SimulatorError::admission)?;
+        let alt_az = super::super::voltage_patterns::squint_mount(self)?;
+        let selection = self.data_plan.selection();
+        let mut first = HashMap::<VisitKey, f64>::new();
+        if selection.has_query() {
+            self.visit_selected_headers(selection, |scan, header| {
+                first
+                    .entry(visit_key(scan))
+                    .and_modify(|time| *time = time.min(header.time_s))
+                    .or_insert(header.time_s);
+                Ok(())
+            })?;
+        }
+        let [x, y, z] = self.antennas[0].position_itrf_m;
+        let initial = self
+            .prediction_frame(phase_centres)
+            .with_position(MPosition::new_itrf(x, y, z));
+        // The enclosing mosaic-state admission owns the returned window
+        // list until kernel construction drops its inputs.
+        let mut angles = Vec::with_capacity(self.spectral_windows.len());
+        let mut previous: Option<(_, f64)> = None;
+        for (index, scan) in self.scans.iter().enumerate() {
+            if !selection.contains_scan(scan) || scan.row_count() == 0 {
+                continue;
+            }
+            let time = if selection.has_query() {
+                let Some(&time) = first.get(&visit_key(scan)) else {
+                    continue;
+                };
+                time
+            } else {
+                match &scan.rows {
+                    ScanRows::OnDisk(_) => {
+                        self.opened.as_ref().expect("opened").scan_times_s[index][0]
+                    }
+                    ScanRows::Planned(rows) => rows.integration_times_s().next().unwrap_or(0.),
+                }
+            };
+            let key = (
+                scan.array_id,
+                scan.field_id,
+                scan.pointing_rad.map(f64::to_bits),
+            );
+            let angle = if let Some((known, angle)) = previous
+                && known == key
+                && self.beam_angle_increment_rad >= std::f64::consts::TAU
+            {
+                angle
+            } else {
+                let frame = initial
+                    .clone()
+                    .with_epoch(MEpoch::from_mjd(time / 86400., EpochRef::UTC));
+                let centre = super::super::from_ms::polynomial::centre(phase_centres, scan);
+                let current = if alt_az {
+                    f64::from(
+                        MDirection::from_angles(centre[0], centre[1], DirectionRef::J2000)
+                            .parallactic_angle(&frame)
+                            .map_err(|error| SimulatorError::raised(error.to_string()))?
+                            as f32,
+                    )
+                } else {
+                    0.
+                };
+                match previous {
+                    Some((known, angle))
+                        if known == key
+                            && (current - angle).abs() <= self.beam_angle_increment_rad =>
+                    {
+                        angle
+                    }
+                    _ => current,
+                }
+            };
+            previous = Some((key, angle));
+            let window = scan.spectral_window_id as u32;
+            if !angles.iter().any(|(known, _)| *known == window) {
+                angles.push((window, angle));
+            }
+        }
+        Ok(angles)
+    }
+
     pub(super) fn prepare_jones_image(
         &self,
         model: SkyModel,

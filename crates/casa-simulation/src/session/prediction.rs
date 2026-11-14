@@ -568,7 +568,9 @@ impl Simulator {
         let selected_beam = self.voltage_pattern_beam()?;
         let component_beam = selected_beam.as_ref().filter(|_| self.voltage_pattern);
         let beam = component_beam.map(|beam| &beam.pattern);
-        frame_epoch |= beam.is_some_and(|beam| beam.image().is_some());
+        frame_epoch |= selected_beam
+            .as_ref()
+            .is_some_and(|beam| beam.pattern.image().is_some());
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
@@ -757,11 +759,18 @@ impl Simulator {
                 )
                 .map_err(SimulatorError::admission)?;
                 mosaic_state = Some((reservation, kept));
-                let (beams, antenna_types) = self.mosaic_beams(
+                let (mut beams, antenna_types) = self.mosaic_beams(
                     selected_beam
                         .filter(|beam| !beam.standard)
                         .map(|beam| &beam.pattern),
                 )?;
+                if beams
+                    .custom_pattern
+                    .as_ref()
+                    .is_some_and(|beam| beam.image().is_some())
+                {
+                    beams.image_angles_rad = self.mosaic_jones_angles(phase_centres.as_ref())?;
+                }
                 (Some(beams), antenna_types, self.mosaic_pointings(&model)?)
             }
             FtMachine::Grid(_) | FtMachine::WProject(_) => {

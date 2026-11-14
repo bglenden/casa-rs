@@ -28,7 +28,7 @@ impl std::fmt::Debug for JonesImage {
 }
 
 impl ImagePlane {
-    fn linear(&self, pixel: [f64; 2]) -> [Complex32; 4] {
+    pub(super) fn linear(&self, pixel: [f64; 2]) -> [Complex32; 4] {
         let [x, y] = pixel;
         if !x.is_finite()
             || !y.is_finite()

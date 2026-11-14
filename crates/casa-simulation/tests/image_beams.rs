@@ -66,7 +66,7 @@ fn run(operation: &str) {
                 },
             )
             .unwrap();
-            if case["operation"] == "mosaic" {
+            if operation.starts_with("mosaic") {
                 sm.set_options(&PredictionOptions {
                     ftmachine: "mosaic".into(),
                     ..PredictionOptions::default()
@@ -114,7 +114,7 @@ fn run(operation: &str) {
                 } else {
                     &[0]
                 },
-                "",
+                case["query"].as_str().unwrap_or(""),
             )
             .unwrap();
             let mut prediction = PredictSpec::default();
@@ -158,4 +158,14 @@ fn saved_jones_images_modify_component_signals_like_casa() {
 #[test]
 fn saved_jones_images_modify_model_images_like_casa() {
     run("image");
+}
+
+#[test]
+fn saved_jones_images_modify_intrinsic_mosaics_like_casa() {
+    run("mosaic");
+}
+
+#[test]
+fn saved_jones_mosaics_use_each_windows_initial_orientation() {
+    run("mosaic_window_visits");
 }
