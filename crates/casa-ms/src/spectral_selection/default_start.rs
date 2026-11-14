@@ -44,7 +44,7 @@ pub fn casa_selected_band_hz<'a>(
 /// edge, the rest of the channels where none does. As in CASA, one channel
 /// cannot bound both ends, and the test reads the signed `CHAN_WIDTH`, so a
 /// window stored with negative widths is never cut.
-pub(super) fn casa_default_start_channels(
+pub fn casa_default_start_channels(
     frequencies_hz: &[f64],
     widths_hz: &[f64],
     [band_start_hz, band_end_hz]: [f64; 2],

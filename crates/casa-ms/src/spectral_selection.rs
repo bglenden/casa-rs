@@ -26,7 +26,7 @@ mod default_start;
 mod regrid;
 
 pub use combine::combine_spectral_windows;
-pub use default_start::casa_selected_band_hz;
+pub use default_start::{casa_default_start_channels, casa_selected_band_hz};
 
 /// Spectral interpolation policy for cube imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
