@@ -647,83 +647,89 @@
 <a href=#647 id=647 data-nosnippet>647</a>    <span class="kw">let </span>refresh_mvc_mask =
 <a href=#648 id=648 data-nosnippet>648</a>        inputs.taylor_primary_beam().is_some() &amp;&amp; inputs.saved_mosaic_beam().is_some();
 <a href=#649 id=649 data-nosnippet>649</a>    <span class="kw">for </span>member <span class="kw">in </span><span class="kw-2">&amp;</span>planned.members {
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span><span class="kw-2">mut </span>payload = products.payload(member.role)<span class="question-mark">?</span>;
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="comment">// An ordinary Taylor PB is formed at one frequency and zeroed by
-<a href=#652 id=652 data-nosnippet>652</a>        // `makePBImage`. MVC's supplied PB is the weighted cube PB: CASA
-<a href=#653 id=653 data-nosnippet>653</a>        // preserves its values below pblimit while marking those pixels
-<a href=#654 id=654 data-nosnippet>654</a>        // invalid. The other products still blank outside their support.
-<a href=#655 id=655 data-nosnippet>655</a>        </span><span class="kw">let </span>supplied_pb = inputs.taylor_primary_beam().is_some()
-<a href=#656 id=656 data-nosnippet>656</a>            &amp;&amp; member.role == ProductRole::PrimaryBeam(ProductTerm::Taylor(<span class="number">0</span>));
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">if </span>member.validity != ProductValidityRule::All &amp;&amp; !supplied_pb {
-<a href=#658 id=658 data-nosnippet>658</a>            zero_invalid_plane_values(
-<a href=#659 id=659 data-nosnippet>659</a>                <span class="kw-2">&amp;mut </span>payload,
-<a href=#660 id=660 data-nosnippet>660</a>                <span class="kw-2">&amp;</span>products.validity(member.role, member.validity, refresh_mvc_mask)<span class="question-mark">?</span>,
-<a href=#661 id=661 data-nosnippet>661</a>            );
-<a href=#662 id=662 data-nosnippet>662</a>        }
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">let </span>saved_residual_mask = <span class="kw">match </span>member.role {
-<a href=#664 id=664 data-nosnippet>664</a>            ProductRole::RestoredImage(ProductTerm::Taylor(term))
-<a href=#665 id=665 data-nosnippet>665</a>                <span class="kw">if </span>planned.saved_residual_mask_read_bytes.is_some() =&gt;
-<a href=#666 id=666 data-nosnippet>666</a>            {
-<a href=#667 id=667 data-nosnippet>667</a>                <span class="prelude-val">Some</span>(output.saved_residual_mask(
-<a href=#668 id=668 data-nosnippet>668</a>                    member.axes().domain(),
-<a href=#669 id=669 data-nosnippet>669</a>                    ProductTerm::Taylor(term),
-<a href=#670 id=670 data-nosnippet>670</a>                    <span class="bool-val">true</span>,
-<a href=#671 id=671 data-nosnippet>671</a>                    <span class="bool-val">false</span>,
-<a href=#672 id=672 data-nosnippet>672</a>                )<span class="question-mark">?</span>)
-<a href=#673 id=673 data-nosnippet>673</a>            }
-<a href=#674 id=674 data-nosnippet>674</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#675 id=675 data-nosnippet>675</a>        };
-<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">let </span>explicit_mask = saved_residual_mask.as_ref().map(Option::is_some);
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">let </span>validity = <span class="kw">match </span>(saved_residual_mask, member.storage.pixel_mask()) {
-<a href=#678 id=678 data-nosnippet>678</a>            (<span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(mask)), <span class="kw">_</span>) =&gt; mask,
-<a href=#679 id=679 data-nosnippet>679</a>            (<span class="prelude-val">Some</span>(<span class="prelude-val">None</span>), <span class="kw">_</span>)
-<a href=#680 id=680 data-nosnippet>680</a>            | (<span class="prelude-val">None</span>, ProductPixelMask::Absent)
-<a href=#681 id=681 data-nosnippet>681</a>            | (
-<a href=#682 id=682 data-nosnippet>682</a>                <span class="prelude-val">None</span>,
-<a href=#683 id=683 data-nosnippet>683</a>                ProductPixelMask::Explicit(
-<a href=#684 id=684 data-nosnippet>684</a>                    ProductValidityRule::All | ProductValidityRule::FinalNormalState,
-<a href=#685 id=685 data-nosnippet>685</a>                ),
-<a href=#686 id=686 data-nosnippet>686</a>            ) =&gt; <span class="macro">vec!</span>[<span class="bool-val">true</span>; member.payload_values],
-<a href=#687 id=687 data-nosnippet>687</a>            (<span class="prelude-val">None</span>, ProductPixelMask::Explicit(rule)) =&gt; {
-<a href=#688 id=688 data-nosnippet>688</a>                products.validity(member.role, rule, refresh_mvc_mask)<span class="question-mark">?
-<a href=#689 id=689 data-nosnippet>689</a>            </span>}
-<a href=#690 id=690 data-nosnippet>690</a>        };
-<a href=#691 id=691 data-nosnippet>691</a>        <span class="kw">if </span>payload.len() != member.payload_values || validity.len() != member.payload_values {
-<a href=#692 id=692 data-nosnippet>692</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::PayloadLengthMismatch {
-<a href=#693 id=693 data-nosnippet>693</a>                expected: member.payload_values,
-<a href=#694 id=694 data-nosnippet>694</a>                actual: payload.len().max(validity.len()),
-<a href=#695 id=695 data-nosnippet>695</a>            });
-<a href=#696 id=696 data-nosnippet>696</a>        }
-<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">let </span>layout = storage_plan.layout(member.axes())<span class="question-mark">?</span>;
-<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">let </span>image = output.begin(
-<a href=#699 id=699 data-nosnippet>699</a>            member,
-<a href=#700 id=700 data-nosnippet>700</a>            layout,
-<a href=#701 id=701 data-nosnippet>701</a>            <span class="kw-2">&amp;</span>planned.beams_for_member(member, <span class="kw-2">&amp;</span>fitted_beams, <span class="kw-2">&amp;</span>restoring_beams),
-<a href=#702 id=702 data-nosnippet>702</a>            planned.uses_weight_image,
-<a href=#703 id=703 data-nosnippet>703</a>            explicit_mask,
-<a href=#704 id=704 data-nosnippet>704</a>        )<span class="question-mark">?</span>;
-<a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span><span class="kw-2">mut </span>writer = ProductMemberWriter::new(layout, image);
-<a href=#706 id=706 data-nosnippet>706</a>        writer.write_coupled(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>validity)<span class="question-mark">?</span>;
-<a href=#707 id=707 data-nosnippet>707</a>        writer.finish()<span class="question-mark">?</span>;
-<a href=#708 id=708 data-nosnippet>708</a>    }
-<a href=#709 id=709 data-nosnippet>709</a>    <span class="prelude-val">Ok</span>(planned.published(fitted_beams, restoring_beams))
-<a href=#710 id=710 data-nosnippet>710</a>}
-<a href=#711 id=711 data-nosnippet>711</a>
-<a href=#712 id=712 data-nosnippet>712</a><span class="attr">#[cfg(test)]
-<a href=#713 id=713 data-nosnippet>713</a></span><span class="kw">mod </span>mvc_adjustment_tests {
-<a href=#714 id=714 data-nosnippet>714</a>    <span class="kw">use </span><span class="kw">super</span>::adjust_cube_residual;
-<a href=#715 id=715 data-nosnippet>715</a>
-<a href=#716 id=716 data-nosnippet>716</a>    <span class="attr">#[test]
-<a href=#717 id=717 data-nosnippet>717</a>    </span><span class="kw">fn </span>residual_correction_uses_strict_channel_support_and_skips_a_blank_plane() {
-<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = [<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>];
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>common = [<span class="number">0.5</span>, <span class="number">0.6</span>, <span class="number">0.7</span>, <span class="number">0.8</span>];
-<a href=#720 id=720 data-nosnippet>720</a>        adjust_cube_residual(<span class="kw-2">&amp;mut </span>residual, <span class="kw-2">&amp;</span>common, <span class="kw-2">&amp;</span>[<span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">1.0</span>], <span class="number">0.2</span>).unwrap();
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="macro">assert_eq!</span>(residual, [<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.7 </span>* <span class="number">3.0 </span>/ <span class="number">0.4</span>, <span class="number">0.8 </span>* <span class="number">4.0</span>]);
-<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">let </span><span class="kw-2">mut </span>blank = [<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>];
-<a href=#723 id=723 data-nosnippet>723</a>        adjust_cube_residual(<span class="kw-2">&amp;mut </span>blank, <span class="kw-2">&amp;</span>common, <span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.0</span>], <span class="number">0.2</span>).unwrap();
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="macro">assert_eq!</span>(blank, [<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>]);
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span><span class="kw-2">mut </span>overflow = [f32::MAX];
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="macro">assert!</span>(adjust_cube_residual(<span class="kw-2">&amp;mut </span>overflow, <span class="kw-2">&amp;</span>[f32::MAX], <span class="kw-2">&amp;</span>[<span class="number">1.0</span>], <span class="number">0.2</span>).is_err());
-<a href=#727 id=727 data-nosnippet>727</a>    }
-<a href=#728 id=728 data-nosnippet>728</a>}
+<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>beams = planned.beams_for_member(member, <span class="kw-2">&amp;</span>fitted_beams, <span class="kw-2">&amp;</span>restoring_beams);
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">if </span>planned.refits_saved_psf_beams &amp;&amp; member.role == ProductRole::Psf(ProductTerm::Taylor(<span class="number">0</span>))
+<a href=#652 id=652 data-nosnippet>652</a>        {
+<a href=#653 id=653 data-nosnippet>653</a>            output.stage_saved_psf_beam(member, <span class="kw-2">&amp;</span>beams)<span class="question-mark">?</span>;
+<a href=#654 id=654 data-nosnippet>654</a>            <span class="kw">continue</span>;
+<a href=#655 id=655 data-nosnippet>655</a>        }
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span><span class="kw-2">mut </span>payload = products.payload(member.role)<span class="question-mark">?</span>;
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="comment">// An ordinary Taylor PB is formed at one frequency and zeroed by
+<a href=#658 id=658 data-nosnippet>658</a>        // `makePBImage`. MVC's supplied PB is the weighted cube PB: CASA
+<a href=#659 id=659 data-nosnippet>659</a>        // preserves its values below pblimit while marking those pixels
+<a href=#660 id=660 data-nosnippet>660</a>        // invalid. The other products still blank outside their support.
+<a href=#661 id=661 data-nosnippet>661</a>        </span><span class="kw">let </span>supplied_pb = inputs.taylor_primary_beam().is_some()
+<a href=#662 id=662 data-nosnippet>662</a>            &amp;&amp; member.role == ProductRole::PrimaryBeam(ProductTerm::Taylor(<span class="number">0</span>));
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">if </span>member.validity != ProductValidityRule::All &amp;&amp; !supplied_pb {
+<a href=#664 id=664 data-nosnippet>664</a>            zero_invalid_plane_values(
+<a href=#665 id=665 data-nosnippet>665</a>                <span class="kw-2">&amp;mut </span>payload,
+<a href=#666 id=666 data-nosnippet>666</a>                <span class="kw-2">&amp;</span>products.validity(member.role, member.validity, refresh_mvc_mask)<span class="question-mark">?</span>,
+<a href=#667 id=667 data-nosnippet>667</a>            );
+<a href=#668 id=668 data-nosnippet>668</a>        }
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>saved_residual_mask = <span class="kw">match </span>member.role {
+<a href=#670 id=670 data-nosnippet>670</a>            ProductRole::RestoredImage(ProductTerm::Taylor(term))
+<a href=#671 id=671 data-nosnippet>671</a>                <span class="kw">if </span>planned.saved_residual_mask_read_bytes.is_some() =&gt;
+<a href=#672 id=672 data-nosnippet>672</a>            {
+<a href=#673 id=673 data-nosnippet>673</a>                <span class="prelude-val">Some</span>(output.saved_residual_mask(
+<a href=#674 id=674 data-nosnippet>674</a>                    member.axes().domain(),
+<a href=#675 id=675 data-nosnippet>675</a>                    ProductTerm::Taylor(term),
+<a href=#676 id=676 data-nosnippet>676</a>                    <span class="bool-val">true</span>,
+<a href=#677 id=677 data-nosnippet>677</a>                    <span class="bool-val">false</span>,
+<a href=#678 id=678 data-nosnippet>678</a>                )<span class="question-mark">?</span>)
+<a href=#679 id=679 data-nosnippet>679</a>            }
+<a href=#680 id=680 data-nosnippet>680</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#681 id=681 data-nosnippet>681</a>        };
+<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span>explicit_mask = saved_residual_mask.as_ref().map(Option::is_some);
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>validity = <span class="kw">match </span>(saved_residual_mask, member.storage.pixel_mask()) {
+<a href=#684 id=684 data-nosnippet>684</a>            (<span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(mask)), <span class="kw">_</span>) =&gt; mask,
+<a href=#685 id=685 data-nosnippet>685</a>            (<span class="prelude-val">Some</span>(<span class="prelude-val">None</span>), <span class="kw">_</span>)
+<a href=#686 id=686 data-nosnippet>686</a>            | (<span class="prelude-val">None</span>, ProductPixelMask::Absent)
+<a href=#687 id=687 data-nosnippet>687</a>            | (
+<a href=#688 id=688 data-nosnippet>688</a>                <span class="prelude-val">None</span>,
+<a href=#689 id=689 data-nosnippet>689</a>                ProductPixelMask::Explicit(
+<a href=#690 id=690 data-nosnippet>690</a>                    ProductValidityRule::All | ProductValidityRule::FinalNormalState,
+<a href=#691 id=691 data-nosnippet>691</a>                ),
+<a href=#692 id=692 data-nosnippet>692</a>            ) =&gt; <span class="macro">vec!</span>[<span class="bool-val">true</span>; member.payload_values],
+<a href=#693 id=693 data-nosnippet>693</a>            (<span class="prelude-val">None</span>, ProductPixelMask::Explicit(rule)) =&gt; {
+<a href=#694 id=694 data-nosnippet>694</a>                products.validity(member.role, rule, refresh_mvc_mask)<span class="question-mark">?
+<a href=#695 id=695 data-nosnippet>695</a>            </span>}
+<a href=#696 id=696 data-nosnippet>696</a>        };
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">if </span>payload.len() != member.payload_values || validity.len() != member.payload_values {
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ProductsError::PayloadLengthMismatch {
+<a href=#699 id=699 data-nosnippet>699</a>                expected: member.payload_values,
+<a href=#700 id=700 data-nosnippet>700</a>                actual: payload.len().max(validity.len()),
+<a href=#701 id=701 data-nosnippet>701</a>            });
+<a href=#702 id=702 data-nosnippet>702</a>        }
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>layout = storage_plan.layout(member.axes())<span class="question-mark">?</span>;
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>image = output.begin(
+<a href=#705 id=705 data-nosnippet>705</a>            member,
+<a href=#706 id=706 data-nosnippet>706</a>            layout,
+<a href=#707 id=707 data-nosnippet>707</a>            <span class="kw-2">&amp;</span>beams,
+<a href=#708 id=708 data-nosnippet>708</a>            planned.uses_weight_image,
+<a href=#709 id=709 data-nosnippet>709</a>            explicit_mask,
+<a href=#710 id=710 data-nosnippet>710</a>        )<span class="question-mark">?</span>;
+<a href=#711 id=711 data-nosnippet>711</a>        <span class="kw">let </span><span class="kw-2">mut </span>writer = ProductMemberWriter::new(layout, image);
+<a href=#712 id=712 data-nosnippet>712</a>        writer.write_coupled(<span class="kw-2">&amp;</span>payload, <span class="kw-2">&amp;</span>validity)<span class="question-mark">?</span>;
+<a href=#713 id=713 data-nosnippet>713</a>        writer.finish()<span class="question-mark">?</span>;
+<a href=#714 id=714 data-nosnippet>714</a>    }
+<a href=#715 id=715 data-nosnippet>715</a>    <span class="prelude-val">Ok</span>(planned.published(fitted_beams, restoring_beams))
+<a href=#716 id=716 data-nosnippet>716</a>}
+<a href=#717 id=717 data-nosnippet>717</a>
+<a href=#718 id=718 data-nosnippet>718</a><span class="attr">#[cfg(test)]
+<a href=#719 id=719 data-nosnippet>719</a></span><span class="kw">mod </span>mvc_adjustment_tests {
+<a href=#720 id=720 data-nosnippet>720</a>    <span class="kw">use </span><span class="kw">super</span>::adjust_cube_residual;
+<a href=#721 id=721 data-nosnippet>721</a>
+<a href=#722 id=722 data-nosnippet>722</a>    <span class="attr">#[test]
+<a href=#723 id=723 data-nosnippet>723</a>    </span><span class="kw">fn </span>residual_correction_uses_strict_channel_support_and_skips_a_blank_plane() {
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">let </span><span class="kw-2">mut </span>residual = [<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>];
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span>common = [<span class="number">0.5</span>, <span class="number">0.6</span>, <span class="number">0.7</span>, <span class="number">0.8</span>];
+<a href=#726 id=726 data-nosnippet>726</a>        adjust_cube_residual(<span class="kw-2">&amp;mut </span>residual, <span class="kw-2">&amp;</span>common, <span class="kw-2">&amp;</span>[<span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">1.0</span>], <span class="number">0.2</span>).unwrap();
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="macro">assert_eq!</span>(residual, [<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.7 </span>* <span class="number">3.0 </span>/ <span class="number">0.4</span>, <span class="number">0.8 </span>* <span class="number">4.0</span>]);
+<a href=#728 id=728 data-nosnippet>728</a>        <span class="kw">let </span><span class="kw-2">mut </span>blank = [<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>];
+<a href=#729 id=729 data-nosnippet>729</a>        adjust_cube_residual(<span class="kw-2">&amp;mut </span>blank, <span class="kw-2">&amp;</span>common, <span class="kw-2">&amp;</span>[<span class="number">0.0</span>, <span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.0</span>], <span class="number">0.2</span>).unwrap();
+<a href=#730 id=730 data-nosnippet>730</a>        <span class="macro">assert_eq!</span>(blank, [<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>]);
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span><span class="kw-2">mut </span>overflow = [f32::MAX];
+<a href=#732 id=732 data-nosnippet>732</a>        <span class="macro">assert!</span>(adjust_cube_residual(<span class="kw-2">&amp;mut </span>overflow, <span class="kw-2">&amp;</span>[f32::MAX], <span class="kw-2">&amp;</span>[<span class="number">1.0</span>], <span class="number">0.2</span>).is_err());
+<a href=#733 id=733 data-nosnippet>733</a>    }
+<a href=#734 id=734 data-nosnippet>734</a>}
 </code></pre></div></section></main></body></html>
