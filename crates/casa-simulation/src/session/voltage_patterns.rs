@@ -111,6 +111,8 @@ fn table_bytes(path: &Path) -> SimulatorResult<u64> {
 pub(super) struct ResolvedBeam {
     pub(super) pattern: BeamSource,
     pub(super) standard: bool,
+    /// Saved AZEL tangent offset in radians, and its reference frequency Hz.
+    pub(super) squint: Option<([f64; 2], f64)>,
 }
 
 /// MSDerivedValues::parAngle leaves equatorial feeds fixed. The component
@@ -176,6 +178,7 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
             .map(|pattern| ResolvedBeam {
                 pattern: BeamSource::Configured(pattern),
                 standard: true,
+                squint: None,
             })
             .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
@@ -191,17 +194,30 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
         .cell_accessor(index, "pbdescription")
         .and_then(|cell| cell.record())
         .map_err(raised)?;
-    if session.squint
+    let squint = if session.squint
         && let Some(Value::Record(direction)) = record.get("squintdir")
     {
         let offset =
             casa_types::measures::record::direction_from_record(direction).map_err(raised)?;
         if offset.as_angles() != (0., 0.) {
-            return Err(SimulatorError::not_yet_implemented(
-                "squinted custom simulation voltage patterns (#1297)",
-            ));
+            let reference = quantity(&record, "squintreffreq", "Hz")?;
+            // A squint is a signed tangent offset. MVDirection::getAngle
+            // uses atan2's signed longitude; a sky longitude in [0,2π)
+            // would turn a small negative offset into almost a full turn.
+            let [cx, cy, _] = offset.cosines();
+            let (x, y) = (cy.atan2(cx), offset.latitude_rad());
+            if !x.is_finite() || !y.is_finite() || !reference.is_finite() || reference <= 0. {
+                return Err(raised(
+                    "squint offset and positive reference frequency must be finite",
+                ));
+            }
+            Some(([x, y], reference))
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
     let name = text(&record, "name")?;
     let pattern = if name == "IMAGE" {
         BeamSource::Image(images::load(session, &record)?)
@@ -213,6 +229,7 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
     Ok(ResolvedBeam {
         pattern,
         standard: false,
+        squint,
     })
 }
 
