@@ -11,7 +11,7 @@ use std::sync::Arc;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo};
 use casa_imaging_deconvolution::{
     AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes,
-    NoiseEstimate, ReconstructionMaskPlan,
+    NoiseEstimate, ReconstructionMask, ReconstructionMaskPlan,
 };
 use casa_imaging_model::{
     AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
@@ -51,7 +51,10 @@ pub(super) enum DomainMask {
         support: std::sync::Arc<[bool]>,
     },
     /// CASA auto-multithresh support from the current normal state.
-    AutoMultithresh(AutoMultithreshControls),
+    AutoMultithresh {
+        controls: AutoMultithreshControls,
+        previous: Option<(MaskPlanes, Arc<[bool]>)>,
+    },
     /// Inclusive pixel boxes `[x0, y0, x1, y1]`, each on its channels: a
     /// CRTF region limited to a spectral range over part of a cube.
     ChannelBoxes(Vec<([i64; 4], RangeInclusive<usize>)>),
@@ -273,20 +276,23 @@ fn request_mask(
     };
     Ok(match (request.usemask, &request.mask_image) {
         (UseMask::Pb, _) => within_beam(DomainMask::FullPlane, request.pbmask),
-        (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh(AutoMultithreshControls {
-            sidelobe_factor: request.sidelobethreshold,
-            noise_factor: request.noisethreshold,
-            low_noise_factor: request.lownoisethreshold,
-            negative_factor: request.negativethreshold,
-            minimum_beam_fraction: request.minbeamfrac,
-            smooth_factor: request.smoothfactor,
-            cut_threshold: request.cutthreshold,
-            grow_iterations: request.growiterations,
-            grow_prune: request.dogrowprune,
-            minimum_percent_change: request.minpercentchange,
-            noise: noise_estimate(request),
-            verbose: request.verbose,
-        }),
+        (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh {
+            controls: AutoMultithreshControls {
+                sidelobe_factor: request.sidelobethreshold,
+                noise_factor: request.noisethreshold,
+                low_noise_factor: request.lownoisethreshold,
+                negative_factor: request.negativethreshold,
+                minimum_beam_fraction: request.minbeamfrac,
+                smooth_factor: request.smoothfactor,
+                cut_threshold: request.cutthreshold,
+                grow_iterations: request.growiterations,
+                grow_prune: request.dogrowprune,
+                minimum_percent_change: request.minpercentchange,
+                noise: noise_estimate(request),
+                verbose: request.verbose,
+            },
+            previous: None,
+        },
         (UseMask::User, Some(path)) => named(DomainMask::Image(path.clone())),
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
@@ -522,14 +528,23 @@ fn mask_plan(
                 support,
             }
         }
-        DomainMask::AutoMultithresh(controls) => ReconstructionMaskPlan::AutoMultithresh {
-            coordinate,
-            controls,
-            completed_major_cycles: 0,
-            cycle_threshold_reached: false,
-            previous: None,
-            stopped_channels: Box::new([]),
-        },
+        DomainMask::AutoMultithresh { controls, previous } => {
+            ReconstructionMaskPlan::AutoMultithresh {
+                coordinate,
+                controls,
+                completed_major_cycles: 0,
+                cycle_threshold_reached: false,
+                previous: previous
+                    .map(|(planes, support)| {
+                        ReconstructionMask::from_plane_support(
+                            coordinate, image_size, planes, support,
+                        )
+                        .map(Box::new)
+                    })
+                    .transpose()?,
+                stopped_channels: Box::new([]),
+            }
+        }
         DomainMask::WithinPrimaryBeam { within, level } => {
             ReconstructionMaskPlan::within_primary_beam(
                 mask_plan(domain, *within, channels, context, resident)?,
@@ -868,7 +883,7 @@ mod tests {
         );
         assert!(matches!(
             mask_of(&automatic),
-            DomainMask::AutoMultithresh(_)
+            DomainMask::AutoMultithresh { .. }
         ));
         // A new explicit empty region must not silently reuse an old mask:
         // it stays the request's own empty mask, and a cleaning run over an
