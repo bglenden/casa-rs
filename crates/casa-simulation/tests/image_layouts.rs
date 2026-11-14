@@ -128,7 +128,7 @@ fn direct_image_layouts_and_stokes_match_casa() {
 }
 
 #[test]
-fn polarized_total_power_refuses_before_testing_spectral_overlap() {
+fn polarized_total_power_accepts_windows_with_and_without_spectral_overlap() {
     use casa_tables::{Table, TableOptions};
     use casa_types::{ArrayValue, Value as CellValue};
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
@@ -138,7 +138,7 @@ fn polarized_total_power_refuses_before_testing_spectral_overlap() {
     let inputs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_image_layouts");
     for overlap in [true, false] {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("unsupported.ms");
+        let path = directory.path().join("polarized-sd.ms");
         copy(&inputs.join("base.ms"), &path);
         if !overlap {
             let spectral = path.join("SPECTRAL_WINDOW");
@@ -154,7 +154,6 @@ fn polarized_total_power_refuses_before_testing_spectral_overlap() {
             }
             table.save(TableOptions::new(&spectral)).unwrap();
         }
-        let before = std::fs::read(path.join("table.dat")).unwrap();
         let mut sm = Simulator::open_from_ms(
             &path,
             SimulatorOptions {
@@ -171,18 +170,39 @@ fn polarized_total_power_refuses_before_testing_spectral_overlap() {
             ..casa_simulation::PredictionOptions::default()
         })
         .unwrap();
-        let error = sm
-            .predict(&PredictSpec {
-                images: vec![inputs.join("iquv.image")],
-                component_lists: Vec::new(),
-                incremental: false,
-            })
-            .unwrap_err();
-        assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
-        assert!(error.to_string().contains("#1299"));
+        sm.predict(&PredictSpec {
+            images: vec![inputs.join("iquv.image")],
+            component_lists: Vec::new(),
+            incremental: false,
+        })
+        .unwrap();
         sm.close().unwrap();
-        assert_eq!(std::fs::read(path.join("table.dat")).unwrap(), before);
-        let unchanged = serde_json::json!({"after": fixture["cases"][0]["before"]});
-        assert_eq!(existing_ms_calculations::compare(&path, &unchanged), 0.);
+        // At zero baseline, the point-only GridFT control is the same
+        // coherency sampled by BOX, conjugated by SDGrid. Channels outside
+        // the image have no contribution; unselected fields keep their data.
+        let mut expected = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == "iquv")
+            .unwrap()["after"]
+            .clone();
+        for row in expected["rows"].as_array_mut().unwrap() {
+            if row["field"] != 0 {
+                continue;
+            }
+            let sample = overlap && row["antennas"][0] == row["antennas"][1];
+            for column in ["data", "corrected_data"] {
+                for value in row[column].as_array_mut().unwrap() {
+                    if sample {
+                        value[1] = serde_json::json!(-value[1].as_f64().unwrap());
+                    } else {
+                        *value = serde_json::json!([0., 0.]);
+                    }
+                }
+            }
+        }
+        let reference = serde_json::json!({"after": expected});
+        assert!(existing_ms_calculations::compare(&path, &reference) < 1e-3);
     }
 }

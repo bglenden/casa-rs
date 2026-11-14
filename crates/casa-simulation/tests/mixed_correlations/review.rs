@@ -30,14 +30,24 @@ fn opened(path: &Path) -> Simulator {
 }
 
 #[test]
-fn selecting_a_later_correlation_setup_keeps_sd_explicitly_unsupported() {
+fn selecting_a_later_correlation_setup_predicts_only_that_setup() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("sd.ms");
     copy(
         &inputs().join("sm_mixed_correlations/full_linear.ms"),
         &path,
     );
-    let before = std::fs::read(path.join("table.dat")).unwrap();
+    let fixture: super::Value = serde_json::from_reader(super::GzDecoder::new(
+        &include_bytes!("../data/sm_mixed_correlations_casa.json.gz")[..],
+    ))
+    .unwrap();
+    let control = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "full_linear")
+        .unwrap();
+    let mut expected = control["before"].clone();
     let mut sm = opened(&path);
     sm.set_data(&[1], &[], "").unwrap();
     sm.set_options(&casa_simulation::PredictionOptions {
@@ -46,21 +56,42 @@ fn selecting_a_later_correlation_setup_keeps_sd_explicitly_unsupported() {
         ..Default::default()
     })
     .unwrap();
-    let error = sm
-        .predict(&PredictSpec {
-            images: vec![inputs().join("sm_image_layouts/canonical.image")],
-            ..Default::default()
-        })
-        .expect_err(
-            "mixed SD correlations remain unimplemented even when only the later setup is selected",
-        );
-    assert_eq!(
-        error.outcome(),
-        casa_simulation::CasaOutcome::NotYetImplemented
-    );
-    assert!(error.to_string().contains("#1299"));
+    sm.predict(&PredictSpec {
+        images: vec![inputs().join("sm_image_layouts/canonical.image")],
+        ..Default::default()
+    })
+    .unwrap();
     sm.close().unwrap();
-    assert_eq!(std::fs::read(path.join("table.dat")).unwrap(), before);
+    for (index, row) in expected["rows"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        if row["data_desc_id"] != 1 {
+            continue;
+        }
+        // CASA initializes the selected scratch model when opening its
+        // later correlation shape; retain that existing behavior too.
+        row["model_data"] = control["after"]["rows"][index]["model_data"].clone();
+        // The later window's 230 GHz channels all select the image's third
+        // plane: a 3 Jy Stokes-I point at field 0. Field 1 misses the pixel.
+        let on_source = row["field"] == 0
+            && row["antennas"][0] == row["antennas"][1]
+            && row["flag_row"] == false;
+        for column in ["data", "corrected_data"] {
+            for (index, value) in row[column].as_array_mut().unwrap().iter_mut().enumerate() {
+                let flux = if on_source && matches!(index % 4, 0 | 3) {
+                    3.
+                } else {
+                    0.
+                };
+                *value = serde_json::json!([flux, 0.]);
+            }
+        }
+    }
+    let reference = serde_json::json!({"after": expected, "all_fields_selected": true});
+    assert!(super::existing_ms_calculations::compare(&path, &reference) < 1e-3);
 }
 
 struct Watch {
