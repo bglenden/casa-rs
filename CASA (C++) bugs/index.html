@@ -5023,6 +5023,31 @@ mask, where a fresh call and a restart of a cube of several channels have
 5e-5 NRMS. <code>aw_restart_one_window</code> in
 <code>resources/casa-compat/tclean-aw-cube-cases.json</code> shows it and fails on the
 mask alone.</p>
+<h2 id="a-one-channel-mosaic-cube-can-lose-its-residual-mask-during-a-major-cycle">A one-channel mosaic cube can lose its residual mask during a major cycle<a class="headerlink" href="#a-one-channel-mosaic-cube-can-lose-its-residual-mask-during-a-major-cycle" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-14</li>
+<li>Status: CASA cache-dependent defect. The corresponding one-channel
+  restart check remains on <a href="https://github.com/bglenden/casa-rs/issues/944">#944</a>.</li>
+<li>Affected code: <code>SynthesisImagerVi2::runCubeGridding</code>,
+  <code>SIImageStore::copyMask</code>.</li>
+</ul>
+<p>On CASA 6.7.6.14, image one channel of <code>refim_alma_mosaic.ms</code> with
+<code>gridder='mosaic'</code>, <code>specmode='cube'</code>, natural weighting, Högbom,
+480 pixels, 0.06 arcsec cells, <code>pblimit=0.2</code> and <code>pbcor=True</code>.
+CLEAN eight iterations, edit one pixel of the residual mask, then
+resume for twelve iterations with <code>calcpsf=False, calcres=False</code>.
+CASA logs that <code>residual/mask0</code> is already open in the table cache
+during both calls. Its mask copy removes the old default before trying
+to create the replacement. The error is caught as a T/F mask warning.
+The residual and restored image are left without masks even though the
+saved PB has <code>mask0</code>. In the corresponding two-channel runs the copy
+succeeds and both products receive the saved PB mask.</p>
+<p>casa-rs keeps the generated PB mask on the positive-cutoff cube path.
+In the initial one-channel CLEAN, the raw CASA masks differ by 45,662
+pixels on each of these two products. All nine products have normalized
+RMS at most 5.20e-7 and the controller counts agree. See
+<a href="https://github.com/bglenden/casa-rs/pull/1424">#1424</a> for the separate
+verified two-channel saved-product behavior.</p>
 <h2 id="a-cubes-beam-for-a-plane-without-one-depends-on-how-memory-splits-the-cube">A cube's beam for a plane without one depends on how memory splits the cube<a class="headerlink" href="#a-cubes-beam-for-a-plane-without-one-depends-on-how-memory-splits-the-cube" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-04</li>

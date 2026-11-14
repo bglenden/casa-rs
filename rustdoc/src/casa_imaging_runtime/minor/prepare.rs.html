@@ -29,8 +29,8 @@
 <a href=#29 id=29 data-nosnippet>29</a>///
 <a href=#30 id=30 data-nosnippet>30</a>/// # Panics
 <a href=#31 id=31 data-nosnippet>31</a>///
-<a href=#32 id=32 data-nosnippet>32</a>/// A nonempty mask list must match the domains of a single-channel,
-<a href=#33 id=33 data-nosnippet>33</a>/// single-polarization completion. Each mask must match its own field.
+<a href=#32 id=32 data-nosnippet>32</a>/// A nonempty mask list must match the domain and channel axes of a
+<a href=#33 id=33 data-nosnippet>33</a>/// single-polarization completion, with channels adjacent within each domain.
 <a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub fn </span>prepare_minor_cycle_with_residual_masks(
 <a href=#35 id=35 data-nosnippet>35</a>    completion: <span class="kw-2">&amp;</span>MajorCycleCompletion,
 <a href=#36 id=36 data-nosnippet>36</a>    mask_plans: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
@@ -161,7 +161,7 @@
 <a href=#161 id=161 data-nosnippet>161</a>            <span class="kw-2">&amp;</span>plane.residual[<span class="number">0</span>],
 <a href=#162 id=162 data-nosnippet>162</a>            <span class="kw-2">&amp;</span>plane.support,
 <a href=#163 id=163 data-nosnippet>163</a>            inputs
-<a href=#164 id=164 data-nosnippet>164</a>                .residual_mask(key.domain)
+<a href=#164 id=164 data-nosnippet>164</a>                .residual_mask(<span class="kw-2">*</span>key)
 <a href=#165 id=165 data-nosnippet>165</a>                .unwrap_or_else(|| pixels.residual_mask(setup.residual_pixel_mask)),
 <a href=#166 id=166 data-nosnippet>166</a>            <span class="number">0.0</span>,
 <a href=#167 id=167 data-nosnippet>167</a>            setup.automask,
@@ -244,37 +244,38 @@
 <a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">if </span>residual_masks.is_empty() {
 <a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">return</span>;
 <a href=#246 id=246 data-nosnippet>246</a>    }
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="macro">assert_eq!</span>(residual_masks.len(), normal.domain_count());
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="macro">assert_eq!</span>(normal.slab().total_channels(), <span class="number">1</span>);
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">let </span>channels = normal.slab().total_channels();
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="macro">assert_eq!</span>(residual_masks.len(), normal.domain_count() * channels);
 <a href=#249 id=249 data-nosnippet>249</a>    <span class="macro">assert_eq!</span>(normal.polarization_count(), <span class="number">1</span>);
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">for </span>(domain, mask) <span class="kw">in </span>residual_masks.iter().enumerate() {
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(mask) = mask {
-<a href=#252 id=252 data-nosnippet>252</a>            <span class="kw">let </span>[nx, ny] = normal.domain_shape(domain).expect(<span class="string">"known saved field"</span>);
-<a href=#253 id=253 data-nosnippet>253</a>            <span class="macro">assert_eq!</span>(mask.shape(), PlaneShape::new(nx, ny));
-<a href=#254 id=254 data-nosnippet>254</a>        }
-<a href=#255 id=255 data-nosnippet>255</a>    }
-<a href=#256 id=256 data-nosnippet>256</a>}
-<a href=#257 id=257 data-nosnippet>257</a>
-<a href=#258 id=258 data-nosnippet>258</a><span class="kw">fn </span>aggregate_statistics(
-<a href=#259 id=259 data-nosnippet>259</a>    planes: <span class="kw-2">&amp;</span>[(PlaneKey, PlaneStatistics)],
-<a href=#260 id=260 data-nosnippet>260</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
-<a href=#261 id=261 data-nosnippet>261</a>    nsigma: f64,
-<a href=#262 id=262 data-nosnippet>262</a>) -&gt; ResidualStatistics {
-<a href=#263 id=263 data-nosnippet>263</a>    <span class="comment">// Each image domain is one CASA image store.
-<a href=#264 id=264 data-nosnippet>264</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>statistics = ResidualStatistics::empty();
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">let </span>domains = planes
-<a href=#266 id=266 data-nosnippet>266</a>        .iter()
-<a href=#267 id=267 data-nosnippet>267</a>        .map(|(key, <span class="kw">_</span>)| key.domain)
-<a href=#268 id=268 data-nosnippet>268</a>        .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">for </span>domain <span class="kw">in </span>domains {
-<a href=#270 id=270 data-nosnippet>270</a>        statistics.include_store(
-<a href=#271 id=271 data-nosnippet>271</a>            planes
-<a href=#272 id=272 data-nosnippet>272</a>                .iter()
-<a href=#273 id=273 data-nosnippet>273</a>                .filter(|(key, <span class="kw">_</span>)| key.domain == domain)
-<a href=#274 id=274 data-nosnippet>274</a>                .map(|(key, plane)| (plane, cache.summaries[key].sidelobe())),
-<a href=#275 id=275 data-nosnippet>275</a>            nsigma,
-<a href=#276 id=276 data-nosnippet>276</a>        );
-<a href=#277 id=277 data-nosnippet>277</a>    }
-<a href=#278 id=278 data-nosnippet>278</a>    statistics
-<a href=#279 id=279 data-nosnippet>279</a>}
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">for </span>(index, mask) <span class="kw">in </span>residual_masks.iter().enumerate() {
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>domain = index / channels;
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(mask) = mask {
+<a href=#253 id=253 data-nosnippet>253</a>            <span class="kw">let </span>[nx, ny] = normal.domain_shape(domain).expect(<span class="string">"known saved field"</span>);
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="macro">assert_eq!</span>(mask.shape(), PlaneShape::new(nx, ny));
+<a href=#255 id=255 data-nosnippet>255</a>        }
+<a href=#256 id=256 data-nosnippet>256</a>    }
+<a href=#257 id=257 data-nosnippet>257</a>}
+<a href=#258 id=258 data-nosnippet>258</a>
+<a href=#259 id=259 data-nosnippet>259</a><span class="kw">fn </span>aggregate_statistics(
+<a href=#260 id=260 data-nosnippet>260</a>    planes: <span class="kw-2">&amp;</span>[(PlaneKey, PlaneStatistics)],
+<a href=#261 id=261 data-nosnippet>261</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
+<a href=#262 id=262 data-nosnippet>262</a>    nsigma: f64,
+<a href=#263 id=263 data-nosnippet>263</a>) -&gt; ResidualStatistics {
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="comment">// Each image domain is one CASA image store.
+<a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>statistics = ResidualStatistics::empty();
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">let </span>domains = planes
+<a href=#267 id=267 data-nosnippet>267</a>        .iter()
+<a href=#268 id=268 data-nosnippet>268</a>        .map(|(key, <span class="kw">_</span>)| key.domain)
+<a href=#269 id=269 data-nosnippet>269</a>        .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">for </span>domain <span class="kw">in </span>domains {
+<a href=#271 id=271 data-nosnippet>271</a>        statistics.include_store(
+<a href=#272 id=272 data-nosnippet>272</a>            planes
+<a href=#273 id=273 data-nosnippet>273</a>                .iter()
+<a href=#274 id=274 data-nosnippet>274</a>                .filter(|(key, <span class="kw">_</span>)| key.domain == domain)
+<a href=#275 id=275 data-nosnippet>275</a>                .map(|(key, plane)| (plane, cache.summaries[key].sidelobe())),
+<a href=#276 id=276 data-nosnippet>276</a>            nsigma,
+<a href=#277 id=277 data-nosnippet>277</a>        );
+<a href=#278 id=278 data-nosnippet>278</a>    }
+<a href=#279 id=279 data-nosnippet>279</a>    statistics
+<a href=#280 id=280 data-nosnippet>280</a>}
 </code></pre></div></section></main></body></html>
