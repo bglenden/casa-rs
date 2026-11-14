@@ -106,8 +106,17 @@ pub(super) fn image_band_lsrk(
         first_hz - 1.5 * increment_hz,
         first_hz + (channels as f64 + 0.5) * increment_hz,
     ]
-    .map(|hz| hz * factor);
+    .map(|hz| tuned_selection_hz(hz * factor));
     Ok([ends[0].min(ends[1]), ends[0].max(ends[1])])
+}
+
+/// CASA's tuneSelectData sends each LSRK endpoint through std::to_string
+/// and parses the resulting frequency quantity. Its six fractional digits
+/// can put the endpoint exactly on a stored channel's inclusive edge.
+fn tuned_selection_hz(hertz: f64) -> f64 {
+    format!("{hertz:.6}")
+        .parse()
+        .expect("a formatted frequency is a number")
 }
 
 /// The bands a cube's gridding selects each surveyed window's channels by:
@@ -270,6 +279,25 @@ impl CubeBands {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tuned_band_includes_only_channel_edges_reached_after_casa_rounding() {
+        let edge: f64 = 1_525_000_000.0;
+        let below = edge.next_down();
+        let mut band = FrequencyBands::new(
+            casa_imaging_model::FrequencyFrame::Lsrk,
+            vec![[1.025e9, tuned_selection_hz(below)]],
+        )
+        .expect("ordered band");
+        assert!(band.meets(1.0, [edge, edge + 50.0e6]));
+        band = FrequencyBands::new(
+            casa_imaging_model::FrequencyFrame::Lsrk,
+            vec![[1.025e9, tuned_selection_hz(edge - 1.0e-6)]],
+        )
+        .expect("ordered band");
+        assert!(!band.meets(1.0, [edge, edge + 50.0e6]));
+        assert_eq!(tuned_selection_hz(edge + 2.4e-6), edge + 2.0e-6);
+    }
 
     #[test]
     fn a_band_narrows_the_bands_it_overlaps_and_is_added_where_none() {
