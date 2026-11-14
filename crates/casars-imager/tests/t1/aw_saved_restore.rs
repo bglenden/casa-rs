@@ -185,6 +185,7 @@ fn aw_saved_taylor_alpha_uses_a_user_named_default_residual_mask() {
 #[test]
 fn aw_mtmfs_cleans_saved_residuals_before_its_first_major_cycle() {
     let (observation, mut controls) = two_term_aw_restart();
+    controls["pblimit"] = json!(-0.01);
     let (_, dirty) = observation.image("aw", controls.clone());
     let (_, standard) = observation.image(
         "standard",
@@ -244,6 +245,30 @@ fn aw_mtmfs_cleans_saved_residuals_before_its_first_major_cycle() {
     controls["calcres"] = json!(false);
     controls["niter"] = json!(1);
     controls["threshold"] = json!("2Jy");
+    let mut positive_limit = controls.clone();
+    positive_limit["pblimit"] = json!(0.01);
+    let Err(error) = observation.try_image("aw", positive_limit) else {
+        panic!("saved CLEAN admitted a positive PB mask cutoff");
+    };
+    assert!(error.contains("#944"), "{error}");
+    let residual0 = &residuals[0].1;
+    let mut masked = PagedImage::<f32>::open(residual0).unwrap();
+    let mut mask = ndarray::ArrayD::from_elem(ndarray::IxDyn(masked.shape()), true);
+    mask[[target[0], target[1], 0, 0]] = false;
+    masked.put_mask("user_mask", &mask).unwrap();
+    masked.set_default_mask("user_mask").unwrap();
+    masked.save().unwrap();
+    let masked_before = snapshot(residual0);
+    let Err(error) = observation.try_image("aw", controls.clone()) else {
+        panic!("saved CLEAN admitted a user-masked Taylor residual");
+    };
+    assert!(error.contains("#944"), "{error}");
+    assert_unchanged(&masked_before, &snapshot(residual0));
+    masked.unset_default_mask().unwrap();
+    masked.remove_mask("user_mask").unwrap();
+    masked.save().unwrap();
+    residuals[0].0 = snapshot(residual0);
+
     let (stopped, _) = observation.image("aw", controls.clone());
     assert_eq!((stopped.minor_iterations, stopped.major_cycles), (0, 0));
     for (bytes, path) in &residuals {

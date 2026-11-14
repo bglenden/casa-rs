@@ -189,6 +189,16 @@ fn read(
             (!request.calcpsf, residual),
             restart::reuses_direction_dependent_psf(request),
         )?;
+        if request.niter > 0
+            && let Some(path) = existing.masked_taylor_residual()
+        {
+            return Err(PrepareError::Restart {
+                path: path.to_path_buf(),
+                reason:
+                    "AW CLEAN from a masked saved Taylor residual is not implemented yet (#944)"
+                        .into(),
+            });
+        }
         if psf_beam {
             let mut charge = admit(
                 &context.host,

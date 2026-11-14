@@ -198,6 +198,17 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         (false, true) => "calcpsf=False",
         _ => "calcres=False",
     };
+    if !request.calcpsf
+        && !request.calcres
+        && request.niter > 0
+        && request.pblimit > 0.0
+        && reuses_direction_dependent_psf(request)
+    {
+        return refuse(
+            request.imagename.clone(),
+            "AW CLEAN from a saved Taylor residual with a positive pblimit requires saved residual-mask support (#944)".into(),
+        );
+    }
     let unsupported = match &request.gridder {
         _ if request.outlierfile.is_some() => Some("with outlier fields"),
         Gridder::Standard { facets } | Gridder::Wproject { facets, .. } if facets.get() > 1 => {
