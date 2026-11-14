@@ -176,7 +176,7 @@ fn setup<'a>(beam: Option<AnalyticPrimaryBeam<'a>>) -> MinorCycleSetup<'a> {
         algorithm: ReconstructionAlgorithm::Hogbom,
         accounting: HogbomIterationAccounting::Strict,
         response: None,
-        saved_taylor_residual: false,
+        saved_weighted_residual: false,
         nsigma: 0.0,
         noise: NoiseEstimate::Fast,
         automask: false,

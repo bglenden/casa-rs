@@ -19,7 +19,7 @@ pub fn prepare_minor_cycle(
     prepare_minor_cycle_with_residual_mask(completion, mask_plans, setup, cache, team, None)
 }
 
-/// Prepare a minor cycle with an existing Taylor residual's pixel mask.
+/// Prepare a minor cycle with an existing residual's pixel mask.
 /// CASA uses it for the controller's peak, while the CLEAN mask continues
 /// to define the support of the component solver.
 ///
@@ -29,27 +29,18 @@ pub fn prepare_minor_cycle(
 ///
 /// # Panics
 ///
-/// The supplied mask must match a single-polarization, single-domain
-/// Taylor completion.
+/// The supplied mask must match a single-polarization, single-domain, single-plane
+/// completion.
 pub fn prepare_minor_cycle_with_residual_mask(
     completion: &MajorCycleCompletion,
     mask_plans: &ImageDomainReconstructionMaskPlans,
     setup: &MinorCycleSetup<'_>,
     cache: &mut PsfCache,
     team: &WorkerTeam,
-    residual_mask: Option<&Support>,
+    residual_mask: Option<Support>,
 ) -> Result<PreparedMinorCycle, MinorCycleRunError> {
     let normal = completion.normal_state();
-    if let Some(mask) = residual_mask {
-        let [nx, ny] = normal.shape();
-        assert!(
-            is_taylor(normal)
-                && normal.domain_count() == 1
-                && normal.polarization_count() == 1
-                && mask.shape() == PlaneShape::new(nx, ny),
-            "the saved pixel mask must describe the single Taylor plane"
-        );
-    }
+    check_residual_mask(normal, residual_mask.as_ref());
     let base = completion.final_model();
     let taylor = is_taylor(normal);
     for beams in [&setup.psf_beams, &setup.mask_beams]
@@ -124,6 +115,7 @@ pub fn prepare_minor_cycle_with_residual_mask(
         masks: &masks,
         setup,
         taylor,
+        residual_mask: residual_mask.as_ref(),
     };
     let mut measured = measurements.into_inner().expect("measurements lock");
     let mut slots = keys
@@ -168,7 +160,9 @@ pub fn prepare_minor_cycle_with_residual_mask(
         let mut statistics = PlaneStatistics::measure(
             &plane.residual[0],
             &plane.support,
-            residual_mask.unwrap_or_else(|| pixels.residual_mask(setup.residual_pixel_mask)),
+            residual_mask
+                .as_ref()
+                .unwrap_or_else(|| pixels.residual_mask(setup.residual_pixel_mask)),
             0.0,
             setup.automask,
         );
@@ -241,8 +235,22 @@ pub fn prepare_minor_cycle_with_residual_mask(
         planes,
         blank,
         retained,
+        residual_mask,
         statistics,
     })
+}
+
+fn check_residual_mask(normal: &FinalNormalState, residual_mask: Option<&Support>) {
+    if let Some(mask) = residual_mask {
+        let [nx, ny] = normal.shape();
+        assert!(
+            normal.domain_count() == 1
+                && normal.slab().total_channels() == 1
+                && normal.polarization_count() == 1
+                && mask.shape() == PlaneShape::new(nx, ny),
+            "the saved pixel mask must describe the single residual plane"
+        );
+    }
 }
 
 fn aggregate_statistics(

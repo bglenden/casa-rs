@@ -34,7 +34,9 @@ use std::time::Instant;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_imaging_model::{ImageDomainRole, ProductPixelMask, ProductRole, ProductUnit};
+use casa_imaging_model::{
+    ImageDomainRole, ProductPixelMask, ProductRole, ProductTerm, ProductUnit,
+};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -358,14 +360,17 @@ impl CasaImageWriter {
 
     /// Read the default residual mask. Image restoration only propagates
     /// CASA's generated mask0. The spectral-index cutoff uses any default.
-    pub(crate) fn saved_taylor_residual_mask(
+    pub(crate) fn saved_residual_mask(
         &self,
         domain: &ImageDomainRole,
-        term: usize,
+        term: ProductTerm,
         restoring_image: bool,
     ) -> Result<Option<Vec<bool>>, ProductsError> {
         let mut name = self.output(domain).base.clone().into_os_string();
-        name.push(format!(".residual.tt{term}"));
+        match term {
+            ProductTerm::Single => name.push(".residual"),
+            ProductTerm::Taylor(term) => name.push(format!(".residual.tt{term}")),
+        }
         let path = PathBuf::from(name);
         let image_error = |source| ProductsError::Image {
             path: path.clone(),

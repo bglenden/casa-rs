@@ -81,7 +81,7 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
-            saved_taylor_residual: false,
+            saved_weighted_residual: false,
             nsigma: 3.0,
             noise: NoiseEstimate::Fast,
             automask: true,
@@ -256,7 +256,7 @@ fn automatic_mask_reads_the_saved_taylor_residual_in_image_units() {
             )
             .unwrap(),
         ),
-        saved_taylor_residual: true,
+        saved_weighted_residual: true,
         nsigma: 0.0,
         noise: NoiseEstimate::Fast,
         automask: true,
@@ -270,6 +270,6 @@ fn automatic_mask_reads_the_saved_taylor_residual_in_image_units() {
             .0[peak]
     };
     assert_eq!(read(&setup), 2.0);
-    setup.saved_taylor_residual = false;
+    setup.saved_weighted_residual = false;
     assert_eq!(read(&setup), 0.5);
 }

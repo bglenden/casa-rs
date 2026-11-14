@@ -46,27 +46,11 @@ impl<'a> MvcState<'a> {
         ))
     }
 
-    /// The saved Taylor lattice's pixel mask applies to the initial
-    /// convergence statistics. A refreshed residual supplies its own.
-    pub(super) fn saved_residual_mask(
-        &self,
-        run: &Run<'_>,
-    ) -> Result<Option<Admitted<casa_imaging_deconvolution::Support>>, ImagingError> {
-        let Some(saved) = self.spec.start.and_then(|start| start.saved_psf.as_ref()) else {
-            return Ok(None);
-        };
-        let Some(bytes) = saved.taylor.taylor_mask_read_bytes() else {
-            return Ok(None);
-        };
-        if bytes == 0 {
-            return Ok(None);
-        }
-        let reservation = run.admit("saved MVC residual mask", bytes)?;
-        let value = saved
-            .taylor
-            .mvc_residual_mask()
-            .map_err(ImagingError::Existing)?;
-        Ok(value.map(|value| Admitted { value, reservation }))
+    pub(super) fn saved_taylor(&self) -> Option<&ExistingProducts> {
+        self.spec
+            .start
+            .and_then(|start| start.saved_psf.as_ref())
+            .map(|saved| &saved.taylor)
     }
 
     /// Apply a Taylor minor update, predict it through the cube, then reduce

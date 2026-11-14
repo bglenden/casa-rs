@@ -31,14 +31,17 @@ pub(super) fn run(
         cancel,
         diagnostics,
     } = inputs;
-    setup.saved_taylor_residual = run
+    setup.saved_weighted_residual = run
         .existing
         .as_ref()
-        .and_then(ExistingProducts::taylor_mask_read_bytes)
-        .is_some();
+        .is_some_and(ExistingProducts::residual_in_image_units);
     let use_pb_mask = setup.residual_pixel_mask;
     let read_mvc_residual = mvc.is_some() && !run.forms.residual;
-    if read_mvc_residual {
+    let read_mosaic_residual = run
+        .existing
+        .as_ref()
+        .is_some_and(ExistingProducts::reads_mosaic_residual);
+    if read_mvc_residual || read_mosaic_residual {
         // The saved residual's own mask governs the initial measurement.
         // Without a mask, CASA measures every valid pixel.
         setup.residual_pixel_mask = false;
@@ -66,45 +69,44 @@ pub(super) fn run(
         // A plane preparation keeps for the solve stays charged until the
         // solve, which the minor cycle's charge then leaves out; the solve
         // drops the plane, and the charge goes with the minor cycle.
-        let (prepared, kept) = run_phase(name, &cancel, diagnostics, summary, || {
-            if ordinal == 1 {
-                held = run.admit(
-                    "reconstruction masks",
-                    2 * mask_bytes(&outcome.scientific, &mask_plans)
-                        + psf_cache_bytes(&outcome.scientific)
-                        + std::mem::size_of_val(outcome.plane_rows.start_model_flux.as_slice())
-                            as u64,
+        let (prepared, kept, saved_mask_charge) =
+            run_phase(name, &cancel, diagnostics, summary, || {
+                if ordinal == 1 {
+                    held = run.admit(
+                        "reconstruction masks",
+                        2 * mask_bytes(&outcome.scientific, &mask_plans)
+                            + psf_cache_bytes(&outcome.scientific)
+                            + std::mem::size_of_val(outcome.plane_rows.start_model_flux.as_slice())
+                                as u64,
+                    )?;
+                }
+                let mut preparing = run.admit(
+                    "minor-cycle preparation",
+                    prepare_bytes(
+                        &outcome.scientific,
+                        &mask_plans,
+                        &setup,
+                        &cache,
+                        run.teams.compute().workers(),
+                    ),
                 )?;
-            }
-            let mut preparing = run.admit(
-                "minor-cycle preparation",
-                prepare_bytes(
+                let (saved_mask, saved_mask_charge) =
+                    if outcome.major_cycle_count == 0 || (read_mosaic_residual && use_pb_mask) {
+                        read_saved_mask(&run, mvc.as_ref())?
+                    } else {
+                        (None, Reservation::none())
+                    };
+                let prepared = prepare_minor_cycle_with_residual_mask(
                     &outcome.scientific,
                     &mask_plans,
                     &setup,
-                    &cache,
-                    run.teams.compute().workers(),
-                ),
-            )?;
-            let saved_mask = if outcome.major_cycle_count == 0 {
-                mvc.as_ref()
-                    .map(|state| state.saved_residual_mask(&run))
-                    .transpose()?
-                    .flatten()
-            } else {
-                None
-            };
-            let prepared = prepare_minor_cycle_with_residual_mask(
-                &outcome.scientific,
-                &mask_plans,
-                &setup,
-                &mut cache,
-                run.teams.compute(),
-                saved_mask.as_ref().map(|mask| &mask.value),
-            )?;
-            let kept = preparing.split(prepared.retained_bytes());
-            Ok::<_, ImagingError>((prepared, kept))
-        })?;
+                    &mut cache,
+                    run.teams.compute(),
+                    saved_mask,
+                )?;
+                let kept = preparing.split(prepared.retained_bytes());
+                Ok::<_, ImagingError>((prepared, kept, saved_mask_charge))
+            })?;
         let statistics = prepared.statistics;
         // CASA's summary uses the final initminorcycle statistics, including
         // a convergence check that stops before another minor cycle executes.
@@ -168,7 +170,7 @@ pub(super) fn run(
             )?;
             Ok::<_, ImagingError>((minor, plans))
         })?;
-        drop(kept);
+        drop((kept, saved_mask_charge));
         mask_plans = next_plans;
         let global_threshold = controls
             .threshold_jy_per_beam()
@@ -212,7 +214,7 @@ pub(super) fn run(
                 run.refresh(scientific, (minor.terms, minor.dense, minor.results), last)
             }
         })?;
-        setup.saved_taylor_residual = false;
+        setup.saved_weighted_residual = false;
         setup.residual_pixel_mask = use_pb_mask;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
@@ -234,4 +236,25 @@ pub(super) fn run(
     outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
     outcome.retained.join(held);
     Ok(outcome)
+}
+
+/// In CASA the stored pixel mask determines the peak at the first CLEAN
+/// boundary. The solver gets its own saved CLEAN mask.
+fn read_saved_mask(
+    run: &Run<'_>,
+    mvc: Option<&MvcState<'_>>,
+) -> Result<(Option<casa_imaging_deconvolution::Support>, Reservation), ImagingError> {
+    let saved = mvc
+        .and_then(MvcState::saved_taylor)
+        .or(run.existing.as_ref());
+    let Some(saved) = saved else {
+        return Ok((None, Reservation::none()));
+    };
+    let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
+    if bytes == 0 {
+        return Ok((None, Reservation::none()));
+    }
+    let charge = run.admit("saved residual mask", bytes)?;
+    let mask = saved.residual_mask().map_err(ImagingError::Existing)?;
+    Ok((mask, charge))
 }

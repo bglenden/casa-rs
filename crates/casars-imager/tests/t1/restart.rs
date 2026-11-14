@@ -144,6 +144,98 @@ fn check_mosaic_continuation(cube: bool) {
 }
 
 #[test]
+fn a_mosaic_cleans_the_saved_residual_and_predicts_the_persisted_model() {
+    let (observation, mut controls) = mosaic_run(false);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    observation.image("mosaic-reuse", controls.clone());
+    observation.image("mosaic-recompute", controls.clone());
+    let suffixes = [".psf", ".weight", ".sumwt", ".pb"];
+    let paths = suffixes.map(|suffix| observation.scratch(&format!("mosaic-reuse{suffix}")));
+    let preserved = paths.each_ref().map(|path| snapshot(path));
+    let residual_path = observation.scratch("mosaic-reuse.residual");
+    let mut residual = PagedImage::<f32>::open(&residual_path).unwrap();
+    let mut mask = residual.get_mask().unwrap().unwrap();
+    let [x, y] = observation.geometry().centre();
+    let sentinel = [x + 12, y + 7, 0, 0];
+    assert!(mask[sentinel]);
+    mask[sentinel] = false;
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+
+    controls["niter"] = json!(5);
+    controls["calcpsf"] = json!(false);
+    let (recomputed, expected) = observation.image("mosaic-recompute", controls.clone());
+    controls["calcres"] = json!(false);
+    let (reused, actual) = observation.image("mosaic-reuse", controls);
+    assert_eq!(reused.minor_iterations, 5);
+    assert_eq!(reused.major_cycles + 1, recomputed.major_cycles);
+    for suffix in [".image", ".residual"] {
+        assert_eq!(actual.get(suffix).mask().as_ref(), Some(&mask));
+    }
+    assert!(actual.get(".image.pbcor").mask().unwrap()[sentinel]);
+    for (path, bytes) in paths.iter().zip(&preserved) {
+        assert_unchanged(bytes, &snapshot(path));
+    }
+    for suffix in [".residual", ".model", ".image", ".image.pbcor"] {
+        let expected = expected.get(suffix).values();
+        let actual = actual.get(suffix).values();
+        let error: f64 = expected
+            .iter()
+            .zip(&actual)
+            .map(|(a, b)| f64::from(*a - *b).powi(2))
+            .sum();
+        let power: f64 = expected.iter().map(|value| f64::from(*value).powi(2)).sum();
+        assert!(
+            power > 0.0 && (error / power).sqrt() < 2e-6,
+            "{suffix}: {error}/{power}"
+        );
+    }
+}
+
+#[test]
+fn a_mosaic_restores_the_saved_residual_and_uses_its_mask_to_stop_cleaning() {
+    let (observation, mut controls) = mosaic_run(false);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    let (_, seed) = observation.image("mosaic-stopped", controls.clone());
+    let path = observation.scratch("mosaic-stopped.residual");
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    let [cx, cy] = observation.geometry().centre();
+    let hidden = [cx, cy, 0, 0];
+    let target = [cx + 2, cy + 1, 0, 0];
+    let mut mask = seed.get(".residual").mask().unwrap();
+    assert!(mask[hidden] && mask[target]);
+    mask[hidden] = false;
+    let mut pixels = residual.get().unwrap();
+    pixels[hidden] = 50.0;
+    pixels[target] += 0.3;
+    residual.put_slice(&pixels, &[0; 4]).unwrap();
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let before = snapshot(&path);
+
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    controls["threshold"] = json!("2Jy");
+    controls["pblimit"] = json!(-0.6);
+    let (stopped, restored) = observation.image("mosaic-stopped", controls);
+    assert_eq!((stopped.minor_iterations, stopped.major_cycles), (0, 0));
+    assert_unchanged(&before, &snapshot(&path));
+    assert_eq!(restored.get(".image").mask().as_ref(), Some(&mask));
+    let difference = restored.get(".image").values()[target] - seed.get(".image").values()[target];
+    assert!((difference - 0.3).abs() < 1e-5, "{difference}");
+    let difference =
+        restored.get(".image.pbcor").values()[target] - seed.get(".image.pbcor").values()[target];
+    assert!(
+        (difference - 0.3 / seed.get(".pb").values()[target]).abs() < 1e-5,
+        "{difference}"
+    );
+}
+
+#[test]
 fn default_restart_continues_and_rejected_changes_preserve_the_previous_run() {
     let point = Component {
         offset_px: [6, -4],

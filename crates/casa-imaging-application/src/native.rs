@@ -291,20 +291,21 @@ pub(crate) fn prepare(
             .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
     }
     publication.controls.validate_for_problem(problem)?;
-    let saved_controls = input
-        .existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::taylor_mask_read_bytes)
-        .map(|bytes| publication.controls.preserving_taylor_residuals(bytes));
-    let products = if let Some(saved) = saved_controls {
-        let saved_bytes = products_floor(problem, &publication, saved)?;
-        if problem.reconstruction().controls().max_minor_iterations() == 0 {
-            saved_bytes
-        } else {
-            saved_bytes.max(products_floor(problem, &publication, publication.controls)?)
-        }
+    let keeps_pb_mask = problem.products().validity().uncorrected_mask()
+        == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam;
+    let held = |major_cycles| {
+        let controls = controls_after_cycles(
+            publication.controls,
+            input.existing.as_ref(),
+            major_cycles,
+            keeps_pb_mask,
+        );
+        products_floor(problem, &publication, controls)
+    };
+    let products = if problem.reconstruction().controls().max_minor_iterations() == 0 {
+        held(0)?
     } else {
-        products_floor(problem, &publication, publication.controls)?
+        held(0)?.max(held(1)?)
     };
     let measures = input
         .psf_view
@@ -552,7 +553,16 @@ pub(crate) fn run(
                     major_cycles: outcome.major_cycle_count,
                 },
                 &runtime,
-                publication_after_cycles(publication, existing.as_ref(), outcome.major_cycle_count),
+                ApplicationPublication {
+                    controls: controls_after_cycles(
+                        publication.controls,
+                        existing.as_ref(),
+                        outcome.major_cycle_count,
+                        problem.products().validity().uncorrected_mask()
+                            == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam,
+                    ),
+                    ..publication
+                },
                 team,
                 &mut published,
                 &mut lanes,
@@ -685,7 +695,7 @@ fn publish_run_products(
                 taylor_coordinates: coordinates,
                 saved,
                 saved_residual_mask_bytes: (major_cycles == 0)
-                    .then(|| saved.and_then(|saved| saved.taylor.taylor_mask_read_bytes()))
+                    .then(|| saved.and_then(|saved| saved.taylor.saved_residual_mask_bytes()))
                     .flatten(),
             },
             runtime,
@@ -750,20 +760,27 @@ struct ProductSource<'a> {
     primary_beam: Option<ProductPrimaryBeam<'a>>,
 }
 
-/// A run that stopped before its first major cycle still holds the saved
-/// Taylor residual and its model in image units.
-fn publication_after_cycles(
-    mut publication: ApplicationPublication,
+/// CASA keeps the saved residual in image units until the first major
+/// cycle, then retains its mask when residual division leaves it in place.
+fn controls_after_cycles(
+    controls: casa_imaging_products::ContinuumProductControls,
     existing: Option<&crate::restart::ExistingProducts>,
     major_cycles: usize,
-) -> ApplicationPublication {
-    if major_cycles == 0
-        && let Some(bytes) =
-            existing.and_then(crate::restart::ExistingProducts::taylor_mask_read_bytes)
-    {
-        publication.controls = publication.controls.preserving_taylor_residuals(bytes);
+    keeps_pb_mask: bool,
+) -> casa_imaging_products::ContinuumProductControls {
+    let Some(existing) = existing else {
+        return controls;
+    };
+    let Some(bytes) = existing.saved_residual_mask_bytes() else {
+        return controls;
+    };
+    if major_cycles == 0 {
+        controls.preserving_weighted_residuals(bytes)
+    } else if keeps_pb_mask && existing.reads_mosaic_residual() && bytes > 0 {
+        controls.with_saved_residual_mask(bytes)
+    } else {
+        controls
     }
-    publication
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -888,7 +905,7 @@ fn publish_mvc_products(
     } = cube;
     let taylor_publication = ApplicationPublication {
         controls: saved_residual_mask_bytes.map_or(publication.controls, |bytes| {
-            publication.controls.preserving_taylor_residuals(bytes)
+            publication.controls.preserving_weighted_residuals(bytes)
         }),
         primary_beam_centres: publication.primary_beam_centres.clone(),
         vla_selection_store: None,

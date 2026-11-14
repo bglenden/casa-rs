@@ -25,6 +25,7 @@ pub(crate) struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     pub(crate) domain_ordinal: usize,
     pub(crate) polarization: usize,
     pub(crate) reuses_single_psf: bool,
+    pub(crate) saved_weighted_residual: bool,
     pub(crate) fitted_beam: Option<RestoringBeam>,
     pub(crate) restoring_beam: Option<RestoringBeam>,
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
@@ -252,28 +253,33 @@ fn restored_plane(
         (None, false) => return Ok(vec![0.0; cells]),
         (None, true) => return Err(unfitted()),
     };
-    let model = apparent_model(
-        model_real_plane(
-            inputs.final_model(),
-            domain_ordinal,
-            plane.output_channel(),
-            polarization,
-            plane.shape(),
-        )?,
-        plane,
-        required_normalization(member),
-        inputs.problem().products().validity().primary_beam(),
-        primary_beam_model,
+    let model = model_real_plane(
+        inputs.final_model(),
+        domain_ordinal,
+        plane.output_channel(),
+        polarization,
+        plane.shape(),
     )?;
+    let model = if request.saved_weighted_residual {
+        model
+    } else {
+        apparent_model(
+            model,
+            plane,
+            required_normalization(member),
+            inputs.problem().products().validity().primary_beam(),
+            primary_beam_model,
+        )?
+    };
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain());
     let residual = if valid {
         let fitted_beam = fitted_beam.ok_or_else(unfitted)?;
-        let residual = normalize_domain_plane(
-            &residual_real_plane(plane)?,
-            required_normalization(member),
-            plane,
-            inputs,
-        )?;
+        let residual = residual_real_plane(plane)?;
+        let residual = if request.saved_weighted_residual {
+            residual
+        } else {
+            normalize_domain_plane(&residual, required_normalization(member), plane, inputs)?
+        };
         rescale_residual_to_beam(&residual, plane.shape(), cell_size, fitted_beam, beam)?
             .into_values()
     } else {

@@ -221,11 +221,14 @@ pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
     }
     match (&request.gridder, Family::of(request)) {
         (Gridder::Mosaic { .. }, Family::Single) => {
-            request.calcres
-                && matches!(
+            if request.calcres {
+                matches!(
                     request.specmode,
                     crate::SpecMode::Mfs | crate::SpecMode::Cube
                 )
+            } else {
+                supports_saved_mosaic_residual(request)
+            }
         }
         (Gridder::Awproject(_), Family::Taylor { terms }) => {
             request.specmode == crate::SpecMode::Mfs
@@ -240,6 +243,24 @@ pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
         }
         _ => false,
     }
+}
+
+/// Ordinary single-plane CLEAN or restoration from a saved mosaic residual.
+fn supports_saved_mosaic_residual(request: &ImagingRequest) -> bool {
+    matches!(
+        request.gridder,
+        Gridder::Mosaic {
+            normtype: casa_imaging_model::ProductNormalization::FlatNoise,
+            ..
+        }
+    ) && request.specmode == crate::SpecMode::Mfs
+        && request.deconvolver == Deconvolver::Hogbom
+        && request.weighting == crate::Weighting::Natural
+        && request.stokes == [crate::PolarizationCoordinate::StokesI]
+        && request.usemask == UseMask::User
+        && request.nsigma == 0.0
+        && request.pbmask == 0.0
+        && request.savemodel == crate::SaveModel::None
 }
 
 /// Check that what `calcpsf=False` and `calcres=False` read exists and that
@@ -259,6 +280,7 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         && !request.calcres
         && request.niter > 0
         && request.pblimit > 0.0
+        && matches!(request.gridder, Gridder::Awproject(_))
         && reuses_direction_dependent_psf(request)
     {
         return refuse(

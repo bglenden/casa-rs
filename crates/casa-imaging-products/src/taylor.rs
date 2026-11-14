@@ -539,7 +539,7 @@ impl<'a> SolvedFamily<'a> {
             primary_beam_model,
             directional,
             planned
-                .saved_taylor_mask_read_bytes
+                .saved_residual_mask_read_bytes
                 .is_none()
                 .then_some(residual_sum_weight),
         )?;
@@ -660,8 +660,8 @@ impl<'a> SolvedFamily<'a> {
                 // The residual lattice's masked maximum sets the cutoff
                 // in SIImageStoreMultiTerm::calculateAlphaBeta. The alpha
                 // support itself comes from the restored intensity.
-                let peak_mask = if planned.saved_taylor_mask_read_bytes.is_some() {
-                    output.saved_taylor_residual_mask(domain_role, 0, false)?
+                let peak_mask = if planned.saved_residual_mask_read_bytes.is_some() {
+                    output.saved_residual_mask(domain_role, ProductTerm::Taylor(0), false)?
                 } else {
                     None
                 };
