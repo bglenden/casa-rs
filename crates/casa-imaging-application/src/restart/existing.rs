@@ -404,11 +404,11 @@ impl ExistingProducts {
         (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
     }
 
-    /// CASA would refill these sums during gridding. Multi-field reuse
-    /// currently requires the earlier run to have populated each one.
+    /// The saved-residual path cannot normalize with an unfilled sum.
+    /// CASA fills the sum only when it grids the field.
     pub(crate) fn nonpositive_sum_weight(&self) -> ImageError {
         ImageError::InvalidMetadata(format!(
-            "{} has a nonpositive saved sum of weights; refilling a field's sumwt on restart is not implemented (#944)",
+            "{} has a nonpositive saved sum of weights; use calcres=True to refill it by gridding (#944)",
             product_path(&self.prefix, "sumwt").display()
         ))
     }

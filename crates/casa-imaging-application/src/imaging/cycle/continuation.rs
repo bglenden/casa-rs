@@ -128,7 +128,8 @@ impl Run<'_> {
                 let mut images = saved
                     .pass_images(channels)
                     .map_err(ImagingError::Existing)?;
-                if !self.outlier_products.is_empty()
+                if !self.forms.residual
+                    && !self.outlier_products.is_empty()
                     && images.sum_weights.iter().any(|sum| *sum <= 0.0)
                 {
                     return Err(ImagingError::Existing(saved.nonpositive_sum_weight()));

@@ -1203,6 +1203,10 @@ impl<'a> Run<'a> {
         let team = self.teams.streaming();
         let domains = pass_domains(&self.domains, team.workers(), self.row_work(modes));
         let charts = &self.charts;
+        let refills_saved_sums = !self.forms.psf
+            && self.forms.residual
+            && !self.outlier_products.is_empty()
+            && state.needs_scalar_weight();
         let prepare = |chart: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
             let Chart { domain, window } = charts[chart];
@@ -1218,6 +1222,7 @@ impl<'a> Run<'a> {
             domains: &domains,
             weighting: &self.weighting,
             modes,
+            refill_scalar_sum_weight: refills_saved_sums,
             model: model.map(|_| &prepare as &ModelPreparation<'_>),
             residency,
             native_spacing_hz: self.native_spacing_hz,
@@ -1243,6 +1248,7 @@ impl<'a> Run<'a> {
             &self.cancel,
             &mut |chart, images| {
                 let basis = self.domains[chart].operator.basis();
+                let gridded_sum = refills_saved_sums.then(|| images.data_sumwt(0, 0, 0));
                 let images = self
                     .stitch
                     .accept(chart, pass_images(chart, &images, initial, basis))
@@ -1266,9 +1272,11 @@ impl<'a> Run<'a> {
                             )
                             .map_err(|error| PassError::Images(Box::new(error)))?;
                         }
-                        let appended = state
-                            .append(images)
-                            .map_err(|error| PassError::Images(Box::new(error)));
+                        let appended = match gridded_sum {
+                            Some(sum) => state.append_with_scalar_weight(images, sum),
+                            None => state.append(images),
+                        }
+                        .map_err(|error| PassError::Images(Box::new(error)));
                         drop(psf_resident);
                         appended
                     }

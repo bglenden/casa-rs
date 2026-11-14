@@ -202,6 +202,7 @@ fn trial(
         domains: &domains,
         weighting: &weighting,
         modes: ModeSet::DATA_PSF,
+        refill_scalar_sum_weight: false,
         model: None,
         residency,
         native_spacing_hz: 128.0e6,

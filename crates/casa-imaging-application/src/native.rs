@@ -297,6 +297,7 @@ pub(crate) fn prepare(
                 .iter()
                 .chain(input.outlier_psfs.iter().flatten())
                 .any(|saved| saved.psf_beams().is_none()),
+            input.forms.residual,
         );
     }
     publication.controls.validate_for_problem(problem)?;

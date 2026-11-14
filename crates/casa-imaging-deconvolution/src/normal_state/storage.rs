@@ -180,6 +180,15 @@ impl NormalStatePrimitives {
         }
     }
 
+    pub(crate) fn refilled_sum_weight(&self, ordinal: usize) -> bool {
+        match self {
+            Self::Coupled(domains) => domains
+                .get(ordinal)
+                .is_some_and(|d| d.refilled_sum_weight()),
+            Self::ChannelLocal(_) => false,
+        }
+    }
+
     /// The resident domains of a coupled coefficient family.
     pub(crate) fn into_coupled(self) -> Result<Box<[SpectralDomainPrimitives]>, NormalStateError> {
         match self {

@@ -85,6 +85,27 @@ fn outlier_restart_seed_stays_within_admission() {
         mask_admitted >= 2 * 1280 * 1280,
         "outlier residual mask read held only {mask_admitted} admitted bytes"
     );
+    let sum_path = outlier.with_extension("sumwt");
+    let mut sum = casa_images::PagedImage::<f32>::open(&sum_path).unwrap();
+    let zero = sum.get().unwrap().mapv(|_| 0.0);
+    sum.put_slice(&zero, &[0; 4]).unwrap();
+    sum.save().unwrap();
+    drop(sum);
+    saved_residual.calcres = true;
+    let measured = check(
+        &mut breaches,
+        "refilled outlier sum",
+        &saved_residual,
+        1,
+        AMPLE,
+    );
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    let outcome = measured.outcome.unwrap();
+    let normal = outcome.scientific().normal_state();
+    assert!(normal.refilled_sum_weight(1));
+    assert!(!normal.refilled_sum_weight(0));
+    assert!(normal.read_plane(1, 0, 0).unwrap().published_sum_weight() > 0.0);
+    drop(outcome);
     let admitted = SEED_BYTES.load(Ordering::Relaxed);
     // The current direct reader holds a Float32 input and emitted samples
     // of the largest domain together, beside the new model generation.
