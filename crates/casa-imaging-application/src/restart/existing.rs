@@ -353,6 +353,11 @@ impl ExistingProducts {
         self.residual
     }
 
+    /// Whether restoration reads this saved single-term cube residual.
+    pub(crate) const fn reads_cube_residual(&self) -> bool {
+        self.residual && self.cube
+    }
+
     /// Whether restoration reads this saved Taylor residual family.
     pub(crate) const fn reads_taylor_residual(&self) -> bool {
         self.residual && matches!(self.family, Family::Taylor { .. })

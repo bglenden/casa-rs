@@ -281,7 +281,32 @@ fn a_cube_restores_and_continues_from_what_it_left() {
         "cube",
         with(&base, json!({"niter": 10, "restoration": false})),
     );
-    assert!(!inventory(&observation.scratch("cube")).contains("image"));
+    let prefix = observation.scratch("cube");
+    assert!(!inventory(&prefix).contains("image"));
+    // CASA reuses this complete per-channel beam grid without writing
+    // its header again. Change one beam's angle to make the evidence
+    // independent of the fit and f64 unit-conversion round trip.
+    let psf_path = prefix.with_extension("psf");
+    let mut psf = casa_images::PagedImage::<f32>::open(&psf_path).unwrap();
+    let mut info = psf.image_info().unwrap();
+    let mut grid = (0..4)
+        .map(|channel| vec![*info.beam_set.beam(channel, 0)])
+        .collect::<Vec<_>>();
+    grid[0][0].position_angle = grid[0][0].position_angle.next_up();
+    info.beam_set = casa_images::ImageBeamSet::from_grid(grid);
+    psf.set_image_info(&info).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+    let stable = |suffix: &str| {
+        let mut files = super::restart::snapshot(&prefix.with_extension(suffix));
+        files.retain(|name, _| {
+            name.file_name().unwrap() != "table.lock"
+                && !name.components().any(|part| part.as_os_str() == "logtable")
+        });
+        files
+    };
+    let kept = ["psf", "residual", "sumwt"];
+    let before = kept.map(stable);
     let (restore, restored) = observation.image(
         "cube",
         with(
@@ -292,14 +317,25 @@ fn a_cube_restores_and_continues_from_what_it_left() {
         ),
     );
     assert_eq!(restore.major_cycles, 0, "nothing was formed");
+    let reported = restored.suffixes();
+    assert!(
+        kept.iter()
+            .all(|suffix| !reported.contains(&format!(".{suffix}"))),
+        "saved products were published again: {reported:?}"
+    );
+    for (previous, current) in before.iter().zip(&kept.map(stable)) {
+        super::restart::assert_unchanged(previous, current);
+    }
     let (_, reference) = observation.image(
         "cube-once",
         with(&base, json!({"niter": 10, "restoringbeam": "common"})),
     );
-    for suffix in [".image", ".residual", ".psf"] {
-        let error = nrms(&restored, &reference, suffix);
+    for suffix in [".residual", ".psf"] {
+        let error = nrms(&unrestored, &reference, suffix);
         assert!(error < 1e-5, "{suffix}: {error}");
     }
+    let error = nrms(&restored, &reference, ".image");
+    assert!(error < 1e-5, "restored common beam image: {error}");
     assert!(nrms(&unrestored, &reference, ".model") < 1e-6);
 
     // A continuation reads every channel's model: with no iterations it
