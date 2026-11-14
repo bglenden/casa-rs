@@ -12,7 +12,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "refusals-1099-20261104"
+    "refusals-1099-20261104",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "outputs"
@@ -27,7 +28,8 @@
     "parity-20261103",
     "skymodel-fixture",
     "model-overrides-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -282,7 +284,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "observation"
@@ -386,7 +389,8 @@
     "parity-20261103",
     "frequency-frames-20261106",
     "additional-frames-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "observation"
@@ -400,7 +404,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "noise-seeds-20261103"
+    "noise-seeds-20261103",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "noise"
@@ -478,7 +483,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "noise"
@@ -528,7 +534,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "outputs"
@@ -602,7 +609,8 @@
     "frequency-frames-20261106",
     "additional-frames-20261111",
     "main-integration-20261111",
-    "uvw-long-baselines-20261112"
+    "uvw-long-baselines-20261112",
+    "project-lifecycle-20261114"
    ]
   },
   {
@@ -629,7 +637,8 @@
     "parity-20261103",
     "casa-suite-20261103",
     "quick-psf-20261111",
-    "quick-psf-relative-project-20261111"
+    "quick-psf-relative-project-20261111",
+    "project-lifecycle-20261114"
    ]
   }
  ],
@@ -1042,6 +1051,22 @@
    "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --only schedule_ot_file schedule_untimed_file schedule_alma_nyquist schedule_cycle0_pb schedule_list_components schedule_calibrator_file schedule_calibrator_partial schedule_calibrator_components schedule_sd_calibrator_ignored",
    "receipt": "resources/casa-compat/evidence/simobserve-schedules-20261114.json",
    "source_revision": "cc592d3ad005e5255084179fd57f8109fe56a64c"
+  },
+  "project-lifecycle-20261114": {
+   "kind": "CASA-paired stateful simulation project scenarios",
+   "state": "passed",
+   "scope": "SIM-24/25 continuation with REST/BARY and Undefined requests, manual/atmospheric noise and ignored leakage; single dish; successful/rejected overwrite, missing/ambiguous MS detection, relative/absolute paths and input preservation.",
+   "result": "13/13 agree: eight successful project scenarios, five refusals/corrected failures, 14 native MS C++ readbacks. Model DATA NRMS <=1.81e-7 under 1e-3; all noise gates pass, minimum KS p 0.16. Original MS science, inputs and unrelated products are preserved; existing noisy outputs and requested prediction products are replaced.",
+   "links": [
+    "tools/simulation/simobserve_projects_parity.py",
+    "crates/casa-simulation/tests/simobserve.rs",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "cd6b94a073c381bd8bdb28335e7566d6f58526e5",
+   "source_revision": "f0367e3d448e220b3bae12defad04935cbceb5d0",
+   "command": "CASAPY tools/simulation/simobserve_projects_parity.py --out OUT --casars-bin TARGET/debug/simobserve --atmosphere-model TARGET/debug/examples/at_tool_quantities",
+   "receipt": "resources/casa-compat/evidence/simobserve-projects-20261114.json"
   }
  }
 }
