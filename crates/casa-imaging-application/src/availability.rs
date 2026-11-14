@@ -39,9 +39,7 @@ pub enum Unsupported {
     /// Metal grids the standard and mosaic kernel sets (#787); W and AW
     /// wait for their gate R2 rows (#653).
     KernelSetOnMetal,
-    /// Facets image a constant-basis (MFS) image; CASA also facets Taylor
-    /// images, which wait for a CASA comparison, and a cube's density rule
-    /// would see each facet's rotated uvw.
+    /// Facets support constant-basis MFS and the verified standard two-term Taylor mode (#1063).
     FacetedBasis,
     /// Facets grid with the standard or W-projection kernel set; AW and
     /// mosaic facets remain unsupported (#1063, #1070).
@@ -85,9 +83,9 @@ impl fmt::Display for Unsupported {
                 "the Metal backend grids the standard and mosaic kernel sets only; W projection \
                  and AW projection run on the CPU",
             ),
-            Self::FacetedBasis => {
-                formatter.write_str("facets image a single-term MFS image (specmode mfs; #1063)")
-            }
+            Self::FacetedBasis => formatter.write_str(
+                "facets image single-term MFS or standard, natural-weighted two-term Stokes I MT-MFS (#1063)",
+            ),
             Self::FacetedKernelSet => {
                 formatter.write_str("facets grid with standard or W projection only (#1063)")
             }
@@ -251,14 +249,18 @@ pub fn check(
         .required_capabilities()
         .contains(&RequiredCapability::FacetedGeometry)
     {
-        if !matches!(
-            problem.reconstruction().basis(),
-            ReconstructionBasis::Constant
-        ) {
+        let standard = crate::imaging::standard_kernel_set(problem);
+        let basis = problem.reconstruction().basis();
+        let taylor = matches!(basis, ReconstructionBasis::Taylor { terms: 2 })
+            && standard
+            && problem.reconstruction().polarization().coordinates()
+                == [PolarizationCoordinate::StokesI]
+            && problem.weighting().scheme() == WeightingScheme::Natural;
+        if !matches!(basis, ReconstructionBasis::Constant) && !taylor {
             unsupported.push(Unsupported::FacetedBasis);
         }
         let equation = problem.science().measurement_equation();
-        if !crate::imaging::standard_kernel_set(problem) && equation.w_projection().is_none() {
+        if !standard && equation.w_projection().is_none() {
             unsupported.push(Unsupported::FacetedKernelSet);
         }
         if let Some(w) = equation.w_projection()

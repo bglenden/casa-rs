@@ -690,7 +690,19 @@ fn produce_taylor_members(
             output.stage_saved_psf_beam(member, &beams)?;
             continue;
         }
-        let mut payload = products.payload(member.role)?;
+        let mut payload =
+            if let (ProductRole::SumWeights(ProductTerm::Taylor(moment)), Some(facets)) =
+                (member.role, inputs.facet_sum_weights(0))
+            {
+                facet_moment_weights(
+                    member,
+                    inputs.normal_state().polarization_count(),
+                    moment,
+                    facets,
+                )
+            } else {
+                products.payload(member.role)?
+            };
         // An ordinary Taylor PB is formed at one frequency and zeroed by
         // `makePBImage`. MVC's supplied PB is the weighted cube PB: CASA
         // preserves its values below pblimit while marking those pixels
@@ -752,6 +764,29 @@ fn produce_taylor_members(
         writer.finish()?;
     }
     Ok(planned.published(fitted_beams, restoring_beams))
+}
+
+/// CASA's Taylor sum-weight image has one pixel per facet for this moment.
+fn facet_moment_weights(
+    member: &PlannedMember,
+    polarizations: usize,
+    moment: usize,
+    facets: &[Vec<f64>],
+) -> Vec<f32> {
+    let axes = member.axes();
+    let mut payload = vec![0.0; member.payload_values];
+    for polarization in 0..polarizations {
+        let index = moment * polarizations + polarization;
+        scatter_polarization_plane_state(
+            &mut payload,
+            axes,
+            axes.shape(),
+            polarization,
+            0,
+            |facet| facets[facet][index] as f32,
+        );
+    }
+    payload
 }
 
 #[cfg(test)]
