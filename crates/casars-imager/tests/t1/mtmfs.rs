@@ -452,6 +452,38 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
     }
 }
 
+/// The joined, faceted Taylor product retains each moment separately for
+/// every Stokes plane. CASA replicates the Stokes I PSF and the first
+/// correlation's sum weights across IQUV.
+#[test]
+fn full_stokes_taylor_facets_publish_every_moment_on_every_stokes_plane() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let (_, products) = observation.image(
+        "iquv-taylor-facets",
+        json!({
+            "weighting": "natural", "niter": 0, "stokes": "IQUV",
+            "deconvolver": "mtmfs", "nterms": 2, "facets": 2,
+        }),
+    );
+    for term in [".sumwt.tt0", ".sumwt.tt1", ".sumwt.tt2"] {
+        let sums = products.get(term).values();
+        assert_eq!(sums.shape(), &[2, 2, 4, 1], "{term}");
+        let first = stokes_plane(&sums, 0);
+        assert!(first.iter().any(|sum| *sum != 0.0), "{term}");
+        for stokes in 1..4 {
+            assert_eq!(stokes_plane(&sums, stokes), first, "{term} plane {stokes}");
+        }
+    }
+    for term in [".psf.tt0", ".psf.tt1", ".psf.tt2"] {
+        let psf = products.get(term).values();
+        let first = stokes_plane(&psf, 0);
+        assert!(first.iter().any(|value| *value != 0.0), "{term}");
+        for stokes in 1..4 {
+            assert_eq!(stokes_plane(&psf, stokes), first, "{term} plane {stokes}");
+        }
+    }
+}
+
 /// A polarized Taylor family is imaged on its own Stokes plane. Linear
 /// feeds observe the point 40 % circularly polarized, so Stokes V holds
 /// 0.4 of Stokes I's flux and spectrum. `stokes='IV'` recovers it on V's

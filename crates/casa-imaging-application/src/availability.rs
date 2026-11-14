@@ -84,9 +84,9 @@ impl fmt::Display for Unsupported {
                  and AW projection run on the CPU",
             ),
             Self::FacetedBasis => formatter.write_str(
-                "facets image single-term MFS, standard Stokes I two-term MT-MFS with natural or \
-                 Briggs weighting, or standard natural-weighted Stokes I same-frame \
-                 nearest-channel dirty/Högbom cubes (#1063)",
+                "facets image single-term MFS, standard two-term MT-MFS in Stokes I with natural \
+                 or Briggs weighting or IQUV with natural weighting, or standard natural-weighted \
+                 Stokes I same-frame nearest-channel dirty/Högbom cubes (#1063)",
             ),
             Self::FacetedKernelSet => {
                 formatter.write_str("facets grid with standard or W projection only (#1063)")
@@ -253,16 +253,20 @@ pub fn check(
     {
         let standard = crate::imaging::standard_kernel_set(problem);
         let basis = problem.reconstruction().basis();
-        let standard_i = standard
-            && problem.reconstruction().polarization().coordinates()
-                == [PolarizationCoordinate::StokesI];
+        use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+        let coordinates = problem.reconstruction().polarization().coordinates();
+        let standard_i = standard && coordinates == [StokesI];
         let weighting = problem.weighting().scheme();
-        let taylor = standard_i
-            && matches!(
-                weighting,
-                WeightingScheme::Natural | WeightingScheme::Briggs { .. }
-            )
-            && matches!(basis, ReconstructionBasis::Taylor { terms: 2 });
+        let taylor = standard
+            && matches!(basis, ReconstructionBasis::Taylor { terms: 2 })
+            && match coordinates {
+                [StokesI] => matches!(
+                    weighting,
+                    WeightingScheme::Natural | WeightingScheme::Briggs { .. }
+                ),
+                [StokesI, StokesQ, StokesU, StokesV] => weighting == WeightingScheme::Natural,
+                _ => false,
+            };
         let spectral = problem.geometry().spectral();
         let cube = standard_i
             && weighting == WeightingScheme::Natural
