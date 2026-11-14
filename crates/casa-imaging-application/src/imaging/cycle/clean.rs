@@ -48,14 +48,7 @@ pub(super) fn run(
         setup.residual_pixel_mask = false;
     }
     let mut controller = Controller::new(&controls);
-    let mut cache = if !run.forms.psf
-        && outcome.scientific.normal_state().basis()
-            != casa_imaging_deconvolution::NormalBasis::Taylor
-    {
-        PsfCache::for_reused_single_psf()
-    } else {
-        PsfCache::default()
-    };
+    let mut cache = psf_cache(run.forms, &outcome.scientific);
     // What outlives each minor cycle: the masks it forms (the latest, and the
     // one an automatic mask evolves from, every holder sharing a
     // generation's support), the PSF summaries it measures and a Clark
@@ -238,6 +231,16 @@ pub(super) fn run(
     outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
     outcome.retained.join(held);
     Ok(outcome)
+}
+
+fn psf_cache(forms: Forms, scientific: &MajorCycleCompletion) -> PsfCache {
+    if !forms.psf
+        && scientific.normal_state().basis() != casa_imaging_deconvolution::NormalBasis::Taylor
+    {
+        PsfCache::for_reused_single_psf()
+    } else {
+        PsfCache::default()
+    }
 }
 
 /// CASA's pixel mask determines the peak independent of the solver's
