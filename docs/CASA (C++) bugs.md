@@ -4532,6 +4532,14 @@ uniform on that grid use the captured CASA density weights. All 34
 weighted products and 96 beams pass, with exact masks and controller
 counts and maxima of 9.00e-7 product NRMS and 1.23e-6 MODEL_DATA NRMS.
 
+For BARY input on a tracked TOPO axis, each of the six buffers has the
+same native LSRK frequencies. On the eight-plane, 50.01 MHz grid, the
+two lower cubic halo samples are outside the image. The same-cache
+CASA AW control uses the eight in-band frequencies. The three
+weightings pass all 51 dirty and clean products and 144 beams, with
+exact masks and controller counts. Maximum product normalized RMS is
+9.32e-7 and MODEL_DATA normalized RMS is 1.32e-6 (#1121).
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed
