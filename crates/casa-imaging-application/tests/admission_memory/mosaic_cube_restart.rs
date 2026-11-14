@@ -18,7 +18,7 @@ fn mosaic_cube_saved_residual_masks_stay_within_admission() {
         &prefix,
         json!({
             "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 2,
-            "niter": 0, "pblimit": 0.2,
+            "niter": 0, "pblimit": 0.2, "pbcor": true,
         }),
     );
     let mut breaches = Vec::new();
