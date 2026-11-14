@@ -35,6 +35,7 @@ impl Input {
             (true, residual),
             weight,
             weight,
+            channels > 1 && matches!(family, Family::Single),
         )
         .map(Self)
     }

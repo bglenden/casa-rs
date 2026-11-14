@@ -4218,6 +4218,33 @@ mask, where a fresh call and a restart of a cube of several channels have
 `resources/casa-compat/tclean-aw-cube-cases.json` shows it and fails on the
 mask alone.
 
+## A one-channel mosaic cube can lose its residual mask during a major cycle
+
+- Date noted: 2026-11-14
+- Status: CASA cache-dependent defect. The corresponding one-channel
+  restart check remains on [#944](https://github.com/bglenden/casa-rs/issues/944).
+- Affected code: `SynthesisImagerVi2::runCubeGridding`,
+  `SIImageStore::copyMask`.
+
+On CASA 6.7.6.14, image one channel of `refim_alma_mosaic.ms` with
+`gridder='mosaic'`, `specmode='cube'`, natural weighting, Högbom,
+480 pixels, 0.06 arcsec cells, `pblimit=0.2` and `pbcor=True`.
+CLEAN eight iterations, edit one pixel of the residual mask, then
+resume for twelve iterations with `calcpsf=False, calcres=False`.
+CASA logs that `residual/mask0` is already open in the table cache
+during both calls. Its mask copy removes the old default before trying
+to create the replacement. The error is caught as a T/F mask warning.
+The residual and restored image are left without masks even though the
+saved PB has `mask0`. In the corresponding two-channel runs the copy
+succeeds and both products receive the saved PB mask.
+
+casa-rs keeps the generated PB mask on the positive-cutoff cube path.
+In the initial one-channel CLEAN, the raw CASA masks differ by 45,662
+pixels on each of these two products. All nine products have normalized
+RMS at most 5.20e-7 and the controller counts agree. See
+[#1424](https://github.com/bglenden/casa-rs/pull/1424) for the separate
+verified two-channel saved-product behavior.
+
 ## A cube's beam for a plane without one depends on how memory splits the cube
 
 - Date noted: 2026-11-04

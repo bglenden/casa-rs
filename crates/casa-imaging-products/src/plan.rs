@@ -42,6 +42,13 @@ pub(crate) enum FieldResidualMask {
     Absent,
 }
 
+/// CASA seeds a corrected image's mask only when it has no default mask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SavedPbcorMask {
+    Existing(u64),
+    PrimaryBeam,
+}
+
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinuumProductControls {
@@ -54,6 +61,8 @@ pub struct ContinuumProductControls {
     saved_mosaic_beam_read_bytes: Option<u64>,
     saved_higher_primary_beam: bool,
     saved_residual_mask_read_bytes: Option<u64>,
+    saved_cube_model_read_bytes: u64,
+    saved_cube_pbcor_mask: Option<SavedPbcorMask>,
     preserves_saved_residual: bool,
     saved_weighted_residual: bool,
     field_residual_mask: Option<FieldResidualMask>,
@@ -132,6 +141,25 @@ impl ContinuumProductControls {
     #[must_use]
     pub const fn with_saved_residual_mask(mut self, mask_read_bytes: u64) -> Self {
         self.saved_residual_mask_read_bytes = Some(mask_read_bytes);
+        self
+    }
+
+    /// Keep saved apparent model pixels that a cube's temporary prediction
+    /// excludes, admitting one saved model plane per publication lane.
+    #[must_use]
+    pub const fn with_saved_cube_model(mut self, read_bytes: u64) -> Self {
+        self.saved_cube_model_read_bytes = read_bytes;
+        self
+    }
+
+    /// Retain the existing corrected cube's mask, or take the saved beam's
+    /// generated mask when there is no corrected-image mask to retain.
+    #[must_use]
+    pub const fn with_saved_cube_pbcor_mask(mut self, mask_read_bytes: Option<u64>) -> Self {
+        self.saved_cube_pbcor_mask = Some(match mask_read_bytes {
+            Some(bytes) => SavedPbcorMask::Existing(bytes),
+            None => SavedPbcorMask::PrimaryBeam,
+        });
         self
     }
 
@@ -221,6 +249,8 @@ impl Default for ContinuumProductControls {
             saved_mosaic_beam_read_bytes: None,
             saved_higher_primary_beam: false,
             saved_residual_mask_read_bytes: None,
+            saved_cube_model_read_bytes: 0,
+            saved_cube_pbcor_mask: None,
             preserves_saved_residual: false,
             saved_weighted_residual: false,
             field_residual_mask: None,
@@ -258,6 +288,8 @@ pub struct PlannedContinuumGeneration {
     pub(crate) uses_weight_image: bool,
     pub(crate) saved_mosaic_beam_read_bytes: u64,
     pub(crate) saved_residual_mask_read_bytes: Option<u64>,
+    pub(crate) saved_cube_model_read_bytes: u64,
+    pub(crate) saved_cube_pbcor_mask: Option<SavedPbcorMask>,
     pub(crate) saved_weighted_residual: bool,
     pub(crate) field_residual_mask: Option<FieldResidualMask>,
     pub(crate) members: Box<[PlannedMember]>,
@@ -378,6 +410,8 @@ impl PlannedContinuumGeneration {
             primary_beam_model: controls.primary_beam_model(),
             saved_mosaic_beam_read_bytes: controls.saved_mosaic_beam_read_bytes.unwrap_or(0),
             saved_residual_mask_read_bytes: controls.saved_residual_mask_read_bytes,
+            saved_cube_model_read_bytes: controls.saved_cube_model_read_bytes,
+            saved_cube_pbcor_mask: controls.saved_cube_pbcor_mask,
             saved_weighted_residual: controls.saved_weighted_residual,
             field_residual_mask: controls.field_residual_mask,
             uses_weight_image: list

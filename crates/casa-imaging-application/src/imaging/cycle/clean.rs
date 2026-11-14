@@ -37,11 +37,10 @@ pub(super) fn run(
         .is_some_and(ExistingProducts::residual_in_image_units);
     let use_pb_mask = setup.residual_pixel_mask;
     let read_mvc_residual = mvc.is_some() && !run.forms.residual;
-    let read_mosaic_residual = run
-        .existing
-        .as_ref()
-        .is_some_and(ExistingProducts::reads_mosaic_residual);
+    let (read_mosaic_residual, read_mosaic_cube) = mosaic_restart_masks(run.existing.as_ref());
     let read_field_residuals = !run.forms.residual && !run.outlier_products.is_empty();
+    let read_after_refresh =
+        read_mosaic_cube || (read_mosaic_residual || read_field_residuals) && use_pb_mask;
     if read_mvc_residual || read_mosaic_residual || read_field_residuals {
         // The saved residual's own mask governs the initial measurement.
         // Without a mask, CASA measures every valid pixel.
@@ -89,7 +88,7 @@ pub(super) fn run(
                     &run,
                     mvc.as_ref(),
                     refreshed,
-                    (read_mosaic_residual || read_field_residuals) && use_pb_mask,
+                    (read_after_refresh, use_pb_mask),
                     outcome.scientific.normal_state().slab().total_channels(),
                 )?;
                 let prepared = prepare_minor_cycle_with_residual_masks(
@@ -211,7 +210,7 @@ pub(super) fn run(
             }
         })?;
         setup.saved_weighted_residual = false;
-        setup.residual_pixel_mask = use_pb_mask && !read_field_residuals;
+        setup.residual_pixel_mask = use_pb_mask && !(read_field_residuals || read_mosaic_cube);
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
@@ -244,14 +243,23 @@ fn psf_cache(forms: Forms, scientific: &MajorCycleCompletion) -> PsfCache {
     }
 }
 
-/// CASA's pixel mask determines the peak independent of the solver's
-/// CLEAN support. If the first positive-cutoff major cycle sees an
-/// unmasked residual, it copies the saved PB's support to the residual.
+fn mosaic_restart_masks(saved: Option<&ExistingProducts>) -> (bool, bool) {
+    saved.map_or((false, false), |saved| {
+        (
+            saved.reads_mosaic_residual(),
+            saved.reads_mosaic_cube_residual(),
+        )
+    })
+}
+
+/// CASA's pixel mask determines the peak independently of CLEAN support.
+/// A positive cutoff copies a saved PB mask after a cube major cycle, or
+/// to a previously unmasked residual after a continuum major cycle.
 fn read_saved_masks(
     run: &Run<'_>,
     mvc: Option<&MvcState<'_>>,
     refreshed: bool,
-    keep_after_refresh: bool,
+    (keep_after_refresh, positive_cutoff): (bool, bool),
     channels: usize,
 ) -> Result<
     (
@@ -283,7 +291,8 @@ fn read_saved_masks(
         .enumerate()
     {
         for channel in 0..channels {
-            let (mask, mut charge) = read_saved_mask(run, saved, channel, refreshed)?;
+            let (mask, mut charge) =
+                read_saved_mask(run, saved, channel, refreshed && positive_cutoff)?;
             let pixels = mask.as_ref().map_or(0, |mask| mask.as_slice().len() as u64);
             if pixels > 0 {
                 tracing::debug!(
@@ -305,23 +314,27 @@ fn read_saved_mask(
     run: &Run<'_>,
     saved: &ExistingProducts,
     channel: usize,
-    refreshed: bool,
+    copy_pb: bool,
 ) -> Result<(Option<casa_imaging_deconvolution::Support>, Reservation), ImagingError> {
     let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
+    if copy_pb
+        && (bytes == 0 || saved.reads_mosaic_cube_residual())
+        && let Some(beam) = saved.mosaic_beam()
+        && (!saved.reads_mosaic_cube_residual() || beam.has_generated_mask())
+    {
+        let charge = run.admit("saved PB for residual mask", beam.reading_bytes())?;
+        let [nx, ny, _, _] = beam.shape();
+        let pixels = beam
+            .read_mask(channel, 0)
+            .map_err(casa_imaging_runtime::MinorCycleRunError::from)?;
+        let mask = casa_imaging_deconvolution::Support::new(
+            casa_imaging_deconvolution::PlaneShape::new(nx, ny),
+            pixels,
+        );
+        return Ok((Some(mask), charge));
+    }
     if bytes == 0 {
-        if refreshed && let Some(beam) = saved.mosaic_beam() {
-            let charge = run.admit("saved PB for residual mask", beam.reading_bytes())?;
-            let [nx, ny, _, _] = beam.shape();
-            let pixels = beam
-                .read_mask(channel, 0)
-                .map_err(casa_imaging_runtime::MinorCycleRunError::from)?;
-            let mask = casa_imaging_deconvolution::Support::new(
-                casa_imaging_deconvolution::PlaneShape::new(nx, ny),
-                pixels,
-            );
-            return Ok((Some(mask), charge));
-        }
-        if refreshed && saved.primary_beam_mask_bytes() > 0 {
+        if copy_pb && saved.primary_beam_mask_bytes() > 0 {
             let charge = run.admit(
                 "saved PB for residual mask",
                 saved.primary_beam_mask_bytes(),

@@ -258,6 +258,7 @@ fn read_domain(
             (!request.calcpsf, residual),
             weight,
             weight || (residual && request.outlierfile.is_some()),
+            request.specmode != crate::SpecMode::Mfs && matches!(family, Family::Single),
         )?;
         if request.niter > 0
             && let Some(path) = existing.masked_taylor_residual()

@@ -52,4 +52,21 @@ fn mosaic_cube_saved_residual_masks_stay_within_admission() {
     let measured = check(&mut breaches, "saved mosaic cube masks", &resumed, 2, AMPLE);
     assert!(breaches.is_empty(), "{}", breaches.join("\n"));
     assert_eq!(measured.outcome.unwrap().major_cycle_count, 0);
+
+    let mut residual =
+        casa_images::PagedImage::<f32>::open(prefix.with_extension("residual")).unwrap();
+    let blank = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1; 4]), 0.0_f32);
+    residual.put_slice(&blank, &coordinate).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    resumed.threshold = 0.0;
+    let measured = check(
+        &mut breaches,
+        "refreshed mosaic cube model",
+        &resumed,
+        2,
+        AMPLE,
+    );
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    assert!(measured.outcome.unwrap().major_cycle_count > 0);
 }

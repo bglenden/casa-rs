@@ -46,6 +46,9 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
+    cube: bool,
+    saved_model_plane_bytes: u64,
+    saved_pbcor_mask_bytes: Option<u64>,
     /// Whether the saved residual already uses the solver's image units.
     residual_in_image_units: bool,
     /// Scratch for reading the saved residual's pixel mask.
@@ -81,6 +84,7 @@ impl ExistingProducts {
         (psf, residual): (bool, bool),
         weight: bool,
         read_residual_mask: bool,
+        cube: bool,
     ) -> Result<Self, PrepareError> {
         let planes = match family {
             Family::Single => channels,
@@ -176,6 +180,29 @@ impl ExistingProducts {
                 }
             }
         }
+        let mut saved_model_plane_bytes = 0;
+        let mut saved_pbcor_mask_bytes = None;
+        if cube && residual && weight {
+            let path = product_path(prefix, "model");
+            if path.exists() {
+                let model = open(&path)?;
+                let cells = (shape[0] * shape[1]) as u64;
+                let backing = if model.tiled_io_stats().is_some() {
+                    let tile = 4 * model.tile_shape().iter().product::<usize>() as u64;
+                    CACHE_BYTES as u64 + 2 * tile
+                } else {
+                    12 * model.shape().iter().product::<usize>() as u64
+                };
+                saved_model_plane_bytes = 4 * cells + backing;
+            }
+            let path = product_path(prefix, "image.pbcor");
+            if path.exists() {
+                let image = open(&path)?;
+                if image.default_mask_name().is_some() {
+                    saved_pbcor_mask_bytes = Some(residual_mask_bytes(&image, &path)?);
+                }
+            }
+        }
         Ok(Self {
             prefix: prefix.to_path_buf(),
             family,
@@ -184,6 +211,9 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
+            cube,
+            saved_model_plane_bytes,
+            saved_pbcor_mask_bytes,
             residual_in_image_units,
             saved_residual_mask_bytes,
             primary_beam_mask_bytes,
@@ -347,6 +377,20 @@ impl ExistingProducts {
     /// Whether a saved single-term residual governs the first minor cycle.
     pub(crate) const fn reads_mosaic_residual(&self) -> bool {
         matches!(self.family, Family::Single) && self.residual_in_image_units()
+    }
+
+    /// A split mosaic cube major cycle writes only residual values before
+    /// the outer imager optionally copies the saved PB mask.
+    pub(crate) const fn reads_mosaic_cube_residual(&self) -> bool {
+        self.cube && self.reads_mosaic_residual()
+    }
+
+    pub(crate) const fn saved_model_plane_bytes(&self) -> u64 {
+        self.saved_model_plane_bytes
+    }
+
+    pub(crate) const fn saved_pbcor_mask_bytes(&self) -> Option<u64> {
+        self.saved_pbcor_mask_bytes
     }
 
     /// The first masked Taylor residual a CLEAN continuation would use.

@@ -187,6 +187,7 @@ fn raw_plane(
         polarization: 0,
         reuses_single_psf: false,
         saved_weighted_residual: false,
+        saved_cube_model_plane: None,
         fitted_beam: None,
         restoring_beam: None,
         primary_beam_model: planned.primary_beam_model(),
