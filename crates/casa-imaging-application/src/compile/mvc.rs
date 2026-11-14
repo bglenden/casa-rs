@@ -396,16 +396,18 @@ fn check_view_scope(
     if store_count != 1
         || parent.outlierfile.is_some()
         || moving_centre
-        || !(matches!(parent.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
-            || matches!(
-                parent.gridder,
-                crate::Gridder::Mosaic {
-                    normtype: casa_imaging_model::ProductNormalization::FlatNoise,
-                    conjbeams: false,
-                    ..
-                } if parent.psfphasecenter.is_none()
-            )
-            || matches!(parent.gridder, crate::Gridder::Awp2 { .. }))
+        || !(matches!(
+            parent.gridder,
+            crate::Gridder::Standard { facets } | crate::Gridder::Wproject { facets, .. }
+                if facets.get() == 1
+        ) || matches!(
+            parent.gridder,
+            crate::Gridder::Mosaic {
+                normtype: casa_imaging_model::ProductNormalization::FlatNoise,
+                conjbeams: false,
+                ..
+            } if parent.psfphasecenter.is_none()
+        ) || matches!(parent.gridder, crate::Gridder::Awp2 { .. }))
         || parent.stokes != [casa_imaging_model::PolarizationCoordinate::StokesI]
         || parent.nterms != 2
         || (parent.weighting != crate::Weighting::Natural
