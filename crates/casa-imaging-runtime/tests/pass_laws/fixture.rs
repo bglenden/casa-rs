@@ -685,6 +685,7 @@ pub fn try_run_on(
         domains,
         weighting: &weighting,
         modes: run.modes,
+        refill_scalar_sum_weight: false,
         model: run.model,
         residency: run.residency,
         native_spacing_hz: run.native_spacing_hz,

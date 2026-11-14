@@ -49,6 +49,7 @@ pub struct ContinuumProductControls {
     reuses_single_psf: bool,
     preserves_saved_psfs: bool,
     refits_saved_psf_beams: bool,
+    refills_saved_sums: bool,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     saved_mosaic_beam_read_bytes: Option<u64>,
     saved_higher_primary_beam: bool,
@@ -151,10 +152,12 @@ impl ContinuumProductControls {
     /// Keep the PSF, sums of weights and primary-beam images already
     /// present on the main field and its outliers. If a saved PSF has
     /// no beam, allow generation to attach the fitted beam to that image.
+    /// A residual gridding pass can also publish only the sums it refilled.
     #[must_use]
-    pub const fn preserving_saved_psfs(mut self, refits_beams: bool) -> Self {
+    pub const fn preserving_saved_psfs(mut self, refits_beams: bool, refills_sums: bool) -> Self {
         self.preserves_saved_psfs = true;
         self.refits_saved_psf_beams = refits_beams;
+        self.refills_saved_sums = refills_sums;
         self
     }
 
@@ -213,6 +216,7 @@ impl Default for ContinuumProductControls {
             reuses_single_psf: false,
             preserves_saved_psfs: false,
             refits_saved_psf_beams: false,
+            refills_saved_sums: false,
             primary_beam_model: None,
             saved_mosaic_beam_read_bytes: None,
             saved_higher_primary_beam: false,
@@ -272,13 +276,19 @@ impl PlannedContinuumGeneration {
         controls: &ContinuumProductControls,
     ) -> Result<Self, ProductsError> {
         let mut planned = Self::for_problem(inputs.problem(), controls)?;
-        if controls.refits_saved_psf_beams {
+        if controls.refits_saved_psf_beams || controls.refills_saved_sums {
             let mut members = planned.members.into_vec();
             members.retain(|member| {
-                !matches!(member.role, ProductRole::Psf(_))
-                    || inputs
-                        .saved_psf_beams(inputs.model_domain_ordinal(member.axes().domain()))
-                        .is_none()
+                let domain = inputs.model_domain_ordinal(member.axes().domain());
+                match member.role {
+                    ProductRole::Psf(_) if controls.refits_saved_psf_beams => {
+                        inputs.saved_psf_beams(domain).is_none()
+                    }
+                    ProductRole::SumWeights(_) if controls.refills_saved_sums => {
+                        inputs.normal_state().refilled_sum_weight(domain)
+                    }
+                    _ => true,
+                }
             });
             planned.members = members.into_boxed_slice();
         }
@@ -306,8 +316,8 @@ impl PlannedContinuumGeneration {
             if keep_psf
                 && match entry.role() {
                     ProductRole::Psf(_) => !controls.refits_saved_psf_beams,
+                    ProductRole::SumWeights(_) => !controls.refills_saved_sums,
                     ProductRole::Weight(_)
-                    | ProductRole::SumWeights(_)
                     | ProductRole::PrimaryBeam(ProductTerm::Single | ProductTerm::Taylor(0)) => {
                         true
                     }

@@ -239,6 +239,9 @@ pub struct MajorCyclePass<'a> {
     pub weighting: &'a WeightingGeneration,
     /// Modes accumulated: data and PSF on the initial pass, data later.
     pub modes: ModeSet,
+    /// Sum data-gridding weights on a restart with an unfilled scalar
+    /// field even though this pass forms no PSF.
+    pub refill_scalar_sum_weight: bool,
     /// Model grids of a domain's planes; `None` grids the data themselves
     /// (an initial pass without a start model).
     pub model: Option<&'a ModelPreparation<'a>>,
@@ -313,10 +316,10 @@ impl MajorCyclePass<'_> {
     /// Whether the pass sums `sumwt`: without a model, or when it forms the
     /// PSF, as the initial pass from a start model does. A residual pass's
     /// sums are not read, since CASA keeps the PSF gridding's `.sumwt`
-    /// through the data passes (`FTMachine::finalizeToSkyNew`), so its
-    /// images carry zero sums.
+    /// through the data passes (`FTMachine::finalizeToSkyNew`), unless an
+    /// earlier run left a field with an unfilled sum.
     fn sums_weights(&self) -> bool {
-        self.model.is_none() || self.modes.psf
+        self.model.is_none() || self.modes.psf || self.refill_scalar_sum_weight
     }
 
     /// `acc`, summing `sumwt` only when the pass does.

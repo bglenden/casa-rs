@@ -292,6 +292,7 @@ pub(crate) struct SpectralDomainPrimitives {
     domain_ordinal: usize,
     domain_role: ImageDomainRole,
     primitives: NormalPrimitives,
+    refilled_sum_weight: bool,
 }
 
 impl SpectralDomainPrimitives {
@@ -304,7 +305,12 @@ impl SpectralDomainPrimitives {
             domain_ordinal,
             domain_role,
             primitives,
+            refilled_sum_weight: false,
         }
+    }
+
+    pub(crate) const fn refilled_sum_weight(&self) -> bool {
+        self.refilled_sum_weight
     }
 
     pub(crate) const fn domain_ordinal(&self) -> usize {

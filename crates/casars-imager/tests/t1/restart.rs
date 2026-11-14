@@ -913,26 +913,83 @@ fn check_outlier_psf_edges(
         "unlabelled outlier PSF uses the default beam fit"
     );
 
-    let mut sum = PagedImage::<f32>::open(directory.join("field.sumwt")).unwrap();
-    let saved = sum.get().unwrap();
-    sum.put_slice(&saved.mapv(|_| 0.0), &[0; 4]).unwrap();
-    sum.save().unwrap();
-    drop(sum);
+    check_refilled_field_sum_weight(directory, values);
+    set_beam(casa_images::ImageBeamSet::new(field_beam));
+}
+
+/// The data pass supplies the weight of a field with an unfilled sum.
+fn check_refilled_field_sum_weight(directory: &Path, mut values: serde_json::Value) {
+    let field = directory.join("field.sumwt");
+    let main = directory.join("main.sumwt");
+    let read = |p: &Path| PagedImage::<f32>::open(p).unwrap().get().unwrap();
+    let change = |path: &Path, factor: f32| {
+        let mut image = PagedImage::<f32>::open(path).unwrap();
+        image
+            .put_slice(&image.get().unwrap().mapv(|v| v * factor), &[0; 4])
+            .unwrap();
+        image.save().unwrap();
+    };
+    // The field was deliberately doubled in check_saved_outlier_psfs.
+    let gridded = read(&main);
+    assert_eq!(read(&field), gridded.mapv(|weight| 2.0 * weight));
+    change(&field, 0.0);
     let before = snapshot(directory);
-    match json_run(directory, values) {
-        TaskReply::Failed { message, .. } => {
-            assert!(
-                message.contains("field.sumwt") && message.contains("nonpositive"),
-                "{message}"
-            );
-        }
-        reply => panic!("an unfilled outlier sumwt should be refused: {reply:?}"),
+    values["calcres"] = json!(false);
+    match json_run(directory, values.clone()) {
+        TaskReply::Failed { message, .. } => assert!(
+            message.contains("field.sumwt") && message.contains("nonpositive"),
+            "{message}"
+        ),
+        reply => panic!("a zero sum without initial gridding must fail: {reply:?}"),
     }
     assert_unchanged(&before, &snapshot(directory));
-    let mut sum = PagedImage::<f32>::open(directory.join("field.sumwt")).unwrap();
-    sum.put_slice(&saved, &[0; 4]).unwrap();
-    sum.save().unwrap();
-    set_beam(casa_images::ImageBeamSet::new(field_beam));
+
+    values["calcres"] = json!(true);
+    let resumed = |refilled: &str| {
+        let reply = json_run(directory, values.clone());
+        let TaskReply::Succeeded { result, .. } = reply else {
+            panic!("{reply:?}")
+        };
+        let sums = result["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|image| image["kind"] == "sumwt")
+            .map(|image| {
+                Path::new(image["path"].as_str().unwrap())
+                    .file_name()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(sums, [refilled], "only the refilled sumwt is published");
+    };
+    let scientific_table = |path: &Path| {
+        let mut files = snapshot(path);
+        files.retain(|path, _| {
+            path.file_name().unwrap() != "table.lock"
+                && !path.components().any(|part| part.as_os_str() == "logtable")
+        });
+        files
+    };
+    let main_before = scientific_table(&main);
+    resumed("field.sumwt");
+    assert_eq!(
+        read(&field),
+        gridded,
+        "zero outlier sumwt is refilled from the gridding pass"
+    );
+    assert_unchanged(&main_before, &scientific_table(&main));
+    change(&field, 1.5);
+    change(&main, -1.0);
+    let field_before = scientific_table(&field);
+    resumed("main.sumwt");
+    assert_eq!(
+        read(&main),
+        gridded,
+        "negative main sumwt is refilled from the gridding pass"
+    );
+    assert_unchanged(&field_before, &scientific_table(&field));
+    change(&field, 2.0 / 3.0);
 }
 
 /// Each field supplies its own residual pixels and default mask. A
