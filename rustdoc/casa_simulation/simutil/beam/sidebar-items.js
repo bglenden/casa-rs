@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["spheroidal_beam"]};

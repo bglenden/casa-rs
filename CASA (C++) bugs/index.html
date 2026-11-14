@@ -6308,6 +6308,56 @@ with the actual default-exponent CASA prediction at 3.7e-7 NRMS. Native CPU
 W1/W3 predictions agree with these controls below 1e-6 NRMS, including polarized
 spectra, selected replacement/increments and unchanged scratch/quality cells.
 The uniform-disk and projected-sphere analytic limits are checked separately.</p>
+<h2 id="simulation-numerical-diagnostics-fail-before-returning-their-calculations">Simulation numerical diagnostics fail before returning their calculations<a class="headerlink" href="#simulation-numerical-diagnostics-fail-before-returning-their-calculations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-14</li>
+<li>Status: CASA defects; casa-rs corrects these simulation diagnostics (#1303).</li>
+<li>Affected code: CASA 6.7.6.14 <code>casatasks/private/simutil.py</code>, <code>sfBeam1d</code> and <code>sensitivity</code>.</li>
+</ul>
+<p><code>sfBeam1d</code> passes the length-one arrays returned by <code>qa.getvalue</code> to Python
+scalar operations. Under NumPy 2 this raises <code>TypeError: only 0-dimensional
+arrays can be converted to Python scalars</code>. The reference control explicitly
+extracts just the three scalar quantities (beam, cell and sampling); its
+SciPy spheroid, convolutions and spline calculation remain unchanged. Native
+widths agree with seven such controls to 1e-9 relatively. Units, invalid
+quantity messages, zero support, support below -1 and absent sampling are
+covered too. CASA's literal default support -1 has negative c; SciPy returns
+a constant angular profile there, so native preserves that box-kernel result.</p>
+<p><code>sensitivity</code> without an antenna list leaves <code>padnames</code> undefined and raises
+<code>UnboundLocalError</code>, even with a valid telescope, dish diameter and antenna
+count. Native returns the identical-dish radiometer estimate at the requested
+elevation: the existing Tsys baseline sigma divided by
+<code>sqrt((time/integration) * nant*(nant-1)/2 * 2)</code> for two polarizations. It
+uses the existing receiver and manual/ATM models without inventing antenna
+positions. Nonfinite inputs and invalid Tsys are refused before the noise
+model can neutralize a bad gain into a plausible estimate. Independent controls
+use the previously validated radiometer
+equations, CASA receiver efficiencies and CASA's ATM tool. Image noise needs
+a configuration, since diameter/count alone do not define an image's UV coverage.</p>
+<p>With a configuration, native follows the task's synthetic-track and middle
+unflagged T-solution calculation through the existing simulator. Its accepted
+UTC, per-row noise and physical-channel atmosphere corrections still apply.
+Six ALMA/ACA/VLA references, including manual/atmospheric noise and the ALMA
+high-frequency double-sideband case, agree within the ordinary 1e-3 tolerance.
+An additional equivalent-unit/time/bandwidth case also agrees. With manual
+noise and omitted <code>tau0</code>, CASA instead fails inside <code>setnoise</code> with a negative
+Tsys and a Python <code>SystemError</code>; native requires an explicit manual opacity
+and reports that cause. This does not choose a new scientific default.</p>
+<p><code>doimnoise=True</code> calls <code>imclean</code> without its <code>psfmode</code> argument, raising
+<code>TypeError</code> for missing <code>stokes</code>. Inserting that argument exposes the removed
+legacy <code>clean</code> function (<code>NameError</code>). Native carries out the declared small
+128-square, natural-weighted Stokes-I Clark calculation with the existing
+imaging application and returns <code>(theoretical_noise, image_rms)</code> in Jy. The
+reference uses CASA <code>tclean</code> on exactly the same native-written noisy MS;
+the native image never constructs its reference. The two 128x128x1x1 Jy/beam
+images agree at 1.905e-7 NRMS, and their measured RMS agrees at about 1e-9
+relatively. This completes the numerical diagnostic without completing the
+general <code>imclean</code> wrapper or introducing a new task.</p>
+<p>The raw errors, controlled calculations and reproduction commands are kept
+with the simulation diagnostic evidence and
+<code>tools/simulation/simutil_diagnostics_oracle.py</code>. These apply the standing
+policy to correct CASA failures that contradict the calculation's evident
+intent; ordinary successful configurations and scientific tolerances are retained.</p>
 
 
 
