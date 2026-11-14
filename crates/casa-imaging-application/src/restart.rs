@@ -150,8 +150,11 @@ fn supports_outlier_restart(request: &ImagingRequest) -> bool {
         && request.weighting == crate::Weighting::Natural
         && request.stokes == [crate::PolarizationCoordinate::StokesI]
         && request.usemask == UseMask::User
-        && request.calcres
-        && (request.calcpsf || (request.savemodel == crate::SaveModel::None && !request.pbcor))
+        && if request.calcpsf {
+            request.calcres
+        } else {
+            request.savemodel == crate::SaveModel::None && !request.pbcor
+        }
 }
 
 pub(crate) fn supports_saved_automask(request: &ImagingRequest) -> bool {
@@ -337,7 +340,9 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         }
     }
     if !request.calcres
-        && (request.niter > 0 || reuses_direction_dependent_psf(request))
+        && (request.niter > 0
+            || request.outlierfile.is_some()
+            || reuses_direction_dependent_psf(request))
         && let Some(path) = missing("residual")
     {
         return refuse(
@@ -346,7 +351,7 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
                 "calcres=False with niter > 0 cleans the residual an earlier run left at imagename, \
                  and this one does not exist"
             } else {
-                "calcres=False restoration requires the saved residual at imagename"
+                "calcres=False requires the saved residual at imagename for this restart"
             }
             .into(),
         );

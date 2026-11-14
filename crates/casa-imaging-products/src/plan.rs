@@ -34,6 +34,14 @@ pub enum AnalyticPrimaryBeamModel {
     MosaicSensitivity,
 }
 
+/// The mask CASA leaves on a scalar residual during a field restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldResidualMask {
+    Saved,
+    SavedOrPrimaryBeam,
+    Absent,
+}
+
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinuumProductControls {
@@ -46,6 +54,8 @@ pub struct ContinuumProductControls {
     saved_higher_primary_beam: bool,
     saved_residual_mask_read_bytes: Option<u64>,
     preserves_saved_residual: bool,
+    saved_weighted_residual: bool,
+    field_residual_mask: Option<FieldResidualMask>,
 }
 
 impl ContinuumProductControls {
@@ -92,6 +102,27 @@ impl ContinuumProductControls {
     #[must_use]
     pub const fn preserving_weighted_residuals(mut self, mask_read_bytes: u64) -> Self {
         self.preserves_saved_residual = true;
+        self.saved_weighted_residual = true;
+        self.with_saved_residual_mask(mask_read_bytes)
+    }
+
+    /// Preserve scalar saved residuals through a zero-major restart.
+    /// After a positive-cutoff refresh retain a field's original mask,
+    /// or copy that field's saved PB mask when the residual had none.
+    /// The scientific state still uses its own scalar sum of weights.
+    #[must_use]
+    pub const fn with_saved_field_residuals(
+        mut self,
+        mask_read_bytes: u64,
+        refreshed: bool,
+        keeps_pb_mask: bool,
+    ) -> Self {
+        self.preserves_saved_residual = !refreshed;
+        self.field_residual_mask = Some(match (refreshed, keeps_pb_mask) {
+            (false, _) => FieldResidualMask::Saved,
+            (true, true) => FieldResidualMask::SavedOrPrimaryBeam,
+            (true, false) => FieldResidualMask::Absent,
+        });
         self.with_saved_residual_mask(mask_read_bytes)
     }
 
@@ -187,6 +218,8 @@ impl Default for ContinuumProductControls {
             saved_higher_primary_beam: false,
             saved_residual_mask_read_bytes: None,
             preserves_saved_residual: false,
+            saved_weighted_residual: false,
+            field_residual_mask: None,
         }
     }
 }
@@ -221,7 +254,8 @@ pub struct PlannedContinuumGeneration {
     pub(crate) uses_weight_image: bool,
     pub(crate) saved_mosaic_beam_read_bytes: u64,
     pub(crate) saved_residual_mask_read_bytes: Option<u64>,
-    pub(crate) preserves_saved_residual: bool,
+    pub(crate) saved_weighted_residual: bool,
+    pub(crate) field_residual_mask: Option<FieldResidualMask>,
     pub(crate) members: Box<[PlannedMember]>,
 }
 
@@ -334,7 +368,8 @@ impl PlannedContinuumGeneration {
             primary_beam_model: controls.primary_beam_model(),
             saved_mosaic_beam_read_bytes: controls.saved_mosaic_beam_read_bytes.unwrap_or(0),
             saved_residual_mask_read_bytes: controls.saved_residual_mask_read_bytes,
-            preserves_saved_residual: controls.preserves_saved_residual,
+            saved_weighted_residual: controls.saved_weighted_residual,
+            field_residual_mask: controls.field_residual_mask,
             uses_weight_image: list
                 .entries()
                 .iter()

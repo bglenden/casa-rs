@@ -228,7 +228,11 @@ fn read_domain(
         ));
     }
     let is_main = domain.role == casa_imaging_model::ImageDomainRole::Main;
-    let residual = is_main && restart::reads_residual(request);
+    let residual = if is_main {
+        restart::reads_residual(request)
+    } else {
+        !request.calcres
+    };
     // CASA retains an existing residual's beam even when it forms new pixels.
     let residual_name = family
         .names("residual")
@@ -253,7 +257,7 @@ fn read_domain(
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
             weight,
-            weight,
+            weight || (residual && request.outlierfile.is_some()),
         )?;
         if request.niter > 0
             && let Some(path) = existing.masked_taylor_residual()

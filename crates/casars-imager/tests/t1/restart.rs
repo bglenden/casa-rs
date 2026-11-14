@@ -935,6 +935,181 @@ fn check_outlier_psf_edges(
     set_beam(casa_images::ImageBeamSet::new(field_beam));
 }
 
+/// Each field supplies its own residual pixels and default mask. A
+/// threshold stop before the first major cycle keeps the saved tables.
+#[test]
+fn same_prefix_restart_reuses_both_fields_saved_residuals() {
+    let observation = Observation::synthesise(&[(
+        "point",
+        Component {
+            offset_px: [0, 0],
+            flux_jy: 1.0,
+            fwhm_px: None,
+            spectral_index: 0.0,
+        },
+    )]);
+    let directory = observation.scratch("saved-outlier-residuals");
+    fs::create_dir(&directory).unwrap();
+    let definition = directory.join("outlier.txt");
+    fs::write(
+        &definition,
+        "imagename=field\nimsize=40\nphasecenter=J2000 18h00m00s -23d00m10s\n",
+    )
+    .unwrap();
+    let geometry = observation.geometry();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": "main", "outlierfile": definition,
+        "imsize": geometry.image_size, "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        "niter": 2, "cycleniter": 1, "backend": "cpu", "fullsummary": true,
+    });
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(&directory, values.clone());
+        let TaskReply::Succeeded { value, result, .. } = reply else {
+            panic!("{reply:?}")
+        };
+        let record = serde_json::to_value(value).unwrap();
+        let counts = ["iterdone", "nmajordone", "stopcode"].map(|key| {
+            record["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["key"] == key)
+                .unwrap()["value"]["value"]
+                .as_i64()
+                .unwrap()
+        });
+        if !values["calcres"].as_bool().unwrap_or(true) && (counts[1] == 0 || counts[0] == 0) {
+            assert!(
+                result["artifacts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|image| image["kind"] != "residual"),
+                "a run without gridding must not publish a residual table"
+            );
+        }
+        counts
+    };
+    run(&values);
+
+    let read = |name: &str| PagedImage::<f32>::open(directory.join(name)).unwrap();
+    let reshape = |name: &str, peak: f32, excluded: Option<([usize; 4], f32)>| {
+        let mut image = read(name);
+        let [nx, ny, _, _] = image.shape().try_into().unwrap();
+        let mut pixels = image.get().unwrap().mapv(|_| 0.0);
+        pixels[[nx / 2, ny / 2, 0, 0]] = peak;
+        let mut mask = pixels.mapv(|_| true);
+        if let Some((index, value)) = excluded {
+            pixels[index] = value;
+            mask[index] = false;
+        }
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+        image.set_default_mask("mask0").unwrap();
+        image.save().unwrap();
+        mask
+    };
+    let main_mask = reshape("main.residual", 2.0, None);
+    let field_mask = reshape("field.residual", 3.0, Some(([21, 20, 0, 0], 8.0)));
+    let saved = ["main.residual", "field.residual"].map(|name| directory.join(name));
+    let stable = |path: &Path| {
+        let mut files = snapshot(path);
+        files.retain(|path, _| {
+            path.file_name().unwrap() != "table.lock"
+                && !path.components().any(|part| part.as_os_str() == "logtable")
+        });
+        files
+    };
+    let before = saved.each_ref().map(|path| stable(path));
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    values["threshold"] = json!("2.5Jy");
+    let hidden = directory.join("withheld-residual");
+    fs::rename(&saved[1], &hidden).unwrap();
+    let no_outlier = snapshot(&directory);
+    match json_run_with(&directory, values.clone(), true) {
+        TaskReply::Failed { message, .. } => {
+            assert!(message.contains("field.residual"), "{message}")
+        }
+        reply => panic!("missing saved outlier residual was accepted: {reply:?}"),
+    }
+    assert_unchanged(&no_outlier, &snapshot(&directory));
+    fs::rename(hidden, &saved[1]).unwrap();
+
+    // The retained 3 Jy outlier peak is above 2.5 Jy. The masked 8 Jy
+    // pixel is excluded from the controller threshold, as in CASA.
+    values["threshold"] = json!("4Jy");
+    assert_eq!(run(&values), [0, 0, 2], "saved mask governs the first stop");
+    for (path, bytes) in saved.iter().zip(&before) {
+        assert_unchanged(bytes, &stable(path));
+    }
+    assert_eq!(read("main.image").get_mask().unwrap().unwrap(), main_mask);
+    assert_eq!(read("field.image").get_mask().unwrap().unwrap(), field_mask);
+    values["niter"] = json!(0);
+    assert_eq!(run(&values), [0, 1, 3], "restoration-only summary");
+    for (path, bytes) in saved.iter().zip(&before) {
+        assert_unchanged(bytes, &stable(path));
+    }
+
+    values["niter"] = json!(2);
+    values["threshold"] = json!("2.5Jy");
+    let counters = run(&values);
+    assert!(
+        counters[0] > 0 && counters[1] > 0,
+        "saved outlier peak entered CLEAN: {counters:?}"
+    );
+    assert_eq!(
+        read("field.residual").get_mask().unwrap().unwrap(),
+        field_mask
+    );
+    assert_eq!(read("field.image").get_mask().unwrap().unwrap(), field_mask);
+    assert_ne!(
+        stable(&saved[1]),
+        before[1],
+        "the major cycle replaces the residual"
+    );
+
+    let pb_mask = field_mask.mapv(|pixel| !pixel);
+    let mut pb = read("field.pb");
+    pb.put_mask_slice("mask0", &pb_mask, &[0; 4]).unwrap();
+    pb.set_default_mask("mask0").unwrap();
+    pb.save().unwrap();
+    let mut residual = read("field.residual");
+    residual.remove_mask("mask0").unwrap();
+    residual.save().unwrap();
+    drop((pb, residual));
+    values["threshold"] = json!("0Jy");
+    assert!(run(&values)[1] > 0);
+    assert_eq!(
+        read("field.residual").get_mask().unwrap().unwrap(),
+        pb_mask,
+        "first major copies the saved PB mask if the residual has none"
+    );
+    assert_eq!(read("field.image").get_mask().unwrap().unwrap(), pb_mask);
+
+    fs::remove_dir_all(directory.join("field.pb")).unwrap();
+    fs::remove_dir_all(directory.join("field.image")).unwrap();
+    values["niter"] = json!(0);
+    run(&values);
+    assert!(
+        read("field.image").get_mask().unwrap().is_none(),
+        "a new restored image has no mask without a saved PB"
+    );
+    let mut restored = read("field.image");
+    restored
+        .put_mask_slice("mask0", &field_mask, &[0; 4])
+        .unwrap();
+    restored.set_default_mask("mask0").unwrap();
+    restored.save().unwrap();
+    drop(restored);
+    run(&values);
+    assert_eq!(
+        read("field.image").get_mask().unwrap().unwrap(),
+        field_mask,
+        "without a PB, restoration keeps the previous image mask"
+    );
+}
+
 /// CASA blanks a shared sky component in earlier fields for prediction
 /// and restores it in their published model images after the major cycle.
 #[test]

@@ -54,6 +54,37 @@ fn outlier_restart_seed_stays_within_admission() {
         outlier_admitted >= 12 * 1280 * 1280,
         "outlier PSF and residual read held only {outlier_admitted} admitted bytes"
     );
+    // The first resumed measurement holds both fields' independently
+    // read masks while the controller evaluates the requested threshold.
+    for path in [
+        prefix.with_extension("residual"),
+        outlier.with_extension("residual"),
+    ] {
+        let mut image = casa_images::PagedImage::<f32>::open(path).unwrap();
+        if image.default_mask_name().is_none() {
+            image.make_mask("mask0", true, true).unwrap();
+            image.save().unwrap();
+        }
+    }
+    let mut saved_residual = saved_psf;
+    saved_residual.calcres = false;
+    saved_residual.niter = 1;
+    saved_residual.threshold = 1.0e6;
+    OUTLIER_MASK_BYTES.store(0, Ordering::Relaxed);
+    let measured = check(
+        &mut breaches,
+        "saved outlier residuals",
+        &saved_residual,
+        1,
+        AMPLE,
+    );
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    assert_eq!(measured.outcome.unwrap().major_cycle_count, 0);
+    let mask_admitted = OUTLIER_MASK_BYTES.load(Ordering::Relaxed);
+    assert!(
+        mask_admitted >= 2 * 1280 * 1280,
+        "outlier residual mask read held only {mask_admitted} admitted bytes"
+    );
     let admitted = SEED_BYTES.load(Ordering::Relaxed);
     // The current direct reader holds a Float32 input and emitted samples
     // of the largest domain together, beside the new model generation.
@@ -78,9 +109,10 @@ pub(super) fn record_seed(event: &tracing::Event<'_>) {
     event.record(&mut Seed);
 }
 
-static OUTLIER_READ_BYTES: AtomicU64 = AtomicU64::new(0);
+pub(super) static OUTLIER_READ_BYTES: AtomicU64 = AtomicU64::new(0);
+pub(super) static OUTLIER_MASK_BYTES: AtomicU64 = AtomicU64::new(0);
 
-pub(super) fn record_read(event: &tracing::Event<'_>) {
+pub(super) fn record_read(event: &tracing::Event<'_>, counter: &AtomicU64) {
     #[derive(Default)]
     struct Read {
         domain: u64,
@@ -99,6 +131,6 @@ pub(super) fn record_read(event: &tracing::Event<'_>) {
     let mut read = Read::default();
     event.record(&mut read);
     if read.domain == 1 {
-        OUTLIER_READ_BYTES.store(read.admitted, Ordering::Relaxed);
+        counter.store(read.admitted, Ordering::Relaxed);
     }
 }
