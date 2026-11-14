@@ -505,68 +505,69 @@
 <a href=#505 id=505 data-nosnippet>505</a>            algorithm,
 <a href=#506 id=506 data-nosnippet>506</a>            accounting: HogbomIterationAccounting::Strict,
 <a href=#507 id=507 data-nosnippet>507</a>            response: <span class="prelude-val">None</span>,
-<a href=#508 id=508 data-nosnippet>508</a>            nsigma: <span class="number">0.0</span>,
-<a href=#509 id=509 data-nosnippet>509</a>            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
-<a href=#510 id=510 data-nosnippet>510</a>            automask: <span class="bool-val">false</span>,
-<a href=#511 id=511 data-nosnippet>511</a>            primary_beam: <span class="prelude-val">None</span>,
-<a href=#512 id=512 data-nosnippet>512</a>            residual_pixel_mask: <span class="bool-val">false</span>,
-<a href=#513 id=513 data-nosnippet>513</a>            pbmask: <span class="number">0.0</span>,
-<a href=#514 id=514 data-nosnippet>514</a>        }
-<a href=#515 id=515 data-nosnippet>515</a>    }
-<a href=#516 id=516 data-nosnippet>516</a>
-<a href=#517 id=517 data-nosnippet>517</a>    <span class="doccomment">/// #780 review: a lone plane's scale transforms take the team's threads
-<a href=#518 id=518 data-nosnippet>518</a>    /// and own their plans, so its minor cycle charges the solver on that
-<a href=#519 id=519 data-nosnippet>519</a>    /// many threads; planes cleaned side by side transform on one thread
-<a href=#520 id=520 data-nosnippet>520</a>    /// each and charge as many one-thread solves as run at once.
-<a href=#521 id=521 data-nosnippet>521</a>    </span><span class="attr">#[test]
-<a href=#522 id=522 data-nosnippet>522</a>    </span><span class="kw">fn </span>a_lone_plane_charges_its_threaded_transforms() {
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">let </span>shape = PlaneShape::new(<span class="number">256</span>, <span class="number">256</span>);
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>scales = <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">5.0</span>];
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>taylor = setup(ReconstructionAlgorithm::Mtmfs {
-<a href=#526 id=526 data-nosnippet>526</a>            scales_px: scales.clone(),
-<a href=#527 id=527 data-nosnippet>527</a>            small_scale_bias: <span class="number">0.0</span>,
-<a href=#528 id=528 data-nosnippet>528</a>        });
-<a href=#529 id=529 data-nosnippet>529</a>        <span class="kw">let </span>lone = MinorLayout {
-<a href=#530 id=530 data-nosnippet>530</a>            planes: <span class="number">1</span>,
-<a href=#531 id=531 data-nosnippet>531</a>            shape,
-<a href=#532 id=532 data-nosnippet>532</a>            domains: <span class="macro">vec!</span>[[<span class="number">256</span>, <span class="number">256</span>]],
-<a href=#533 id=533 data-nosnippet>533</a>            channels_and_polarizations: (<span class="number">1</span>, <span class="number">1</span>),
-<a href=#534 id=534 data-nosnippet>534</a>            terms: (<span class="number">2</span>, <span class="number">3</span>),
-<a href=#535 id=535 data-nosnippet>535</a>            paged: <span class="bool-val">false</span>,
-<a href=#536 id=536 data-nosnippet>536</a>        };
-<a href=#537 id=537 data-nosnippet>537</a>        <span class="kw">let </span>solve = |threads| {
-<a href=#538 id=538 data-nosnippet>538</a>            casa_imaging_deconvolution::solve_bytes(
-<a href=#539 id=539 data-nosnippet>539</a>                <span class="kw-2">&amp;</span>Taylor::new(<span class="number">2</span>, scales.clone(), <span class="number">0.0</span>).with_fft_threads(threads),
-<a href=#540 id=540 data-nosnippet>540</a>                shape,
-<a href=#541 id=541 data-nosnippet>541</a>                <span class="number">2</span>,
-<a href=#542 id=542 data-nosnippet>542</a>                <span class="number">101</span>,
-<a href=#543 id=543 data-nosnippet>543</a>                TRACE,
-<a href=#544 id=544 data-nosnippet>544</a>            )
-<a href=#545 id=545 data-nosnippet>545</a>        };
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="macro">assert!</span>(solve(<span class="number">4</span>) &gt; solve(<span class="number">1</span>), <span class="string">"four threads own their plans"</span>);
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="macro">assert_eq!</span>(
-<a href=#548 id=548 data-nosnippet>548</a>            run_bytes_for(<span class="kw-2">&amp;</span>lone, <span class="kw-2">&amp;</span>taylor, <span class="number">100</span>, <span class="number">0</span>, <span class="number">4</span>) - run_bytes_for(<span class="kw-2">&amp;</span>lone, <span class="kw-2">&amp;</span>taylor, <span class="number">100</span>, <span class="number">0</span>, <span class="number">1</span>),
-<a href=#549 id=549 data-nosnippet>549</a>            solve(<span class="number">4</span>) - solve(<span class="number">1</span>)
-<a href=#550 id=550 data-nosnippet>550</a>        );
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">let </span>multiscale = setup(ReconstructionAlgorithm::Multiscale {
-<a href=#552 id=552 data-nosnippet>552</a>            scales_px: scales,
-<a href=#553 id=553 data-nosnippet>553</a>            small_scale_bias: <span class="number">0.6</span>,
-<a href=#554 id=554 data-nosnippet>554</a>        });
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>side = MinorLayout {
-<a href=#556 id=556 data-nosnippet>556</a>            planes: <span class="number">4</span>,
-<a href=#557 id=557 data-nosnippet>557</a>            terms: (<span class="number">1</span>, <span class="number">1</span>),
-<a href=#558 id=558 data-nosnippet>558</a>            ..lone
-<a href=#559 id=559 data-nosnippet>559</a>        };
-<a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">let </span>records = (<span class="number">4
-<a href=#561 id=561 data-nosnippet>561</a>            </span>* (size_of::&lt;Slot&gt;()
-<a href=#562 id=562 data-nosnippet>562</a>                + size_of::&lt;(
-<a href=#563 id=563 data-nosnippet>563</a>                    PlaneKey,
-<a href=#564 id=564 data-nosnippet>564</a>                    casa_imaging_deconvolution::PlaneStatistics,
-<a href=#565 id=565 data-nosnippet>565</a>                    Solved,
-<a href=#566 id=566 data-nosnippet>566</a>                )&gt;()
-<a href=#567 id=567 data-nosnippet>567</a>                + size_of::&lt;PlaneStop&gt;())) <span class="kw">as </span>u64;
-<a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">let </span>run = |workers| run_bytes_for(<span class="kw-2">&amp;</span>side, <span class="kw-2">&amp;</span>multiscale, <span class="number">100</span>, <span class="number">0</span>, workers) - records;
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="macro">assert_eq!</span>(run(<span class="number">4</span>), <span class="number">4 </span>* run(<span class="number">1</span>), <span class="string">"four one-thread solves at once"</span>);
-<a href=#570 id=570 data-nosnippet>570</a>    }
-<a href=#571 id=571 data-nosnippet>571</a>}
+<a href=#508 id=508 data-nosnippet>508</a>            saved_taylor_residual: <span class="bool-val">false</span>,
+<a href=#509 id=509 data-nosnippet>509</a>            nsigma: <span class="number">0.0</span>,
+<a href=#510 id=510 data-nosnippet>510</a>            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+<a href=#511 id=511 data-nosnippet>511</a>            automask: <span class="bool-val">false</span>,
+<a href=#512 id=512 data-nosnippet>512</a>            primary_beam: <span class="prelude-val">None</span>,
+<a href=#513 id=513 data-nosnippet>513</a>            residual_pixel_mask: <span class="bool-val">false</span>,
+<a href=#514 id=514 data-nosnippet>514</a>            pbmask: <span class="number">0.0</span>,
+<a href=#515 id=515 data-nosnippet>515</a>        }
+<a href=#516 id=516 data-nosnippet>516</a>    }
+<a href=#517 id=517 data-nosnippet>517</a>
+<a href=#518 id=518 data-nosnippet>518</a>    <span class="doccomment">/// #780 review: a lone plane's scale transforms take the team's threads
+<a href=#519 id=519 data-nosnippet>519</a>    /// and own their plans, so its minor cycle charges the solver on that
+<a href=#520 id=520 data-nosnippet>520</a>    /// many threads; planes cleaned side by side transform on one thread
+<a href=#521 id=521 data-nosnippet>521</a>    /// each and charge as many one-thread solves as run at once.
+<a href=#522 id=522 data-nosnippet>522</a>    </span><span class="attr">#[test]
+<a href=#523 id=523 data-nosnippet>523</a>    </span><span class="kw">fn </span>a_lone_plane_charges_its_threaded_transforms() {
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>shape = PlaneShape::new(<span class="number">256</span>, <span class="number">256</span>);
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>scales = <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">5.0</span>];
+<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">let </span>taylor = setup(ReconstructionAlgorithm::Mtmfs {
+<a href=#527 id=527 data-nosnippet>527</a>            scales_px: scales.clone(),
+<a href=#528 id=528 data-nosnippet>528</a>            small_scale_bias: <span class="number">0.0</span>,
+<a href=#529 id=529 data-nosnippet>529</a>        });
+<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">let </span>lone = MinorLayout {
+<a href=#531 id=531 data-nosnippet>531</a>            planes: <span class="number">1</span>,
+<a href=#532 id=532 data-nosnippet>532</a>            shape,
+<a href=#533 id=533 data-nosnippet>533</a>            domains: <span class="macro">vec!</span>[[<span class="number">256</span>, <span class="number">256</span>]],
+<a href=#534 id=534 data-nosnippet>534</a>            channels_and_polarizations: (<span class="number">1</span>, <span class="number">1</span>),
+<a href=#535 id=535 data-nosnippet>535</a>            terms: (<span class="number">2</span>, <span class="number">3</span>),
+<a href=#536 id=536 data-nosnippet>536</a>            paged: <span class="bool-val">false</span>,
+<a href=#537 id=537 data-nosnippet>537</a>        };
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">let </span>solve = |threads| {
+<a href=#539 id=539 data-nosnippet>539</a>            casa_imaging_deconvolution::solve_bytes(
+<a href=#540 id=540 data-nosnippet>540</a>                <span class="kw-2">&amp;</span>Taylor::new(<span class="number">2</span>, scales.clone(), <span class="number">0.0</span>).with_fft_threads(threads),
+<a href=#541 id=541 data-nosnippet>541</a>                shape,
+<a href=#542 id=542 data-nosnippet>542</a>                <span class="number">2</span>,
+<a href=#543 id=543 data-nosnippet>543</a>                <span class="number">101</span>,
+<a href=#544 id=544 data-nosnippet>544</a>                TRACE,
+<a href=#545 id=545 data-nosnippet>545</a>            )
+<a href=#546 id=546 data-nosnippet>546</a>        };
+<a href=#547 id=547 data-nosnippet>547</a>        <span class="macro">assert!</span>(solve(<span class="number">4</span>) &gt; solve(<span class="number">1</span>), <span class="string">"four threads own their plans"</span>);
+<a href=#548 id=548 data-nosnippet>548</a>        <span class="macro">assert_eq!</span>(
+<a href=#549 id=549 data-nosnippet>549</a>            run_bytes_for(<span class="kw-2">&amp;</span>lone, <span class="kw-2">&amp;</span>taylor, <span class="number">100</span>, <span class="number">0</span>, <span class="number">4</span>) - run_bytes_for(<span class="kw-2">&amp;</span>lone, <span class="kw-2">&amp;</span>taylor, <span class="number">100</span>, <span class="number">0</span>, <span class="number">1</span>),
+<a href=#550 id=550 data-nosnippet>550</a>            solve(<span class="number">4</span>) - solve(<span class="number">1</span>)
+<a href=#551 id=551 data-nosnippet>551</a>        );
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span>multiscale = setup(ReconstructionAlgorithm::Multiscale {
+<a href=#553 id=553 data-nosnippet>553</a>            scales_px: scales,
+<a href=#554 id=554 data-nosnippet>554</a>            small_scale_bias: <span class="number">0.6</span>,
+<a href=#555 id=555 data-nosnippet>555</a>        });
+<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>side = MinorLayout {
+<a href=#557 id=557 data-nosnippet>557</a>            planes: <span class="number">4</span>,
+<a href=#558 id=558 data-nosnippet>558</a>            terms: (<span class="number">1</span>, <span class="number">1</span>),
+<a href=#559 id=559 data-nosnippet>559</a>            ..lone
+<a href=#560 id=560 data-nosnippet>560</a>        };
+<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">let </span>records = (<span class="number">4
+<a href=#562 id=562 data-nosnippet>562</a>            </span>* (size_of::&lt;Slot&gt;()
+<a href=#563 id=563 data-nosnippet>563</a>                + size_of::&lt;(
+<a href=#564 id=564 data-nosnippet>564</a>                    PlaneKey,
+<a href=#565 id=565 data-nosnippet>565</a>                    casa_imaging_deconvolution::PlaneStatistics,
+<a href=#566 id=566 data-nosnippet>566</a>                    Solved,
+<a href=#567 id=567 data-nosnippet>567</a>                )&gt;()
+<a href=#568 id=568 data-nosnippet>568</a>                + size_of::&lt;PlaneStop&gt;())) <span class="kw">as </span>u64;
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">let </span>run = |workers| run_bytes_for(<span class="kw-2">&amp;</span>side, <span class="kw-2">&amp;</span>multiscale, <span class="number">100</span>, <span class="number">0</span>, workers) - records;
+<a href=#570 id=570 data-nosnippet>570</a>        <span class="macro">assert_eq!</span>(run(<span class="number">4</span>), <span class="number">4 </span>* run(<span class="number">1</span>), <span class="string">"four one-thread solves at once"</span>);
+<a href=#571 id=571 data-nosnippet>571</a>    }
+<a href=#572 id=572 data-nosnippet>572</a>}
 </code></pre></div></section></main></body></html>
