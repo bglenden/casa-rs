@@ -727,7 +727,13 @@ impl SpectralResampler {
             axis.first_hz
         };
         let points = axis.channels as usize * per_channel;
-        let point = |index: usize| fine_start + index as f64 * fine_increment;
+        let point = |index: usize| {
+            if width <= 1.0 && axis.reporting_axis.is_some() {
+                axis.centre_hz(index as u32)
+            } else {
+                fine_start + index as f64 * fine_increment
+            }
+        };
         let native_width_hz = native[1] - native[0];
         for (channel, frequency_hz) in native.iter().enumerate() {
             if axis.nearest_channel(*frequency_hz).is_none()

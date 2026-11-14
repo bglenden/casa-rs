@@ -4,6 +4,7 @@
 
 use std::{cmp::Ordering, collections::BTreeSet, f64::consts::TAU};
 
+use casa_types::measures::PreparedFrequencyConversion;
 use thiserror::Error;
 
 use crate::sky_projection::Projection;
@@ -835,13 +836,16 @@ pub enum DopplerConvention {
     Relativistic,
 }
 
-/// Source-defined LSRK coordinates for a channel-index TOPO cube.
+/// An LSRK interpolation grid retained alongside the reported TOPO axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceLsrkGrid {
     /// Exact centre of plane zero in the source coordinate.
     pub first_hz: f64,
     /// Signed measured channel width in the source coordinate.
     pub increment_hz: f64,
+    /// Prepared conversions from the reported coordinate to LSRK and back.
+    /// They evaluate each output centre and map density lookups to pixels.
+    pub reporting_conversions: Option<[PreparedFrequencyConversion; 2]>,
     /// The requested last centre lies beyond the range of native channel
     /// centres, even though its evaluated centre equals the stored edge.
     pub terminal_plane_outside: bool,
@@ -881,10 +885,8 @@ impl SpectralCoordinateSpec {
         }
     }
 
-    /// Retain the exact source LSRK grid of a channel-index TOPO cube, as
-    /// its first centre and signed increment in hertz. The caller derives
-    /// both from the selected SPW that defines this WCS and proves the
-    /// terminal plane's coverage against that same SPW.
+    /// Retain the LSRK sampling coordinate alongside the reported TOPO WCS.
+    /// Channel-index grids can also record their terminal source coverage.
     #[must_use]
     pub const fn with_source_lsrk_grid(mut self, grid: Option<SourceLsrkGrid>) -> Self {
         self.source_lsrk_grid = grid;
@@ -895,6 +897,15 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn has_source_lsrk_grid(&self) -> bool {
         self.source_lsrk_grid.is_some()
+    }
+
+    /// Prepared conversions to and from the retained LSRK grid.
+    #[must_use]
+    pub const fn reporting_conversions(&self) -> Option<[PreparedFrequencyConversion; 2]> {
+        match self.source_lsrk_grid {
+            Some(grid) => grid.reporting_conversions,
+            None => None,
+        }
     }
 
     /// Whether the source span excludes the final plane from gridding.
@@ -1499,12 +1510,23 @@ fn canonicalize_spectral(
             return Err(CompileGeometryError::InvalidSpectralWcs);
         };
         let last = first + channels.saturating_sub(1) as f64 * step;
-        if spectral.source_frame != FrequencyFrame::Lsrk
+        let valid_source = match spectral.source_frame {
+            FrequencyFrame::Lsrk => {
+                grid.reporting_conversions.is_none()
+                    && matches!(
+                        spectral.doppler_convention,
+                        DopplerConvention::Radio | DopplerConvention::NotApplicable
+                    )
+            }
+            FrequencyFrame::Topocentric => {
+                grid.reporting_conversions.is_some()
+                    && matches!(spectral.anchor, SpectralFrameAnchor::Conversion { .. })
+                    && !grid.terminal_plane_outside
+            }
+            _ => false,
+        };
+        if !valid_source
             || spectral.output_frame != FrequencyFrame::Topocentric
-            || !matches!(
-                spectral.doppler_convention,
-                DopplerConvention::Radio | DopplerConvention::NotApplicable
-            )
             || channels < 2
             || !step.is_normal()
             || step.is_sign_positive() != increment_hz.is_sign_positive()
