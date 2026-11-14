@@ -847,8 +847,25 @@ fn controls_after_cycles(
     let Some(bytes) = existing.saved_residual_mask_bytes() else {
         return controls;
     };
+    let cube = existing.reads_mosaic_cube_residual();
+    let controls = if cube {
+        controls.with_saved_cube_pbcor_mask(existing.saved_pbcor_mask_bytes())
+    } else {
+        controls
+    };
     if major_cycles == 0 {
         controls.preserving_weighted_residuals(bytes)
+    } else if cube {
+        let controls = controls.with_saved_cube_model(existing.saved_model_plane_bytes());
+        if keeps_pb_mask
+            && existing
+                .mosaic_beam()
+                .is_some_and(|beam| beam.has_generated_mask())
+        {
+            controls
+        } else {
+            controls.with_saved_residual_mask(bytes)
+        }
     } else if keeps_pb_mask && existing.reads_mosaic_residual() && bytes > 0 {
         controls.with_saved_residual_mask(bytes)
     } else {

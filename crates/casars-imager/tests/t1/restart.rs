@@ -236,6 +236,116 @@ fn a_mosaic_restores_the_saved_residual_and_uses_its_mask_to_stop_cleaning() {
 }
 
 #[test]
+fn a_mosaic_cube_restart_reads_and_publishes_the_mask_of_each_channel() {
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    let (_, seed) = observation.image("mosaic-cube-stopped", controls.clone());
+    let path = observation.scratch("mosaic-cube-stopped.residual");
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    let [x, y] = observation.geometry().centre();
+    let hidden = [x, y, 0, 1];
+    let visible = [x + 3, y + 2, 0, 1];
+    let mut mask = residual.get_mask().unwrap().unwrap();
+    assert!(mask[hidden] && mask[visible] && mask[[x, y, 0, 0]]);
+    mask[hidden] = false;
+    let mut pixels = residual.get().unwrap();
+    pixels[hidden] = 50.0;
+    pixels[visible] += 0.3;
+    residual.put_slice(&pixels, &[0; 4]).unwrap();
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let before = snapshot(&path);
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    controls["threshold"] = json!("2Jy");
+    let (stopped, restored) = observation.image("mosaic-cube-stopped", controls.clone());
+    assert_eq!(
+        (stopped.minor_iterations, stopped.major_cycles),
+        (0, 0),
+        "only the second channel masks the sentinel"
+    );
+    assert_unchanged(&before, &snapshot(&path));
+    assert_eq!(restored.get(".image").mask().as_ref(), Some(&mask));
+    let delta = restored.get(".image").values()[visible] - seed.get(".image").values()[visible];
+    assert!(
+        (delta - 0.3).abs() < 1e-5,
+        "channel two restored delta {delta}"
+    );
+    controls["threshold"] = json!("0Jy");
+    controls["niter"] = json!(2);
+    let (clean, products) = observation.image("mosaic-cube-stopped", controls.clone());
+    assert!(clean.minor_iterations > 0 && clean.major_cycles > 0);
+    let pb_mask = seed.get(".pb").mask().unwrap();
+    assert_eq!(products.get(".residual").mask().as_ref(), Some(&pb_mask));
+    assert_eq!(products.get(".image").mask().as_ref(), Some(&pb_mask));
+
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    assert_mosaic_cube_negative_cutoff(&observation, &mut controls, &mask, &pb_mask);
+
+    let mut pb = PagedImage::<f32>::open(observation.scratch("mosaic-cube-stopped.pb")).unwrap();
+    pb.remove_mask("mask0").unwrap();
+    pb.save().unwrap();
+    drop(pb);
+    controls["pblimit"] = json!(0.2);
+    let (clean, products) = observation.image("mosaic-cube-stopped", controls.clone());
+    assert!(clean.major_cycles > 0);
+    assert_eq!(products.get(".residual").mask().as_ref(), Some(&mask));
+    assert_eq!(products.get(".image").mask().as_ref(), Some(&mask));
+    assert_eq!(products.get(".image.pbcor").mask().as_ref(), Some(&pb_mask));
+    let mut corrected =
+        PagedImage::<f32>::open(observation.scratch("mosaic-cube-stopped.image.pbcor")).unwrap();
+    corrected.remove_mask("mask0").unwrap();
+    corrected.save().unwrap();
+    drop(corrected);
+    controls["niter"] = json!(0);
+    let (_, products) = observation.image("mosaic-cube-stopped", controls);
+    assert!(products.get(".image.pbcor").mask().is_none());
+}
+
+/// A negative cutoff preserves the old mask, while prediction excludes
+/// apparent-model samples below its magnitude on the temporary cube.
+fn assert_mosaic_cube_negative_cutoff(
+    observation: &Observation,
+    controls: &mut serde_json::Value,
+    mask: &ndarray::ArrayD<bool>,
+    pb_mask: &ndarray::ArrayD<bool>,
+) {
+    let pb = PagedImage::<f32>::open(observation.scratch("mosaic-cube-stopped.pb"))
+        .unwrap()
+        .get()
+        .unwrap();
+    let corner = pb
+        .indexed_iter()
+        .find_map(|(index, &value)| {
+            (index[3] == 1 && value > 0.25 && value < 0.5 && pb_mask[&index]).then_some(index)
+        })
+        .expect("a sample between cutoffs");
+    let location: [usize; 4] = std::array::from_fn(|axis| corner[axis]);
+    let mut model =
+        PagedImage::<f32>::open(observation.scratch("mosaic-cube-stopped.model")).unwrap();
+    let mut pixels = model.get().unwrap();
+    pixels[location] = 0.125;
+    model.put_slice(&pixels, &[0; 4]).unwrap();
+    model.save().unwrap();
+    drop(model);
+    controls["pblimit"] = json!(-0.6);
+    let (clean, products) = observation.image("mosaic-cube-stopped", controls.clone());
+    assert!(clean.major_cycles > 0);
+    assert_eq!(products.get(".residual").mask().as_ref(), Some(mask));
+    assert_eq!(products.get(".image").mask().as_ref(), Some(mask));
+    assert_eq!(
+        products.get(".model").values()[location],
+        0.125,
+        "the persisted cube keeps an apparent model sample outside the new cutoff"
+    );
+}
+
+#[test]
 fn a_mosaic_resumed_with_positive_cutoff_copies_the_saved_pb_mask_after_gridding() {
     let (observation, mut controls) = mosaic_run(false);
     controls["niter"] = json!(8);

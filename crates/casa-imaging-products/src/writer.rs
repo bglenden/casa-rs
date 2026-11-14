@@ -362,12 +362,13 @@ impl CasaImageWriter {
         self.saved_image_path(domain, ".pb").exists()
     }
 
-    /// Without a PB, CASA leaves any previous restored-image mask in place.
-    pub(crate) fn existing_restored_mask(
+    /// Read a persisted mask in channel, polarization, x, y order.
+    pub(crate) fn existing_image_mask(
         &self,
         domain: &ImageDomainRole,
+        suffix: &str,
     ) -> Result<Option<Vec<bool>>, ProductsError> {
-        let path = self.saved_image_path(domain, ".image");
+        let path = self.saved_image_path(domain, suffix);
         if !path.exists() {
             return Ok(None);
         }
@@ -379,7 +380,26 @@ impl CasaImageWriter {
         let mask = image
             .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
             .map_err(image_error)?;
-        Ok(mask.map(|mask| mask.iter().copied().collect()))
+        Ok(mask.map(pixel_mask_planes))
+    }
+
+    /// One on-disk apparent model plane retained by CASA's cube major cycle.
+    pub(crate) fn saved_model_plane(
+        &self,
+        domain: &ImageDomainRole,
+        channel: usize,
+        polarization: usize,
+    ) -> Result<ndarray::ArrayD<f32>, ProductsError> {
+        let path = self.saved_image_path(domain, ".model");
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let shape = image.shape();
+        image
+            .get_slice(&[0, 0, polarization, channel], &[shape[0], shape[1], 1, 1])
+            .map_err(image_error)
     }
 
     fn saved_image_path(&self, domain: &ImageDomainRole, suffix: &str) -> PathBuf {
@@ -431,7 +451,7 @@ impl CasaImageWriter {
         let mask = image
             .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
             .map_err(image_error)?;
-        Ok(mask.map(|mask| mask.iter().copied().collect()))
+        Ok(mask.map(pixel_mask_planes))
     }
 
     /// Create one member's image in private staging beside its target, with
@@ -843,6 +863,16 @@ fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
         std::io::ErrorKind::Unsupported,
         "atomic non-empty directory exchange is unavailable",
     ))
+}
+
+fn pixel_mask_planes(mask: ndarray::ArrayD<bool>) -> Vec<bool> {
+    let mut planes = Vec::with_capacity(mask.len());
+    for channel in mask.axis_iter(ndarray::Axis(3)) {
+        for pol in channel.axis_iter(ndarray::Axis(2)) {
+            planes.extend(pol.iter().copied());
+        }
+    }
+    planes
 }
 
 #[cfg(test)]

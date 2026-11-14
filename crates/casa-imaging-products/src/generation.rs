@@ -82,7 +82,7 @@ fn produce_plane_members(
                 let domain = member.axes().domain();
                 Some(
                     if planned.field_residual_mask.is_some() && !output.has_saved_pb(domain) {
-                        output.existing_restored_mask(domain)?
+                        output.existing_image_mask(domain, ".image")?
                     } else if planned.field_residual_mask
                         == Some(crate::plan::FieldResidualMask::Absent)
                     {
@@ -115,6 +115,21 @@ fn produce_plane_members(
                     },
                 )
             }
+            ProductRole::PbCorrectedImage(ProductTerm::Single) => {
+                match planned.saved_cube_pbcor_mask {
+                    Some(crate::plan::SavedPbcorMask::Existing(_)) => {
+                        Some(output.existing_image_mask(member.axes().domain(), ".image.pbcor")?)
+                    }
+                    Some(crate::plan::SavedPbcorMask::PrimaryBeam)
+                        if inputs
+                            .saved_mosaic_beam()
+                            .is_some_and(|beam| !beam.has_generated_mask()) =>
+                    {
+                        Some(None)
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         };
         let windows = MemberWindows::new(
@@ -135,7 +150,7 @@ fn produce_plane_members(
         windows.write(
             ProductMemberWriter::new(windows.layout, image),
             execution,
-            saved_mask.as_ref().map(|mask| mask.as_deref()),
+            (saved_mask.as_ref().map(|mask| mask.as_deref()), output),
         )?;
     }
     Ok(planned.published(fitted_beams, restoring_beams))
@@ -325,7 +340,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         &self,
         mut writer: ProductMemberWriter<'_>,
         execution: &impl ProductWindowExecutor,
-        saved_mask: Option<Option<&[bool]>>,
+        (saved_mask, output): (Option<Option<&[bool]>>, &CasaImageWriter),
     ) -> Result<(), ProductsError> {
         let channels = self.inputs.normal_state().channel_count();
         let window_channels = self.layout.maximum_channels();
@@ -336,7 +351,11 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 .collect();
             execution.prepare(&mut slots, &|index| {
                 let start = (wave_start + index) * window_channels;
-                self.window(start..(start + window_channels).min(channels), saved_mask)
+                self.window(
+                    start..(start + window_channels).min(channels),
+                    saved_mask,
+                    output,
+                )
             })?;
             for slot in slots {
                 writer.write(slot.expect("the executor fills every slot"))?;
@@ -350,6 +369,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         &self,
         channels: Range<usize>,
         saved_mask: Option<Option<&[bool]>>,
+        output: &CasaImageWriter,
     ) -> Result<ProductWindow, ProductsError> {
         let mut window = self.layout.window(channels.clone())?;
         let reconstruction_only = matches!(
@@ -360,8 +380,20 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         for channel in channels.clone() {
             for polarization in 0..self.inputs.normal_state().polarization_count() {
                 let local = channel - channels.start;
+                let saved_model = (self.planned.saved_cube_model_read_bytes > 0
+                    && matches!(
+                        self.member.role,
+                        ProductRole::Model(_)
+                            | ProductRole::RestoredImage(_)
+                            | ProductRole::PbCorrectedImage(_)
+                    ))
+                .then(|| {
+                    output.saved_model_plane(self.member.axes().domain(), channel, polarization)
+                })
+                .transpose()?;
                 if reconstruction_only {
-                    let plane = self.reconstruction_plane(channel, polarization)?;
+                    let plane =
+                        self.reconstruction_plane(channel, polarization, saved_model.as_ref())?;
                     self.scatter(
                         &mut window.payload,
                         &window.shape,
@@ -370,7 +402,12 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                         &plane,
                     );
                 } else {
-                    self.normal_plane(&mut window, (channel, polarization, local), saved_mask)?;
+                    self.normal_plane(
+                        &mut window,
+                        (channel, polarization, local),
+                        saved_mask,
+                        saved_model.as_ref(),
+                    )?;
                 }
             }
         }
@@ -401,6 +438,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         &self,
         channel: usize,
         polarization: usize,
+        saved_model: Option<&ndarray::ArrayD<f32>>,
     ) -> Result<Vec<f32>, ProductsError> {
         let [width, height] = self.plane_shape;
         if self.member.role == ProductRole::CleanMask {
@@ -434,6 +472,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             products.normalization(),
             products.validity().primary_beam(),
             self.planned.primary_beam_model,
+            saved_model,
         )
     }
 
@@ -444,6 +483,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         window: &mut ProductWindow,
         (channel, polarization, local_channel): (usize, usize, usize),
         saved_mask: Option<Option<&[bool]>>,
+        saved_model: Option<&ndarray::ArrayD<f32>>,
     ) -> Result<(), ProductsError> {
         let plane =
             self.inputs
@@ -483,6 +523,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             polarization,
             reuses_single_psf: self.planned.reuses_single_psf,
             saved_weighted_residual: self.planned.saved_weighted_residual,
+            saved_cube_model_plane: saved_model,
             fitted_beam: self.fitted_beams.get(beam_index).copied().flatten(),
             restoring_beam: self.restoring_beams.get(beam_index).copied().flatten(),
             primary_beam_model: self.planned.primary_beam_model,
@@ -520,7 +561,11 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             zero_invalid_plane_values(&mut values, &validity(self.member.validity)?);
         }
         let support = match (saved_mask, self.member.storage.pixel_mask()) {
-            (Some(mask), _) => mask.map(std::borrow::Cow::Borrowed),
+            (Some(mask), _) => mask.map(|mask| {
+                let cells = self.plane_shape[0] * self.plane_shape[1];
+                let offset = (channel * planes + polarization) * cells;
+                std::borrow::Cow::Borrowed(&mask[offset..offset + cells])
+            }),
             (None, ProductPixelMask::Explicit(rule)) => {
                 Some(std::borrow::Cow::Owned(validity(rule)?))
             }

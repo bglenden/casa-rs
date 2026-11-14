@@ -256,8 +256,10 @@ fn supports_saved_mosaic_residual(request: &ImagingRequest) -> bool {
             normtype: casa_imaging_model::ProductNormalization::FlatNoise,
             ..
         }
-    ) && request.specmode == crate::SpecMode::Mfs
-        && request.deconvolver == Deconvolver::Hogbom
+    ) && matches!(
+        request.specmode,
+        crate::SpecMode::Mfs | crate::SpecMode::Cube
+    ) && request.deconvolver == Deconvolver::Hogbom
         && request.weighting == crate::Weighting::Natural
         && request.stokes == [crate::PolarizationCoordinate::StokesI]
         && request.usemask == UseMask::User

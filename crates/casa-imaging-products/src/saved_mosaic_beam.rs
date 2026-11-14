@@ -13,6 +13,7 @@ pub struct SavedMosaicBeam {
     path: PathBuf,
     shape: [usize; 4],
     reading_bytes: u64,
+    has_generated_mask: bool,
 }
 
 impl SavedMosaicBeam {
@@ -40,6 +41,7 @@ impl SavedMosaicBeam {
             path: path.to_path_buf(),
             shape,
             reading_bytes: 8 * cells + pixel_backing + mask_backing,
+            has_generated_mask: image.default_mask_name().as_deref() == Some("mask0"),
         })
     }
 
@@ -63,6 +65,12 @@ impl SavedMosaicBeam {
     #[must_use]
     pub const fn reading_bytes(&self) -> u64 {
         self.reading_bytes
+    }
+
+    /// Whether CASA's copyMask can copy this PB's default pixel mask.
+    #[must_use]
+    pub const fn has_generated_mask(&self) -> bool {
+        self.has_generated_mask
     }
 
     /// Read a saved PB plane in x-major order.

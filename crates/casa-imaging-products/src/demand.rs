@@ -377,23 +377,31 @@ impl PlannedContinuumGeneration {
         } else {
             generic_scratch_bytes(self, shapes)?
         };
+        let saved_mask = self.saved_residual_mask_read_bytes.unwrap_or(0);
+        let saved_mask = match self.saved_cube_pbcor_mask {
+            Some(crate::plan::SavedPbcorMask::Existing(bytes)) => saved_mask.max(bytes),
+            _ => saved_mask,
+        };
         bytes = if taylor {
             // The saved PB is read while building, then a saved residual
             // mask may be read while writing one restored image.
             checked_add(
                 bytes,
-                self.saved_mosaic_beam_read_bytes
-                    .max(self.saved_residual_mask_read_bytes.unwrap_or(0)),
+                self.saved_mosaic_beam_read_bytes.max(saved_mask),
                 "saved Taylor product",
             )?
         } else {
             checked_add(
                 bytes,
-                self.saved_mosaic_beam_read_bytes
-                    .max(self.saved_residual_mask_read_bytes.unwrap_or(0)),
+                self.saved_mosaic_beam_read_bytes.max(saved_mask),
                 "saved primary beam or residual mask",
             )?
         };
+        bytes = checked_add(
+            bytes,
+            self.saved_cube_model_read_bytes,
+            "saved cube model plane",
+        )?;
         bytes = checked_add(
             bytes,
             checked_add(

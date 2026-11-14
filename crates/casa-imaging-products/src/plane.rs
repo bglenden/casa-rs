@@ -26,6 +26,7 @@ pub(crate) struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     pub(crate) polarization: usize,
     pub(crate) reuses_single_psf: bool,
     pub(crate) saved_weighted_residual: bool,
+    pub(crate) saved_cube_model_plane: Option<&'request ndarray::ArrayD<f32>>,
     pub(crate) fitted_beam: Option<RestoringBeam>,
     pub(crate) restoring_beam: Option<RestoringBeam>,
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
@@ -184,6 +185,7 @@ pub(crate) fn apparent_model(
     normalization: ProductNormalization,
     policy: casa_imaging_model::PrimaryBeamValidityPolicy,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    saved: Option<&ndarray::ArrayD<f32>>,
 ) -> Result<Vec<f32>, ProductsError> {
     if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         || !matches!(
@@ -212,10 +214,18 @@ pub(crate) fn apparent_model(
         .into_iter()
         .enumerate()
         .map(|(index, value)| {
-            Ok(
-                response.physical_to_apparent(f64::from(value), index, normalization, policy)?
-                    as f32,
-            )
+            Ok(response.physical_to_apparent_or(
+                f64::from(value),
+                index,
+                normalization,
+                policy,
+                || {
+                    saved.map_or(0.0, |saved| {
+                        let height = plane.shape()[1];
+                        f64::from(saved[&[index / height, index % height, 0, 0][..]])
+                    })
+                },
+            )? as f32)
         })
         .collect()
 }
@@ -269,6 +279,7 @@ fn restored_plane(
             required_normalization(member),
             inputs.problem().products().validity().primary_beam(),
             primary_beam_model,
+            request.saved_cube_model_plane,
         )?
     };
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain());

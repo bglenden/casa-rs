@@ -44,6 +44,8 @@ mod synthetic_observation;
 
 #[path = "admission_memory/aw.rs"]
 mod aw;
+#[path = "admission_memory/mosaic_cube_restart.rs"]
+mod mosaic_cube_restart;
 #[path = "admission_memory/mvc_view.rs"]
 mod mvc_view;
 #[path = "admission_memory/outliers.rs"]
