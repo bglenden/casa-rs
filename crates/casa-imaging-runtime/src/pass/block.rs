@@ -27,6 +27,9 @@ impl RowAddress {
 /// mapper's uvw to its own phase centre (`FTMachine::rotateUVW`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DomainProjection {
+    /// Exclude this row from this domain, independently of other domains.
+    /// Combined with the shared row flag; does not alter persisted flags.
+    pub row_flag: bool,
     /// Baseline `[u, v, w]` in metres in the domain's phase-centre frame.
     pub uvw_m: [f64; 3],
     /// Path-length shift to the domain's phase centre in metres.
@@ -444,7 +447,7 @@ impl NativeBlock {
             values: &self.values[samples * cells..(samples + 1) * cells],
             weights: &self.weights[samples * cells..(samples + 1) * cells],
             flags: &self.flags[samples * cells..(samples + 1) * cells],
-            row_flag: header.row_flag,
+            row_flag: header.row_flag || projection.row_flag,
             context: header.context,
         }
     }
@@ -499,6 +502,7 @@ mod tests {
         let mut block = NativeBlock::default();
         block.reset(1, &[0], &[0]);
         let projection = DomainProjection {
+            row_flag: false,
             uvw_m: [0.0; 3],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
@@ -538,6 +542,7 @@ mod tests {
         };
         let mut block = NativeBlock::with_capacity(shape);
         let projection = DomainProjection {
+            row_flag: false,
             uvw_m: [0.0; 3],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
@@ -588,6 +593,7 @@ mod tests {
         let mut block = NativeBlock::with_capacity(shape);
         block.reset(1, &[0, 1], &[0, 1]);
         let projection = DomainProjection {
+            row_flag: false,
             uvw_m: [0.0; 3],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
@@ -637,6 +643,7 @@ mod tests {
         };
         let projections = |row: usize| {
             [0, 1].map(|domain| DomainProjection {
+                row_flag: false,
                 uvw_m: [row as f64, domain as f64, 0.5],
                 phase_shift_m: 0.25 * domain as f64,
                 pointing_offset_rad: [0.0; 2],

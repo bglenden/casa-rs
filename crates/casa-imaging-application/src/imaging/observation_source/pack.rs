@@ -674,6 +674,7 @@ impl Packer<'_> {
                 None => [0.0; 2],
             };
             let mut projected = DomainProjection {
+                row_flag: false,
                 uvw_m: projection.uvw_m,
                 phase_shift_m: projection.phase_shift_m,
                 pointing_offset_rad,

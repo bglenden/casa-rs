@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
+};
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_types::measures::direction::DirectionRef;
@@ -63,6 +65,56 @@ pub struct SkyModel {
     pub(crate) distance_m: f64,
 }
 
+/// Numeric direction metadata retained for visibility-buffer mosaic updates.
+pub(crate) struct PointingGeometry {
+    direction: DirectionCoordinate,
+    shape: [usize; 2],
+    increment_rad: [f64; 2],
+    observer_itrf_m: [f64; 3],
+    bounded: bool,
+}
+
+impl PointingGeometry {
+    pub(crate) fn bytes(&self) -> u64 {
+        (size_of::<Self>()
+            + 4 * size_of::<f64>()
+            + 6
+            + std::mem::size_of_val(self.direction.projection().parameters())) as u64
+    }
+
+    pub(crate) fn offset(
+        &self,
+        pointing: [f64; 2],
+        frame: &MeasFrame,
+    ) -> Result<Option<[f64; 2]>, PredictError> {
+        let [x, y, z] = self.observer_itrf_m;
+        let frame = frame
+            .clone()
+            .with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
+        let direction = MDirection::from_angles(pointing[0], pointing[1], DirectionRef::J2000)
+            .convert_to(self.direction.direction_ref(), &frame)
+            .map_err(|error| {
+                casa_coordinates::CoordinateError::ConversionFailed(error.to_string())
+            })?
+            .as_angles();
+        let pixel = self.direction.to_pixel(&[direction.0, direction.1])?;
+        let (offset, inside) =
+            pointing_offset(self.shape, self.increment_rad, [pixel[0], pixel[1]]);
+        Ok((!self.bounded || inside).then_some(offset))
+    }
+}
+
+fn pointing_offset(shape: [usize; 2], increment: [f64; 2], pixel: [f64; 2]) -> ([f64; 2], bool) {
+    let inside = |pixel: f64, n: usize| (0.0..n as f64).contains(&pixel.trunc());
+    (
+        [
+            (pixel[0] - (shape[0] / 2) as f64) * increment[0],
+            (pixel[1] - (shape[1] / 2) as f64) * increment[1],
+        ],
+        inside(pixel[0], shape[0]) && inside(pixel[1], shape[1]),
+    )
+}
+
 /// Where a model's planes come from.
 enum Pixels {
     /// The open image; planes are read under the lock, one reader at a
@@ -93,6 +145,40 @@ impl std::fmt::Debug for SkyModel {
 }
 
 impl SkyModel {
+    pub(crate) fn pointing_geometry_bytes(&self) -> u64 {
+        (size_of::<PointingGeometry>()
+            + 4 * size_of::<f64>()
+            + 6
+            + std::mem::size_of_val(self.direction_coordinate().projection().parameters()))
+            as u64
+    }
+
+    pub(crate) fn pointing_geometry(
+        &self,
+        observer_itrf_m: [f64; 3],
+        bounded: bool,
+    ) -> PointingGeometry {
+        let source = self.direction_coordinate();
+        let reference = source.reference_value();
+        let pixel = source.reference_pixel();
+        let direction = DirectionCoordinate::new(
+            source.direction_ref(),
+            source.projection().clone(),
+            [reference[0], reference[1]],
+            self.increment_rad,
+            [pixel[0], pixel[1]],
+        )
+        .with_longpole(source.longpole())
+        .with_latpole(source.latpole())
+        .with_pc_matrix(source.pc_matrix().clone());
+        PointingGeometry {
+            direction,
+            shape: self.shape,
+            increment_rad: self.increment_rad,
+            observer_itrf_m,
+            bounded,
+        }
+    }
     pub(super) fn direction_coordinate(&self) -> &casa_coordinates::DirectionCoordinate {
         let CoordinateModel::Direction(direction) = self.coordinates.coordinate(0) else {
             unreachable!()
@@ -366,14 +452,11 @@ impl SkyModel {
         direction_rad: [f64; 2],
     ) -> Result<([f64; 2], bool), PredictError> {
         let pixel = self.pixel_of(direction_rad)?;
-        let inside = |pixel: f64, n: usize| (0.0..n as f64).contains(&pixel.trunc());
-        Ok((
-            [
-                (pixel[0] - (self.shape[0] / 2) as f64) * self.increment_rad[0],
-                (pixel[1] - (self.shape[1] / 2) as f64) * self.increment_rad[1],
-            ],
-            inside(pixel[0], self.shape[0]) && inside(pixel[1], self.shape[1]),
-        ))
+        Ok(self.pointing_offset_at_pixel(pixel))
+    }
+
+    fn pointing_offset_at_pixel(&self, pixel: [f64; 2]) -> ([f64; 2], bool) {
+        pointing_offset(self.shape, self.increment_rad, pixel)
     }
 
     pub(super) fn read_polarizations(

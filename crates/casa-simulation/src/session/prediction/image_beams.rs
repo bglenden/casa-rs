@@ -228,6 +228,7 @@ impl Simulator {
                 observer_position_itrf_m: dynamic.then_some(self.antennas[0].position_itrf_m),
             })),
             pointings: Vec::new(),
+            mosaic_geometry: None,
             antenna_types: Vec::new(),
             _reservation: reservation,
             _kernels: kernels,

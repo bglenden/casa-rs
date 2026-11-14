@@ -44,15 +44,129 @@ const DIAMETER_KEY_BYTES: usize = 32;
 /// offset.
 pub(super) type MosaicPointing = ([u64; 2], Option<[f64; 2]>);
 
+type FrameKey = (i32, usize, usize);
+
+#[derive(Default)]
+struct BufferClock {
+    rows: usize,
+    epoch_s: f64,
+    last_row: Option<u64>,
+}
+
+/// CASA's visibility-buffer clock, sampled before numerical workers run.
+pub(super) struct MosaicGeometry {
+    geometry: crate::predict::PointingGeometry,
+    buffers: std::sync::Mutex<Vec<(FrameKey, BufferClock)>>,
+    rows: usize,
+}
+
+impl MosaicGeometry {
+    fn bytes_for(
+        model: &SkyModel,
+        centres: Option<&super::from_ms::polynomial::PhaseCentres>,
+    ) -> u64 {
+        model.pointing_geometry_bytes()
+            + (size_of::<Self>() - size_of::<crate::predict::PointingGeometry>()
+                + centres.map_or(0, |p| p.value.len()) * size_of::<(FrameKey, BufferClock)>())
+                as u64
+    }
+
+    pub(super) fn new(
+        model: &SkyModel,
+        position: [f64; 3],
+        bounded: bool,
+        centres: Option<&super::from_ms::polynomial::PhaseCentres>,
+        antennas: usize,
+    ) -> Self {
+        let first = super::from_ms::polynomial::first_chunk_rows(centres).min(101);
+        // Simulator::setRowBlocking(100) includes both endpoints. SkyEquation
+        // increases that blocking when the first buffer holds too few rows.
+        let rows = if antennas > 1 && first < antennas * (antennas - 1) / 4 {
+            antennas * (antennas + 1) / 2 + 1
+        } else {
+            101
+        };
+        let mut buffers = Vec::with_capacity(centres.map_or(0, |p| p.value.len()));
+        if let Some(centres) = centres {
+            buffers.extend(
+                centres
+                    .value
+                    .iter()
+                    .map(|(key, _)| (*key, BufferClock::default())),
+            );
+        }
+        Self {
+            geometry: model.pointing_geometry(position, bounded),
+            buffers: std::sync::Mutex::new(buffers),
+            rows,
+        }
+    }
+
+    pub(super) fn bytes(&self) -> u64 {
+        self.geometry.bytes()
+            + (size_of::<Self>() - size_of::<crate::predict::PointingGeometry>()
+                + self.buffers.lock().expect("buffer metadata").capacity()
+                    * size_of::<(FrameKey, BufferClock)>()) as u64
+    }
+
+    pub(super) fn epoch(
+        &self,
+        scan: &super::observe::Scan,
+        row: u64,
+        time: f64,
+    ) -> SimulatorResult<f64> {
+        let key = (scan.array_id, scan.field_id, scan.data_description_id);
+        let mut buffers = self
+            .buffers
+            .lock()
+            .map_err(|e| SimulatorError::raised(e.to_string()))?;
+        let index = buffers
+            .binary_search_by_key(&key, |(key, _)| *key)
+            .map_err(|_| SimulatorError::raised("missing mosaic frame chunk"))?;
+        let clock = &mut buffers[index].1;
+        // A private selection rendering or a retried transaction starts
+        // another pass over the same captured physical rows.
+        if clock.last_row.is_some_and(|previous| row <= previous) {
+            clock.rows = 0;
+        }
+        if clock.rows == 0 {
+            clock.epoch_s = time;
+        }
+        clock.last_row = Some(row);
+        clock.rows += 1;
+        if clock.rows == self.rows {
+            clock.rows = 0;
+        }
+        Ok(clock.epoch_s)
+    }
+
+    pub(super) fn offset(
+        &self,
+        pointing: [f64; 2],
+        frame: &casa_types::measures::MeasFrame,
+    ) -> Result<Option<[f64; 2]>, PredictError> {
+        self.geometry.offset(pointing, frame)
+    }
+}
+
 impl Simulator {
     /// Bytes the mosaic machine's state holds, known before it is formed:
-    /// what the prediction keeps (a pointing for each scan's phase centre at
-    /// most, and each antenna's dish class), and what builds the beams
+    /// what the prediction keeps (fixed offsets or numeric direction geometry
+    /// and a clock per selected chunk, plus each antenna's dish class), and what builds the beams
     /// until the kernels are built (a dish and a diameter key for each
     /// antenna at most, and every window's channel frequencies twice).
-    pub(super) fn mosaic_state_bytes(&self) -> (u64, u64) {
-        let kept =
-            self.scans.len() * size_of::<MosaicPointing>() + self.antennas.len() * size_of::<u8>();
+    pub(super) fn mosaic_state_bytes(
+        &self,
+        model: &SkyModel,
+        centres: Option<&super::from_ms::polynomial::PhaseCentres>,
+    ) -> (u64, u64) {
+        let timed = !crate::predict::fixed_direction_frame(model.tangent_direction().refer());
+        let geometry = if timed {
+            MosaicGeometry::bytes_for(model, centres) as usize
+        } else {
+            self.scans.len() * size_of::<MosaicPointing>()
+        };
+        let kept = geometry + self.antennas.len() * size_of::<u8>();
         let antennas = self.antennas.len()
             * (size_of::<PrimaryBeam>() + size_of::<String>() + DIAMETER_KEY_BYTES);
         let windows = self.spectral_windows.len()
@@ -62,7 +176,10 @@ impl Simulator {
                 .iter()
                 .map(|window| 2 * window.channel_count * size_of::<f64>())
                 .sum::<usize>();
-        (kept as u64, (antennas + windows) as u64)
+        (
+            kept as u64,
+            (antennas + windows + if timed { 256 } else { 0 }) as u64,
+        )
     }
 
     /// The mosaic machine's beams for the scans observed so far, and each

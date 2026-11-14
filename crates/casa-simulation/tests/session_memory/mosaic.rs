@@ -111,12 +111,20 @@ fn a_mosaic_predict_charges_what_it_keeps_per_pointing() {
     if !alone("mosaic::a_mosaic_predict_charges_what_it_keeps_per_pointing") {
         return;
     }
+    for frame in [DirectionRef::J2000, DirectionRef::JMEAN] {
+        pointing_retention(frame);
+    }
+}
+
+// JMEAN adds the per-chunk visibility-buffer clocks and numeric direction
+// metadata; both that retained state and its construction must be admitted.
+fn pointing_retention(frame: DirectionRef) {
     let resources = resources(BUDGET_32);
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
     let model = root.path().join("model.image");
-    write_model(&model, 32);
+    super::write_model_in_frame(&model, 32, super::PIXELS, frame);
     let ms = root.path().join("pointings.ms");
     let options = mosaic();
     let run = |scans: usize, distinct: bool| {
@@ -162,7 +170,7 @@ fn a_mosaic_predict_charges_what_it_keeps_per_pointing() {
     ];
     for (label, Predicted { beyond, kept, .. }) in cases {
         println!(
-            "{label}: predict kept {} against {} charged, {beyond} at most beyond its \
+            "{frame:?} {label}: predict kept {} against {} charged, {beyond} at most beyond its \
              reservations",
             kept.heap, kept.admitted
         );

@@ -110,10 +110,56 @@ struct Segment {
     source_scan: usize,
     steps: Vec<usize>,
     field: usize,
-    projections: Vec<GridFtProjection>,
-    pointing_offsets: Vec<[f64; 2]>,
-    projection_epoch_s: Option<f64>,
+    projections: Vec<FrameProjection>,
     timed_grids: bool,
+}
+
+/// Geometry cached at CASA's visibility-buffer epoch for a timed mosaic,
+/// or at the current integration for other image machines.
+struct FrameProjection {
+    rotation: GridFtProjection,
+    pointing_offset: Option<[f64; 2]>,
+    epoch_s: Option<f64>,
+}
+
+impl FrameProjection {
+    fn refresh(
+        &mut self,
+        prediction: &Prediction,
+        scan: &Scan,
+        row: u64,
+        time: f64,
+    ) -> SimulatorResult<()> {
+        let epoch = if prediction.has_timed_mosaic() {
+            prediction.mosaic_buffer_epoch(scan, row, time)?
+        } else {
+            time
+        };
+        if self.epoch_s == Some(epoch) {
+            return Ok(());
+        }
+        if prediction.has_timed_mosaic() {
+            self.pointing_offset = prediction.mosaic_pointing_at(scan, epoch)?;
+        }
+        if prediction.tangent.refer() != DirectionRef::J2000 {
+            let phase = prediction.phase_centre(scan);
+            let source = MDirection::from_angles(phase[0], phase[1], DirectionRef::J2000);
+            let initial = prediction.frame(scan)?;
+            let current = initial
+                .clone()
+                .with_epoch(casa_types::measures::MEpoch::from_mjd(
+                    epoch / 86400.,
+                    casa_types::measures::EpochRef::UTC,
+                ));
+            self.rotation
+                .recalculate_with_frame(&source, &prediction.tangent, &initial, &current)
+                .map_err(|error| {
+                    SimulatorError::raised(format!("simulator image-frame rotation: {error}"))
+                })?;
+        }
+        self.epoch_s = Some(epoch);
+        Ok(())
+    }
 }
 
 /// The segment of `scan`, which the predict steps `steps` of `predictions`
@@ -140,7 +186,6 @@ fn segment_of(
     }));
     let steps = selected_steps;
     let mut projections = Vec::with_capacity(steps.len());
-    let mut pointing_offsets = Vec::with_capacity(steps.len());
     for &step in &steps {
         let prediction = predictions[step];
         if prediction.grids_for(prediction.grid_id(scan)).is_none() {
@@ -172,8 +217,11 @@ fn segment_of(
         .map_err(|error| {
             SimulatorError::raised(format!("simulator image-frame projection: {error}"))
         })?;
-        projections.push(projection);
-        pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
+        projections.push(FrameProjection {
+            rotation: projection,
+            pointing_offset: Some(prediction.pointing_offset_rad(scan.pointing_rad)),
+            epoch_s: None,
+        });
     }
     Ok(Segment {
         timed_grids: steps
@@ -183,8 +231,6 @@ fn segment_of(
         steps,
         field: scan.field_id,
         projections,
-        pointing_offsets,
-        projection_epoch_s: None,
     })
 }
 
@@ -601,8 +647,7 @@ impl<'s> PredictionStage<'s> {
             .iter()
             .map(|segment| {
                 segment.steps.capacity() * size_of::<usize>()
-                    + segment.projections.capacity() * size_of::<GridFtProjection>()
-                    + segment.pointing_offsets.capacity() * size_of::<[f64; 2]>()
+                    + segment.projections.capacity() * size_of::<FrameProjection>()
             })
             .sum();
         let frequencies: usize = self
@@ -868,60 +913,29 @@ impl<'s> PredictionStage<'s> {
             self.antenna_types.get(antenna).copied().unwrap_or(0)
         };
         for (offset, row) in rows.iter().enumerate() {
-            if segment.projection_epoch_s != Some(row.time_s) {
-                for (&step, projection) in segment.steps.iter().zip(&mut segment.projections) {
-                    let prediction = self.predictions[step];
-                    if prediction.tangent.refer() == DirectionRef::J2000 {
-                        continue;
-                    }
-                    let phase = prediction.phase_centre(scan);
-                    let source = MDirection::from_angles(phase[0], phase[1], DirectionRef::J2000);
-                    let initial = prediction.frame(scan)?;
-                    let current =
-                        initial
-                            .clone()
-                            .with_epoch(casa_types::measures::MEpoch::from_mjd(
-                                row.time_s / 86400.,
-                                casa_types::measures::EpochRef::UTC,
-                            ));
-                    projection
-                        .recalculate_with_frame(&source, &prediction.tangent, &initial, &current)
-                        .map_err(|error| {
-                            SimulatorError::raised(format!(
-                                "simulator image-frame rotation: {error}"
-                            ))
-                        })?;
-                }
-                segment.projection_epoch_s = Some(row.time_s);
-            }
             self.projections.clear();
-            self.projections.extend(
-                segment
-                    .projections
-                    .iter()
-                    .zip(&segment.pointing_offsets)
-                    .zip(&segment.steps)
-                    .map(|((projection, pointing_offset_rad), &step)| {
-                        let prediction = self.predictions[step];
-                        let (mut uvw_m, mut phase_shift_m) = projection.apply(row.uvw_m);
-                        if let Some(focus) = &prediction.focus {
-                            (uvw_m, phase_shift_m) = crate::session::focus::apply(
-                                focus,
-                                first_row + offset as u64,
-                                row,
-                                projection,
-                                prediction.distance_m,
-                                uvw_m,
-                                phase_shift_m,
-                            );
-                        }
-                        DomainProjection {
-                            uvw_m,
-                            phase_shift_m,
-                            pointing_offset_rad: *pointing_offset_rad,
-                        }
-                    }),
-            );
+            for (&step, frame) in segment.steps.iter().zip(&mut segment.projections) {
+                let prediction = self.predictions[step];
+                frame.refresh(prediction, scan, first_row + offset as u64, row.time_s)?;
+                let (mut uvw_m, mut phase_shift_m) = frame.rotation.apply(row.uvw_m);
+                if let Some(focus) = &prediction.focus {
+                    (uvw_m, phase_shift_m) = crate::session::focus::apply(
+                        focus,
+                        first_row + offset as u64,
+                        row,
+                        &frame.rotation,
+                        prediction.distance_m,
+                        uvw_m,
+                        phase_shift_m,
+                    );
+                }
+                self.projections.push(DomainProjection {
+                    row_flag: frame.pointing_offset.is_none(),
+                    uvw_m,
+                    phase_shift_m,
+                    pointing_offset_rad: frame.pointing_offset.unwrap_or([0.; 2]),
+                });
+            }
             let header = NativeRowHeader {
                 row_flag: row.flagged,
                 context: RowContext {

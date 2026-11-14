@@ -16,7 +16,7 @@ from casatools import coordsys, ctsys, image, measures, regionmanager, simulator
 
 from sm_apply_time_oracle import write
 from sm_existing_append_oracle import snapshot
-from sm_multiple_models_oracle import CENTRE
+from sm_multiple_models_oracle import CENTRE, make_session
 
 EXTRA_FRAMES = ("SUPERGAL", "ECLIPTIC", "JMEAN", "JTRUE", "JNAT", "APP",
     "MECLIPTIC", "TECLIPTIC", "HADEC", "AZEL", "AZELSW", "AZELGEO", "AZELSWGEO",
@@ -26,6 +26,7 @@ FRAME_COMBINATIONS = tuple(f"frame_{frame}_{mode}" for frame in ("b1950", "galac
 FRAME_COMBINATIONS += ("frame_hadec_mosaic",)
 FRAME_COMBINATIONS += tuple(f"frame_{frame.lower()}_beam" for frame in
     ("JMEAN", "APP", "HADEC", "AZEL"))
+FRAME_COMBINATIONS += tuple(f"frame_{frame.lower()}_mosaic" for frame in ("JMEAN", "APP", "AZEL"))
 HORIZON_FRAMES = ("HADEC", "AZEL", "AZELSW", "AZELGEO", "AZELSWGEO", "ITRF")
 
 
@@ -82,9 +83,12 @@ def make_model(path, kind, location=None, full_stokes=False):
     cs.setunits(["rad", "rad", "", "Hz"])
     cs.setreferencecode("J2000", type="direction")
     cs.setreferencevalue(CENTRE, type="direction")
-    if location is not None and kind == "frame_hadec_mosaic":
+    if location is not None and kind.endswith("_mosaic"):
         cs.setepoch(measures().epoch("UTC", "2024/06/01/00:00:05"))
         cs.settelescope("ALMA")
+        record = cs.torecord()
+        record["telescopeposition"] = location
+        assert cs.fromrecord(record)
     frame = None
     if kind.startswith("frame_") and kind != "frame_conversion_b1950":
         frame = kind.removeprefix("frame_").removesuffix("_beam").removesuffix("_mosaic").upper()
@@ -146,6 +150,8 @@ def main():
         help="Explicit setoptions reference position for horizon-frame controls")
     parser.add_argument("--refresh-beam", action="store_true")
     parser.add_argument("--squint", action="store_true")
+    parser.add_argument("--all-fields", action="store_true")
+    parser.add_argument("--long-track", action="store_true")
     parser.add_argument("--case", required=True, choices=("canonical", "spectral_before_stokes", "direction_last", "no_stokes", "direction_only", "iquv", "iquv_beam", "frame_j2000", "frame_b1950", "frame_galactic", "frame_icrs", "frame_conversion_b1950", *("frame_"+frame.lower() for frame in EXTRA_FRAMES), *FRAME_COMBINATIONS))
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
@@ -153,7 +159,14 @@ def main():
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
     source = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_irregular_channels/ascending.ms"
-    shutil.copytree(source, inputs / "base.ms", ignore=shutil.ignore_patterns("table.lock"))
+    if args.long_track:
+        from sm_apply_parameters_oracle import initialize
+        fresh = make_session(inputs / "base.ms", stokes="XX XY YX YY", frequency=100e9, channel=1e6)
+        assert fresh.observe(sourcename="target", spwname="band6", starttime="3s", stoptime="13s")
+        fresh.close()
+        initialize(inputs / "base.ms")
+    else:
+        shutil.copytree(source, inputs / "base.ms", ignore=shutil.ignore_patterns("table.lock"))
     if args.squint:
         tb = table()
         tb.open(str(inputs / "base.ms" / "POLARIZATION"), nomodify=False)
@@ -192,7 +205,7 @@ def main():
     shutil.copytree(model, run_model, ignore=shutil.ignore_patterns("table.lock"))
     sm = simulator()
     assert sm.openfromms(str(path))
-    assert sm.setdata(fieldid=[0])
+    assert sm.setdata(fieldid=[] if args.all_fields else [0])
     beam = args.case == "iquv_beam" or args.case.endswith("_beam")
     mosaic = args.case.endswith("_mosaic")
     if beam:
@@ -229,6 +242,12 @@ def main():
     if args.squint:
         case.update(squint=True, circular=True, vp_table="squint.vp")
         case["name"] += "_squint"
+    if args.all_fields:
+        case["field_ids"] = []
+        case["all_fields_selected"] = True
+        case["name"] += "_all_fields"
+    if args.long_track:
+        case["name"] += "_long"
     if args.constant_frequency is not None:
         case["constant_frequency_hz"] = args.constant_frequency
     elif mosaic:
