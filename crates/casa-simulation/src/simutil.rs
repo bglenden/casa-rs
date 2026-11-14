@@ -11,6 +11,7 @@
 //! | `read_pointings`, `write_pointings` | [`pointings::read_pointings`], [`pointings::write_pointings`] |
 //! | `noisetemp`, `bandname`, `polsettings` | [`receivers::noise_temperature`], [`receivers::band_name`], [`receivers::polarization_settings`] |
 //! | `itrf2loc`, `baselineLengths`, `approxBeam` | [`baselines::itrf_to_local`], [`baselines::baseline_lengths`], [`baselines::approximate_beam`] |
+//! | `sfBeam1d`, `sensitivity` | [`beam::spheroidal_beam`], [`sensitivity::sensitivity`], [`sensitivity::array_sensitivity`] |
 //! | `dir_s2m` | [`direction::direction_measure`] |
 //! | `setcfg`'s mount | [`config::default_mount`] |
 //! | `modifymodel`, `flatimage`, `is4d`, `spectral`, `ia.modify`, the component-only model | [`skymodel`] |
@@ -48,11 +49,13 @@
 
 pub mod analysis;
 pub mod baselines;
+pub mod beam;
 pub mod config;
 pub mod direction;
 pub mod pointings;
 pub(crate) mod qa;
 pub mod receivers;
+pub mod sensitivity;
 pub mod skymodel;
 
 pub use qa::python_float;
