@@ -227,7 +227,7 @@ pub(crate) struct Prediction {
     /// The mosaic machine's pointing offsets, from the model's pixel
     /// `(nx/2, ny/2)`, by phase centre (its bits), sorted by the bits; empty
     /// for the others.
-    pointings: Vec<([u64; 2], [f64; 2])>,
+    pointings: Vec<super::mosaic::MosaicPointing>,
     /// The mosaic machine's dish class of each antenna; empty for the
     /// others.
     antenna_types: Vec<u8>,
@@ -310,8 +310,15 @@ impl Prediction {
             .eq(codes.iter().copied())
     }
     pub(crate) fn has_selected_chunk(&self, scan: &super::observe::Scan) -> bool {
-        self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000
-            || super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan).is_some()
+        let covered = self.pointings.is_empty()
+            || self
+                .pointings
+                .binary_search_by_key(&scan.pointing_rad.map(f64::to_bits), |(key, _)| *key)
+                .map(|index| self.pointings[index].1.is_some())
+                .expect("a mosaic step measured its scan's pointing");
+        covered
+            && (self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000
+                || super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan).is_some())
     }
 
     pub(crate) fn frame(
@@ -351,7 +358,7 @@ impl Prediction {
             found.is_some() || self.pointings.is_empty(),
             "a mosaic step predicts rows pointed at {centre_rad:?}, which it did not measure"
         );
-        found.map_or([0.0; 2], |(_, offset)| *offset)
+        found.and_then(|(_, offset)| *offset).unwrap_or([0.0; 2])
     }
 
     /// Each antenna's dish class, which keys the mosaic machine's kernels;
@@ -774,7 +781,8 @@ impl Simulator {
                 {
                     beams.image_angles_rad = self.mosaic_jones_angles(phase_centres.as_ref())?;
                 }
-                (Some(beams), antenna_types, self.mosaic_pointings(&model)?)
+                let pointings = self.mosaic_pointings(&model, !beams.common)?;
+                (Some(beams), antenna_types, pointings)
             }
             FtMachine::Grid(_) | FtMachine::WProject(_) => {
                 if self
@@ -802,7 +810,7 @@ impl Simulator {
         let operator = ModelOperator::new(layout, kernels, GridPrecision::F32);
         if let Some((mut reservation, kept)) = mosaic_state {
             debug_assert_eq!(
-                (pointings.capacity() * size_of::<([u64; 2], [f64; 2])>()
+                (pointings.capacity() * size_of::<super::mosaic::MosaicPointing>()
                     + antenna_types.capacity()) as u64,
                 kept,
                 "the mosaic state keeps what was admitted for it"
