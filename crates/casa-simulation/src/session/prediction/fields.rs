@@ -7,10 +7,8 @@ impl Prediction {
     pub(crate) fn grid_id(&self, scan: &super::super::observe::Scan) -> usize {
         match &self.grids {
             StepGrids::Prepared(..) => 0,
-            StepGrids::ImageBeam(held) => held
-                .visits
-                .binary_search_by_key(&image_beams::visit_key(scan), |(key, _)| *key)
-                .map(|index| held.visits[index].1)
+            StepGrids::ImageBeam(_) => self
+                .image_visit(scan, None)
                 .expect("prepared image-beam visit"),
             StepGrids::PerField(held) => held
                 .centres
@@ -19,6 +17,45 @@ impl Prediction {
                 })
                 .expect("prepared pointing"),
         }
+    }
+
+    pub(crate) fn grid_id_at(&self, scan: &super::super::observe::Scan, time: f64) -> usize {
+        if matches!(self.grids, StepGrids::ImageBeam(_)) {
+            self.image_visit(scan, Some(time))
+                .expect("prepared timed image-beam visit")
+        } else {
+            self.grid_id(scan)
+        }
+    }
+
+    pub(crate) fn has_timed_grids(&self) -> bool {
+        matches!(&self.grids, StepGrids::ImageBeam(held) if held.timed)
+    }
+
+    pub(super) fn image_visit(
+        &self,
+        scan: &super::super::observe::Scan,
+        time: Option<f64>,
+    ) -> Option<usize> {
+        let StepGrids::ImageBeam(held) = &self.grids else {
+            return None;
+        };
+        let visit = image_beams::visit_key(scan);
+        let first = held
+            .visits
+            .partition_point(|((known, _), _)| *known < visit);
+        let index = time.map_or(first, |time| {
+            held.visits
+                .partition_point(|((known, epoch), _)| {
+                    *known < visit || (*known == visit && *epoch <= time)
+                })
+                .saturating_sub(1)
+                .max(first)
+        });
+        held.visits
+            .get(index)
+            .filter(|((known, _), _)| *known == visit)
+            .map(|(_, grid)| *grid)
     }
 
     /// Where the grids rows of `field` are predicted from come from; `None`

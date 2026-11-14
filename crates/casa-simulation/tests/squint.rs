@@ -68,13 +68,21 @@ fn observation(path: &Path, case: &Value, resources: SessionResources) -> Simula
     )
     .unwrap();
     sm.set_times(
-        10.,
+        case["integration_s"].as_f64().unwrap_or(10.),
         false,
         MEpoch::from_mjd(support::REFERENCE_MJD, EpochRef::UTC),
     )
     .unwrap();
-    for start in [0., 3600.] {
-        let mut scan = support::scan("target", start, start + 20.);
+    let starts = case["scan_starts_s"].as_array().map_or_else(
+        || vec![0., 3600.],
+        |values| values.iter().map(|value| value.as_f64().unwrap()).collect(),
+    );
+    for start in starts {
+        let mut scan = support::scan(
+            "target",
+            start,
+            start + case["scan_duration_s"].as_f64().unwrap_or(20.),
+        );
         scan.spectral_window = "beam".into();
         scan.observer = "CASA simulator".into();
         scan.project = "CASA simulation".into();

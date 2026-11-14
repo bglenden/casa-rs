@@ -340,6 +340,52 @@ pub(super) fn cached_clean(spw: &str, cache: &Path, surface: &Path) -> Value {
     })
 }
 
+/// The AW cube's frequency-dependent model handoff and common-beam
+/// Taylor correction run through the native cache and production route.
+#[test]
+fn aw_mvc_cleans_with_a_wideband_cube_and_corrects_both_taylor_images() {
+    let mut setup = two_window_setup();
+    setup.noise_jy = 0.0;
+    let observation = Observation::synthesise_setup(setup, &[("point", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).unwrap();
+    let cache = observation.scratch("mvc-aw-cache");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    for (key, value) in json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 2, "reffreq": "1.5GHz", "niter": 2, "cycleniter": 1,
+        "wprojplanes": 1, "wbawp": false, "conjbeams": true, "pblimit": 0.1,
+    })
+    .as_object()
+    .unwrap()
+    {
+        controls[key] = value.clone();
+    }
+    let (summary, products) = observation.image("mvc-aw-clean", controls);
+    assert_eq!(summary.actual_minor_iterations, 2);
+    assert_eq!(summary.major_cycles, 3);
+    assert!(products.suffixes().contains(".weight"));
+    assert!(!products.suffixes().contains(".weight.tt0"));
+    assert!(!products.suffixes().contains(".alpha.pbcor"));
+    let source = observation.geometry().pixel(OFF_AXIS);
+    let pb = products.get(".pb.tt0");
+    assert!((0.1..0.99).contains(&pb.pixels[source]));
+    for term in 0..2 {
+        let image = products.get(&format!(".image.tt{term}"));
+        let corrected = products.get(&format!(".image.tt{term}.pbcor"));
+        assert_eq!(corrected.mask(), pb.mask());
+        assert!((corrected.pixels[source] - image.pixels[source] / pb.pixels[source]).abs() < 1e-6);
+    }
+    let data_cells = entries(&cache)
+        .into_iter()
+        .filter(|name| name.starts_with("CFS_"))
+        .count();
+    assert_eq!(
+        data_cells, 4,
+        "two frequency groups and two Mueller elements"
+    );
+}
+
 /// The entries of a cache directory, sorted.
 fn entries(cache: &Path) -> Vec<String> {
     let mut names = std::fs::read_dir(cache)

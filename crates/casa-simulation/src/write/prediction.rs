@@ -113,6 +113,7 @@ struct Segment {
     projections: Vec<GridFtProjection>,
     pointing_offsets: Vec<[f64; 2]>,
     projection_epoch_s: Option<f64>,
+    timed_grids: bool,
 }
 
 /// The segment of `scan`, which the predict steps `steps` of `predictions`
@@ -175,6 +176,9 @@ fn segment_of(
         pointing_offsets.push(prediction.pointing_offset_rad(scan.pointing_rad));
     }
     Ok(Segment {
+        timed_grids: steps
+            .iter()
+            .any(|&step| predictions[step].has_timed_grids()),
         source_scan: scan_index,
         steps,
         field: scan.field_id,
@@ -682,7 +686,6 @@ impl<'s> PredictionStage<'s> {
             let Some(segment) = self.segment_for_scan(scan) else {
                 continue;
             };
-            self.select(segment, scan, team)?;
             self.noise_terms.clear();
             if self.noises_on_device(noise(scan)) {
                 // A term of σ = 0 adds nothing on either side.
@@ -697,11 +700,19 @@ impl<'s> PredictionStage<'s> {
                         }),
                 );
             }
+            let scan_index = scan;
             let scan = &scans[scan];
             let end = start + count;
             let mut block_start = start;
             while block_start < end {
-                let block_end = (block_start + self.block_rows).min(end);
+                self.select(segment, scan_index, rows[block_start].time_s, team)?;
+                let block_end = self.grid_block_end(
+                    segment,
+                    scan,
+                    rows,
+                    block_start,
+                    (block_start + self.block_rows).min(end),
+                );
                 let started = std::time::Instant::now();
                 self.fill_block(
                     segment,
@@ -740,34 +751,67 @@ impl<'s> PredictionStage<'s> {
         Ok(())
     }
 
+    /// Keep one beam orientation in a prediction block. Static grids retain
+    /// the full block; timed grids split only when their selected grid changes.
+    fn grid_block_end(
+        &self,
+        segment: usize,
+        scan: &Scan,
+        rows: &[RowGeometry],
+        start: usize,
+        end: usize,
+    ) -> usize {
+        if !self.segments[segment].timed_grids {
+            return end;
+        }
+        let mut previous = rows[start].time_s;
+        for (offset, row) in rows[start + 1..end].iter().enumerate() {
+            if row.time_s != previous {
+                if self.keep.iter().any(|&(step, grid)| {
+                    self.predictions[step].grid_id_at(scan, row.time_s) != grid
+                }) {
+                    return start + 1 + offset;
+                }
+                previous = row.time_s;
+            }
+        }
+        end
+    }
+
     /// Make the predictor `segment`'s, unless it is, for the visit at scan
     /// `scan`: its per-field grids found or prepared on `team`
     /// ([`FieldGridCache::grids`]).
-    fn select(&mut self, segment: usize, scan: usize, team: &WorkerTeam) -> SimulatorResult<()> {
-        if self
-            .predictor
-            .as_ref()
-            .is_some_and(|(current, _)| *current == segment)
-        {
+    fn select(
+        &mut self,
+        segment: usize,
+        scan: usize,
+        time: f64,
+        team: &WorkerTeam,
+    ) -> SimulatorResult<()> {
+        if self.predictor.as_ref().is_some_and(|(current, _)| {
+            *current == segment
+                && (!self.segments[segment].timed_grids
+                    || self.keep.iter().all(|&(step, grid)| {
+                        self.predictions[step].grid_id_at(&self.scans[scan], time) == grid
+                    }))
+        }) {
             return Ok(());
         }
         // The previous predictor is dropped first, so at most one is held,
         // and the grids it kept can be evicted.
         self.predictor = None;
-        let Segment {
-            steps, source_scan, ..
-        } = &self.segments[segment];
-        let source = &self.scans[*source_scan];
+        let steps = &self.segments[segment].steps;
+        let source = &self.scans[scan];
         self.keep.clear();
         self.keep.extend(
             steps
                 .iter()
-                .map(|&step| (step, self.predictions[step].grid_id(source))),
+                .map(|&step| (step, self.predictions[step].grid_id_at(source, time))),
         );
         let mut domains = Vec::with_capacity(steps.len());
         for &step in steps {
             let prediction = self.predictions[step];
-            let field = prediction.grid_id(source);
+            let field = prediction.grid_id_at(source, time);
             let model = match prediction.grids_for(field) {
                 Some(FieldGrids::Prepared(grids)) => DomainModel::Borrowed(grids),
                 Some(FieldGrids::PerField) => DomainModel::Shared(self.grids.grids(

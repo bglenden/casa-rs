@@ -770,6 +770,76 @@ fn mvc_corrects_both_taylor_images_with_the_shared_primary_beam() {
     }
 }
 
+/// W-projected cube passes supply the two-term Taylor solver with PSFs and
+/// refresh the cube from its updated model on each major cycle.
+#[test]
+fn mvc_w_projection_refreshes_the_cube_and_taylor_residual() {
+    let observation = weighted_observation();
+    let controls = json!({
+        "specmode": "mvc", "gridder": "wproject", "wprojplanes": 4,
+        "deconvolver": "mtmfs", "nterms": 2, "nchan": 3, "reffreq": "45GHz",
+        "weighting": "natural", "niter": 0, "cycleniter": 1, "pblimit": -0.1,
+    });
+    let (_, dirty) = observation.image("mvc-w-dirty", controls.clone());
+    let mut clean_controls = controls;
+    clean_controls["niter"] = json!(3);
+    let (summary, clean) = observation.image("mvc-w-clean", clean_controls);
+    assert_eq!(summary.actual_minor_iterations, 3);
+    assert_eq!(summary.major_cycles, 4);
+    assert!(!clean.suffixes().contains(".weight"));
+    let point = [152, 144];
+    assert!(clean.get(".model.tt0").pixels[point] > 0.0);
+    for channel in 0..3 {
+        let dirty_peak = dirty.get(".residual").plane(channel)[point];
+        let residual = clean.get(".residual").plane(channel)[point];
+        assert!((0.0..0.85 * dirty_peak).contains(&residual));
+        let model = clean.get(".model").plane(channel)[point];
+        assert!(model > 0.0);
+    }
+    let dirty_peak = dirty.get(".residual.tt0").pixels[point];
+    assert!((0.0..0.85 * dirty_peak).contains(&clean.get(".residual.tt0").pixels[point]));
+}
+
+/// The mosaic cube uses channel-dependent primary beams, then the Taylor
+/// images divide by one common beam without a separate corrected alpha.
+#[test]
+fn mvc_mosaic_cleans_and_corrects_both_terms_with_the_common_beam() {
+    let mut setup = super::mosaic::setup();
+    setup.fields = vec![super::fixture::PHASE_CENTER_RAD];
+    setup.spectral_windows[0].channel_width_hz = 4.0e9;
+    setup.spectral_windows[0].channel_count = 3;
+    setup.noise_jy = 0.0;
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let (summary, products) = observation.image(
+        "mvc-mosaic",
+        json!({
+            "specmode": "mvc", "gridder": "mosaic", "normtype": "flatnoise",
+            "deconvolver": "mtmfs", "nterms": 2, "nchan": 3, "reffreq": "54GHz",
+            "weighting": "natural", "niter": 3, "cycleniter": 1,
+            "pblimit": 0.1, "pbcor": true,
+        }),
+    );
+    assert_eq!(summary.actual_minor_iterations, 3);
+    assert_eq!(summary.major_cycles, 4);
+    assert!(products.suffixes().contains(".weight"));
+    assert!(!products.suffixes().contains(".weight.tt0"));
+    assert!(!products.suffixes().contains(".alpha.pbcor"));
+    let source = [280, 272];
+    let beam = products.get(".pb.tt0");
+    let mean = beam.pixels[source];
+    assert!((0.1..0.99).contains(&mean), "{mean}");
+    let mask = beam.mask().expect("Taylor PB mask");
+    let mut restored = [0.0; 2];
+    for (term, value) in restored.iter_mut().enumerate() {
+        let raw = products.get(&format!(".image.tt{term}"));
+        let corrected = products.get(&format!(".image.tt{term}.pbcor"));
+        assert_eq!(corrected.mask().as_ref(), Some(&mask));
+        *value = raw.pixels[source];
+        assert!((corrected.pixels[source] - *value / mean).abs() < 1e-6);
+    }
+    assert!((products.get(".alpha").pixels[source] - restored[1] / restored[0]).abs() < 1e-6);
+}
+
 /// CASA does not create a cube model when the initial threshold check
 /// stops before any minor cycle, but does publish the Taylor models (#1069).
 #[test]

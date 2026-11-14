@@ -28,6 +28,12 @@ pub(crate) fn cube_request(
     cube.mvc_output_channels = Some(channels);
     cube.mvc_auto_channels = false;
     let channels = channels.get();
+    if let crate::Gridder::Awproject(aw) = &mut cube.gridder {
+        // CASA's MVC helper always builds wideband cube cells and uses the
+        // direct, rather than conjugate, frequency for the cube passes.
+        aw.wbawp = true;
+        aw.conjbeams = false;
+    }
     cube.specmode = SpecMode::Cube;
     cube.deconvolver = Deconvolver::Hogbom;
     cube.nterms = 1;
@@ -396,8 +402,24 @@ fn check_view_scope(
     if store_count != 1
         || parent.outlierfile.is_some()
         || moving_centre
-        || !(matches!(parent.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
-            || matches!(parent.gridder, crate::Gridder::Awp2 { .. }))
+        || !(matches!(
+            parent.gridder,
+            crate::Gridder::Standard { facets } | crate::Gridder::Wproject { facets, .. }
+                if facets.get() == 1
+        ) || matches!(
+            parent.gridder,
+            crate::Gridder::Mosaic {
+                normtype: casa_imaging_model::ProductNormalization::FlatNoise,
+                conjbeams: false,
+                ..
+            } if parent.psfphasecenter.is_none()
+        ) || matches!(
+            parent.gridder,
+            crate::Gridder::Awproject(crate::AwProjection {
+                normtype: casa_imaging_model::ProductNormalization::FlatNoise,
+                ..
+            }) | crate::Gridder::Awp2 { .. }
+        ))
         || parent.stokes != [casa_imaging_model::PolarizationCoordinate::StokesI]
         || parent.nterms != 2
         || (parent.weighting != crate::Weighting::Natural
@@ -560,6 +582,34 @@ mod tests {
         let mut other = parent;
         other.weighting = crate::Weighting::Uniform;
         assert!(check_view_scope(&other, 1, false).is_err());
+    }
+
+    /// The CASA MVC helper forces wideband cells and direct frequency
+    /// selection for the cube, regardless of the input AW flags.
+    #[test]
+    fn aw_mvc_cube_uses_wideband_direct_frequency_cells() {
+        let parent = request(json!({
+            "gridder": "awproject", "specmode": "mvc", "deconvolver": "mtmfs",
+            "nterms": 2, "nchan": 3, "cfcache": "test.cf",
+            "wbawp": false, "conjbeams": true,
+        }));
+        let context = crate::RunContext {
+            host: casa_imaging_runtime::HostResources::detect().unwrap(),
+            policy: parent.resource_policy(),
+            cancel: casa_imaging_runtime::pass::Cancel::default(),
+            summary: None,
+        };
+        let cube = cube_request(&parent, [1.2e9, 1.8e9], &context).unwrap();
+        let crate::Gridder::Awproject(aw) = &cube.value.gridder else {
+            panic!("the cube uses the AW gridder");
+        };
+        assert!(aw.wbawp);
+        assert!(!aw.conjbeams);
+        let crate::Gridder::Awproject(aw) = &parent.gridder else {
+            panic!("the parent uses the AW gridder");
+        };
+        assert!(!aw.wbawp);
+        assert!(aw.conjbeams);
     }
 
     #[test]
