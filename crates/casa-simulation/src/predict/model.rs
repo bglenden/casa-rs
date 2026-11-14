@@ -290,7 +290,7 @@ impl SkyModel {
         self.planes
     }
 
-    pub(super) fn polarizations(&self) -> &[PolarizationCoordinate] {
+    pub(crate) fn polarizations(&self) -> &[PolarizationCoordinate] {
         &self.polarizations
     }
 

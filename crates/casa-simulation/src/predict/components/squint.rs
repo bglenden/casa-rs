@@ -18,10 +18,18 @@ pub(crate) struct Config {
 #[derive(Clone, Debug)]
 enum Source {
     Squint(PrimaryBeam, f64),
+    Offset([f64; 2], f64),
     Image(std::sync::Arc<crate::predict::jones::JonesImage>),
 }
 
 impl Config {
+    pub(crate) fn offset(offset: [f64; 2], frequency: f64, increment: f64, alt_az: bool) -> Self {
+        Self {
+            source: Source::Offset(offset, frequency),
+            increment,
+            alt_az,
+        }
+    }
     pub(crate) fn squint(beam: PrimaryBeam, frequency: f64, increment: f64, alt_az: bool) -> Self {
         Self {
             source: Source::Squint(beam, frequency),
@@ -41,7 +49,7 @@ impl Config {
         }
     }
     pub(super) fn radial(&self) -> bool {
-        matches!(self.source, Source::Squint(..))
+        !matches!(self.source, Source::Image(_))
     }
 }
 
@@ -194,12 +202,23 @@ impl Squint {
         if let Source::Image(image) = &self.config.source {
             return image.component_flux(circular, direction, pointing, angle, frequency, basis);
         }
-        let Source::Squint(beam, reference) = self.config.source else {
-            unreachable!()
-        };
         let pattern = self.pattern.as_ref().expect("squint has a radial pattern");
         let powers = [true, false].map(|right| {
-            let [dx, dy] = beam.squint_displacement_rad(reference, frequency, angle, right);
+            let [dx, dy] = match self.config.source {
+                Source::Squint(beam, reference) => {
+                    beam.squint_displacement_rad(reference, frequency, angle, right)
+                }
+                Source::Offset(offset, reference) => {
+                    // BeamSquint::getPointingDirection quantizes the
+                    // frequency scale to Float before rotating by -PA.
+                    let scale =
+                        f64::from((-reference / frequency) as f32) * if right { 1. } else { -1. };
+                    let [sx, sy] = offset.map(|v| v * scale);
+                    let (sin, cos) = (-angle).sin_cos();
+                    [-(sx * cos + sy * sin), -sx * sin + sy * cos]
+                }
+                Source::Image(_) => unreachable!("handled above"),
+            };
             let shifted = shifted(pointing, dx, dy);
             f64::from(pattern.power_at(separation_rad(direction, shifted), frequency))
         });

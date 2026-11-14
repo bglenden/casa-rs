@@ -609,6 +609,7 @@ impl Simulator {
             return Ok(());
         }
         let component_frame_epoch = beam.is_some_and(|beam| beam.image().is_some())
+            || component_beam.is_some_and(|beam| beam.squint.is_some())
             || (self.squint
                 && beam.is_some_and(|beam| beam.configured().is_some_and(PrimaryBeam::squints)))
             || list.as_ref().is_some_and(|(_, list, _)| {
@@ -716,6 +717,17 @@ impl Simulator {
     ) -> SimulatorResult<Prediction> {
         use casa_types::measures::direction::DirectionRef;
         let beam = selected_beam.map(|beam| &beam.pattern);
+        if !self.mosaic
+            && selected_beam.is_some_and(|beam| beam.squint.is_some())
+            && model
+                .polarizations()
+                .iter()
+                .any(|pol| *pol != casa_imaging_model::PolarizationCoordinate::StokesI)
+        {
+            return Err(SimulatorError::not_yet_implemented(
+                "custom beam squint on polarized model images (#1297)",
+            ));
+        }
         let fixed_celestial_frame = matches!(
             model.tangent_direction().refer(),
             DirectionRef::J2000
@@ -859,6 +871,14 @@ impl Simulator {
             })
             .transpose()?;
         let beam = selected_beam.map(|beam| &beam.pattern);
+        if let Some((offset, reference)) = selected_beam.and_then(|beam| beam.squint) {
+            squint = Some(crate::predict::ComponentBeamConfig::offset(
+                offset,
+                reference,
+                self.beam_angle_increment_rad,
+                super::voltage_patterns::squint_mount(self)?,
+            ));
+        }
         if let Some(image) = beam.and_then(super::voltage_patterns::BeamSource::image) {
             squint = Some(crate::predict::ComponentBeamConfig::image(
                 image.clone(),
@@ -1034,6 +1054,7 @@ impl Simulator {
         Ok(Some(super::voltage_patterns::ResolvedBeam {
             pattern: super::voltage_patterns::BeamSource::Configured(beam),
             standard: true,
+            squint: None,
         }))
     }
 

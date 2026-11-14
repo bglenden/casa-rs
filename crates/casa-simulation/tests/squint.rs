@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! VLA component squint and CASA's accepted EVLA no-op response.
+//! Standard and saved-beam squint in simulated component and image DATA.
 mod existing_ms_calculations;
 
 use casa_simulation::{
@@ -117,9 +117,12 @@ fn component_squint_and_angle_refresh_match_casa() {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("squint.ms");
             let mut sm = observation(&path, case, resources);
+            let saved_beam = case["saved_beam"].as_str();
             sm.set_vp(&VoltagePatternSpec {
-                use_default_vp: case["saved_standard"] != true,
-                vp_table: if case["saved_standard"] == true {
+                use_default_vp: case["saved_standard"] != true && saved_beam.is_none(),
+                vp_table: if let Some(beam) = saved_beam {
+                    data.join(beam).to_string_lossy().into_owned()
+                } else if case["saved_standard"] == true {
                     data.join("standard.vp").to_string_lossy().into_owned()
                 } else {
                     String::new()
@@ -130,11 +133,21 @@ fn component_squint_and_angle_refresh_match_casa() {
             })
             .unwrap();
             let telescope = case["telescope"].as_str().unwrap().to_lowercase();
-            sm.predict(&PredictSpec {
-                component_lists: vec![data.join(format!("{telescope}.cl"))],
+            let prediction = PredictSpec {
+                images: case["sky_image"]
+                    .as_str()
+                    .map(|name| data.join(name))
+                    .into_iter()
+                    .collect(),
+                component_lists: if case["sky_image"].is_string() {
+                    Vec::new()
+                } else {
+                    vec![data.join(format!("{telescope}.cl"))]
+                },
                 ..PredictSpec::default()
-            })
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
+            };
+            sm.predict(&prediction)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
             if case["replace_squint"] == true {
                 sm.set_vp(&VoltagePatternSpec {
                     do_squint: false,
