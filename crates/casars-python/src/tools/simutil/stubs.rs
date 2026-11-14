@@ -73,38 +73,4 @@ impl PySimutil {
         stub("imtclean")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (freq, bandwidth, etime, elevation, pwv = None, telescope = None, diam = None, nant = None, antennalist = None, doimnoise = None, integration = None, debug = None, method = None, tau0 = None, t_sky = None), text_signature = "($self, freq, bandwidth, etime, elevation, pwv=None, telescope=None, diam=None, nant=None, antennalist=None, doimnoise=None, integration=None, debug=None, method='tsys-atm', tau0=None, t_sky=None)")]
-    fn sensitivity(
-        &self,
-        freq: &Bound<'_, PyAny>,
-        bandwidth: &Bound<'_, PyAny>,
-        etime: &Bound<'_, PyAny>,
-        elevation: &Bound<'_, PyAny>,
-        pwv: Option<&Bound<'_, PyAny>>,
-        telescope: Option<&Bound<'_, PyAny>>,
-        diam: Option<&Bound<'_, PyAny>>,
-        nant: Option<&Bound<'_, PyAny>>,
-        antennalist: Option<&Bound<'_, PyAny>>,
-        doimnoise: Option<&Bound<'_, PyAny>>,
-        integration: Option<&Bound<'_, PyAny>>,
-        debug: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-        tau0: Option<&Bound<'_, PyAny>>,
-        t_sky: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("sensitivity")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (beam = None, cell = None, convsupport = None, sampling = None), text_signature = "($self, beam='', cell='', convsupport=-1, sampling='')")]
-    fn sfBeam1d(
-        &self,
-        beam: Option<&Bound<'_, PyAny>>,
-        cell: Option<&Bound<'_, PyAny>>,
-        convsupport: Option<&Bound<'_, PyAny>>,
-        sampling: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("sfBeam1d")
-    }
 }

@@ -1797,7 +1797,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 55 | 0 | 2 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 23 | 6 | 0 | 3 | 1 | 0 |
-| [simutil](#simutil) | `casars.simutil` | 57 | yes | 52 | 1 | 4 | 0 | 0 | 0 |
+| [simutil](#simutil) | `casars.simutil` | 57 | yes | 54 | 1 | 2 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
 
 ### componentlist
@@ -3950,7 +3950,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 52, Partial: 1, Not implemented: 4, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 54, Partial: 1, Not implemented: 2, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -3998,9 +3998,9 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `polsettings` | `telescope, poltype=None, listall=False` | Implemented | CASA's feed and correlation settings per telescope. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `read_pointings` | `filename` | Implemented | Reads CASA's pointing files; the text read is CASA's. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `readantenna` | `antab=None` | Implemented | Reads CASA's antenna configuration files (XYZ, UTM, LOC and geodetic, with `observatory` and `COFA` headers) and returns CASA's tuple; keeps the telescope as `telescopename`. The two CASA reading bugs it does not follow are decisions below. | [signature](#simutil-evidence-signature), [readantenna-casa-fixture](#simutil-evidence-readantenna-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
-| `sensitivity` | `freq, bandwidth, etime, elevation, pwv=None, telescope=None, diam=None, nant=None, antennalist=None, doimnoise=None, integration=None, debug=None, method='tsys-atm', tau0=None, t_sky=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `sensitivity` | `freq, bandwidth, etime, elevation, pwv=None, telescope=None, diam=None, nant=None, antennalist=None, doimnoise=None, integration=None, debug=None, method='tsys-atm', tau0=None, t_sky=None` | Implemented | Theoretical two-polarization noise in Jy from the configured synthetic track and Tsys scale table, or an identical-dish radiometer estimate from telescope/diameter/count at requested elevation; manual/atmospheric noise, frequency/bandwidth/time/elevation/PWV inputs. doimnoise=True with a configuration returns (theoretical, image RMS) using the existing 128-square natural-weighted Clark imaging calculation. Corrects undefined-padnames and broken legacy image calls; manual tau0 is required. Debug retains configured diagnostic products; explicit analytic estimates invent no geometry. | [signature](#simutil-evidence-signature), [numerical-diagnostics-20261114](#simutil-evidence-numerical-diagnostics-20261114), [binding-tests](#simutil-evidence-binding-tests) |
 | `setcfg` | `mysm, telescope, x, y, z, diam, padnames, posobs, mounttype=None` | Implemented | Calls the simulator's setconfig as CASA does (global coordinates, CASA's mount guess, diam.tolist()), returns the mount; a refused configuration closes the simulator and raises ValueError. | [signature](#simutil-evidence-signature), [helpers-casa](#simutil-evidence-helpers-casa) |
-| `sfBeam1d` | `beam='', cell='', convsupport=-1, sampling=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `sfBeam1d` | `beam='', cell='', convsupport=-1, sampling=''` | Implemented | Arcsecond FWHM of the sampled Gaussian beam convolved with CASA's angular spheroid and optional pointing-spacing box; quantity records/strings, support/default behavior and invalid-angle messages. Corrects CASA's NumPy-2 scalar-array failure. | [signature](#simutil-evidence-signature), [numerical-diagnostics-20261114](#simutil-evidence-numerical-diagnostics-20261114), [binding-tests](#simutil-evidence-binding-tests) |
 | `spectral` | `image` | Implemented | (nchan as a one-element int64 array, width as CASA's string) or 0.0 without a spectral axis, for CASA images and FITS files. | [signature](#simutil-evidence-signature), [helpers-casa](#simutil-evidence-helpers-casa) |
 | `statim` | `image, plot=True, incell=None, disprange=None, bar=True, showstats=True` | Implemented | CASA's (min, max, rms, unit), values as 0-d float64 arrays, plus its complete default plot. Supports display-range scalar/list controls (an empty list receives computed limits), mask, colour-scale and statistics options; incell is unused as in CASA. Requires the plot extra only for plot=True. Retains the recorded Jy/beam-without-beam scaling correction. | [signature](#simutil-evidence-signature), [simanalyze-casa-fixture](#simutil-evidence-simanalyze-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `tconpc` | `sf, orlim, er, esq, rf` | Implemented | The transverse Mercator zone constants (eps, r, so, v0, v2, v4, v6). | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
@@ -4166,6 +4166,16 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 - Owner decision: Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md.
 - Evidence: [helpers-casa](#simutil-evidence-helpers-casa).
 
+##### correct-numerical-diagnostic-runtime-failures: Previously agreed
+
+- Inputs: sfBeam1d under NumPy 2; sensitivity with telescope/diameter/count, missing manual opacity or doimnoise=True.
+- CASA: Raises scalar-array TypeError, undefined-padnames UnboundLocalError, negative-Tsys SystemError or broken legacy imclean/clean errors instead of a numerical diagnostic.
+- casa-rs: Compute the supported beam/radiometer/image diagnostics through native calculations; validate missing opacity and require an array configuration for image noise.
+- Rationale: Return the declared simulation calculation where CASA fails before producing it; do not invent array geometry or a manual opacity.
+- User impact: Scripts receive a numerical result or a clear invalid-input error; existing successful configured calculations retain their numerical acceptance and approved noise/UTC fixes.
+- Owner decision: Standing AGENTS.md CASA-deviation rule: correct CASA failures that contradict the documented/evident intent; preserve deliberate observable behavior.
+- Evidence: [numerical-diagnostics-20261114](#simutil-evidence-numerical-diagnostics-20261114).
+
 #### simutil evidence
 
 Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
@@ -4278,3 +4288,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/simutil_arithmetic_oracle.py](https://github.com/bglenden/casa-rs/blob/c59130fca34f967fd100cca36a5b067ee318ece9/tools/simulation/simutil_arithmetic_oracle.py)
 - [crates/casars-python/python/tests/data/casa_simutil_arithmetic.json](https://github.com/bglenden/casa-rs/blob/c59130fca34f967fd100cca36a5b067ee318ece9/crates/casars-python/python/tests/data/casa_simutil_arithmetic.json)
 - [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/c59130fca34f967fd100cca36a5b067ee318ece9/crates/casars-python/python/tests/test_simutil.py)
+
+<a id="simutil-evidence-numerical-diagnostics-20261114"></a>
+##### numerical-diagnostics-20261114
+
+**CASA numerical simulation diagnostic controls — passed.** 25/25 API cases pass. Seven beam widths agree to 1e-9; configured ALMA/ACA/VLA and explicit-array radiometer sensitivities satisfy 1e-3. Optional noise image agrees with independent CASA tclean at 1.905e-7 NRMS. 94 focused Python tests pass across retained and post-fix batches; one pre-existing optional live-CASA import is skipped in native Python. Ten invalid-Tsys/nonfinite-input regression checks pass before bad-gain neutralization; valid controls remain unchanged. SIM-27/28 sensitivity and single-dish beam/cell/support/sampling diagnostics; retains existing approximate synthesized-beam evidence.
+
+- [crates/casa-simulation/src/simutil/beam.rs](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casa-simulation/src/simutil/beam.rs)
+- [crates/casa-simulation/src/simutil/sensitivity.rs](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casa-simulation/src/simutil/sensitivity.rs)
+- [crates/casars-python/src/tools/simutil/diagnostics.rs](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casars-python/src/tools/simutil/diagnostics.rs)
+- [crates/casars-python/python/tests/test_simutil_diagnostics.py](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/crates/casars-python/python/tests/test_simutil_diagnostics.py)
+- [tools/simulation/simutil_diagnostics_oracle.py](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/tools/simulation/simutil_diagnostics_oracle.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- Revision: `c906e21e0f31dd0a4dc3f19169551657f9188517`; CASA: `6.7.6.14`.
+- Command: `CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna ; NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native ; CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native-image OUT/native-report.json`.
+- Receipt: `resources/casa-compat/evidence/simutil-diagnostics-20261114.json`.
