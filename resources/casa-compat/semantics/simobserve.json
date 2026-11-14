@@ -157,7 +157,8 @@
     "task-tests",
     "parity-20261103",
     "pointings-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -171,7 +172,8 @@
     "task-tests",
     "parity-20261103",
     "pointings-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -183,7 +185,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -195,7 +198,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -209,7 +213,8 @@
     "task-tests",
     "parity-20261103",
     "pointings-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -223,7 +228,8 @@
     "task-tests",
     "parity-20261103",
     "scheduling-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -237,7 +243,8 @@
     "task-tests",
     "parity-20261103",
     "pointings-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -249,7 +256,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -261,7 +269,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -289,7 +298,8 @@
     "scheduling-20261111",
     "main-integration-20261111",
     "uvw-sidereal-20261112",
-    "uvw-long-baselines-20261112"
+    "uvw-long-baselines-20261112",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -305,7 +315,8 @@
     "scheduling-20261111",
     "main-integration-20261111",
     "uvw-sidereal-20261112",
-    "uvw-long-baselines-20261112"
+    "uvw-long-baselines-20261112",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -319,7 +330,8 @@
     "task-tests",
     "parity-20261103",
     "pointings-20261111",
-    "main-integration-20261111"
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -1014,6 +1026,22 @@
    "links": [
     "https://github.com/bglenden/casa-rs/issues/1293"
    ]
+  },
+  "pointing-calibrators-20261114": {
+   "kind": "CASA-paired pointing and calibrator projects",
+   "state": "passed",
+   "scope": "SIM-20/SIM-23: OT and untimed files, ALMA/ALMA2012 tilings, explicit component-map directions, variable dwell times and whole/partial calibrator schedules, mJy flux, ICRS, hour angle/date, and ignored single-dish calibrators.",
+   "result": "9/9 projects agree on products, byte-identical pointing lists, scan timing, source/field metadata, flags and DATA. Maximum DATA NRMS 1.80e-7; direction difference 2.23e-16 rad; UVW difference 6.85e-9 m. Existing scientific tolerances and documented corrections retained.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py",
+    "crates/casa-types/src/measures/direction.rs"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "cc592d3ad005e5255084179fd57f8109fe56a64c",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --only schedule_ot_file schedule_untimed_file schedule_alma_nyquist schedule_cycle0_pb schedule_list_components schedule_calibrator_file schedule_calibrator_partial schedule_calibrator_components schedule_sd_calibrator_ignored",
+   "receipt": "resources/casa-compat/evidence/simobserve-schedules-20261114.json",
+   "source_revision": "cc592d3ad005e5255084179fd57f8109fe56a64c"
   }
  }
 }
