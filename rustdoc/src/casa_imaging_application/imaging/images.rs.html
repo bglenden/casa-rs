@@ -106,7 +106,7 @@
 <a href=#106 id=106 data-nosnippet>106</a>/// a facet's `window` when it has one (each CASA facet mapper degrids its
 <a href=#107 id=107 data-nosnippet>107</a>/// own window, `SIMapperCollection::degrid`): one plane per output channel
 <a href=#108 id=108 data-nosnippet>108</a>/// of a channel-local basis, the Taylor terms of one plane otherwise.
-<a href=#109 id=109 data-nosnippet>109</a>/// Pixels outside the model's support predict nothing.
+<a href=#109 id=109 data-nosnippet>109</a>/// Pixels outside the model's support or owned by a later field predict nothing.
 <a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>model_images(
 <a href=#111 id=111 data-nosnippet>111</a>    generation: <span class="kw-2">&amp;</span>ModelGeneration,
 <a href=#112 id=112 data-nosnippet>112</a>    (domain, window): (usize, <span class="prelude-ty">Option</span>&lt;FacetBox&gt;),
@@ -131,7 +131,7 @@
 <a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..terms {
 <a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">let </span>coefficient = <span class="kw">if </span>channel_local { plane <span class="kw">as </span>usize } <span class="kw">else </span>{ term };
 <a href=#133 id=133 data-nosnippet>133</a>            <span class="kw">for </span>pol <span class="kw">in </span><span class="number">0</span>..pols {
-<a href=#134 id=134 data-nosnippet>134</a>                <span class="kw">let </span>samples = generation.read_plane(domain, coefficient, pol)<span class="question-mark">?</span>;
+<a href=#134 id=134 data-nosnippet>134</a>                <span class="kw">let </span>samples = generation.prediction_plane(domain, coefficient, pol)<span class="question-mark">?</span>;
 <a href=#135 id=135 data-nosnippet>135</a>                images.push(Array2::from_shape_fn((height, width), |(y, x)| {
 <a href=#136 id=136 data-nosnippet>136</a>                    <span class="kw">let </span>sample = samples[(origin[<span class="number">1</span>] + y) * full_width + origin[<span class="number">0</span>] + x];
 <a href=#137 id=137 data-nosnippet>137</a>                    <span class="kw">match </span>sample.support() {

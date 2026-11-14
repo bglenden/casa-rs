@@ -189,7 +189,7 @@
 <a href=#189 id=189 data-nosnippet>189</a>            .main_samples()
 <a href=#190 id=190 data-nosnippet>190</a>            .map_err(ImagingError::StartModel)<span class="question-mark">?</span>;
 <a href=#191 id=191 data-nosnippet>191</a>        run.start_model_flux =
-<a href=#192 id=192 data-nosnippet>192</a>            <span class="kw">super</span>::<span class="kw">super</span>::seeding::plane_fluxes(spec.taylor_problem, <span class="kw-2">&amp;</span>start.model, <span class="kw-2">&amp;</span>samples);
+<a href=#192 id=192 data-nosnippet>192</a>            <span class="kw">super</span>::<span class="kw">super</span>::seeding::plane_fluxes(spec.taylor_problem, <span class="kw-2">&amp;</span>start.model, <span class="kw-2">&amp;</span>samples, <span class="number">0</span>);
 <a href=#193 id=193 data-nosnippet>193</a>        lifecycle.prepare_final_model(lifecycle.initial_from_start_model(<span class="kw-2">&amp;</span>samples)<span class="question-mark">?</span>, [])<span class="question-mark">?
 <a href=#194 id=194 data-nosnippet>194</a>    </span>};
 <a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span><span class="prelude-val">Some</span>((cube_pb, taylor_pb)) = <span class="kw-2">&amp;</span>start.projection_beams <span class="kw">else </span>{
