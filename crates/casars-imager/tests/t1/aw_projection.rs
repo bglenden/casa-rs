@@ -712,6 +712,50 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
     );
 }
 
+/// CASA's data-frame AW cube keeps its offset grid in the stored frame.
+#[test]
+fn aw_data_frame_cube_uses_the_casa_frequency_grid() {
+    let mut setup = setup();
+    let window = &mut setup.spectral_windows[0];
+    window.start_frequency_hz = 1.0e9;
+    window.channel_width_hz = 50.0e6;
+    window.channel_count = 20;
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).expect("open MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(
+            0,
+            "MEAS_FREQ_REF",
+            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+        )
+        .expect("declare TOPO input");
+    ms.save().expect("save TOPO input");
+    drop(ms);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write EVLA surface");
+    let mut request = cached_clean("0:3~14", &observation.scratch("cubedata-cf"), &surface);
+    request["specmode"] = json!("cubedata");
+    request["nchan"] = json!(8);
+    request["start"] = json!("1.275GHz");
+    request["width"] = json!("50MHz");
+    request["niter"] = json!(0);
+    for interpolation in ["linear", "cubic"] {
+        request["interpolation"] = json!(interpolation);
+        let (_, products) = observation.image(interpolation, request.clone());
+        let image = products.get(".psf");
+        let coordinate = image.image.first_spectral_coordinate().unwrap().unwrap();
+        assert_eq!(
+            coordinate.world_frequency_hz(0.0).unwrap(),
+            1_274_999_999.999_999_8
+        );
+        assert_eq!(coordinate.world_increment_hz().unwrap(), 50.0e6);
+        let sums = products.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), 8);
+        assert!(sums.iter().all(|&value| value > 0.0), "{sums:?}");
+    }
+}
+
 /// A native LSRK AW cube uses the four-point cubic stencil on an offset
 /// axis. The shorter edge stencil and strict support are shared with GridFT.
 #[test]

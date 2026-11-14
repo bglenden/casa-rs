@@ -828,7 +828,10 @@ fn cube_law(
     let mut axis = cube_axis(request)?;
     let exact_aw_grid =
         tracked_aw_cube_density(request, survey.source_frequency_reference, axis.outframe);
-    if exact_aw_grid {
+    if exact_aw_grid
+        || (request.specmode == SpecMode::Cubedata
+            && matches!(request.gridder, Gridder::Awproject(_)))
+    {
         casa_cube_frequency(&mut axis.start, request.start.as_deref());
         casa_cube_frequency(&mut axis.width, request.width.as_deref());
     }
