@@ -290,6 +290,9 @@ pub(crate) fn prepare(
             .controls
             .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
     }
+    if !input.forms.psf && !input.outlier_psfs.is_empty() {
+        publication.controls = publication.controls.preserving_saved_psfs();
+    }
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()
         == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam;
@@ -380,6 +383,19 @@ impl SavedBeams {
             mask_pixels: existing.and_then(ExistingProducts::mask_beams),
         }
     }
+}
+
+fn saved_outlier_products(
+    forms: imaging::Forms,
+    outliers: Vec<Option<crate::restart::ExistingProducts>>,
+) -> Vec<crate::restart::ExistingProducts> {
+    if forms.psf {
+        return Vec::new();
+    }
+    outliers
+        .into_iter()
+        .map(|products| products.expect("checked saved outlier products"))
+        .collect()
 }
 
 fn saved_psf_controls(
@@ -493,6 +509,7 @@ pub(crate) fn run(
             masks,
             start_model,
             outlier_models,
+            outlier_products: saved_outlier_products(forms, outlier_psfs),
             existing: existing.clone(),
             forms,
             image_response,

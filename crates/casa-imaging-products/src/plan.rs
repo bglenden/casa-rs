@@ -39,6 +39,7 @@ pub enum AnalyticPrimaryBeamModel {
 pub struct ContinuumProductControls {
     psf_cutoff: f32,
     reuses_single_psf: bool,
+    preserves_saved_psfs: bool,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     saved_mosaic_beam_read_bytes: Option<u64>,
     saved_higher_primary_beam: bool,
@@ -115,6 +116,14 @@ impl ContinuumProductControls {
         self
     }
 
+    /// Keep the PSF, sums of weights and primary-beam images already
+    /// present on the main field and its outliers.
+    #[must_use]
+    pub const fn preserving_saved_psfs(mut self) -> Self {
+        self.preserves_saved_psfs = true;
+        self
+    }
+
     /// Select the exact analytic primary-beam law used by requested PB products.
     #[must_use]
     pub const fn with_primary_beam_model(mut self, model: AnalyticPrimaryBeamModel) -> Self {
@@ -168,6 +177,7 @@ impl Default for ContinuumProductControls {
         Self {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
             reuses_single_psf: false,
+            preserves_saved_psfs: false,
             primary_beam_model: None,
             saved_mosaic_beam_read_bytes: None,
             saved_higher_primary_beam: false,
@@ -242,7 +252,9 @@ impl PlannedContinuumGeneration {
         let mut members = Vec::with_capacity(list.publication().members().len());
         for id in list.publication().members() {
             let entry = &list.entries()[id.ordinal()];
-            if controls.saved_mosaic_beam_read_bytes.is_some()
+            let keep_psf =
+                controls.preserves_saved_psfs || controls.saved_mosaic_beam_read_bytes.is_some();
+            if keep_psf
                 && match entry.role() {
                     ProductRole::Psf(_)
                     | ProductRole::Weight(_)

@@ -106,21 +106,30 @@ impl Run<'_> {
         let mut cycle =
             MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
         let window = self.read_window(plan.residency);
+        let (_, mut state) = cycle.parts();
+        for (domain, saved) in std::iter::once(&existing)
+            .chain(&self.outlier_products)
+            .enumerate()
         {
             let _reading = self.admit(
                 "existing products",
-                existing.reading_bytes(window) + existing.images_bytes(window),
+                saved.reading_bytes(window) + saved.images_bytes(window),
             )?;
-            let (_, mut state) = cycle.parts();
+            tracing::debug!(
+                target: "casa_imaging::saved_products",
+                domain,
+                admitted_bytes = _reading.memory(),
+                "read the saved normal state"
+            );
             for channels in windows(self.total_channels(), window) {
                 if self.cancel.is_cancelled() {
                     return Err(Cancelled.into());
                 }
-                state.append(
-                    existing
-                        .pass_images(channels)
-                        .map_err(ImagingError::Existing)?,
-                )?;
+                let mut images = saved
+                    .pass_images(channels)
+                    .map_err(ImagingError::Existing)?;
+                images.domain = domain;
+                state.append(images)?;
             }
         }
         let major = Major {

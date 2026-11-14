@@ -33,6 +33,7 @@ pub(crate) fn form(
             }])?,
             start_model: None,
             outlier_models: Vec::new(),
+            outlier_products: Vec::new(),
             existing: None,
             forms: Forms {
                 psf: true,
