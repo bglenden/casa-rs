@@ -710,8 +710,12 @@ struct Inputs<'a> {
 }
 
 impl Inputs<'_> {
-    fn residual_mask(&self, domain: usize) -> Option<&Support> {
-        self.residual_masks.get(domain).and_then(Option::as_ref)
+    fn residual_mask(&self, key: PlaneKey) -> Option<&Support> {
+        let channels = self.normal.slab().total_channels();
+        let channel = if self.taylor { 0 } else { key.channel };
+        self.residual_masks
+            .get(key.domain * channels + channel)
+            .and_then(Option::as_ref)
     }
 }
 
@@ -1172,9 +1176,7 @@ fn solve(
     // it skipped.
     let end_residual = std::mem::take(&mut outcome.end_residual);
     let peak_no_mask = match end_residual.first() {
-        Some(residual)
-            if let Some(mask) = inputs.residual_mask(key.domain).filter(|_| !inputs.taylor) =>
-        {
+        Some(residual) if let Some(mask) = inputs.residual_mask(key).filter(|_| !inputs.taylor) => {
             peak_magnitude(residual, mask)
         }
         Some(residual) if setup.residual_pixel_mask => {

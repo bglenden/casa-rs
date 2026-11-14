@@ -29,8 +29,8 @@ pub fn prepare_minor_cycle(
 ///
 /// # Panics
 ///
-/// A nonempty mask list must match the domains of a single-channel,
-/// single-polarization completion. Each mask must match its own field.
+/// A nonempty mask list must match the domain and channel axes of a
+/// single-polarization completion, with channels adjacent within each domain.
 pub fn prepare_minor_cycle_with_residual_masks(
     completion: &MajorCycleCompletion,
     mask_plans: &ImageDomainReconstructionMaskPlans,
@@ -161,7 +161,7 @@ pub fn prepare_minor_cycle_with_residual_masks(
             &plane.residual[0],
             &plane.support,
             inputs
-                .residual_mask(key.domain)
+                .residual_mask(*key)
                 .unwrap_or_else(|| pixels.residual_mask(setup.residual_pixel_mask)),
             0.0,
             setup.automask,
@@ -244,10 +244,11 @@ fn check_residual_masks(normal: &FinalNormalState, residual_masks: &[Option<Supp
     if residual_masks.is_empty() {
         return;
     }
-    assert_eq!(residual_masks.len(), normal.domain_count());
-    assert_eq!(normal.slab().total_channels(), 1);
+    let channels = normal.slab().total_channels();
+    assert_eq!(residual_masks.len(), normal.domain_count() * channels);
     assert_eq!(normal.polarization_count(), 1);
-    for (domain, mask) in residual_masks.iter().enumerate() {
+    for (index, mask) in residual_masks.iter().enumerate() {
+        let domain = index / channels;
         if let Some(mask) = mask {
             let [nx, ny] = normal.domain_shape(domain).expect("known saved field");
             assert_eq!(mask.shape(), PlaneShape::new(nx, ny));

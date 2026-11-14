@@ -520,7 +520,11 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             zero_invalid_plane_values(&mut values, &validity(self.member.validity)?);
         }
         let support = match (saved_mask, self.member.storage.pixel_mask()) {
-            (Some(mask), _) => mask.map(std::borrow::Cow::Borrowed),
+            (Some(mask), _) => mask.map(|mask| {
+                let cells = self.plane_shape[0] * self.plane_shape[1];
+                let offset = (channel * planes + polarization) * cells;
+                std::borrow::Cow::Borrowed(&mask[offset..offset + cells])
+            }),
             (None, ProductPixelMask::Explicit(rule)) => {
                 Some(std::borrow::Cow::Owned(validity(rule)?))
             }

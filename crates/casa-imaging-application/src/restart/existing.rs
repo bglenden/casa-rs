@@ -341,7 +341,7 @@ impl ExistingProducts {
     pub(crate) fn primary_beam_mask(
         &self,
     ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
-        self.pixel_mask("pb")
+        self.pixel_mask("pb", 0)
     }
 
     /// Whether a saved single-term residual governs the first minor cycle.
@@ -522,21 +522,30 @@ impl ExistingProducts {
     pub(crate) fn residual_mask(
         &self,
     ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
+        self.residual_mask_at(0)
+    }
+
+    /// Default pixel mask of one channel in a saved Stokes-I residual.
+    pub(crate) fn residual_mask_at(
+        &self,
+        channel: usize,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
         let name = match self.family {
             Family::Single => "residual",
             Family::Taylor { .. } => "residual.tt0",
         };
-        self.pixel_mask(name)
+        self.pixel_mask(name, channel)
     }
 
     fn pixel_mask(
         &self,
         name: &str,
+        channel: usize,
     ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
         let image =
             PagedImage::<f32>::open_with_cache(product_path(&self.prefix, name), CACHE_BYTES)?;
         let [nx, ny] = self.shape;
-        let mask = image.get_mask_slice(&[0; 4], &[nx, ny, 1, 1], &[1; 4])?;
+        let mask = image.get_mask_slice(&[0, 0, 0, channel], &[nx, ny, 1, 1], &[1; 4])?;
         Ok(mask.map(|mask| {
             casa_imaging_deconvolution::Support::new(
                 casa_imaging_deconvolution::PlaneShape::new(nx, ny),

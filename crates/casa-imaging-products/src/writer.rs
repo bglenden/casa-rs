@@ -431,7 +431,15 @@ impl CasaImageWriter {
         let mask = image
             .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
             .map_err(image_error)?;
-        Ok(mask.map(|mask| mask.iter().copied().collect()))
+        Ok(mask.map(|mask| {
+            let mut planes = Vec::with_capacity(mask.len());
+            for channel in mask.axis_iter(ndarray::Axis(3)) {
+                for pol in channel.axis_iter(ndarray::Axis(2)) {
+                    planes.extend(pol.iter().copied());
+                }
+            }
+            planes
+        }))
     }
 
     /// Create one member's image in private staging beside its target, with

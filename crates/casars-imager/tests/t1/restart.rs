@@ -236,6 +236,52 @@ fn a_mosaic_restores_the_saved_residual_and_uses_its_mask_to_stop_cleaning() {
 }
 
 #[test]
+fn a_mosaic_cube_restart_reads_and_publishes_the_mask_of_each_channel() {
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    let (_, seed) = observation.image("mosaic-cube-stopped", controls.clone());
+    let path = observation.scratch("mosaic-cube-stopped.residual");
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    let [x, y] = observation.geometry().centre();
+    let hidden = [x, y, 0, 1];
+    let visible = [x + 3, y + 2, 0, 1];
+    let mut mask = residual.get_mask().unwrap().unwrap();
+    assert!(mask[hidden] && mask[visible] && mask[[x, y, 0, 0]]);
+    mask[hidden] = false;
+    let mut pixels = residual.get().unwrap();
+    pixels[hidden] = 50.0;
+    pixels[visible] += 0.3;
+    residual.put_slice(&pixels, &[0; 4]).unwrap();
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let before = snapshot(&path);
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    controls["threshold"] = json!("2Jy");
+    let (stopped, restored) = observation.image("mosaic-cube-stopped", controls.clone());
+    assert_eq!(
+        (stopped.minor_iterations, stopped.major_cycles),
+        (0, 0),
+        "only the second channel masks the sentinel"
+    );
+    assert_unchanged(&before, &snapshot(&path));
+    assert_eq!(restored.get(".image").mask().as_ref(), Some(&mask));
+    let delta = restored.get(".image").values()[visible] - seed.get(".image").values()[visible];
+    assert!(
+        (delta - 0.3).abs() < 1e-5,
+        "channel two restored delta {delta}"
+    );
+    controls["threshold"] = json!("0Jy");
+    controls["niter"] = json!(2);
+    let (clean, products) = observation.image("mosaic-cube-stopped", controls);
+    assert!(clean.minor_iterations > 0 && clean.major_cycles > 0);
+    assert_eq!(products.get(".residual").mask().as_ref(), Some(&mask));
+    assert_eq!(products.get(".image").mask().as_ref(), Some(&mask));
+}
+
+#[test]
 fn a_mosaic_resumed_with_positive_cutoff_copies_the_saved_pb_mask_after_gridding() {
     let (observation, mut controls) = mosaic_run(false);
     controls["niter"] = json!(8);

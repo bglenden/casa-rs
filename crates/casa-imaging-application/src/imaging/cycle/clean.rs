@@ -270,7 +270,15 @@ fn read_saved_masks(
     if main.saved_residual_mask_bytes().is_none() {
         return Ok((Vec::new(), Reservation::none()));
     }
-    let count = 1 + run.outlier_products.len();
+    let channels = if matches!(
+        run.domains[0].operator.basis(),
+        casa_imaging_operator::Basis::ChannelLocal { .. }
+    ) {
+        run.problem.geometry().spectral().output_channels()
+    } else {
+        1
+    };
+    let count = (1 + run.outlier_products.len()) * channels;
     let mut held = run.admit(
         "saved residual mask list",
         (count * size_of::<Option<casa_imaging_deconvolution::Support>>()) as u64,
@@ -280,19 +288,21 @@ fn read_saved_masks(
         .chain(&run.outlier_products)
         .enumerate()
     {
-        let (mask, mut charge) = read_saved_mask(run, saved, refreshed)?;
-        let pixels = mask.as_ref().map_or(0, |mask| mask.as_slice().len() as u64);
-        if pixels > 0 {
-            tracing::debug!(
-                target: "casa_imaging::saved_residual_mask",
-                domain,
-                admitted_bytes = charge.memory(),
-                "read the saved residual pixel mask"
-            );
+        for channel in 0..channels {
+            let (mask, mut charge) = read_saved_mask(run, saved, channel, refreshed)?;
+            let pixels = mask.as_ref().map_or(0, |mask| mask.as_slice().len() as u64);
+            if pixels > 0 {
+                tracing::debug!(
+                    target: "casa_imaging::saved_residual_mask",
+                    domain,
+                    admitted_bytes = charge.memory(),
+                    "read the saved residual pixel mask"
+                );
+            }
+            charge.retain(pixels);
+            held.join(charge);
+            masks.push(mask);
         }
-        charge.retain(pixels);
-        held.join(charge);
-        masks.push(mask);
     }
     Ok((masks, held))
 }
@@ -300,6 +310,7 @@ fn read_saved_masks(
 fn read_saved_mask(
     run: &Run<'_>,
     saved: &ExistingProducts,
+    channel: usize,
     refreshed: bool,
 ) -> Result<(Option<casa_imaging_deconvolution::Support>, Reservation), ImagingError> {
     let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
@@ -308,7 +319,7 @@ fn read_saved_mask(
             let charge = run.admit("saved PB for residual mask", beam.reading_bytes())?;
             let [nx, ny, _, _] = beam.shape();
             let pixels = beam
-                .read_mask(0, 0)
+                .read_mask(channel, 0)
                 .map_err(casa_imaging_runtime::MinorCycleRunError::from)?;
             let mask = casa_imaging_deconvolution::Support::new(
                 casa_imaging_deconvolution::PlaneShape::new(nx, ny),
@@ -327,6 +338,8 @@ fn read_saved_mask(
         return Ok((None, Reservation::none()));
     }
     let charge = run.admit("saved residual mask", bytes)?;
-    let mask = saved.residual_mask().map_err(ImagingError::Existing)?;
+    let mask = saved
+        .residual_mask_at(channel)
+        .map_err(ImagingError::Existing)?;
     Ok((mask, charge))
 }
