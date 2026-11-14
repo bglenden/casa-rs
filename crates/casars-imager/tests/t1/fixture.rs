@@ -443,7 +443,7 @@ impl Observation {
         };
         let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
         let result = run(parameters, &request)?;
-        let products = Products::read(&image_name, &result.artifacts);
+        let products = Products::read(&request.image_names(), &result.artifacts);
         Ok((result.run, products))
     }
 
@@ -711,23 +711,32 @@ impl Product {
     }
 }
 
-/// Every product a run reported, keyed by its CASA suffix.
+/// The main image products a run reported, keyed by their CASA suffix.
 pub struct Products {
     opened: BTreeMap<String, Product>,
 }
 
 impl Products {
-    fn read(image_name: &Path, reported: &[ImagerArtifact]) -> Self {
-        let prefix = image_name.display().to_string();
+    fn read(image_names: &[PathBuf], reported: &[ImagerArtifact]) -> Self {
+        let prefixes: Vec<_> = image_names
+            .iter()
+            .map(|name| name.to_string_lossy())
+            .collect();
         Self {
             opened: reported
                 .iter()
-                .map(|artifact| {
-                    let suffix = artifact
-                        .path
-                        .strip_prefix(&prefix)
-                        .unwrap_or_else(|| panic!("{} outside {prefix}", artifact.path));
-                    (suffix.to_string(), Product::open(Path::new(&artifact.path)))
+                .filter_map(|artifact| {
+                    let (domain, suffix) = prefixes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(domain, prefix)| {
+                            let suffix = artifact.path.strip_prefix(prefix.as_ref())?;
+                            suffix.starts_with('.').then_some((domain, suffix))
+                        })
+                        .min_by_key(|(_, suffix)| suffix.len())
+                        .unwrap_or_else(|| panic!("{} outside the image domains", artifact.path));
+                    (domain == 0)
+                        .then(|| (suffix.to_string(), Product::open(Path::new(&artifact.path))))
                 })
                 .collect(),
         }
