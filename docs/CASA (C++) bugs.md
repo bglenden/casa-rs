@@ -4480,6 +4480,17 @@ reproduces all standard dirty products exactly for natural, Briggs
 and uniform weighting. The clean control evaluates predictions at
 each buffer's converted frequencies before sampling the residuals.
 
+For LSRK input into a tracked BARY cubic cube, CASA's
+`BriggsCubeWeightor::getWeightUniform` narrows the visibility buffer's
+reporting LSRK frequency divided by c to Float before forming the
+density coordinates. Applying the equivalent BARY frequency and scaled
+baseline before narrowing moved one sample from v = 619.5 to v =
+619.49994. The adjacent cells gave uniform weights of 1/6 and 1/4.
+The AW catalog route now undoes the wavelength rescaling for this lookup.
+The Briggs and uniform controls each agree across 17 dirty and clean
+products and 48 fitted beams. The worst normalized RMS is 9.38e-7
+for products and 1.11e-6 for MODEL_DATA (#1121).
+
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
 CASA 6.7.6.14's `PointingOffsets` owns a default-constructed

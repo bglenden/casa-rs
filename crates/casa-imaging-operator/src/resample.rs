@@ -539,6 +539,7 @@ fn sample_weight(
     source: Source,
     placement: &Placement,
     density_axis: Option<SpectralAxis>,
+    density_wavelength_scale: f64,
 ) -> f32 {
     let channel_weight = |channel: usize| {
         let input = unpolarized_weight(row, npol, channel);
@@ -571,7 +572,15 @@ fn sample_weight(
             plane,
             ..*placement
         };
-        weighting.imaging_weight(&native, DensityUv::casa(uvw_m, frequency_hz), input)
+        let density_uv = if density_axis.is_some() && density_wavelength_scale != 1.0 {
+            DensityUv::casa(
+                uvw_m.map(|metres| metres / density_wavelength_scale),
+                frequency_hz * density_wavelength_scale,
+            )
+        } else {
+            DensityUv::casa(uvw_m, frequency_hz)
+        };
+        weighting.imaging_weight(&native, density_uv, input)
     };
     match source {
         Source::Pair { left, right_factor }
@@ -737,6 +746,7 @@ pub struct SpectralResampler {
     autocorrelations: bool,
     /// The source span excludes the last output plane from gridding.
     omit_terminal_plane: bool,
+    density_wavelength_scale: f64,
 }
 
 impl SpectralResampler {
@@ -753,6 +763,7 @@ impl SpectralResampler {
             basis,
             autocorrelations: false,
             omit_terminal_plane: false,
+            density_wavelength_scale: 1.0,
         })
     }
 
@@ -771,6 +782,7 @@ impl SpectralResampler {
             },
             autocorrelations: false,
             omit_terminal_plane: false,
+            density_wavelength_scale: 1.0,
         }
     }
 
@@ -779,6 +791,17 @@ impl SpectralResampler {
     #[must_use]
     pub const fn with_terminal_plane_outside(mut self, outside: bool) -> Self {
         self.omit_terminal_plane = outside;
+        self
+    }
+
+    /// Form cube density lookup wavelengths in the reporting frame. A
+    /// finite positive `scale` converts the working frequency to the
+    /// reporting frequency and the working baseline back to physical metres
+    /// before CASA's Float rounding. Density accumulation and gridding keep
+    /// the working coordinates.
+    #[must_use]
+    pub const fn with_density_wavelength_scale(mut self, scale: f64) -> Self {
+        self.density_wavelength_scale = scale;
         self
     }
 
@@ -1065,7 +1088,15 @@ impl SpectralResampler {
                 return;
             };
             let weight = kept.unwrap_or_else(|| {
-                let weight = sample_weight(weighting, row, npol, source, &placement, density_axis);
+                let weight = sample_weight(
+                    weighting,
+                    row,
+                    npol,
+                    source,
+                    &placement,
+                    density_axis,
+                    self.density_wavelength_scale,
+                );
                 if let Some((slots, channel)) = slot {
                     slots.keep(channel, weight);
                 }
