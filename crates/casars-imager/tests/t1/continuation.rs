@@ -250,14 +250,14 @@ fn taylor_restore_refits_only_the_missing_principal_psf_beam() {
         label,
         with(&with(&base, restart.clone()), json!({"restoration": false})),
     );
-    assert!(!skipped.suffixes().contains(&".psf.tt0".to_string()));
+    assert!(!skipped.suffixes().contains(".psf.tt0"));
     assert_unchanged(&before[0], &scientific(suffixes[0], false));
 
     let (_, restored) = observation.image(label, with(&base, restart));
     let published = restored.suffixes();
-    assert!(published.contains(&".psf.tt0".to_string()));
-    assert!(!published.contains(&".psf.tt1".to_string()));
-    assert!(!published.contains(&".psf.tt2".to_string()));
+    assert!(published.contains(".psf.tt0"));
+    assert!(!published.contains(".psf.tt1"));
+    assert!(!published.contains(".psf.tt2"));
     let psf = PagedImage::<f32>::open(&principal).unwrap();
     let beam = psf.image_info().unwrap().beam_set.single_beam().unwrap();
     assert!((beam.major - fitted.major).abs() < 1e-8 * fitted.major);
