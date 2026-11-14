@@ -385,12 +385,12 @@
    ]
   },
   "sensitivity": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Theoretical two-polarization noise in Jy from the configured synthetic track and Tsys scale table, or an identical-dish radiometer estimate from telescope/diameter/count at requested elevation; manual/atmospheric noise, frequency/bandwidth/time/elevation/PWV inputs. doimnoise=True with a configuration returns (theoretical, image RMS) using the existing 128-square natural-weighted Clark imaging calculation. Corrects undefined-padnames and broken legacy image calls; manual tau0 is required. Debug retains configured diagnostic products; explicit analytic estimates invent no geometry.",
    "evidence": [
     "signature",
-    "refusals"
+    "numerical-diagnostics-20261114",
+    "binding-tests"
    ]
   },
   "setcfg": {
@@ -402,12 +402,12 @@
    ]
   },
   "sfBeam1d": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Arcsecond FWHM of the sampled Gaussian beam convolved with CASA's angular spheroid and optional pointing-spacing box; quantity records/strings, support/default behavior and invalid-angle messages. Corrects CASA's NumPy-2 scalar-array failure.",
    "evidence": [
     "signature",
-    "refusals"
+    "numerical-diagnostics-20261114",
+    "binding-tests"
    ]
   },
   "spectral": {
@@ -693,6 +693,19 @@
     "helpers-casa"
    ],
    "owner_decision": "Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
+  },
+  {
+   "id": "correct-numerical-diagnostic-runtime-failures",
+   "inputs": "sfBeam1d under NumPy 2; sensitivity with telescope/diameter/count, missing manual opacity or doimnoise=True.",
+   "casa": "Raises scalar-array TypeError, undefined-padnames UnboundLocalError, negative-Tsys SystemError or broken legacy imclean/clean errors instead of a numerical diagnostic.",
+   "ours": "Compute the supported beam/radiometer/image diagnostics through native calculations; validate missing opacity and require an array configuration for image noise.",
+   "rationale": "Return the declared simulation calculation where CASA fails before producing it; do not invent array geometry or a manual opacity.",
+   "impact": "Scripts receive a numerical result or a clear invalid-input error; existing successful configured calculations retain their numerical acceptance and approved noise/UTC fixes.",
+   "evidence": [
+    "numerical-diagnostics-20261114"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing AGENTS.md CASA-deviation rule: correct CASA failures that contradict the documented/evident intent; preserve deliberate observable behavior."
   }
  ],
  "evidence": {
@@ -831,6 +844,25 @@
     "crates/casars-python/python/tests/test_simutil.py"
    ],
    "source_revision": "c59130fca34f967fd100cca36a5b067ee318ece9"
+  },
+  "numerical-diagnostics-20261114": {
+   "kind": "CASA numerical simulation diagnostic controls",
+   "state": "passed",
+   "scope": "SIM-27/28 sensitivity and single-dish beam/cell/support/sampling diagnostics; retains existing approximate synthesized-beam evidence.",
+   "result": "25/25 API cases pass. Seven beam widths agree to 1e-9; configured ALMA/ACA/VLA and explicit-array radiometer sensitivities satisfy 1e-3. Optional noise image agrees with independent CASA tclean at 1.905e-7 NRMS. 94 focused Python tests pass across retained and post-fix batches; one pre-existing optional live-CASA import is skipped in native Python. Ten invalid-Tsys/nonfinite-input regression checks pass before bad-gain neutralization; valid controls remain unchanged.",
+   "links": [
+    "crates/casa-simulation/src/simutil/beam.rs",
+    "crates/casa-simulation/src/simutil/sensitivity.rs",
+    "crates/casars-python/src/tools/simutil/diagnostics.rs",
+    "crates/casars-python/python/tests/test_simutil_diagnostics.py",
+    "tools/simulation/simutil_diagnostics_oracle.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "c906e21e0f31dd0a4dc3f19169551657f9188517",
+   "source_revision": "e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a",
+   "command": "CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna ; NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native ; CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native-image OUT/native-report.json",
+   "receipt": "resources/casa-compat/evidence/simutil-diagnostics-20261114.json"
   }
  }
 }

@@ -35,7 +35,8 @@
 //! pointing patterns `getTrianglePoints`, `getTriangularTiling`,
 //! `getBaseTriangularTiling` and `getShiftTriangularTiling` (`tiling.rs`);
 //! and the direct arithmetic helpers `applyRotate`, `isEven` and `needsFiller`
-//! (`arithmetic.rs`). CASA's other
+//! (`arithmetic.rs`); and numerical `sfBeam1d` and `sensitivity` diagnostics
+//! (`diagnostics.rs`). CASA's other
 //! public methods have its signatures and raise `NotImplementedError` naming #1053, which
 //! classifies them (`stubs.rs`).
 //!
@@ -61,6 +62,7 @@
 
 mod analysis;
 mod arithmetic;
+mod diagnostics;
 mod geodesy;
 mod helpers;
 mod ops;

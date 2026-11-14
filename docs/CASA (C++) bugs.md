@@ -5598,3 +5598,58 @@ with the actual default-exponent CASA prediction at 3.7e-7 NRMS. Native CPU
 W1/W3 predictions agree with these controls below 1e-6 NRMS, including polarized
 spectra, selected replacement/increments and unchanged scratch/quality cells.
 The uniform-disk and projected-sphere analytic limits are checked separately.
+
+## Simulation numerical diagnostics fail before returning their calculations
+
+- Date noted: 2026-11-14
+- Status: CASA defects; casa-rs corrects these simulation diagnostics (#1303).
+- Affected code: CASA 6.7.6.14 `casatasks/private/simutil.py`, `sfBeam1d` and `sensitivity`.
+
+`sfBeam1d` passes the length-one arrays returned by `qa.getvalue` to Python
+scalar operations. Under NumPy 2 this raises `TypeError: only 0-dimensional
+arrays can be converted to Python scalars`. The reference control explicitly
+extracts just the three scalar quantities (beam, cell and sampling); its
+SciPy spheroid, convolutions and spline calculation remain unchanged. Native
+widths agree with seven such controls to 1e-9 relatively. Units, invalid
+quantity messages, zero support, support below -1 and absent sampling are
+covered too. CASA's literal default support -1 has negative c; SciPy returns
+a constant angular profile there, so native preserves that box-kernel result.
+
+`sensitivity` without an antenna list leaves `padnames` undefined and raises
+`UnboundLocalError`, even with a valid telescope, dish diameter and antenna
+count. Native returns the identical-dish radiometer estimate at the requested
+elevation: the existing Tsys baseline sigma divided by
+`sqrt((time/integration) * nant*(nant-1)/2 * 2)` for two polarizations. It
+uses the existing receiver and manual/ATM models without inventing antenna
+positions. Nonfinite inputs and invalid Tsys are refused before the noise
+model can neutralize a bad gain into a plausible estimate. Independent controls
+use the previously validated radiometer
+equations, CASA receiver efficiencies and CASA's ATM tool. Image noise needs
+a configuration, since diameter/count alone do not define an image's UV coverage.
+
+With a configuration, native follows the task's synthetic-track and middle
+unflagged T-solution calculation through the existing simulator. Its accepted
+UTC, per-row noise and physical-channel atmosphere corrections still apply.
+Six ALMA/ACA/VLA references, including manual/atmospheric noise and the ALMA
+high-frequency double-sideband case, agree within the ordinary 1e-3 tolerance.
+An additional equivalent-unit/time/bandwidth case also agrees. With manual
+noise and omitted `tau0`, CASA instead fails inside `setnoise` with a negative
+Tsys and a Python `SystemError`; native requires an explicit manual opacity
+and reports that cause. This does not choose a new scientific default.
+
+`doimnoise=True` calls `imclean` without its `psfmode` argument, raising
+`TypeError` for missing `stokes`. Inserting that argument exposes the removed
+legacy `clean` function (`NameError`). Native carries out the declared small
+128-square, natural-weighted Stokes-I Clark calculation with the existing
+imaging application and returns `(theoretical_noise, image_rms)` in Jy. The
+reference uses CASA `tclean` on exactly the same native-written noisy MS;
+the native image never constructs its reference. The two 128x128x1x1 Jy/beam
+images agree at 1.905e-7 NRMS, and their measured RMS agrees at about 1e-9
+relatively. This completes the numerical diagnostic without completing the
+general `imclean` wrapper or introducing a new task.
+
+The raw errors, controlled calculations and reproduction commands are kept
+with the simulation diagnostic evidence and
+`tools/simulation/simutil_diagnostics_oracle.py`. These apply the standing
+policy to correct CASA failures that contradict the calculation's evident
+intent; ordinary successful configurations and scientific tolerances are retained.

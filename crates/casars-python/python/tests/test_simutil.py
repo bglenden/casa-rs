@@ -41,7 +41,7 @@ IMPLEMENTED = {
     "getBaseTriangularTiling", "getShiftTriangularTiling", "getTrianglePoints", "getTriangularTiling",
     "is4d", "isEven", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
     "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "needsFiller", "noisetemp", "openreport",
-    "polsettings", "read_pointings", "readantenna", "setcfg", "spectral", "statim", "tconpc",
+    "polsettings", "read_pointings", "readantenna", "sensitivity", "setcfg", "sfBeam1d", "spectral", "statim", "tconpc",
     "tmgeod", "utm2long", "utm2xyz", "wrapang", "write_pointings", "xyz2long", "xyz2long_old",
 }
 
