@@ -939,7 +939,8 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// `conjbeams`, `DataToGrid` with `conjBeams`); `cube` the cell a
     /// prediction reads: the native frequency's (`GridToData`,
     /// `nearestFreqNdx(spw, chan)`) at the w-plane of the unrotated w
-    /// ([`Self::prediction_w`]).
+    /// ([`Self::prediction_w`]). Both use the row's rotation epoch
+    /// (`AWProjectFT::setupVBStore` runs for gridding and prediction).
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
         let pa = self
             .row_pa_cell(row)
@@ -956,7 +957,7 @@ impl ConvolutionFunctionSet for AwCatalog {
             pa,
             nearest(&self.frequencies_hz, native_frequency_hz).0,
             prediction_w,
-        );
+        ) + rotation * self.groups.len();
         CfKey {
             group: u16::try_from(group).expect("AW group fits u16"),
             cube: u16::try_from(native).expect("AW group fits u16"),

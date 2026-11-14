@@ -1186,7 +1186,7 @@ fn aw_rotation(
         || aw.computepastep != 360.0
         || surveyed.survey.fields.len() != 1
         || request.specmode != SpecMode::Mfs
-        || request.solves()
+        || (request.solves() && request.deconvolver != Deconvolver::Hogbom)
         || request.predicts_final_model()
         || request.tclean_restart
         || request.has_start_model()

@@ -1228,15 +1228,30 @@ fn imported_aw_runtime_pa_rotation_changes_the_residual_and_psf() {
             .fold(0.0_f32, f32::max);
         assert!(difference > 1.0e-6, "{suffix}: {difference}");
     }
-    imported["niter"] = json!(1);
-    let Err(error) = observation.try_image("rotation-clean", imported) else {
-        panic!("runtime rotation accepted a clean");
-    };
+    imported["niter"] = json!(4);
+    imported["cycleniter"] = json!(2);
+    let (run, clean) = observation.image("rotation-clean", imported.clone());
+    assert!(run.major_cycles > 1 && run.actual_minor_iterations > 0);
     assert!(
-        error.contains("rotatepastep currently supports dirty imported AW"),
-        "{error}"
+        clean
+            .get(".model")
+            .values()
+            .iter()
+            .any(|&value| value != 0.0)
     );
-    assert!(!observation.scratch("rotation-clean.image").exists());
+    assert_eq!(clean.get(".psf").values(), rotated.get(".psf").values());
+    assert_ne!(
+        clean.get(".residual").values(),
+        rotated.get(".residual").values()
+    );
+
+    imported["deconvolver"] = json!("clark");
+    let name = "rotation-clark";
+    let Err(error) = observation.try_image(name, imported) else {
+        panic!("runtime rotation accepted a Clark clean");
+    };
+    assert!(error.contains("rotatepastep currently supports"), "{error}");
+    assert!(!observation.scratch(&format!("{name}.image")).exists());
 }
 
 /// A native cache is generated over all covered PA groups and reopened

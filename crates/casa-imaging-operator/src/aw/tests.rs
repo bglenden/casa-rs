@@ -379,9 +379,9 @@ fn rotation_epochs_key_the_current_group_and_bound_memory() {
     };
     assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 0, cube: 0 });
     row.time_s = 2.0;
-    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 1, cube: 0 });
+    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 1, cube: 1 });
     row.time_s = 3.0;
-    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 2, cube: 0 });
+    assert_eq!(catalog.key(&row, 1.0e9, 0.0), CfKey { group: 2, cube: 2 });
 }
 
 #[test]

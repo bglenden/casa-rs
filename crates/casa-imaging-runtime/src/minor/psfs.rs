@@ -7,6 +7,17 @@ use super::{
     normalise, plane_shape, psf_peak_value, read_psf,
 };
 
+// SIImageStore::normPSF scales the single-term plane by its positive
+// maximum. The solver's central-patch peak search is a separate operation.
+pub(super) fn single_psf_peak(psf: &[f64]) -> Result<f64, MinorCycleRunError> {
+    let peak = psf.iter().try_fold(0.0_f64, |peak, &value| {
+        value.is_finite().then_some(peak.max(value))
+    });
+    Ok(peak
+        .filter(|&value| value > 0.0)
+        .ok_or(casa_imaging_deconvolution::Error::PsfPeak)?)
+}
+
 impl PsfCache {
     /// Measure a reused single-term PSF in the saved image's units.
     #[must_use]
@@ -109,7 +120,11 @@ pub(super) fn measure_psfs(
     team.for_each_mut(&mut slots, |_, (key, summary)| {
         let shape = plane_shape(normal, *key);
         let psf = read_psf(normal, taylor, *key)?;
-        let peak = psf_peak_value(&psf, shape)?;
+        let peak = if taylor {
+            psf_peak_value(&psf, shape)?
+        } else {
+            single_psf_peak(&psf)?
+        };
         *summary = Some(summarize_psf(
             normal,
             base,
@@ -127,4 +142,20 @@ pub(super) fn measure_psfs(
         }
     }
     beams::settle_refused_fits(normal, base, taylor, cache, setup.psf_beams.is_some(), None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_term_psf_divisor_uses_the_whole_positive_plane() {
+        let shape = PlaneShape::new(128, 128);
+        let mut psf = vec![0.0; shape.len()];
+        psf[shape.index(64, 64)] = 0.9;
+        psf[shape.index(10, 10)] = 1.0;
+        psf[shape.index(15, 15)] = -1.2;
+        assert_eq!(psf_peak_value(&psf, shape).unwrap(), 0.9);
+        assert_eq!(single_psf_peak(&psf).unwrap(), 1.0);
+    }
 }

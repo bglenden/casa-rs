@@ -53,7 +53,7 @@ pub use layout::{
     run_bytes_for,
 };
 use mem::{dense_result_bytes, dense_result_slots, solve_mem};
-use psfs::{measure_psfs, saved_beam, saved_psf_beam};
+use psfs::{measure_psfs, saved_beam, saved_psf_beam, single_psf_peak};
 pub use rows::PlaneCycleRow;
 
 /// Component records kept per minor cycle for diagnostics.
@@ -1045,13 +1045,12 @@ fn read_single<'a>(
     key: PlaneKey,
 ) -> Result<PlaneTerms<'a>, MinorCycleRunError> {
     let plane = normal.read_reconstruction_plane(key.domain, key.channel, key.polarization)?;
-    let shape = plane_shape(normal, key);
     let psf = plane
         .normal_approximation()
         .iter()
         .map(|value| value.re)
         .collect::<Vec<_>>();
-    let peak = psf_peak_value(&psf, shape)?;
+    let peak = single_psf_peak(&psf)?;
     let (residual, response) = single_residual(
         normal,
         setup,
