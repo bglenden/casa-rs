@@ -1159,6 +1159,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#project-lifecycle-20261114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        project-lifecycle-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5669,6 +5680,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#project-lifecycle-20261114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        project-lifecycle-20261114
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9762,7 +9784,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'sim'</code>; <code>project</code> → <code>project</code></td>
 <td>Implemented</td>
 <td>The project directory and CASA's file stem <project>.<configuration>; a nested project path is named by its last component (decision). <a href="#simobserve-behavior-outputs">outputs</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-refusals-1099-20261104">refusals-1099-20261104</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-refusals-1099-20261104">refusals-1099-20261104</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a></td>
 </tr>
 <tr>
 <td><code>skymodel</code></td>
@@ -9770,7 +9792,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code>; <code>skymodel</code> → <code>skymodel</code></td>
 <td>Implemented</td>
 <td>An image model, rewritten by modifymodel and flattened; a model that is the <stem>.skymodel the task writes is refused (decision). <a href="#simobserve-behavior-sky-model">sky-model</a><br>Catalog domain: <code>path</code> (image)</td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-skymodel-fixture">skymodel-fixture</a>, <a href="#simobserve-evidence-model-overrides-20261111">model-overrides-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-skymodel-fixture">skymodel-fixture</a>, <a href="#simobserve-evidence-model-overrides-20261111">model-overrides-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a></td>
 </tr>
 <tr>
 <td><code>inbright</code></td>
@@ -9914,7 +9936,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'int'</code>; <code>obsmode</code> → <code>obsmode</code></td>
 <td>Implemented</td>
 <td>'int', 'sd', or '' to corrupt an existing MeasurementSet. <a href="#simobserve-behavior-observation">observation</a><br>Catalog domain: <code>`,</code>int<code>,</code>sd`</td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a></td>
 </tr>
 <tr>
 <td><code>refdate</code></td>
@@ -9970,7 +9992,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'LSRK'</code>; <code>outframe</code> → <code>outframe</code></td>
 <td>Implemented</td>
 <td>The spectral frame written. LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB have scoped CASA task comparisons. Interferometric REST image prediction is supported; Undefined image/component predictions and REST component or joint predictions report CASA simulator failure before publishing an unpredicted MS, correcting the task's ignored predict=False outcome. Frame combinations with other observation modes are outside these receipts. <a href="#simobserve-behavior-observation">observation</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-frequency-frames-20261106">frequency-frames-20261106</a>, <a href="#simobserve-evidence-additional-frames-20261111">additional-frames-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-frequency-frames-20261106">frequency-frames-20261106</a>, <a href="#simobserve-evidence-additional-frames-20261111">additional-frames-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a></td>
 </tr>
 <tr>
 <td><code>thermalnoise</code></td>
@@ -9978,7 +10000,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'tsys-atm'</code>; <code>thermalnoise</code> → <code>thermalnoise</code></td>
 <td>Implemented</td>
 <td>'tsys-atm', 'tsys-manual' or '' noise through the simulator's setnoise. <a href="#simobserve-behavior-noise">noise</a><br>Catalog domain: <code>`,</code>tsys-atm<code>,</code>tsys-manual`</td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-noise-seeds-20261103">noise-seeds-20261103</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-noise-seeds-20261103">noise-seeds-20261103</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a></td>
 </tr>
 <tr>
 <td><code>user_pwv</code></td>
@@ -10026,7 +10048,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>0.0</code>; <code>leakage</code> → <code>leakage</code></td>
 <td>Implemented</td>
 <td>Polarization leakage through setleakage. <a href="#simobserve-behavior-noise">noise</a><br>Catalog domain: <code>float</code>; Constraints: <code>[{"kind": "number_range", "min": 0.0}]</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a></td>
 </tr>
 <tr>
 <td><code>correlator</code></td>
@@ -10058,7 +10080,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>True</code>; <code>overwrite</code> → <code>overwrite</code></td>
 <td>Implemented</td>
 <td>Replaces the project's products; without it an existing MeasurementSet is refused with CASA's message. <a href="#simobserve-behavior-outputs">outputs</a><br>Catalog domain: <code>bool</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a></td>
 </tr>
 </tbody>
 </table>
@@ -10086,8 +10108,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="simobserve-behavior-observation"></a></p>
 <h5 id="observation-and-prediction">Observation and prediction<a class="headerlink" href="#observation-and-prediction" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.</p>
-<p>Image-model interferometry has scoped CASA comparisons for LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. REST image prediction succeeds; Undefined image/component predictions and REST component or joint predictions resolve to documented failures before native MS publication. Frame combinations with single dish and existing-MS corruption remain outside these receipts.</p>
-<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-frequency-frames-20261106">frequency-frames-20261106</a>, <a href="#simobserve-evidence-additional-frames-20261111">additional-frames-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a>.</p>
+<p>Image-model interferometry has scoped CASA comparisons for LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. REST image prediction succeeds; Undefined image/component predictions and REST component or joint predictions resolve to documented failures before native MS publication. Stateful controls also cover continuation of REST image and BARY MeasurementSets, an ignored Undefined output-frame request, single-dish continuation, manual/atmospheric noise and ignored leakage with prediction disabled; original MS spectral frames are preserved. These are scoped workflows rather than an exhaustive Cartesian product of inputs.</p>
+<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-frequency-frames-20261106">frequency-frames-20261106</a>, <a href="#simobserve-evidence-additional-frames-20261111">additional-frames-20261111</a>, <a href="#simobserve-evidence-main-integration-20261111">main-integration-20261111</a>, <a href="#simobserve-evidence-uvw-long-baselines-20261112">uvw-long-baselines-20261112</a>, <a href="#simobserve-evidence-interferometric-projects-20261114">interferometric-projects-20261114</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a>.</p>
 <p><a id="simobserve-behavior-noise"></a></p>
 <h5 id="thermal-noise-and-leakage">Thermal noise and leakage<a class="headerlink" href="#thermal-noise-and-leakage" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — thermalnoise 'tsys-atm', 'tsys-manual' and '' with user_pwv, t_ground, t_sky, tau0, seed, leakage and correlator.</p>
@@ -10097,7 +10119,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h5 id="files-overwrite-and-graphics">Files, overwrite and graphics<a class="headerlink" href="#files-overwrite-and-graphics" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — CASA's file names under the project, overwrite, verbose and graphics.</p>
 <p>PNG rendering (.skymodel.png and .observe.png) remains unfinished and warns (#1025). Numerical interferometric .quick.psf is implemented; broader graphics and task acceptance remain open (#1053).</p>
-<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-quick-psf-20261111">quick-psf-20261111</a>, <a href="#simobserve-evidence-quick-psf-relative-project-20261111">quick-psf-relative-project-20261111</a>.</p>
+<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-casa-suite-20261103">casa-suite-20261103</a>, <a href="#simobserve-evidence-quick-psf-20261111">quick-psf-20261111</a>, <a href="#simobserve-evidence-quick-psf-relative-project-20261111">quick-psf-relative-project-20261111</a>, <a href="#simobserve-evidence-project-lifecycle-20261114">project-lifecycle-20261114</a>.</p>
 <h4 id="simobserve-deviations-and-unfinished-work">simobserve deviations and unfinished work<a class="headerlink" href="#simobserve-deviations-and-unfinished-work" title="Permanent link">&para;</a></h4>
 <h5 id="compwidth-unset-spectral-increment-previously-agreed">compwidth-unset-spectral-increment: Previously agreed<a class="headerlink" href="#compwidth-unset-spectral-increment-previously-agreed" title="Permanent link">&para;</a></h5>
 <ul>
@@ -10416,6 +10438,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>64b576b487c48236a4c14977a844352e8a40e15a</code>; CASA: <code>6.7.6.14</code>.</li>
 <li>Command: <code>CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --atmosphere-model TARGET/debug/examples/at_tool_quantities --only if_image_rest if_image_undefined if_components_rest if_components_undefined if_joint_manual if_joint_polarized if_joint_atmosphere if_joint_rest</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/simobserve-interferometric-20261114.json</code>.</li>
+</ul>
+<p><a id="simobserve-evidence-project-lifecycle-20261114"></a></p>
+<h5 id="project-lifecycle-20261114">project-lifecycle-20261114<a class="headerlink" href="#project-lifecycle-20261114" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-paired stateful simulation project scenarios — passed.</strong> 13/13 agree: eight successful project scenarios, five refusals/corrected failures, 14 native MS C++ readbacks. Model DATA NRMS &lt;=1.81e-7 under 1e-3; all noise gates pass, minimum KS p 0.16. Original MS science, inputs and unrelated products are preserved; existing noisy outputs and requested prediction products are replaced. SIM-24/25 continuation with REST/BARY and Undefined requests, manual/atmospheric noise and ignored leakage; single dish; successful/rejected overwrite, missing/ambiguous MS detection, relative/absolute paths and input preservation.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f0367e3d448e220b3bae12defad04935cbceb5d0/tools/simulation/simobserve_projects_parity.py">tools/simulation/simobserve_projects_parity.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f0367e3d448e220b3bae12defad04935cbceb5d0/crates/casa-simulation/tests/simobserve.rs">crates/casa-simulation/tests/simobserve.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f0367e3d448e220b3bae12defad04935cbceb5d0/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+<li>Revision: <code>cd6b94a073c381bd8bdb28335e7566d6f58526e5</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>CASAPY tools/simulation/simobserve_projects_parity.py --out OUT --casars-bin TARGET/debug/simobserve --atmosphere-model TARGET/debug/examples/at_tool_quantities</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simobserve-projects-20261114.json</code>.</li>
 </ul>
 <h3 id="split">split<a class="headerlink" href="#split" title="Permanent link">&para;</a></h3>
 <ul>
