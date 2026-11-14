@@ -431,595 +431,599 @@
 <a href=#431 id=431 data-nosnippet>431</a>                    &gt; <span class="number">0</span>)
 <a href=#432 id=432 data-nosnippet>432</a>                .then_some(imaging::MvcCycleSpec {
 <a href=#433 id=433 data-nosnippet>433</a>                    taylor_problem: <span class="kw-2">&amp;</span>view.problem,
-<a href=#434 id=434 data-nosnippet>434</a>                    expansion_reference_hz: view.expansion_reference_hz,
-<a href=#435 id=435 data-nosnippet>435</a>                    controls: publication.controls,
-<a href=#436 id=436 data-nosnippet>436</a>                    centres: publication.primary_beam_centres.as_ref(),
-<a href=#437 id=437 data-nosnippet>437</a>                })
-<a href=#438 id=438 data-nosnippet>438</a>            }),
-<a href=#439 id=439 data-nosnippet>439</a>            psf_cutoff: <span class="kw">if </span>!forms.psf &amp;&amp; psf_beams.is_none() {
-<a href=#440 id=440 data-nosnippet>440</a>                casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF
-<a href=#441 id=441 data-nosnippet>441</a>            } <span class="kw">else </span>{
-<a href=#442 id=442 data-nosnippet>442</a>                publication.controls.psf_cutoff()
-<a href=#443 id=443 data-nosnippet>443</a>            },
-<a href=#444 id=444 data-nosnippet>444</a>            psf_beams,
-<a href=#445 id=445 data-nosnippet>445</a>            mask_beams,
-<a href=#446 id=446 data-nosnippet>446</a>            source: <span class="kw-2">&amp;</span>route,
-<a href=#447 id=447 data-nosnippet>447</a>            separate_psf,
-<a href=#448 id=448 data-nosnippet>448</a>            masks,
-<a href=#449 id=449 data-nosnippet>449</a>            start_model,
-<a href=#450 id=450 data-nosnippet>450</a>            existing: existing.clone(),
-<a href=#451 id=451 data-nosnippet>451</a>            forms,
-<a href=#452 id=452 data-nosnippet>452</a>            image_response,
-<a href=#453 id=453 data-nosnippet>453</a>            primary_beam,
-<a href=#454 id=454 data-nosnippet>454</a>            visibility_write,
-<a href=#455 id=455 data-nosnippet>455</a>            products: (products, source.memory()),
-<a href=#456 id=456 data-nosnippet>456</a>            host: runtime.host,
-<a href=#457 id=457 data-nosnippet>457</a>            policy: runtime.resource_policy,
-<a href=#458 id=458 data-nosnippet>458</a>            teams: <span class="kw-2">&amp;</span>teams,
-<a href=#459 id=459 data-nosnippet>459</a>            cancel: runtime.cancel.clone(),
-<a href=#460 id=460 data-nosnippet>460</a>            spill_directory: <span class="kw-2">&amp;</span>runtime.spill_directory,
-<a href=#461 id=461 data-nosnippet>461</a>            aw_catalog,
-<a href=#462 id=462 data-nosnippet>462</a>            awp2,
-<a href=#463 id=463 data-nosnippet>463</a>            backend: runtime.backend,
-<a href=#464 id=464 data-nosnippet>464</a>            grid_precision: runtime.grid_precision,
-<a href=#465 id=465 data-nosnippet>465</a>            ft_padding: runtime.ft_padding,
-<a href=#466 id=466 data-nosnippet>466</a>            diagnostics: runtime.diagnostics,
-<a href=#467 id=467 data-nosnippet>467</a>        },
-<a href=#468 id=468 data-nosnippet>468</a>        summary,
-<a href=#469 id=469 data-nosnippet>469</a>    )<span class="question-mark">?</span>;
-<a href=#470 id=470 data-nosnippet>470</a>    drop(route);
-<a href=#471 id=471 data-nosnippet>471</a>    drop(source);
-<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">let </span>team = teams
-<a href=#473 id=473 data-nosnippet>473</a>        .get()
-<a href=#474 id=474 data-nosnippet>474</a>        .expect(<span class="string">"a run that completed formed its teams"</span>)
-<a href=#475 id=475 data-nosnippet>475</a>        .compute();
-<a href=#476 id=476 data-nosnippet>476</a>    <span class="kw">let </span><span class="kw-2">mut </span>published = Vec::new();
-<a href=#477 id=477 data-nosnippet>477</a>    <span class="kw">let </span><span class="kw-2">mut </span>lanes = (<span class="number">0</span>, <span class="prelude-val">None</span>);
-<a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">let </span>mvc_run = mvc_taylor.is_some();
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="comment">// CASA creates the cube model when it invokes its first minor cycle.
-<a href=#480 id=480 data-nosnippet>480</a>    </span><span class="kw">let </span>cube_model_created = outcome.mvc_taylor.is_none() || !outcome.minor_cycles.is_empty();
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="kw">let </span>products: <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, NativeError&gt; = run_phase(
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="string">"products"</span>,
-<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw-2">&amp;</span>runtime.cancel,
-<a href=#484 id=484 data-nosnippet>484</a>        runtime.diagnostics,
-<a href=#485 id=485 data-nosnippet>485</a>        summary,
-<a href=#486 id=486 data-nosnippet>486</a>        || {
-<a href=#487 id=487 data-nosnippet>487</a>            publish_run_products(
-<a href=#488 id=488 data-nosnippet>488</a>                RunProductInputs {
-<a href=#489 id=489 data-nosnippet>489</a>                    problem,
-<a href=#490 id=490 data-nosnippet>490</a>                    source: ProductSource {
-<a href=#491 id=491 data-nosnippet>491</a>                        scientific: outcome.scientific,
-<a href=#492 id=492 data-nosnippet>492</a>                        masks: outcome.masks,
-<a href=#493 id=493 data-nosnippet>493</a>                        facet_sum_weights: outcome.facet_sum_weights,
-<a href=#494 id=494 data-nosnippet>494</a>                        mem_alpha: outcome.mem_alpha,
-<a href=#495 id=495 data-nosnippet>495</a>                        saved_psf_beams,
-<a href=#496 id=496 data-nosnippet>496</a>                        vla_selection_hz,
-<a href=#497 id=497 data-nosnippet>497</a>                        primary_beam: saved_mosaic_beam
-<a href=#498 id=498 data-nosnippet>498</a>                            .as_ref()
-<a href=#499 id=499 data-nosnippet>499</a>                            .map(ProductPrimaryBeam::SavedMosaic),
-<a href=#500 id=500 data-nosnippet>500</a>                    },
-<a href=#501 id=501 data-nosnippet>501</a>                    taylor_view: mvc_taylor,
-<a href=#502 id=502 data-nosnippet>502</a>                    taylor_completion: outcome.mvc_taylor,
-<a href=#503 id=503 data-nosnippet>503</a>                    cube_model_created,
-<a href=#504 id=504 data-nosnippet>504</a>                },
-<a href=#505 id=505 data-nosnippet>505</a>                <span class="kw-2">&amp;</span>runtime,
-<a href=#506 id=506 data-nosnippet>506</a>                publication_after_cycles(publication, existing.as_ref(), outcome.major_cycle_count),
-<a href=#507 id=507 data-nosnippet>507</a>                team,
-<a href=#508 id=508 data-nosnippet>508</a>                <span class="kw-2">&amp;mut </span>published,
-<a href=#509 id=509 data-nosnippet>509</a>                <span class="kw-2">&amp;mut </span>lanes,
-<a href=#510 id=510 data-nosnippet>510</a>            )
-<a href=#511 id=511 data-nosnippet>511</a>        },
-<a href=#512 id=512 data-nosnippet>512</a>    );
-<a href=#513 id=513 data-nosnippet>513</a>    summary.products = published;
-<a href=#514 id=514 data-nosnippet>514</a>    (summary.product_lanes, summary.product_lanes_reason) = lanes;
-<a href=#515 id=515 data-nosnippet>515</a>    <span class="kw">let </span>(products, taylor_names, names_reservation) = products<span class="question-mark">?</span>;
-<a href=#516 id=516 data-nosnippet>516</a>    <span class="kw">let </span><span class="kw-2">mut </span>retained = outcome.retained;
-<a href=#517 id=517 data-nosnippet>517</a>    retained.join(names_reservation);
-<a href=#518 id=518 data-nosnippet>518</a>    <span class="kw">for </span>plan <span class="kw">in </span><span class="kw-2">&amp;</span>virtual_model {
-<a href=#519 id=519 data-nosnippet>519</a>        run_phase(
-<a href=#520 id=520 data-nosnippet>520</a>            <span class="string">"virtual model"</span>,
-<a href=#521 id=521 data-nosnippet>521</a>            <span class="kw-2">&amp;</span>runtime.cancel,
-<a href=#522 id=522 data-nosnippet>522</a>            runtime.diagnostics,
-<a href=#523 id=523 data-nosnippet>523</a>            summary,
-<a href=#524 id=524 data-nosnippet>524</a>            || {
-<a href=#525 id=525 data-nosnippet>525</a>                <span class="kw">crate</span>::virtual_model::save(
-<a href=#526 id=526 data-nosnippet>526</a>                    problem,
-<a href=#527 id=527 data-nosnippet>527</a>                    products.scientific.final_model(),
-<a href=#528 id=528 data-nosnippet>528</a>                    plan,
-<a href=#529 id=529 data-nosnippet>529</a>                    <span class="kw-2">&amp;</span>runtime,
-<a href=#530 id=530 data-nosnippet>530</a>                )
-<a href=#531 id=531 data-nosnippet>531</a>            },
-<a href=#532 id=532 data-nosnippet>532</a>        )<span class="question-mark">?</span>;
-<a href=#533 id=533 data-nosnippet>533</a>    }
-<a href=#534 id=534 data-nosnippet>534</a>    <span class="kw">let </span>workers = team.workers();
-<a href=#535 id=535 data-nosnippet>535</a>    <span class="kw">let </span>problem = problem.clone();
-<a href=#536 id=536 data-nosnippet>536</a>    <span class="prelude-val">Ok</span>(<span class="kw">move </span>|summary| ImagingOutcome {
-<a href=#537 id=537 data-nosnippet>537</a>        problem,
-<a href=#538 id=538 data-nosnippet>538</a>        minor_cycles: outcome.minor_cycles,
-<a href=#539 id=539 data-nosnippet>539</a>        plane_rows: outcome.plane_rows,
-<a href=#540 id=540 data-nosnippet>540</a>        final_residual_statistics: outcome.final_residual_statistics,
-<a href=#541 id=541 data-nosnippet>541</a>        stop: outcome.stop,
-<a href=#542 id=542 data-nosnippet>542</a>        major_cycle_count: outcome.major_cycle_count,
-<a href=#543 id=543 data-nosnippet>543</a>        total_minor_iterations: outcome.total_minor_iterations,
-<a href=#544 id=544 data-nosnippet>544</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
-<a href=#545 id=545 data-nosnippet>545</a>        workers,
-<a href=#546 id=546 data-nosnippet>546</a>        planes_per_wave: outcome.planes_per_wave,
-<a href=#547 id=547 data-nosnippet>547</a>        visibility_products: outcome.visibility_products,
-<a href=#548 id=548 data-nosnippet>548</a>        summary,
-<a href=#549 id=549 data-nosnippet>549</a>        scientific: products.scientific,
-<a href=#550 id=550 data-nosnippet>550</a>        planned_products: products.planned,
-<a href=#551 id=551 data-nosnippet>551</a>        products: products.published,
-<a href=#552 id=552 data-nosnippet>552</a>        mvc_taylor_names: taylor_names,
-<a href=#553 id=553 data-nosnippet>553</a>        mvc_run,
-<a href=#554 id=554 data-nosnippet>554</a>        _retained: retained,
-<a href=#555 id=555 data-nosnippet>555</a>    })
-<a href=#556 id=556 data-nosnippet>556</a>}
-<a href=#557 id=557 data-nosnippet>557</a>
-<a href=#558 id=558 data-nosnippet>558</a><span class="doccomment">/// CASA selects the cube's VLA aperture through its LSRK conversion layer,
-<a href=#559 id=559 data-nosnippet>559</a>/// but evaluates it at each output plane's own frequency.
-<a href=#560 id=560 data-nosnippet>560</a></span><span class="kw">fn </span>vla_selection_frequency(
-<a href=#561 id=561 data-nosnippet>561</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#562 id=562 data-nosnippet>562</a>    route: <span class="kw-2">&amp;</span>imaging::BatchRoute,
-<a href=#563 id=563 data-nosnippet>563</a>    store: usize,
-<a href=#564 id=564 data-nosnippet>564</a>) -&gt; f64 {
-<a href=#565 id=565 data-nosnippet>565</a>    <span class="kw">let </span>factor = route.stores[store]
-<a href=#566 id=566 data-nosnippet>566</a>        .plan
-<a href=#567 id=567 data-nosnippet>567</a>        .output_lsrk_factor()
-<a href=#568 id=568 data-nosnippet>568</a>        .expect(<span class="string">"a tracked cube has an LSRK conversion layer"</span>);
-<a href=#569 id=569 data-nosnippet>569</a>    problem
-<a href=#570 id=570 data-nosnippet>570</a>        .geometry()
-<a href=#571 id=571 data-nosnippet>571</a>        .spectral()
-<a href=#572 id=572 data-nosnippet>572</a>        .channel_centre_hz(<span class="number">0</span>)
-<a href=#573 id=573 data-nosnippet>573</a>        .expect(<span class="string">"a cube has a first channel"</span>)
-<a href=#574 id=574 data-nosnippet>574</a>        * factor
-<a href=#575 id=575 data-nosnippet>575</a>}
-<a href=#576 id=576 data-nosnippet>576</a>
-<a href=#577 id=577 data-nosnippet>577</a><span class="doccomment">/// One run's cube or continuum products and, for MVC, its Taylor view.
-<a href=#578 id=578 data-nosnippet>578</a></span><span class="kw">struct </span>RunProductInputs&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#579 id=579 data-nosnippet>579</a>    problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
-<a href=#580 id=580 data-nosnippet>580</a>    source: ProductSource&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#581 id=581 data-nosnippet>581</a>    taylor_view: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::compile::CompiledTaylorView&gt;,
-<a href=#582 id=582 data-nosnippet>582</a>    taylor_completion: <span class="prelude-ty">Option</span>&lt;Admitted&lt;<span class="kw">crate</span>::mvc::TaylorCompletion&gt;&gt;,
-<a href=#583 id=583 data-nosnippet>583</a>    cube_model_created: bool,
-<a href=#584 id=584 data-nosnippet>584</a>}
-<a href=#585 id=585 data-nosnippet>585</a>
-<a href=#586 id=586 data-nosnippet>586</a><span class="doccomment">/// Reduce MVC's cube before staging both families, or publish an ordinary run.
-<a href=#587 id=587 data-nosnippet>587</a></span><span class="kw">fn </span>publish_run_products(
-<a href=#588 id=588 data-nosnippet>588</a>    inputs: RunProductInputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#589 id=589 data-nosnippet>589</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
-<a href=#590 id=590 data-nosnippet>590</a>    publication: ApplicationPublication,
-<a href=#591 id=591 data-nosnippet>591</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#592 id=592 data-nosnippet>592</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
-<a href=#593 id=593 data-nosnippet>593</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
-<a href=#594 id=594 data-nosnippet>594</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Products, Vec&lt;String&gt;, Reservation), NativeError&gt; {
-<a href=#595 id=595 data-nosnippet>595</a>    <span class="kw">let </span>RunProductInputs {
-<a href=#596 id=596 data-nosnippet>596</a>        problem,
-<a href=#597 id=597 data-nosnippet>597</a>        source,
-<a href=#598 id=598 data-nosnippet>598</a>        taylor_view,
-<a href=#599 id=599 data-nosnippet>599</a>        taylor_completion,
-<a href=#600 id=600 data-nosnippet>600</a>        cube_model_created,
-<a href=#601 id=601 data-nosnippet>601</a>    } = inputs;
-<a href=#602 id=602 data-nosnippet>602</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(view) = taylor_view {
-<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">let </span><span class="kw">crate</span>::compile::CompiledTaylorView {
-<a href=#604 id=604 data-nosnippet>604</a>            problem: taylor_problem,
-<a href=#605 id=605 data-nosnippet>605</a>            coordinates,
-<a href=#606 id=606 data-nosnippet>606</a>            expansion_reference_hz,
-<a href=#607 id=607 data-nosnippet>607</a>            reservation: _view_reservation,
-<a href=#608 id=608 data-nosnippet>608</a>        } = view;
-<a href=#609 id=609 data-nosnippet>609</a>        <span class="kw">let </span>taylor = <span class="kw">if let </span><span class="prelude-val">Some</span>(taylor) = taylor_completion {
-<a href=#610 id=610 data-nosnippet>610</a>            taylor
-<a href=#611 id=611 data-nosnippet>611</a>        } <span class="kw">else </span>{
-<a href=#612 id=612 data-nosnippet>612</a>            <span class="kw">crate</span>::mvc::assemble_taylor_completion(
-<a href=#613 id=613 data-nosnippet>613</a>                <span class="kw">crate</span>::mvc::TaylorAssemblyInputs {
-<a href=#614 id=614 data-nosnippet>614</a>                    cube_problem: problem,
-<a href=#615 id=615 data-nosnippet>615</a>                    cube: <span class="kw-2">&amp;</span>source.scientific,
-<a href=#616 id=616 data-nosnippet>616</a>                    taylor_problem: <span class="kw-2">&amp;</span>taylor_problem,
-<a href=#617 id=617 data-nosnippet>617</a>                    expansion_reference_hz,
-<a href=#618 id=618 data-nosnippet>618</a>                    controls: publication.controls,
-<a href=#619 id=619 data-nosnippet>619</a>                    centres: publication.primary_beam_centres.as_ref(),
-<a href=#620 id=620 data-nosnippet>620</a>                },
-<a href=#621 id=621 data-nosnippet>621</a>                (<span class="kw-2">&amp;</span>runtime.host, <span class="kw-2">&amp;</span>runtime.resource_policy, <span class="kw-2">&amp;</span>runtime.cancel),
-<a href=#622 id=622 data-nosnippet>622</a>            )<span class="question-mark">?
-<a href=#623 id=623 data-nosnippet>623</a>        </span>};
-<a href=#624 id=624 data-nosnippet>624</a>        <span class="kw">let </span>products = publish_mvc_products(
-<a href=#625 id=625 data-nosnippet>625</a>            MvcProductSource {
-<a href=#626 id=626 data-nosnippet>626</a>                cube_problem: problem,
-<a href=#627 id=627 data-nosnippet>627</a>                cube_model_created,
-<a href=#628 id=628 data-nosnippet>628</a>                cube: source,
-<a href=#629 id=629 data-nosnippet>629</a>                taylor_problem: <span class="kw-2">&amp;</span>taylor_problem,
-<a href=#630 id=630 data-nosnippet>630</a>                taylor,
-<a href=#631 id=631 data-nosnippet>631</a>                taylor_coordinates: coordinates,
-<a href=#632 id=632 data-nosnippet>632</a>            },
-<a href=#633 id=633 data-nosnippet>633</a>            runtime,
-<a href=#634 id=634 data-nosnippet>634</a>            publication,
-<a href=#635 id=635 data-nosnippet>635</a>            team,
-<a href=#636 id=636 data-nosnippet>636</a>            published,
-<a href=#637 id=637 data-nosnippet>637</a>            lanes,
-<a href=#638 id=638 data-nosnippet>638</a>        )<span class="question-mark">?</span>;
-<a href=#639 id=639 data-nosnippet>639</a>        <span class="prelude-val">Ok</span>((
-<a href=#640 id=640 data-nosnippet>640</a>            products.cube,
-<a href=#641 id=641 data-nosnippet>641</a>            products.taylor_names,
-<a href=#642 id=642 data-nosnippet>642</a>            products.names_reservation,
-<a href=#643 id=643 data-nosnippet>643</a>        ))
-<a href=#644 id=644 data-nosnippet>644</a>    } <span class="kw">else </span>{
-<a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">if </span>taylor_completion.is_some() {
-<a href=#646 id=646 data-nosnippet>646</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(NativeError::Other(
-<a href=#647 id=647 data-nosnippet>647</a>                std::io::Error::other(<span class="string">"MVC Taylor completion has no compiled view"</span>).into(),
-<a href=#648 id=648 data-nosnippet>648</a>            ));
-<a href=#649 id=649 data-nosnippet>649</a>        }
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>products = publish_products(
-<a href=#651 id=651 data-nosnippet>651</a>            problem,
-<a href=#652 id=652 data-nosnippet>652</a>            source,
-<a href=#653 id=653 data-nosnippet>653</a>            runtime,
-<a href=#654 id=654 data-nosnippet>654</a>            publication,
-<a href=#655 id=655 data-nosnippet>655</a>            team,
-<a href=#656 id=656 data-nosnippet>656</a>            published,
-<a href=#657 id=657 data-nosnippet>657</a>            lanes,
-<a href=#658 id=658 data-nosnippet>658</a>        )<span class="question-mark">?</span>;
-<a href=#659 id=659 data-nosnippet>659</a>        <span class="prelude-val">Ok</span>((products, Vec::new(), Reservation::none()))
-<a href=#660 id=660 data-nosnippet>660</a>    }
-<a href=#661 id=661 data-nosnippet>661</a>}
-<a href=#662 id=662 data-nosnippet>662</a>
-<a href=#663 id=663 data-nosnippet>663</a><span class="doccomment">/// The products of a run and the state they were generated from.
-<a href=#664 id=664 data-nosnippet>664</a></span><span class="kw">struct </span>Products {
-<a href=#665 id=665 data-nosnippet>665</a>    planned: PlannedContinuumGeneration,
-<a href=#666 id=666 data-nosnippet>666</a>    scientific: MajorCycleCompletion,
-<a href=#667 id=667 data-nosnippet>667</a>    published: PublishedContinuumGeneration,
-<a href=#668 id=668 data-nosnippet>668</a>}
-<a href=#669 id=669 data-nosnippet>669</a>
-<a href=#670 id=670 data-nosnippet>670</a><span class="doccomment">/// What the products are formed from: the final completion, its
-<a href=#671 id=671 data-nosnippet>671</a>/// reconstruction masks and the faceted domains' facets' own sums of
-<a href=#672 id=672 data-nosnippet>672</a>/// weights.
-<a href=#673 id=673 data-nosnippet>673</a></span><span class="kw">enum </span>ProductPrimaryBeam&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#674 id=674 data-nosnippet>674</a>    MvcCube(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f32]),
-<a href=#675 id=675 data-nosnippet>675</a>    MvcTaylor(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f32]),
-<a href=#676 id=676 data-nosnippet>676</a>    SavedMosaic(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>casa_imaging_products::SavedMosaicBeam),
-<a href=#677 id=677 data-nosnippet>677</a>}
-<a href=#678 id=678 data-nosnippet>678</a>
-<a href=#679 id=679 data-nosnippet>679</a><span class="kw">struct </span>ProductSource&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#680 id=680 data-nosnippet>680</a>    scientific: MajorCycleCompletion,
-<a href=#681 id=681 data-nosnippet>681</a>    masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
-<a href=#682 id=682 data-nosnippet>682</a>    facet_sum_weights: FacetSumWeights,
-<a href=#683 id=683 data-nosnippet>683</a>    mem_alpha: <span class="prelude-ty">Option</span>&lt;f32&gt;,
-<a href=#684 id=684 data-nosnippet>684</a>    saved_psf_beams: <span class="prelude-ty">Option</span>&lt;std::sync::Arc&lt;[casa_imaging_deconvolution::RestoringBeam]&gt;&gt;,
-<a href=#685 id=685 data-nosnippet>685</a>    vla_selection_hz: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#686 id=686 data-nosnippet>686</a>    <span class="doccomment">/// A separately admitted PB, borrowed until the family is staged.
-<a href=#687 id=687 data-nosnippet>687</a>    </span>primary_beam: <span class="prelude-ty">Option</span>&lt;ProductPrimaryBeam&lt;<span class="lifetime">'a</span>&gt;&gt;,
-<a href=#688 id=688 data-nosnippet>688</a>}
-<a href=#689 id=689 data-nosnippet>689</a>
-<a href=#690 id=690 data-nosnippet>690</a><span class="doccomment">/// A run that stopped before its first major cycle still holds the saved
-<a href=#691 id=691 data-nosnippet>691</a>/// Taylor residual and its model in image units.
-<a href=#692 id=692 data-nosnippet>692</a></span><span class="kw">fn </span>publication_after_cycles(
-<a href=#693 id=693 data-nosnippet>693</a>    <span class="kw-2">mut </span>publication: ApplicationPublication,
-<a href=#694 id=694 data-nosnippet>694</a>    existing: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">crate</span>::restart::ExistingProducts&gt;,
-<a href=#695 id=695 data-nosnippet>695</a>    major_cycles: usize,
-<a href=#696 id=696 data-nosnippet>696</a>) -&gt; ApplicationPublication {
-<a href=#697 id=697 data-nosnippet>697</a>    <span class="kw">if </span>major_cycles == <span class="number">0
-<a href=#698 id=698 data-nosnippet>698</a>        </span>&amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(bytes) =
-<a href=#699 id=699 data-nosnippet>699</a>            existing.and_then(<span class="kw">crate</span>::restart::ExistingProducts::taylor_mask_read_bytes)
-<a href=#700 id=700 data-nosnippet>700</a>    {
-<a href=#701 id=701 data-nosnippet>701</a>        publication.controls = publication.controls.preserving_taylor_residuals(bytes);
-<a href=#702 id=702 data-nosnippet>702</a>    }
-<a href=#703 id=703 data-nosnippet>703</a>    publication
-<a href=#704 id=704 data-nosnippet>704</a>}
-<a href=#705 id=705 data-nosnippet>705</a>
-<a href=#706 id=706 data-nosnippet>706</a><span class="doccomment">/// What `problem`'s products hold on one lane, before the run
-<a href=#707 id=707 data-nosnippet>707</a>/// (`PlannedContinuumGeneration::planned_demand`): the least they can run
-<a href=#708 id=708 data-nosnippet>708</a>/// on, which the run's setup fits beside it.
-<a href=#709 id=709 data-nosnippet>709</a></span><span class="kw">fn </span>products_floor(
-<a href=#710 id=710 data-nosnippet>710</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#711 id=711 data-nosnippet>711</a>    publication: <span class="kw-2">&amp;</span>ApplicationPublication,
-<a href=#712 id=712 data-nosnippet>712</a>    controls: casa_imaging_products::ContinuumProductControls,
-<a href=#713 id=713 data-nosnippet>713</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, NativeError&gt; {
-<a href=#714 id=714 data-nosnippet>714</a>    <span class="prelude-val">Ok</span>(PlannedContinuumGeneration::for_problem(problem, <span class="kw-2">&amp;</span>controls)<span class="question-mark">?
-<a href=#715 id=715 data-nosnippet>715</a>        </span>.planned_demand(problem, ProductStoragePlan::new(<span class="number">1</span>, <span class="number">1</span>)<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?
-<a href=#716 id=716 data-nosnippet>716</a>        </span>.peak_residency_bytes())
-<a href=#717 id=717 data-nosnippet>717</a>}
-<a href=#718 id=718 data-nosnippet>718</a>
-<a href=#719 id=719 data-nosnippet>719</a><span class="doccomment">/// Generate every planned product member into the writer's private staging,
-<a href=#720 id=720 data-nosnippet>720</a>/// one output channel per window on the run's team, and publish them,
-<a href=#721 id=721 data-nosnippet>721</a>/// adding each image published to `published`; a cancelled run publishes
-<a href=#722 id=722 data-nosnippet>722</a>/// nothing. `lanes` receives the lanes the products ran on and, when fewer
-<a href=#723 id=723 data-nosnippet>723</a>/// than the team's workers, why.
-<a href=#724 id=724 data-nosnippet>724</a></span><span class="kw">fn </span>publish_products(
-<a href=#725 id=725 data-nosnippet>725</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#726 id=726 data-nosnippet>726</a>    source: ProductSource&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#727 id=727 data-nosnippet>727</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
-<a href=#728 id=728 data-nosnippet>728</a>    <span class="kw-2">mut </span>publication: ApplicationPublication,
-<a href=#729 id=729 data-nosnippet>729</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#730 id=730 data-nosnippet>730</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
-<a href=#731 id=731 data-nosnippet>731</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
-<a href=#732 id=732 data-nosnippet>732</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
-<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(alpha) = source.mem_alpha {
-<a href=#734 id=734 data-nosnippet>734</a>        publication.writer.set_mem_alpha(alpha)<span class="question-mark">?</span>;
-<a href=#735 id=735 data-nosnippet>735</a>    }
-<a href=#736 id=736 data-nosnippet>736</a>    <span class="kw">let </span>(products, held) =
-<a href=#737 id=737 data-nosnippet>737</a>        stage_products(problem, source, runtime, <span class="kw-2">&amp;</span>publication, team, lanes, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#738 id=738 data-nosnippet>738</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
-<a href=#739 id=739 data-nosnippet>739</a>        <span class="comment">// The staged members are removed when the writer drops.
-<a href=#740 id=740 data-nosnippet>740</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
-<a href=#741 id=741 data-nosnippet>741</a>    }
-<a href=#742 id=742 data-nosnippet>742</a>    publication
-<a href=#743 id=743 data-nosnippet>743</a>        .writer
-<a href=#744 id=744 data-nosnippet>744</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
-<a href=#745 id=745 data-nosnippet>745</a>    <span class="comment">// The charge covers the staged records until they are published.
-<a href=#746 id=746 data-nosnippet>746</a>    </span>drop(held);
-<a href=#747 id=747 data-nosnippet>747</a>    <span class="prelude-val">Ok</span>(products)
-<a href=#748 id=748 data-nosnippet>748</a>}
-<a href=#749 id=749 data-nosnippet>749</a>
-<a href=#750 id=750 data-nosnippet>750</a><span class="doccomment">/// The two MVC families share one staging registry and one admitted beam.
-<a href=#751 id=751 data-nosnippet>751</a></span><span class="attr">#[cfg_attr(
-<a href=#752 id=752 data-nosnippet>752</a>    not(test),
-<a href=#753 id=753 data-nosnippet>753</a>    allow(dead_code, reason = <span class="string">"MVC publication is being wired in #1069"</span>)
-<a href=#754 id=754 data-nosnippet>754</a>)]
-<a href=#755 id=755 data-nosnippet>755</a></span><span class="kw">struct </span>MvcProductSource&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#756 id=756 data-nosnippet>756</a>    cube_problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
-<a href=#757 id=757 data-nosnippet>757</a>    cube_model_created: bool,
-<a href=#758 id=758 data-nosnippet>758</a>    cube: ProductSource&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#759 id=759 data-nosnippet>759</a>    taylor_problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
-<a href=#760 id=760 data-nosnippet>760</a>    taylor: Admitted&lt;<span class="kw">crate</span>::mvc::TaylorCompletion&gt;,
-<a href=#761 id=761 data-nosnippet>761</a>    taylor_coordinates: Vec&lt;(
-<a href=#762 id=762 data-nosnippet>762</a>        casa_imaging_model::ImageDomainRole,
-<a href=#763 id=763 data-nosnippet>763</a>        casa_coordinates::CoordinateSystem,
-<a href=#764 id=764 data-nosnippet>764</a>    )&gt;,
-<a href=#765 id=765 data-nosnippet>765</a>}
-<a href=#766 id=766 data-nosnippet>766</a>
-<a href=#767 id=767 data-nosnippet>767</a><span class="doccomment">/// The cube remains the run's scientific result; Taylor names are separately
-<a href=#768 id=768 data-nosnippet>768</a>/// charged so the task's artifact inventory can report both families.
-<a href=#769 id=769 data-nosnippet>769</a></span><span class="attr">#[cfg_attr(
-<a href=#770 id=770 data-nosnippet>770</a>    not(test),
-<a href=#771 id=771 data-nosnippet>771</a>    allow(dead_code, reason = <span class="string">"MVC publication is being wired in #1069"</span>)
-<a href=#772 id=772 data-nosnippet>772</a>)]
-<a href=#773 id=773 data-nosnippet>773</a></span><span class="kw">struct </span>MvcProducts {
-<a href=#774 id=774 data-nosnippet>774</a>    cube: Products,
-<a href=#775 id=775 data-nosnippet>775</a>    taylor_names: Vec&lt;String&gt;,
-<a href=#776 id=776 data-nosnippet>776</a>    names_reservation: Reservation,
-<a href=#777 id=777 data-nosnippet>777</a>}
-<a href=#778 id=778 data-nosnippet>778</a>
-<a href=#779 id=779 data-nosnippet>779</a><span class="doccomment">/// Stage both MVC families before publishing either. A failure or cancellation
-<a href=#780 id=780 data-nosnippet>780</a>/// drops the shared writer and discards its staged members.
-<a href=#781 id=781 data-nosnippet>781</a></span><span class="attr">#[cfg_attr(
-<a href=#782 id=782 data-nosnippet>782</a>    not(test),
-<a href=#783 id=783 data-nosnippet>783</a>    allow(dead_code, reason = <span class="string">"MVC publication is being wired in #1069"</span>)
-<a href=#784 id=784 data-nosnippet>784</a>)]
-<a href=#785 id=785 data-nosnippet>785</a></span><span class="kw">fn </span>publish_mvc_products(
-<a href=#786 id=786 data-nosnippet>786</a>    source: MvcProductSource&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#787 id=787 data-nosnippet>787</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
-<a href=#788 id=788 data-nosnippet>788</a>    publication: ApplicationPublication,
-<a href=#789 id=789 data-nosnippet>789</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#790 id=790 data-nosnippet>790</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
-<a href=#791 id=791 data-nosnippet>791</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
-<a href=#792 id=792 data-nosnippet>792</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MvcProducts, NativeError&gt; {
-<a href=#793 id=793 data-nosnippet>793</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
-<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
-<a href=#795 id=795 data-nosnippet>795</a>    }
-<a href=#796 id=796 data-nosnippet>796</a>    <span class="kw">let </span>MvcProductSource {
-<a href=#797 id=797 data-nosnippet>797</a>        cube_problem,
-<a href=#798 id=798 data-nosnippet>798</a>        cube_model_created,
-<a href=#799 id=799 data-nosnippet>799</a>        cube,
-<a href=#800 id=800 data-nosnippet>800</a>        taylor_problem,
-<a href=#801 id=801 data-nosnippet>801</a>        taylor,
-<a href=#802 id=802 data-nosnippet>802</a>        taylor_coordinates,
-<a href=#803 id=803 data-nosnippet>803</a>    } = source;
-<a href=#804 id=804 data-nosnippet>804</a>    <span class="kw">let </span>Admitted {
-<a href=#805 id=805 data-nosnippet>805</a>        value:
-<a href=#806 id=806 data-nosnippet>806</a>            <span class="kw">crate</span>::mvc::TaylorCompletion {
-<a href=#807 id=807 data-nosnippet>807</a>                scientific: taylor_science,
-<a href=#808 id=808 data-nosnippet>808</a>                primary_beam,
-<a href=#809 id=809 data-nosnippet>809</a>            },
-<a href=#810 id=810 data-nosnippet>810</a>        reservation: taylor_reservation,
-<a href=#811 id=811 data-nosnippet>811</a>    } = taylor;
-<a href=#812 id=812 data-nosnippet>812</a>    <span class="kw">let </span>ProductSource {
-<a href=#813 id=813 data-nosnippet>813</a>        scientific,
-<a href=#814 id=814 data-nosnippet>814</a>        masks,
-<a href=#815 id=815 data-nosnippet>815</a>        facet_sum_weights,
-<a href=#816 id=816 data-nosnippet>816</a>        mem_alpha: <span class="kw">_</span>,
-<a href=#817 id=817 data-nosnippet>817</a>        saved_psf_beams,
-<a href=#818 id=818 data-nosnippet>818</a>        vla_selection_hz,
-<a href=#819 id=819 data-nosnippet>819</a>        primary_beam: <span class="kw">_</span>,
-<a href=#820 id=820 data-nosnippet>820</a>    } = cube;
-<a href=#821 id=821 data-nosnippet>821</a>    <span class="kw">let </span>taylor_publication = ApplicationPublication {
-<a href=#822 id=822 data-nosnippet>822</a>        controls: publication.controls,
-<a href=#823 id=823 data-nosnippet>823</a>        primary_beam_centres: publication.primary_beam_centres.clone(),
-<a href=#824 id=824 data-nosnippet>824</a>        vla_selection_store: <span class="prelude-val">None</span>,
-<a href=#825 id=825 data-nosnippet>825</a>        writer: publication.writer.with_coordinates(taylor_coordinates),
-<a href=#826 id=826 data-nosnippet>826</a>    };
-<a href=#827 id=827 data-nosnippet>827</a>    <span class="kw">let </span>(cube, cube_charge) = stage_products(
-<a href=#828 id=828 data-nosnippet>828</a>        cube_problem,
-<a href=#829 id=829 data-nosnippet>829</a>        ProductSource {
-<a href=#830 id=830 data-nosnippet>830</a>            scientific,
-<a href=#831 id=831 data-nosnippet>831</a>            masks: <span class="prelude-val">None</span>,
-<a href=#832 id=832 data-nosnippet>832</a>            facet_sum_weights,
-<a href=#833 id=833 data-nosnippet>833</a>            mem_alpha: <span class="prelude-val">None</span>,
-<a href=#834 id=834 data-nosnippet>834</a>            saved_psf_beams,
-<a href=#835 id=835 data-nosnippet>835</a>            vla_selection_hz,
-<a href=#836 id=836 data-nosnippet>836</a>            primary_beam: <span class="prelude-val">Some</span>(ProductPrimaryBeam::MvcCube(<span class="kw-2">&amp;</span>primary_beam)),
-<a href=#837 id=837 data-nosnippet>837</a>        },
-<a href=#838 id=838 data-nosnippet>838</a>        runtime,
-<a href=#839 id=839 data-nosnippet>839</a>        <span class="kw-2">&amp;</span>publication,
-<a href=#840 id=840 data-nosnippet>840</a>        team,
-<a href=#841 id=841 data-nosnippet>841</a>        lanes,
-<a href=#842 id=842 data-nosnippet>842</a>        !cube_model_created,
-<a href=#843 id=843 data-nosnippet>843</a>    )<span class="question-mark">?</span>;
-<a href=#844 id=844 data-nosnippet>844</a>    <span class="kw">let </span>(taylor, taylor_charge) = stage_products(
-<a href=#845 id=845 data-nosnippet>845</a>        taylor_problem,
-<a href=#846 id=846 data-nosnippet>846</a>        ProductSource {
-<a href=#847 id=847 data-nosnippet>847</a>            scientific: taylor_science,
-<a href=#848 id=848 data-nosnippet>848</a>            masks,
-<a href=#849 id=849 data-nosnippet>849</a>            facet_sum_weights: Default::default(),
-<a href=#850 id=850 data-nosnippet>850</a>            mem_alpha: <span class="prelude-val">None</span>,
-<a href=#851 id=851 data-nosnippet>851</a>            saved_psf_beams: <span class="prelude-val">None</span>,
-<a href=#852 id=852 data-nosnippet>852</a>            vla_selection_hz: <span class="prelude-val">None</span>,
-<a href=#853 id=853 data-nosnippet>853</a>            primary_beam: <span class="prelude-val">Some</span>(ProductPrimaryBeam::MvcTaylor(<span class="kw-2">&amp;</span>primary_beam)),
-<a href=#854 id=854 data-nosnippet>854</a>        },
-<a href=#855 id=855 data-nosnippet>855</a>        runtime,
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw-2">&amp;</span>taylor_publication,
-<a href=#857 id=857 data-nosnippet>857</a>        team,
-<a href=#858 id=858 data-nosnippet>858</a>        lanes,
-<a href=#859 id=859 data-nosnippet>859</a>        <span class="bool-val">false</span>,
-<a href=#860 id=860 data-nosnippet>860</a>    )<span class="question-mark">?</span>;
-<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">let </span>count = taylor.planned.members().len();
-<a href=#862 id=862 data-nosnippet>862</a>    <span class="kw">let </span>overflow = || ProductsError::ResourceDemandOverflow(<span class="string">"MVC product names"</span>);
-<a href=#863 id=863 data-nosnippet>863</a>    <span class="kw">let </span>bytes = taylor.planned.members().iter().try_fold(
-<a href=#864 id=864 data-nosnippet>864</a>        count
-<a href=#865 id=865 data-nosnippet>865</a>            .checked_mul(size_of::&lt;String&gt;())
-<a href=#866 id=866 data-nosnippet>866</a>            .ok_or_else(overflow)<span class="question-mark">?</span>,
-<a href=#867 id=867 data-nosnippet>867</a>        |sum, member| sum.checked_add(member.name().len()).ok_or_else(overflow),
-<a href=#868 id=868 data-nosnippet>868</a>    )<span class="question-mark">?</span>;
-<a href=#869 id=869 data-nosnippet>869</a>    <span class="kw">let </span>names_reservation = admit(
-<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw-2">&amp;</span>runtime.host,
-<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
-<a href=#872 id=872 data-nosnippet>872</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#873 id=873 data-nosnippet>873</a>            phase: <span class="string">"MVC product inventory"</span>,
-<a href=#874 id=874 data-nosnippet>874</a>            memory: u64::try_from(bytes).map_err(|<span class="kw">_</span>| overflow())<span class="question-mark">?</span>,
-<a href=#875 id=875 data-nosnippet>875</a>        },
-<a href=#876 id=876 data-nosnippet>876</a>    )<span class="question-mark">?</span>;
-<a href=#877 id=877 data-nosnippet>877</a>    <span class="kw">let </span><span class="kw-2">mut </span>taylor_names = Vec::with_capacity(count);
-<a href=#878 id=878 data-nosnippet>878</a>    taylor_names.extend(
-<a href=#879 id=879 data-nosnippet>879</a>        taylor
-<a href=#880 id=880 data-nosnippet>880</a>            .planned
-<a href=#881 id=881 data-nosnippet>881</a>            .members()
-<a href=#882 id=882 data-nosnippet>882</a>            .iter()
-<a href=#883 id=883 data-nosnippet>883</a>            .map(|member| member.name().to_owned()),
-<a href=#884 id=884 data-nosnippet>884</a>    );
-<a href=#885 id=885 data-nosnippet>885</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
-<a href=#886 id=886 data-nosnippet>886</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
-<a href=#887 id=887 data-nosnippet>887</a>    }
-<a href=#888 id=888 data-nosnippet>888</a>    publication
-<a href=#889 id=889 data-nosnippet>889</a>        .writer
-<a href=#890 id=890 data-nosnippet>890</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
-<a href=#891 id=891 data-nosnippet>891</a>    drop(taylor);
-<a href=#892 id=892 data-nosnippet>892</a>    drop(taylor_charge);
-<a href=#893 id=893 data-nosnippet>893</a>    drop(cube_charge);
-<a href=#894 id=894 data-nosnippet>894</a>    drop(taylor_reservation);
-<a href=#895 id=895 data-nosnippet>895</a>    <span class="prelude-val">Ok</span>(MvcProducts {
-<a href=#896 id=896 data-nosnippet>896</a>        cube,
-<a href=#897 id=897 data-nosnippet>897</a>        taylor_names,
-<a href=#898 id=898 data-nosnippet>898</a>        names_reservation,
-<a href=#899 id=899 data-nosnippet>899</a>    })
-<a href=#900 id=900 data-nosnippet>900</a>}
-<a href=#901 id=901 data-nosnippet>901</a>
-<a href=#902 id=902 data-nosnippet>902</a><span class="doccomment">/// Stage one product family without publishing it. The caller holds its
-<a href=#903 id=903 data-nosnippet>903</a>/// admission until every staged family has been published or discarded.
-<a href=#904 id=904 data-nosnippet>904</a></span><span class="kw">fn </span>stage_products(
-<a href=#905 id=905 data-nosnippet>905</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#906 id=906 data-nosnippet>906</a>    source: ProductSource&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#907 id=907 data-nosnippet>907</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
-<a href=#908 id=908 data-nosnippet>908</a>    publication: <span class="kw-2">&amp;</span>ApplicationPublication,
-<a href=#909 id=909 data-nosnippet>909</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#910 id=910 data-nosnippet>910</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
-<a href=#911 id=911 data-nosnippet>911</a>    omit_uncreated_mvc_cube_model: bool,
-<a href=#912 id=912 data-nosnippet>912</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Products, casa_imaging_runtime::Reservation), NativeError&gt; {
-<a href=#913 id=913 data-nosnippet>913</a>    <span class="kw">let </span>ProductSource {
-<a href=#914 id=914 data-nosnippet>914</a>        scientific,
-<a href=#915 id=915 data-nosnippet>915</a>        masks: reconstruction_masks,
-<a href=#916 id=916 data-nosnippet>916</a>        facet_sum_weights,
-<a href=#917 id=917 data-nosnippet>917</a>        mem_alpha: <span class="kw">_</span>,
-<a href=#918 id=918 data-nosnippet>918</a>        saved_psf_beams,
-<a href=#919 id=919 data-nosnippet>919</a>        vla_selection_hz,
-<a href=#920 id=920 data-nosnippet>920</a>        primary_beam,
-<a href=#921 id=921 data-nosnippet>921</a>    } = source;
-<a href=#922 id=922 data-nosnippet>922</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific);
-<a href=#923 id=923 data-nosnippet>923</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = primary_beam {
-<a href=#924 id=924 data-nosnippet>924</a>        inputs = <span class="kw">match </span>beam {
-<a href=#925 id=925 data-nosnippet>925</a>            ProductPrimaryBeam::MvcCube(beam) =&gt; inputs.with_cube_taylor_primary_beam(beam)<span class="question-mark">?</span>,
-<a href=#926 id=926 data-nosnippet>926</a>            ProductPrimaryBeam::MvcTaylor(beam) =&gt; inputs
-<a href=#927 id=927 data-nosnippet>927</a>                .with_taylor_primary_beam(beam)<span class="question-mark">?
-<a href=#928 id=928 data-nosnippet>928</a>                </span>.with_taylor_residual_sum_weight(<span class="number">1.0</span>)<span class="question-mark">?</span>,
-<a href=#929 id=929 data-nosnippet>929</a>            ProductPrimaryBeam::SavedMosaic(beam) =&gt; inputs.with_saved_mosaic_beam(beam)<span class="question-mark">?</span>,
-<a href=#930 id=930 data-nosnippet>930</a>        };
-<a href=#931 id=931 data-nosnippet>931</a>    }
-<a href=#932 id=932 data-nosnippet>932</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(frequency) = vla_selection_hz {
-<a href=#933 id=933 data-nosnippet>933</a>        inputs = inputs.with_vla_selection_frequency(frequency);
-<a href=#934 id=934 data-nosnippet>934</a>    }
-<a href=#935 id=935 data-nosnippet>935</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beams) = saved_psf_beams.as_deref() {
-<a href=#936 id=936 data-nosnippet>936</a>        inputs = inputs.with_saved_psf_beams(beams)<span class="question-mark">?</span>;
-<a href=#937 id=937 data-nosnippet>937</a>    }
-<a href=#938 id=938 data-nosnippet>938</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
-<a href=#939 id=939 data-nosnippet>939</a>        inputs = <span class="kw">match </span>masks {
-<a href=#940 id=940 data-nosnippet>940</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask),
-<a href=#941 id=941 data-nosnippet>941</a>            ReconstructionMaskSet::Domains(masks) =&gt; inputs.with_domain_reconstruction_masks(masks),
-<a href=#942 id=942 data-nosnippet>942</a>        };
-<a href=#943 id=943 data-nosnippet>943</a>    }
-<a href=#944 id=944 data-nosnippet>944</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(centres) = publication.primary_beam_centres.as_ref() {
-<a href=#945 id=945 data-nosnippet>945</a>        inputs = inputs.with_primary_beam_centres(centres);
-<a href=#946 id=946 data-nosnippet>946</a>    }
-<a href=#947 id=947 data-nosnippet>947</a>    <span class="kw">if </span>!facet_sum_weights.is_empty() {
-<a href=#948 id=948 data-nosnippet>948</a>        inputs = inputs.with_facet_sum_weights(<span class="kw-2">&amp;</span>facet_sum_weights);
-<a href=#949 id=949 data-nosnippet>949</a>    }
-<a href=#950 id=950 data-nosnippet>950</a>    <span class="kw">let </span><span class="kw-2">mut </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
-<a href=#951 id=951 data-nosnippet>951</a>    <span class="kw">if </span>omit_uncreated_mvc_cube_model {
-<a href=#952 id=952 data-nosnippet>952</a>        planned = planned.without_uncreated_mvc_cube_model();
+<a href=#434 id=434 data-nosnippet>434</a>                    start: view.start.as_ref(),
+<a href=#435 id=435 data-nosnippet>435</a>                    expansion_reference_hz: view.expansion_reference_hz,
+<a href=#436 id=436 data-nosnippet>436</a>                    controls: publication.controls,
+<a href=#437 id=437 data-nosnippet>437</a>                    centres: publication.primary_beam_centres.as_ref(),
+<a href=#438 id=438 data-nosnippet>438</a>                })
+<a href=#439 id=439 data-nosnippet>439</a>            }),
+<a href=#440 id=440 data-nosnippet>440</a>            psf_cutoff: <span class="kw">if </span>!forms.psf &amp;&amp; psf_beams.is_none() {
+<a href=#441 id=441 data-nosnippet>441</a>                casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF
+<a href=#442 id=442 data-nosnippet>442</a>            } <span class="kw">else </span>{
+<a href=#443 id=443 data-nosnippet>443</a>                publication.controls.psf_cutoff()
+<a href=#444 id=444 data-nosnippet>444</a>            },
+<a href=#445 id=445 data-nosnippet>445</a>            psf_beams,
+<a href=#446 id=446 data-nosnippet>446</a>            mask_beams,
+<a href=#447 id=447 data-nosnippet>447</a>            source: <span class="kw-2">&amp;</span>route,
+<a href=#448 id=448 data-nosnippet>448</a>            separate_psf,
+<a href=#449 id=449 data-nosnippet>449</a>            masks,
+<a href=#450 id=450 data-nosnippet>450</a>            start_model,
+<a href=#451 id=451 data-nosnippet>451</a>            existing: existing.clone(),
+<a href=#452 id=452 data-nosnippet>452</a>            forms,
+<a href=#453 id=453 data-nosnippet>453</a>            image_response,
+<a href=#454 id=454 data-nosnippet>454</a>            primary_beam,
+<a href=#455 id=455 data-nosnippet>455</a>            visibility_write,
+<a href=#456 id=456 data-nosnippet>456</a>            products: (products, source.memory()),
+<a href=#457 id=457 data-nosnippet>457</a>            host: runtime.host,
+<a href=#458 id=458 data-nosnippet>458</a>            policy: runtime.resource_policy,
+<a href=#459 id=459 data-nosnippet>459</a>            teams: <span class="kw-2">&amp;</span>teams,
+<a href=#460 id=460 data-nosnippet>460</a>            cancel: runtime.cancel.clone(),
+<a href=#461 id=461 data-nosnippet>461</a>            spill_directory: <span class="kw-2">&amp;</span>runtime.spill_directory,
+<a href=#462 id=462 data-nosnippet>462</a>            aw_catalog,
+<a href=#463 id=463 data-nosnippet>463</a>            awp2,
+<a href=#464 id=464 data-nosnippet>464</a>            backend: runtime.backend,
+<a href=#465 id=465 data-nosnippet>465</a>            grid_precision: runtime.grid_precision,
+<a href=#466 id=466 data-nosnippet>466</a>            ft_padding: runtime.ft_padding,
+<a href=#467 id=467 data-nosnippet>467</a>            diagnostics: runtime.diagnostics,
+<a href=#468 id=468 data-nosnippet>468</a>        },
+<a href=#469 id=469 data-nosnippet>469</a>        summary,
+<a href=#470 id=470 data-nosnippet>470</a>    )<span class="question-mark">?</span>;
+<a href=#471 id=471 data-nosnippet>471</a>    drop(route);
+<a href=#472 id=472 data-nosnippet>472</a>    drop(source);
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">let </span>team = teams
+<a href=#474 id=474 data-nosnippet>474</a>        .get()
+<a href=#475 id=475 data-nosnippet>475</a>        .expect(<span class="string">"a run that completed formed its teams"</span>)
+<a href=#476 id=476 data-nosnippet>476</a>        .compute();
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="kw">let </span><span class="kw-2">mut </span>published = Vec::new();
+<a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">let </span><span class="kw-2">mut </span>lanes = (<span class="number">0</span>, <span class="prelude-val">None</span>);
+<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">let </span>mvc_run = mvc_taylor.is_some();
+<a href=#480 id=480 data-nosnippet>480</a>    <span class="comment">// CASA creates the cube model when it invokes its first minor cycle.
+<a href=#481 id=481 data-nosnippet>481</a>    </span><span class="kw">let </span>cube_model_created = outcome.mvc_taylor.is_none()
+<a href=#482 id=482 data-nosnippet>482</a>        || !outcome.minor_cycles.is_empty()
+<a href=#483 id=483 data-nosnippet>483</a>        || mvc_taylor.as_ref().is_some_and(|view| view.start.is_some());
+<a href=#484 id=484 data-nosnippet>484</a>    <span class="kw">let </span>products: <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, NativeError&gt; = run_phase(
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="string">"products"</span>,
+<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw-2">&amp;</span>runtime.cancel,
+<a href=#487 id=487 data-nosnippet>487</a>        runtime.diagnostics,
+<a href=#488 id=488 data-nosnippet>488</a>        summary,
+<a href=#489 id=489 data-nosnippet>489</a>        || {
+<a href=#490 id=490 data-nosnippet>490</a>            publish_run_products(
+<a href=#491 id=491 data-nosnippet>491</a>                RunProductInputs {
+<a href=#492 id=492 data-nosnippet>492</a>                    problem,
+<a href=#493 id=493 data-nosnippet>493</a>                    source: ProductSource {
+<a href=#494 id=494 data-nosnippet>494</a>                        scientific: outcome.scientific,
+<a href=#495 id=495 data-nosnippet>495</a>                        masks: outcome.masks,
+<a href=#496 id=496 data-nosnippet>496</a>                        facet_sum_weights: outcome.facet_sum_weights,
+<a href=#497 id=497 data-nosnippet>497</a>                        mem_alpha: outcome.mem_alpha,
+<a href=#498 id=498 data-nosnippet>498</a>                        saved_psf_beams,
+<a href=#499 id=499 data-nosnippet>499</a>                        vla_selection_hz,
+<a href=#500 id=500 data-nosnippet>500</a>                        primary_beam: saved_mosaic_beam
+<a href=#501 id=501 data-nosnippet>501</a>                            .as_ref()
+<a href=#502 id=502 data-nosnippet>502</a>                            .map(ProductPrimaryBeam::SavedMosaic),
+<a href=#503 id=503 data-nosnippet>503</a>                    },
+<a href=#504 id=504 data-nosnippet>504</a>                    taylor_view: mvc_taylor,
+<a href=#505 id=505 data-nosnippet>505</a>                    taylor_completion: outcome.mvc_taylor,
+<a href=#506 id=506 data-nosnippet>506</a>                    cube_model_created,
+<a href=#507 id=507 data-nosnippet>507</a>                },
+<a href=#508 id=508 data-nosnippet>508</a>                <span class="kw-2">&amp;</span>runtime,
+<a href=#509 id=509 data-nosnippet>509</a>                publication_after_cycles(publication, existing.as_ref(), outcome.major_cycle_count),
+<a href=#510 id=510 data-nosnippet>510</a>                team,
+<a href=#511 id=511 data-nosnippet>511</a>                <span class="kw-2">&amp;mut </span>published,
+<a href=#512 id=512 data-nosnippet>512</a>                <span class="kw-2">&amp;mut </span>lanes,
+<a href=#513 id=513 data-nosnippet>513</a>            )
+<a href=#514 id=514 data-nosnippet>514</a>        },
+<a href=#515 id=515 data-nosnippet>515</a>    );
+<a href=#516 id=516 data-nosnippet>516</a>    summary.products = published;
+<a href=#517 id=517 data-nosnippet>517</a>    (summary.product_lanes, summary.product_lanes_reason) = lanes;
+<a href=#518 id=518 data-nosnippet>518</a>    <span class="kw">let </span>(products, taylor_names, names_reservation) = products<span class="question-mark">?</span>;
+<a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">let </span><span class="kw-2">mut </span>retained = outcome.retained;
+<a href=#520 id=520 data-nosnippet>520</a>    retained.join(names_reservation);
+<a href=#521 id=521 data-nosnippet>521</a>    <span class="kw">for </span>plan <span class="kw">in </span><span class="kw-2">&amp;</span>virtual_model {
+<a href=#522 id=522 data-nosnippet>522</a>        run_phase(
+<a href=#523 id=523 data-nosnippet>523</a>            <span class="string">"virtual model"</span>,
+<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw-2">&amp;</span>runtime.cancel,
+<a href=#525 id=525 data-nosnippet>525</a>            runtime.diagnostics,
+<a href=#526 id=526 data-nosnippet>526</a>            summary,
+<a href=#527 id=527 data-nosnippet>527</a>            || {
+<a href=#528 id=528 data-nosnippet>528</a>                <span class="kw">crate</span>::virtual_model::save(
+<a href=#529 id=529 data-nosnippet>529</a>                    problem,
+<a href=#530 id=530 data-nosnippet>530</a>                    products.scientific.final_model(),
+<a href=#531 id=531 data-nosnippet>531</a>                    plan,
+<a href=#532 id=532 data-nosnippet>532</a>                    <span class="kw-2">&amp;</span>runtime,
+<a href=#533 id=533 data-nosnippet>533</a>                )
+<a href=#534 id=534 data-nosnippet>534</a>            },
+<a href=#535 id=535 data-nosnippet>535</a>        )<span class="question-mark">?</span>;
+<a href=#536 id=536 data-nosnippet>536</a>    }
+<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">let </span>workers = team.workers();
+<a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">let </span>problem = problem.clone();
+<a href=#539 id=539 data-nosnippet>539</a>    <span class="prelude-val">Ok</span>(<span class="kw">move </span>|summary| ImagingOutcome {
+<a href=#540 id=540 data-nosnippet>540</a>        problem,
+<a href=#541 id=541 data-nosnippet>541</a>        minor_cycles: outcome.minor_cycles,
+<a href=#542 id=542 data-nosnippet>542</a>        plane_rows: outcome.plane_rows,
+<a href=#543 id=543 data-nosnippet>543</a>        final_residual_statistics: outcome.final_residual_statistics,
+<a href=#544 id=544 data-nosnippet>544</a>        stop: outcome.stop,
+<a href=#545 id=545 data-nosnippet>545</a>        major_cycle_count: outcome.major_cycle_count,
+<a href=#546 id=546 data-nosnippet>546</a>        total_minor_iterations: outcome.total_minor_iterations,
+<a href=#547 id=547 data-nosnippet>547</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
+<a href=#548 id=548 data-nosnippet>548</a>        workers,
+<a href=#549 id=549 data-nosnippet>549</a>        planes_per_wave: outcome.planes_per_wave,
+<a href=#550 id=550 data-nosnippet>550</a>        visibility_products: outcome.visibility_products,
+<a href=#551 id=551 data-nosnippet>551</a>        summary,
+<a href=#552 id=552 data-nosnippet>552</a>        scientific: products.scientific,
+<a href=#553 id=553 data-nosnippet>553</a>        planned_products: products.planned,
+<a href=#554 id=554 data-nosnippet>554</a>        products: products.published,
+<a href=#555 id=555 data-nosnippet>555</a>        mvc_taylor_names: taylor_names,
+<a href=#556 id=556 data-nosnippet>556</a>        mvc_run,
+<a href=#557 id=557 data-nosnippet>557</a>        _retained: retained,
+<a href=#558 id=558 data-nosnippet>558</a>    })
+<a href=#559 id=559 data-nosnippet>559</a>}
+<a href=#560 id=560 data-nosnippet>560</a>
+<a href=#561 id=561 data-nosnippet>561</a><span class="doccomment">/// CASA selects the cube's VLA aperture through its LSRK conversion layer,
+<a href=#562 id=562 data-nosnippet>562</a>/// but evaluates it at each output plane's own frequency.
+<a href=#563 id=563 data-nosnippet>563</a></span><span class="kw">fn </span>vla_selection_frequency(
+<a href=#564 id=564 data-nosnippet>564</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#565 id=565 data-nosnippet>565</a>    route: <span class="kw-2">&amp;</span>imaging::BatchRoute,
+<a href=#566 id=566 data-nosnippet>566</a>    store: usize,
+<a href=#567 id=567 data-nosnippet>567</a>) -&gt; f64 {
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">let </span>factor = route.stores[store]
+<a href=#569 id=569 data-nosnippet>569</a>        .plan
+<a href=#570 id=570 data-nosnippet>570</a>        .output_lsrk_factor()
+<a href=#571 id=571 data-nosnippet>571</a>        .expect(<span class="string">"a tracked cube has an LSRK conversion layer"</span>);
+<a href=#572 id=572 data-nosnippet>572</a>    problem
+<a href=#573 id=573 data-nosnippet>573</a>        .geometry()
+<a href=#574 id=574 data-nosnippet>574</a>        .spectral()
+<a href=#575 id=575 data-nosnippet>575</a>        .channel_centre_hz(<span class="number">0</span>)
+<a href=#576 id=576 data-nosnippet>576</a>        .expect(<span class="string">"a cube has a first channel"</span>)
+<a href=#577 id=577 data-nosnippet>577</a>        * factor
+<a href=#578 id=578 data-nosnippet>578</a>}
+<a href=#579 id=579 data-nosnippet>579</a>
+<a href=#580 id=580 data-nosnippet>580</a><span class="doccomment">/// One run's cube or continuum products and, for MVC, its Taylor view.
+<a href=#581 id=581 data-nosnippet>581</a></span><span class="kw">struct </span>RunProductInputs&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#582 id=582 data-nosnippet>582</a>    problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
+<a href=#583 id=583 data-nosnippet>583</a>    source: ProductSource&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#584 id=584 data-nosnippet>584</a>    taylor_view: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::compile::CompiledTaylorView&gt;,
+<a href=#585 id=585 data-nosnippet>585</a>    taylor_completion: <span class="prelude-ty">Option</span>&lt;Admitted&lt;<span class="kw">crate</span>::mvc::TaylorCompletion&gt;&gt;,
+<a href=#586 id=586 data-nosnippet>586</a>    cube_model_created: bool,
+<a href=#587 id=587 data-nosnippet>587</a>}
+<a href=#588 id=588 data-nosnippet>588</a>
+<a href=#589 id=589 data-nosnippet>589</a><span class="doccomment">/// Reduce MVC's cube before staging both families, or publish an ordinary run.
+<a href=#590 id=590 data-nosnippet>590</a></span><span class="kw">fn </span>publish_run_products(
+<a href=#591 id=591 data-nosnippet>591</a>    inputs: RunProductInputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#592 id=592 data-nosnippet>592</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
+<a href=#593 id=593 data-nosnippet>593</a>    publication: ApplicationPublication,
+<a href=#594 id=594 data-nosnippet>594</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#595 id=595 data-nosnippet>595</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
+<a href=#596 id=596 data-nosnippet>596</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
+<a href=#597 id=597 data-nosnippet>597</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Products, Vec&lt;String&gt;, Reservation), NativeError&gt; {
+<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">let </span>RunProductInputs {
+<a href=#599 id=599 data-nosnippet>599</a>        problem,
+<a href=#600 id=600 data-nosnippet>600</a>        source,
+<a href=#601 id=601 data-nosnippet>601</a>        taylor_view,
+<a href=#602 id=602 data-nosnippet>602</a>        taylor_completion,
+<a href=#603 id=603 data-nosnippet>603</a>        cube_model_created,
+<a href=#604 id=604 data-nosnippet>604</a>    } = inputs;
+<a href=#605 id=605 data-nosnippet>605</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(view) = taylor_view {
+<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span><span class="kw">crate</span>::compile::CompiledTaylorView {
+<a href=#607 id=607 data-nosnippet>607</a>            problem: taylor_problem,
+<a href=#608 id=608 data-nosnippet>608</a>            coordinates,
+<a href=#609 id=609 data-nosnippet>609</a>            expansion_reference_hz,
+<a href=#610 id=610 data-nosnippet>610</a>            reservation: _view_reservation,
+<a href=#611 id=611 data-nosnippet>611</a>            start: <span class="kw">_</span>,
+<a href=#612 id=612 data-nosnippet>612</a>        } = view;
+<a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">let </span>taylor = <span class="kw">if let </span><span class="prelude-val">Some</span>(taylor) = taylor_completion {
+<a href=#614 id=614 data-nosnippet>614</a>            taylor
+<a href=#615 id=615 data-nosnippet>615</a>        } <span class="kw">else </span>{
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">crate</span>::mvc::assemble_taylor_completion(
+<a href=#617 id=617 data-nosnippet>617</a>                <span class="kw">crate</span>::mvc::TaylorAssemblyInputs {
+<a href=#618 id=618 data-nosnippet>618</a>                    cube_problem: problem,
+<a href=#619 id=619 data-nosnippet>619</a>                    cube: <span class="kw-2">&amp;</span>source.scientific,
+<a href=#620 id=620 data-nosnippet>620</a>                    taylor_problem: <span class="kw-2">&amp;</span>taylor_problem,
+<a href=#621 id=621 data-nosnippet>621</a>                    expansion_reference_hz,
+<a href=#622 id=622 data-nosnippet>622</a>                    controls: publication.controls,
+<a href=#623 id=623 data-nosnippet>623</a>                    centres: publication.primary_beam_centres.as_ref(),
+<a href=#624 id=624 data-nosnippet>624</a>                },
+<a href=#625 id=625 data-nosnippet>625</a>                (<span class="kw-2">&amp;</span>runtime.host, <span class="kw-2">&amp;</span>runtime.resource_policy, <span class="kw-2">&amp;</span>runtime.cancel),
+<a href=#626 id=626 data-nosnippet>626</a>            )<span class="question-mark">?
+<a href=#627 id=627 data-nosnippet>627</a>        </span>};
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">let </span>products = publish_mvc_products(
+<a href=#629 id=629 data-nosnippet>629</a>            MvcProductSource {
+<a href=#630 id=630 data-nosnippet>630</a>                cube_problem: problem,
+<a href=#631 id=631 data-nosnippet>631</a>                cube_model_created,
+<a href=#632 id=632 data-nosnippet>632</a>                cube: source,
+<a href=#633 id=633 data-nosnippet>633</a>                taylor_problem: <span class="kw-2">&amp;</span>taylor_problem,
+<a href=#634 id=634 data-nosnippet>634</a>                taylor,
+<a href=#635 id=635 data-nosnippet>635</a>                taylor_coordinates: coordinates,
+<a href=#636 id=636 data-nosnippet>636</a>            },
+<a href=#637 id=637 data-nosnippet>637</a>            runtime,
+<a href=#638 id=638 data-nosnippet>638</a>            publication,
+<a href=#639 id=639 data-nosnippet>639</a>            team,
+<a href=#640 id=640 data-nosnippet>640</a>            published,
+<a href=#641 id=641 data-nosnippet>641</a>            lanes,
+<a href=#642 id=642 data-nosnippet>642</a>        )<span class="question-mark">?</span>;
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="prelude-val">Ok</span>((
+<a href=#644 id=644 data-nosnippet>644</a>            products.cube,
+<a href=#645 id=645 data-nosnippet>645</a>            products.taylor_names,
+<a href=#646 id=646 data-nosnippet>646</a>            products.names_reservation,
+<a href=#647 id=647 data-nosnippet>647</a>        ))
+<a href=#648 id=648 data-nosnippet>648</a>    } <span class="kw">else </span>{
+<a href=#649 id=649 data-nosnippet>649</a>        <span class="kw">if </span>taylor_completion.is_some() {
+<a href=#650 id=650 data-nosnippet>650</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(NativeError::Other(
+<a href=#651 id=651 data-nosnippet>651</a>                std::io::Error::other(<span class="string">"MVC Taylor completion has no compiled view"</span>).into(),
+<a href=#652 id=652 data-nosnippet>652</a>            ));
+<a href=#653 id=653 data-nosnippet>653</a>        }
+<a href=#654 id=654 data-nosnippet>654</a>        <span class="kw">let </span>products = publish_products(
+<a href=#655 id=655 data-nosnippet>655</a>            problem,
+<a href=#656 id=656 data-nosnippet>656</a>            source,
+<a href=#657 id=657 data-nosnippet>657</a>            runtime,
+<a href=#658 id=658 data-nosnippet>658</a>            publication,
+<a href=#659 id=659 data-nosnippet>659</a>            team,
+<a href=#660 id=660 data-nosnippet>660</a>            published,
+<a href=#661 id=661 data-nosnippet>661</a>            lanes,
+<a href=#662 id=662 data-nosnippet>662</a>        )<span class="question-mark">?</span>;
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="prelude-val">Ok</span>((products, Vec::new(), Reservation::none()))
+<a href=#664 id=664 data-nosnippet>664</a>    }
+<a href=#665 id=665 data-nosnippet>665</a>}
+<a href=#666 id=666 data-nosnippet>666</a>
+<a href=#667 id=667 data-nosnippet>667</a><span class="doccomment">/// The products of a run and the state they were generated from.
+<a href=#668 id=668 data-nosnippet>668</a></span><span class="kw">struct </span>Products {
+<a href=#669 id=669 data-nosnippet>669</a>    planned: PlannedContinuumGeneration,
+<a href=#670 id=670 data-nosnippet>670</a>    scientific: MajorCycleCompletion,
+<a href=#671 id=671 data-nosnippet>671</a>    published: PublishedContinuumGeneration,
+<a href=#672 id=672 data-nosnippet>672</a>}
+<a href=#673 id=673 data-nosnippet>673</a>
+<a href=#674 id=674 data-nosnippet>674</a><span class="doccomment">/// What the products are formed from: the final completion, its
+<a href=#675 id=675 data-nosnippet>675</a>/// reconstruction masks and the faceted domains' facets' own sums of
+<a href=#676 id=676 data-nosnippet>676</a>/// weights.
+<a href=#677 id=677 data-nosnippet>677</a></span><span class="kw">enum </span>ProductPrimaryBeam&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#678 id=678 data-nosnippet>678</a>    MvcCube(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f32]),
+<a href=#679 id=679 data-nosnippet>679</a>    MvcTaylor(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[f32]),
+<a href=#680 id=680 data-nosnippet>680</a>    SavedMosaic(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>casa_imaging_products::SavedMosaicBeam),
+<a href=#681 id=681 data-nosnippet>681</a>}
+<a href=#682 id=682 data-nosnippet>682</a>
+<a href=#683 id=683 data-nosnippet>683</a><span class="kw">struct </span>ProductSource&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#684 id=684 data-nosnippet>684</a>    scientific: MajorCycleCompletion,
+<a href=#685 id=685 data-nosnippet>685</a>    masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
+<a href=#686 id=686 data-nosnippet>686</a>    facet_sum_weights: FacetSumWeights,
+<a href=#687 id=687 data-nosnippet>687</a>    mem_alpha: <span class="prelude-ty">Option</span>&lt;f32&gt;,
+<a href=#688 id=688 data-nosnippet>688</a>    saved_psf_beams: <span class="prelude-ty">Option</span>&lt;std::sync::Arc&lt;[casa_imaging_deconvolution::RestoringBeam]&gt;&gt;,
+<a href=#689 id=689 data-nosnippet>689</a>    vla_selection_hz: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#690 id=690 data-nosnippet>690</a>    <span class="doccomment">/// A separately admitted PB, borrowed until the family is staged.
+<a href=#691 id=691 data-nosnippet>691</a>    </span>primary_beam: <span class="prelude-ty">Option</span>&lt;ProductPrimaryBeam&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#692 id=692 data-nosnippet>692</a>}
+<a href=#693 id=693 data-nosnippet>693</a>
+<a href=#694 id=694 data-nosnippet>694</a><span class="doccomment">/// A run that stopped before its first major cycle still holds the saved
+<a href=#695 id=695 data-nosnippet>695</a>/// Taylor residual and its model in image units.
+<a href=#696 id=696 data-nosnippet>696</a></span><span class="kw">fn </span>publication_after_cycles(
+<a href=#697 id=697 data-nosnippet>697</a>    <span class="kw-2">mut </span>publication: ApplicationPublication,
+<a href=#698 id=698 data-nosnippet>698</a>    existing: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">crate</span>::restart::ExistingProducts&gt;,
+<a href=#699 id=699 data-nosnippet>699</a>    major_cycles: usize,
+<a href=#700 id=700 data-nosnippet>700</a>) -&gt; ApplicationPublication {
+<a href=#701 id=701 data-nosnippet>701</a>    <span class="kw">if </span>major_cycles == <span class="number">0
+<a href=#702 id=702 data-nosnippet>702</a>        </span>&amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(bytes) =
+<a href=#703 id=703 data-nosnippet>703</a>            existing.and_then(<span class="kw">crate</span>::restart::ExistingProducts::taylor_mask_read_bytes)
+<a href=#704 id=704 data-nosnippet>704</a>    {
+<a href=#705 id=705 data-nosnippet>705</a>        publication.controls = publication.controls.preserving_taylor_residuals(bytes);
+<a href=#706 id=706 data-nosnippet>706</a>    }
+<a href=#707 id=707 data-nosnippet>707</a>    publication
+<a href=#708 id=708 data-nosnippet>708</a>}
+<a href=#709 id=709 data-nosnippet>709</a>
+<a href=#710 id=710 data-nosnippet>710</a><span class="doccomment">/// What `problem`'s products hold on one lane, before the run
+<a href=#711 id=711 data-nosnippet>711</a>/// (`PlannedContinuumGeneration::planned_demand`): the least they can run
+<a href=#712 id=712 data-nosnippet>712</a>/// on, which the run's setup fits beside it.
+<a href=#713 id=713 data-nosnippet>713</a></span><span class="kw">fn </span>products_floor(
+<a href=#714 id=714 data-nosnippet>714</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#715 id=715 data-nosnippet>715</a>    publication: <span class="kw-2">&amp;</span>ApplicationPublication,
+<a href=#716 id=716 data-nosnippet>716</a>    controls: casa_imaging_products::ContinuumProductControls,
+<a href=#717 id=717 data-nosnippet>717</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, NativeError&gt; {
+<a href=#718 id=718 data-nosnippet>718</a>    <span class="prelude-val">Ok</span>(PlannedContinuumGeneration::for_problem(problem, <span class="kw-2">&amp;</span>controls)<span class="question-mark">?
+<a href=#719 id=719 data-nosnippet>719</a>        </span>.planned_demand(problem, ProductStoragePlan::new(<span class="number">1</span>, <span class="number">1</span>)<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?
+<a href=#720 id=720 data-nosnippet>720</a>        </span>.peak_residency_bytes())
+<a href=#721 id=721 data-nosnippet>721</a>}
+<a href=#722 id=722 data-nosnippet>722</a>
+<a href=#723 id=723 data-nosnippet>723</a><span class="doccomment">/// Generate every planned product member into the writer's private staging,
+<a href=#724 id=724 data-nosnippet>724</a>/// one output channel per window on the run's team, and publish them,
+<a href=#725 id=725 data-nosnippet>725</a>/// adding each image published to `published`; a cancelled run publishes
+<a href=#726 id=726 data-nosnippet>726</a>/// nothing. `lanes` receives the lanes the products ran on and, when fewer
+<a href=#727 id=727 data-nosnippet>727</a>/// than the team's workers, why.
+<a href=#728 id=728 data-nosnippet>728</a></span><span class="kw">fn </span>publish_products(
+<a href=#729 id=729 data-nosnippet>729</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#730 id=730 data-nosnippet>730</a>    source: ProductSource&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#731 id=731 data-nosnippet>731</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
+<a href=#732 id=732 data-nosnippet>732</a>    <span class="kw-2">mut </span>publication: ApplicationPublication,
+<a href=#733 id=733 data-nosnippet>733</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#734 id=734 data-nosnippet>734</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
+<a href=#735 id=735 data-nosnippet>735</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
+<a href=#736 id=736 data-nosnippet>736</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
+<a href=#737 id=737 data-nosnippet>737</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(alpha) = source.mem_alpha {
+<a href=#738 id=738 data-nosnippet>738</a>        publication.writer.set_mem_alpha(alpha)<span class="question-mark">?</span>;
+<a href=#739 id=739 data-nosnippet>739</a>    }
+<a href=#740 id=740 data-nosnippet>740</a>    <span class="kw">let </span>(products, held) =
+<a href=#741 id=741 data-nosnippet>741</a>        stage_products(problem, source, runtime, <span class="kw-2">&amp;</span>publication, team, lanes, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#742 id=742 data-nosnippet>742</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="comment">// The staged members are removed when the writer drops.
+<a href=#744 id=744 data-nosnippet>744</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
+<a href=#745 id=745 data-nosnippet>745</a>    }
+<a href=#746 id=746 data-nosnippet>746</a>    publication
+<a href=#747 id=747 data-nosnippet>747</a>        .writer
+<a href=#748 id=748 data-nosnippet>748</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
+<a href=#749 id=749 data-nosnippet>749</a>    <span class="comment">// The charge covers the staged records until they are published.
+<a href=#750 id=750 data-nosnippet>750</a>    </span>drop(held);
+<a href=#751 id=751 data-nosnippet>751</a>    <span class="prelude-val">Ok</span>(products)
+<a href=#752 id=752 data-nosnippet>752</a>}
+<a href=#753 id=753 data-nosnippet>753</a>
+<a href=#754 id=754 data-nosnippet>754</a><span class="doccomment">/// The two MVC families share one staging registry and one admitted beam.
+<a href=#755 id=755 data-nosnippet>755</a></span><span class="attr">#[cfg_attr(
+<a href=#756 id=756 data-nosnippet>756</a>    not(test),
+<a href=#757 id=757 data-nosnippet>757</a>    allow(dead_code, reason = <span class="string">"MVC publication is being wired in #1069"</span>)
+<a href=#758 id=758 data-nosnippet>758</a>)]
+<a href=#759 id=759 data-nosnippet>759</a></span><span class="kw">struct </span>MvcProductSource&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#760 id=760 data-nosnippet>760</a>    cube_problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
+<a href=#761 id=761 data-nosnippet>761</a>    cube_model_created: bool,
+<a href=#762 id=762 data-nosnippet>762</a>    cube: ProductSource&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#763 id=763 data-nosnippet>763</a>    taylor_problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
+<a href=#764 id=764 data-nosnippet>764</a>    taylor: Admitted&lt;<span class="kw">crate</span>::mvc::TaylorCompletion&gt;,
+<a href=#765 id=765 data-nosnippet>765</a>    taylor_coordinates: Vec&lt;(
+<a href=#766 id=766 data-nosnippet>766</a>        casa_imaging_model::ImageDomainRole,
+<a href=#767 id=767 data-nosnippet>767</a>        casa_coordinates::CoordinateSystem,
+<a href=#768 id=768 data-nosnippet>768</a>    )&gt;,
+<a href=#769 id=769 data-nosnippet>769</a>}
+<a href=#770 id=770 data-nosnippet>770</a>
+<a href=#771 id=771 data-nosnippet>771</a><span class="doccomment">/// The cube remains the run's scientific result; Taylor names are separately
+<a href=#772 id=772 data-nosnippet>772</a>/// charged so the task's artifact inventory can report both families.
+<a href=#773 id=773 data-nosnippet>773</a></span><span class="attr">#[cfg_attr(
+<a href=#774 id=774 data-nosnippet>774</a>    not(test),
+<a href=#775 id=775 data-nosnippet>775</a>    allow(dead_code, reason = <span class="string">"MVC publication is being wired in #1069"</span>)
+<a href=#776 id=776 data-nosnippet>776</a>)]
+<a href=#777 id=777 data-nosnippet>777</a></span><span class="kw">struct </span>MvcProducts {
+<a href=#778 id=778 data-nosnippet>778</a>    cube: Products,
+<a href=#779 id=779 data-nosnippet>779</a>    taylor_names: Vec&lt;String&gt;,
+<a href=#780 id=780 data-nosnippet>780</a>    names_reservation: Reservation,
+<a href=#781 id=781 data-nosnippet>781</a>}
+<a href=#782 id=782 data-nosnippet>782</a>
+<a href=#783 id=783 data-nosnippet>783</a><span class="doccomment">/// Stage both MVC families before publishing either. A failure or cancellation
+<a href=#784 id=784 data-nosnippet>784</a>/// drops the shared writer and discards its staged members.
+<a href=#785 id=785 data-nosnippet>785</a></span><span class="attr">#[cfg_attr(
+<a href=#786 id=786 data-nosnippet>786</a>    not(test),
+<a href=#787 id=787 data-nosnippet>787</a>    allow(dead_code, reason = <span class="string">"MVC publication is being wired in #1069"</span>)
+<a href=#788 id=788 data-nosnippet>788</a>)]
+<a href=#789 id=789 data-nosnippet>789</a></span><span class="kw">fn </span>publish_mvc_products(
+<a href=#790 id=790 data-nosnippet>790</a>    source: MvcProductSource&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#791 id=791 data-nosnippet>791</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
+<a href=#792 id=792 data-nosnippet>792</a>    publication: ApplicationPublication,
+<a href=#793 id=793 data-nosnippet>793</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#794 id=794 data-nosnippet>794</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
+<a href=#795 id=795 data-nosnippet>795</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
+<a href=#796 id=796 data-nosnippet>796</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MvcProducts, NativeError&gt; {
+<a href=#797 id=797 data-nosnippet>797</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
+<a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
+<a href=#799 id=799 data-nosnippet>799</a>    }
+<a href=#800 id=800 data-nosnippet>800</a>    <span class="kw">let </span>MvcProductSource {
+<a href=#801 id=801 data-nosnippet>801</a>        cube_problem,
+<a href=#802 id=802 data-nosnippet>802</a>        cube_model_created,
+<a href=#803 id=803 data-nosnippet>803</a>        cube,
+<a href=#804 id=804 data-nosnippet>804</a>        taylor_problem,
+<a href=#805 id=805 data-nosnippet>805</a>        taylor,
+<a href=#806 id=806 data-nosnippet>806</a>        taylor_coordinates,
+<a href=#807 id=807 data-nosnippet>807</a>    } = source;
+<a href=#808 id=808 data-nosnippet>808</a>    <span class="kw">let </span>Admitted {
+<a href=#809 id=809 data-nosnippet>809</a>        value:
+<a href=#810 id=810 data-nosnippet>810</a>            <span class="kw">crate</span>::mvc::TaylorCompletion {
+<a href=#811 id=811 data-nosnippet>811</a>                scientific: taylor_science,
+<a href=#812 id=812 data-nosnippet>812</a>                primary_beam,
+<a href=#813 id=813 data-nosnippet>813</a>            },
+<a href=#814 id=814 data-nosnippet>814</a>        reservation: taylor_reservation,
+<a href=#815 id=815 data-nosnippet>815</a>    } = taylor;
+<a href=#816 id=816 data-nosnippet>816</a>    <span class="kw">let </span>ProductSource {
+<a href=#817 id=817 data-nosnippet>817</a>        scientific,
+<a href=#818 id=818 data-nosnippet>818</a>        masks,
+<a href=#819 id=819 data-nosnippet>819</a>        facet_sum_weights,
+<a href=#820 id=820 data-nosnippet>820</a>        mem_alpha: <span class="kw">_</span>,
+<a href=#821 id=821 data-nosnippet>821</a>        saved_psf_beams,
+<a href=#822 id=822 data-nosnippet>822</a>        vla_selection_hz,
+<a href=#823 id=823 data-nosnippet>823</a>        primary_beam: <span class="kw">_</span>,
+<a href=#824 id=824 data-nosnippet>824</a>    } = cube;
+<a href=#825 id=825 data-nosnippet>825</a>    <span class="kw">let </span>taylor_publication = ApplicationPublication {
+<a href=#826 id=826 data-nosnippet>826</a>        controls: publication.controls,
+<a href=#827 id=827 data-nosnippet>827</a>        primary_beam_centres: publication.primary_beam_centres.clone(),
+<a href=#828 id=828 data-nosnippet>828</a>        vla_selection_store: <span class="prelude-val">None</span>,
+<a href=#829 id=829 data-nosnippet>829</a>        writer: publication.writer.with_coordinates(taylor_coordinates),
+<a href=#830 id=830 data-nosnippet>830</a>    };
+<a href=#831 id=831 data-nosnippet>831</a>    <span class="kw">let </span>(cube, cube_charge) = stage_products(
+<a href=#832 id=832 data-nosnippet>832</a>        cube_problem,
+<a href=#833 id=833 data-nosnippet>833</a>        ProductSource {
+<a href=#834 id=834 data-nosnippet>834</a>            scientific,
+<a href=#835 id=835 data-nosnippet>835</a>            masks: <span class="prelude-val">None</span>,
+<a href=#836 id=836 data-nosnippet>836</a>            facet_sum_weights,
+<a href=#837 id=837 data-nosnippet>837</a>            mem_alpha: <span class="prelude-val">None</span>,
+<a href=#838 id=838 data-nosnippet>838</a>            saved_psf_beams,
+<a href=#839 id=839 data-nosnippet>839</a>            vla_selection_hz,
+<a href=#840 id=840 data-nosnippet>840</a>            primary_beam: <span class="prelude-val">Some</span>(ProductPrimaryBeam::MvcCube(<span class="kw-2">&amp;</span>primary_beam)),
+<a href=#841 id=841 data-nosnippet>841</a>        },
+<a href=#842 id=842 data-nosnippet>842</a>        runtime,
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw-2">&amp;</span>publication,
+<a href=#844 id=844 data-nosnippet>844</a>        team,
+<a href=#845 id=845 data-nosnippet>845</a>        lanes,
+<a href=#846 id=846 data-nosnippet>846</a>        !cube_model_created,
+<a href=#847 id=847 data-nosnippet>847</a>    )<span class="question-mark">?</span>;
+<a href=#848 id=848 data-nosnippet>848</a>    <span class="kw">let </span>(taylor, taylor_charge) = stage_products(
+<a href=#849 id=849 data-nosnippet>849</a>        taylor_problem,
+<a href=#850 id=850 data-nosnippet>850</a>        ProductSource {
+<a href=#851 id=851 data-nosnippet>851</a>            scientific: taylor_science,
+<a href=#852 id=852 data-nosnippet>852</a>            masks,
+<a href=#853 id=853 data-nosnippet>853</a>            facet_sum_weights: Default::default(),
+<a href=#854 id=854 data-nosnippet>854</a>            mem_alpha: <span class="prelude-val">None</span>,
+<a href=#855 id=855 data-nosnippet>855</a>            saved_psf_beams: <span class="prelude-val">None</span>,
+<a href=#856 id=856 data-nosnippet>856</a>            vla_selection_hz: <span class="prelude-val">None</span>,
+<a href=#857 id=857 data-nosnippet>857</a>            primary_beam: <span class="prelude-val">Some</span>(ProductPrimaryBeam::MvcTaylor(<span class="kw-2">&amp;</span>primary_beam)),
+<a href=#858 id=858 data-nosnippet>858</a>        },
+<a href=#859 id=859 data-nosnippet>859</a>        runtime,
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw-2">&amp;</span>taylor_publication,
+<a href=#861 id=861 data-nosnippet>861</a>        team,
+<a href=#862 id=862 data-nosnippet>862</a>        lanes,
+<a href=#863 id=863 data-nosnippet>863</a>        <span class="bool-val">false</span>,
+<a href=#864 id=864 data-nosnippet>864</a>    )<span class="question-mark">?</span>;
+<a href=#865 id=865 data-nosnippet>865</a>    <span class="kw">let </span>count = taylor.planned.members().len();
+<a href=#866 id=866 data-nosnippet>866</a>    <span class="kw">let </span>overflow = || ProductsError::ResourceDemandOverflow(<span class="string">"MVC product names"</span>);
+<a href=#867 id=867 data-nosnippet>867</a>    <span class="kw">let </span>bytes = taylor.planned.members().iter().try_fold(
+<a href=#868 id=868 data-nosnippet>868</a>        count
+<a href=#869 id=869 data-nosnippet>869</a>            .checked_mul(size_of::&lt;String&gt;())
+<a href=#870 id=870 data-nosnippet>870</a>            .ok_or_else(overflow)<span class="question-mark">?</span>,
+<a href=#871 id=871 data-nosnippet>871</a>        |sum, member| sum.checked_add(member.name().len()).ok_or_else(overflow),
+<a href=#872 id=872 data-nosnippet>872</a>    )<span class="question-mark">?</span>;
+<a href=#873 id=873 data-nosnippet>873</a>    <span class="kw">let </span>names_reservation = admit(
+<a href=#874 id=874 data-nosnippet>874</a>        <span class="kw-2">&amp;</span>runtime.host,
+<a href=#875 id=875 data-nosnippet>875</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
+<a href=#876 id=876 data-nosnippet>876</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#877 id=877 data-nosnippet>877</a>            phase: <span class="string">"MVC product inventory"</span>,
+<a href=#878 id=878 data-nosnippet>878</a>            memory: u64::try_from(bytes).map_err(|<span class="kw">_</span>| overflow())<span class="question-mark">?</span>,
+<a href=#879 id=879 data-nosnippet>879</a>        },
+<a href=#880 id=880 data-nosnippet>880</a>    )<span class="question-mark">?</span>;
+<a href=#881 id=881 data-nosnippet>881</a>    <span class="kw">let </span><span class="kw-2">mut </span>taylor_names = Vec::with_capacity(count);
+<a href=#882 id=882 data-nosnippet>882</a>    taylor_names.extend(
+<a href=#883 id=883 data-nosnippet>883</a>        taylor
+<a href=#884 id=884 data-nosnippet>884</a>            .planned
+<a href=#885 id=885 data-nosnippet>885</a>            .members()
+<a href=#886 id=886 data-nosnippet>886</a>            .iter()
+<a href=#887 id=887 data-nosnippet>887</a>            .map(|member| member.name().to_owned()),
+<a href=#888 id=888 data-nosnippet>888</a>    );
+<a href=#889 id=889 data-nosnippet>889</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
+<a href=#891 id=891 data-nosnippet>891</a>    }
+<a href=#892 id=892 data-nosnippet>892</a>    publication
+<a href=#893 id=893 data-nosnippet>893</a>        .writer
+<a href=#894 id=894 data-nosnippet>894</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
+<a href=#895 id=895 data-nosnippet>895</a>    drop(taylor);
+<a href=#896 id=896 data-nosnippet>896</a>    drop(taylor_charge);
+<a href=#897 id=897 data-nosnippet>897</a>    drop(cube_charge);
+<a href=#898 id=898 data-nosnippet>898</a>    drop(taylor_reservation);
+<a href=#899 id=899 data-nosnippet>899</a>    <span class="prelude-val">Ok</span>(MvcProducts {
+<a href=#900 id=900 data-nosnippet>900</a>        cube,
+<a href=#901 id=901 data-nosnippet>901</a>        taylor_names,
+<a href=#902 id=902 data-nosnippet>902</a>        names_reservation,
+<a href=#903 id=903 data-nosnippet>903</a>    })
+<a href=#904 id=904 data-nosnippet>904</a>}
+<a href=#905 id=905 data-nosnippet>905</a>
+<a href=#906 id=906 data-nosnippet>906</a><span class="doccomment">/// Stage one product family without publishing it. The caller holds its
+<a href=#907 id=907 data-nosnippet>907</a>/// admission until every staged family has been published or discarded.
+<a href=#908 id=908 data-nosnippet>908</a></span><span class="kw">fn </span>stage_products(
+<a href=#909 id=909 data-nosnippet>909</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#910 id=910 data-nosnippet>910</a>    source: ProductSource&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#911 id=911 data-nosnippet>911</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
+<a href=#912 id=912 data-nosnippet>912</a>    publication: <span class="kw-2">&amp;</span>ApplicationPublication,
+<a href=#913 id=913 data-nosnippet>913</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#914 id=914 data-nosnippet>914</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
+<a href=#915 id=915 data-nosnippet>915</a>    omit_uncreated_mvc_cube_model: bool,
+<a href=#916 id=916 data-nosnippet>916</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Products, casa_imaging_runtime::Reservation), NativeError&gt; {
+<a href=#917 id=917 data-nosnippet>917</a>    <span class="kw">let </span>ProductSource {
+<a href=#918 id=918 data-nosnippet>918</a>        scientific,
+<a href=#919 id=919 data-nosnippet>919</a>        masks: reconstruction_masks,
+<a href=#920 id=920 data-nosnippet>920</a>        facet_sum_weights,
+<a href=#921 id=921 data-nosnippet>921</a>        mem_alpha: <span class="kw">_</span>,
+<a href=#922 id=922 data-nosnippet>922</a>        saved_psf_beams,
+<a href=#923 id=923 data-nosnippet>923</a>        vla_selection_hz,
+<a href=#924 id=924 data-nosnippet>924</a>        primary_beam,
+<a href=#925 id=925 data-nosnippet>925</a>    } = source;
+<a href=#926 id=926 data-nosnippet>926</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific);
+<a href=#927 id=927 data-nosnippet>927</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = primary_beam {
+<a href=#928 id=928 data-nosnippet>928</a>        inputs = <span class="kw">match </span>beam {
+<a href=#929 id=929 data-nosnippet>929</a>            ProductPrimaryBeam::MvcCube(beam) =&gt; inputs.with_cube_taylor_primary_beam(beam)<span class="question-mark">?</span>,
+<a href=#930 id=930 data-nosnippet>930</a>            ProductPrimaryBeam::MvcTaylor(beam) =&gt; inputs
+<a href=#931 id=931 data-nosnippet>931</a>                .with_taylor_primary_beam(beam)<span class="question-mark">?
+<a href=#932 id=932 data-nosnippet>932</a>                </span>.with_taylor_residual_sum_weight(<span class="number">1.0</span>)<span class="question-mark">?</span>,
+<a href=#933 id=933 data-nosnippet>933</a>            ProductPrimaryBeam::SavedMosaic(beam) =&gt; inputs.with_saved_mosaic_beam(beam)<span class="question-mark">?</span>,
+<a href=#934 id=934 data-nosnippet>934</a>        };
+<a href=#935 id=935 data-nosnippet>935</a>    }
+<a href=#936 id=936 data-nosnippet>936</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(frequency) = vla_selection_hz {
+<a href=#937 id=937 data-nosnippet>937</a>        inputs = inputs.with_vla_selection_frequency(frequency);
+<a href=#938 id=938 data-nosnippet>938</a>    }
+<a href=#939 id=939 data-nosnippet>939</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beams) = saved_psf_beams.as_deref() {
+<a href=#940 id=940 data-nosnippet>940</a>        inputs = inputs.with_saved_psf_beams(beams)<span class="question-mark">?</span>;
+<a href=#941 id=941 data-nosnippet>941</a>    }
+<a href=#942 id=942 data-nosnippet>942</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
+<a href=#943 id=943 data-nosnippet>943</a>        inputs = <span class="kw">match </span>masks {
+<a href=#944 id=944 data-nosnippet>944</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask),
+<a href=#945 id=945 data-nosnippet>945</a>            ReconstructionMaskSet::Domains(masks) =&gt; inputs.with_domain_reconstruction_masks(masks),
+<a href=#946 id=946 data-nosnippet>946</a>        };
+<a href=#947 id=947 data-nosnippet>947</a>    }
+<a href=#948 id=948 data-nosnippet>948</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(centres) = publication.primary_beam_centres.as_ref() {
+<a href=#949 id=949 data-nosnippet>949</a>        inputs = inputs.with_primary_beam_centres(centres);
+<a href=#950 id=950 data-nosnippet>950</a>    }
+<a href=#951 id=951 data-nosnippet>951</a>    <span class="kw">if </span>!facet_sum_weights.is_empty() {
+<a href=#952 id=952 data-nosnippet>952</a>        inputs = inputs.with_facet_sum_weights(<span class="kw-2">&amp;</span>facet_sum_weights);
 <a href=#953 id=953 data-nosnippet>953</a>    }
-<a href=#954 id=954 data-nosnippet>954</a>    <span class="comment">// The products' scratch grows with their lanes, and the gridding's
-<a href=#955 id=955 data-nosnippet>955</a>    // workers were chosen without it: the products take the most lanes, up
-<a href=#956 id=956 data-nosnippet>956</a>    // to the team's, whose demand fits what the policy leaves free (#763
-<a href=#957 id=957 data-nosnippet>957</a>    // review), and one when none does, which admission then refuses.
-<a href=#958 id=958 data-nosnippet>958</a>    </span><span class="kw">let </span>free = free_memory(<span class="kw-2">&amp;</span>runtime.host, <span class="kw-2">&amp;</span>runtime.resource_policy);
-<a href=#959 id=959 data-nosnippet>959</a>    <span class="kw">let </span>demand_on = |count: usize| -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, NativeError&gt; {
-<a href=#960 id=960 data-nosnippet>960</a>        <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, count)<span class="question-mark">?</span>;
-<a href=#961 id=961 data-nosnippet>961</a>        <span class="prelude-val">Ok</span>((
-<a href=#962 id=962 data-nosnippet>962</a>            window,
-<a href=#963 id=963 data-nosnippet>963</a>            planned.demand(<span class="kw-2">&amp;</span>inputs, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
-<a href=#964 id=964 data-nosnippet>964</a>        ))
-<a href=#965 id=965 data-nosnippet>965</a>    };
-<a href=#966 id=966 data-nosnippet>966</a>    <span class="kw">let </span>workers = team.workers();
-<a href=#967 id=967 data-nosnippet>967</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>window, <span class="kw-2">mut </span>demand) = demand_on(workers)<span class="question-mark">?</span>;
-<a href=#968 id=968 data-nosnippet>968</a>    <span class="macro">debug_assert_eq!</span>(
-<a href=#969 id=969 data-nosnippet>969</a>        planned.planned_demand(problem, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
-<a href=#970 id=970 data-nosnippet>970</a>        demand,
-<a href=#971 id=971 data-nosnippet>971</a>        <span class="string">"the products' demand before the run is the run's"
-<a href=#972 id=972 data-nosnippet>972</a>    </span>);
-<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">let </span>needed = demand.peak_residency_bytes();
-<a href=#974 id=974 data-nosnippet>974</a>    <span class="kw">if </span>needed &gt; free {
-<a href=#975 id=975 data-nosnippet>975</a>        <span class="kw">for </span>count <span class="kw">in </span>(<span class="number">1</span>..workers).rev() {
-<a href=#976 id=976 data-nosnippet>976</a>            (window, demand) = demand_on(count)<span class="question-mark">?</span>;
-<a href=#977 id=977 data-nosnippet>977</a>            <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
-<a href=#978 id=978 data-nosnippet>978</a>                <span class="kw">break</span>;
-<a href=#979 id=979 data-nosnippet>979</a>            }
-<a href=#980 id=980 data-nosnippet>980</a>        }
-<a href=#981 id=981 data-nosnippet>981</a>        <span class="kw">let </span>count = window.maximum_workers();
-<a href=#982 id=982 data-nosnippet>982</a>        <span class="kw">let </span>gigabytes = |bytes: u64| <span class="macro">format!</span>(<span class="string">"{:.2} GB"</span>, bytes <span class="kw">as </span>f64 / <span class="number">1e9</span>);
-<a href=#983 id=983 data-nosnippet>983</a>        <span class="kw">let </span>reason = <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
-<a href=#984 id=984 data-nosnippet>984</a>            <span class="macro">format!</span>(
-<a href=#985 id=985 data-nosnippet>985</a>                <span class="string">"{workers} lanes need {}, {count} fit {} free"</span>,
-<a href=#986 id=986 data-nosnippet>986</a>                gigabytes(needed),
-<a href=#987 id=987 data-nosnippet>987</a>                gigabytes(free)
-<a href=#988 id=988 data-nosnippet>988</a>            )
-<a href=#989 id=989 data-nosnippet>989</a>        } <span class="kw">else </span>{
-<a href=#990 id=990 data-nosnippet>990</a>            <span class="macro">format!</span>(
-<a href=#991 id=991 data-nosnippet>991</a>                <span class="string">"{workers} lanes need {} and no fewer fit {} free"</span>,
-<a href=#992 id=992 data-nosnippet>992</a>                gigabytes(needed),
-<a href=#993 id=993 data-nosnippet>993</a>                gigabytes(free)
-<a href=#994 id=994 data-nosnippet>994</a>            )
-<a href=#995 id=995 data-nosnippet>995</a>        };
-<a href=#996 id=996 data-nosnippet>996</a>        <span class="kw">if </span>count &lt; workers {
-<a href=#997 id=997 data-nosnippet>997</a>            <span class="macro">tracing::warn!</span>(<span class="string">"products on {count} lanes, not the team's {workers}: {reason}"</span>);
-<a href=#998 id=998 data-nosnippet>998</a>            lanes.<span class="number">1 </span>= <span class="prelude-val">Some</span>(reason);
-<a href=#999 id=999 data-nosnippet>999</a>        }
-<a href=#1000 id=1000 data-nosnippet>1000</a>    }
-<a href=#1001 id=1001 data-nosnippet>1001</a>    lanes.<span class="number">0 </span>= window.maximum_workers();
-<a href=#1002 id=1002 data-nosnippet>1002</a>    <span class="kw">let </span>held = admit(
-<a href=#1003 id=1003 data-nosnippet>1003</a>        <span class="kw-2">&amp;</span>runtime.host,
-<a href=#1004 id=1004 data-nosnippet>1004</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
-<a href=#1005 id=1005 data-nosnippet>1005</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#1006 id=1006 data-nosnippet>1006</a>            phase: <span class="string">"products"</span>,
-<a href=#1007 id=1007 data-nosnippet>1007</a>            memory: demand.peak_residency_bytes(),
-<a href=#1008 id=1008 data-nosnippet>1008</a>        },
-<a href=#1009 id=1009 data-nosnippet>1009</a>    )<span class="question-mark">?</span>;
-<a href=#1010 id=1010 data-nosnippet>1010</a>    <span class="kw">let </span>generation =
-<a href=#1011 id=1011 data-nosnippet>1011</a>        produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
-<a href=#1012 id=1012 data-nosnippet>1012</a>    <span class="prelude-val">Ok</span>((
-<a href=#1013 id=1013 data-nosnippet>1013</a>        Products {
-<a href=#1014 id=1014 data-nosnippet>1014</a>            planned,
-<a href=#1015 id=1015 data-nosnippet>1015</a>            scientific,
-<a href=#1016 id=1016 data-nosnippet>1016</a>            published: generation,
-<a href=#1017 id=1017 data-nosnippet>1017</a>        },
-<a href=#1018 id=1018 data-nosnippet>1018</a>        held,
-<a href=#1019 id=1019 data-nosnippet>1019</a>    ))
-<a href=#1020 id=1020 data-nosnippet>1020</a>}
-<a href=#1021 id=1021 data-nosnippet>1021</a>
-<a href=#1022 id=1022 data-nosnippet>1022</a><span class="attr">#[cfg(test)]
-<a href=#1023 id=1023 data-nosnippet>1023</a>#[path = <span class="string">"native/mvc_publication_law.rs"</span>]
-<a href=#1024 id=1024 data-nosnippet>1024</a></span><span class="kw">mod </span>mvc_publication_law;
+<a href=#954 id=954 data-nosnippet>954</a>    <span class="kw">let </span><span class="kw-2">mut </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
+<a href=#955 id=955 data-nosnippet>955</a>    <span class="kw">if </span>omit_uncreated_mvc_cube_model {
+<a href=#956 id=956 data-nosnippet>956</a>        planned = planned.without_uncreated_mvc_cube_model();
+<a href=#957 id=957 data-nosnippet>957</a>    }
+<a href=#958 id=958 data-nosnippet>958</a>    <span class="comment">// The products' scratch grows with their lanes, and the gridding's
+<a href=#959 id=959 data-nosnippet>959</a>    // workers were chosen without it: the products take the most lanes, up
+<a href=#960 id=960 data-nosnippet>960</a>    // to the team's, whose demand fits what the policy leaves free (#763
+<a href=#961 id=961 data-nosnippet>961</a>    // review), and one when none does, which admission then refuses.
+<a href=#962 id=962 data-nosnippet>962</a>    </span><span class="kw">let </span>free = free_memory(<span class="kw-2">&amp;</span>runtime.host, <span class="kw-2">&amp;</span>runtime.resource_policy);
+<a href=#963 id=963 data-nosnippet>963</a>    <span class="kw">let </span>demand_on = |count: usize| -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, NativeError&gt; {
+<a href=#964 id=964 data-nosnippet>964</a>        <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, count)<span class="question-mark">?</span>;
+<a href=#965 id=965 data-nosnippet>965</a>        <span class="prelude-val">Ok</span>((
+<a href=#966 id=966 data-nosnippet>966</a>            window,
+<a href=#967 id=967 data-nosnippet>967</a>            planned.demand(<span class="kw-2">&amp;</span>inputs, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
+<a href=#968 id=968 data-nosnippet>968</a>        ))
+<a href=#969 id=969 data-nosnippet>969</a>    };
+<a href=#970 id=970 data-nosnippet>970</a>    <span class="kw">let </span>workers = team.workers();
+<a href=#971 id=971 data-nosnippet>971</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>window, <span class="kw-2">mut </span>demand) = demand_on(workers)<span class="question-mark">?</span>;
+<a href=#972 id=972 data-nosnippet>972</a>    <span class="macro">debug_assert_eq!</span>(
+<a href=#973 id=973 data-nosnippet>973</a>        planned.planned_demand(problem, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
+<a href=#974 id=974 data-nosnippet>974</a>        demand,
+<a href=#975 id=975 data-nosnippet>975</a>        <span class="string">"the products' demand before the run is the run's"
+<a href=#976 id=976 data-nosnippet>976</a>    </span>);
+<a href=#977 id=977 data-nosnippet>977</a>    <span class="kw">let </span>needed = demand.peak_residency_bytes();
+<a href=#978 id=978 data-nosnippet>978</a>    <span class="kw">if </span>needed &gt; free {
+<a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">for </span>count <span class="kw">in </span>(<span class="number">1</span>..workers).rev() {
+<a href=#980 id=980 data-nosnippet>980</a>            (window, demand) = demand_on(count)<span class="question-mark">?</span>;
+<a href=#981 id=981 data-nosnippet>981</a>            <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
+<a href=#982 id=982 data-nosnippet>982</a>                <span class="kw">break</span>;
+<a href=#983 id=983 data-nosnippet>983</a>            }
+<a href=#984 id=984 data-nosnippet>984</a>        }
+<a href=#985 id=985 data-nosnippet>985</a>        <span class="kw">let </span>count = window.maximum_workers();
+<a href=#986 id=986 data-nosnippet>986</a>        <span class="kw">let </span>gigabytes = |bytes: u64| <span class="macro">format!</span>(<span class="string">"{:.2} GB"</span>, bytes <span class="kw">as </span>f64 / <span class="number">1e9</span>);
+<a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>reason = <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
+<a href=#988 id=988 data-nosnippet>988</a>            <span class="macro">format!</span>(
+<a href=#989 id=989 data-nosnippet>989</a>                <span class="string">"{workers} lanes need {}, {count} fit {} free"</span>,
+<a href=#990 id=990 data-nosnippet>990</a>                gigabytes(needed),
+<a href=#991 id=991 data-nosnippet>991</a>                gigabytes(free)
+<a href=#992 id=992 data-nosnippet>992</a>            )
+<a href=#993 id=993 data-nosnippet>993</a>        } <span class="kw">else </span>{
+<a href=#994 id=994 data-nosnippet>994</a>            <span class="macro">format!</span>(
+<a href=#995 id=995 data-nosnippet>995</a>                <span class="string">"{workers} lanes need {} and no fewer fit {} free"</span>,
+<a href=#996 id=996 data-nosnippet>996</a>                gigabytes(needed),
+<a href=#997 id=997 data-nosnippet>997</a>                gigabytes(free)
+<a href=#998 id=998 data-nosnippet>998</a>            )
+<a href=#999 id=999 data-nosnippet>999</a>        };
+<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="kw">if </span>count &lt; workers {
+<a href=#1001 id=1001 data-nosnippet>1001</a>            <span class="macro">tracing::warn!</span>(<span class="string">"products on {count} lanes, not the team's {workers}: {reason}"</span>);
+<a href=#1002 id=1002 data-nosnippet>1002</a>            lanes.<span class="number">1 </span>= <span class="prelude-val">Some</span>(reason);
+<a href=#1003 id=1003 data-nosnippet>1003</a>        }
+<a href=#1004 id=1004 data-nosnippet>1004</a>    }
+<a href=#1005 id=1005 data-nosnippet>1005</a>    lanes.<span class="number">0 </span>= window.maximum_workers();
+<a href=#1006 id=1006 data-nosnippet>1006</a>    <span class="kw">let </span>held = admit(
+<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw-2">&amp;</span>runtime.host,
+<a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
+<a href=#1009 id=1009 data-nosnippet>1009</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#1010 id=1010 data-nosnippet>1010</a>            phase: <span class="string">"products"</span>,
+<a href=#1011 id=1011 data-nosnippet>1011</a>            memory: demand.peak_residency_bytes(),
+<a href=#1012 id=1012 data-nosnippet>1012</a>        },
+<a href=#1013 id=1013 data-nosnippet>1013</a>    )<span class="question-mark">?</span>;
+<a href=#1014 id=1014 data-nosnippet>1014</a>    <span class="kw">let </span>generation =
+<a href=#1015 id=1015 data-nosnippet>1015</a>        produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
+<a href=#1016 id=1016 data-nosnippet>1016</a>    <span class="prelude-val">Ok</span>((
+<a href=#1017 id=1017 data-nosnippet>1017</a>        Products {
+<a href=#1018 id=1018 data-nosnippet>1018</a>            planned,
+<a href=#1019 id=1019 data-nosnippet>1019</a>            scientific,
+<a href=#1020 id=1020 data-nosnippet>1020</a>            published: generation,
+<a href=#1021 id=1021 data-nosnippet>1021</a>        },
+<a href=#1022 id=1022 data-nosnippet>1022</a>        held,
+<a href=#1023 id=1023 data-nosnippet>1023</a>    ))
+<a href=#1024 id=1024 data-nosnippet>1024</a>}
+<a href=#1025 id=1025 data-nosnippet>1025</a>
+<a href=#1026 id=1026 data-nosnippet>1026</a><span class="attr">#[cfg(test)]
+<a href=#1027 id=1027 data-nosnippet>1027</a>#[path = <span class="string">"native/mvc_publication_law.rs"</span>]
+<a href=#1028 id=1028 data-nosnippet>1028</a></span><span class="kw">mod </span>mvc_publication_law;
 </code></pre></div></section></main></body></html>
