@@ -117,6 +117,8 @@ pub struct MinorCycleSetup<'a> {
     /// CASA's flat-noise or flat-sky residual units, for a direction-dependent
     /// response (mosaic, A-projection).
     pub response: Option<MinorCycleImageResponse>,
+    /// Whether the current Taylor residual was read in its saved image units.
+    pub saved_taylor_residual: bool,
     /// The `nsigma` multiplier; zero when off.
     pub nsigma: f64,
     /// How the `nsigma` threshold's noise is estimated (`fastnoise`).
@@ -1170,6 +1172,9 @@ fn read_taylor(
             term.iter()
                 .enumerate()
                 .map(|(index, value)| {
+                    if setup.saved_taylor_residual {
+                        return Ok(value.re);
+                    }
                     bound.normalize_weighted_residual_sample(
                         value.re,
                         index,
@@ -1230,6 +1235,9 @@ fn taylor_principal_residual(
         .iter()
         .enumerate()
         .map(|(index, value)| {
+            if setup.saved_taylor_residual {
+                return Ok(value.re);
+            }
             bound.normalize_weighted_residual_sample(
                 value.re,
                 index,

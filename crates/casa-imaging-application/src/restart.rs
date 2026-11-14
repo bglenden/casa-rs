@@ -177,7 +177,6 @@ pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
                 } else {
                     terms == 2
                         && request.restoration
-                        && request.niter == 0
                         && request.savemodel == crate::SaveModel::None
                         && !request.pbcor
                 }

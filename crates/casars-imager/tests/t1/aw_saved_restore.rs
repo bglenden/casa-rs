@@ -178,3 +178,97 @@ fn aw_saved_taylor_alpha_uses_a_user_named_default_residual_mask() {
         );
     }
 }
+
+/// CASA cleans the saved residual in image units before the first major
+/// cycle, then predicts from the PB-corrected model. A threshold stop
+/// before that major cycle preserves the original residuals.
+#[test]
+fn aw_mtmfs_cleans_saved_residuals_before_its_first_major_cycle() {
+    let (observation, mut controls) = two_term_aw_restart();
+    let (_, dirty) = observation.image("aw", controls.clone());
+    let (_, standard) = observation.image(
+        "standard",
+        json!({
+            "spw": "0,1", "gridder": "standard", "deconvolver": "mtmfs",
+            "nterms": 2, "scales": [0], "reffreq": "1.45GHz", "niter": 0
+        }),
+    );
+    let centre = observation.geometry().pixel(super::CENTRE);
+    let target = [centre[0] + 34, centre[1] - 20];
+    let seed = [centre[0] - 28, centre[1] + 26];
+    for pixel in [target, seed] {
+        let pb = dirty.get(".pb.tt0").pixels[pixel];
+        assert!((0.2..0.95).contains(&pb), "off-axis fixture PB is {pb}");
+    }
+    let hessian = [0, 1, 2].map(|term| {
+        let suffix = format!(".psf.tt{term}");
+        fs::remove_dir_all(observation.scratch(&format!("aw{suffix}"))).unwrap();
+        fs::rename(
+            observation.scratch(&format!("standard{suffix}")),
+            observation.scratch(&format!("aw{suffix}")),
+        )
+        .unwrap();
+        f64::from(standard.get(&suffix).pixels[centre])
+    });
+    let [a, b, c] = hessian;
+    let component = [0.75_f64, -0.25];
+    let saved_residual = [
+        (a * component[0] + b * component[1]) / a,
+        (b * component[0] + c * component[1]) / a,
+    ];
+    let saved_model = [0.3_f32, -0.125];
+    let mut residuals = Vec::new();
+    for term in 0..2 {
+        let path = observation.scratch(&format!("aw.residual.tt{term}"));
+        let mut residual = PagedImage::<f32>::open(&path).unwrap();
+        let shape = residual.shape();
+        let mut pixels = ndarray::ArrayD::zeros(ndarray::IxDyn(shape));
+        pixels[[target[0], target[1], 0, 0]] = saved_residual[term] as f32;
+        residual.put_slice(&pixels, &[0; 4]).unwrap();
+        residual.save().unwrap();
+        residuals.push((snapshot(&path), path));
+
+        let mut model =
+            PagedImage::<f32>::open(observation.scratch(&format!("aw.model.tt{term}"))).unwrap();
+        model
+            .put_slice(
+                &Array4::from_elem((1, 1, 1, 1), saved_model[term]).into_dyn(),
+                &[seed[0], seed[1], 0, 0],
+            )
+            .unwrap();
+        model.save().unwrap();
+    }
+    let saved_psf = observation.scratch("aw.psf.tt0");
+    let psf_before = snapshot(&saved_psf);
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    controls["niter"] = json!(1);
+    controls["threshold"] = json!("2Jy");
+    let (stopped, _) = observation.image("aw", controls.clone());
+    assert_eq!((stopped.minor_iterations, stopped.major_cycles), (0, 0));
+    for (bytes, path) in &residuals {
+        assert_unchanged(bytes, &snapshot(path));
+    }
+
+    controls["threshold"] = json!("0.25Jy");
+    controls["gain"] = json!(0.1);
+    let (report, cleaned) = observation.image("aw", controls);
+    assert_eq!((report.minor_iterations, report.major_cycles), (1, 1));
+    for term in 0..2 {
+        let image = cleaned.get(&format!(".model.tt{term}"));
+        let expected = 0.1 * component[term];
+        let actual = f64::from(image.pixels[target]);
+        assert!(
+            (actual - expected).abs() < 2e-6,
+            "term {term}: {actual} vs {expected}"
+        );
+        assert!((image.pixels[seed] - saved_model[term]).abs() < 2e-6);
+        let (before, path) = &residuals[term];
+        assert_ne!(
+            *before,
+            snapshot(path),
+            "term {term}: residual was not refreshed"
+        );
+    }
+    assert_unchanged(&psf_before, &snapshot(&saved_psf));
+}

@@ -285,12 +285,23 @@ pub(crate) fn prepare(
         publication.controls = publication
             .controls
             .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
-        if let Some(bytes) = existing.taylor_mask_read_bytes() {
-            publication.controls = publication.controls.preserving_taylor_residuals(bytes);
-        }
     }
     publication.controls.validate_for_problem(problem)?;
-    let products = products_floor(problem, &publication)?;
+    let saved_controls = input
+        .existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::taylor_mask_read_bytes)
+        .map(|bytes| publication.controls.preserving_taylor_residuals(bytes));
+    let products = if let Some(saved) = saved_controls {
+        let saved_bytes = products_floor(problem, &publication, saved)?;
+        if problem.reconstruction().controls().max_minor_iterations() == 0 {
+            saved_bytes
+        } else {
+            saved_bytes.max(products_floor(problem, &publication, publication.controls)?)
+        }
+    } else {
+        products_floor(problem, &publication, publication.controls)?
+    };
     let measures = input
         .psf_view
         .as_ref()
@@ -436,7 +447,7 @@ pub(crate) fn run(
             separate_psf,
             masks,
             start_model,
-            existing,
+            existing: existing.clone(),
             forms,
             image_response,
             primary_beam,
@@ -492,7 +503,7 @@ pub(crate) fn run(
                     cube_model_created,
                 },
                 &runtime,
-                publication,
+                publication_after_cycles(publication, existing.as_ref(), outcome.major_cycle_count),
                 team,
                 &mut published,
                 &mut lanes,
@@ -676,18 +687,33 @@ struct ProductSource<'a> {
     primary_beam: Option<ProductPrimaryBeam<'a>>,
 }
 
+/// A run that stopped before its first major cycle still holds the saved
+/// Taylor residual and its model in image units.
+fn publication_after_cycles(
+    mut publication: ApplicationPublication,
+    existing: Option<&crate::restart::ExistingProducts>,
+    major_cycles: usize,
+) -> ApplicationPublication {
+    if major_cycles == 0
+        && let Some(bytes) =
+            existing.and_then(crate::restart::ExistingProducts::taylor_mask_read_bytes)
+    {
+        publication.controls = publication.controls.preserving_taylor_residuals(bytes);
+    }
+    publication
+}
+
 /// What `problem`'s products hold on one lane, before the run
 /// (`PlannedContinuumGeneration::planned_demand`): the least they can run
 /// on, which the run's setup fits beside it.
 fn products_floor(
     problem: &CompiledProblem,
     publication: &ApplicationPublication,
+    controls: casa_imaging_products::ContinuumProductControls,
 ) -> Result<u64, NativeError> {
-    Ok(
-        PlannedContinuumGeneration::for_problem(problem, &publication.controls)?
-            .planned_demand(problem, ProductStoragePlan::new(1, 1)?, &publication.writer)?
-            .peak_residency_bytes(),
-    )
+    Ok(PlannedContinuumGeneration::for_problem(problem, &controls)?
+        .planned_demand(problem, ProductStoragePlan::new(1, 1)?, &publication.writer)?
+        .peak_residency_bytes())
 }
 
 /// Generate every planned product member into the writer's private staging,
