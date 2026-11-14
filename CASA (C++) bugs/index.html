@@ -6175,6 +6175,33 @@ ordinary CASA references. These controls agree with native prediction at
 5.4e-7 NRMS in the J2000 case, without changing the 1e-3 threshold. Reproduce
 a frequency control with <code>sm_image_layouts_oracle.py --case
 frame_j2000_mosaic --constant-frequency 210000000000 --out OUT --fixture FILE</code>.</p>
+<h2 id="mvc-restoration-can-drop-a-newly-generated-higher-term-residual-mask">MVC restoration can drop a newly generated higher-term residual mask<a class="headerlink" href="#mvc-restoration-can-drop-a-newly-generated-higher-term-residual-mask" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, seed standard, two-term MVC on field 0 of
+<code>refim_oneshiftpoint.mosaic.ms</code> with 512 pixels per axis, 10 arcsec cells,
+three channels and <code>pblimit=0.1</code>. Remove both saved Taylor residual
+default masks, scale the residual planes independently, and set a 50 Jy
+off-axis pixel in term zero. Resume with <code>calcpsf=False, calcres=False</code>,
+five iterations and a 2 Jy threshold.</p>
+<p>The first major cycle replaces both Taylor residual tables and their
+masks in <code>PyMtmfsViaCubeSynthesisImager.cube2tt</code>. Tracing table identity
+and mask support shows 62,955 valid pixels on both terms immediately
+before <code>SDAlgorithmMSMFS::restore</code>. After restoration, term one's table
+header has been replaced again and its default mask is absent. Term
+zero retains all 62,955 valid pixels. The restored term one likewise
+has no mask. Restoration is meant to copy each residual's mask to its
+image and preserve the underlying residual. The observed mask loss
+occurs during restoration after the Python helper has recreated tables
+that the minor cycle also accesses.</p>
+<p>casa-rs retains the freshly generated residual mask and copies its
+support to the corresponding restored image. The masked and unmasked
+initial convergence controls follow CASA's saved term-zero mask,
+including all valid pixels when that initial mask is absent. The
+additional both-unmasked probe agrees on the controller and numeric
+products. Only the two term-one masks differ, by 199,189 pixels. Reinstating
+just those masks in CASA after restoration gives all 24 products,
+exact masks and a maximum normalized RMS of 8.309e-6.
+See <a href="https://github.com/bglenden/casa-rs/issues/944">#944</a> and
+<a href="https://github.com/bglenden/casa-rs/pull/1414">#1414</a>.</p>
 <h2 id="simulator-component-list-copies-lose-the-limb-darkening-exponent">Simulator component-list copies lose the limb-darkening exponent<a class="headerlink" href="#simulator-component-list-copies-lose-the-limb-darkening-exponent" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 accepts a limb-darkened disk through a component record/table.
 <code>ComponentList::readTable</code> applies <code>Optional_Parameters</code> to its shape, but
