@@ -421,6 +421,7 @@ fn aw_multichannel_sampling_supported(
             output != Rest || (source == Topocentric && weighting == WeightingScheme::Natural)
         }
         SpectralKernel::Cubic => match (source, output) {
+            (Topocentric, Rest) => weighting == WeightingScheme::Natural,
             (Topocentric | Barycentric, Topocentric | Barycentric) => tracked && common_weighting,
             (Lsrk | Topocentric | Barycentric, Lsrk) | (Lsrk, Topocentric | Barycentric) => {
                 common_weighting
@@ -578,13 +579,16 @@ mod tests {
                             true,
                             weighting
                         ),
-                        supported
-                            && if source == Lsrk {
-                                matches!(output, Lsrk | Topocentric | Barycentric)
-                            } else {
-                                matches!(source, Topocentric | Barycentric)
-                                    && matches!(output, Lsrk | Topocentric | Barycentric)
-                            },
+                        match (source, output) {
+                            (Topocentric, Rest) => weighting == WeightingScheme::Natural,
+                            (
+                                Lsrk | Topocentric | Barycentric,
+                                Lsrk | Topocentric | Barycentric,
+                            ) => {
+                                supported
+                            }
+                            _ => false,
+                        },
                         "cubic from {source:?} to {output:?} with {weighting:?}",
                     );
                 }

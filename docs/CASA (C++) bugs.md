@@ -4585,6 +4585,15 @@ resamples the native residual, and restores with CASA. All 17 products
 and 12 beams agree with exact masks and controller counts. Maximum
 product normalized RMS is 3.29e-7 and MODEL_DATA is 3.54e-7 (#1121).
 
+The same native-ordinal problem affects an eight-plane REST cube with
+cubic interpolation. The 20-channel VLA fixture selects channels 3–14
+and asks for a 1.275 GHz start and 50.01 MHz spacing. The frame-initialized
+CASA AW run differs by 0.191 in PSF normalized RMS and 0.549 in residual
+normalized RMS. The CASA GridFT capture and wavelength-preserving
+same-cache replay agree on all 17 dirty and cleaned products and 48 beams.
+Masks and controller counts match exactly. Maximum product normalized
+RMS is 4.30e-5 and stored-channel MODEL_DATA is 1.82e-6 (#1121).
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
