@@ -320,7 +320,7 @@
 <a href=#320 id=320 data-nosnippet>320</a>        request,
 <a href=#321 id=321 data-nosnippet>321</a>        <span class="kw-2">&amp;mut </span>domains[<span class="number">0</span>],
 <a href=#322 id=322 data-nosnippet>322</a>        (spectral.output_channels, reconstruction_planes),
-<a href=#323 id=323 data-nosnippet>323</a>        mvc_taylor.as_ref().is_some_and(|view| view.start.is_some()),
+<a href=#323 id=323 data-nosnippet>323</a>        mvc_taylor.as_ref().and_then(|view| view.start.as_ref()),
 <a href=#324 id=324 data-nosnippet>324</a>        context,
 <a href=#325 id=325 data-nosnippet>325</a>        <span class="kw-2">&amp;mut </span>deployment.publication.writer,
 <a href=#326 id=326 data-nosnippet>326</a>    )<span class="question-mark">?</span>;

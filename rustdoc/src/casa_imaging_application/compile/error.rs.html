@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">pub enum </span>PrepareError {
 <a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// The initial MVC execution cannot honour this run's controls yet.
 <a href=#24 id=24 data-nosnippet>24</a>    </span><span class="attr">#[error(
-<a href=#25 id=25 data-nosnippet>25</a>        <span class="string">"MVC supports fresh imaging, or standard-gridder continuation with two Taylor start models and saved primary beams, from one selected MeasurementSet with LSRK coordinates, up to two fields for squinted AWP2 or one field for the other modes, no model-column or virtual-model writes, and a user box or full mask; cleaning requires nsigma=0 and spatial-only user boxes (#1069)"
+<a href=#25 id=25 data-nosnippet>25</a>        <span class="string">"MVC supports fresh imaging, or standard-gridder CLEAN continuation with recalculated PSF and residual, from one selected MeasurementSet with LSRK coordinates, up to two fields for squinted AWP2 or one field for the other modes, no model-column or virtual-model writes, and a user box or full mask; cleaning requires nsigma=0 and spatial-only user boxes (#1069)"
 <a href=#26 id=26 data-nosnippet>26</a>    </span>)]
 <a href=#27 id=27 data-nosnippet>27</a>    </span>MvcExecutionUnsupported,
 <a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// The additional MVC view is not yet bounded for this configuration.
