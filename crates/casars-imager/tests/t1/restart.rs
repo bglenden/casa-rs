@@ -788,6 +788,8 @@ fn same_prefix_restart_reuses_each_fields_model_and_outlier_mask() {
     }
     assert!(changed > 0.005, "the outlier did not CLEAN: {changed}");
 
+    check_saved_outlier_psfs(&directory, &values, field_beam);
+
     // An outlier may already exist when the new main image has never run.
     let mut outlier_only = values.clone();
     outlier_only["imagename"] = json!("new-main");
@@ -808,6 +810,129 @@ fn same_prefix_restart_reuses_each_fields_model_and_outlier_mask() {
         reply => panic!("incompatible outlier should fail before publication: {reply:?}"),
     }
     assert_unchanged(&before, &snapshot(&directory));
+}
+
+/// Saved outlier sums scale their own residual, and absent inputs leave
+/// all earlier products in place.
+fn check_saved_outlier_psfs(
+    directory: &Path,
+    values: &serde_json::Value,
+    field_beam: casa_images::GaussianBeam,
+) {
+    let mut values = values.clone();
+    values["niter"] = json!(0);
+    let dirty = |values: &serde_json::Value| {
+        let reply = json_run(directory, values.clone());
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    };
+    dirty(&values);
+    let read = |name: &str| super::fixture::Product::open(&directory.join(name));
+    let expected = read("field.residual").values();
+
+    let mut sum = PagedImage::<f32>::open(directory.join("field.sumwt")).unwrap();
+    let doubled = sum.get().unwrap().mapv(|v| 2.0 * v);
+    sum.put_slice(&doubled, &[0; 4]).unwrap();
+    sum.save().unwrap();
+    drop(sum);
+    let mut pb = PagedImage::<f32>::open(directory.join("field.pb")).unwrap();
+    let pixels = pb.get().unwrap().mapv(|v| v * 0.8);
+    pb.put_slice(&pixels, &[0; 4]).unwrap();
+    pb.save().unwrap();
+    drop(pb);
+    let names = ["main", "field"]
+        .into_iter()
+        .flat_map(|field| {
+            ["psf", "sumwt", "pb"].map(move |suffix| directory.join(format!("{field}.{suffix}")))
+        })
+        .collect::<Vec<_>>();
+    let stable = |path: &Path| {
+        let mut files = snapshot(path);
+        files.retain(|path, _| !path.components().any(|part| part.as_os_str() == "logtable"));
+        files
+    };
+    let saved = names.iter().map(|path| stable(path)).collect::<Vec<_>>();
+    values["calcpsf"] = json!(false);
+    let missing = directory.join("field.sumwt");
+    let held = directory.join("saved-outlier-sums");
+    fs::rename(&missing, &held).unwrap();
+    let before = snapshot(directory);
+    match json_run_with(directory, values.clone(), true) {
+        TaskReply::Failed { message, .. } => assert!(message.contains("field.sumwt"), "{message}"),
+        reply => panic!("missing outlier sumwt was accepted: {reply:?}"),
+    }
+    assert_unchanged(&before, &snapshot(directory));
+    fs::rename(&held, &missing).unwrap();
+
+    dirty(&values);
+    for (path, files) in names.iter().zip(saved) {
+        assert_unchanged(&files, &stable(path));
+    }
+    assert_eq!(read("field.image").restoring_beam(), field_beam);
+    let actual = read("field.residual").values();
+    let peak = expected.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+    assert!(peak > 0.01);
+    let error = expected
+        .iter()
+        .zip(&actual)
+        .map(|(a, b)| (0.5 * a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(error <= 1e-6 * peak, "saved outlier sumwt: {error}/{peak}");
+    check_outlier_psf_edges(directory, values, field_beam);
+}
+
+fn check_outlier_psf_edges(
+    directory: &Path,
+    mut values: serde_json::Value,
+    field_beam: casa_images::GaussianBeam,
+) {
+    let psf_path = directory.join("field.psf");
+    let pixels = super::fixture::Product::open(&psf_path).values();
+    let set_beam = |beams| {
+        let mut image = PagedImage::<f32>::open(&psf_path).unwrap();
+        let mut info = image.image_info().unwrap();
+        info.beam_set = beams;
+        image.set_image_info(&info).unwrap();
+        image.save().unwrap();
+    };
+    set_beam(casa_images::ImageBeamSet::default());
+    values["niter"] = json!(1);
+    values["threshold"] = json!("100Jy");
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(directory, values.clone());
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+        let image = super::fixture::Product::open(&psf_path);
+        assert_eq!(image.values(), pixels);
+        image.restoring_beam()
+    };
+    let default = run(&values);
+    set_beam(casa_images::ImageBeamSet::default());
+    values["psfcutoff"] = json!(0.8);
+    assert_eq!(
+        run(&values),
+        default,
+        "unlabelled outlier PSF uses the default beam fit"
+    );
+
+    let mut sum = PagedImage::<f32>::open(directory.join("field.sumwt")).unwrap();
+    let saved = sum.get().unwrap();
+    sum.put_slice(&saved.mapv(|_| 0.0), &[0; 4]).unwrap();
+    sum.save().unwrap();
+    drop(sum);
+    let before = snapshot(directory);
+    match json_run(directory, values) {
+        TaskReply::Failed { message, .. } => {
+            assert!(
+                message.contains("field.sumwt") && message.contains("nonpositive"),
+                "{message}"
+            );
+        }
+        reply => panic!("an unfilled outlier sumwt should be refused: {reply:?}"),
+    }
+    assert_unchanged(&before, &snapshot(directory));
+    let mut sum = PagedImage::<f32>::open(directory.join("field.sumwt")).unwrap();
+    sum.put_slice(&saved, &[0; 4]).unwrap();
+    sum.save().unwrap();
+    set_beam(casa_images::ImageBeamSet::new(field_beam));
 }
 
 /// CASA blanks a shared sky component in earlier fields for prediction

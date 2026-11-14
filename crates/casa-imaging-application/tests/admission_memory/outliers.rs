@@ -43,6 +43,17 @@ fn outlier_restart_seed_stays_within_admission() {
     let measured = check(&mut breaches, "saved outlier models", &resumed, 1, AMPLE);
     assert!(breaches.is_empty(), "{}", breaches.join("\n"));
     assert_eq!(measured.outcome.unwrap().major_cycle_count, 1);
+    let mut saved_psf = resumed.clone();
+    saved_psf.calcpsf = false;
+    OUTLIER_READ_BYTES.store(0, Ordering::Relaxed);
+    let measured = check(&mut breaches, "saved outlier PSFs", &saved_psf, 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    assert_eq!(measured.outcome.unwrap().major_cycle_count, 1);
+    let outlier_admitted = OUTLIER_READ_BYTES.load(Ordering::Relaxed);
+    assert!(
+        outlier_admitted >= 12 * 1280 * 1280,
+        "outlier PSF and residual read held only {outlier_admitted} admitted bytes"
+    );
     let admitted = SEED_BYTES.load(Ordering::Relaxed);
     // The current direct reader holds a Float32 input and emitted samples
     // of the largest domain together, beside the new model generation.
@@ -65,4 +76,29 @@ pub(super) fn record_seed(event: &tracing::Event<'_>) {
         fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
     }
     event.record(&mut Seed);
+}
+
+static OUTLIER_READ_BYTES: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn record_read(event: &tracing::Event<'_>) {
+    #[derive(Default)]
+    struct Read {
+        domain: u64,
+        admitted: u64,
+    }
+    impl tracing::field::Visit for Read {
+        fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+            match field.name() {
+                "domain" => self.domain = value,
+                "admitted_bytes" => self.admitted = value,
+                _ => {}
+            }
+        }
+        fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+    }
+    let mut read = Read::default();
+    event.record(&mut read);
+    if read.domain == 1 {
+        OUTLIER_READ_BYTES.store(read.admitted, Ordering::Relaxed);
+    }
 }

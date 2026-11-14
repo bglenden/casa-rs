@@ -290,6 +290,15 @@ pub(crate) fn prepare(
             .controls
             .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
     }
+    if !input.forms.psf && !input.outlier_psfs.is_empty() {
+        publication.controls = publication.controls.preserving_saved_psfs(
+            input
+                .existing
+                .iter()
+                .chain(input.outlier_psfs.iter().flatten())
+                .any(|saved| saved.psf_beams().is_none()),
+        );
+    }
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()
         == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam;
@@ -382,6 +391,19 @@ impl SavedBeams {
     }
 }
 
+fn saved_outlier_products(
+    forms: imaging::Forms,
+    outliers: Vec<Option<crate::restart::ExistingProducts>>,
+) -> Vec<crate::restart::ExistingProducts> {
+    if forms.psf {
+        return Vec::new();
+    }
+    outliers
+        .into_iter()
+        .map(|products| products.expect("checked saved outlier products"))
+        .collect()
+}
+
 fn saved_psf_controls(
     mut publication: ApplicationPublication,
     forms: imaging::Forms,
@@ -438,7 +460,8 @@ pub(crate) fn run(
     } = SavedBeams::read(existing.as_ref(), &outlier_psfs);
     // An unlabelled saved PSF is fitted by getBeamSet's default cutoff at
     // minor-cycle initialization. Publication must reuse that fit's cutoff.
-    let publication = saved_psf_controls(publication, forms, psf_beams.is_none(), problem)?;
+    let missing_beam = psf_beams.is_none() || outlier_psf_beams.iter().any(Option::is_none);
+    let publication = saved_psf_controls(publication, forms, missing_beam, problem)?;
     let vla_selection_hz = publication
         .vla_selection_store
         .map(|store| vla_selection_frequency(problem, &route, store));
@@ -493,6 +516,7 @@ pub(crate) fn run(
             masks,
             start_model,
             outlier_models,
+            outlier_products: saved_outlier_products(forms, outlier_psfs),
             existing: existing.clone(),
             forms,
             image_response,

@@ -245,7 +245,7 @@ fn read_domain(
         && request.usemask == UseMask::AutoMultithresh
         && request.niter > 0
         && restart::product_path(&request.imagename, &residual_name).exists();
-    if (is_main && !request.calcpsf) || residual || mask_beam || psf_beam {
+    if !request.calcpsf || residual || mask_beam || psf_beam {
         let weight = is_main && restart::reuses_direction_dependent_psf(request);
         let mut existing = ExistingProducts::new(
             &domain.output,

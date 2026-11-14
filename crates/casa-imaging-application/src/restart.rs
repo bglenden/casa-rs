@@ -150,8 +150,8 @@ fn supports_outlier_restart(request: &ImagingRequest) -> bool {
         && request.weighting == crate::Weighting::Natural
         && request.stokes == [crate::PolarizationCoordinate::StokesI]
         && request.usemask == UseMask::User
-        && request.calcpsf
         && request.calcres
+        && (request.calcpsf || (request.savemodel == crate::SaveModel::None && !request.pbcor))
 }
 
 pub(crate) fn supports_saved_automask(request: &ImagingRequest) -> bool {
@@ -289,7 +289,9 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         );
     }
     let unsupported = match &request.gridder {
-        _ if request.outlierfile.is_some() => Some("with outlier fields"),
+        _ if request.outlierfile.is_some() && !supports_outlier_restart(request) => {
+            Some("with outlier fields")
+        }
         Gridder::Standard { facets } | Gridder::Wproject { facets, .. } if facets.get() > 1 => {
             Some("with facets")
         }
@@ -318,16 +320,7 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             .find(|path| !continuing || !path.exists())
     };
     if !request.calcpsf {
-        for base in ["psf", "sumwt"] {
-            if let Some(path) = missing(base) {
-                return refuse(
-                    path,
-                    "calcpsf=False reads the PSF and sums of weights an earlier run left at \
-                     imagename, and this one does not exist"
-                        .into(),
-                );
-            }
-        }
+        check_saved_psf(&request.imagename, family, continuing)?;
     }
     if reuses_direction_dependent_psf(request) {
         for base in ["weight", "pb"] {
@@ -357,6 +350,27 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             }
             .into(),
         );
+    }
+    Ok(())
+}
+
+fn check_saved_psf(prefix: &Path, family: Family, continuing: bool) -> Result<(), PrepareError> {
+    for base in ["psf", "sumwt"] {
+        if let Some(path) = family
+            .names(base)
+            .into_iter()
+            .map(|name| product_path(prefix, &name))
+            .find(|path| !continuing || !path.exists())
+        {
+            return Err(PrepareError::Restart {
+                path,
+                reason: concat!(
+                    "calcpsf=False reads the PSF and sums of weights an earlier run left at ",
+                    "imagename, and this one does not exist"
+                )
+                .into(),
+            });
+        }
     }
     Ok(())
 }

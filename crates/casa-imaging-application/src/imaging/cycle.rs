@@ -78,6 +78,7 @@ pub(crate) struct ImagingInputs<'a> {
     /// model from.
     pub(crate) start_model: Option<StartModel>,
     pub(crate) outlier_models: Vec<Option<StartModel>>,
+    pub(crate) outlier_products: Vec<ExistingProducts>,
     /// The PSF, sums of weights and residual an earlier run left, which the
     /// run reads where it does not form them.
     pub(crate) existing: Option<ExistingProducts>,
@@ -183,6 +184,7 @@ struct Run<'a> {
     /// the initial pass grids the residual of its prediction.
     start_model: Option<StartModel>,
     outlier_models: Vec<Option<StartModel>>,
+    outlier_products: Vec<ExistingProducts>,
     /// The flat-noise response the start model is made physical with,
     /// after an initial pass without it has formed the weights
     /// ([`seeding`]); `None` when it is physical already.
@@ -776,6 +778,7 @@ impl<'a> Run<'a> {
             lifecycle,
             start_model: inputs.start_model,
             outlier_models: inputs.outlier_models,
+            outlier_products: inputs.outlier_products,
             reseed,
             existing: inputs.existing,
             forms: inputs.forms,

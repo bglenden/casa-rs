@@ -308,6 +308,10 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PhaseRecorder {
             outliers::record_seed(event);
             return;
         }
+        if event.metadata().target() == "casa_imaging::saved_products" {
+            outliers::record_read(event);
+            return;
+        }
         if event.metadata().target() != casa_imaging_runtime::STAGE_TIMING {
             return;
         }
