@@ -57,6 +57,7 @@ impl ImagePlane {
         pointing: [f64; 2],
         angle: f64,
         frequency: f64,
+        frame: Option<&casa_types::measures::MeasFrame>,
     ) -> Result<DirectionCoordinate, super::PredictError> {
         let source = model.direction_coordinate();
         let increment = self.direction.increment();
@@ -68,7 +69,10 @@ impl ImagePlane {
         Ok(DirectionCoordinate::new(
             source.direction_ref(),
             source.projection().clone(),
-            model.native_pointing(pointing)?,
+            frame.map_or_else(
+                || model.native_pointing(pointing),
+                |frame| model.native_pointing_with_frame(pointing, frame),
+            )?,
             increments,
             [pixel[0], pixel[1]],
         )
@@ -102,16 +106,20 @@ impl JonesImage {
         images: Vec<ndarray::Array2<f32>>,
         pointing: [f64; 2],
         angle: f64,
+        frame: Option<&casa_types::measures::MeasFrame>,
     ) -> Result<Vec<ndarray::Array2<f32>>, super::PredictError> {
         let frequency = model.plane_frequency_hz(plane);
         let real = self
             .real
             .value
-            .image_coordinate(model, pointing, angle, frequency)?;
+            .image_coordinate(model, pointing, angle, frequency, frame)?;
         let imaginary = self
             .imaginary
             .as_ref()
-            .map(|v| v.value.image_coordinate(model, pointing, angle, frequency))
+            .map(|v| {
+                v.value
+                    .image_coordinate(model, pointing, angle, frequency, frame)
+            })
             .transpose()?;
         let [nx, ny] = model.shape();
         let mut output: Vec<_> = (0..4).map(|_| ndarray::Array2::zeros((ny, nx))).collect();

@@ -55,6 +55,22 @@ mod jones_mosaic;
 mod model;
 mod single_dish;
 
+pub(crate) fn fixed_direction_frame(
+    reference: casa_types::measures::direction::DirectionRef,
+) -> bool {
+    use casa_types::measures::direction::DirectionRef;
+    matches!(
+        reference,
+        DirectionRef::J2000
+            | DirectionRef::B1950
+            | DirectionRef::B1950Vla
+            | DirectionRef::GALACTIC
+            | DirectionRef::ICRS
+            | DirectionRef::SUPERGAL
+            | DirectionRef::ECLIPTIC
+    )
+}
+
 pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
 pub(crate) use components::{
@@ -359,6 +375,7 @@ impl ModelOperator {
         image: &image_beam::ImageBeam,
         pointing: [f64; 2],
         angle: f64,
+        frame: Option<&casa_types::measures::MeasFrame>,
         team: &WorkerTeam,
     ) -> Result<PreparedModelGrids, PredictError> {
         let mut grids = self.operator.empty_model_grids(self.planes())?;
@@ -374,6 +391,7 @@ impl ModelOperator {
                 model.read_polarizations(plane)?,
                 pointing,
                 angle,
+                frame,
             )?;
             self.operator
                 .fill_model_plane(&ModelPlane { images }, None, target)?;

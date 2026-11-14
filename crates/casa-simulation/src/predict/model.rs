@@ -101,8 +101,16 @@ impl SkyModel {
     }
 
     pub(super) fn native_pointing(&self, pointing: [f64; 2]) -> Result<[f64; 2], PredictError> {
+        self.native_pointing_with_frame(pointing, &self.frame)
+    }
+
+    pub(super) fn native_pointing_with_frame(
+        &self,
+        pointing: [f64; 2],
+        frame: &MeasFrame,
+    ) -> Result<[f64; 2], PredictError> {
         let (ra, dec) = MDirection::from_angles(pointing[0], pointing[1], DirectionRef::J2000)
-            .convert_to(self.tangent.refer(), &self.frame)
+            .convert_to(self.tangent.refer(), frame)
             .map_err(|e| casa_coordinates::CoordinateError::ConversionFailed(e.to_string()))?
             .as_angles();
         Ok([ra, dec])
@@ -334,9 +342,13 @@ impl SkyModel {
                 })?
                 .as_angles()
         };
+        self.pixel_of_native([direction.0, direction.1])
+    }
+
+    pub(super) fn pixel_of_native(&self, direction: [f64; 2]) -> Result<[f64; 2], PredictError> {
         let pixel = self.coordinates.to_pixel(&[
-            direction.0,
-            direction.1,
+            direction[0],
+            direction[1],
             self.coordinates.coordinate(1).to_world(&[0.])?[0],
             self.first_spectral_world,
         ])?;

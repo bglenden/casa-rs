@@ -262,9 +262,10 @@ struct FieldModel {
 struct ImageBeamModel {
     model: SkyModel,
     image: crate::predict::image_beam::ImageBeam,
-    centres: Vec<(image_beams::BeamFieldKey, f64)>,
+    centres: Vec<image_beams::BeamCentre>,
     visits: Vec<image_beams::BeamVisit>,
     timed: bool,
+    observer_position_itrf_m: Option<[f64; 3]>,
 }
 
 /// Where the grids of a field come from: a set prepared at `predict`, or
@@ -691,29 +692,14 @@ impl Simulator {
         selected_beam: Option<&super::voltage_patterns::ResolvedBeam>,
         phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     ) -> SimulatorResult<Prediction> {
-        use casa_types::measures::direction::DirectionRef;
         let beam = selected_beam.map(|beam| &beam.pattern);
         let transformed_beam = self.transformed_image_beam(&model, correlations, selected_beam)?;
-        let fixed_celestial_frame = matches!(
-            model.tangent_direction().refer(),
-            DirectionRef::J2000
-                | DirectionRef::B1950
-                | DirectionRef::B1950Vla
-                | DirectionRef::GALACTIC
-                | DirectionRef::ICRS
-                | DirectionRef::SUPERGAL
-                | DirectionRef::ECLIPTIC
-        );
+        let fixed_celestial_frame =
+            crate::predict::fixed_direction_frame(model.tangent_direction().refer());
         if self.mosaic && !fixed_celestial_frame {
             return Err(SimulatorError::not_yet_implemented(
                 "mosaic prediction with a time-dependent image direction frame needs \
                  a valid CASA reference (#1298)",
-            ));
-        }
-        if beam.is_some() && !fixed_celestial_frame {
-            return Err(SimulatorError::not_yet_implemented(
-                "primary-beam prediction with a time-dependent image direction frame needs \
-                 the beam's actual array observer context (#1297)",
             ));
         }
         let frame = self.prediction_frame(phase_centres.as_ref());
@@ -855,6 +841,19 @@ impl Simulator {
             ));
         }
         let radial = beam.filter(|beam| beam.image().is_none());
+        if squint.is_none()
+            && radial.is_some()
+            && list.components().iter().any(|component| {
+                !crate::predict::fixed_direction_frame(
+                    component.shape().reference_direction().refer(),
+                )
+            })
+        {
+            squint = Some(crate::predict::ComponentBeamConfig::unsquinted(
+                self.beam_angle_increment_rad,
+                super::voltage_patterns::squint_mount(self)?,
+            ));
+        }
         if self
             .antennas
             .windows(2)

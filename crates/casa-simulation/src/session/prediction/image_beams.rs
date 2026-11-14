@@ -10,8 +10,9 @@ use std::collections::HashMap;
 pub(super) type VisitKey = ([u64; 2], usize, i32, usize, u64, bool);
 
 pub(super) type BeamFieldKey = ([u64; 2], usize, i32);
+pub(super) type BeamCentre = (BeamFieldKey, f64, f64);
 pub(super) type BeamVisit = ((VisitKey, f64), usize);
-type BeamVisits = (Vec<(BeamFieldKey, f64)>, Vec<BeamVisit>);
+type BeamVisits = (Vec<BeamCentre>, Vec<BeamVisit>);
 
 pub(super) fn visit_key(scan: &Scan) -> VisitKey {
     let (row, on_disk) = match &scan.rows {
@@ -42,17 +43,15 @@ impl Simulator {
         if let Some(image) = selected.pattern.image() {
             return Ok(Some(ImageBeam::Jones(image.clone())));
         }
-        let Some((offset, reference_hz)) = selected.squint else {
-            return Ok(None);
-        };
-        if model.is_stokes_i_only()
-            || !correlations.iter().any(|correlation| {
+        let squinted = selected.squint.is_some()
+            && !model.is_stokes_i_only()
+            && correlations.iter().any(|correlation| {
                 matches!(
                     correlation,
                     Correlation::RR | Correlation::RL | Correlation::LR | Correlation::LL
                 )
-            })
-        {
+            });
+        if !squinted && crate::predict::fixed_direction_frame(model.tangent_direction().refer()) {
             return Ok(None);
         }
         let pattern = match &selected.pattern {
@@ -75,10 +74,15 @@ impl Simulator {
             }
             BeamSource::Image(_) => unreachable!("Jones images were handled above"),
         };
-        Ok(Some(ImageBeam::Squinted {
-            pattern,
-            offset,
-            reference_hz,
+        Ok(Some(if squinted {
+            let (offset, reference_hz) = selected.squint.expect("squinted pattern");
+            ImageBeam::Squinted {
+                pattern,
+                offset,
+                reference_hz,
+            }
+        } else {
+            ImageBeam::Radial(pattern)
         }))
     }
 
@@ -195,7 +199,9 @@ impl Simulator {
         charge_process_caches(host, policy).map_err(SimulatorError::admission)?;
         let kept = model.held_bytes() + size_of::<ImageBeamModel>() as u64 + (16 << 10);
         let mut reservation = admitted(MODEL_PHASE, kept)?;
-        let (centres, visits) = self.image_beam_visits(phase_centres, &mut reservation, kept)?;
+        let dynamic = !crate::predict::fixed_direction_frame(model.tangent_direction().refer());
+        let (centres, visits) =
+            self.image_beam_visits(phase_centres, &mut reservation, kept, dynamic)?;
         drop(admitted(
             PREPARATION_PHASE,
             operator.grid_bytes() + operator.image_beam_scratch_bytes(&model),
@@ -219,6 +225,7 @@ impl Simulator {
                 centres,
                 visits,
                 timed: self.beam_angle_increment_rad < std::f64::consts::TAU,
+                observer_position_itrf_m: dynamic.then_some(self.antennas[0].position_itrf_m),
             })),
             pointings: Vec::new(),
             antenna_types: Vec::new(),
@@ -232,6 +239,7 @@ impl Simulator {
         phase_centres: Option<&super::super::from_ms::polynomial::PhaseCentres>,
         reservation: &mut Reservation,
         kept: u64,
+        dynamic: bool,
     ) -> SimulatorResult<BeamVisits> {
         let resources = &self.options.resources;
         let alt_az = super::super::voltage_patterns::squint_mount(self)?;
@@ -240,7 +248,7 @@ impl Simulator {
             .prediction_frame(phase_centres)
             .with_position(MPosition::new_itrf(x, y, z));
         let selection = self.data_plan.selection();
-        let mut centres: Vec<(BeamFieldKey, f64)> = Vec::new();
+        let mut centres: Vec<BeamCentre> = Vec::new();
         let mut visits: Vec<BeamVisit> = Vec::new();
         let mut indices = HashMap::new();
         let mut previous: Option<(BeamFieldKey, usize)> = None;
@@ -284,7 +292,14 @@ impl Simulator {
                     .filter(|previous| (angle - previous).abs() <= increment)
                     .unwrap_or(angle)
             };
-            let identity = (key, angle.to_bits());
+            let applied_time = same
+                .filter(|&grid| centres[grid].1 == angle)
+                .map_or(time, |grid| centres[grid].2);
+            let identity = (
+                key,
+                angle.to_bits(),
+                if dynamic { applied_time.to_bits() } else { 0 },
+            );
             let known = indices.get(&identity).copied();
             if visits
                 .last()
@@ -315,7 +330,7 @@ impl Simulator {
             }
             let grid = *indices.entry(identity).or_insert_with(|| {
                 let grid = centres.len();
-                centres.push((key, angle));
+                centres.push((key, angle, applied_time));
                 grid
             });
             visits.push(((visit, time), grid));
@@ -342,7 +357,7 @@ impl Simulator {
         drop(indices);
         visits.sort_unstable_by(|(a, _), (b, _)| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
         reservation.retain(
-            kept + (centres.capacity() * size_of::<(BeamFieldKey, f64)>()
+            kept + (centres.capacity() * size_of::<BeamCentre>()
                 + visits.capacity() * size_of::<BeamVisit>()) as u64,
         );
         Ok((centres, visits))

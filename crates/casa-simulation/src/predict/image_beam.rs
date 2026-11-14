@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub(crate) enum ImageBeam {
     Jones(Arc<JonesImage>),
+    Radial(Arc<Admitted<BeamPattern>>),
     Squinted {
         pattern: Arc<Admitted<BeamPattern>>,
         offset: [f64; 2],
@@ -22,15 +23,38 @@ impl ImageBeam {
         images: Vec<Array2<f32>>,
         pointing: [f64; 2],
         angle: f64,
+        frame: Option<&casa_types::measures::MeasFrame>,
     ) -> Result<Vec<Array2<f32>>, PredictError> {
+        let pixel_of = |direction| {
+            frame.map_or_else(
+                || model.pixel_of(direction),
+                |frame| model.pixel_of_with_frame(direction, frame),
+            )
+        };
         match self {
-            Self::Jones(image) => image.apply_plane(model, plane, images, pointing, angle),
+            Self::Jones(image) => image.apply_plane(model, plane, images, pointing, angle, frame),
+            Self::Radial(pattern) => {
+                let centre = pixel_of(pointing)?;
+                Ok(radial_plane(
+                    model,
+                    plane,
+                    images,
+                    &pattern.value,
+                    [centre; 3],
+                ))
+            }
             Self::Squinted {
                 pattern,
                 offset,
                 reference_hz,
             } => {
                 let frequency = model.plane_frequency_hz(plane);
+                // PBMath1D converts POINTING before applying the squint;
+                // displacement axes belong to the image's native frame.
+                let centre = frame.map_or_else(
+                    || Ok(pointing),
+                    |frame| model.native_pointing_with_frame(pointing, frame),
+                )?;
                 let [right, left] = [1., -1.].map(|sign| {
                     // BeamSquint::getPointingDirection quantizes the
                     // frequency scale before rotating the saved AZEL offset.
@@ -38,14 +62,18 @@ impl ImageBeam {
                     let [sx, sy] = offset.map(|v| v * scale);
                     let (sin, cos) = (-angle).sin_cos();
                     let (dx, dy) = (-(sx * cos + sy * sin), -sx * sin + sy * cos);
-                    let [ra, dec] = pointing;
+                    let [ra, dec] = centre;
                     let direction = [
                         ra + dx.sin().atan2(dx.cos() * (dec + dy).cos()),
                         (dx.cos() * (dec + dy).sin()).asin(),
                     ];
-                    model.pixel_of(direction)
+                    if frame.is_some() {
+                        model.pixel_of_native(direction)
+                    } else {
+                        model.pixel_of(direction)
+                    }
                 });
-                let centres = [right?, left?, model.pixel_of(pointing)?];
+                let centres = [right?, left?, pixel_of(pointing)?];
                 Ok(radial_plane(model, plane, images, &pattern.value, centres))
             }
         }

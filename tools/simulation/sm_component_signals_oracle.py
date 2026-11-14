@@ -8,7 +8,7 @@ import shutil
 import numpy as np
 
 from casatasks import version_string
-from casatools import componentlist, measures, simulator
+from casatools import componentlist, measures, simulator, table, vpmanager
 
 from sm_apply_time_oracle import write
 from sm_existing_append_oracle import snapshot
@@ -37,6 +37,10 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--only", nargs="+", choices=[case["name"] for case in CASES])
+    parser.add_argument("--beam", action="store_true")
+    parser.add_argument("--beam-observer", choices=("ALMA", "ARRAY"), default="ALMA")
+    parser.add_argument("--refresh-beam", action="store_true")
+    parser.add_argument("--jones-beam", action="store_true")
     parser.add_argument("--base", type=Path,
         default=Path(__file__).resolve().parents[2] /
         "crates/casa-simulation/tests/data/sm_image_layouts/base.ms")
@@ -45,9 +49,23 @@ def main():
     root = args.out.resolve()
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
+    if args.jones_beam:
+        assert args.beam
+        from sm_image_beams_oracle import inputs_for
+        inputs_for(inputs)
+        vp = vpmanager()
+        assert vp.reset()
+        assert vp.setpbimage(telescope="ALMA", compleximage=str(inputs / "jones.image"))
+        assert vp.saveastable(str(inputs / "jones.vp"))
     cases = []
     frame_measures = measures()
     location = frame_measures.observatory("ALMA")
+    if args.beam and args.beam_observer == "ARRAY":
+        tb = table()
+        tb.open(str(args.base / "ANTENNA"))
+        position = tb.getcell("POSITION", 0)
+        tb.close()
+        location = frame_measures.position("ITRF", *(f"{value}m" for value in position))
     if any("frame" in spec and (not args.only or spec["name"] in args.only) for spec in CASES):
         base = snapshot(args.base)
         epoch = base["rows"][0]["time"]/86400.
@@ -57,6 +75,13 @@ def main():
         if args.only and spec["name"] not in args.only:
             continue
         name = spec["name"]
+        if args.beam:
+            spec = dict(spec, beam=True, beam_increment_deg=0. if args.refresh_beam else 360.)
+            name += "_beam_" + args.beam_observer.lower()
+            if args.refresh_beam:
+                name += "_refresh"
+            if args.jones_beam:
+                name += "_jones"
         component = inputs / f"{name}.cl"
         cl = componentlist()
         arguments = dict(flux=[1., .15, -.08, .03], fluxunit="Jy",
@@ -64,6 +89,12 @@ def main():
             shape="gaussian" if "exponent" in spec else spec["shape"],
             freq="150GHz", spectrumtype="spectral index",
             index=[-.7, .1, 120., -.02])
+        indices = [0., 0., 0., 0.] if args.beam else [-.7, .1, 120., -.02]
+        if args.beam:
+            # Isolate frame/beam behavior from CASA's full-spectral flux /
+            # abs(flux) defect (signs and complex cross-hand phases) and
+            # LSRK tabulation. Positive real linear products are unaffected.
+            arguments.update(flux=[1., .15, .08, 0.], index=indices)
         if spec["shape"] != "point":
             arguments.update(majoraxis="1.8arcsec", minoraxis="0.7arcsec",
                 positionangle="37deg")
@@ -88,7 +119,7 @@ def main():
         # addcomponent's index argument keeps only a scalar index. For
         # polarized signals use the explicit four-index method; the scalar
         # CASA matrix sampler otherwise reads past its coefficient vector.
-        assert cl.setstokesspectrum(0, "spectral index", index=[-.7, .1, 120., -.02])
+        assert cl.setstokesspectrum(0, "spectral index", index=indices)
         assert len(cl.getcomponent(0)["spectrum"]["stokesindex"]) == 4
         cl.rename(str(component))
         cl.done()
@@ -111,12 +142,20 @@ def main():
             assert sm.setdata(fieldid=[], msselect="FIELD_ID == 0")
         else:
             assert sm.setdata(fieldid=[0])
+        if args.beam:
+            settings = dict(dovp=True, dosquint=False,
+                parangleinc=f"{spec['beam_increment_deg']}deg")
+            if args.jones_beam:
+                settings.update(usedefaultvp=False, vptable=str(inputs / "jones.vp"))
+            assert sm.setvp(**settings)
         assert sm.predict(complist=str(component), incremental=False)
         if spec.get("incremental"):
             assert sm.predict(complist=str(component), incremental=True)
         sm.close()
         case = dict(name=name, spec=spec, returned=True, before=before, after=snapshot(path),
             native_created="distance" in spec)
+        if args.jones_beam:
+            case.update(jones_beam=True, vp_table="jones.vp")
         if "frame" in spec:
             itrf = frame_measures.measure(location, "ITRF")
             lon, lat, radius = [itrf[f"m{i}"]["value"] for i in range(3)]
