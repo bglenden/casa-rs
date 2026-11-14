@@ -850,7 +850,7 @@ natural weighting.
 `BriggsCubeWeightor::fillImgWeightCol` builds its density with `GridFT`.
 In `FTMachine::findGridSector`, a sector reaching the grid's right edge
 sets its width to `nxp - x0 - 1` while `x0` is zero-based. The function
-then makes the origin one-based for `sectggridd`, which accumulates
+then makes the origin one-based for the Float kernel `sectggrids`, which accumulates
 through `x0 + nxsub - 1`. The final in-band column is excluded. The
 same calculation omits the final row. The weightor can look up those
 cells, but their accumulated density is zero and the visibility gets
