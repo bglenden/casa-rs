@@ -574,8 +574,8 @@ impl Simulator {
     ///   casa-components does not evaluate), scans whose windows differ in
     ///   correlations, or
     ///   `setvp(dovp=True)` for a telescope whose default pattern casa-rs
-    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has) or
-    ///   for pointings `observemany` moved off their fields.
+    ///   does not have (ALMA's, ACA's, the VLA's and the EVLA's it has), or
+    ///   a fresh total-power prediction with a displaced beam pointing.
     /// - CASA's `False`: no model image ("No model images found"), or no
     ///   rows observed yet.
     /// - Raised: a scan of 3 correlations ("No such VisVector type"), or
@@ -642,14 +642,10 @@ impl Simulator {
         if (self.mosaic && model.is_some()) || beam.is_some() || self.single_dish.is_some() {
             self.load_pointings()?;
         }
-        // A primary beam, over a model image, a component list or total
-        // power, and the mosaic machine's kernels are centred on each
-        // scan's field here, which a pointing `observemany` moved does not
-        // point at (#884).
-        if model.is_some() && self.mosaic {
-            self.check_pointings_on_fields("setoptions(ftmachine='mosaic')")?;
-        }
-        if beam.is_some() {
+        // Interferometric images/components and mosaic kernels keep phase
+        // and pointing separately. Fresh total-power beam offsets await
+        // their dedicated integration controls.
+        if beam.is_some() && self.single_dish.is_some() {
             self.check_pointings_on_fields("setvp(dovp=True)")?;
         }
         if let Some(kernel) = self.single_dish {
@@ -922,9 +918,8 @@ impl Simulator {
             .collect();
         let pattern = beam.map(PrimaryBeam::pattern);
         // A scan is phased on its field's phase centre, as CASA's
-        // `VisBuffer` phases it, and the beam centred there: a beam on a
-        // pointing `observemany` moved was refused above (#884). Scans at
-        // one centre share a pointing.
+        // `VisBuffer` phases it, with the beam centred independently on
+        // POINTING. Only equal phase/beam pairs share prepared terms.
         let mut pointings: Vec<(usize, [f64; 2], [f64; 2])> = Vec::new();
         let pointing_of_scan: Vec<usize> = self
             .scans
@@ -1059,12 +1054,11 @@ impl Simulator {
             .map_or(0.0, |window| window.reference_frequency_hz)
     }
 
-    /// That every scan points at its field, as `what` needs here: a primary
-    /// beam, or the mosaic machine's kernels, centred on each scan's field.
-    /// CASA's beam on a pointing `observemany` moved off its field is
-    /// centred where the first row of the field it visits points, which
-    /// `BeamSkyJones` keeps for the field's other rows (#884, `docs/CASA
-    /// (C++) bugs.md`); casa-rs does not follow it yet.
+    /// The remaining fresh total-power beam path requires pointings at
+    /// their fields until its displaced-pointing consumer is implemented
+    /// in SIM-12/22 (#1299). Interferometric prediction instead keeps the
+    /// phase and beam directions separately, correcting CASA's field-only
+    /// beam cache (documented in `docs/CASA (C++) bugs.md`).
     fn check_pointings_on_fields(&self, what: &str) -> SimulatorResult<()> {
         let moved = self.scans.iter().find(|scan| {
             !matches!(scan.rows, super::observe::ScanRows::OnDisk(_))

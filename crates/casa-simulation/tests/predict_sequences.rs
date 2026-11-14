@@ -232,7 +232,7 @@ fn predict_refuses_as_casa_does() {
 /// yet, so a beam over a model image, a component list or total power, and
 /// the mosaic machine, refuse a moved pointing; each predicts it without.
 #[test]
-fn a_beam_on_a_moved_pointing_is_refused() {
+fn displaced_interferometric_beams_are_accepted_and_total_power_stays_explicit() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
     let points = directory.path().join("points.cl");
@@ -270,25 +270,22 @@ fn a_beam_on_a_moved_pointing_is_refused() {
             sm.set_options(options).expect("setoptions");
         }
         sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
-        let (outcome, message) = refusal(sm.predict(&predict));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
-        assert!(
-            message.contains("pointed away") && message.contains("#1053"),
-            "{what}: {message}"
-        );
+        if options.is_some() {
+            let (outcome, message) = refusal(sm.predict(&predict));
+            assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
+            assert!(message.contains("pointed away"), "{message}");
+        } else {
+            sm.predict(&predict)
+                .unwrap_or_else(|error| panic!("{what}: {error}"));
+        }
         sm.set_vp(&no_beam).expect("setvp");
         sm.predict(&predict)
             .unwrap_or_else(|error| panic!("{what} without the beam: {error}"));
     }
     let mut sm = moved_pointing(&directory.path().join("mosaic.ms"));
     sm.set_options(&mosaic).expect("setoptions");
-    let (outcome, message) = refusal(sm.predict(&spec(&[&model])));
-    assert_eq!(
-        outcome,
-        CasaOutcome::NotYetImplemented,
-        "the mosaic machine"
-    );
-    assert!(message.contains("pointed away"), "{message}");
+    sm.predict(&spec(&[&model]))
+        .expect("mosaic predicts the moved pointing");
     sm.set_options(&PredictionOptions::default())
         .expect("setoptions");
     sm.predict(&spec(&[&model]))

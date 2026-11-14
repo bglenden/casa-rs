@@ -212,10 +212,31 @@ pub fn session_with_dishes(
     dishes: &[f64],
     resources: SessionResources,
 ) -> Simulator {
+    session_with_measures(
+        path,
+        telescope,
+        stokes,
+        channels,
+        dishes,
+        resources,
+        casa_test_support::deterministic_measures_provider(),
+    )
+}
+
+/// Configure the same array with the reference's measured Earth orientation.
+pub fn session_with_measures(
+    path: &Path,
+    telescope: &str,
+    stokes: &str,
+    channels: usize,
+    dishes: &[f64],
+    resources: SessionResources,
+    measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+) -> Simulator {
     let mut session = Simulator::open(
         path,
         SimulatorOptions {
-            measures: casa_test_support::deterministic_measures_provider(),
+            measures,
             resources,
             now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
         },
