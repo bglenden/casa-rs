@@ -264,6 +264,56 @@ fn a_mosaic_cube_rebuilds_the_psf_and_cleans_the_saved_residual() {
     }
 }
 
+/// Before gridding both signs use the saved mask. After a major cycle
+/// positive pblimit copies the rebuilt PB's mask and negative keeps it.
+#[test]
+fn a_rebuilt_mosaic_cube_psf_refreshes_the_residual_mask_only_for_positive_cutoff() {
+    use casa_images::PagedImage;
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    controls["pblimit"] = json!(0.2);
+    let (_, seed) = observation.image("positive-cutoff", controls.clone());
+    observation.image("negative-cutoff", controls.clone());
+    let pb = seed.get(".pb").mask().unwrap();
+    let [x, y] = observation.geometry().centre();
+    let hidden = [x, y, 0, 1];
+    assert!(pb[hidden]);
+    let mut saved_mask = pb.clone();
+    saved_mask[hidden] = false;
+    let off_axis = pb
+        .indexed_iter()
+        .find_map(|(index, &inside)| (index[3] == 1 && !inside).then_some(index))
+        .expect("the PB rejects part of channel two");
+    saved_mask[off_axis] = true;
+    controls["calcres"] = json!(false);
+    controls["cycleniter"] = json!(2);
+    controls["niter"] = json!(12);
+    for (prefix, cutoff, expected) in [
+        ("positive-cutoff", 0.2, &pb),
+        ("negative-cutoff", -0.2, &saved_mask),
+    ] {
+        let path = observation.scratch(&format!("{prefix}.residual"));
+        let mut residual = PagedImage::<f32>::open(path).unwrap();
+        residual
+            .put_mask_slice("mask0", &saved_mask, &[0; 4])
+            .unwrap();
+        residual.save().unwrap();
+        drop(residual);
+        controls["pblimit"] = json!(cutoff);
+        let (resumed, products) = observation.image(prefix, controls.clone());
+        assert!(resumed.major_cycles > 1, "exercise a second CLEAN boundary");
+        for suffix in [".residual", ".image"] {
+            assert_eq!(
+                products.get(suffix).mask().as_ref(),
+                Some(expected),
+                "{suffix} follows the signed cutoff after gridding"
+            );
+        }
+        assert_eq!(products.get(".image.pbcor").mask().as_ref(), Some(&pb));
+    }
+}
+
 /// A mosaic's start model on a channel no sample reaches stays as it is:
 /// `SIImageStore::divideModelByWeight` skips a plane whose PB's peak is zero
 /// (#1067). The channel with data is converted as ever.
