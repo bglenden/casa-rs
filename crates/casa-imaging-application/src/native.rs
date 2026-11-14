@@ -830,14 +830,17 @@ fn saved_field_mask_bytes(
     let main = main.filter(|saved| !outliers.is_empty() && saved.reads_residual())?;
     let mut before = 0;
     let mut after = 0;
-    let mut without_pb = 0;
+    let mut retained = 0;
     for saved in std::iter::once(main).chain(outliers.iter().flatten()) {
         let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
-        without_pb = without_pb.max(saved.restored_mask_without_pb_bytes());
+        retained = retained.max(saved.restored_mask_bytes());
+        if saved.custom_residual_mask() {
+            retained = retained.max(bytes);
+        }
         before = before.max(bytes);
         after = after.max(bytes).max(saved.primary_beam_mask_bytes());
     }
-    Some([before.max(without_pb), after.max(without_pb), without_pb])
+    Some([before.max(retained), after.max(retained), retained])
 }
 
 /// CASA keeps the saved residual in image units until the first major
@@ -850,12 +853,12 @@ fn controls_after_cycles(
     keeps_pb_mask: bool,
     forms_psf: bool,
 ) -> casa_imaging_products::ContinuumProductControls {
-    if let Some([before, after, without_pb]) = saved_fields {
+    if let Some([before, after, retained]) = saved_fields {
         let rebuilds_pb = forms_psf && controls.primary_beam_model().is_some();
         let (bytes, refreshed) = if major_cycles == 0 {
             (before, false)
         } else {
-            (if keeps_pb_mask { after } else { without_pb }, true)
+            (if keeps_pb_mask { after } else { retained }, true)
         };
         // CASA's makePB keeps any generated mask on the old PB. Its
         // reader is also live for a stopped run that rebuilds the PB.

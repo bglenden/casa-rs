@@ -386,7 +386,9 @@ impl CasaImageWriter {
         &self,
         domain: &ImageDomainRole,
     ) -> Result<Option<Vec<bool>>, ProductsError> {
-        self.existing_mask(domain, ".pb", true)
+        Ok(self
+            .existing_mask(domain, ".pb", |name| name == "mask0")?
+            .map(|mask| mask.pixels))
     }
 
     /// Read a persisted mask in channel, polarization, x, y order.
@@ -395,15 +397,19 @@ impl CasaImageWriter {
         domain: &ImageDomainRole,
         suffix: &str,
     ) -> Result<Option<Vec<bool>>, ProductsError> {
-        self.existing_mask(domain, suffix, false)
+        Ok(self
+            .existing_mask(domain, suffix, |_| true)?
+            .map(|mask| mask.pixels))
     }
 
-    fn existing_mask(
+    /// Read one default mask after checking its name, so an ignored mask
+    /// does not allocate an image plane or open its backing table.
+    pub(crate) fn existing_mask(
         &self,
         domain: &ImageDomainRole,
         suffix: &str,
-        generated: bool,
-    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        accepts_name: impl FnOnce(&str) -> bool,
+    ) -> Result<Option<SavedPixelMask>, ProductsError> {
         let path = self.saved_image_path(domain, suffix);
         if !path.exists() {
             return Ok(None);
@@ -413,13 +419,19 @@ impl CasaImageWriter {
             source,
         };
         let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
-        if generated && image.default_mask_name().as_deref() != Some("mask0") {
+        let Some(name) = image.default_mask_name() else {
+            return Ok(None);
+        };
+        if !accepts_name(&name) {
             return Ok(None);
         }
         let mask = image
-            .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
+            .get_named_mask_slice(&name, &[0; 4], image.shape(), &[1; 4])
             .map_err(image_error)?;
-        Ok(mask.map(pixel_mask_planes))
+        Ok(Some(SavedPixelMask {
+            name,
+            pixels: pixel_mask_planes(mask),
+        }))
     }
 
     /// One on-disk apparent model plane retained by CASA's cube major cycle.
@@ -578,7 +590,7 @@ impl CasaImageWriter {
         layout: ProductWindowLayout,
         beams: &[Option<RestoringBeam>],
         uses_weight_image: bool,
-        explicit_mask: Option<bool>,
+        mask_override: Option<Option<&str>>,
     ) -> Result<MemberImage<'_>, ProductsError> {
         let started = Instant::now();
         let staged = self.stage(member)?;
@@ -654,12 +666,24 @@ impl CasaImageWriter {
         image
             .set_misc_info(RecordValue::new(miscinfo))
             .map_err(image_error)?;
+        let mask_name = mask_override.unwrap_or(
+            matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)).then_some("mask0"),
+        );
+        if let Some(name) = mask_name
+            && (name.eq_ignore_ascii_case("logtable")
+                || !matches!(
+                    Path::new(name).components().next(),
+                    Some(std::path::Component::Normal(part)) if part == name
+                )
+                || staged.staging.join(name).exists())
+        {
+            return Err(image_error(casa_images::ImageError::InvalidMetadata(
+                format!("invalid output pixel-mask name {name:?}"),
+            )));
+        }
         Ok(MemberImage {
             image,
-            explicit_mask: explicit_mask.unwrap_or(matches!(
-                storage.pixel_mask(),
-                ProductPixelMask::Explicit(_)
-            )),
+            mask_name: mask_name.map(str::to_owned),
             writer: self,
             staged,
             begin_nanos: started.elapsed().as_nanos(),
@@ -668,10 +692,16 @@ impl CasaImageWriter {
     }
 }
 
+/// A saved default mask's name and channel, polarization, x, y values.
+pub(crate) struct SavedPixelMask {
+    pub(crate) name: String,
+    pub(crate) pixels: Vec<bool>,
+}
+
 /// One member's image in staging, written a window at a time.
 pub(crate) struct MemberImage<'a> {
     image: PagedImage<f32>,
-    explicit_mask: bool,
+    mask_name: Option<String>,
     writer: &'a CasaImageWriter,
     staged: StagedImage,
     begin_nanos: u128,
@@ -693,11 +723,11 @@ impl MemberImage<'_> {
         self.image
             .put_slice_view(data.view(), &start)
             .map_err(image_error)?;
-        if self.explicit_mask {
+        if let Some(name) = &self.mask_name {
             let mask = ArrayD::from_shape_vec(IxDyn(&shape), validity)
                 .expect("a product window's validity fills its shape");
             self.image
-                .put_mask_slice("mask0", &mask, &start)
+                .put_mask_slice(name, &mask, &start)
                 .map_err(image_error)?;
         }
         self.window_nanos += started.elapsed().as_nanos();
@@ -712,8 +742,8 @@ impl MemberImage<'_> {
             path: target.clone(),
             source,
         };
-        if self.explicit_mask {
-            self.image.set_default_mask("mask0").map_err(image_error)?;
+        if let Some(name) = &self.mask_name {
+            self.image.set_default_mask(name).map_err(image_error)?;
         }
         self.image.save().map_err(image_error)?;
         if let Some(stats) = self.image.tiled_io_stats() {

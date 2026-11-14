@@ -279,3 +279,159 @@ fn check_rebuilt_field_auxiliaries(
         Some(&old_mask)
     );
 }
+
+/// CASA uses custom residual support for the controller. Restoration
+/// copies only mask0 when a PB exists; without a PB it keeps the prior mask.
+#[test]
+fn saved_outlier_user_pixel_masks_follow_casa_restoration() {
+    let observation = Observation::synthesise(&[(
+        "point",
+        Component {
+            offset_px: [0, 0],
+            flux_jy: 1.0,
+            fwhm_px: None,
+            spectral_index: 0.0,
+        },
+    )]);
+    let directory = observation.scratch("custom-field-masks");
+    fs::create_dir(&directory).unwrap();
+    let definition = directory.join("outlier.txt");
+    fs::write(
+        &definition,
+        "imagename=field\nimsize=40\nphasecenter=J2000 18h00m00s -23d00m10s\n",
+    )
+    .unwrap();
+    let geometry = observation.geometry();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": "main", "outlierfile": definition,
+        "imsize": geometry.image_size, "cell": geometry.cell_arcsec.map(|v| format!("{v}arcsec")),
+        "niter": 2, "cycleniter": 1, "backend": "cpu", "fullsummary": true,
+    });
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(&directory, values.clone());
+        let TaskReply::Succeeded { value, .. } = reply else {
+            panic!("{reply:?}");
+        };
+        let record = serde_json::to_value(value).unwrap();
+        ["iterdone", "nmajordone", "stopcode"].map(|key| {
+            record["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["key"] == key)
+                .unwrap()["value"]["value"]
+                .as_i64()
+                .unwrap()
+        })
+    };
+    run(&values);
+    let open = |name: &str| PagedImage::<f32>::open(directory.join(name)).unwrap();
+    let mut main = open("main.residual");
+    let zero = main.get().unwrap().mapv(|_| 0.0);
+    main.put_slice(&zero, &[0; 4]).unwrap();
+    main.save().unwrap();
+    drop(main);
+
+    let mut residual = open("field.residual");
+    let mut pixels = residual.get().unwrap().mapv(|_| 0.0);
+    let bright = [21, 20, 0, 0];
+    pixels[bright] = 8.0;
+    pixels[[20, 20, 0, 0]] = 2.0;
+    let mut mask = pixels.mapv(|_| true);
+    mask[bright] = false;
+    residual.put_slice(&pixels, &[0; 4]).unwrap();
+    residual.remove_mask("mask0").unwrap();
+    residual.put_mask("saved_support", &mask).unwrap();
+    residual.set_default_mask("saved_support").unwrap();
+    residual.save().unwrap();
+    drop(residual);
+
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    values["threshold"] = json!("4Jy");
+    let path = directory.join("field.residual");
+    let stable = || {
+        let mut files = snapshot(&path);
+        files.retain(|path, _| {
+            path.file_name().unwrap() != "table.lock"
+                && !path.components().any(|part| part.as_os_str() == "logtable")
+        });
+        files
+    };
+    let before = stable();
+    assert_eq!(run(&values), [0, 0, 2], "custom mask controls the stop");
+    assert_unchanged(&before, &stable());
+    assert!(
+        open("field.image").default_mask_name().is_none(),
+        "restore does not copy custom residual masks"
+    );
+
+    values["threshold"] = json!("0Jy");
+    values["pblimit"] = json!(-0.2);
+    assert!(run(&values)[1] > 0);
+    let residual = open("field.residual");
+    assert_eq!(
+        residual.default_mask_name().as_deref(),
+        Some("saved_support")
+    );
+    assert_eq!(residual.get_mask().unwrap().unwrap(), mask);
+    assert!(open("field.image").default_mask_name().is_none());
+    drop(residual);
+
+    let mut prior = open("field.image");
+    let prior_mask = mask.mapv(|valid| !valid);
+    prior.put_mask("prior_support", &prior_mask).unwrap();
+    prior.set_default_mask("prior_support").unwrap();
+    prior.save().unwrap();
+    drop(prior);
+    values["niter"] = json!(0);
+    for with_pb in [true, false] {
+        if !with_pb {
+            fs::remove_dir_all(directory.join("field.pb")).unwrap();
+        }
+        run(&values);
+        let restored = open("field.image");
+        assert_eq!(
+            restored.default_mask_name().as_deref(),
+            Some("prior_support")
+        );
+        assert_eq!(restored.get_mask().unwrap().unwrap(), prior_mask);
+    }
+    let path = directory.join("field.image");
+    let options = casa_tables::TableOptions::new(&path);
+    let mut table = casa_tables::Table::open_metadata_only(options.clone()).unwrap();
+    let Some(casa_types::Value::Record(masks)) = table.keywords_mut().get_mut("masks") else {
+        panic!("expected a saved mask record");
+    };
+    let support = masks.get("prior_support").unwrap().clone();
+    // Casacore's defineRegion stores its logical name independently of
+    // the mask table path. Leave the mask in prior_support and the history
+    // table in logtable, like an image from that API.
+    masks.upsert("logtable", support);
+    table.keywords_mut().upsert(
+        "Image_defaultmask",
+        casa_types::Value::Scalar(casa_types::ScalarValue::String("logtable".into())),
+    );
+    table.save_metadata_only(options).unwrap();
+    drop(table);
+    let image = open("field.image");
+    assert_eq!(image.get_mask().unwrap().unwrap(), prior_mask);
+    drop(image);
+    let snapshot_products = || {
+        let mut files = snapshot(&directory);
+        files.retain(|path, _| path.file_name().unwrap() != "table.lock");
+        files
+    };
+    let before = snapshot_products();
+    match json_run_with(&directory, values, false) {
+        TaskReply::Failed { message, .. } => {
+            assert!(
+                message.contains("invalid output pixel-mask name"),
+                "{message}"
+            );
+            assert!(message.contains("logtable"), "{message}");
+        }
+        reply => panic!("reserved output mask name was accepted: {reply:?}"),
+    }
+    assert_unchanged(&before, &snapshot_products());
+}

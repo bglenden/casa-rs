@@ -39,7 +39,7 @@ pub enum AnalyticPrimaryBeamModel {
 pub(crate) enum FieldResidualMask {
     Saved,
     SavedOrPrimaryBeam,
-    Absent,
+    CustomOnly,
 }
 
 /// CASA seeds a corrected image's mask only when it has no default mask.
@@ -126,9 +126,9 @@ impl ContinuumProductControls {
         self
     }
 
-    /// After a positive-cutoff refresh retain a field's original mask,
-    /// or copy that field's saved PB mask when the residual had none.
-    /// The scientific state still uses its own scalar sum of weights.
+    /// Keep a field's user-named residual mask. On refresh, a positive
+    /// cutoff keeps or copies the generated PB support, and a negative
+    /// cutoff removes the generated mask. The field keeps its own sum of weights.
     #[must_use]
     pub const fn with_saved_field_residuals(
         mut self,
@@ -143,7 +143,7 @@ impl ContinuumProductControls {
         self.field_residual_mask = Some(match (refreshed, keeps_pb_mask) {
             (false, _) => FieldResidualMask::Saved,
             (true, true) => FieldResidualMask::SavedOrPrimaryBeam,
-            (true, false) => FieldResidualMask::Absent,
+            (true, false) => FieldResidualMask::CustomOnly,
         });
         self.with_saved_residual_mask(mask_read_bytes)
     }

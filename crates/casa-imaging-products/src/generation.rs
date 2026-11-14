@@ -25,7 +25,7 @@ use crate::plane::{
 use crate::source::ContinuumProductInputs;
 use crate::storage::{ProductMemberWriter, ProductWindow, ProductWindowLayout};
 use crate::taylor::TaylorProducts;
-use crate::writer::CasaImageWriter;
+use crate::writer::{CasaImageWriter, SavedPixelMask};
 use crate::{ProductStoragePlan, ProductWindowExecutor};
 
 /// Produce every planned member and write it to `output`'s staging.
@@ -61,30 +61,39 @@ pub fn produce_continuum_members(
     produced
 }
 
-fn field_or_saved_residual_mask(
+fn field_residual_mask(
     planned: &PlannedContinuumGeneration,
     member: &PlannedMember,
     output: &CasaImageWriter,
-) -> Result<Option<Option<Vec<bool>>>, ProductsError> {
+    policy: crate::plan::FieldResidualMask,
+) -> Result<Option<Option<SavedPixelMask>>, ProductsError> {
     use crate::plan::FieldResidualMask;
     let domain = member.axes().domain();
     let restored = member.role == ProductRole::RestoredImage(ProductTerm::Single);
-    if restored
-        && planned.field_residual_mask.is_some()
-        && !planned.rebuilds_field_pb
-        && !output.has_saved_pb(domain)
-    {
-        return Ok(Some(output.existing_image_mask(domain, ".image")?));
+    if restored && !planned.rebuilds_field_pb && !output.has_saved_pb(domain) {
+        return Ok(Some(output.existing_mask(domain, ".image", |_| true)?));
     }
-    if planned.field_residual_mask == Some(FieldResidualMask::Absent) {
-        return Ok(Some(None));
+
+    let mut has_default = false;
+    let mut mask = output.existing_mask(domain, ".residual", |name| {
+        has_default = true;
+        if name == "mask0" {
+            policy != FieldResidualMask::CustomOnly
+        } else {
+            !restored
+        }
+    })?;
+    if !has_default && policy == FieldResidualMask::SavedOrPrimaryBeam {
+        mask = output.existing_mask(domain, ".pb", |name| name == "mask0")?;
+        if mask.is_none() && planned.rebuilds_field_pb {
+            // A newly created PB supplies its generated mask.
+            return Ok(None);
+        }
     }
-    let copy_pb = planned.field_residual_mask == Some(FieldResidualMask::SavedOrPrimaryBeam);
-    let mask = output.saved_residual_mask(domain, ProductTerm::Single, restored, copy_pb)?;
-    if mask.is_none() && planned.rebuilds_field_pb && copy_pb {
-        // The new PB supplies generated validity if the previous PB had
-        // no generated mask to copy.
-        return Ok(None);
+    if restored && mask.is_none() {
+        // With a PB, restore removes an old mask0. It leaves a custom
+        // output mask unless copyMask replaces it with a residual mask0.
+        mask = output.existing_mask(domain, ".image", |name| name != "mask0")?;
     }
     Ok(Some(mask))
 }
@@ -109,33 +118,7 @@ fn produce_plane_members(
         {
             continue;
         }
-        let saved_mask = match member.role {
-            ProductRole::RestoredImage(ProductTerm::Single)
-            | ProductRole::Residual(ProductTerm::Single)
-                if planned.saved_residual_mask_read_bytes.is_some() =>
-            {
-                field_or_saved_residual_mask(planned, member, output)?
-            }
-            ProductRole::PrimaryBeam(ProductTerm::Single) if planned.rebuilds_field_pb => {
-                output.existing_pb_mask(member.axes().domain())?.map(Some)
-            }
-            ProductRole::PbCorrectedImage(ProductTerm::Single) => {
-                match planned.saved_cube_pbcor_mask {
-                    Some(crate::plan::SavedPbcorMask::Existing(_)) => {
-                        Some(output.existing_image_mask(member.axes().domain(), ".image.pbcor")?)
-                    }
-                    Some(crate::plan::SavedPbcorMask::PrimaryBeam)
-                        if inputs
-                            .saved_mosaic_beam()
-                            .is_some_and(|beam| !beam.has_generated_mask()) =>
-                    {
-                        Some(None)
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
+        let saved_mask = single_term_member_mask(planned, member, inputs, output)?;
         let windows = MemberWindows::new(
             planned,
             member,
@@ -149,15 +132,69 @@ fn produce_plane_members(
             windows.layout,
             &planned.beams_for_member(member, &fitted_beams, &restoring_beams),
             planned.uses_weight_image,
-            saved_mask.as_ref().map(Option::is_some),
+            saved_mask
+                .as_ref()
+                .map(|mask| mask.as_ref().map(|mask| mask.name.as_str())),
         )?;
         windows.write(
             ProductMemberWriter::new(windows.layout, image),
             execution,
-            (saved_mask.as_ref().map(|mask| mask.as_deref()), output),
+            (
+                saved_mask
+                    .as_ref()
+                    .map(|mask| mask.as_ref().map(|mask| mask.pixels.as_slice())),
+                output,
+            ),
         )?;
     }
     Ok(planned.published(fitted_beams, restoring_beams))
+}
+
+fn single_term_member_mask(
+    planned: &PlannedContinuumGeneration,
+    member: &PlannedMember,
+    inputs: &ContinuumProductInputs<'_>,
+    output: &CasaImageWriter,
+) -> Result<Option<Option<SavedPixelMask>>, ProductsError> {
+    let generated = match member.role {
+        ProductRole::RestoredImage(ProductTerm::Single)
+        | ProductRole::Residual(ProductTerm::Single)
+            if planned.saved_residual_mask_read_bytes.is_some() =>
+        {
+            if let Some(policy) = planned.field_residual_mask {
+                return field_residual_mask(planned, member, output, policy);
+            }
+            Some(output.saved_residual_mask(
+                member.axes().domain(),
+                ProductTerm::Single,
+                matches!(member.role, ProductRole::RestoredImage(_)),
+                false,
+            )?)
+        }
+        ProductRole::PrimaryBeam(ProductTerm::Single) if planned.rebuilds_field_pb => {
+            output.existing_pb_mask(member.axes().domain())?.map(Some)
+        }
+        ProductRole::PbCorrectedImage(ProductTerm::Single) => match planned.saved_cube_pbcor_mask {
+            Some(crate::plan::SavedPbcorMask::Existing(_)) => {
+                Some(output.existing_image_mask(member.axes().domain(), ".image.pbcor")?)
+            }
+            Some(crate::plan::SavedPbcorMask::PrimaryBeam)
+                if inputs
+                    .saved_mosaic_beam()
+                    .is_some_and(|beam| !beam.has_generated_mask()) =>
+            {
+                Some(None)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    Ok(generated.map(|mask| {
+        mask.map(|pixels| SavedPixelMask {
+            name: "mask0".to_owned(),
+            pixels,
+        })
+    }))
 }
 
 /// Fit a restoring beam to every valid PSF plane, domain by domain, then
@@ -679,7 +716,9 @@ fn produce_taylor_members(
             }
             _ => None,
         };
-        let explicit_mask = saved_residual_mask.as_ref().map(Option::is_some);
+        let mask_override = saved_residual_mask
+            .as_ref()
+            .map(|mask| mask.as_ref().map(|_| "mask0"));
         let validity = match (saved_residual_mask, member.storage.pixel_mask()) {
             (Some(Some(mask)), _) => mask,
             (Some(None), _)
@@ -706,7 +745,7 @@ fn produce_taylor_members(
             layout,
             &beams,
             planned.uses_weight_image,
-            explicit_mask,
+            mask_override,
         )?;
         let mut writer = ProductMemberWriter::new(layout, image);
         writer.write_coupled(&payload, &validity)?;
