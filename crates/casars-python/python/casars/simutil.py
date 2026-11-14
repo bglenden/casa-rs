@@ -21,8 +21,10 @@ use:
 - `noisetemp`, `bandname` and `polsettings`;
 - `itrf2loc`, `baselineLengths` and `approxBeam`;
 - the sky-model helpers `modifymodel` and `flatimage`;
-- the analysis helpers `simanalyze` uses: `ismstp`, `cellsize`, `statim`
-  (whose plot is not drawn yet) and `convimage`;
+- the analysis helpers `ismstp`, `cellsize`, `statim` and `convimage`;
+- `newfig`, `nextfig`, `endfig`, `plotants` and `ephemeris`, with native
+  scientific preparation and Matplotlib presentation (install the `plot`
+  extra); `statim` draws its complete plane by default;
 - the geodesy helpers, `getdatum` through `itrf2locname`;
 - `msg`, the report file (`isreport`, `openreport`, `closereport`),
   `dir_s2m`, `is4d`, `spectral` and `setcfg`.

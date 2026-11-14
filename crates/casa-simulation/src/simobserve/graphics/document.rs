@@ -7,7 +7,7 @@ use casa_ms::plot_document::{
     PlotPayloadStrategy, PlotTextStyle,
 };
 
-pub(super) fn panel(
+pub(crate) fn panel(
     id: &str,
     title: &str,
     labels: [&str; 2],
@@ -17,6 +17,7 @@ pub(super) fn panel(
     PlotDocumentPanel {
         id: id.into(),
         title: title.into(),
+        title_font_size: None,
         axes: ["x", "y"]
             .into_iter()
             .zip(labels)
@@ -43,7 +44,7 @@ pub(super) fn panel(
     }
 }
 
-pub(super) fn document(id: &str, panels: Vec<PlotDocumentPanel>, columns: u32) -> PlotDocument {
+pub(crate) fn document(id: &str, panels: Vec<PlotDocumentPanel>, columns: u32) -> PlotDocument {
     let rows = (panels.len() as u32).div_ceil(columns);
     PlotDocument {
         id: id.into(),
@@ -65,7 +66,7 @@ pub(super) fn document(id: &str, panels: Vec<PlotDocumentPanel>, columns: u32) -
     }
 }
 
-pub(super) fn layer(
+pub(crate) fn layer(
     id: &str,
     kind: PlotLayerKind,
     data: PlotLayerData,
@@ -112,7 +113,7 @@ pub(super) fn layer(
     }
 }
 
-pub(super) fn annotation(
+pub(crate) fn annotation(
     id: &str,
     position: [f64; 2],
     text: String,

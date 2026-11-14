@@ -26,6 +26,10 @@
   sky-model helpers `modifymodel` and `flatimage`, and the analysis helpers
   `ismstp`, `cellsize`, `statim` and `convimage`, the geodesy helpers, and
   `msg`, the report helpers, `dir_s2m`, `is4d`, `spectral` and `setcfg`.
+  Its plotting methods `newfig`, `nextfig`, `endfig`, `plotants`,
+  `ephemeris` and the default `statim(plot=True)` use the `plot` extra.
+  Rust prepares all scientific arrays; Matplotlib draws onto the current
+  figure and panel, so scripts can annotate and save them as in CASA.
   Its other methods have
   CASA's signatures and raise `NotImplementedError` naming the issue that
   records them. `from casars import simutil` is its public import.

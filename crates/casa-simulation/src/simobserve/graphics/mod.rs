@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native plot preparation for the Python host's Matplotlib renderer (#1025).
 
-mod document;
-mod ephemeris;
-mod image;
+pub(crate) mod document;
+pub(crate) mod ephemeris;
+pub(crate) mod image;
 mod model;
-mod observation;
-mod payload;
+pub(crate) mod observation;
+pub(crate) mod payload;
 
 use casa_imaging_runtime::charge_process_caches;
 use casa_ms::plot_document::PlotFigure;

@@ -50,6 +50,7 @@ pub mod analysis;
 pub mod baselines;
 pub mod config;
 pub mod direction;
+pub mod graphics;
 pub mod pointings;
 pub(crate) mod qa;
 pub mod receivers;

@@ -427,6 +427,7 @@ fn shared_plot_panel(panel: &MsPlotDataPanel) -> PlotDocumentPanel {
     PlotDocumentPanel {
         id: panel.id.clone(),
         title: panel.title.clone(),
+        title_font_size: None,
         axes: panel
             .axes
             .iter()

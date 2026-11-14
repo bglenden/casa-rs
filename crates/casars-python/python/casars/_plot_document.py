@@ -21,27 +21,36 @@ def array_view(payload: Any, descriptor: Mapping[str, Any]) -> np.ndarray:
     )
 
 
-def render_document(document: Mapping[str, Any], *, payload: Any = None, figure: Any = None, use_native_limits: bool = True):
+def render_document(document: Mapping[str, Any], *, payload: Any = None, figure: Any = None, use_native_limits: bool = True, axes: Any = None, preserve_titles: bool = False):
     """Return editable Matplotlib figures from native-prepared artists."""
 
     from matplotlib import pyplot as plt
 
+    if axes is not None:
+        if len(axes) != len(document["panels"] or [document]):
+            raise ValueError("one supplied axes is required for each panel")
+        if figure is None:
+            figure = axes[0].figure
+        if any(axis.figure is not figure for axis in axes):
+            raise ValueError("supplied axes must belong to the supplied figure")
     owned = figure is None
     if owned:
         figure = plt.figure()
     try:
-        return _render_document(document, payload, figure, use_native_limits)
+        return _render_document(document, payload, figure, use_native_limits, axes, preserve_titles)
     except BaseException:
         if owned:
             plt.close(figure)
         raise
 
 
-def _render_document(document, payload, figure, use_native_limits):
+def _render_document(document, payload, figure, use_native_limits, axes, preserve_titles):
     panels = document["panels"] or [document]
     layout = document.get("layout") or {}
     rows, columns = layout.get("rows", len(panels)), layout.get("columns", 1)
-    axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
+    supplied_axes = axes is not None
+    if axes is None:
+        axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
     for panel, axis in zip(panels, axes, strict=True):
         for layer in panel["layers"]:
             _draw_layer(figure, axis, layer, payload)
@@ -57,7 +66,9 @@ def _render_document(document, payload, figure, use_native_limits):
                 kwargs["bbox"] = {"facecolor": style["background"], "alpha": 0.7}
             axis.text(annotation["x"], annotation["y"], annotation["text"], **kwargs)
         font = {} if layout.get("font_size") is None else {"fontsize": layout["font_size"]}
-        axis.set_title(panel.get("title", ""), **font)
+        title_font = font if panel.get("title_font_size") is None else {"fontsize": panel["title_font_size"]}
+        if not preserve_titles:
+            axis.set_title(panel.get("title", ""), **title_font)
         if panel.get("frame_visible") is not None:
             axis.set_frame_on(panel["frame_visible"])
         if font:
@@ -76,16 +87,32 @@ def _render_document(document, payload, figure, use_native_limits):
             axis.set_yscale(y.get("scale", "linear"))
         aspect = panel.get("aspect") or layout.get("aspect")
         if aspect == "equal_data_limits":
-            axis.set_aspect("equal", adjustable="datalim")
+            if panel.get("axes"):
+                axis.set_aspect("equal", adjustable="datalim")
+            else:
+                # With no native bounds, CASA's axis('equal') also restores
+                # autoscaling after a caller explicitly fixed both limits.
+                axis.axis("equal")
         elif aspect:
             axis.set_aspect(aspect)
         if document["show_legend"] and len(panel["layers"]) > 1:
             axis.legend()
-    figure.suptitle(document.get("title", ""))
+    if not supplied_axes:
+        figure.suptitle(document.get("title", ""))
     if layout.get("margins"):
         left, right, bottom, top, wspace, hspace = layout["margins"]
         figure.subplots_adjust(left=left, right=right, bottom=bottom, top=top, wspace=wspace, hspace=hspace)
     return figure, axes[0] if len(axes) == 1 else axes
+
+
+def render_current(document, payload_path, preserve_title=False):
+    """Draw one native simutil panel on Matplotlib's current axes."""
+
+    from matplotlib import pyplot as plt
+
+    axis = plt.gca()
+    payload = np.memmap(payload_path, dtype="u1", mode="r")
+    render_document(document, payload=payload, figure=axis.figure, axes=[axis], preserve_titles=preserve_title)
 
 
 def _draw_layer(figure, axis, layer, payload):
@@ -101,7 +128,9 @@ def _draw_layer(figure, axis, layer, payload):
             interpolation=data["interpolation"], origin=data["origin"],
         )
         if data["color_bar"]:
-            figure.colorbar(image, ax=axis, pad=0)
+            bar = figure.colorbar(image, ax=axis, pad=0)
+            if data.get("color_bar_font_size") is not None:
+                bar.ax.tick_params(labelsize=data["color_bar_font_size"])
         return
     if data:
         x, y = array_view(payload, data["x"]), array_view(payload, data["y"])

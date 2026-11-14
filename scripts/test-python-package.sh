@@ -113,4 +113,6 @@ test_installed "$sdist_venv" \
   "$tests_dir/test_binding_snapshots.py" \
   "$tests_dir/test_parameters.py" \
   "$tests_dir/test_data.py" \
-  "$tests_dir/test_plot_document.py"
+  "$tests_dir/test_plot_document.py" \
+  "$tests_dir/test_simutil_graphics.py" \
+  "$tests_dir/test_simutil.py::test_the_class_has_casas_signatures"

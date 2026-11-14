@@ -9,13 +9,13 @@ use casa_ms::plot_document::{PlotArrayDtype, PlotBinaryArray};
 
 use super::{SimobserveError, failure};
 
-pub(in crate::simobserve) struct Payload {
+pub(crate) struct Payload {
     file: BufWriter<std::fs::File>,
     bytes: u64,
 }
 
 impl Payload {
-    pub(super) fn open(path: &Path) -> Result<Self, SimobserveError> {
+    pub(crate) fn open(path: &Path) -> Result<Self, SimobserveError> {
         let file = OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -27,23 +27,23 @@ impl Payload {
         })
     }
 
-    pub(super) const fn position(&self) -> u64 {
+    pub(crate) const fn position(&self) -> u64 {
         self.bytes
     }
 
-    pub(super) fn f64(&mut self, value: f64) -> Result<(), SimobserveError> {
+    pub(crate) fn f64(&mut self, value: f64) -> Result<(), SimobserveError> {
         self.file.write_all(&value.to_le_bytes()).map_err(failure)?;
         self.bytes += 8;
         Ok(())
     }
 
-    pub(super) fn f32(&mut self, value: f32) -> Result<(), SimobserveError> {
+    pub(crate) fn f32(&mut self, value: f32) -> Result<(), SimobserveError> {
         self.file.write_all(&value.to_le_bytes()).map_err(failure)?;
         self.bytes += 4;
         Ok(())
     }
 
-    pub(super) fn values(
+    pub(crate) fn values(
         &mut self,
         values: impl IntoIterator<Item = f64>,
     ) -> Result<PlotBinaryArray, SimobserveError> {
@@ -59,13 +59,13 @@ impl Payload {
         ))
     }
 
-    pub(super) fn finish(mut self) -> Result<u64, SimobserveError> {
+    pub(crate) fn finish(mut self) -> Result<u64, SimobserveError> {
         self.file.flush().map_err(failure)?;
         Ok(self.bytes)
     }
 }
 
-pub(super) fn view(
+pub(crate) fn view(
     offset_bytes: u64,
     shape: Vec<u64>,
     strides_bytes: Vec<u64>,

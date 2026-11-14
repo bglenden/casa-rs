@@ -24,9 +24,23 @@ pub(super) fn antennas(
         .zip(&config.z)
         .map(|((&x, &y), &z)| [x, y, z])
         .collect();
+    antenna_panel(
+        &positions,
+        &config.dish_diameter,
+        &config.pad_names,
+        payload,
+    )
+}
+
+pub(crate) fn antenna_panel(
+    positions: &[[f64; 3]],
+    diameters: &[f64],
+    names: &[String],
+    payload: &mut Payload,
+) -> Result<PlotDocumentPanel, SimobserveError> {
     let n = positions.len();
     let centre = [0, 1, 2].map(|axis| positions.iter().map(|p| p[axis]).sum::<f64>() / n as f64);
-    let local = itrf_to_local(&positions, centre)?;
+    let local = itrf_to_local(positions, centre)?;
     let bounds = |axis: usize| {
         [
             local.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min),
@@ -38,16 +52,16 @@ pub(super) fn antennas(
     };
     let [xb, yb] = [bounds(0), bounds(1)];
     let range = (xb[1] - xb[0]).max(yb[1] - yb[0]);
-    let circles = config.dish_diameter.iter().any(|&d| d > 0.01 * range);
+    let circles = diameters.iter().any(|&d| d > 0.01 * range);
     let limits = [0, 1].map(|axis| {
         let lo = local
             .iter()
-            .zip(&config.dish_diameter)
+            .zip(diameters)
             .map(|(p, d)| p[axis] - if circles { d / 2.0 } else { 0.0 })
             .fold(f64::INFINITY, f64::min);
         let hi = local
             .iter()
-            .zip(&config.dish_diameter)
+            .zip(diameters)
             .map(|(p, d)| p[axis] + if circles { d / 2.0 } else { 0.0 })
             .fold(f64::NEG_INFINITY, f64::max);
         let margin = if hi > lo { (hi - lo) * 0.05 } else { 0.055 };
@@ -67,7 +81,7 @@ pub(super) fn antennas(
         Some(if circles { "," } else { "o" }),
     ));
     if circles {
-        let radii = payload.values(config.dish_diameter.iter().map(|d| d / 2.0))?;
+        let radii = payload.values(diameters.iter().map(|d| d / 2.0))?;
         output.layers.push(layer(
             "dishes",
             PlotLayerKind::Circles,
@@ -84,12 +98,13 @@ pub(super) fn antennas(
     }
     if n < 10 {
         for (i, p) in local.iter().enumerate() {
-            output.annotations.push(annotation(
-                &format!("pad-{i}"),
-                [p[0], p[1]],
-                config.pad_names[i].clone(),
-                false,
-            ));
+            let mut label = annotation(&format!("pad-{i}"), [p[0], p[1]], names[i].clone(), false);
+            if !circles {
+                let style = label.style.as_mut().expect("annotation style");
+                style.font_size = Some("8".into());
+                style.vertical_alignment = Some("baseline".into());
+            }
+            output.annotations.push(label);
         }
     }
     Ok(output)

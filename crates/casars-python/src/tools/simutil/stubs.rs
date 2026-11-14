@@ -23,30 +23,6 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 )]
 impl PySimutil {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (show = None, filename = None), text_signature = "($self, show=True, filename='')")]
-    fn endfig(
-        &self,
-        show: Option<&Bound<'_, PyAny>>,
-        filename: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("endfig")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (date, usehourangle = None, direction = None, telescope = None, ms = None, cofa = None), text_signature = "($self, date, usehourangle=True, direction=None, telescope=None, ms=None, cofa=None)")]
-    fn ephemeris(
-        &self,
-        date: &Bound<'_, PyAny>,
-        usehourangle: Option<&Bound<'_, PyAny>>,
-        direction: Option<&Bound<'_, PyAny>>,
-        telescope: Option<&Bound<'_, PyAny>>,
-        ms: Option<&Bound<'_, PyAny>>,
-        cofa: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("ephemeris")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist = None, modelimage = None, mask = None, dryrun = None), text_signature = "($self, mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist='', modelimage='', mask=[], dryrun=False)")]
     fn imclean(
         &self,
@@ -95,35 +71,6 @@ impl PySimutil {
         dryrun: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("imtclean")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (multi = None, show = None), text_signature = "($self, multi=0, show=True)")]
-    fn newfig(
-        &self,
-        multi: Option<&Bound<'_, PyAny>>,
-        show: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("newfig")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nextfig(&self) -> PyResult<Py<PyAny>> {
-        stub("nextfig")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (x, y, z, d, name), text_signature = "($self, x, y, z, d, name)")]
-    fn plotants(
-        &self,
-        x: &Bound<'_, PyAny>,
-        y: &Bound<'_, PyAny>,
-        z: &Bound<'_, PyAny>,
-        d: &Bound<'_, PyAny>,
-        name: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("plotants")
     }
 
     /// Not yet implemented in casa-rs.
