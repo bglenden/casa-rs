@@ -516,6 +516,7 @@ fn assert_taylor_model_is_carried(
             centres: None,
         },
         Some(prepared_model),
+        None,
         (&context.host, &context.policy, &context.cancel),
     )
     .unwrap();
@@ -546,6 +547,7 @@ fn assert_taylor_model_is_carried(
                 expansion_reference_hz: reference_hz, controls, centres: None,
             },
             Some(wrong_model),
+            None,
             (&context.host, &context.policy, &context.cancel),
         ),
         Err(crate::native::NativeError::Other(error)) if error.to_string().contains("model does not match")

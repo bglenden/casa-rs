@@ -444,6 +444,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 self.inputs,
                 self.member.axes().domain(),
                 &plane,
+                polarization,
             )?;
             let cutoff = self
                 .inputs
@@ -536,6 +537,8 @@ fn produce_taylor_members(
             .into_iter()
             .collect(),
     };
+    let refresh_mvc_mask =
+        inputs.taylor_primary_beam().is_some() && inputs.saved_mosaic_beam().is_some();
     for member in &planned.members {
         let mut payload = products.payload(member.role)?;
         // An ordinary Taylor PB is formed at one frequency and zeroed by
@@ -545,7 +548,10 @@ fn produce_taylor_members(
         let supplied_pb = inputs.taylor_primary_beam().is_some()
             && member.role == ProductRole::PrimaryBeam(ProductTerm::Taylor(0));
         if member.validity != ProductValidityRule::All && !supplied_pb {
-            zero_invalid_plane_values(&mut payload, &products.validity(member.validity)?);
+            zero_invalid_plane_values(
+                &mut payload,
+                &products.validity(member.role, member.validity, refresh_mvc_mask)?,
+            );
         }
         let saved_residual_mask = match member.role {
             ProductRole::RestoredImage(ProductTerm::Taylor(term))
@@ -566,7 +572,9 @@ fn produce_taylor_members(
                     ProductValidityRule::All | ProductValidityRule::FinalNormalState,
                 ),
             ) => vec![true; member.payload_values],
-            (None, ProductPixelMask::Explicit(rule)) => products.validity(rule)?,
+            (None, ProductPixelMask::Explicit(rule)) => {
+                products.validity(member.role, rule, refresh_mvc_mask)?
+            }
         };
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {

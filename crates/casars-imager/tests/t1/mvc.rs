@@ -751,6 +751,93 @@ fn mvc_restart_reads_each_saved_model_on_its_own_grid() {
     }
 }
 
+/// Skipping makePSF preserves the cube and Taylor PSFs, beams and weights.
+#[test]
+fn mvc_restart_keeps_the_saved_psf_and_primary_beam_families() {
+    use super::restart::{assert_unchanged, snapshot};
+    use casa_images::PagedImage;
+
+    let observation = weighted_observation();
+    let name = "mvc-saved-psf";
+    let mut controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+        "niter": 1, "cycleniter": 1, "pbcor": true, "pblimit": 0.1,
+    });
+    let (_, seed) = observation.image(name, controls.clone());
+    let path = |suffix: &str| observation.scratch(&format!("{name}{suffix}"));
+    for (suffix, scale) in [(".pb", 0.8), (".pb.tt0", 0.7), (".psf.tt1", 0.5)] {
+        let mut image = PagedImage::<f32>::open(path(suffix)).unwrap();
+        let pixels = image.get().unwrap().mapv(|value| value * scale);
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let saved = [
+        ".pb",
+        ".pb.tt0",
+        ".pb.tt1",
+        ".psf",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".sumwt",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+    ]
+    .map(path);
+    let before = saved.each_ref().map(|path| snapshot(path));
+    controls["calcpsf"] = json!(false);
+    controls["threshold"] = json!("100Jy");
+    let (summary, resumed) = observation.image(name, controls);
+    assert_eq!(summary.actual_minor_iterations, 0);
+    assert_eq!(summary.major_cycles, 1);
+    assert_eq!(resumed.get(".mask").pixels, seed.get(".mask").pixels);
+    for (path, before) in saved.iter().zip(before) {
+        assert_unchanged(&before, &snapshot(path));
+    }
+    let point = [152, 144];
+    for channel in 0..3 {
+        let expected = seed.get(".residual").plane(channel)[point] * (0.7 / 0.8);
+        let actual = resumed.get(".residual").plane(channel)[point];
+        assert!(
+            (actual - expected).abs() < 1e-5,
+            "{channel}: {actual} vs {expected}"
+        );
+    }
+    // The restored image uses the inverse of the saved Taylor Hessian.
+    // The same model and restoring beam cancel between the two runs.
+    let principal_tt1 = |products: &super::fixture::Products, off_diagonal: f64| {
+        let centre = [128, 128];
+        let a = f64::from(seed.get(".psf.tt0").pixels[centre]);
+        let b = f64::from(seed.get(".psf.tt1").pixels[centre]) * off_diagonal;
+        let c = f64::from(seed.get(".psf.tt2").pixels[centre]);
+        let r0 = f64::from(products.get(".residual.tt0").pixels[point]);
+        let r1 = f64::from(products.get(".residual.tt1").pixels[point]);
+        a * (a * r1 - b * r0) / (a * c - b * b)
+    };
+    let expected = principal_tt1(&resumed, 0.5) - principal_tt1(&seed, 1.0);
+    let recomputed = principal_tt1(&resumed, 1.0) - principal_tt1(&seed, 1.0);
+    assert!((recomputed - expected).abs() > 0.1);
+    let actual = f64::from(resumed.get(".image.tt1").pixels[point])
+        - f64::from(seed.get(".image.tt1").pixels[point]);
+    assert!((actual - expected).abs() < 1e-5, "{actual} vs {expected}");
+    let pb = super::fixture::Product::open(&path(".pb.tt0"));
+    let saved_mask = pb.mask().expect("saved Taylor PB mask");
+    let pixels = pb.values();
+    let refreshed_mask = ndarray::Zip::from(&saved_mask)
+        .and(&pixels)
+        .map_collect(|&valid, &value| valid && value > 0.1);
+    assert_ne!(saved_mask, refreshed_mask);
+    for term in 0..2 {
+        for suffix in [format!(".residual.tt{term}"), format!(".image.tt{term}")] {
+            assert_eq!(resumed.get(&suffix).mask().as_ref(), Some(&refreshed_mask));
+        }
+        let corrected = format!(".image.tt{term}.pbcor");
+        assert_eq!(resumed.get(&corrected).mask().as_ref(), Some(&saved_mask));
+    }
+}
+
 /// CASA copies the common Taylor PB support onto MVC's restored and
 /// residual Taylor images when pblimit is positive, while cleaning the
 /// source through repeated cube-major cycles (#1069).

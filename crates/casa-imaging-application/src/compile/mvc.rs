@@ -186,7 +186,7 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     // particular, an outlier file or facets would make the small metadata
     // envelope below scale with data it does not yet account for.
     check_view_scope(parent, surveyed.stores.len(), centre.ephemeris.is_some())?;
-    let reservation = casa_imaging_runtime::admit(
+    let mut reservation = casa_imaging_runtime::admit(
         &context.host,
         &context.policy,
         &casa_imaging_runtime::Demand {
@@ -239,7 +239,13 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     let specification =
         super::specification::specification(request, &spectral, specification_inputs)?;
     let geometry = super::geometry(request, &domains, centre, &spectral);
-    let start = prepare_start(parent, &domains[0])?;
+    let start = prepare_start(
+        parent,
+        &domains[0],
+        cube.output_channels,
+        context,
+        &mut reservation,
+    )?;
     let samples = super::domains::model_samples(&domains, request.nterms, &request.stokes)?;
     Ok(TaylorView {
         specification,
@@ -281,7 +287,7 @@ pub(super) fn check_execution_scope(
         || (request.niter != 0
             && (request.nsigma != 0.0
                 || request.mask_box.iter().any(|region| region.range.is_some())))
-        || !request.calcpsf
+        || (!request.calcpsf && (!restarts_standard_clean(request) || request.has_start_model()))
         || !request.calcres
         || ((request.tclean_restart || request.has_start_model())
             && !restarts_standard_clean(request))
@@ -315,6 +321,16 @@ fn restarts_standard_clean(request: &ImagingRequest) -> bool {
 pub(crate) struct MvcStart {
     pub(crate) model: super::StartModel,
     pub(crate) projection_beams: Option<(MvcPrimaryBeam, MvcPrimaryBeam)>,
+    pub(crate) saved_psf: Option<MvcSavedPsf>,
+}
+
+/// The two saved normal families. The cube normal state reads its PSF and
+/// weights through ExistingProducts. MVC separately reads its saved beams
+/// and Taylor Hessian, which CASA keeps when makePSF is skipped.
+pub(crate) struct MvcSavedPsf {
+    pub(crate) cube_pb: casa_imaging_products::SavedMosaicBeam,
+    pub(crate) taylor_pb: casa_imaging_products::SavedMosaicBeam,
+    pub(crate) taylor: crate::restart::ExistingProducts,
 }
 
 /// A saved Float PB with a bounded tile cache and its read workspace.
@@ -355,6 +371,9 @@ impl MvcPrimaryBeam {
 fn prepare_start(
     request: &ImagingRequest,
     domain: &super::domains::PreparedImageDomain,
+    channels: usize,
+    context: &crate::RunContext,
+    view_charge: &mut casa_imaging_runtime::Reservation,
 ) -> Result<Option<MvcStart>, super::PrepareError> {
     use crate::restart::{check_grid, mvc_cube_product, product_path, products, suffix};
     if !restarts_standard_clean(request) {
@@ -404,9 +423,66 @@ fn prepare_start(
         );
         (model, None)
     };
+    let saved_psf = if request.calcpsf {
+        None
+    } else {
+        use casa_imaging_products::SavedMosaicBeam;
+        let reason = "MVC continuation requires saved cube and Taylor primary beams (#944)";
+        let beam = |name, expected| {
+            let path = required(name, reason)?;
+            let image = casa_images::PagedImage::<f32>::open_with_cache(
+                &path,
+                SavedMosaicBeam::CACHE_BYTES,
+            )
+            .map_err(|error| super::PrepareError::Restart {
+                path: path.clone(),
+                reason: error.to_string(),
+            })?;
+            let beam = SavedMosaicBeam::new(&path, &image).map_err(|error| {
+                super::PrepareError::Restart {
+                    path: path.clone(),
+                    reason: error.to_string(),
+                }
+            })?;
+            if beam.shape() != expected {
+                return Err(super::PrepareError::Restart {
+                    path,
+                    reason: format!(
+                        "saved MVC primary beam has shape {:?}, expected {expected:?}",
+                        beam.shape()
+                    ),
+                });
+            }
+            Ok(beam)
+        };
+        let mut taylor = crate::restart::ExistingProducts::new(
+            &request.imagename,
+            crate::restart::Family::Taylor { terms: 2 },
+            ([nx, ny], 1, 1),
+            (true, false),
+            false,
+        )?;
+        let mut charge = casa_imaging_runtime::admit(
+            &context.host,
+            &context.policy,
+            &casa_imaging_runtime::Demand {
+                phase: "saved MVC Taylor beam metadata",
+                memory: crate::restart::ExistingProducts::beam_reading_bytes(1, 1),
+            },
+        )?;
+        taylor.read_psf_beams(1, domain.direction.increment_rad()[0].abs())?;
+        charge.retain(taylor.beam_resident_bytes());
+        view_charge.join(charge);
+        Some(MvcSavedPsf {
+            cube_pb: beam("pb", [nx, ny, 1, channels])?,
+            taylor_pb: beam("pb.tt0", [nx, ny, 1, 1])?,
+            taylor,
+        })
+    };
     Ok(Some(MvcStart {
         model,
         projection_beams,
+        saved_psf,
     }))
 }
 
