@@ -16,7 +16,7 @@ use casa_imaging_operator::{
     WeightingGeneration, build_density_grid,
 };
 use casa_types::Correlation;
-use common::{geometry, operator};
+use common::{geometry, geometry_of, operator, operator_on};
 use num_complex::Complex32;
 
 const C: f64 = 299_792_458.0;
@@ -388,6 +388,63 @@ fn the_cube_density_bins_and_looks_up_the_rotated_uvw() {
     for index in 0..out.len() {
         assert_eq!(out.block().weights_of(index), &[0.5, 0.5], "plane {index}");
     }
+}
+
+/// At the recorded LSRK-to-BARY AW boundary, CASA's Float lookup lands
+/// exactly at v = 619.5 using the reporting frequency. Rounding the
+/// converted operands gives v = 619.49994 and reads the adjacent cell.
+#[test]
+fn cube_density_lookup_narrows_the_reporting_wavelength() {
+    let frequency = 1_300_078_121.166_889_4;
+    let axis = SpectralAxis::new(frequency, 50.0e6, 1).expect("axis");
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Cubic);
+    let cell = (10.0_f64 / 3600.0).to_radians();
+    let increments = [-cell, cell];
+    let operator = operator_on(
+        geometry_of([1024, 1024], increments),
+        GridPrecision::F64,
+        resampler.basis(),
+        &XX_YY,
+        &STOKES_I,
+    );
+    let row = NativeRow {
+        uvw_m: [-470.246_429_233_412_47, -499.326_663_238_139_76, 0.0],
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &[frequency],
+        values: &[Complex32::new(1.0, 0.0); 2],
+        weights: &[1.0; 2],
+        flags: &[false; 2],
+        row_flag: false,
+        context: context(),
+    };
+    let shape = DensityGridShape {
+        width: 1024,
+        height: 1024,
+        increment_rad: increments,
+        ..density_shape(&resampler, 0)
+    };
+    let mut density = SampleBuffer::new(1);
+    for (v_cell, weight) in [(619.0, 2.0), (620.0, 3.0)] {
+        let v_metres = -(v_cell - 512.0) * C / (1024.0 * cell * frequency);
+        let donor = NativeRow {
+            uvw_m: [row.uvw_m[0], v_metres, 0.0],
+            weights: &[weight; 2],
+            ..row
+        };
+        resampler
+            .place_density(&operator, &donor, &shape, &mut density)
+            .expect("density");
+    }
+    let grid = build_density_grid(std::iter::once(density.block()), shape);
+    let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+    let mut out = SampleBuffer::new(2);
+    resampler
+        .with_density_wavelength_scale(1.3e9 / frequency)
+        .place(&operator, &uniform, &row, &mut out)
+        .expect("place");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out.block().weights_of(0), &[1.0 / 6.0; 2]);
 }
 
 #[test]

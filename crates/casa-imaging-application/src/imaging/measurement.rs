@@ -3,8 +3,8 @@
 //! compiled problem, projected from `CompiledProblem`.
 
 use casa_imaging_model::{
-    AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, InstrumentModel,
-    ReconstructionBasis, SpectralKernel, SpectralWcs,
+    AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, FrequencyFrame,
+    InstrumentModel, ReconstructionBasis, SpectralKernel, SpectralWcs,
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Awp2Sampling, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet,
@@ -330,7 +330,17 @@ pub(crate) fn domain_operator(
         problem.reconstruction().polarization().coordinates(),
     )?;
     let basis = basis(problem)?;
-    let resampler = resampler(problem, basis)?;
+    let mut resampler = resampler(problem, basis)?;
+    // The catalog uses a scaled BARY axis. Restore the reporting LSRK
+    // frequency for CASA's Float rounding and retain our projected uvw.
+    let spectral = problem.geometry().spectral();
+    if let Some((_, scale)) = deployment.0
+        && spectral.source_frame() == FrequencyFrame::Lsrk
+        && spectral.output_frame() == FrequencyFrame::Barycentric
+        && problem.science().spectral().sampling().kernel() == SpectralKernel::Cubic
+    {
+        resampler = resampler.with_density_wavelength_scale(scale);
+    }
     let (cf, kernels) = kernel_set(
         problem,
         kind,
