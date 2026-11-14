@@ -355,6 +355,15 @@ impl ExistingProducts {
         (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
     }
 
+    /// CASA would refill these sums during gridding. Multi-field reuse
+    /// currently requires the earlier run to have populated each one.
+    pub(crate) fn nonpositive_sum_weight(&self) -> ImageError {
+        ImageError::InvalidMetadata(format!(
+            "{} has a nonpositive saved sum of weights; refilling a field's sumwt on restart is not implemented (#944)",
+            product_path(&self.prefix, "sumwt").display()
+        ))
+    }
+
     /// The images of domain 0 a pass forming its PSF and residual would
     /// return for output channels `channels`, from the PSF, sums of weights
     /// and residual read: the residual is zero when it is not read, for a

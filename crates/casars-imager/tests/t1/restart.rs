@@ -877,6 +877,62 @@ fn check_saved_outlier_psfs(
         .map(|(a, b)| (0.5 * a - b).abs())
         .fold(0.0_f32, f32::max);
     assert!(error <= 1e-6 * peak, "saved outlier sumwt: {error}/{peak}");
+    check_outlier_psf_edges(directory, values, field_beam);
+}
+
+fn check_outlier_psf_edges(
+    directory: &Path,
+    mut values: serde_json::Value,
+    field_beam: casa_images::GaussianBeam,
+) {
+    let psf_path = directory.join("field.psf");
+    let pixels = super::fixture::Product::open(&psf_path).values();
+    let set_beam = |beams| {
+        let mut image = PagedImage::<f32>::open(&psf_path).unwrap();
+        let mut info = image.image_info().unwrap();
+        info.beam_set = beams;
+        image.set_image_info(&info).unwrap();
+        image.save().unwrap();
+    };
+    set_beam(casa_images::ImageBeamSet::default());
+    values["niter"] = json!(1);
+    values["threshold"] = json!("100Jy");
+    let run = |values: &serde_json::Value| {
+        let reply = json_run(directory, values.clone());
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+        let image = super::fixture::Product::open(&psf_path);
+        assert_eq!(image.values(), pixels);
+        image.restoring_beam()
+    };
+    let default = run(&values);
+    set_beam(casa_images::ImageBeamSet::default());
+    values["psfcutoff"] = json!(0.8);
+    assert_eq!(
+        run(&values),
+        default,
+        "unlabelled outlier PSF uses the default beam fit"
+    );
+
+    let mut sum = PagedImage::<f32>::open(directory.join("field.sumwt")).unwrap();
+    let saved = sum.get().unwrap();
+    sum.put_slice(&saved.mapv(|_| 0.0), &[0; 4]).unwrap();
+    sum.save().unwrap();
+    drop(sum);
+    let before = snapshot(directory);
+    match json_run(directory, values) {
+        TaskReply::Failed { message, .. } => {
+            assert!(
+                message.contains("field.sumwt") && message.contains("nonpositive"),
+                "{message}"
+            );
+        }
+        reply => panic!("an unfilled outlier sumwt should be refused: {reply:?}"),
+    }
+    assert_unchanged(&before, &snapshot(directory));
+    let mut sum = PagedImage::<f32>::open(directory.join("field.sumwt")).unwrap();
+    sum.put_slice(&saved, &[0; 4]).unwrap();
+    sum.save().unwrap();
+    set_beam(casa_images::ImageBeamSet::new(field_beam));
 }
 
 /// CASA blanks a shared sky component in earlier fields for prediction

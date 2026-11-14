@@ -291,7 +291,13 @@ pub(crate) fn prepare(
             .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
     }
     if !input.forms.psf && !input.outlier_psfs.is_empty() {
-        publication.controls = publication.controls.preserving_saved_psfs();
+        publication.controls = publication.controls.preserving_saved_psfs(
+            input
+                .existing
+                .iter()
+                .chain(input.outlier_psfs.iter().flatten())
+                .any(|saved| saved.psf_beams().is_none()),
+        );
     }
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()
@@ -454,7 +460,8 @@ pub(crate) fn run(
     } = SavedBeams::read(existing.as_ref(), &outlier_psfs);
     // An unlabelled saved PSF is fitted by getBeamSet's default cutoff at
     // minor-cycle initialization. Publication must reuse that fit's cutoff.
-    let publication = saved_psf_controls(publication, forms, psf_beams.is_none(), problem)?;
+    let missing_beam = psf_beams.is_none() || outlier_psf_beams.iter().any(Option::is_none);
+    let publication = saved_psf_controls(publication, forms, missing_beam, problem)?;
     let vla_selection_hz = publication
         .vla_selection_store
         .map(|store| vla_selection_frequency(problem, &route, store));

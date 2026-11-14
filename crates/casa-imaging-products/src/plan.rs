@@ -40,6 +40,7 @@ pub struct ContinuumProductControls {
     psf_cutoff: f32,
     reuses_single_psf: bool,
     preserves_saved_psfs: bool,
+    refits_saved_psf_beams: bool,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     saved_mosaic_beam_read_bytes: Option<u64>,
     saved_higher_primary_beam: bool,
@@ -117,10 +118,12 @@ impl ContinuumProductControls {
     }
 
     /// Keep the PSF, sums of weights and primary-beam images already
-    /// present on the main field and its outliers.
+    /// present on the main field and its outliers. If a saved PSF has
+    /// no beam, allow generation to attach the fitted beam to that image.
     #[must_use]
-    pub const fn preserving_saved_psfs(mut self) -> Self {
+    pub const fn preserving_saved_psfs(mut self, refits_beams: bool) -> Self {
         self.preserves_saved_psfs = true;
+        self.refits_saved_psf_beams = refits_beams;
         self
     }
 
@@ -178,6 +181,7 @@ impl Default for ContinuumProductControls {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
             reuses_single_psf: false,
             preserves_saved_psfs: false,
+            refits_saved_psf_beams: false,
             primary_beam_model: None,
             saved_mosaic_beam_read_bytes: None,
             saved_higher_primary_beam: false,
@@ -233,7 +237,18 @@ impl PlannedContinuumGeneration {
         inputs: &ContinuumProductInputs<'_>,
         controls: &ContinuumProductControls,
     ) -> Result<Self, ProductsError> {
-        Self::for_problem(inputs.problem(), controls)
+        let mut planned = Self::for_problem(inputs.problem(), controls)?;
+        if controls.refits_saved_psf_beams {
+            let mut members = planned.members.into_vec();
+            members.retain(|member| {
+                !matches!(member.role, ProductRole::Psf(_))
+                    || inputs
+                        .saved_psf_beams(inputs.model_domain_ordinal(member.axes().domain()))
+                        .is_none()
+            });
+            planned.members = members.into_boxed_slice();
+        }
+        Ok(planned)
     }
 
     /// The publication inventory of a run of `problem`, before it runs:
@@ -256,8 +271,8 @@ impl PlannedContinuumGeneration {
                 controls.preserves_saved_psfs || controls.saved_mosaic_beam_read_bytes.is_some();
             if keep_psf
                 && match entry.role() {
-                    ProductRole::Psf(_)
-                    | ProductRole::Weight(_)
+                    ProductRole::Psf(_) => !controls.refits_saved_psf_beams,
+                    ProductRole::Weight(_)
                     | ProductRole::SumWeights(_)
                     | ProductRole::PrimaryBeam(ProductTerm::Single | ProductTerm::Taylor(0)) => {
                         true
