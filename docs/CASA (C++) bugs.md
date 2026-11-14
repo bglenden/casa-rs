@@ -4637,6 +4637,26 @@ weights and original cache give 34 passing dirty and clean products,
 96 beam checks, exact masks and controller counts, maximum product
 normalized RMS 9.09e-7, and MODEL_DATA below 1.81e-6 (#1121).
 
+## Offset data-frame AW cubes reuse the native channel map
+
+With `specmode='cubedata'`, CASA publishes the native spectral grid as
+`Undefined` and leaves frequencies unconverted. The aligned natural
+nearest control agrees directly. On the 20-channel TOPO fixture with
+`spw='0:3~14', start='1.275GHz', width='50MHz', nchan=8`, raw CASA AW
+uses native ordinals after interpolation. Its PSF normalized RMS is
+0.557 for both linear and cubic. Capturing CASA GridFT's interpolated
+samples and replaying them through the matching AW cache preserves
+their frequencies and plane assignment.
+
+The CASA quantity conversion divides by the unit-scale ratio, so the
+first centre is 1274999999.9999998 Hz. Rounding it to 1275000000 Hz moves
+the strict prediction halo boundary onto the 1.65 GHz stored channel
+and incorrectly excludes that channel. The exact conversion matches
+CASA without expanding the halo. Together the aligned nearest and
+offset linear/cubic comparisons pass 51 products and 132 beams, exact
+masks and controller counts, maximum product normalized RMS 9.67e-7
+and MODEL_DATA below 1.73e-6 (#1121).
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05

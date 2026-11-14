@@ -422,6 +422,9 @@ fn aw_multichannel_sampling_supported(
         }
         SpectralKernel::Cubic => match (source, output) {
             (Topocentric, Rest) => common_weighting,
+            (Topocentric, Topocentric) => {
+                tracked && common_weighting || weighting == WeightingScheme::Natural
+            }
             (Topocentric | Barycentric, Topocentric | Barycentric) => tracked && common_weighting,
             (Lsrk | Topocentric | Barycentric, Lsrk) | (Lsrk, Topocentric | Barycentric) => {
                 common_weighting
@@ -597,14 +600,23 @@ mod tests {
     }
 
     #[test]
-    fn multi_channel_aw_cubic_refuses_an_untracked_topo_axis() {
-        assert!(!aw_multichannel_sampling_supported(
-            SpectralKernel::Cubic,
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            false,
+    fn multi_channel_aw_cubic_accepts_natural_on_the_topo_data_axis() {
+        for weighting in [
             WeightingScheme::Natural,
-        ));
+            WeightingScheme::Briggs { robust: 0.5 },
+            WeightingScheme::Uniform,
+        ] {
+            assert_eq!(
+                aw_multichannel_sampling_supported(
+                    SpectralKernel::Cubic,
+                    FrequencyFrame::Topocentric,
+                    FrequencyFrame::Topocentric,
+                    false,
+                    weighting,
+                ),
+                weighting == WeightingScheme::Natural,
+            );
+        }
     }
 
     #[test]
