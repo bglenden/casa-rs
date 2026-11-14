@@ -127,14 +127,7 @@ impl ImagerRunTaskResult {
             .summary
             .products
             .iter()
-            .map(|path| {
-                let suffix = base_names
-                    .iter()
-                    .filter_map(|base| path.strip_prefix(base.as_ref()))
-                    .find(|suffix| suffix.starts_with('.'))
-                    .unwrap_or_default();
-                artifact(path.into(), suffix)
-            })
+            .map(|path| artifact(path.into(), image_suffix(path, &base_names)))
             .collect();
         Self {
             artifacts,
@@ -486,6 +479,15 @@ pub struct ImagerArtifact {
     pub exists: bool,
 }
 
+fn image_suffix<'a>(path: &'a str, bases: &[std::borrow::Cow<'_, str>]) -> &'a str {
+    bases
+        .iter()
+        .filter_map(|base| path.strip_prefix(base.as_ref()))
+        .filter(|suffix| suffix.starts_with('.'))
+        .min_by_key(|suffix| suffix.len())
+        .unwrap_or_default()
+}
+
 /// Describe one product at the actual destination used by publication.
 fn artifact(path: PathBuf, suffix: &str) -> ImagerArtifact {
     let kind = ImagerArtifactKind::of_suffix(suffix);
@@ -524,6 +526,15 @@ mod tests {
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert_eq!(bundle.parameter_surfaces.len(), 1);
+    }
+
+    #[test]
+    fn artifact_uses_the_owning_image_name_when_prefixes_overlap() {
+        let bases = ["/images/target".into(), "/images/target.field".into()];
+        let path = "/images/target.field.psf";
+        let product = artifact(path.into(), image_suffix(path, &bases));
+        assert_eq!(product.kind, ImagerArtifactKind::Psf);
+        assert_eq!(product.label, "PSF");
     }
 
     #[test]
