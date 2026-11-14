@@ -113,14 +113,16 @@
    "status": "Implemented",
    "scope": "Applies x-small tick labels, draws when requested, saves a supplied filename and disables interactive mode; returns None as CASA does.",
    "evidence": [
-    "signature"
+    "signature",
+    "simulation-figures-20261114"
    ]
   },
   "ephemeris": {
    "status": "Implemented",
    "scope": "Prepares the 96-sample elevation curve, transit and optional MS time range or quantity-duration bar in Rust, using the supplied date/hour-angle choice, direction or list, known telescope or explicit cofa; draws on current axes. Corrects CASA's default quantity-record comparison defect under the standing deviations rule.",
    "evidence": [
-    "signature"
+    "signature",
+    "simulation-figures-20261114"
    ]
   },
   "flatimage": {
@@ -313,14 +315,16 @@
    "status": "Implemented",
    "scope": "Clears the current Matplotlib figure, sets interactive mode and selects a multi-panel layout; retains the caller's list as pmulti, as CASA does. Requires the plot extra.",
    "evidence": [
-    "signature"
+    "signature",
+    "simulation-figures-20261114"
    ]
   },
   "nextfig": {
    "status": "Implemented",
    "scope": "Applies x-small tick labels and advances the retained multi-panel list, keeping the last axes after its final panel, as CASA does.",
    "evidence": [
-    "signature"
+    "signature",
+    "simulation-figures-20261114"
    ]
   },
   "noisetemp": {
@@ -344,7 +348,8 @@
    "status": "Implemented",
    "scope": "Draws every antenna in its native local tangent plane, with CASA's dish-circle or marker choice and labels for fewer than ten antennas, on the selected axes. Requires the plot extra.",
    "evidence": [
-    "signature"
+    "signature",
+    "simulation-figures-20261114"
    ]
   },
   "polsettings": {
@@ -414,7 +419,8 @@
    "evidence": [
     "signature",
     "simanalyze-casa-fixture",
-    "binding-tests"
+    "binding-tests",
+    "simulation-figures-20261114"
    ]
   },
   "tconpc": {
@@ -695,6 +701,19 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing AGENTS.md CASA-deviation rule: correct CASA failures that contradict the documented/evident intent; preserve deliberate observable behavior."
+  },
+  {
+   "id": "ephemeris-quantity-duration",
+   "inputs": "Public simutil.ephemeris without an MS and the constructor default or a supplied quantity-record duration.",
+   "casa": "Compares its quantity record to an integer and raises TypeError after partially drawing the figure.",
+   "ours": "Convert the duration quantity before comparison; default zero draws no observation bar, while positive durations draw their actual hour range.",
+   "rationale": "The constructor itself supplies a quantity record, and the helper evidently intends a time interval rather than a Python type error.",
+   "impact": "Default and quantity-duration calls work while preserving the independent CASA elevation/transit curve.",
+   "evidence": [
+    "simulation-figures-20261114"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing AGENTS.md CASA-deviation rule: correct behavior that contradicts documented or evident intent; the existing checkpoint already records this correction."
   }
  ],
  "evidence": {
@@ -852,6 +871,26 @@
    "source_revision": "e95e5eb6e4aff85af917af4ba22d6e4bfafaf89a",
    "command": "CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --configs crates/casa-simulation/tests/data/readantenna ; NATIVEPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native ; CASAPY tools/simulation/simutil_diagnostics_oracle.py --out OUT --native-image OUT/native-report.json",
    "receipt": "resources/casa-compat/evidence/simutil-diagnostics-20261114.json"
+  },
+  "simulation-figures-20261114": {
+   "kind": "Integrated CASA simulation figures and public helper comparisons",
+   "state": "passed",
+   "scope": "SIM-29/30/31 task figure settings, complete plotted values/artists, lifecycle/antenna/ephemeris/statistic helpers and numerical quick-PSF preservation.",
+   "result": "139 Python tests pass (one existing optional live-CASA skip); four native figure/PSF tests pass (one parent-invoked helper ignore). 16 task PNG figures and 34 helper artist cases agree with CASA 6.7.6.14; helper image NRMS 0, maximum helper coordinate difference 1.34e-7. CASA C++ reads six native PSFs, maximum NRMS 6.63e-7 under 1e-3. No thinning; all 279 dense pointings retained.",
+   "links": [
+    "crates/casa-simulation/src/simobserve/graphics/mod.rs",
+    "crates/casa-simulation/src/simutil/graphics.rs",
+    "crates/casars-python/src/tools/simutil/graphics.rs",
+    "crates/casars-python/python/casars/_plot_document.py",
+    "crates/casars-python/python/tests/test_simutil_graphics.py",
+    "tools/simulation/check_simobserve_rendering.py",
+    "tools/simulation/simutil_graphics_oracle.py"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "514f31e98d393a8e68c4287583701e1b9a523aed",
+   "source_revision": "cbc37eaf51ecf1d1f6eba8cddb231cb898d77875",
+   "command": "CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py ; CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture ; python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered ; CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json",
+   "receipt": "resources/casa-compat/evidence/simulation-figures-20261114.json"
   }
  }
 }

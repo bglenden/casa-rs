@@ -1,0 +1,429 @@
+{
+ "schema": "simobserve-graphics-receipt/1",
+ "work_issue": 1304,
+ "date": "2026-11-14",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6.14"
+ },
+ "source_revision": "cbc37eaf51ecf1d1f6eba8cddb231cb898d77875",
+ "producer_revision": "514f31e98d393a8e68c4287583701e1b9a523aed",
+ "consumer_revision": "514f31e98d393a8e68c4287583701e1b9a523aed",
+ "scope": "SIM-29/30/31 complete task sky/observation figures and public figure lifecycle, antenna, ephemeris and plotted-statistic helpers. Existing rendering and public-helper checkpoints are integrated with completed calculation deliveries.",
+ "commands": [
+  "CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py",
+  "CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture",
+  "python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered",
+  "CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json"
+ ],
+ "summary": {
+  "python_passed": 139,
+  "python_skipped": 1,
+  "skip": "Existing optional live-CASA signature import in native-only Python; separate actual CASA C++ readbacks pass.",
+  "native_passed": 4,
+  "native_ignored": 1,
+  "ignore": "Parent-invoked relative-project subprocess helper, exercised by its passing parent.",
+  "task_figures": 16,
+  "helper_artist_cases": 34,
+  "native_psfs_read_by_cpp": 6,
+  "maximum_task_display_coordinate_difference": 0.0008598989224992692,
+  "maximum_helper_display_coordinate_difference": 1.3321680825129079e-07,
+  "maximum_helper_image_nrms": 0.0,
+  "maximum_quick_psf_nrms": 6.62696262868408e-07
+ },
+ "acceptance": "Exact panel/artist counts, text, units, labels, styles and controls; full line samples/image pixels and all 279 dense pointings retained. Coordinate bound 1e-3 in declared display units, image NRMS 1e-3, image extent 1e-9, colour limits 1e-5, colours 1e-12. File/screen/both/none, relative projects, retained caller axes/title/style, quantity/list forms, unobservable-site errors, PNG failure preservation and payload/mapping cleanup pass. Representative rendered figures were visually inspected.",
+ "preserved_evidence": "The original 2026-11-11 task renderer review and fixed orphan-pending/figure-ownership regressions remain valid. Existing prediction/backends/performance/memory evidence and numerical quick-PSF acceptance are retained. Native scientific preparation uses existing resource admission; raw arrays use bounded validated little-endian file views, with no JSON pixel copies or thinning.",
+ "limits": "No raster bit identity or new throughput claim. Display-time alignment retains the already accepted scoped plotting allowance; it does not replace equal-stored-TIME MS/UVW acceptance. This Linux host has no Metal device; retained accepted Metal prediction/quick-PSF evidence is unchanged. PNG rendering requires the Python host and plot extra; direct headless use without its payload warns. General plotting, Phase6 tasks and non-simulation wrappers are separate.",
+ "task_artist_comparison": {
+  "casa_version": "6.7.6.14",
+  "passed": 16,
+  "results": [
+   {
+    "name": "int_components.small.skymodel.png",
+    "native_run": "int_components-w1-VpJTdF",
+    "panels": 1,
+    "maximum_coordinate_difference": 2.289999370653732e-11,
+    "png": "target/1304-rendered/int_components-w1-VpJTdF/int_components.small.skymodel.png"
+   },
+   {
+    "name": "int_components.small.observe.png",
+    "native_run": "int_components-w1-VpJTdF",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png": "target/1304-rendered/int_components-w1-VpJTdF/int_components.small.observe.png"
+   },
+   {
+    "name": "int_components.small.skymodel.png",
+    "native_run": "int_components-w3-MzIIAU",
+    "panels": 1,
+    "maximum_coordinate_difference": 2.289999370653732e-11,
+    "png": "target/1304-rendered/int_components-w3-MzIIAU/int_components.small.skymodel.png"
+   },
+   {
+    "name": "int_components.small.observe.png",
+    "native_run": "int_components-w3-MzIIAU",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png": "target/1304-rendered/int_components-w3-MzIIAU/int_components.small.observe.png"
+   },
+   {
+    "name": "int_dense_pointings.small.skymodel.png",
+    "native_run": "int_dense_pointings-w1-1HwSGP",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png": "target/1304-rendered/int_dense_pointings-w1-1HwSGP/int_dense_pointings.small.skymodel.png"
+   },
+   {
+    "name": "int_dense_pointings.small.observe.png",
+    "native_run": "int_dense_pointings-w1-1HwSGP",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598989224992692,
+    "png": "target/1304-rendered/int_dense_pointings-w1-1HwSGP/int_dense_pointings.small.observe.png"
+   },
+   {
+    "name": "int_dense_pointings.small.skymodel.png",
+    "native_run": "int_dense_pointings-w3-HF1eKV",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png": "target/1304-rendered/int_dense_pointings-w3-HF1eKV/int_dense_pointings.small.skymodel.png"
+   },
+   {
+    "name": "int_dense_pointings.small.observe.png",
+    "native_run": "int_dense_pointings-w3-HF1eKV",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598989224992692,
+    "png": "target/1304-rendered/int_dense_pointings-w3-HF1eKV/int_dense_pointings.small.observe.png"
+   },
+   {
+    "name": "int_image.small.skymodel.png",
+    "native_run": "int_image-w1-OiqxGh",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png": "target/1304-rendered/int_image-w1-OiqxGh/int_image.small.skymodel.png"
+   },
+   {
+    "name": "int_image.small.observe.png",
+    "native_run": "int_image-w1-OiqxGh",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png": "target/1304-rendered/int_image-w1-OiqxGh/int_image.small.observe.png"
+   },
+   {
+    "name": "int_image.small.skymodel.png",
+    "native_run": "int_image-w3-kDQ5rk",
+    "panels": 2,
+    "maximum_coordinate_difference": 1.7763568394002505e-15,
+    "png": "target/1304-rendered/int_image-w3-kDQ5rk/int_image.small.skymodel.png"
+   },
+   {
+    "name": "int_image.small.observe.png",
+    "native_run": "int_image-w3-kDQ5rk",
+    "panels": 4,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png": "target/1304-rendered/int_image-w3-kDQ5rk/int_image.small.observe.png"
+   },
+   {
+    "name": "sd_image.small.skymodel.png",
+    "native_run": "sd_image-w1-7puyDM",
+    "panels": 2,
+    "maximum_coordinate_difference": 0.0,
+    "png": "target/1304-rendered/sd_image-w1-7puyDM/sd_image.small.skymodel.png"
+   },
+   {
+    "name": "sd_image.small.observe.png",
+    "native_run": "sd_image-w1-7puyDM",
+    "panels": 1,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png": "target/1304-rendered/sd_image-w1-7puyDM/sd_image.small.observe.png"
+   },
+   {
+    "name": "sd_image.small.skymodel.png",
+    "native_run": "sd_image-w3-JBiLmM",
+    "panels": 2,
+    "maximum_coordinate_difference": 0.0,
+    "png": "target/1304-rendered/sd_image-w3-JBiLmM/sd_image.small.skymodel.png"
+   },
+   {
+    "name": "sd_image.small.observe.png",
+    "native_run": "sd_image-w3-JBiLmM",
+    "panels": 1,
+    "maximum_coordinate_difference": 0.0008598922868259251,
+    "png": "target/1304-rendered/sd_image-w3-JBiLmM/sd_image.small.observe.png"
+   }
+  ]
+ },
+ "public_helper_artist_comparison": [
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_every_antenna_and_dish_matches_casa[1-d12.0] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_every_antenna_and_dish_matches_casa[8-d12.0] (call)",
+   "max_coordinate_difference_in_display_units": 3.526139380483073e-10,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_every_antenna_and_dish_matches_casa[8-d0.01] (call)",
+   "max_coordinate_difference_in_display_units": 3.525997271935921e-10,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_every_antenna_and_dish_matches_casa[12-d12.0] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[image.flat-{}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[image.flat-{'bar': False, 'showstats': False}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[stats.flat-{'disprange': []}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[stats.flat-{'disprange': [0.5]}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[stats.flat-{'disprange': [0.1, 0.8]}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[stats.flat-{'disprange': 0.8}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[masked_corner.flat-{}] (call)",
+   "max_coordinate_difference_in_display_units": 1.4210854715202004e-14,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[cube.image-{}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[kelvin.flat-{}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": [
+    0.0
+   ]
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_statim_complete_plane_controls_and_statistics_match_casa[stats.flat-{'plot': False, 'disprange': []}] (call)",
+   "max_coordinate_difference_in_display_units": 0.0,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[False-case0] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[False-case1] (call)",
+   "max_coordinate_difference_in_display_units": 8.454923516865165e-08,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[False-case2] (call)",
+   "max_coordinate_difference_in_display_units": 1.2879472421900573e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[False-case3] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[False-case4] (call)",
+   "max_coordinate_difference_in_display_units": 8.472562029737674e-08,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[False-case5] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[False-case6] (call)",
+   "max_coordinate_difference_in_display_units": 4.5227352529764175e-08,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[True-case0] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[True-case1] (call)",
+   "max_coordinate_difference_in_display_units": 8.454923516865165e-08,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[True-case2] (call)",
+   "max_coordinate_difference_in_display_units": 1.2879472421900573e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[True-case3] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[True-case4] (call)",
+   "max_coordinate_difference_in_display_units": 8.472562029737674e-08,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[True-case5] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_public_ephemeris_matches_casa[True-case6] (call)",
+   "max_coordinate_difference_in_display_units": 4.5227352529764175e-08,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_ephemeris_accepts_its_default_quantity_and_draws_the_requested_duration[None] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_ephemeris_accepts_its_default_quantity_and_draws_the_requested_duration[duration1] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_existing_axes_and_unused_ms_duration_match_casa[plotants-0.0] (call)",
+   "max_coordinate_difference_in_display_units": 3.526139380483073e-10,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_existing_axes_and_unused_ms_duration_match_casa[ephemeris-0.0] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_existing_axes_and_unused_ms_duration_match_casa[ephemeris-unused] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  },
+  {
+   "case": "python/tests/test_simutil_graphics.py::test_existing_axes_and_unused_ms_duration_match_casa[ephemeris-{'value': 1.0, 'unit': 'Jy'}] (call)",
+   "max_coordinate_difference_in_display_units": 1.3321680825129079e-07,
+   "image_nrms": []
+  }
+ ],
+ "cpp_quick_psf_readback": {
+  "casa_version": "6.7.6.14",
+  "passed": 6,
+  "results": [
+   {
+    "case": "int_image",
+    "path": "target/1304-figures-native/int_image-w1-OiqxGh/int_image/int_image.small.quick.psf",
+    "shape": [
+     128,
+     128,
+     1,
+     1
+    ],
+    "unit": "Jy/pixel",
+    "data_nrms": 6.62696262868408e-07,
+    "limit": 0.001
+   },
+   {
+    "case": "int_image",
+    "path": "target/1304-figures-native/int_image-w3-kDQ5rk/int_image/int_image.small.quick.psf",
+    "shape": [
+     128,
+     128,
+     1,
+     1
+    ],
+    "unit": "Jy/pixel",
+    "data_nrms": 6.62696262868408e-07,
+    "limit": 0.001
+   },
+   {
+    "case": "int_components",
+    "path": "target/1304-figures-native/int_components-w1-VpJTdF/int_components/int_components.small.quick.psf",
+    "shape": [
+     152,
+     152,
+     1,
+     1
+    ],
+    "unit": "Jy/pixel",
+    "data_nrms": 2.0627433564218497e-07,
+    "limit": 0.001
+   },
+   {
+    "case": "int_components",
+    "path": "target/1304-figures-native/int_components-w3-MzIIAU/int_components/int_components.small.quick.psf",
+    "shape": [
+     152,
+     152,
+     1,
+     1
+    ],
+    "unit": "Jy/pixel",
+    "data_nrms": 2.0627433564218497e-07,
+    "limit": 0.001
+   },
+   {
+    "case": "int_dense_pointings",
+    "path": "target/1304-figures-native/int_dense_pointings-w1-1HwSGP/int_dense_pointings/int_dense_pointings.small.quick.psf",
+    "shape": [
+     128,
+     128,
+     1,
+     1
+    ],
+    "unit": "Jy/pixel",
+    "data_nrms": 6.422581136138259e-07,
+    "limit": 0.001
+   },
+   {
+    "case": "int_dense_pointings",
+    "path": "target/1304-figures-native/int_dense_pointings-w3-HF1eKV/int_dense_pointings/int_dense_pointings.small.quick.psf",
+    "shape": [
+     128,
+     128,
+     1,
+     1
+    ],
+    "unit": "Jy/pixel",
+    "data_nrms": 6.422581136138259e-07,
+    "limit": 0.001
+   }
+  ]
+ }
+}
