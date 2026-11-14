@@ -2315,7 +2315,9 @@ retains the raw CASA rows. Its independent image control supplies the
 equivalent four-plane sky and reverses the beam correlation values to
 compensate for CASA's image indexing. Those actual C++ rows are the
 corrected reference, with the usual 1e-3 threshold unchanged. The scalar
-real, real/imaginary and complex beam controls require no such correction.</p>
+real, real/imaginary and complex beam controls require no such correction. The total-power
+controls in <code>sm_total_power_oracle.py</code> retain this correction for a
+nonzero I/Q/U/V sky, including an ordinary GridFT control (#1299).</p>
 <p><code>PBMath2DImage::updateJones</code> also returns its cached beam when the sky
 coordinates and shape are unchanged, without testing the pointing or
 parallactic angle. An A/B/A observation separated by four hours therefore
@@ -2831,8 +2833,9 @@ Native total power
 continues to use autocorrelations only, correcting the separate <code>SDGrid</code>
 cross-correlation defect documented above. Incomplete or disagreeing antenna
 pointings are explicitly refused before changing the DATA plan.</p>
-<p>Fresh <code>observemany</code> beams on pointings moved off their fields remain
-explicitly refused. <code>simobserve</code> gives each pointing its own field and does
+<p>Fresh total-power <code>observemany</code> sampling also follows POINTING; the six
+fixed/changing BOX/PB/VP controls in <code>sm_fresh_pointings_oracle.py</code> retain
+raw output and use the same independent cache reset (#1299). <code>simobserve</code> gives each pointing its own field and does
 not reach this cache defect.</p>
 <h2 id="predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them"><code>predict</code> and <code>corrupt</code> add scratch columns to a MeasurementSet without them<a class="headerlink" href="#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them" title="Permanent link">&para;</a></h2>
 <ul>
