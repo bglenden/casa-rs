@@ -85,20 +85,20 @@ def main():
         recipe="tools/simulation/sm_saved_curves_oracle.py", cases=cases))
 
 
-def mosaic_case(root, inputs, base):
-    path = root / "numeric_power_mosaic.ms"
+def mosaic_case(root, inputs, base, beam="numeric_power", name="numeric_power_mosaic"):
+    path = root / f"{name}.ms"
     shutil.copytree(base, path, ignore=shutil.ignore_patterns("table.lock"))
     before = snapshot(path)
     sm = simulator()
     assert sm.openfromms(str(path))
     assert sm.setoptions(ftmachine="mosaic")
     assert sm.setvp(dovp=False, usedefaultvp=False,
-        vptable=str(inputs / "numeric_power.vp"), dosquint=False)
+        vptable=str(inputs / f"{beam}.vp"), dosquint=False)
     assert sm.setdata(fieldid=[0])
     assert sm.predict(imagename=str(inputs / "sky.image"), incremental=False)
-    case = dict(name="numeric_power_mosaic", beam="numeric_power", operation="mosaic", dovp=False,
+    case = dict(name=name, beam=beam, operation="mosaic", dovp=False,
         before=before, after=snapshot(path), cleanup="not returned")
-    output = root / "numeric_power_mosaic.json.gz"
+    output = root / f"{name}.json.gz"
     write(output, dict(casa_version=version_string(), cases=[case]))
     sm.close()
     case["cleanup"] = "returned"

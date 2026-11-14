@@ -106,6 +106,8 @@ mod feeds;
 mod field_grids;
 #[path = "session_memory/focus.rs"]
 mod focus;
+#[path = "session_memory/frequency_curves.rs"]
+mod frequency_curves;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
 #[path = "session_memory/heap.rs"]
