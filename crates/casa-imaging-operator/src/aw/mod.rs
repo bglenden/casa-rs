@@ -302,6 +302,8 @@ pub struct AwCatalog {
     /// Every cell, by group and then Mueller element: group `g`'s are
     /// `cells[g·E..(g + 1)·E]` with `E` the number of elements.
     cells: Vec<CellFiles>,
+    /// Cell path allocations present while opening before PA coalescing.
+    discarded_path_bytes: usize,
     groups: Vec<Group>,
     rotations: Vec<(f64, f64)>,
     oversampling: u16,
@@ -350,6 +352,7 @@ impl AwCatalog {
     ) -> Result<Self, AwCatalogError> {
         let root = root.as_ref().to_path_buf();
         let mut cells = read_cells(&root)?;
+        let discarded_path_bytes = coalesce_imported_pa(&mut cells);
         // A native cell's working field is the image field times the
         // oversampling: `working_size · working_increment = sampling · n · Δx`.
         let [grid_n, _] = geometry.grid_shape();
@@ -507,6 +510,7 @@ impl AwCatalog {
             }),
             bound: CacheBound::new(bound_bytes),
             cells,
+            discarded_path_bytes,
             groups,
             rotations,
             oversampling,
@@ -697,6 +701,7 @@ impl AwCatalog {
             .map(|cell| cell.imaging.path.capacity() + cell.weight.path.capacity());
         let index = self.root.capacity()
             + self.cells.capacity() * size_of::<CellFiles>()
+            + size_of::<usize>()
             + paths.clone().sum::<usize>()
             + self.groups.capacity() * size_of::<Group>()
             + self.rotations.capacity() * size_of::<(f64, f64)>()
@@ -719,7 +724,7 @@ impl AwCatalog {
             + self.mueller_elements.capacity() * size_of::<u32>()
             + lru.slots.capacity() * size_of::<Slot>();
         let opening = (self.cells.len() * size_of::<f64>())
-            .max(CELL_IMAGE_RECORD_BYTES + 4 * paths.max().unwrap_or(0))
+            .max(self.discarded_path_bytes + CELL_IMAGE_RECORD_BYTES + 4 * paths.max().unwrap_or(0))
             as u64;
         let elements = self.mueller_elements.len();
         let group = |group: &Group| {
@@ -1073,6 +1078,30 @@ impl ConvolutionFunctionSet for AwCatalog {
     fn weighs_samples_off_the_grid(&self) -> bool {
         true
     }
+}
+
+/// CASA imports PA buffers in ascending header order. A new angle within
+/// one degree of the previous buffer replaces its angle and cells
+/// (CFCache::fillCFListFromDisk, CFStore2::resize). Thus only the last
+/// buffer survives each run of neighboring angles within that tolerance.
+fn coalesce_imported_pa(cells: &mut Vec<CellFiles>) -> usize {
+    cells.sort_unstable_by(|a, b| b.imaging.pa_deg.total_cmp(&a.imaging.pa_deg));
+    let tolerance = 1.0_f32.to_radians();
+    let mut next = None::<f64>;
+    let mut keep = true;
+    let mut discarded = 0;
+    cells.retain(|cell| {
+        let angle = cell.imaging.pa_deg;
+        if next.is_none_or(|next| next.to_bits() != angle.to_bits()) {
+            keep = next.is_none_or(|next| stored_pa_rad(next) - stored_pa_rad(angle) >= tolerance);
+            next = Some(angle);
+        }
+        if !keep {
+            discarded += cell.imaging.path.capacity() + cell.weight.path.capacity();
+        }
+        keep
+    });
+    discarded
 }
 
 /// Every cell of the cache at `root` (`CFCache::fillCFListFromDisk`): each
