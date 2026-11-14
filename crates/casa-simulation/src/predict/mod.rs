@@ -49,13 +49,15 @@
 
 mod beam;
 mod components;
+pub(crate) mod jones;
 mod model;
 mod single_dish;
 
 pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
 pub(crate) use components::{
-    BeamContext, ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
+    BeamContext, ComponentBeamConfig, ComponentPrediction, ComponentRefusal, ComponentTargets,
+    ComponentWindow,
 };
 pub use model::SkyModel;
 pub use single_dish::SingleDishKernel;
@@ -164,6 +166,12 @@ pub(crate) struct ModelLayout {
 }
 
 impl ModelLayout {
+    pub(crate) fn with_jones(mut self, correlations: &[Correlation]) -> Result<Self, PredictError> {
+        use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+        self.polarization =
+            PolarizationRouting::compile(correlations, &[StokesI, StokesQ, StokesU, StokesV])?;
+        Ok(self)
+    }
     /// The layout for `model` on rows with `correlations` through `machine`,
     /// with `beams` for [`FtMachine::Mosaic`] (the others ignore them).
     ///
@@ -272,6 +280,8 @@ impl ModelLayout {
                         .custom_pattern
                         .as_ref()
                         .map(crate::session::voltage_patterns::BeamSource::pattern)
+                        .transpose()
+                        .map_err(|e| PredictError::UnsupportedModel(e.to_string()))?
                         .unwrap_or_else(|| beams.dishes[0].pattern()),
                     &beams.windows,
                 )?
@@ -301,6 +311,41 @@ pub(crate) struct ModelOperator {
 }
 
 impl ModelOperator {
+    pub(crate) fn jones_scratch_bytes(&self, model: &SkyModel) -> u64 {
+        let [nx, ny] = model.shape();
+        self.plane_scratch_bytes(model) + (4 * nx * ny * size_of::<f32>() + 1024) as u64
+    }
+
+    pub(crate) fn prepare_jones(
+        &self,
+        model: &SkyModel,
+        image: &jones::JonesImage,
+        pointing: [f64; 2],
+        angle: f64,
+        team: &WorkerTeam,
+    ) -> Result<PreparedModelGrids, PredictError> {
+        let mut grids = self.operator.empty_model_grids(self.planes())?;
+        let mut jobs: Vec<Option<ModelPlaneGrids<'_>>> =
+            grids.planes_mut().into_iter().map(Some).collect();
+        team.for_each_mut(&mut jobs, |plane, target| {
+            let Some(target) = target.take() else {
+                return Ok(());
+            };
+            let images = image.apply_plane(
+                model,
+                plane,
+                model.read_polarizations(plane)?,
+                pointing,
+                angle,
+            )?;
+            self.operator
+                .fill_model_plane(&ModelPlane { images }, None, target)?;
+            Ok::<_, PredictError>(())
+        })?;
+        drop(jobs);
+        Ok(grids)
+    }
+
     /// The operator of `layout` with `kernels` (its machine's set), in
     /// `precision`.
     pub(crate) fn new(

@@ -88,6 +88,21 @@ impl std::fmt::Debug for SkyModel {
 }
 
 impl SkyModel {
+    pub(super) fn direction_coordinate(&self) -> &casa_coordinates::DirectionCoordinate {
+        let CoordinateModel::Direction(direction) = self.coordinates.coordinate(0) else {
+            unreachable!()
+        };
+        direction
+    }
+
+    pub(super) fn native_pointing(&self, pointing: [f64; 2]) -> Result<[f64; 2], PredictError> {
+        let (ra, dec) = MDirection::from_angles(pointing[0], pointing[1], DirectionRef::J2000)
+            .convert_to(self.tangent.refer(), &self.frame)
+            .map_err(|e| casa_coordinates::CoordinateError::ConversionFailed(e.to_string()))?
+            .as_angles();
+        Ok([ra, dec])
+    }
+
     /// Open a CASA image with axes `[direction x, direction y, Stokes,
     /// spectral]`, with Stokes I/Q/U/V planes, as `simobserve` writes its sky
     /// model, and read its header.

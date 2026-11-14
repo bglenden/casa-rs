@@ -283,8 +283,8 @@ fn a_prediction_holds_the_bytes_its_targets_say_before_it_is_formed() {
             squint: None,
             workers: 1,
         };
-        let prediction =
-            ComponentPrediction::new(&listed, targets, Reservation::none()).expect("prepared");
+        let prediction = ComponentPrediction::new(&listed, targets.clone(), Reservation::none())
+            .expect("prepared");
         assert_eq!(
             prediction.bytes(),
             targets.bytes(listed.len()),

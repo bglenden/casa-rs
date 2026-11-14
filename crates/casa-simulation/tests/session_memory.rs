@@ -112,6 +112,8 @@ mod frequency_curves;
 mod gain_setters;
 #[path = "session_memory/heap.rs"]
 mod heap;
+#[path = "session_memory/image_beams.rs"]
+mod image_beams;
 #[path = "session_memory/image_stokes.rs"]
 mod image_stokes;
 #[path = "session_memory/irregular_channels.rs"]

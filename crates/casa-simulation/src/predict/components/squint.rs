@@ -8,7 +8,42 @@ use num_complex::Complex64;
 
 use super::{BeamPattern, PrimaryBeam, separation_rad};
 
-pub(super) type Config = (PrimaryBeam, f64, f64, bool);
+#[derive(Clone, Debug)]
+pub(crate) struct Config {
+    source: Source,
+    pub(super) increment: f64,
+    pub(super) alt_az: bool,
+}
+
+#[derive(Clone, Debug)]
+enum Source {
+    Squint(PrimaryBeam, f64),
+    Image(std::sync::Arc<crate::predict::jones::JonesImage>),
+}
+
+impl Config {
+    pub(crate) fn squint(beam: PrimaryBeam, frequency: f64, increment: f64, alt_az: bool) -> Self {
+        Self {
+            source: Source::Squint(beam, frequency),
+            increment,
+            alt_az,
+        }
+    }
+    pub(crate) fn image(
+        image: std::sync::Arc<crate::predict::jones::JonesImage>,
+        increment: f64,
+        alt_az: bool,
+    ) -> Self {
+        Self {
+            source: Source::Image(image),
+            increment,
+            alt_az,
+        }
+    }
+    pub(super) fn radial(&self) -> bool {
+        matches!(self.source, Source::Squint(..))
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct History {
@@ -26,7 +61,7 @@ pub(crate) struct BeamContext {
 
 pub(super) struct Squint {
     pub(super) config: Config,
-    pattern: BeamPattern,
+    pattern: Option<BeamPattern>,
     history: Mutex<History>,
     workspaces: Vec<Mutex<Vec<Complex64>>>,
     channels: usize,
@@ -85,27 +120,27 @@ impl BeamContext {
 }
 
 impl Squint {
-    pub(super) fn bytes(workers: usize, channels: usize) -> u64 {
+    pub(super) fn bytes(workers: usize, channels: usize, radial: bool) -> u64 {
         size_of::<Self>() as u64
-            + BeamPattern::BYTES
+            + if radial { BeamPattern::BYTES } else { 0 }
             + (workers
                 * (size_of::<Mutex<Vec<Complex64>>>() + channels * 4 * size_of::<Complex64>()))
                 as u64
     }
 
     pub(super) fn resident_bytes(&self) -> u64 {
-        Self::bytes(self.workspaces.len(), self.channels)
+        Self::bytes(self.workspaces.len(), self.channels, self.config.radial())
     }
 
     pub(super) fn new(
         config: Config,
-        pattern: &BeamPattern,
+        pattern: Option<&BeamPattern>,
         workers: usize,
         channels: usize,
     ) -> Self {
         Self {
             config,
-            pattern: pattern.clone(),
+            pattern: pattern.cloned(),
             history: Mutex::default(),
             workspaces: (0..workers)
                 .map(|_| Mutex::new(vec![Complex64::new(0., 0.); channels * 4]))
@@ -135,7 +170,13 @@ impl Squint {
         };
         let mut context = initial;
         for time in times {
-            context.advance(time, phase, frame, self.config.2, self.config.3)?;
+            context.advance(
+                time,
+                phase,
+                frame,
+                self.config.increment,
+                self.config.alt_az,
+            )?;
         }
         *history = context.history;
         Ok(initial)
@@ -150,21 +191,19 @@ impl Squint {
         frequency: f64,
         basis: Polarisation,
     ) -> [Complex64; 4] {
+        if let Source::Image(image) = &self.config.source {
+            return image.component_flux(circular, direction, pointing, angle, frequency, basis);
+        }
+        let Source::Squint(beam, reference) = self.config.source else {
+            unreachable!()
+        };
+        let pattern = self.pattern.as_ref().expect("squint has a radial pattern");
         let powers = [true, false].map(|right| {
-            let [dx, dy] =
-                self.config
-                    .0
-                    .squint_displacement_rad(self.config.1, frequency, angle, right);
+            let [dx, dy] = beam.squint_displacement_rad(reference, frequency, angle, right);
             let shifted = shifted(pointing, dx, dy);
-            f64::from(
-                self.pattern
-                    .power_at(separation_rad(direction, shifted), frequency),
-            )
+            f64::from(pattern.power_at(separation_rad(direction, shifted), frequency))
         });
-        let centre = f64::from(
-            self.pattern
-                .power_at(separation_rad(direction, pointing), frequency),
-        );
+        let centre = f64::from(pattern.power_at(separation_rad(direction, pointing), frequency));
         let [rr, rl, lr, ll] = circular;
         let [rr, ll] = [rr.re * powers[0], ll.re * powers[1]];
         stokes_in(

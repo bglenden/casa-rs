@@ -15,10 +15,13 @@ use super::{
 };
 use crate::predict::{BeamPattern, PrimaryBeam};
 
+mod images;
+
 #[derive(Clone)]
 pub(crate) enum BeamSource {
     Configured(PrimaryBeam),
     Tabulated(Arc<Admitted<BeamPattern>>),
+    Image(Arc<crate::predict::jones::JonesImage>),
 }
 
 impl std::fmt::Debug for BeamSource {
@@ -26,6 +29,7 @@ impl std::fmt::Debug for BeamSource {
         match self {
             Self::Configured(beam) => std::fmt::Debug::fmt(beam, f),
             Self::Tabulated(_) => f.write_str("saved radial voltage curve"),
+            Self::Image(image) => std::fmt::Debug::fmt(image, f),
         }
     }
 }
@@ -34,13 +38,24 @@ impl BeamSource {
     pub(crate) fn configured(&self) -> Option<PrimaryBeam> {
         match self {
             Self::Configured(beam) => Some(*beam),
-            Self::Tabulated(_) => None,
+            Self::Tabulated(_) | Self::Image(_) => None,
         }
     }
-    pub(crate) fn pattern(&self) -> BeamPattern {
-        match self {
+    pub(crate) fn pattern(&self) -> SimulatorResult<BeamPattern> {
+        Ok(match self {
             Self::Configured(beam) => beam.pattern(),
             Self::Tabulated(pattern) => pattern.value.clone(),
+            Self::Image(_) => {
+                return Err(SimulatorError::not_yet_implemented(
+                    "saved Jones image consumption through this prediction path (#1297)",
+                ));
+            }
+        })
+    }
+    pub(crate) fn image(&self) -> Option<&Arc<crate::predict::jones::JonesImage>> {
+        match self {
+            Self::Image(image) => Some(image),
+            _ => None,
         }
     }
 }
@@ -188,7 +203,9 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
         }
     }
     let name = text(&record, "name")?;
-    let pattern = if matches!(name, "POLY" | "IPOLY" | "COSPOLY" | "NUMERIC") {
+    let pattern = if name == "IMAGE" {
+        BeamSource::Image(images::load(session, &record)?)
+    } else if matches!(name, "POLY" | "IPOLY" | "COSPOLY" | "NUMERIC") {
         saved_curve(session, &record)?
     } else {
         BeamSource::Configured(from_record(&record)?)

@@ -1308,6 +1308,32 @@ rows by dividing selected correlations by that original unit-phase factor.
 No scientific tolerance changes; the remaining documented LSRK-label error
 is below the existing 1e-3 threshold in these controls.
 
+## Saved Jones-image beams lose or reverse image polarization
+
+- Date noted: 2026-11-14
+- Status: CASA bug casa-rs does not follow (#1297, SIM-10)
+- Affected code: `synthesis/TransformMachines/PBMath2DImage.cc`,
+  `applyJonesFastX` and `apply(SkyComponent&, ...)` in CASA 6.7.6.14.
+
+The component path reverses its input and output correlations around the
+Jones product. The image path constructs the same reversed Jones matrix
+but applies it directly to the image correlations. An asymmetric voltage
+matrix therefore has different polarization effects on an image and on
+its component representation. A one-Stokes sky also retains only one
+beam-applied correlation, losing induced Q/U/V. Giving CASA four Stokes
+planes with Q/U/V zero changes the prediction even though the sky is the
+same. In the named controls, the original one-Stokes image produces equal
+XX/YY and zero crosshands, while the equivalent four-plane sky has unequal
+parallel hands and nonzero crosshands.
+
+casa-rs applies the same coherency product to image and component signals
+and grids all four resulting Stokes planes. `sm_image_beams_oracle.py`
+retains the raw CASA rows. Its independent image control supplies the
+equivalent four-plane sky and reverses the beam correlation values to
+compensate for CASA's image indexing. Those actual C++ rows are the
+corrected reference, with the usual 1e-3 threshold unchanged. The scalar
+real, real/imaginary and complex beam controls require no such correction.
+
 ## EVLA component dosquint is a no-op
 
 CASA 6.7.6.14 accepts `sm.setvp(dosquint=True)` for EVLA, but logs
