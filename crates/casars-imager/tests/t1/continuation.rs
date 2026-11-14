@@ -149,16 +149,46 @@ fn taylor_family_continues(terms: usize) {
         "{terms} terms"
     );
     step(json!({"niter": 0, "calcpsf": false, "restoration": false}));
+    let saved = [
+        family("psf", moments),
+        family("sumwt", moments),
+        family("residual", terms),
+    ]
+    .concat();
+    let snapshots = || {
+        saved
+            .iter()
+            .map(|name| {
+                let path = prefix.with_extension(name);
+                let mut files = super::restart::snapshot(&path);
+                files.retain(|name, _| {
+                    name.file_name().unwrap() != "table.lock"
+                        && !name.components().any(|part| part.as_os_str() == "logtable")
+                });
+                files
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = snapshots();
     let (restored_report, restored) = step(json!({
         "niter": 0, "calcpsf": false, "calcres": false,
     }));
     assert_eq!(restored_report.major_cycles, 0);
     let (_, dirty) = observation.image(&format!("{label}-dirty"), with(&base, json!({"niter": 0})));
     let images = [family(".residual", terms), family(".image", terms)].concat();
-    for suffix in images.iter().chain(&family(".psf", moments)) {
-        let error = nrms(&restored, &dirty, suffix);
+    for suffix in family(".image", terms) {
+        let error = nrms(&restored, &dirty, &suffix);
         assert!(error < 1e-5, "{terms} terms, {suffix}: {error}");
     }
+    for (previous, current) in before.iter().zip(&snapshots()) {
+        super::restart::assert_unchanged(previous, current);
+    }
+    let reported = restored.suffixes();
+    assert!(
+        saved
+            .iter()
+            .all(|name| !reported.contains(&format!(".{name}")))
+    );
     assert_eq!(inventory(&prefix).contains("alpha"), terms > 1);
 
     let (cleaned_report, cleaned) = step(json!({
@@ -176,6 +206,70 @@ fn taylor_family_continues(terms: usize) {
     assert_eq!(formed.major_cycles, 2);
 }
 
+/// SIImageStore::restore persists a missing fitted beam on the principal
+/// Taylor PSF alone, keeping the original PSF samples and higher moments.
+#[test]
+fn taylor_restore_refits_only_the_missing_principal_psf_beam() {
+    use super::restart::{assert_unchanged, snapshot};
+    use casa_images::PagedImage;
+
+    let observation = Observation::synthesise_band(4, &[("point", POINT)]);
+    let label = "beamless-taylor-psf";
+    let prefix = observation.scratch(label);
+    let base = json!({"deconvolver": "mtmfs", "nterms": 2, "niter": 0});
+    observation.image(label, with(&base, json!({"restoration": false})));
+    let restart = json!({"calcpsf": false, "calcres": false});
+    let principal = prefix.with_extension("psf.tt0");
+    let mut psf = PagedImage::<f32>::open(&principal).unwrap();
+    let fitted = psf.image_info().unwrap().beam_set.single_beam().unwrap();
+    assert!(psf.remove_restoring_beams().unwrap());
+    let pixels = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1; 4]), 0.013712319_f32);
+    psf.put_slice(&pixels, &[0; 4]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+
+    let scientific = |suffix: &str, metadata_changes: bool| {
+        let mut files = snapshot(&prefix.with_extension(suffix));
+        files.retain(|path, _| {
+            let name = path.file_name().unwrap();
+            name != "table.lock"
+                && !(metadata_changes && name == "table.dat")
+                && !path.components().any(|part| part.as_os_str() == "logtable")
+        });
+        files
+    };
+    let suffixes = [
+        "psf.tt0",
+        "psf.tt1",
+        "psf.tt2",
+        "residual.tt0",
+        "residual.tt1",
+    ];
+    let before = suffixes.map(|suffix| scientific(suffix, false));
+    let (_, skipped) = observation.image(
+        label,
+        with(&with(&base, restart.clone()), json!({"restoration": false})),
+    );
+    assert!(!skipped.suffixes().contains(".psf.tt0"));
+    assert_unchanged(&before[0], &scientific(suffixes[0], false));
+
+    let (_, restored) = observation.image(label, with(&base, restart));
+    let published = restored.suffixes();
+    assert!(published.contains(".psf.tt0"));
+    assert!(!published.contains(".psf.tt1"));
+    assert!(!published.contains(".psf.tt2"));
+    let psf = PagedImage::<f32>::open(&principal).unwrap();
+    let beam = psf.image_info().unwrap().beam_set.single_beam().unwrap();
+    assert!((beam.major - fitted.major).abs() < 1e-8 * fitted.major);
+    assert!((beam.minor - fitted.minor).abs() < 1e-8 * fitted.minor);
+    let mut principal_pixels = before[0].clone();
+    principal_pixels.remove(&principal.join("table.dat"));
+    assert_unchanged(&principal_pixels, &scientific("psf.tt0", true));
+    for (suffix, previous) in suffixes[1..].iter().zip(&before[1..]) {
+        assert_unchanged(previous, &scientific(suffix, false));
+    }
+}
+
 /// CASA's `test_cube_common_restoringbeam`: a cube cleaned without
 /// restoration is restored later with a common beam from what it left, and
 /// a cube's model continues channel by channel.
@@ -187,7 +281,32 @@ fn a_cube_restores_and_continues_from_what_it_left() {
         "cube",
         with(&base, json!({"niter": 10, "restoration": false})),
     );
-    assert!(!inventory(&observation.scratch("cube")).contains("image"));
+    let prefix = observation.scratch("cube");
+    assert!(!inventory(&prefix).contains("image"));
+    // CASA reuses this complete per-channel beam grid without writing
+    // its header again. Change one beam's angle to make the evidence
+    // independent of the fit and f64 unit-conversion round trip.
+    let psf_path = prefix.with_extension("psf");
+    let mut psf = casa_images::PagedImage::<f32>::open(&psf_path).unwrap();
+    let mut info = psf.image_info().unwrap();
+    let mut grid = (0..4)
+        .map(|channel| vec![*info.beam_set.beam(channel, 0)])
+        .collect::<Vec<_>>();
+    grid[0][0].position_angle = grid[0][0].position_angle.next_up();
+    info.beam_set = casa_images::ImageBeamSet::from_grid(grid);
+    psf.set_image_info(&info).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+    let stable = |suffix: &str| {
+        let mut files = super::restart::snapshot(&prefix.with_extension(suffix));
+        files.retain(|name, _| {
+            name.file_name().unwrap() != "table.lock"
+                && !name.components().any(|part| part.as_os_str() == "logtable")
+        });
+        files
+    };
+    let kept = ["psf", "residual", "sumwt"];
+    let before = kept.map(stable);
     let (restore, restored) = observation.image(
         "cube",
         with(
@@ -198,14 +317,25 @@ fn a_cube_restores_and_continues_from_what_it_left() {
         ),
     );
     assert_eq!(restore.major_cycles, 0, "nothing was formed");
+    let reported = restored.suffixes();
+    assert!(
+        kept.iter()
+            .all(|suffix| !reported.contains(&format!(".{suffix}"))),
+        "saved products were published again: {reported:?}"
+    );
+    for (previous, current) in before.iter().zip(&kept.map(stable)) {
+        super::restart::assert_unchanged(previous, current);
+    }
     let (_, reference) = observation.image(
         "cube-once",
         with(&base, json!({"niter": 10, "restoringbeam": "common"})),
     );
-    for suffix in [".image", ".residual", ".psf"] {
-        let error = nrms(&restored, &reference, suffix);
+    for suffix in [".residual", ".psf"] {
+        let error = nrms(&unrestored, &reference, suffix);
         assert!(error < 1e-5, "{suffix}: {error}");
     }
+    let error = nrms(&restored, &reference, ".image");
+    assert!(error < 1e-5, "restored common beam image: {error}");
     assert!(nrms(&unrestored, &reference, ".model") < 1e-6);
 
     // A continuation reads every channel's model: with no iterations it

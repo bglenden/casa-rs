@@ -111,6 +111,13 @@ impl FinalNormalState {
         self.primitives.metadata(ordinal).map(|domain| domain.shape)
     }
 
+    /// Whether this field's previously unfilled scalar sum of weights was
+    /// supplied by a residual gridding pass.
+    #[must_use]
+    pub fn refilled_sum_weight(&self, domain: usize) -> bool {
+        self.primitives.refilled_sum_weight(domain)
+    }
+
     /// Read channel support metadata without loading image payloads.
     #[must_use]
     pub fn domain_channel_validity(
@@ -721,6 +728,13 @@ pub struct PassAppender<'a> {
 }
 
 impl PassAppender<'_> {
+    /// Whether a saved scalar field still needs a sum of weights during
+    /// residual gridding.
+    #[must_use]
+    pub fn needs_scalar_weight(&self) -> bool {
+        self.state.needs_scalar_weight()
+    }
+
     /// Add one pass's images of one domain.
     ///
     /// A non-finite image value or `sumwt` is a generated non-finite value,
@@ -734,7 +748,20 @@ impl PassAppender<'_> {
     /// match the problem and the pass (PSF moments on a residual refresh, a
     /// channel range out of order), and generated non-finite values.
     pub fn append(&mut self, images: PassImages) -> Result<(), NormalStateError> {
-        self.state.append(images)
+        self.state.append(images, None)
+    }
+
+    /// Append a standard single-plane residual pass, supplying its gridded
+    /// sum of weights for a saved field with an unfilled scalar sum.
+    ///
+    /// # Errors
+    /// The images, gridded weight or coupled scalar state are invalid.
+    pub fn append_with_scalar_weight(
+        &mut self,
+        images: PassImages,
+        gridded_sum: f64,
+    ) -> Result<(), NormalStateError> {
+        self.state.append(images, Some(gridded_sum))
     }
 }
 

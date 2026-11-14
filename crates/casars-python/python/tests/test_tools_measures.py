@@ -1,4 +1,4 @@
-"""`casars.tools.measures`: CASA's `me` tool (ADR-0019, #841).
+"""`casars.tools.measures`: CASA's `me` tool (ADR-0017, #841).
 
 Signatures are compared with CASA 6.7.6's installed binding
 (`data/casa_measures_signatures.json`, and a live CASA when importable) and

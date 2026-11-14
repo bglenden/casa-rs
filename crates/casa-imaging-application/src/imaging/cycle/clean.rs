@@ -26,13 +26,20 @@ pub(super) fn run(
         mut outcome,
         mut mvc,
         controls,
-        setup,
+        mut setup,
         mut mask_plans,
         cancel,
         diagnostics,
     } = inputs;
+    setup.saved_weighted_residual = run
+        .existing
+        .as_ref()
+        .is_some_and(ExistingProducts::residual_in_image_units);
+    let positive_cutoff = setup.residual_pixel_mask;
+    let (read_after_refresh, use_formed_mask) =
+        restart_mask_refresh(&run, &mut setup, mvc.is_some());
     let mut controller = Controller::new(&controls);
-    let mut cache = PsfCache::default();
+    let mut cache = psf_cache(run.forms, &outcome.scientific);
     // What outlives each minor cycle: the masks it forms (the latest, and the
     // one an automatic mask evolves from, every holder sharing a
     // generation's support), the PSF summaries it measures and a Clark
@@ -47,36 +54,46 @@ pub(super) fn run(
         // A plane preparation keeps for the solve stays charged until the
         // solve, which the minor cycle's charge then leaves out; the solve
         // drops the plane, and the charge goes with the minor cycle.
-        let (prepared, kept) = run_phase(name, &cancel, diagnostics, summary, || {
-            if ordinal == 1 {
-                held = run.admit(
-                    "reconstruction masks",
-                    2 * mask_bytes(&outcome.scientific, &mask_plans)
-                        + psf_cache_bytes(&outcome.scientific)
-                        + std::mem::size_of_val(outcome.plane_rows.start_model_flux.as_slice())
-                            as u64,
+        let (prepared, kept, saved_mask_charge) =
+            run_phase(name, &cancel, diagnostics, summary, || {
+                if ordinal == 1 {
+                    held = run.admit(
+                        "reconstruction masks",
+                        2 * mask_bytes(&outcome.scientific, &mask_plans)
+                            + psf_cache_bytes(&outcome.scientific)
+                            + std::mem::size_of_val(outcome.plane_rows.start_model_flux.as_slice())
+                                as u64,
+                    )?;
+                }
+                let mut preparing = run.admit(
+                    "minor-cycle preparation",
+                    prepare_bytes(
+                        &outcome.scientific,
+                        &mask_plans,
+                        &setup,
+                        &cache,
+                        run.teams.compute().workers(),
+                    ),
                 )?;
-            }
-            let mut preparing = run.admit(
-                "minor-cycle preparation",
-                prepare_bytes(
+                let refreshed = outcome.major_cycle_count > 0;
+                let (saved_masks, saved_mask_charge) = read_saved_masks(
+                    &run,
+                    mvc.as_ref(),
+                    refreshed,
+                    (read_after_refresh, positive_cutoff),
+                    outcome.scientific.normal_state().slab().total_channels(),
+                )?;
+                let prepared = prepare_minor_cycle_with_residual_masks(
                     &outcome.scientific,
                     &mask_plans,
                     &setup,
-                    &cache,
-                    run.teams.compute().workers(),
-                ),
-            )?;
-            let prepared = prepare_minor_cycle(
-                &outcome.scientific,
-                &mask_plans,
-                &setup,
-                &mut cache,
-                run.teams.compute(),
-            )?;
-            let kept = preparing.split(prepared.retained_bytes());
-            Ok::<_, ImagingError>((prepared, kept))
-        })?;
+                    &mut cache,
+                    run.teams.compute(),
+                    saved_masks,
+                )?;
+                let kept = preparing.split(prepared.retained_bytes());
+                Ok::<_, ImagingError>((prepared, kept, saved_mask_charge))
+            })?;
         let statistics = prepared.statistics;
         // CASA's summary uses the final initminorcycle statistics, including
         // a convergence check that stops before another minor cycle executes.
@@ -140,7 +157,7 @@ pub(super) fn run(
             )?;
             Ok::<_, ImagingError>((minor, plans))
         })?;
-        drop(kept);
+        drop((kept, saved_mask_charge));
         mask_plans = next_plans;
         let global_threshold = controls
             .threshold_jy_per_beam()
@@ -181,9 +198,16 @@ pub(super) fn run(
                     visibility: None,
                 })
             } else {
-                run.refresh(scientific, (minor.terms, minor.dense, minor.results), last)
+                run.refresh(
+                    scientific,
+                    (minor.terms, minor.dense, minor.results),
+                    last,
+                    outcome.major_cycle_count == 0,
+                )
             }
         })?;
+        setup.saved_weighted_residual = false;
+        setup.residual_pixel_mask = use_formed_mask;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
@@ -204,4 +228,141 @@ pub(super) fn run(
     outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
     outcome.retained.join(held);
     Ok(outcome)
+}
+
+fn psf_cache(forms: Forms, scientific: &MajorCycleCompletion) -> PsfCache {
+    if !forms.psf
+        && scientific.normal_state().basis() != casa_imaging_deconvolution::NormalBasis::Taylor
+    {
+        PsfCache::for_reused_single_psf()
+    } else {
+        PsfCache::default()
+    }
+}
+
+/// Measure the saved residual with its own mask at the first boundary.
+fn restart_mask_refresh(run: &Run<'_>, setup: &mut MinorCycleSetup<'_>, mvc: bool) -> (bool, bool) {
+    let positive_cutoff = setup.residual_pixel_mask;
+    let saved = run.existing.as_ref();
+    let mosaic = saved.is_some_and(ExistingProducts::reads_mosaic_residual);
+    let cube = saved.is_some_and(ExistingProducts::reads_mosaic_cube_residual);
+    let outliers = !run.forms.residual && !run.outlier_products.is_empty();
+    if mosaic || outliers || mvc && !run.forms.residual {
+        setup.residual_pixel_mask = false;
+    }
+    if cube {
+        // Positive cutoff copies the new PB's mask when the PSF pass
+        // formed it. Otherwise the controller reads a persisted mask.
+        let uses_new_pb =
+            positive_cutoff && saved.is_some_and(|saved| saved.mosaic_beam().is_none());
+        (!uses_new_pb, uses_new_pb)
+    } else {
+        (
+            (mosaic && positive_cutoff) || outliers,
+            positive_cutoff && (!outliers || run.forms.psf),
+        )
+    }
+}
+
+/// CASA's pixel mask determines the peak independently of CLEAN support.
+/// A positive cutoff copies a saved PB mask after a cube major cycle, or
+/// to a previously unmasked residual after a continuum major cycle.
+fn read_saved_masks(
+    run: &Run<'_>,
+    mvc: Option<&MvcState<'_>>,
+    refreshed: bool,
+    (keep_after_refresh, positive_cutoff): (bool, bool),
+    channels: usize,
+) -> Result<
+    (
+        Vec<Option<casa_imaging_deconvolution::Support>>,
+        Reservation,
+    ),
+    ImagingError,
+> {
+    if refreshed && !keep_after_refresh {
+        return Ok((Vec::new(), Reservation::none()));
+    }
+    let Some(main) = mvc
+        .and_then(MvcState::saved_taylor)
+        .or(run.existing.as_ref())
+    else {
+        return Ok((Vec::new(), Reservation::none()));
+    };
+    if main.saved_residual_mask_bytes().is_none() {
+        return Ok((Vec::new(), Reservation::none()));
+    }
+    let count = (1 + run.outlier_products.len()) * channels;
+    let mut held = run.admit(
+        "saved residual mask list",
+        (count * size_of::<Option<casa_imaging_deconvolution::Support>>()) as u64,
+    )?;
+    let mut masks = Vec::with_capacity(count);
+    for (domain, saved) in std::iter::once(main)
+        .chain(&run.outlier_products)
+        .enumerate()
+    {
+        for channel in 0..channels {
+            if refreshed && !positive_cutoff && !saved.custom_residual_mask() {
+                masks.push(None);
+                continue;
+            }
+            let (mask, mut charge) =
+                read_saved_mask(run, saved, channel, refreshed && positive_cutoff)?;
+            let pixels = mask.as_ref().map_or(0, |mask| mask.as_slice().len() as u64);
+            if pixels > 0 {
+                tracing::debug!(
+                    target: "casa_imaging::saved_residual_mask",
+                    domain,
+                    admitted_bytes = charge.memory(),
+                    "read the saved residual pixel mask"
+                );
+            }
+            charge.retain(pixels);
+            held.join(charge);
+            masks.push(mask);
+        }
+    }
+    Ok((masks, held))
+}
+
+fn read_saved_mask(
+    run: &Run<'_>,
+    saved: &ExistingProducts,
+    channel: usize,
+    copy_pb: bool,
+) -> Result<(Option<casa_imaging_deconvolution::Support>, Reservation), ImagingError> {
+    let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
+    if copy_pb
+        && (bytes == 0 || saved.reads_mosaic_cube_residual())
+        && let Some(beam) = saved.mosaic_beam()
+        && (!saved.reads_mosaic_cube_residual() || beam.has_generated_mask())
+    {
+        let charge = run.admit("saved PB for residual mask", beam.reading_bytes())?;
+        let [nx, ny, _, _] = beam.shape();
+        let pixels = beam
+            .read_mask(channel, 0)
+            .map_err(casa_imaging_runtime::MinorCycleRunError::from)?;
+        let mask = casa_imaging_deconvolution::Support::new(
+            casa_imaging_deconvolution::PlaneShape::new(nx, ny),
+            pixels,
+        );
+        return Ok((Some(mask), charge));
+    }
+    if bytes == 0 {
+        if copy_pb && saved.primary_beam_mask_bytes() > 0 {
+            let charge = run.admit(
+                "saved PB for residual mask",
+                saved.primary_beam_mask_bytes(),
+            )?;
+            let mask = saved.primary_beam_mask().map_err(ImagingError::Existing)?;
+            return Ok((mask, charge));
+        }
+        return Ok((None, Reservation::none()));
+    }
+    let charge = run.admit("saved residual mask", bytes)?;
+    let mask = saved
+        .residual_mask_at(channel)
+        .map_err(ImagingError::Existing)?;
+    Ok((mask, charge))
 }

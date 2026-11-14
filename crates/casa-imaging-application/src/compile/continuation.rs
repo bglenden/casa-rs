@@ -8,7 +8,9 @@
 
 use std::path::PathBuf;
 
+use casa_coordinates::CoordinateSystem;
 use casa_images::RegridTemplate;
+use casa_imaging_products::CasaImageWriter;
 use casa_imaging_runtime::{Demand, Reservation, admit};
 
 use super::domains::{DomainMask, PreparedImageDomain};
@@ -20,10 +22,52 @@ use crate::{ImagingRequest, RunContext, UseMask};
 pub(crate) struct Continuation {
     /// The earlier model, on the image's own grid.
     pub(crate) start_model: Option<StartModel>,
-    /// Charges for a reused CLEAN mask and saved beams, held through publication.
+    /// Saved outlier models in compiled domain order after the main image.
+    pub(crate) outlier_models: Vec<Option<StartModel>>,
+    pub(crate) outlier_psfs: Vec<Option<ExistingProducts>>,
+    /// Existing mosaic PSF coordinates when CASA grids into that image.
+    pub(crate) psf_coordinates: Option<CoordinateSystem>,
+    /// Charges for reused mask and image metadata, held through publication.
     pub(crate) mask_resident: Reservation,
     /// Earlier products or their metadata, including images read in place of a pass.
     pub(crate) existing: Option<ExistingProducts>,
+}
+
+/// Bind the coordinates of a re-formed PSF and the model for the first pass.
+pub(super) fn prepare(
+    request: &ImagingRequest,
+    domains: &mut [PreparedImageDomain],
+    (channels, reconstruction_planes): (usize, usize),
+    mvc_start: Option<&super::MvcStart>,
+    context: &RunContext,
+    writer: &mut CasaImageWriter,
+) -> Result<Continuation, PrepareError> {
+    let (main, outliers) = domains.split_first_mut().expect("main image domain");
+    let mut continuation = read(request, main, channels, mvc_start, context)?;
+    if request.tclean_restart && !outliers.is_empty() {
+        for outlier in outliers {
+            let mut saved = read_domain(request, outlier, channels, None, context)?;
+            continuation.mask_resident.join(saved.mask_resident);
+            continuation.outlier_models.push(saved.start_model.take());
+            continuation.outlier_psfs.push(saved.existing.take());
+        }
+    }
+    if let Some(coordinates) = continuation.psf_coordinates.take() {
+        writer.set_main_psf_coordinates(coordinates);
+    }
+    if request.has_start_model() {
+        let terms = match request.deconvolver {
+            crate::Deconvolver::Mtmfs => request.nterms,
+            _ => 1,
+        };
+        continuation.start_model = Some(StartModel::prepare(
+            &request.startmodel,
+            main,
+            request.stokes.len(),
+            (reconstruction_planes, terms),
+        )?);
+    }
+    Ok(continuation)
 }
 
 /// Check every product at the main domain's prefix on its grid, and take
@@ -32,41 +76,108 @@ pub(crate) struct Continuation {
 /// that `calcpsf=False` and `calcres=False` read. `channels` are the
 /// image's output channels. A request that does not continue
 /// (`tclean_restart` unset, lower-level execution) reads nothing.
-pub(super) fn prepare(
+fn read(
     request: &ImagingRequest,
     main: &mut PreparedImageDomain,
     channels: usize,
+    mvc_start: Option<&super::MvcStart>,
+    context: &RunContext,
+) -> Result<Continuation, PrepareError> {
+    if !request.tclean_restart {
+        restart::check_inputs(request, false)?;
+        return Ok(Continuation {
+            start_model: None,
+            outlier_models: Vec::new(),
+            outlier_psfs: Vec::new(),
+            psf_coordinates: None,
+            mask_resident: Reservation::none(),
+            existing: None,
+        });
+    }
+    read_domain(request, main, channels, mvc_start, context)
+}
+
+fn read_domain(
+    request: &ImagingRequest,
+    domain: &mut PreparedImageDomain,
+    channels: usize,
+    mvc_start: Option<&super::MvcStart>,
     context: &RunContext,
 ) -> Result<Continuation, PrepareError> {
     let mut continuation = Continuation {
         start_model: None,
+        outlier_models: Vec::new(),
+        outlier_psfs: Vec::new(),
+        psf_coordinates: None,
         mask_resident: Reservation::none(),
         existing: None,
     };
-    if !request.tclean_restart {
-        restart::check_inputs(request, false)?;
-        return Ok(continuation);
-    }
     let family = Family::of(request);
-    let [nx, ny] = main.image_size;
+    let rebuilds_mosaic_psf = restart::rebuilds_mosaic_cube_psf(request);
+    let [nx, ny] = domain.image_size;
     let polarizations = request.stokes.len();
     let planes = match family {
         Family::Single => channels,
         Family::Taylor { .. } => 1,
     };
     let template = RegridTemplate {
-        coordinates: main.coordinates.clone(),
+        coordinates: domain.coordinates.clone(),
         shape: vec![nx, ny, polarizations, planes],
     };
-    for path in restart::products(&request.imagename)? {
-        let suffix = restart::suffix(&request.imagename, &path);
-        restart::check_grid(&path, &suffix, &template)?;
-        // CASA's setupMask reuses an existing mask only when no mask is
-        // given; `restart::check` refused the other cleaning cases.
+    let saved_mosaic_psf = request.supports_separate_psf().then_some(domain.direction);
+    for path in restart::continuation_products(request, &domain.output)? {
+        let suffix = restart::suffix(&domain.output, &path);
+        if mvc_start.is_some() && suffix != "mask" && !restart::mvc_cube_product(&suffix) {
+            continue;
+        }
+        let psf_coordinates = if mvc_start.is_some() && suffix == "mask" {
+            // The Taylor view checked the mask's one-channel grid.
+            None
+        } else {
+            restart::check_grid(&path, &suffix, &template, saved_mosaic_psf)?
+        };
+        if request.calcpsf
+            && !request.uses_separate_psf()
+            && let Some(coordinates) = psf_coordinates
+        {
+            // Without a separate PSF request CASA makes new samples in
+            // the existing image store, keeping its coordinates and beam.
+            let bytes = coordinates
+                .to_record()
+                .retained_heap_bytes()
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .unwrap_or(u64::MAX);
+            continuation.mask_resident.join(admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "saved mosaic PSF coordinates",
+                    memory: bytes,
+                },
+            )?);
+            continuation.psf_coordinates = Some(coordinates);
+        }
+        // CASA fills a new user mask into its existing image store. Keep
+        // this request scoped to reuse until that combination is covered.
         if suffix == "mask"
             && request.niter > 0
-            && request.usemask == UseMask::User
-            && main.mask == DomainMask::FullPlane
+            && domain.role != casa_imaging_model::ImageDomainRole::Main
+            && domain.mask != DomainMask::FullPlane
+        {
+            return Err(PrepareError::Restart {
+                path,
+                reason:
+                    "merging a new mask into an existing CLEAN mask is not implemented yet (#944)"
+                        .into(),
+            });
+        }
+        let use_existing_mask =
+            request.usemask == UseMask::User && domain.mask == DomainMask::FullPlane;
+        let seed_automatic = request.usemask == UseMask::AutoMultithresh
+            && restart::supports_saved_automask(request);
+        if suffix == "mask"
+            && (request.niter > 0 || mvc_start.is_some())
+            && (use_existing_mask || seed_automatic)
         {
             let input = restart::MaskInput::open(&path)?;
             let mut charge = admit(
@@ -79,10 +190,14 @@ pub(super) fn prepare(
             )?;
             let (planes, support) = input.read()?;
             charge.retain(restart::MaskInput::retained_bytes(planes, nx * ny));
-            main.mask = DomainMask::PixelSupport {
-                planes,
-                support: support.into(),
-            };
+            if let DomainMask::AutoMultithresh { previous, .. } = &mut domain.mask {
+                *previous = Some((planes, support.into()));
+            } else {
+                domain.mask = DomainMask::PixelSupport {
+                    planes,
+                    support: support.into(),
+                };
+            }
             continuation.mask_resident.join(charge);
         }
     }
@@ -90,11 +205,13 @@ pub(super) fn prepare(
         .names("model")
         .into_iter()
         .map(|name| {
-            let path = restart::product_path(&request.imagename, &name);
+            let path = restart::product_path(&domain.output, &name);
             path.exists().then_some(path)
         })
         .collect::<Box<[Option<PathBuf>]>>();
-    if models.iter().any(Option::is_some) {
+    if !mvc_start.is_some_and(|start| start.projection_beams.is_some())
+        && models.iter().any(Option::is_some)
+    {
         continuation.start_model = Some(StartModel::restart(
             models,
             RegridTemplate {
@@ -111,7 +228,12 @@ pub(super) fn prepare(
             },
         ));
     }
-    let residual = restart::reads_residual(request);
+    let is_main = domain.role == casa_imaging_model::ImageDomainRole::Main;
+    let residual = if is_main {
+        restart::reads_residual(request)
+    } else {
+        !request.calcres
+    };
     // CASA retains an existing residual's beam even when it forms new pixels.
     let residual_name = family
         .names("residual")
@@ -122,17 +244,33 @@ pub(super) fn prepare(
     // CubeMajorCycleAlgorithm forms a temporary PSF without the old image
     // metadata, whereas MFS makes its PSF in the existing image store.
     let psf_beam = (!request.calcpsf || request.specmode == crate::SpecMode::Mfs)
-        && restart::product_path(&request.imagename, &psf_name).exists();
-    let mask_beam = request.usemask == UseMask::AutoMultithresh
+        && !(request.calcpsf && request.uses_separate_psf())
+        && restart::product_path(&domain.output, &psf_name).exists();
+    let mask_beam = is_main
+        && request.usemask == UseMask::AutoMultithresh
         && request.niter > 0
         && restart::product_path(&request.imagename, &residual_name).exists();
     if !request.calcpsf || residual || mask_beam || psf_beam {
+        let weight = is_main && restart::reuses_direction_dependent_psf(request);
         let mut existing = ExistingProducts::new(
-            &request.imagename,
+            &domain.output,
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
+            weight,
+            weight || rebuilds_mosaic_psf || (residual && request.outlierfile.is_some()),
+            request.specmode != crate::SpecMode::Mfs && matches!(family, Family::Single),
         )?;
+        if request.niter > 0
+            && let Some(path) = existing.masked_taylor_residual()
+        {
+            return Err(PrepareError::Restart {
+                path: path.to_path_buf(),
+                reason:
+                    "AW CLEAN from a masked saved Taylor residual is not implemented yet (#944)"
+                        .into(),
+            });
+        }
         if psf_beam {
             let mut charge = admit(
                 &context.host,
@@ -142,7 +280,7 @@ pub(super) fn prepare(
                     memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
                 },
             )?;
-            existing.read_psf_beams(channels, main.direction.increment_rad()[0].abs())?;
+            existing.read_psf_beams(channels, domain.direction.increment_rad()[0].abs())?;
             charge.retain(existing.beam_resident_bytes());
             continuation.mask_resident.join(charge);
         }
@@ -156,7 +294,7 @@ pub(super) fn prepare(
                 },
             )?;
             let before = existing.beam_resident_bytes();
-            existing.read_mask_beams(channels, main.direction.increment_rad()[0].abs())?;
+            existing.read_mask_beams(channels, domain.direction.increment_rad()[0].abs())?;
             charge.retain(existing.beam_resident_bytes() - before);
             continuation.mask_resident.join(charge);
         }

@@ -32,9 +32,9 @@ use casa_ms::{MeasurementSetWriteError, MeasurementSetWritePlan, MeasurementSetW
 use casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES;
 use casa_types::Complex32;
 
+use super::data::DataStage;
 use super::geometry::RowGeometry;
 use super::pipeline::Integration;
-use super::prediction::PredictionStage;
 use crate::corrupt::jones::JonesTerm;
 use crate::corrupt::{BatchScales, NoiseScratch, TsysAtm};
 use crate::session::SessionResources;
@@ -88,6 +88,7 @@ pub(super) struct MainShape<'a> {
 pub(super) struct NoiseScales {
     /// The plan's `tsys-atm` terms.
     terms: usize,
+    channel_sigma: bool,
     /// The plan's `settrop` terms.
     tropospheric_terms: usize,
     /// Channels of the cells.
@@ -106,15 +107,19 @@ impl NoiseScales {
         channels: usize,
         integrations: Option<(usize, usize)>,
     ) -> Self {
+        let integrations = if plan.has_query() { None } else { integrations };
         let mut models: Vec<*const TsysAtm> = plan
-            .noise_for_scan(0)
+            .phases()
             .iter()
+            .flat_map(|phase| phase.noise_for_scan(0))
             .filter_map(|application| application.tsys_atm().map(std::ptr::from_ref))
             .collect();
         models.sort_unstable();
         models.dedup();
         let mut tropospheric: Vec<*const JonesTerm> = plan
-            .corruptions_for_scan(0)
+            .phases()
+            .iter()
+            .flat_map(|phase| phase.corruptions_for_scan(0))
             .flat_map(|(_, jones)| jones)
             .filter(|term| term.tropospheric_phase().is_some())
             .map(|term| std::ptr::from_ref::<JonesTerm>(term))
@@ -122,6 +127,11 @@ impl NoiseScales {
         tropospheric.sort_unstable();
         tropospheric.dedup();
         Self {
+            channel_sigma: plan
+                .phases()
+                .iter()
+                .flat_map(|phase| phase.noise_for_scan(0))
+                .any(crate::corrupt::NoiseApplication::channel_sigma),
             terms: models.len(),
             tropospheric_terms: tropospheric.len(),
             channels,
@@ -140,7 +150,7 @@ impl NoiseScales {
 
     /// The most a batch of `rows` rows holds with `workers` workers.
     pub(super) fn bytes(&self, rows: usize, workers: usize) -> u64 {
-        let scratch = if self.terms == 0 {
+        let scratch = if !self.channel_sigma {
             0
         } else {
             workers as u64 * NoiseScratch::bytes(self.channels)
@@ -176,7 +186,7 @@ pub(super) struct MainAdmission {
 pub(super) fn admit_main_write(
     resources: &SessionResources,
     shape: &MainShape<'_>,
-    prediction: Option<&PredictionStage<'_>>,
+    prediction: Option<&DataStage<'_>>,
 ) -> SimulatorResult<MainAdmission> {
     let (host, policy) = (resources.host(), resources.policy());
     let free = free_memory(host, policy);
@@ -185,7 +195,7 @@ pub(super) fn admit_main_write(
             minimum_writer_bytes(shape).map_or(u64::MAX, |bytes| (bytes as u64).saturating_mul(2));
         refusal_or(error, WRITER_PHASE, required, free)
     })?;
-    let mut reservation = admit(
+    let reservation = admit(
         host,
         policy,
         &Demand {
@@ -194,13 +204,26 @@ pub(super) fn admit_main_write(
         },
     )
     .map_err(SimulatorError::admission)?;
+    admit_pipeline(resources, shape, prediction, plan, reservation)
+}
+
+pub(super) fn admit_pipeline(
+    resources: &SessionResources,
+    shape: &MainShape<'_>,
+    prediction: Option<&DataStage<'_>>,
+    plan: MeasurementSetWritePlan,
+    mut reservation: Reservation,
+) -> SimulatorResult<MainAdmission> {
+    let (host, policy) = (resources.host(), resources.policy());
     let policy_cores = resources
         .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
     let free = free_memory(host, policy);
     let batch_rows = plan.batch_rows();
     let demand = |cores: CoreAllocation, block_rows: usize| {
         pipeline_bytes(shape, batch_rows, cores)
-            + prediction.map_or(0, |stage| stage.bytes(block_rows, cores.streaming_workers))
+            + prediction.map_or(0, |stage| {
+                stage.bytes(block_rows, cores.streaming_workers, batch_rows)
+            })
     };
     // A batch predicted as one block when that fits with the policy's
     // workers; else small blocks, and the workers shrink first (#737).
@@ -237,12 +260,12 @@ pub(super) fn admit_main_write(
 }
 
 /// Admit, into `reservation`, as many of `prediction`'s per-field grids
-/// beyond the pipeline's ([`PredictionStage::extra_grid_bytes`]) as the
+/// beyond the pipeline's ([`DataStage::extra_grid_bytes`]) as the
 /// budget leaves free, once the pipeline's workers are admitted: the bytes
 /// the grids may then hold, the pipeline's set and these.
 pub(super) fn admit_field_grids(
     resources: &SessionResources,
-    prediction: Option<&PredictionStage<'_>>,
+    prediction: Option<&DataStage<'_>>,
     reservation: &mut Reservation,
 ) -> SimulatorResult<u64> {
     let Some(stage) = prediction else {
@@ -286,12 +309,18 @@ pub(super) fn writer_plan(
 /// The fewest writer bytes that plan `shape`'s MAIN write; `None` when no
 /// budget does.
 fn minimum_writer_bytes(shape: &MainShape<'_>) -> Option<usize> {
-    writer_plan(shape, UNBOUNDED_WRITER_BYTES).ok()?;
+    minimum_writer_bytes_for(|budget| writer_plan(shape, budget))
+}
+
+pub(super) fn minimum_writer_bytes_for(
+    make_plan: impl Fn(usize) -> Result<MeasurementSetWritePlan, MeasurementSetWriteError>,
+) -> Option<usize> {
+    make_plan(UNBOUNDED_WRITER_BYTES).ok()?;
     // Whether a budget plans is monotone in the budget.
     let (mut refused, mut planned) = (0, UNBOUNDED_WRITER_BYTES);
     while planned - refused > 1 {
         let middle = refused + (planned - refused) / 2;
-        if writer_plan(shape, middle).is_ok() {
+        if make_plan(middle).is_ok() {
             planned = middle;
         } else {
             refused = middle;
@@ -302,7 +331,7 @@ fn minimum_writer_bytes(shape: &MainShape<'_>) -> Option<usize> {
 
 /// A plan refused for its budget as an [`Admission`] of `required` bytes
 /// against `free`, and any other planning failure as raised.
-fn refusal_or(
+pub(super) fn refusal_or(
     error: MeasurementSetWriteError,
     phase: &'static str,
     required: u64,

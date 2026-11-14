@@ -65,6 +65,8 @@ pub enum ProductRole {
     SpectralIndex,
     /// Spectral-index uncertainty.
     SpectralIndexError,
+    /// Spectral curvature from the first three restored Taylor terms.
+    SpectralCurvature,
     /// Primary-beam-corrected spectral index.
     PbCorrectedSpectralIndex,
     /// Fitted and selected beam metadata embedded in image products.
@@ -416,8 +418,9 @@ impl<'a> ListBuilder<'a> {
             }
             ProductKind::SpectralIndex
             | ProductKind::SpectralIndexError
+            | ProductKind::SpectralCurvature
             | ProductKind::PbCorrectedSpectralIndex => {
-                self.compile_spectral_index(domain_index, domain, product);
+                self.compile_spectral_products(domain_index, domain, product);
             }
             ProductKind::Mask => {
                 self.add_image(
@@ -638,8 +641,8 @@ impl<'a> ListBuilder<'a> {
         }
     }
 
-    /// The spectral index, its error and its PB-corrected image.
-    fn compile_spectral_index(
+    /// The spectral index, its error, curvature and PB-corrected index.
+    fn compile_spectral_products(
         &mut self,
         domain_index: usize,
         domain: &CompiledImageDomain,
@@ -672,6 +675,19 @@ impl<'a> ListBuilder<'a> {
                     ProductValidityRule::Taylor(self.products.validity().taylor()),
                 );
             }
+            ProductKind::SpectralCurvature => {
+                self.add_image(
+                    domain_index,
+                    domain,
+                    ProductRole::SpectralCurvature,
+                    ".beta".to_string(),
+                    ProductAxisKind::SkyImage,
+                    ProductUnit::Dimensionless,
+                    None,
+                    self.derived_beam(domain_index),
+                    ProductValidityRule::Taylor(self.products.validity().taylor()),
+                );
+            }
             ProductKind::PbCorrectedSpectralIndex => {
                 let alpha = self.id(domain_index, ProductRole::SpectralIndex);
                 self.add_image(
@@ -689,7 +705,7 @@ impl<'a> ListBuilder<'a> {
                     },
                 );
             }
-            _ => unreachable!("compile_product routes only spectral-index products here"),
+            _ => unreachable!("compile_product routes only spectral products here"),
         }
     }
 
@@ -711,6 +727,7 @@ impl<'a> ListBuilder<'a> {
             ProductRole::PbCorrectedImage(_)
             | ProductRole::SpectralIndex
             | ProductRole::SpectralIndexError
+            | ProductRole::SpectralCurvature
             | ProductRole::PbCorrectedSpectralIndex => {
                 ProductPixelMask::Explicit(projection.validity)
             }

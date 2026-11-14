@@ -57,7 +57,7 @@ const W_PLANES: usize = 32;
 
 /// A paraboloid dish surface in the EVLA radius/height/slope text format:
 /// 12.5 m radius sampled every centimetre.
-fn surface_text() -> String {
+pub(super) fn surface_text() -> String {
     (0..=1250)
         .map(|index| {
             let radius = f64::from(index) / 100.0;
@@ -90,7 +90,7 @@ fn compact_evla_antennas() -> Vec<SyntheticAntenna> {
     antennas
 }
 
-fn setup() -> Setup {
+pub(super) fn setup() -> Setup {
     Setup {
         telescope: "EVLA".to_string(),
         antennas: compact_evla_antennas(),
@@ -316,7 +316,7 @@ fn two_window_setup() -> Setup {
 
 /// A short native-AW Högbom clean of the SPWs `spw` with its cells in
 /// `cache`, generated when it lacks them.
-fn cached_clean(spw: &str, cache: &Path, surface: &Path) -> Value {
+pub(super) fn cached_clean(spw: &str, cache: &Path, surface: &Path) -> Value {
     json!({
         "spw": spw,
         "weighting": "natural",
@@ -338,6 +338,52 @@ fn cached_clean(spw: &str, cache: &Path, surface: &Path) -> Value {
         "pbcor": true,
         "write_pb": true,
     })
+}
+
+/// The AW cube's frequency-dependent model handoff and common-beam
+/// Taylor correction run through the native cache and production route.
+#[test]
+fn aw_mvc_cleans_with_a_wideband_cube_and_corrects_both_taylor_images() {
+    let mut setup = two_window_setup();
+    setup.noise_jy = 0.0;
+    let observation = Observation::synthesise_setup(setup, &[("point", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).unwrap();
+    let cache = observation.scratch("mvc-aw-cache");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    for (key, value) in json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 2, "reffreq": "1.5GHz", "niter": 2, "cycleniter": 1,
+        "wprojplanes": 1, "wbawp": false, "conjbeams": true, "pblimit": 0.1,
+    })
+    .as_object()
+    .unwrap()
+    {
+        controls[key] = value.clone();
+    }
+    let (summary, products) = observation.image("mvc-aw-clean", controls);
+    assert_eq!(summary.actual_minor_iterations, 2);
+    assert_eq!(summary.major_cycles, 3);
+    assert!(products.suffixes().contains(".weight"));
+    assert!(!products.suffixes().contains(".weight.tt0"));
+    assert!(!products.suffixes().contains(".alpha.pbcor"));
+    let source = observation.geometry().pixel(OFF_AXIS);
+    let pb = products.get(".pb.tt0");
+    assert!((0.1..0.99).contains(&pb.pixels[source]));
+    for term in 0..2 {
+        let image = products.get(&format!(".image.tt{term}"));
+        let corrected = products.get(&format!(".image.tt{term}.pbcor"));
+        assert_eq!(corrected.mask(), pb.mask());
+        assert!((corrected.pixels[source] - image.pixels[source] / pb.pixels[source]).abs() < 1e-6);
+    }
+    let data_cells = entries(&cache)
+        .into_iter()
+        .filter(|name| name.starts_with("CFS_"))
+        .count();
+    assert_eq!(
+        data_cells, 4,
+        "two frequency groups and two Mueller elements"
+    );
 }
 
 /// The entries of a cache directory, sorted.
@@ -376,6 +422,228 @@ fn assert_same_products(products: &Products, fresh: &Products) {
             worst <= 1.0e-6 * scale,
             "{suffix}: differs from a fresh cache's by {worst} (peak {scale})"
         );
+    }
+}
+
+/// A dirty run leaves raw higher Taylor weight moments. Recomputing the
+/// PSF during CLEAN must preserve their scale and give the same result as
+/// a fresh CLEAN. CASA can multiply those saved moments by the principal
+/// sum of weights on restart (#1070).
+#[test]
+fn aw_mtmfs_restart_recomputes_taylor_weights() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    controls["deconvolver"] = json!("mtmfs");
+    controls["nterms"] = json!(2);
+    controls["scales"] = json!([0]);
+    controls["reffreq"] = json!("1.45GHz");
+    controls["threshold"] = json!("0Jy");
+    controls["pbcor"] = json!(false);
+    controls["niter"] = json!(0);
+    let (_, dirty) = observation.image("continued", controls.clone());
+
+    controls["niter"] = json!(10);
+    let (continued, products) = observation.image("continued", controls.clone());
+    let (fresh, fresh_products) = observation.image("fresh", controls);
+    assert!(continued.minor_iterations > 0, "the restarted run cleans");
+    assert_eq!(continued.minor_iterations, fresh.minor_iterations);
+    assert_eq!(continued.major_cycles, fresh.major_cycles);
+    for suffix in [".weight.tt1", ".weight.tt2"] {
+        let before = dirty.get(suffix).values();
+        let after = products.get(suffix).values();
+        let peak = before
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(peak > 0.0, "{suffix} must exercise a nonzero weight moment");
+        let difference = before
+            .iter()
+            .zip(&after)
+            .map(|(before, after)| (before - after).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            difference <= 1.0e-6 * peak,
+            "{suffix} changed by {difference} from a dirty peak of {peak}"
+        );
+    }
+    assert_same_products(&products, &fresh_products);
+}
+
+fn two_term_aw_restart() -> (Observation, Value) {
+    let source = Component {
+        spectral_index: -0.7,
+        ..CENTRE
+    };
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", source)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut controls = cached_clean("0,1", &cache, &surface);
+    controls["deconvolver"] = json!("mtmfs");
+    controls["nterms"] = json!(2);
+    controls["scales"] = json!([0]);
+    controls["reffreq"] = json!("1.45GHz");
+    controls["threshold"] = json!("0Jy");
+    controls["pbcor"] = json!(false);
+    controls["niter"] = json!(0);
+    (observation, controls)
+}
+
+/// The saved AW Taylor PSF and weights stay on disk while the new
+/// residual is formed and cleaned (#1070).
+#[test]
+fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
+    use super::restart::{assert_unchanged, snapshot};
+
+    let (observation, mut controls) = two_term_aw_restart();
+    let (_, dirty) = observation.image("continued", controls.clone());
+    let [x, y] = observation.geometry().pixel(CENTRE);
+    {
+        let mut beam =
+            casa_images::PagedImage::<f32>::open(observation.scratch("continued.pb.tt0")).unwrap();
+        let mask_name = beam.default_mask_name().expect("the saved PB has a mask");
+        let pixel = ndarray::Array4::from_elem((1, 1, 1, 1), false).into_dyn();
+        assert!(dirty.get(".pb.tt0").mask().unwrap()[[x, y, 0, 0]]);
+        beam.put_mask_slice(&mask_name, &pixel, &[x, y, 0, 0])
+            .unwrap();
+        beam.save().unwrap();
+    }
+    for term in [0, 1] {
+        let mut residual = casa_images::PagedImage::<f32>::open(
+            observation.scratch(&format!("continued.residual.tt{term}")),
+        )
+        .unwrap();
+        residual.unset_default_mask().unwrap();
+        residual.save().unwrap();
+    }
+    let saved_paths = dirty
+        .suffixes()
+        .into_iter()
+        .filter(|name| {
+            name.starts_with(".psf")
+                || name.starts_with(".weight")
+                || name.starts_with(".sumwt")
+                || name == ".pb.tt0"
+        })
+        .map(|name| observation.scratch(&format!("continued{name}")))
+        .collect::<Vec<_>>();
+    assert_eq!(saved_paths.len(), 10);
+    let saved = saved_paths
+        .iter()
+        .map(|path| snapshot(path))
+        .collect::<Vec<_>>();
+
+    controls["niter"] = json!(10);
+    let (fresh, fresh_products) = observation.image("fresh", controls.clone());
+    controls["calcpsf"] = json!(false);
+    let missing = observation.scratch("continued.weight.tt1");
+    let parked = observation.scratch("saved-weight-tt1");
+    std::fs::rename(&missing, &parked).unwrap();
+    let error = observation
+        .try_image("continued", controls.clone())
+        .err()
+        .expect("missing weight must refuse");
+    assert!(error.contains("continued.weight.tt1"), "{error}");
+    std::fs::rename(parked, missing).unwrap();
+    for (path, before) in saved_paths.iter().zip(&saved) {
+        assert_unchanged(before, &snapshot(path));
+    }
+
+    let (continued, products) = observation.image("continued", controls);
+    assert!(continued.minor_iterations > 0);
+    assert_eq!(continued.minor_iterations, fresh.minor_iterations);
+    assert_eq!(continued.major_cycles, fresh.major_cycles);
+    assert!(products.suffixes().contains(".image.tt0"));
+    assert_eq!(
+        products.suffixes().len() + saved_paths.len(),
+        fresh_products.suffixes().len()
+    );
+    for suffix in products.suffixes() {
+        let actual = products.get(&suffix).values();
+        let expected = fresh_products.get(&suffix).values();
+        assert_eq!(actual.shape(), expected.shape(), "{suffix} shape");
+        let reference_power = expected
+            .iter()
+            .map(|value| f64::from(*value).powi(2))
+            .sum::<f64>();
+        let difference_power = actual
+            .iter()
+            .zip(&expected)
+            .map(|(actual, expected)| (f64::from(*actual) - f64::from(*expected)).powi(2))
+            .sum::<f64>();
+        assert!(
+            difference_power <= 1.0e-12 * reference_power,
+            "{suffix}: saved-PSF CLEAN differs from fresh CLEAN (error power {difference_power}, reference power {reference_power})"
+        );
+    }
+    for suffix in [".image.tt0", ".residual.tt0"] {
+        assert!(
+            !products.get(suffix).mask().unwrap()[[x, y, 0, 0]],
+            "{suffix}: use the saved PB mask"
+        );
+    }
+    for (path, before) in saved_paths.iter().zip(&saved) {
+        assert_unchanged(before, &snapshot(path));
+    }
+}
+
+#[path = "aw_saved_restore.rs"]
+mod aw_saved_restore;
+
+/// A resumed correction divides both Taylor images by the saved principal
+/// PB. CASA opens the auxiliary PB image without replacing it if it exists.
+#[test]
+fn aw_mtmfs_restart_corrects_both_terms_with_the_saved_pb() {
+    use super::restart::{assert_unchanged, snapshot};
+
+    let (observation, controls) = two_term_aw_restart();
+    let [x, y] = observation.geometry().pixel(CENTRE);
+    let saved_pb = 0.05;
+    for (name, initial_pbcor) in [("correct-after", false), ("correct-both", true)] {
+        let mut dirty_controls = controls.clone();
+        dirty_controls["pbcor"] = json!(initial_pbcor);
+        let (_, dirty) = observation.image(name, dirty_controls);
+        let pb_mask = dirty.get(".pb.tt0").mask().unwrap();
+        assert!(pb_mask[[x, y, 0, 0]]);
+        let mut beam =
+            casa_images::PagedImage::<f32>::open(observation.scratch(&format!("{name}.pb.tt0")))
+                .unwrap();
+        let pixel = ndarray::Array4::from_elem((1, 1, 1, 1), saved_pb).into_dyn();
+        beam.put_slice(&pixel, &[x, y, 0, 0]).unwrap();
+        beam.save().unwrap();
+
+        let auxiliary = observation.scratch(&format!("{name}.pb.tt1"));
+        assert_eq!(auxiliary.exists(), initial_pbcor);
+        let before = initial_pbcor.then(|| snapshot(&auxiliary));
+        let mut restart = controls.clone();
+        restart["pbcor"] = json!(true);
+        restart["calcpsf"] = json!(false);
+        restart["niter"] = json!(10);
+        let (run, products) = observation.image(name, restart);
+
+        assert_eq!(run.minor_iterations, 10);
+        for term in [0, 1] {
+            let image_name = format!(".image.tt{term}");
+            let image = products.get(&image_name).pixels[[x, y]];
+            assert!(
+                image.abs() > 0.01,
+                "{image_name}: test a nonzero coefficient"
+            );
+            let corrected = products.get(&format!("{image_name}.pbcor"));
+            assert_eq!(corrected.pixels[[x, y]], image / saved_pb, "{image_name}");
+            assert_eq!(corrected.mask().as_ref(), Some(&pb_mask), "{image_name}");
+        }
+        if let Some(before) = before {
+            assert!(!products.suffixes().contains(".pb.tt1"));
+            assert_unchanged(&before, &snapshot(&auxiliary));
+        } else {
+            let beam = products.get(".pb.tt1");
+            assert!(beam.values().iter().all(|value| *value == 0.0));
+            assert!(beam.mask().is_none());
+        }
     }
 }
 
@@ -493,42 +761,146 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
     );
 }
 
-/// Linear multi-channel AW cubes and tracked TOPO nearest cubes remain
-/// refused naming their issue; a one-channel selection runs (#1121).
+/// CASA's data-frame AW cube keeps its offset grid in the stored frame.
 #[test]
-fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
+fn aw_data_frame_cube_uses_the_casa_frequency_grid() {
+    let mut setup = setup();
+    let window = &mut setup.spectral_windows[0];
+    window.start_frequency_hz = 1.0e9;
+    window.channel_width_hz = 50.0e6;
+    window.channel_count = 20;
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).expect("open MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(
+            0,
+            "MEAS_FREQ_REF",
+            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+        )
+        .expect("declare TOPO input");
+    ms.save().expect("save TOPO input");
+    drop(ms);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write EVLA surface");
+    let mut request = cached_clean("0:3~14", &observation.scratch("cubedata-cf"), &surface);
+    request["specmode"] = json!("cubedata");
+    request["nchan"] = json!(8);
+    request["start"] = json!("1.275GHz");
+    request["width"] = json!("50MHz");
+    request["niter"] = json!(0);
+    for interpolation in ["linear", "cubic"] {
+        request["interpolation"] = json!(interpolation);
+        let (_, products) = observation.image(interpolation, request.clone());
+        let image = products.get(".psf");
+        let coordinate = image.image.first_spectral_coordinate().unwrap().unwrap();
+        assert_eq!(
+            coordinate.world_frequency_hz(0.0).unwrap(),
+            1_274_999_999.999_999_8
+        );
+        assert_eq!(coordinate.world_increment_hz().unwrap(), 50.0e6);
+        let sums = products.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), 8);
+        assert!(sums.iter().all(|&value| value > 0.0), "{sums:?}");
+    }
+}
+
+/// A native LSRK AW cube uses the four-point cubic stencil on an offset
+/// axis. The shorter edge stencil and strict support are shared with GridFT.
+#[test]
+fn an_aw_cubic_cube_uses_the_cubic_stencil() {
     let setup = Setup {
         spectral_windows: vec![SyntheticSpectralSetup {
-            channel_count: 2,
-            ..lband_window("t1-lband-two", FREQUENCY_HZ)
+            channel_count: 6,
+            ..lband_window("t1-lband-cubic", FREQUENCY_HZ)
         }],
         ..setup()
     };
     let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
     let surface = observation.scratch("evla.surface");
     std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
-    let controls = |spw: &str| {
-        let mut controls = cached_clean(spw, &observation.scratch("two-cf"), &surface);
-        let fields = controls.as_object_mut().expect("controls");
-        fields.insert("niter".into(), json!(0));
-        fields.insert("specmode".into(), json!("cube"));
-        controls
-    };
-    let refused = observation
-        .try_image("aw-two-channels", controls("0"))
-        .err()
-        .expect("a window of two channels");
-    assert!(refused.contains("#1121"), "{refused}");
-    let mut tracked = controls("0");
-    let fields = tracked.as_object_mut().expect("controls");
-    fields.insert("interpolation".into(), json!("nearest"));
-    fields.insert("outframe".into(), json!("TOPO"));
-    let refused = observation
-        .try_image("aw-tracked-two-channels", tracked)
-        .err()
-        .expect("tracked TOPO AW cubes remain unsupported");
-    assert!(refused.contains("#1121"), "{refused}");
-    observation.image("aw-one-channel", controls("0:0"));
+    let mut request = cached_clean("0", &observation.scratch("cubic-cf"), &surface);
+    request["niter"] = json!(0);
+    request["specmode"] = json!("cube");
+    request["outframe"] = json!("LSRK");
+    request["nchan"] = json!(5);
+    request["start"] = json!("1.504GHz");
+    request["width"] = json!("8MHz");
+    request["interpolation"] = json!("cubic");
+    let (_, cubic) = observation.image("aw-offset-cubic", request.clone());
+    let weights = cubic.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 5);
+    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
+
+    for weighting in ["briggs", "uniform"] {
+        let mut weighted_request = request.clone();
+        weighted_request["weighting"] = json!(weighting);
+        weighted_request["robust"] = json!(0.5);
+        let (_, weighted) =
+            observation.image(&format!("aw-offset-cubic-{weighting}"), weighted_request);
+        let sums = weighted.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), weights.len());
+        assert!(
+            sums.iter().all(|weight| *weight > 0.0),
+            "{weighting}: {sums:?}"
+        );
+        assert!(
+            sums.iter()
+                .zip(&weights)
+                .any(|(weighted, natural)| (weighted - natural).abs() > 1e-3 * natural),
+            "{weighting}: {sums:?}, natural: {weights:?}"
+        );
+    }
+
+    request["interpolation"] = json!("linear");
+    let (_, linear) = observation.image("aw-offset-linear-control", request.clone());
+    let difference = cubic
+        .get(".residual")
+        .values()
+        .into_iter()
+        .zip(linear.get(".residual").values())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        difference > 1e-4,
+        "cubic and linear AW residual difference: {difference}"
+    );
+
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .expect("tag the input frequency frame");
+    ms.save().expect("save the TOPO test MS");
+    drop(ms);
+    request["interpolation"] = json!("cubic");
+    request["native_cf_cache"] = json!(observation.scratch("topo-cubic-cf"));
+    // The TOPO-to-LSRK conversion shifts the final channel below this
+    // grid point, which is within the unconverted native axis.
+    request["start"] = json!("1.49996GHz");
+    request["nchan"] = json!(6);
+    let (_, converted) = observation.image("aw-offset-topo-cubic", request.clone());
+    let sums = converted.get(".sumwt").channel_values();
+    assert_eq!(sums.len(), 6);
+    assert!(sums[..5].iter().all(|weight| *weight > 0.0), "{sums:?}");
+    assert_eq!(sums[5], 0.0, "{sums:?}");
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::BARY.casacore_code())
+        .expect("tag the input frequency frame");
+    ms.save().expect("save the BARY test MS");
+    drop(ms);
+    request["native_cf_cache"] = json!(observation.scratch("bary-cubic-cf"));
+    request["start"] = json!("1.5GHz");
+    let (_, converted) = observation.image("aw-offset-bary-cubic", request);
+    let sums = converted.get(".sumwt").channel_values();
+    assert_eq!(sums.len(), 6);
+    assert!(sums[..5].iter().all(|weight| *weight > 0.0), "{sums:?}");
+    assert_eq!(sums[5], 0.0, "{sums:?}");
 }
 
 /// A multi-channel AW window with nearest interpolation places both native
@@ -551,18 +923,154 @@ fn an_aw_cube_nearest_samples_a_multichannel_window() {
     fields.insert("specmode".into(), json!("cube"));
     fields.insert("nchan".into(), json!(2));
     fields.insert("interpolation".into(), json!("nearest"));
-    let (_, products) = observation.image("aw-two-nearest", controls);
+    for frame in ["LSRK", "TOPO", "BARY"] {
+        let mut request = controls.clone();
+        request["outframe"] = json!(frame);
+        let (_, products) = observation.image(&format!("aw-two-nearest-{frame}"), request);
+        let weights = products.get(".sumwt").channel_values();
+        assert_eq!(weights.len(), 2);
+        assert!(
+            weights.iter().all(|weight| *weight > 0.0),
+            "{frame}: {weights:?}"
+        );
+        for channel in 0..2 {
+            let peak = products
+                .get(".psf")
+                .plane(channel)
+                .iter()
+                .copied()
+                .fold(0.0_f32, f32::max);
+            assert!(
+                (peak - 1.0).abs() < 1.0e-6,
+                "{frame} channel {channel}: {peak}"
+            );
+        }
+    }
+}
+
+/// An offset linear cube visits both in-band output planes. The following
+/// plane is outside the selected native span and remains blank (#1121).
+#[test]
+fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 3,
+            ..lband_window("t1-lband-offset-linear", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut request = cached_clean("0", &observation.scratch("linear-cf"), &surface);
+    request["niter"] = json!(0);
+    request["specmode"] = json!("cube");
+    request["outframe"] = json!("LSRK");
+    request["interpolation"] = json!("linear");
+    request["start"] = json!(1);
+    request["width"] = json!(1);
+    request["nchan"] = json!(3);
+    let (_, products) = observation.image("aw-offset-linear", request.clone());
     let weights = products.get(".sumwt").channel_values();
-    assert_eq!(weights.len(), 2);
-    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
-    for channel in 0..2 {
-        let peak = products
-            .get(".psf")
-            .plane(channel)
-            .iter()
-            .copied()
-            .fold(0.0_f32, f32::max);
-        assert!((peak - 1.0).abs() < 1.0e-6, "channel {channel}: {peak}");
+    assert_eq!(weights.len(), 3);
+    assert!(weights[0] > 0.0 && weights[1] > 0.0, "{weights:?}");
+    assert_eq!(weights[2], 0.0, "{weights:?}");
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open the test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .expect("tag the observed frequencies as TOPO");
+    ms.save().expect("save the converted test MS");
+    drop(ms);
+
+    request["native_cf_cache"] = json!(observation.scratch("topo-linear-cf"));
+    // CASA measures puts the converted band about 90 kHz below the stored
+    // band on this track. Shift by 40 kHz so the first and last planes
+    // have opposite support with and without conversion. Nearest would
+    // also populate the last plane from the adjacent native channel.
+    request["start"] = json!("1.49996GHz");
+    request["width"] = json!("8MHz");
+    let (_, products) = observation.image("aw-converted-offset-linear", request);
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 3);
+    assert!(weights[0] > 0.0 && weights[1] > 0.0, "{weights:?}");
+    assert_eq!(weights[2], 0.0, "{weights:?}");
+}
+
+/// The BARY input case and tracked output cases use the AW linear resampler.
+/// The offset axis reaches two native intervals and leaves its last plane blank.
+#[test]
+fn tracked_aw_linear_cubes_preserve_supported_planes() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 3,
+            ..lband_window("t1-lband-tracked-linear", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    for (input, output) in [
+        (FrequencyRef::LSRK, FrequencyRef::TOPO),
+        (FrequencyRef::LSRK, FrequencyRef::BARY),
+        (FrequencyRef::BARY, FrequencyRef::LSRK),
+        (FrequencyRef::BARY, FrequencyRef::TOPO),
+        (FrequencyRef::BARY, FrequencyRef::BARY),
+    ] {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+        ms.spectral_window_mut()
+            .expect("spectral window")
+            .set_i32(0, "MEAS_FREQ_REF", input.casacore_code())
+            .expect("tag the input frequency frame");
+        ms.save().expect("save the input frame");
+        drop(ms);
+
+        let name = format!("aw-linear-{input}-{output}");
+        let mut request = cached_clean("0", &observation.scratch(&format!("{name}-cf")), &surface);
+        request["niter"] = json!(0);
+        request["specmode"] = json!("cube");
+        request["outframe"] = json!(output.as_str());
+        request["interpolation"] = json!("linear");
+        request["start"] = json!("1.503GHz");
+        request["width"] = json!("8.1MHz");
+        request["nchan"] = json!(3);
+        let (_, products) = observation.image(&name, request.clone());
+        let weights = products.get(".sumwt").channel_values();
+        assert_eq!(weights.len(), 3);
+        assert!(weights[0] > 0.0 && weights[1] > 0.0, "{name}: {weights:?}");
+        assert_eq!(weights[2], 0.0, "{name}: {weights:?}");
+
+        if (input, output) == (FrequencyRef::BARY, FrequencyRef::TOPO) {
+            for weighting in ["briggs", "uniform"] {
+                request["weighting"] = json!(weighting);
+                request["robust"] = json!(0.5);
+                let (_, weighted) =
+                    observation.image(&format!("{name}-{weighting}"), request.clone());
+                let sums = weighted.get(".sumwt").channel_values();
+                assert_eq!(sums.len(), 3);
+                assert!(sums[0] > 0.0 && sums[1] > 0.0, "{weighting}: {sums:?}");
+                assert_eq!(sums[2], 0.0, "{weighting}: {sums:?}");
+                assert!(
+                    (sums[0] - weights[0]).abs() > 1e-3 * weights[0],
+                    "{weighting}: {sums:?}, natural: {weights:?}"
+                );
+            }
+        }
+        let spectral = products
+            .get(".image")
+            .image
+            .first_spectral_coordinate()
+            .expect("spectral metadata")
+            .expect("spectral coordinate");
+        assert_eq!(spectral.frequency_ref(), output);
     }
 }
 
@@ -669,4 +1177,312 @@ fn aw_projection_images_on_its_pointing_table() {
     let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
     controls["usepointing"] = json!(true);
     observation.image("aw-pointing-image", controls);
+}
+
+/// AW uses each visibility's FIELD phase direction when `usepointing` has
+/// no antenna pointing sample, even with a different requested phasecentre
+/// (`VisBufferUtil::getPointingDir`, #1070).
+#[test]
+fn aw_without_pointing_samples_points_at_its_fields() {
+    use casa_ms::{MeasurementSet, SubtableId};
+
+    let setup = Setup {
+        fields: vec![
+            Setup::pointing([0.002, -0.001]),
+            Setup::pointing([-0.002, 0.001]),
+        ],
+        ..two_window_setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).expect("ms");
+        let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+        let rows: Vec<_> = (0..pointing.row_count()).collect();
+        assert!(!rows.is_empty(), "fixture initially has pointing samples");
+        pointing.remove_rows(&rows).expect("empty POINTING");
+        ms.save().expect("save");
+    }
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut controls = cached_clean("0,1", &observation.scratch("cf"), &surface);
+    controls["niter"] = json!(0);
+    controls["pbcor"] = json!(false);
+    let [ra, dec] = Setup::pointing([0.0003, 0.0007]);
+    controls["phasecenter"] = json!(format!("J2000 {ra}rad {dec}rad"));
+    let (_, fields) = observation.image("aw-field-directions", controls.clone());
+    controls["usepointing"] = json!(true);
+    let (_, pointed) = observation.image("aw-empty-pointing", controls);
+    let expected = fields.get(".weight").values();
+    let actual = pointed.get(".weight").values();
+    let scale = expected.mapv(|pixel| pixel.powi(2)).sum();
+    let squared_error = (&actual - &expected).mapv(|pixel| pixel.powi(2)).sum();
+    let nrms = (squared_error / scale).sqrt();
+    assert!(scale > 0.0 && nrms < 1.0e-5, "AW weight NRMS {nrms}");
+}
+
+/// A selected row outside the imported cache's PA range fails through
+/// tclean before it publishes an image. A compatible step reads the same
+/// cells, as `CFStore2::nearestPA` limits the lookup (#1070).
+#[test]
+fn imported_aw_rejects_an_uncovered_pa_before_publication() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0", &cache, &surface);
+    native["niter"] = json!(0);
+    observation.image("generate-pa-cache", native);
+    let mut imported = json!({
+        "spw": "0", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": W_PLANES, "weighting": "natural", "niter": 0,
+    });
+    observation.image("read-pa-cache", imported.clone());
+    imported["computepastep"] = json!(0.0001);
+    let name = "outside-pa-cache";
+    let Err(error) = observation.try_image(name, imported) else {
+        panic!("imaging accepted an uncovered PA");
+    };
+    assert!(
+        error.contains("no imported AW buffer within computepastep"),
+        "{error}"
+    );
+    assert!(!observation.scratch(&format!("{name}.image")).exists());
+}
+
+/// The task rotates both imaging and weight cells for an imported aperture.
+#[test]
+fn imported_aw_runtime_pa_rotation_changes_the_residual_and_psf() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0", &cache, &surface);
+    native["niter"] = json!(0);
+    native["wprojplanes"] = json!(1);
+    observation.image("generate-rotation-cache", native);
+    let mut imported = json!({
+        "spw": "0", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": 1, "weighting": "natural", "niter": 0,
+    });
+    let (_, unrotated) = observation.image("unrotated-pa-cache", imported.clone());
+    imported["rotatepastep"] = json!(0.1);
+    let (_, rotated) = observation.image("rotated-pa-cache", imported.clone());
+    for suffix in [".residual", ".psf"] {
+        let a = rotated.get(suffix).values();
+        let b = unrotated.get(suffix).values();
+        let difference = a
+            .iter()
+            .zip(b.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(difference > 1.0e-6, "{suffix}: {difference}");
+    }
+    imported["niter"] = json!(4);
+    imported["cycleniter"] = json!(2);
+    let (run, clean) = observation.image("rotation-clean", imported.clone());
+    assert!(run.major_cycles > 1 && run.actual_minor_iterations > 0);
+    assert!(
+        clean
+            .get(".model")
+            .values()
+            .iter()
+            .any(|&value| value != 0.0)
+    );
+    assert_eq!(clean.get(".psf").values(), rotated.get(".psf").values());
+    assert_ne!(
+        clean.get(".residual").values(),
+        rotated.get(".residual").values()
+    );
+
+    imported["deconvolver"] = json!("clark");
+    let name = "rotation-clark";
+    let Err(error) = observation.try_image(name, imported) else {
+        panic!("runtime rotation accepted a Clark clean");
+    };
+    assert!(error.contains("rotatepastep currently supports"), "{error}");
+    assert!(!observation.scratch(&format!("{name}.image")).exists());
+}
+
+/// A shared rotation schedule serves the Taylor kernels of two
+/// simultaneously observed windows with the same antenna-0 feed.
+#[test]
+fn imported_aw_runtime_rotation_cleans_two_window_mtmfs() {
+    use casa_ms::MeasurementSet;
+    use casa_types::{ScalarValue, Value as CellValue};
+
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let mut feed = ms.feed_mut().unwrap();
+    let table = feed.table_mut();
+    let mut other_feed = table.row_accessor().row(0).unwrap().clone();
+    other_feed.upsert(
+        "SPECTRAL_WINDOW_ID",
+        CellValue::Scalar(ScalarValue::Int32(1)),
+    );
+    let other_feed_row = table.row_count();
+    table.add_row(other_feed).unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("cf");
+    let mut native = cached_clean("0,1", &cache, &surface);
+    native["niter"] = json!(0);
+    native["wprojplanes"] = json!(1);
+    native["wbawp"] = json!(true);
+    observation.image("generate-wideband-rotation-cache", native);
+    let mut imported = json!({
+        "spw": "0,1", "gridder": "awproject", "cfcache": cache,
+        "wprojplanes": 1, "weighting": "natural", "wbawp": true,
+        "deconvolver": "mtmfs", "nterms": 2, "niter": 4, "cycleniter": 2,
+        "scales": [0], "reffreq": "1.45GHz",
+    });
+    let (_, static_products) = observation.image("static-wideband-cache", imported.clone());
+    imported["rotatepastep"] = json!(0.5);
+    let (run, rotated) = observation.image("rotated-wideband-cache", imported.clone());
+    assert!(run.major_cycles > 1 && run.minor_iterations > 0);
+    assert_eq!(rotated.suffixes(), static_products.suffixes());
+    for suffix in [".psf.tt0", ".psf.tt2", ".residual.tt0"] {
+        assert_ne!(
+            rotated.get(suffix).values(),
+            static_products.get(suffix).values()
+        );
+    }
+
+    imported["wbawp"] = json!(false);
+    assert_rotation_refused(&observation, "rotated-narrowband-mtmfs", imported.clone());
+    imported["wbawp"] = json!(true);
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let mut feed = ms.feed_mut().unwrap();
+    let table = feed.table_mut();
+    table
+        .row_accessor_mut()
+        .set_cell(
+            other_feed_row,
+            "RECEPTOR_ANGLE",
+            CellValue::Array(casa_types::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(vec![2], vec![0.2, 0.0]).unwrap(),
+            )),
+        )
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    assert_rotation_refused(&observation, "rotated-different-feed", imported.clone());
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let mut feed = ms.feed_mut().unwrap();
+    let feed = feed.table_mut();
+    feed.row_accessor_mut()
+        .set_cell(
+            other_feed_row,
+            "RECEPTOR_ANGLE",
+            CellValue::Array(casa_types::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(vec![2], vec![0.0, 0.0]).unwrap(),
+            )),
+        )
+        .unwrap();
+    let first_window_one_time = (0..ms.row_count())
+        .find_map(|row| {
+            let table = ms.main_table();
+            let desc = table.cell_accessor(row, "DATA_DESC_ID").unwrap();
+            (*desc.scalar().unwrap() == ScalarValue::Int32(1)).then(|| {
+                table
+                    .cell_accessor(row, "TIME")
+                    .unwrap()
+                    .scalar()
+                    .unwrap()
+                    .clone()
+            })
+        })
+        .expect("second window is present");
+    for row in 0..ms.row_count() {
+        let table = ms.main_table();
+        if *table
+            .cell_accessor(row, "DATA_DESC_ID")
+            .unwrap()
+            .scalar()
+            .unwrap()
+            == ScalarValue::Int32(1)
+            && *table.cell_accessor(row, "TIME").unwrap().scalar().unwrap() == first_window_one_time
+        {
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(row, "FLAG_ROW", CellValue::Scalar(ScalarValue::Bool(true)))
+                .unwrap();
+        }
+    }
+    ms.save().unwrap();
+    drop(ms);
+    assert_rotation_refused(&observation, "rotated-different-times", imported.clone());
+
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    for row in 0..ms.row_count() {
+        let desc = ms.main_table().cell_accessor(row, "DATA_DESC_ID").unwrap();
+        if *desc.scalar().unwrap() == ScalarValue::Int32(1) {
+            let mut output = ms.main_table_mut().row_accessor_mut();
+            output
+                .set_cell(row, "FLAG_ROW", CellValue::Scalar(ScalarValue::Bool(false)))
+                .unwrap();
+            output
+                .set_cell(row, "ARRAY_ID", CellValue::Scalar(ScalarValue::Int32(1)))
+                .unwrap();
+        }
+    }
+    ms.save().unwrap();
+    drop(ms);
+    assert_rotation_refused(&observation, "rotated-different-arrays", imported);
+}
+
+fn assert_rotation_refused(observation: &Observation, name: &str, controls: Value) {
+    let Err(error) = observation.try_image(name, controls) else {
+        panic!("{name}: rotation unexpectedly ran");
+    };
+    assert!(error.contains("rotatepastep currently supports"), "{error}");
+    assert!(!observation.scratch(&format!("{name}.image.tt0")).exists());
+}
+
+/// A native cache is generated over all covered PA groups and reopened
+/// through the same sorted selection rule.
+#[test]
+fn native_aw_generates_and_reuses_multiple_pa_buffers() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let cache = observation.scratch("native-pa-cf");
+    let mut request = cached_clean("0", &cache, &surface);
+    request["niter"] = json!(0);
+    request["wprojplanes"] = json!(1);
+    request["computepastep"] = json!(2.0);
+    let (_, cold) = observation.image("native-pa-cold", request.clone());
+    let payloads = || {
+        entries(&cache)
+            .into_iter()
+            .filter(|name| name.starts_with("CFS_") || name.starts_with("WTCFS_"))
+            .map(|name| {
+                let meta =
+                    std::fs::metadata(cache.join(&name).join("table.dat")).expect("cell header");
+                (
+                    name,
+                    meta.len(),
+                    meta.modified().expect("cell modification time"),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = payloads();
+    assert!(before.len() > 4, "expected at least two PA buffers");
+    request["native_cf_policy"] = json!("reuse-only");
+    let (_, warm) = observation.image("native-pa-warm", request.clone());
+    assert_same_products(&warm, &cold);
+    assert_eq!(payloads(), before, "warm replay preserves the cell payload");
+
+    request["spw"] = json!("0,1");
+    let Err(error) = observation.try_image("native-pa-two-windows", request) else {
+        panic!("non-default native PA accepted two windows");
+    };
+    assert!(
+        error.contains("native computepastep currently supports MFS"),
+        "{error}"
+    );
 }

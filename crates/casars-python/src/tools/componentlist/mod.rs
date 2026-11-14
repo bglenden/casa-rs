@@ -171,7 +171,7 @@ impl PyComponentList {
 
 impl Drop for PyComponentList {
     /// CASA's destructor writes a list attached for update. The write runs
-    /// with the GIL released, as every method's does (ADR-0019), since it
+    /// with the GIL released, as every method's does (ADR-0017), since it
     /// may wait for a lock another process holds; a failure is a
     /// `RuntimeWarning`, raised once the GIL is held again, as nothing can
     /// raise here.

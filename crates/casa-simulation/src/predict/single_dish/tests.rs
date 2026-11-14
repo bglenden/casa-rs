@@ -107,7 +107,7 @@ fn sampled(
     let prediction = SingleDishPrediction::new(
         model,
         kernel,
-        (Some(&pattern), voltage_pattern.then_some(&pattern)),
+        (Some(&pattern), voltage_pattern.then_some(&pattern), None),
         (&windows, pointings),
         Reservation::none(),
     )
@@ -241,7 +241,7 @@ fn channels_take_their_planes_and_cross_hands_take_none() {
     let prediction = SingleDishPrediction::new(
         &cube,
         SingleDishKernel::Pb,
-        (Some(&pattern), None),
+        (Some(&pattern), None, None),
         (&windows, pointings),
         Reservation::none(),
     )
@@ -279,7 +279,15 @@ fn grid_functions_name_casas_kernels_in_any_case() {
         SingleDishKernel::from_grid_function("Sf"),
         Some(SingleDishKernel::Spheroidal)
     );
-    for other in ["gauss", "GJINC", "", "kb"] {
+    assert_eq!(
+        SingleDishKernel::from_grid_function("gauss"),
+        Some(SingleDishKernel::Gauss)
+    );
+    assert_eq!(
+        SingleDishKernel::from_grid_function("GJINC"),
+        Some(SingleDishKernel::Gjinc)
+    );
+    for other in ["", "kb"] {
         assert_eq!(SingleDishKernel::from_grid_function(other), None, "{other}");
     }
 }

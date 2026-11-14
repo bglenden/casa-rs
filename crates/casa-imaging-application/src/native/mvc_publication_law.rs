@@ -47,6 +47,7 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
         runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
@@ -56,6 +57,7 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -96,6 +98,8 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
     let mut published = Vec::new();
     let result = publish_mvc_products(
         MvcProductSource {
+            saved: None,
+            saved_residual_mask_bytes: None,
             cube_problem: &cube,
             cube_model_created: true,
             cube: ProductSource {
@@ -104,8 +108,9 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
                 facet_sum_weights: Default::default(),
                 mem_alpha: None,
                 saved_psf_beams: None,
+                outlier_psf_beams: Vec::new(),
                 vla_selection_hz: None,
-                mvc_beam: None,
+                primary_beam: None,
             },
             taylor_problem: &taylor,
             taylor: converted,
@@ -211,6 +216,7 @@ fn mvc_native_publication_honours_precancel_before_admission() {
         mut runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
@@ -220,6 +226,7 @@ fn mvc_native_publication_honours_precancel_before_admission() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -232,6 +239,8 @@ fn mvc_native_publication_honours_precancel_before_admission() {
     let mut published = Vec::new();
     let result = publish_mvc_products(
         MvcProductSource {
+            saved: None,
+            saved_residual_mask_bytes: None,
             cube_problem: &cube,
             cube_model_created: true,
             cube: ProductSource {
@@ -240,8 +249,9 @@ fn mvc_native_publication_honours_precancel_before_admission() {
                 facet_sum_weights: Default::default(),
                 mem_alpha: None,
                 saved_psf_beams: None,
+                outlier_psf_beams: Vec::new(),
                 vla_selection_hz: None,
-                mvc_beam: None,
+                primary_beam: None,
             },
             taylor_problem: &taylor,
             taylor: converted,
@@ -291,6 +301,7 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
         runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
@@ -300,6 +311,7 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -308,6 +320,8 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         publish_mvc_products(
             MvcProductSource {
+                saved: None,
+                saved_residual_mask_bytes: None,
                 cube_problem: &cube,
                 cube_model_created: true,
                 cube: ProductSource {
@@ -316,8 +330,9 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
                     facet_sum_weights: Default::default(),
                     mem_alpha: None,
                     saved_psf_beams: None,
+                    outlier_psf_beams: Vec::new(),
                     vla_selection_hz: None,
-                    mvc_beam: None,
+                    primary_beam: None,
                 },
                 taylor_problem: &cube,
                 taylor: converted,
@@ -401,6 +416,7 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
         mut runtime,
         publication,
         aw_catalog: _,
+        awp2: _,
     } = native;
     let converted = mvc::assemble_taylor_completion(
         mvc::TaylorAssemblyInputs {
@@ -410,6 +426,7 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
             expansion_reference_hz: view.expansion_reference_hz,
             controls: publication.controls,
             centres: publication.primary_beam_centres.as_ref(),
+            read_saved_residual: false,
         },
         (&runtime.host, &runtime.resource_policy, &runtime.cancel),
     )
@@ -451,6 +468,8 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
     let mut published = Vec::new();
     let result = publish_mvc_products(
         MvcProductSource {
+            saved: None,
+            saved_residual_mask_bytes: None,
             cube_problem: &cube,
             cube_model_created: true,
             cube: ProductSource {
@@ -459,8 +478,9 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
                 facet_sum_weights: Default::default(),
                 mem_alpha: None,
                 saved_psf_beams: None,
+                outlier_psf_beams: Vec::new(),
                 vla_selection_hz: None,
-                mvc_beam: None,
+                primary_beam: None,
             },
             taylor_problem: &taylor,
             taylor: converted,

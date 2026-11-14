@@ -7,6 +7,8 @@
 
 #[path = "t1/aw_projection.rs"]
 mod aw_projection;
+#[path = "t1/awp2.rs"]
+mod awp2;
 #[path = "t1/casa_return.rs"]
 mod casa_return;
 #[path = "t1/continuation.rs"]
@@ -31,6 +33,8 @@ mod model_column;
 mod mosaic;
 #[path = "t1/mosaic_evla.rs"]
 mod mosaic_evla;
+#[path = "t1/mosaic_psf.rs"]
+mod mosaic_psf;
 #[path = "t1/msv4.rs"]
 mod msv4;
 #[path = "t1/mtmfs.rs"]

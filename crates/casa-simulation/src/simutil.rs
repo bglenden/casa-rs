@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `simutil` helpers that `simobserve` uses (simulation Phase 5,
 //! #841): CASA 6.7.6's `casatasks/src/private/simutil.py`, ported as its
-//! specification (ADR-0018).
+//! specification (ADR-0017).
 //!
 //! | CASA | casa-rs |
 //! |---|---|

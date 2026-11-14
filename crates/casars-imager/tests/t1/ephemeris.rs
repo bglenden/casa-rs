@@ -116,6 +116,164 @@ fn trackfield_images_mfs_and_a_rest_frame_cube() {
     );
 }
 
+/// An AW request on a moving field with a native TOPO window.
+fn moving_aw_cube(channels: usize) -> (Observation, serde_json::Value) {
+    let mut setup = super::aw_projection::setup();
+    setup.spectral_windows[0].channel_count = channels;
+    let observation = following_body(Observation::synthesise_setup(setup, &[("point", POINT)]));
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(
+            0,
+            "MEAS_FREQ_REF",
+            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+        )
+        .expect("declare TOPO input");
+    ms.save().expect("save TOPO input");
+    drop(ms);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, super::aw_projection::surface_text()).expect("write EVLA surface");
+    let mut request =
+        super::aw_projection::cached_clean("0", &observation.scratch("rest-cf"), &surface);
+    request["phasecenter"] = json!("TRACKFIELD");
+    request["specmode"] = json!("cubesource");
+    request["outframe"] = json!("REST");
+    request["restfreq"] = json!("1.5GHz");
+    request["nchan"] = json!(channels);
+    request["niter"] = json!(0);
+    request["interpolation"] = json!("nearest");
+    request["wprojplanes"] = json!(1);
+    (observation, request)
+}
+
+/// A moving source's AW cube uses its REST axis for channel selection.
+#[test]
+fn aw_nearest_images_a_multichannel_rest_cube() {
+    let (observation, mut request) = moving_aw_cube(4);
+    let (_, products) = observation.image("aw-rest-cube", request.clone());
+    // Nearest selects the same stored channels on both axes. The ephemeris,
+    // geometry, cache, and native wavelengths are identical for the two PSFs.
+    let mut selected_request = request.clone();
+    selected_request["spw"] = json!("0:1~2");
+    selected_request["nchan"] = json!(2);
+    let (_, selected) = observation.image("aw-rest-selected-default-start", selected_request);
+
+    request["specmode"] = json!("cubedata");
+    request["outframe"] = json!("TOPO");
+    let (_, native_axis) = observation.image("aw-native-axis-cube", request.clone());
+    let psf_difference = products
+        .get(".psf")
+        .values()
+        .into_iter()
+        .zip(native_axis.get(".psf").values())
+        .map(|(rest, native)| (rest - native).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        psf_difference < 1e-5,
+        "REST AW native wavelength PSF: {psf_difference}"
+    );
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 4);
+    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
+    let coordinate = products
+        .get(".image")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    assert_eq!(
+        coordinate.frequency_ref(),
+        casa_types::measures::frequency::FrequencyRef::REST
+    );
+
+    let selected_coordinate = selected
+        .get(".image")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    // CASA trims to the selected band on the stored axis, then shifts it.
+    for (output, source) in [(0.0, 1.0), (1.0, 2.0)] {
+        let expected = coordinate.world_frequency_hz(source).unwrap();
+        let actual = selected_coordinate.world_frequency_hz(output).unwrap();
+        assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+    }
+
+    // CASA Doppler-shifts the input frequencies before regridding.
+    // The user-supplied start and width already describe the REST axis.
+    request["specmode"] = json!("cubesource");
+    request["outframe"] = json!("REST");
+    request["interpolation"] = json!("linear");
+    request["start"] = json!("1502MHz");
+    request["width"] = json!("8.001MHz");
+    request["nchan"] = json!(2);
+    let (_, linear) = observation.image("aw-rest-linear", request);
+    let coordinate = linear
+        .get(".psf")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    assert_eq!(coordinate.world_frequency_hz(0.0).unwrap(), 1_502_000_000.0);
+    assert_eq!(coordinate.world_increment_hz().unwrap(), 8_001_000.0);
+    assert!(
+        linear
+            .get(".sumwt")
+            .channel_values()
+            .iter()
+            .all(|&w| w > 0.0)
+    );
+}
+
+/// Cubic interpolation on an offset REST grid uses the four-point stencil.
+#[test]
+fn aw_cubic_images_a_multichannel_rest_cube() {
+    let (observation, mut request) = moving_aw_cube(6);
+    request["nchan"] = json!(4);
+    request["start"] = json!("1504MHz");
+    request["width"] = json!("8.001MHz");
+    request["interpolation"] = json!("cubic");
+    let (_, cubic) = observation.image("aw-rest-cubic", request.clone());
+    let weights = cubic.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 4);
+    assert!(weights.iter().all(|&weight| weight > 0.0), "{weights:?}");
+
+    for weighting in ["briggs", "uniform"] {
+        let mut weighted = request.clone();
+        weighted["weighting"] = json!(weighting);
+        weighted["robust"] = json!(0.5);
+        weighted["perchanweightdensity"] = json!(true);
+        let (_, products) = observation.image(&format!("aw-rest-cubic-{weighting}"), weighted);
+        let sums = products.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), 4);
+        assert!(
+            sums.iter().all(|&weight| weight > 0.0),
+            "{weighting}: {sums:?}"
+        );
+        assert!(
+            sums.iter()
+                .zip(&weights)
+                .all(|(weighted, natural)| weighted < natural),
+            "{weighting}: {sums:?}, natural: {weights:?}"
+        );
+    }
+
+    request["interpolation"] = json!("linear");
+    let (_, linear) = observation.image("aw-rest-linear-control", request);
+    let difference = cubic
+        .get(".residual")
+        .values()
+        .into_iter()
+        .zip(linear.get(".residual").values())
+        .map(|(cubic, linear)| (cubic - linear).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        difference > 1e-4,
+        "REST cubic and linear difference: {difference}"
+    );
+}
+
 /// CASA centres a moving field's primary beam on its phase centre shifted by
 /// the body's motion to the image epoch (`SynthesisImagerVi2::makePrimaryBeam`):
 /// tracking the body, the beam stays on the field's offset from the image

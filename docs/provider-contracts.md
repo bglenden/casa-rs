@@ -72,7 +72,7 @@ Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.
 
 The object surfaces are `casars.data.Image` and `casars.data.Table`, and the
-CASA tool classes of `casars.tools` (ADR-0019): `simulator` (CASA's `sm`),
+CASA tool classes of `casars.tools` (ADR-0017): `simulator` (CASA's `sm`),
 `measures` (`me`), `quanta` (`qa`), `componentlist` (`cl`), `image` (`ia`),
 `coordsys` (`cs`), `table` (`tb`), `msmetadata` (`msmd`) and `ms`.
 
@@ -125,7 +125,7 @@ at least:
 3. parameter contract where the surface is parameterized
    - shared `ParameterCatalog` concepts
    - the task `SurfaceDefinition`
-   - parameter bindings, defaults, roles, validation, migrations, and aliases
+   - parameter bindings, defaults, roles and validation
 4. shared component schemas
    - reusable logical value definitions referenced across operations
 5. annotations
@@ -188,8 +188,7 @@ inventory all project from this catalog.
 
 ## Parameter Catalog and Surface Definitions
 
-ADR-0006 defines the common parameter model, including the optional
-current-only profile contract used by simobserve and msconvert.
+ADR-0006 defines the common parameter model and current-only profiles.
 
 `ParameterCatalog` entries describe reusable concepts:
 
@@ -207,11 +206,8 @@ a catalog concept even when a legacy CLI happens to spell them alike.
 
 - absent, literal, or pure conditional default
 - required and activation predicates
-- provably narrowing refinements, aliases, and projection metadata
+- provably narrowing refinements and projection metadata
 - an optional context role consistent with the concept's semantic role
-
-Aliases are unique within a surface and cannot shadow any canonical parameter
-name on that surface.
 
 Concept roles are part of the contract. A path that is safe as an input does not become
 an output merely because both serialize as strings. Runtime-only controls such
@@ -226,14 +222,6 @@ Every optional parameter has an explicit default. Conditional defaults depend
 only on other parameters and form an acyclic graph. Dataset-derived context is
 an explicit suggestion or override, never an undeclared default.
 
-Semantic evolution is guarded by the append-only fingerprints in
-`resources/parameter-contract-history.json`. Changing a concept's type,
-normalization, constraints, units, role, or persistence requires a new semantic
-revision. Changing a surface's bindings, defaults, predicates, provider
-projections, or migrations requires a new surface contract version.
-Run `scripts/check-parameter-contract-history.py --update` only after making and
-reviewing those version bumps; the normal architecture gate is check-only.
-
 ## Sparse Parameter Documents
 
 The human interchange format is versioned sparse TOML. The `[casars]` table
@@ -246,16 +234,10 @@ empty arrays, or zero-dimensional arrays are instead stored in an optional
 parameter values. This keeps complex values distinct from ordinary records
 and allows profiles to round-trip them without reserving any record key.
 
-This makes additive evolution cheap: a newly added optional parameter receives
-its current default without adding an override to a saved file. A surface may
-publish explicit ordered migrations for older contracts, including warnings for
-changed defaults. An empty migration set declares a current-only surface: only
-the exact current contract and canonical parameter names are accepted. The
-simobserve and msconvert surfaces are current-only. A chain may start after
-contract 1: `tclean`, the imager's surface since contract 29, migrates
-profiles from contract 28, the `imager` surface's last, and answers to that
-former id. Future, stale, and otherwise
-unmigratable contracts are errors.
+A saved profile must match the current task, format, and profile version.
+Recreate stale profiles using the current parameters. Adding an optional
+parameter can leave the version alone: a saved file uses its current default.
+Change the marker when a file can no longer be read with its intended meaning.
 
 Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the
@@ -450,7 +432,7 @@ in-process.
 
 `casars.parameters` exposes the common typed task profile, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep
-a second default or migration implementation.
+a second implementation of defaults.
 
 ## Surface inventory
 

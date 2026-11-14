@@ -57,6 +57,8 @@ fn a_table_reserved_for_its_batch_moves_nothing_and_allocates_its_admission() {
         // Each antenna of each integration at an airmass of its own.
         let airmass = |antenna: usize| 1.0 + (integration * antennas + antenna) as f32 * 1e-4;
         let rows = [(0, 1), (0, 2), (1, 2)].map(|(i, j)| RowNoise {
+            time_s: 0.,
+            antennas: [0, 1],
             diameters_m: [12.0; 2],
             airmass: [airmass(i), airmass(j)],
             exposure_s: 10.0,
@@ -86,6 +88,8 @@ fn a_table_reserved_for_its_batch_moves_nothing_and_allocates_its_admission() {
     );
     let scales = builder.build(4, run).expect("built");
     let last = RowNoise {
+        time_s: 0.,
+        antennas: [0, 1],
         diameters_m: [12.0; 2],
         airmass: [1.0 + 8_192.0 * 1e-4; 2],
         exposure_s: 10.0,
@@ -116,7 +120,7 @@ fn phasors_are_one_entry_per_antenna_and_solution() {
     let delays = vec![0.5, 1.0, 2.0];
     let term = tropospheric(
         antennas,
-        (chunks.sorted(), &slots),
+        (chunks.sorted(), Some(&slots)),
         TroposphericPhase::new(excess.clone(), vec![Some(delays.clone())]),
     );
     // Every baseline of the four integrations, twice over.

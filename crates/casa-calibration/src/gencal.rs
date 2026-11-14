@@ -397,13 +397,15 @@ fn write_float_caltable(
         ]))?;
     }
 
-    writer.finish(&[
+    writer.copy_subtables(&[
         (SubtableId::Observation, "OBSERVATION"),
         (SubtableId::Antenna, "ANTENNA"),
         (SubtableId::Field, "FIELD"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
         (SubtableId::History, "HISTORY"),
     ])?;
+    collapse_spectral_axis(&writer.output_path().join("SPECTRAL_WINDOW"))?;
+    writer.save_main()?;
 
     let spectral_window_ids = rows
         .iter()
@@ -590,6 +592,57 @@ fn matching_gaincurve_from_rows(
         }
     }
     Ok(nominal)
+}
+
+/// SolvableVisCal::initSVC collapses all spectral vectors for uniform
+/// parameters: mean channel frequency and summed widths/resolutions.
+/// Keep this inside the writer's staging directory, before publication.
+fn collapse_spectral_axis(path: &Path) -> Result<(), GencalError> {
+    let mut table = Table::open(TableOptions::new(path))
+        .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+    for row in 0..table.row_count() {
+        for column in ["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
+            let ArrayValue::Float64(values) = table
+                .cell_accessor(row, column)
+                .and_then(|cell| cell.array())
+                .map_err(|error| GencalError::InvalidRequest(error.to_string()))?
+            else {
+                return Err(GencalError::InvalidRequest(format!(
+                    "{column} is not a double array"
+                )));
+            };
+            if values.is_empty() {
+                return Err(GencalError::InvalidRequest(format!(
+                    "SPECTRAL_WINDOW row {row} has empty {column}"
+                )));
+            }
+            let value = values.iter().sum::<f64>()
+                / if column == "CHAN_FREQ" {
+                    values.len() as f64
+                } else {
+                    1.
+                };
+            table
+                .cell_accessor_mut(row, column)
+                .and_then(|mut cell| {
+                    cell.set(Value::Array(ArrayValue::Float64(ArrayD::from_elem(
+                        IxDyn(&[1]),
+                        value,
+                    ))))
+                })
+                .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+        }
+        table
+            .cell_accessor_mut(row, "NUM_CHAN")
+            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
+            .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+    }
+    table
+        .save(TableOptions::new(path))
+        .map_err(|source| GencalError::Save {
+            path: path.display().to_string(),
+            source: Box::new(source),
+        })
 }
 
 fn spw_center_frequency_hz(

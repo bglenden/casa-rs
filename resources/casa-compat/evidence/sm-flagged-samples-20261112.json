@@ -1,0 +1,509 @@
+{
+ "schema": "sm-flagged-samples-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-12",
+ "native_revision": "cd842e0e3804730301a65e552392af83f67027b6",
+ "source_revision": "cd842e0e3804730301a65e552392af83f67027b6",
+ "main_revision": "a9662f5e0e0885a71c314d4d060ae8beff36d958",
+ "oracle": "casatools 6.7.6-14, casatasks 6.7.6.14",
+ "host": "bg-mac-mini, macOS arm64",
+ "fixture": "crates/casa-simulation/tests/data/sm_flagged_samples_casa.json.gz",
+ "fixture_sha256": "b3b1b9abd07eb53269db2b6f38dbf4493e4e826ffe783f18b0721dce1c055265",
+ "upstream_read": {
+  "repository": "https://github.com/radio-astro/casa",
+  "revision": "4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef",
+  "paths": [
+   "code/synthesis/MeasurementEquations/Simulator.cc",
+   "code/synthesis/MeasurementEquations/SkyEquation.cc",
+   "code/synthesis/MeasurementEquations/VisEquation.cc",
+   "code/synthesis/TransformMachines/GridFT.cc",
+   "code/synthesis/TransformMachines/FTMachine.cc",
+   "code/synthesis/TransformMachines/SimpleComponentFTMachine.cc",
+   "code/synthesis/MeasurementComponents/SDGrid.cc"
+  ]
+ },
+ "commands": {
+  "oracle": "CASAPY tools/simulation/sm_flagged_samples_oracle.py --out OUT --fixture FIXTURE",
+  "full_crate": "RUST_TEST_THREADS=1 cargo test -p casa-simulation -- --nocapture",
+  "integration": "CASA_RS_FLAGGED_SAMPLES_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test flagged_samples --test open_from_ms --test backends --test simobserve_quick_psf -- --nocapture",
+  "cpp_readback": "CASAPY tools/simulation/sm_flagged_samples_oracle.py --verify-native EXPORT --fixture FIXTURE --out OUT",
+  "lint": "cargo clippy -p casa-simulation --all-targets -- -D warnings"
+ },
+ "source_audit": {
+  "tracked_files_match": true,
+  "extra_sources": [],
+  "method": "Every tracked file SHA-256 checked against the local revision, and extra .rs/.py/.toml sources refused. Dedicated target; initial full archive with refreshed source mtimes, then only changed tracked files updated, followed by another full hash audit."
+ },
+ "pre_fix_demonstration": {
+  "production_revision": "bb25516ebae64d26c867d895b8affc345a8007bf",
+  "tests": [
+   "existing_ms_flags_predict_against_casa",
+   "corrupts_flagged_samples_after_prediction_and_from_disk"
+  ],
+  "result": "Both fail on the original partly-flagged MAIN row 2 NotYetImplemented refusal."
+ },
+ "summary": {
+  "cases": 17,
+  "numerical_cases": 14,
+  "noise_cases": 3,
+  "cpu_runs": 34,
+  "workers": [
+   1,
+   3
+  ],
+  "cpu_worker_comparison": "bitwise equal",
+  "actual_metal_runs": 10,
+  "cpp_readback_runs": 44,
+  "data_nrms_max": 2.715703159348691e-06,
+  "data_nrms_limit": 0.001,
+  "metal_cpu_maximum_relative_error": 3.359415075e-07,
+  "metal_cpu_limit": 0.0001
+ },
+ "validation": {
+  "full_simulation": {
+   "source_revision": "5b4c565b384ada907eadde6673bd38347c351aab",
+   "passed": 301,
+   "failed": 0,
+   "ignored": 2,
+   "note": "Two subprocess helpers are ignored as standalone tests and executed by their parent tests. Includes counting-heap admission laws for the FLAG and DATA buffers."
+  },
+  "current_main_integration": {
+   "source_revision": "cd842e0e3804730301a65e552392af83f67027b6",
+   "passed": 25,
+   "failed": 0,
+   "ignored": 1,
+   "note": "5 backend, 3 new flag, 14 existing-MS and 3 numerical PSF tests; one parent-executed PSF helper ignore."
+  },
+  "clippy": "all targets pass at both full-suite and current-main revisions",
+  "format_architecture_docs": "passed"
+ },
+ "semantics": [
+  "Image and total-power predictions zero flagged samples before adding components.",
+  "Components and corruption operate on sample- and row-flagged data.",
+  "Incremental prediction adds the stored DATA once, after prediction and before corruption.",
+  "FLAG, FLAG_ROW, WEIGHT, SIGMA, row identifiers and cell shapes are preserved; CORRECTED_DATA follows DATA; existing MODEL_DATA becomes unit after predict and is preserved by noise-only corrupt.",
+  "Flagged batches add noise on the host after masking so Metal noise is never erased."
+ ],
+ "decisions": [
+  "Correct CASA mixed image/component doubling at flagged samples using independent image-only and component-only sums; retain raw CASA joint DATA and regression proving the excess.",
+  "Retain the standing SDGrid correction: compare CASA autocorrelations and require zero predicted cross-correlation total power."
+ ],
+ "limits": [
+  "No claim of complete simulation equivalence, whole-task performance or the remaining calculation modes.",
+  "WProjectFT uses CPU; explicit Metal remains refused. SDGrid and component-only paths execute their native CPU calculations.",
+  "Existing-MS layout and selection restrictions remain.",
+  "No new plotting work."
+ ],
+ "metal": [
+  {
+   "case": "image_noise",
+   "maximum_relative_error": 3.359415075e-07
+  },
+  {
+   "case": "image_increment_noise",
+   "maximum_relative_error": 1.395600862e-07
+  },
+  {
+   "case": "ft_replace",
+   "maximum_relative_error": 3.1575604e-07
+  },
+  {
+   "case": "ft_increment",
+   "maximum_relative_error": 9.796077904e-08
+  },
+  {
+   "case": "mosaic_replace",
+   "maximum_relative_error": 1.2924923e-07
+  },
+  {
+   "case": "mosaic_increment",
+   "maximum_relative_error": 7.821758174e-08
+  },
+  {
+   "case": "mixed_replace",
+   "maximum_relative_error": 3.27680624e-07
+  },
+  {
+   "case": "mixed_increment",
+   "maximum_relative_error": 1.379418819e-07
+  },
+  {
+   "case": "multiple_replace",
+   "maximum_relative_error": 2.348069614e-07
+  },
+  {
+   "case": "multiple_increment",
+   "maximum_relative_error": 1.223147876e-07
+  }
+ ],
+ "cpp_readback": [
+  {
+   "name": "components_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 1.0567030087571587e-07
+  },
+  {
+   "name": "sd_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 0.0
+  },
+  {
+   "name": "mosaic_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 4.5518045512063855e-07
+  },
+  {
+   "name": "noise_only",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005001573634326906,
+     "variance": 0.009680429952307298
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950625435336604,
+     "variance": 0.009813941741052977
+    }
+   ]
+  },
+  {
+   "name": "wproject_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.715703159348691e-06
+  },
+  {
+   "name": "mixed_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 5.21725078192465e-07
+  },
+  {
+   "name": "image_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005010339042830063,
+     "variance": 0.009680422144530484
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950649172948433,
+     "variance": 0.009813940489370343
+    }
+   ]
+  },
+  {
+   "name": "image_increment_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005010822437759629,
+     "variance": 0.009680420840126514
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950625435336604,
+     "variance": 0.009813941741052977
+    }
+   ]
+  },
+  {
+   "name": "mixed_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.1936593130639954e-06
+  },
+  {
+   "name": "mixed_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.202341622607831e-06
+  },
+  {
+   "name": "wproject_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 4.782753777541751e-07
+  },
+  {
+   "name": "multiple_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.206634923107861e-06
+  },
+  {
+   "name": "mosaic_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 4.5518045512063855e-07
+  },
+  {
+   "name": "mixed_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.1936593130639954e-06
+  },
+  {
+   "name": "wproject_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.715703159348691e-06
+  },
+  {
+   "name": "components_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.2060336276438e-06
+  },
+  {
+   "name": "ft_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 4.646619413238617e-07
+  },
+  {
+   "name": "ft_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.1907355642665146e-06
+  },
+  {
+   "name": "mosaic_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.1583279126444068e-06
+  },
+  {
+   "name": "sd_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 0.0
+  },
+  {
+   "name": "components_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.2060336276438e-06
+  },
+  {
+   "name": "image_increment_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005010379884476052,
+     "variance": 0.00968042193255112
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950625435336604,
+     "variance": 0.009813941741052977
+    }
+   ]
+  },
+  {
+   "name": "ft_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.2006828949347224e-06
+  },
+  {
+   "name": "components_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 1.0567030087571587e-07
+  },
+  {
+   "name": "multiple_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 6.575639417173648e-07
+  },
+  {
+   "name": "multiple_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 6.601118487343372e-07
+  },
+  {
+   "name": "multiple_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 2.206634923107861e-06
+  },
+  {
+   "name": "ft_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 4.646619413238617e-07
+  },
+  {
+   "name": "mosaic_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.1583279126444068e-06
+  },
+  {
+   "name": "image_noise",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005010339042830063,
+     "variance": 0.009680422144530484
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950649172948433,
+     "variance": 0.009813940489370343
+    }
+   ]
+  },
+  {
+   "name": "noise_only",
+   "workers": 3,
+   "backend": "Cpu",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005001573634326906,
+     "variance": 0.009680429952307298
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950625435336604,
+     "variance": 0.009813941741052977
+    }
+   ]
+  },
+  {
+   "name": "multiple_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.213848076546469e-06
+  },
+  {
+   "name": "multiple_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 6.575639417173648e-07
+  },
+  {
+   "name": "mixed_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 5.242184895500819e-07
+  },
+  {
+   "name": "image_increment_noise",
+   "workers": 1,
+   "backend": "Cpu",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005010379884476052,
+     "variance": 0.00968042193255112
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950625435336604,
+     "variance": 0.009813941741052977
+    }
+   ]
+  },
+  {
+   "name": "mosaic_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 4.5338978110644897e-07
+  },
+  {
+   "name": "ft_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 2.1907355642665146e-06
+  },
+  {
+   "name": "wproject_increment",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 4.782753777541751e-07
+  },
+  {
+   "name": "sd_replace",
+   "workers": 1,
+   "backend": "Cpu",
+   "data_nrms": 0.0
+  },
+  {
+   "name": "sd_replace",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 0.0
+  },
+  {
+   "name": "image_noise",
+   "workers": 3,
+   "backend": "Metal",
+   "noise": [
+    {
+     "flagged": false,
+     "draws": 1064,
+     "mean": -0.0005010757227673343,
+     "variance": 0.00968042140403648
+    },
+    {
+     "flagged": true,
+     "draws": 728,
+     "mean": -0.0018950649172948433,
+     "variance": 0.009813940489370343
+    }
+   ]
+  },
+  {
+   "name": "mosaic_replace",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 2.158444419284373e-06
+  },
+  {
+   "name": "ft_increment",
+   "workers": 3,
+   "backend": "Metal",
+   "data_nrms": 4.6524860369902286e-07
+  },
+  {
+   "name": "mixed_increment",
+   "workers": 3,
+   "backend": "Cpu",
+   "data_nrms": 5.21725078192465e-07
+  }
+ ]
+}

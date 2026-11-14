@@ -452,13 +452,25 @@ impl<'a> MosaicSensitivity<'a> {
         normalization: ProductNormalization,
         policy: PrimaryBeamValidityPolicy,
     ) -> Result<f64, ProductsError> {
+        self.physical_to_apparent_or(value, index, normalization, policy, || 0.0)
+    }
+
+    /// Keep the persisted apparent value where this model is outside support.
+    pub(crate) fn physical_to_apparent_or(
+        self,
+        value: f64,
+        index: usize,
+        normalization: ProductNormalization,
+        policy: PrimaryBeamValidityPolicy,
+        outside: impl FnOnce() -> f64,
+    ) -> Result<f64, ProductsError> {
         match normalization {
             ProductNormalization::FlatNoise => {
                 let pb = self.model_primary_beam_at(index)?;
                 if Self::supported(pb, policy) {
                     Self::finite(value * pb)
                 } else {
-                    Ok(0.0)
+                    Self::finite(outside())
                 }
             }
             ProductNormalization::PbSquare => {
@@ -466,7 +478,7 @@ impl<'a> MosaicSensitivity<'a> {
                 if Self::supported(square, policy) {
                     Self::finite(value * square)
                 } else {
-                    Ok(0.0)
+                    Self::finite(outside())
                 }
             }
             ProductNormalization::FlatSky => Self::finite(value),

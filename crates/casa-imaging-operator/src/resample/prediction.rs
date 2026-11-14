@@ -459,7 +459,9 @@ impl SpectralResampler {
         let native = row.frequencies_hz;
         let prepared = model.layout().planes();
         let terms = self.basis.data_terms();
-        let mut placing = RowPlacing::new(operator.cf(), operator.geometry(), row);
+        let Some(mut placing) = RowPlacing::new(operator.cf(), operator.geometry(), row)? else {
+            return Ok(PlacedRow { start, end: start });
+        };
         if matches!(self.sampling, Sampling::Direct | Sampling::Nearest(_))
             && terms == 1
             && placing.uniform.is_some()
@@ -713,11 +715,7 @@ impl SpectralResampler {
         // `InterpolateArray1D`, linear or cubic).
         index_slots(axis.channels as usize);
         let width = (axis.increment_hz / (native[1] - native[0])).abs();
-        let per_channel = if width > 1.0 {
-            width.floor() as usize
-        } else {
-            1
-        };
+        let per_channel = axis.fine_samples_per_plane(width);
         let fine_increment = axis.increment_hz / per_channel as f64;
         let fine_start = if per_channel > 1 {
             axis.first_hz - axis.increment_hz / 2.0 + fine_increment / 2.0
@@ -725,7 +723,13 @@ impl SpectralResampler {
             axis.first_hz
         };
         let points = axis.channels as usize * per_channel;
-        let point = |index: usize| fine_start + index as f64 * fine_increment;
+        let point = |index: usize| {
+            if width <= 1.0 && axis.reporting_axis.is_some() {
+                axis.centre_hz(index as u32)
+            } else {
+                fine_start + index as f64 * fine_increment
+            }
+        };
         let native_width_hz = native[1] - native[0];
         for (channel, frequency_hz) in native.iter().enumerate() {
             if axis.nearest_channel(*frequency_hz).is_none()

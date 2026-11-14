@@ -17,7 +17,6 @@ const PARAMETER_SURFACES_JSON: &str = include_str!(concat!(
 #[cfg(casa_generated_surfaces)]
 struct GeneratedSurface {
     id: &'static str,
-    aliases: &'static [&'static str],
     json: &'static str,
     parsed: OnceLock<Result<SurfaceContractBundle, String>>,
 }
@@ -75,11 +74,6 @@ pub fn builtin_surface_bundle(id: &str) -> Result<SurfaceContractBundle, String>
         let surface = GENERATED_SURFACES
             .iter()
             .find(|surface| surface.id == id)
-            .or_else(|| {
-                GENERATED_SURFACES
-                    .iter()
-                    .find(|surface| surface.aliases.contains(&id))
-            })
             .ok_or_else(|| format!("unknown configurable surface {id:?}"))?;
         surface
             .parsed
@@ -108,9 +102,9 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::{
-        CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole,
-        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, SemanticRevision,
-        SurfaceKind, SurfaceProductContract, ValueAdapter,
+        CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, OVERWRITE_CONCEPT_ID, ParameterRole, ParameterType,
+        ParameterValue, Predicate, ResourceKind, RunProductSource, SemanticRevision, SurfaceKind,
+        SurfaceProductContract, ValueAdapter,
     };
 
     use super::*;
@@ -126,9 +120,6 @@ mod tests {
                 "{}",
                 surface.id()
             );
-            for alias in surface.former_ids() {
-                assert_eq!(builtin_surface_bundle(alias).unwrap(), expected, "{alias}");
-            }
         }
         assert!(
             builtin_surface_bundle("not-a-task")
@@ -400,20 +391,14 @@ mod tests {
                 binding.name
             );
         }
-        // simobserve is current-only (ADR-0006): a profile of any earlier
-        // contract is refused, not migrated. That holds for contract 4's
-        // casa-rs-only profiles and for contract 7's, which differ from 8
-        // only in naming the CASA task (#931 4b).
-        assert!(surface.migrations().is_empty());
     }
 
     #[test]
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("tclean").unwrap();
-        // The imager was re-surfaced as CASA's tclean (#931): its former id
-        // still finds the surface, so an old profile can migrate.
-        assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
+        assert!(catalog.surface("imager").is_none());
+        assert!(builtin_surface_bundle("imager").is_err());
         assert_eq!(surface.casa_task(), Some("tclean"));
         assert_eq!(surface.contract_version(), 41);
         assert_eq!(surface.bindings().len(), 114);
@@ -537,39 +522,6 @@ mod tests {
             .find(|binding| binding.name == "stokes")
             .unwrap();
         assert_eq!(stokes.concept.id.as_str(), "image.selection.stokes");
-        assert!(stokes.aliases.is_empty());
-        assert!(
-            surface
-                .bindings()
-                .iter()
-                .all(|binding| binding.aliases.is_empty()),
-            "current imager profiles expose canonical names only"
-        );
-        // Contract 28 migrates to tclean's names, then contract 29 adopts
-        // the reviewed PB and Hogbom defaults while preserving explicit overrides.
-        // Contract 32 enables False restart without changing those defaults.
-        assert_eq!(
-            surface
-                .migrations()
-                .iter()
-                .map(|migration| (migration.from_contract, migration.to_contract))
-                .collect::<Vec<_>>(),
-            [
-                (28, 29),
-                (29, 30),
-                (30, 31),
-                (31, 32),
-                (32, 33),
-                (33, 34),
-                (34, 35),
-                (35, 36),
-                (36, 37),
-                (37, 38),
-                (38, 39),
-                (39, 40),
-                (40, 41)
-            ]
-        );
     }
 
     #[test]
@@ -687,13 +639,6 @@ mod tests {
             archivefiles.projections.provider.as_ref().unwrap().adapter,
             ValueAdapter::StringListCsv
         );
-        assert!(matches!(
-            &surface.migrations()[0].steps[..],
-            [MigrationStep::Transform {
-                parameter,
-                transform: crate::MigrationTransform::ScalarToArray { length: 1 },
-            }] if parameter == "archivefiles"
-        ));
     }
 
     #[test]

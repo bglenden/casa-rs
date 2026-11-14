@@ -6,6 +6,7 @@ Known imaging parity defect: [CASA Högbom `niter` off-by-one](#casa-hogbom-nite
 CASA behaviours casa-rs follows for parity:
 [AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
 [AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
+[AW MT-MFS restart weights](#aw-mt-mfs-restart-multiplies-saved-higher-taylor-weights-again),
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
@@ -18,6 +19,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
 [non-frequency component frequency units](#a-non-frequency-component-unit-corrupts-casas-spectrum),
 [nonconforming component flux conversion](#component-flux-conversion-can-relabel-incompatible-units-or-crash),
 [duplicate and empty component removals](#component-removal-can-lose-data-or-crash),
@@ -32,12 +34,15 @@ CASA behaviours casa-rs does not follow:
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [MEM masks on tiled images](#mem-reuses-the-first-mask-tile-for-its-alpha-update),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
+[an unused dish choosing the PB](#an-unused-alma-antenna-can-choose-the-standard-primary-beam),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
 [`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
+[AW baseline pointing groups](#aw-projection-can-use-another-antenna-groups-pointing),
 [a mosaic's single-precision weight image](#a-mosaics-weight-image-is-transformed-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[the standard gridder dropping the final Fourier-grid row and column](#the-standard-gridder-drops-the-final-fourier-grid-row-and-column),
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
 [a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
 [a TOPO cube's cache-dependent endpoint selection](#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history),
@@ -88,6 +93,7 @@ Simulator behaviours casa-rs does not follow:
 [random gains about zero](#setgainmoderandom-draws-gains-about-zero),
 [the last antenna's unit gain or leakage](#an-autocorrelation-row-resets-its-antennas-simulated-term),
 [leakage for two windows only](#setleakage-simulates-only-the-first-two-spectral-windows),
+[invalid leakage becoming one](#invalid-leakage-solutions-become-unit-leakage),
 [a simulated term's table written when it is set](#a-simulated-terms-table-is-written-when-the-term-is-set).
 Measures behaviours casa-rs follows for parity:
 [IAU 1980 sidereal time and obliquities under IAU 2000](#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities).
@@ -488,6 +494,173 @@ the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
 
+## AW gridding can continue after a PA cache miss
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. Casa-rs reports an uncovered imported buffer (#1070).
+- Affected code: `TransformMachines2/CFStore2.cc` (`nearestPA`),
+  `VB2CFBMap.cc` (`makeVBRow2CFBMap`) and `AWProjectFT.cc`
+  (`findConvFunction`, `resampleDataToGrid`).
+
+`CFStore2::nearestPA` takes the first angle strictly within
+`computepastep`, in the imported catalog's sorted angle order. On a cache
+miss `makeVBRow2CFBMap` can leave the previous row-to-buffer mapping in
+place. `findConvFunction` can generate a missing buffer when its angle
+change detector fires. The gridding path also calls the map builder and
+continues when that lookup reports a miss.
+
+On `refim_mawproject.ms` with a 5-degree step and default rotation, CASA
+creates 31 PA buffers. The warm replay still logs five integrations with
+no in-band PA in field 1 and publishes an image. Its residual differs from
+the cold run by 2.95e-3 NRMS. Casa-rs reports a missing imported buffer
+before publication, preserving its read-only import policy (#1043).
+Field 0 is covered by the same cache, and all seven products match CASA
+with exact masks. The default 360-degree control also matches across both
+fields.
+
+CASA imports sorted PA headers through `CFStore2::resize` with a strict
+one-degree tolerance. When a new angle matches a buffer, CASA replaces its
+angle and loads the new buffer's cells. Consecutive angles within one
+degree therefore leave only the last paired buffer. The row selector then
+uses the requested compute step over the surviving angles. A one-integration
+control on `refim_mawproject.ms` uses distinct payloads at 177.8 and 178.2
+degrees. CASA's dense and later-buffer-only references are exactly equal.
+Keeping both buffers in casa-rs had changed the residual by 0.011 normalized
+RMS and flipped 82 mask pixels. The coalesced import matches all seven
+products, exact masks and controller counts, and leaves the cache files
+untouched (#1070).
+
+## AW cache creation and reopening can select different PA buffers
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 cold and warm selection differs when PA coverage
+  intervals overlap. Casa-rs uses the sorted cache order in both runs (#1070).
+- Affected code: `TransformMachines2/AWProjectFT.cc` (`findConvFunction`),
+  `CFStore2.cc` (`resize`, `nearestPA`) and `CFCache.cc`
+  (`fillCFListFromDisk`).
+
+CASA adds generated buffers in observation order and picks the first PA
+strictly inside `computepastep`. Reloading sorts the cache by PA before
+applying the same first-match rule. On FIELD 0 of `refim_mawproject.ms`
+at 5 degrees, both orders cover all 108 selected integrations using
+the same 19 buffers. They select different buffers at 57 integrations.
+CASA's cold and warm residuals differ by 3.284e-3 NRMS and 16 mask
+pixels. With the same cache pixels, a temporary insertion-order
+selector matches all seven CASA cold products. The sorted selector
+matches all seven warm products, with exact masks in both comparisons.
+
+Native cache generation plans a centre at each uncovered selected feed
+angle and uses CASA's sorted replay order for both fresh and reused
+cells. Its cold and warm outputs agree with the CASA warm reference.
+
+## AW aperture rotation can regrid an already rotated cell
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 rotation history affects the residual. Casa-rs
+  samples the saved cell at each rotation epoch (#1070).
+- Affected code: `TransformMachines2/AWConvFunc.cc`
+  (`prepareConvFunction`), `AzElAperture.cc` (`rotate2`) and
+  `Utils.cc` (`rotateComplexArray`).
+
+The first change greater than `rotatepastep` regrids the current kernel
+with cubic interpolation and records the current feed PA. Later changes
+regrid those already interpolated pixels. On field 0 of
+`refim_mawproject.ms`, a zero-weight integration at -99.639° followed
+by the same nonzero integration at 177.839° changes CASA's 5-degree
+residual by 1.122e-4 NRMS versus selecting the final integration alone.
+Both paths rotate to the same final PA. The default 360-degree control
+has identical arrays in both selections.
+
+Casa-rs uses the same strict trigger and cubic interpolation, starting
+from the saved cell at each epoch. As in CASA's major cycle, an
+integration with no unflagged cross-correlation cannot advance the
+rotation. The two selections at the same final PA have identical arrays
+and masks in casa-rs. The independent CASA one-integration
+control and the full field match all seven products and masks under the
+existing limits. The largest full-field NRMS is 6.737e-5.
+
+The same history extends across Högbom major cycles. In the field 0
+eight-iteration CLEAN, CASA starts each residual refresh by rotating
+the cell left by the previous pass from 90.5703° back to -86.0481°.
+Recomputing the final residual in a fresh CASA run with the saved model
+and the same inputs changes the residual by 1.879e-4 NRMS. The static
+360-degree control repeats exactly. Casa-rs starts each rotation from
+the saved cell and uses the selected epoch for both prediction and
+gridding. It matches all eight CLEAN products, masks, and iteration
+counts, with worst NRMS 2.384e-4 over the full field (#1070).
+
+The wideband two-term case on the 1.2, 1.5 and 1.8 GHz windows of
+the same field runs the rotation chain separately during the Taylor
+passes. The stock CASA run repeats exactly but differs from casa-rs
+by 2.769e-3 NRMS in `residual.tt0` and 3.726e-3 in `residual.tt1`.
+Fourteen alpha-mask pixels differ. In a CASA control,
+`AzElAperture::rotate2` keeps the same trigger and output angle but
+hands `rotateComplexArray` the original cell pixels and original
+angle on every call. With just that intervention, both residuals
+agree within 1.192e-6 NRMS, both alpha masks agree exactly, and all 19
+products pass, including the weak odd Taylor weight check. A
+debugger run without the intervention reproduces all 19 stock
+products exactly. The three windows share a feed angle and usable
+integration times, so casa-rs uses one schedule for all three.
+
+## AW pointing can reuse the origin of an earlier convolution buffer
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. casa-rs uses the current buffer's origin (#1070).
+- Affected code: `TransformMachines2/VB2CFBMap.cc`, `PhaseGrad.cc`
+  (`needsNewPhaseGrad`, `ComputeFieldPointingGrad`) and the resampler's
+  `accumulateToGrid.inc` and `accumulateFromGrid.inc`.
+
+The gradient array uses the selected PA buffer's maximum CF width. Its
+origin is `width/2` for an even width and `width/2+1` for an odd width.
+The resampler reads the gradient about `width/2` in either case. A wider
+array can survive a switch to a smaller CF buffer on the same field.
+PSF formation visits the weight buffer first, and the residual can use its
+origin when the two buffers have opposite parity.
+
+On the offset field of `refim_oneshiftpoint.mosaic.ms`, making the imaging
+or weight buffer even produces a 0.0325 NRMS change in `.residual.tt0`
+between fresh PSF formation and `calcpsf=False,calcres=True` with that same
+PSF. The PSF, weights, inputs and cache are identical between each pair.
+The uniformly odd control produces identical CASA residuals. Casa-rs uses
+the maximum width of each selected imaging or weight buffer independently.
+Its fresh and saved-PSF runs agree with all 21 CASA products from the
+saved-PSF control, including masks and both PB-corrected Taylor images.
+Prediction uses the conjugate of the imaging phase.
+
+## AW MT-MFS restart multiplies saved higher Taylor weights again
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. casa-rs recomputes the weights with the PSF (#1070).
+- Affected code: `TransformMachines2/CFCache.cc` (`loadWtImage`),
+  `AWProjectFT.cc` (`getWeightImage`) and
+  `AWProjectWBFT.cc` (`initializeToSky`).
+
+With `gridder='awproject'`, `deconvolver='mtmfs'` and the default
+`calcpsf=True`, CASA can read each saved `.weight.ttN` when a run continues
+at the same image prefix. `CFCache::loadWtImage` multiplies each saved plane
+by `.sumwt.tt0`. The higher Taylor weight images were already written as
+raw moments (see the preceding normalization bug).
+`AWProjectFT::getWeightImage` also reapplies its sinc grid correction to
+the saved, already corrected planes.
+
+In `test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield` on
+`refim_oneshiftpoint.mosaic.ms`, a dirty run followed by ten CLEAN
+iterations multiplies the central values of `.weight.tt1` and
+`.weight.tt2` by 49,971.44, the principal sum of weights. The final
+restored images and residuals also depend on the saved weights. Moving
+only the three saved weight images aside before CLEAN makes CASA agree
+with a fresh CLEAN on the same observation. casa-rs recomputes weights
+when it recomputes the PSF. All 19 products and the iteration counts
+agree with both CASA controls under the existing tolerances.
+
+The matching `cbTrue_twofield` case reloads the higher weights by 49,980.72
+and fits the same reload and sinc correction to 7.4e-8 NRMS. Fresh CLEAN,
+same-prefix CLEAN after moving only the saved weights, and continuation with
+`calcpsf=False` each agree with casa-rs on all 19 products and their masks.
+Both implementations report ten iterations and two major cycles in each
+control.
+
 ## A Taylor term gives every Stokes plane the first correlation's sum of weights
 
 - Date noted: 2026-11-03
@@ -544,6 +717,50 @@ does any image's planes under `'common'`, and records that one beam. The
 two agree because `ToStokesPSF` gives every Stokes plane the first
 correlation's PSF, so every plane fits the same beam. A beam the request
 gives is recorded once in the same way.
+
+## A Gaussian beam fit to collinear PSF samples is unstable
+
+- Date noted: 2026-11-11
+- Status: CASA 6.7.6.14 instability, with a deterministic failed-fit treatment in casa-rs ([#1140](https://github.com/bglenden/casa-rs/issues/1140#issuecomment-6802113024)).
+- Affected code: `synthesis/TransformMachines/StokesImageUtil.cc` (`FitGaussianPSF`),
+  `synthesis/ImagerObjects/SIImageStore.cc` (`makeImageBeamSet`, `getPSFSidelobeLevel`).
+
+In a 64-square, two-channel Clark restart at 8 arcsec per pixel, the saved
+unit-peak PSF of one channel is a one-pixel-wide line. Changing one
+off-peak sample by one Float step, about 5.96e-8, moves CASA's fitted
+position angle from 10.3232° to 0.0017° or −56.3750°, and the reported
+sidelobe from 0.585933 to 0.156330 or 0.900000. All three PSFs have the
+same collinear fit support. That support constrains one directional width,
+leaving the two-dimensional ellipse underdetermined.
+
+casa-rs checks the selected fit samples on their integer grid and retries
+with the existing lower cutoffs. When every attempt with enough samples
+is collinear, the plane uses the ordinary failed-fit beam for its domain.
+That is the largest fitted beam by area, or a circular 1e-6 arcsec beam
+when the domain has no fitted beam. Restoration, the minor-cycle patch,
+and the sidelobe calculation use the same beam. Two-dimensional fits and
+saved beam metadata retain their existing treatment.
+
+## MT-MFS via cube can abort when the primary-beam cutoff removes the central PSF
+
+CASA 6.7.6-14 aborts for a standard-gridder MVC run on field 0 of
+`refim_oneshiftpoint.mosaic.ms` with a 512-square image, 10 arcsec cells,
+three output channels, and `pblimit=-0.8`. The reduced Taylor PSF's
+positive maximum is 0.035371 at (275, 168), outside the central 80-square
+region. Both a ten-iteration run and a dirty run with restoration enabled
+reproduce the abort.
+
+`MatrixCleaner::validatePsf` leaves the peak at (0, 0) when its central
+search sees only zeros. `MultiTermMatrixCleaner::computeHessianPeak` then
+uses that location to slice its 80-square convolution patch and throws an
+uncaught array exception for the negative corner (-40, -40).
+
+casa-rs rejects the clean request with a task error when the Taylor PSF
+has no positive finite peak in the central patch. Its dirty path
+publishes the cube and Taylor products without attempting that solve.
+With the same input and `pblimit=-0.1`, both clean runs complete ten
+iterations and three major cycles and stop at the iteration limit.
+[Issue #1140](https://github.com/bglenden/casa-rs/issues/1140).
 
 ## The analytic PB ignores a failed `toPixel`
 
@@ -801,6 +1018,12 @@ does the blocking. CASA's own flagger (`FlagAgentShadow`, since casapy 4.1)
 flags the antenna behind. casa-rs's simulator flags the antenna behind
 (`casa_ms::shadowing::ShadowedAntenna::Behind`); the CASA convention remains
 available as `CasaSimulatorFront`.
+
+The compact-array scheduling cases in `tools/simulation/simobserve_parity.py`
+retain the raw task projects under `casa-raw`. Their independent control uses
+CASA's `agentflagger` tool to clear flags and apply its behind-antenna shadow
+agent, then predicts again so newly unflagged rows carry the sky signal.
+Calling the tool avoids adding unrelated task HISTORY to the reference.
 
 ## `setspwindow` relabels every spectral window's frame
 
@@ -1094,6 +1317,94 @@ negative flux comes out positive. Probed with CASA 6.7.6: a −0.4 Jy point
 +0.4 Jy times the beam with it. casa-rs keeps the sign;
 `sm_components_scenarios.json` keeps negative components away from the beam.
 
+The same defect doubles the phase of complex correlations. In a linear
+window, a component with nonzero Stokes U and V has XY = U+iV. The beam path
+multiplies each channel's sampled XY by the original XY/abs(XY), rotating it
+again; YX acquires the conjugate rotation. In the SIM-10 VP-table controls,
+both points have the same original Stokes flux [1, 0.1, 0.02, 0.03] Jy.
+CASA's auto-baseline crosshands show exactly this extra unit-phase factor,
+while I and Q agree. casa-rs preserves the requested correlation phase.
+`sm_voltage_patterns_oracle.py` retains raw CASA rows and supplies corrected
+rows by dividing selected correlations by that original unit-phase factor.
+No scientific tolerance changes; the remaining documented LSRK-label error
+is below the existing 1e-3 threshold in these controls.
+
+The interferometric `simobserve` control `if_joint_polarized` also exercises
+this defect in circular products and the joint-sum defect described below.
+It keeps the raw project, predicts its image and component separately with
+CASA, removes the component's extra original unit-phase factor, and adds
+the independent terms. The component is a single constant-spectrum source;
+the reference asserts that domain rather than applying one phase to an
+arbitrary component list.
+
+## An uncovered first mosaic image suppresses a valid model
+
+CASA 6.7.6.14 accepts `sm.predict(imagename=[outside, inside])` but produces
+zero DATA when all pointings lie outside the first image, even though the
+second model alone produces signal. `sm_mosaic_coverage_oracle.py` retains
+that raw result and captures the valid model alone in a fresh simulator.
+Its outside-only control is zero, so linearity independently gives the
+expected sum. casa-rs tests coverage for each image and preserves the valid
+contribution. The unchanged 1e-3 threshold applies to the actual C++ control.
+This is a data-loss defect casa-rs corrects under SIM-10 (#1297).
+
+## Saved Jones-image beams lose or reverse image polarization
+
+- Date noted: 2026-11-14
+- Status: CASA bug casa-rs does not follow (#1297, SIM-10)
+- Affected code: `synthesis/TransformMachines/PBMath2DImage.cc`,
+  `applyJonesFastX` and `apply(SkyComponent&, ...)` in CASA 6.7.6.14.
+
+The component path reverses its input and output correlations around the
+Jones product. The image path constructs the same reversed Jones matrix
+but applies it directly to the image correlations. An asymmetric voltage
+matrix therefore has different polarization effects on an image and on
+its component representation. A one-Stokes sky also retains only one
+beam-applied correlation, losing induced Q/U/V. Giving CASA four Stokes
+planes with Q/U/V zero changes the prediction even though the sky is the
+same. In the named controls, the original one-Stokes image produces equal
+XX/YY and zero crosshands, while the equivalent four-plane sky has unequal
+parallel hands and nonzero crosshands.
+
+casa-rs applies the same coherency product to image and component signals
+and grids all four resulting Stokes planes. `sm_image_beams_oracle.py`
+retains the raw CASA rows. Its independent image control supplies the
+equivalent four-plane sky and reverses the beam correlation values to
+compensate for CASA's image indexing. Those actual C++ rows are the
+corrected reference, with the usual 1e-3 threshold unchanged. The scalar
+real, real/imaginary and complex beam controls require no such correction. The total-power
+controls in `sm_total_power_oracle.py` retain this correction for a
+nonzero I/Q/U/V sky, including an ordinary GridFT control (#1299).
+
+`PBMath2DImage::updateJones` also returns its cached beam when the sky
+coordinates and shape are unchanged, without testing the pointing or
+parallactic angle. An A/B/A observation separated by four hours therefore
+keeps the first visit's attenuation for every field. casa-rs refreshes the
+beam on each pointing/field transition and retains the visit's orientation
+when reusing prediction grids. The `real_image_revisit` control preserves
+CASA's raw cached output and compares with actual CASA predictions made
+using a fresh simulator for each visit, removing that stale cache. The same
+cache suppresses within-scan orientation refresh: the four-integration
+`sm_image_beam_refresh_oracle.py` control preserves the raw output and
+uses a fresh simulator for each integration. casa-rs refreshes when the
+requested angle threshold is crossed; the independent refreshed signal
+differs from a frozen beam by 0.56%.
+
+## EVLA component dosquint is a no-op
+
+CASA 6.7.6.14 accepts `sm.setvp(dosquint=True)` for EVLA, but logs
+"No Beam Squint". The synthetic 14.5 GHz controls in
+`sm_squint_oracle.py` produce identical DATA with squint disabled, enabled
+and a 0.01 degree angle-refresh threshold. The corresponding VLA controls
+change by 0.00760 and 0.00923 NRMS, so the workload measures both effects.
+
+`PBMath1DEVLA` declares its own private `squint_p`; its frequency-selection
+code updates that member, while the inherited `PBMath1D::apply` reads the
+base class's zero offset. casa-rs preserves the observed EVLA response for
+CASA equivalence. Applying a physically different EVLA correction would
+change existing results and is outside this comparison target. VLA band
+offsets and its angle-refresh behavior are implemented separately.
+
 ## A single spectral index is read past its end
 
 - Date noted: 2026-10-23
@@ -1298,6 +1609,32 @@ What casa-rs follows of the same machine:
   off.
 - Rows beyond the largest w the planes reach (`0.25/|cell|`) predict zero.
 
+## Mixed image/component prediction doubles components at flagged samples
+
+- Date noted: 2026-11-12
+- Status: CASA bug; casa-rs corrects it (#1053, standing deviation policy)
+- Affected code: `synthesis/MeasurementEquations/SkyEquation.cc` (`get` of
+  an image model) and `synthesis/TransformMachines/GridFT.cc` (`get`)
+
+CASA 6.7.6.14 first predicts components, then adds each image. `SkyEquation::get`
+saves the previous model cube, calls the image gridder in place, and adds the
+saved cube back. The gridder overwrites unflagged samples but leaves flagged
+samples and rows untouched. Those samples therefore contain the previous
+component twice. Independent component-only, image-only and joint predictions
+reproduce this for both replacing and incremental `sm.predict` after
+`openfromms`: a 0.25 Jy component at the field centre contributes 0.5 Jy to a
+flagged sample in the joint run, and 0.25 Jy on its own. At the second field,
+the same error doubles its complex visibility, including its phase.
+
+casa-rs masks the image prediction before adding components, so each component
+contributes once regardless of flags. Incremental prediction then adds the
+stored DATA once, and corruption still reaches flagged samples. This follows
+the intended sum of sky models without making flagged results depend on whether
+an image was supplied. The raw joint results and independent controls are in
+`crates/casa-simulation/tests/data/sm_flagged_samples_casa.json.gz`, generated by
+`tools/simulation/sm_flagged_samples_oracle.py`; `tests/flagged_samples.rs`
+checks both CASA's excess and the corrected independent sum.
+
 ## `SDGrid` predicts total power into cross-correlations with no positive uvw
 
 - Date noted: 2026-10-23
@@ -1310,9 +1647,27 @@ row's pointing. `SDGrid::get` leaves out a row whose uvw has a positive
 component (`max(uvw) > 0`), which is meant to keep the cross-correlations of
 a single-dish predict at zero. A cross-correlation whose u, v and w are all
 zero or negative passes that test and is given the pointing's total power as
-if it were one dish's autocorrelation. Read from the source; a probe with two
-antennas saw only rows with a positive component. casa-rs predicts total
-power into autocorrelations only.
+if it were one dish's autocorrelation. The original two-antenna probe saw
+only rows with a positive component. On 2026-11-11 an eight-antenna,
+two-pointing probe reproduced the defect in CASA 6.7.6.14: 56 of 112
+cross-correlation rows contain nonzero total power. The other pointing
+samples zero brightness; there are also 32 autocorrelation rows.
+The raw DATA is retained in `sm_multiple_models_casa.json.gz`, generated by
+`tools/simulation/sm_multiple_models_oracle.py`. casa-rs predicts total
+power into autocorrelations only; the new test compares those directly
+with CASA and requires every cross-correlation sample to be exactly zero.
+
+`GridBoth::get` adds this same SDGrid result to its interferometric result.
+Its GridFT has autocorrelations disabled. casa-rs therefore uses single-dish
+signals on autocorrelations and interferometric signals on cross-correlations;
+`sm_ft_modes_oracle.py` retains raw joint output and uses independent GridFT
+cross-correlations as its corrected reference.
+
+The joint PB control also exposes failed-call data loss: with a 64-pixel
+image and gridding support 134, CASA returns false but erases selected DATA.
+casa-rs rejects the insufficient extent before recording the prediction and
+keeps the input DATA. The raw failure and the successful 256-pixel joint PB
+calculation are retained in the same fixture.
 
 ## The EVLA's beam table has no 11052 MHz fit
 
@@ -1350,6 +1705,47 @@ to a few 1e-7 normalized RMS. casa-rs's `close` returns normally. The CASA
 oracle (`tools/simulation/casa_sm_observe_oracle.py`) runs such scenarios
 (`close_aborts`) in a child process, accepts the abort only when every
 `predict` returned True, and records `close` as aborted.
+
+The 2026-11-11 multi-image oracle reproduces the abort with CASA 6.7.6.14
+after `sm.done()` as well. Predicting the same mosaic image twice also
+produced SIGBUS during cleanup on one run. The isolated child writes its
+reference DATA before cleanup; the parent accepts only these identified
+cleanup failures and records the process exit separately from prediction.
+
+## Mosaic multi-image prediction depends on image order
+
+- Date noted: 2026-11-11
+- Status: CASA bug; casa-rs corrects it under the standing CASA deviations
+  rule (#1053)
+- Affected code: `synthesis/TransformMachines/SimplePBConvFunc.cc`
+  (`convIndex`, `storeImageParams`) and `HetArrayConvFunc.cc`
+  (`findConvFunction`), through the simulator's mosaic machine
+
+With CASA 6.7.6.14, `sm.predict(imagename=[a, b])` through the mosaic
+machine gives a different result from predicting the two images separately
+and adding their DATA. The deterministic oracle uses a 64-square,
+single-plane image and a 96-square, four-plane image, at the same cell size
+and phase centre. Against the separately predicted sum, `[a, b]` differs
+by 0.00353 normalized RMS and `[b, a]` by 0.0326. Swapping the images
+changes DATA by 0.0307. `[a, a]` equals twice the separate prediction of
+`a`, so this is not a general failure to accumulate images.
+
+The public CASA source at `4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef`
+explains this failure: `SimplePBConvFunc::convIndex` keys the convolution
+cache by MeasurementSet and spectral window, omitting image geometry.
+`storeImageParams` updates the current image coordinates and dimensions,
+but does not invalidate the cached main convolution. `HetArrayConvFunc`
+then reuses it for the later model. This source inspection supports the
+diagnosis; the numerical reproduction above uses the installed 6.7.6.14
+oracle rather than claiming that the public revision is its exact source.
+
+casa-rs prepares each image with its own geometry and adds the predictions.
+This follows `SkyEquation::predict`'s evident intent to sum all model
+images and avoids silently corrupting DATA according to input order. The
+test retains the raw joint CASA outputs and checks that they still expose
+the defect. Its independent reference for these two cases is the sum of
+the separate CASA predictions, with the usual 0.001 normalized RMS limit;
+the limit is not relaxed to admit the defective joint output.
 
 ## The simulator's mosaic machine is not tclean's
 
@@ -1492,14 +1888,15 @@ Evidence on the CPU and on Metal:
 - `components-moved-pointing` in `tools/simulation/sm_components_scenarios.json`, an image and a component list without a beam: 8.36e-6 normalized RMS;
 - the `openfromms-moved-pointing-*` scenarios of `sm_openfromms_scenarios.json`: 0 and 7e-11.
 
-A primary beam on a moved pointing is a separate matter, and casa-rs
-refuses it ([the next entry](#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)).
+A primary beam follows POINTING independently of FIELD's phase centre
+([the next entry](#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)).
 
 ## The beam on a moved pointing stays where the field's first row points
 
 - Date noted: 2026-10-24
-- Status: CASA bug; casa-rs refuses a primary beam, and the mosaic machine,
-  on a moved pointing rather than follow it (#884, PR #888 review)
+- Status: CASA bug; fresh and resumed interferometric simulations centre
+  each integration's beam and mosaic kernels on POINTING (#884, #1294,
+  #1297). Fresh total-power beam offsets remain on #1299.
 - Affected code: `synthesis/TransformMachines/BeamSkyJones.cc` (`changed`,
   `update`) and `synthesis/MeasurementEquations/Simulator.cc`
   (`makeVisSet`'s sort)
@@ -1528,10 +1925,24 @@ Measured on CASA 6.7.6, ALMA at 230 GHz, a second pointing moved 10.4″ east:
   the BOX kernel, CASA's moved samples are 0.671.
 
 None of these is the beam the moved pointing sees, which follows the
-antennas. casa-rs refuses a primary beam over a model image, a component
-list or total power, and the mosaic machine, on a pointing `observemany`
-moved off its field. It does not reproduce a cache. `simobserve` gives each
-pointing its own field and never reaches this.
+antennas. Fresh and resumed simulations separate FIELD's visibility phase from
+POINTING's beam and total-power sample direction. For changing pointings,
+`tools/simulation/sm_offset_pointings_oracle.py` retains the raw CASA output
+and records a second independent CASA control with a distinct, equal-phase
+FIELD identity per integration, forcing the stale cache to refresh. Native
+beam and mosaic predictions agree with that control. Fresh fixed/changing
+`observemany` controls in `sm_fresh_pointings_oracle.py` use the same
+independent cache reset and capture CASA's IERS inputs; CPU and Metal image,
+component and mosaic DATA agree below 3e-7 NRMS with unchanged tolerances.
+Native total power
+continues to use autocorrelations only, correcting the separate `SDGrid`
+cross-correlation defect documented above. Incomplete or disagreeing antenna
+pointings are explicitly refused before changing the DATA plan.
+
+Fresh total-power `observemany` sampling also follows POINTING; the six
+fixed/changing BOX/PB/VP controls in `sm_fresh_pointings_oracle.py` retain
+raw output and use the same independent cache reset (#1299). `simobserve` gives each pointing its own field and does
+not reach this cache defect.
 
 ## `predict` and `corrupt` add scratch columns to a MeasurementSet without them
 
@@ -2492,6 +2903,37 @@ CASA's own simulator doing what the task meant: CASA's MeasurementSet
 predicted again over every field, from the model image and the lists
 merged into one. DATA agrees to an NRMS of 5.3e-9 and 5.5e-9.
 
+The `schedule_calibrator_partial` control also retains the raw project and
+reruns the same CASA task with its final queued `observemany` flushed when
+`srces` is nonempty. Only that condition changes: CASA still constructs the
+schedule and writes the scans. The calibrator component-list comparison
+allows only the already documented `cl.addcomponent` float32 rounding of
+flux; direction and frequency tolerances stay unchanged.
+
+## simobserve ignores failed frequency-frame predictions
+
+- Date noted: 2026-11-14
+- Status: CASA error-propagation defect; casa-rs corrects it under the standing deviation policy (#1301).
+- Affected code: `casatasks/src/private/task_simobserve.py`, the unchecked `sm.predict` calls.
+
+With `outframe='Undefined'`, CASA 6.7.6.14's simulator returns False and
+logs `Transformations to/from frame "Undefined" are not possible.` For a
+component prediction in `outframe='REST'`, it returns False and logs
+`No MeasFrame specified for conversion of Frequency`: the task supplies no
+radial-velocity frame. The task ignores both failures, reports success and
+publishes an entirely unpredicted zero-DATA MeasurementSet. Image-only REST
+prediction succeeds and is retained.
+
+casa-rs reports the same prediction cause before publishing the invalid MS.
+The project can retain the model and pointing products prepared before the
+failure. This prevents apparent successful science from a rejected calculation.
+The `if_*_undefined` and `if_components_rest` controls retain CASA's raw task
+projects, require all raw DATA to be zero, independently verify False from
+CASA's simulator, and require the native error and matching pre-prediction
+products with no native MS. This is a corrected failure outcome, not a claim
+that CASA's task itself raises that error.
+
+
 ## simobserve leaves `<stem>.noisier.T.cal`
 
 - Date noted: 2026-10-27
@@ -2947,7 +3389,7 @@ or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 
 - Date noted: 2026-10-31
 - Status: CASA bug; owner approved preserving the correct directory (#944).
-  Native `restart=False` numbering is still unfinished.
+  Native numbering keeps absolute paths for both the main image and outliers.
 - Affected build/code: CASA 6.7.6.14, casatasks
   `private/imagerhelpers/input_parameters.py`, `incrementImageNameList`.
 
@@ -2958,8 +3400,8 @@ absolute imagename under `/Volumes/`, this instead produces `olumes/` and
 fails to create the numbered PSF. Relative prefixes in the same probe
 correctly produce `_2` and `_3`. The exact build, parameters and failure
 are recorded on #944 and in the lifecycle receipt linked from the generated
-compatibility reference. The approved casa-rs target keeps the requested
-absolute directory; this decision is not evidence that restart is complete.
+compatibility reference. The native implementation keeps the requested absolute directory and
+uses the same suffix across the main and outlier prefixes.
 
 ## `tclean` cleans nothing with `nsigma`, `fastnoise=False` and no mask
 
@@ -3440,6 +3882,17 @@ narrower than the shift, `test_cube_D2`, images in LSRK, where casa-rs and
 CASA select the same channels at every time (its edge plane keeps 2460.56 of
 5020.51 in both).
 
+
+The tuned bounds also pass through `SynthesisImager::doubleToString`,
+which uses `std::to_string`. Its six fractional digits are part of
+the channel selection. On the LSRK input cubic AW fixture with BARY
+output, CASA converts the upper tuned edge to 1524999999.9999998 Hz
+and passes 1525000000.000000 Hz to the iterator. A stored channel
+starting at that rounded edge is included. The same TOPO request
+already has an upper edge 2.4 μHz above it. casa-rs applies the
+observed rounding before the inclusive channel intersection. A
+channel whose edge remains beyond the rounded bound stays outside.
+
 ## A TOPO cube can gain or lose an endpoint with CASA's aberration cache history
 
 In CASA 6.7.6.14, the image's TOPO spectral coordinate has an LSRK conversion
@@ -3469,6 +3922,24 @@ the latter from gridding.
 The ordinary strict row bounds and flag rules still apply. The full TOPO
 image coordinate, primary-beam calculation and prediction basis retain
 all requested channels.
+
+A tracked BARY cube can lose the same physical endpoint through a different
+round trip. On the three-channel `refim_point_linRL.ms` TOPO input with
+`start=0, width=1`, CASA's TOPO and BARY image centres describe the same
+frequencies. The first LSRK row frequency is 999988784.6184165 Hz.
+CASA's TOPO grid evaluates the first centre one representable step above
+it, while its BARY grid evaluates that centre one step below. The following
+13 buffers are at least 83 Hz above the first image centre and legitimately
+exclude it. Both the standard and AW CASA gridders drop the whole first
+plane in the BARY request. The release AW comparison has 94,625 differing
+mask pixels on that plane and takes four clean iterations instead of three.
+
+casa-rs retains the first buffer's contribution in both coordinates. CASA's
+TOPO AW run on the same rows and cache supplies the reference for the
+BARY products. CASA Measures verifies the corresponding image centres
+in LSRK within 0.5 microhertz. The products, masks and clean counts agree
+against that reference. A separate explicit BARY start nearly 99 kHz below
+the first channel gives a blank first plane in both standard gridders.
 
 ## A cube's fine frequency grid lets rounding choose one or two samples per plane
 
@@ -3500,6 +3971,21 @@ and its PSFs differ by 7e-4 to 1.3e-3 normalized RMS, the returned
 `maxpsfsidelobe` by 3e-4. Which side of 2 a ratio that is 2 exactly falls
 on is rounding, which casa-rs does not reproduce (`AGENTS.md`: a near-tie
 broken the other way is equally valid).
+
+For the channel-index TOPO cube on LSRK data in #1256, that ratio
+can differ for the whole track. In the five-channel VLA fixture, stock
+CASA uses one sample per plane at `width=2`. With fresh aberration
+coefficients in both runs, changing only the cached UT1−UTC value to
+the value at the image epoch changes the ratio from just below two to
+exactly two, doubling the sample count.
+
+For a standard, natural-weighted, linear channel-index TOPO cube on
+LSRK data, casa-rs evaluates the grid in LSRK and takes the lower
+sample count at an exact integral ratio above one. Ratios on either
+side still use CASA's floor. Strict interpolation bounds continue to
+apply to every gridded sample. The width-two control agrees with stock
+CASA, and the width-one control still agrees.
+[Trace and controls in #1256](https://github.com/bglenden/casa-rs/issues/1256#issuecomment-6881726364).
 
 ## A cube without a per-channel density leaves `<imagename>.gridwt` behind
 
@@ -3560,6 +4046,33 @@ their PSFs 3.6% and 5.3% apart in normalized RMS; they now agree with CASA
 0-based column 0, so that a tap one column below the grid would be written
 before it and weighed, mistook `findGridSector`'s start before its final
 increment for the start it returns.)
+
+## The standard gridder drops the final Fourier-grid row and column
+
+- Date noted: 2026-11-12
+- Status: CASA 6.7.6.14 bug. Casa-rs keeps the full support of samples that fit the standard grid. [MVC comparison](https://github.com/bglenden/casa-rs/issues/1069#issuecomment-6801927969)
+- Affected code: `synthesis/TransformMachines2/GridFT.cc` (`put`),
+  `FTMachine.cc` (`findGridSector`) and `synthesis/fortran/fgridft.f`
+  (`sectggridd`, `onmygrid`).
+
+`onmygrid` accepts a standard-kernel support that fits the entire grid.
+`findGridSector` shortens the final sector by one extra cell before it
+converts the sector start to one-based indices. For one sector on a
+320-square grid, CASA passes `(x0, y0, nxsub, nysub) = (1, 1, 319, 319)`.
+The sectioned Fortran kernel consequently drops taps on the final row or
+column and omits their fraction of the weight. The omitted taps shift the
+cube PSF and residual upstream of spectral-index masking.
+
+In the frozen 256-square, 0.3-arcsec, three-channel dirty MVC comparison,
+CASA's unmodified replay reproduces the reference exactly. Its `.alpha`
+and `.alpha.error` validity masks differ from casa-rs at the same two
+pixels near the strict residual-peak cutoff. Replaying the captured CASA
+gridding inputs with its short sector reconstructs its Fourier grid to
+`6.1e-16` normalized RMS. Extending only those two sector lengths to 320
+in a diagnostic CASA process yields agreement on all 19 products under
+the existing limits, with identical masks and maximum NRMS `7.27e-6`.
+The standard operator's edge regression keeps nonzero taps and full
+weight on both boundaries.
 
 ## A CRTF spectral range rounds each end to a channel, toward zero
 
@@ -3767,6 +4280,33 @@ mask, where a fresh call and a restart of a cube of several channels have
 5e-5 NRMS. `aw_restart_one_window` in
 `resources/casa-compat/tclean-aw-cube-cases.json` shows it and fails on the
 mask alone.
+
+## A one-channel mosaic cube can lose its residual mask during a major cycle
+
+- Date noted: 2026-11-14
+- Status: CASA cache-dependent defect. The corresponding one-channel
+  restart check remains on [#944](https://github.com/bglenden/casa-rs/issues/944).
+- Affected code: `SynthesisImagerVi2::runCubeGridding`,
+  `SIImageStore::copyMask`.
+
+On CASA 6.7.6.14, image one channel of `refim_alma_mosaic.ms` with
+`gridder='mosaic'`, `specmode='cube'`, natural weighting, Högbom,
+480 pixels, 0.06 arcsec cells, `pblimit=0.2` and `pbcor=True`.
+CLEAN eight iterations, edit one pixel of the residual mask, then
+resume for twelve iterations with `calcpsf=False, calcres=False`.
+CASA logs that `residual/mask0` is already open in the table cache
+during both calls. Its mask copy removes the old default before trying
+to create the replacement. The error is caught as a T/F mask warning.
+The residual and restored image are left without masks even though the
+saved PB has `mask0`. In the corresponding two-channel runs the copy
+succeeds and both products receive the saved PB mask.
+
+casa-rs keeps the generated PB mask on the positive-cutoff cube path.
+In the initial one-channel CLEAN, the raw CASA masks differ by 45,662
+pixels on each of these two products. All nine products have normalized
+RMS at most 5.20e-7 and the controller counts agree. See
+[#1424](https://github.com/bglenden/casa-rs/pull/1424) for the separate
+verified two-channel saved-product behavior.
 
 ## A cube's beam for a plane without one depends on how memory splits the cube
 
@@ -4064,6 +4604,247 @@ can itself move a channel across a cell boundary, so casa-rs recovers the stored
 channel frequency for AW cell selection while retaining the converted frequency
 for UV placement. Rounding near an exact cell tie remains permitted.
 
+
+## AW cube interpolation restores the native channel map
+
+- Date noted: 2026-11-11
+- Status: verified CASA 6.7.6.14 bug ([#1121](https://github.com/bglenden/casa-rs/issues/1121#issuecomment-6698483927)).
+- Affected code: `FTMachine::interpolateFrequencyTogrid`,
+  `AWProjectFT::put` and `setupVBStore`, and `AWVisResampler::DataToGridImpl_p`
+  in `synthesis/TransformMachines2`.
+
+`AWProjectFT::put` calls `matchChannel` again after interpolating the data,
+weights and flags. The second call restores the map for native channels.
+`setupVBStore` supplies native reporting frequencies. The AW loop uses the
+length of the interpolated flag axis to index both native vectors.
+
+On `refim_point_linRL.ms` with `start=1, width=1, nchan=2` and linear
+interpolation, a trace of CASA's running sampler showed two interpolated
+entries and the native map `[-2, 0, 1]`. Only ordinals 0 and 1 were visited.
+Plane 1 had zero sum weight. CASA's standard gridder populated both planes
+on the same input. With `start=0, width=2, nchan=2`, the trace instead showed
+four entries. The AW loop reached ordinal 3 with positive weight and used
+the CF selection path even though the map and frequency vectors had length 3.
+
+casa-rs keeps each interpolated sample's output plane and frequency together
+through gridding and convolution-cell selection. This is the mapping used by
+the shared spectral resampler.
+
+For converted TOPO-to-LSRK sampling, the offset and width-two comparisons
+use the executing standard CASA gridder's interpolated samples. Putting
+the captured samples on a copy of the measurement set reproduces the
+standard linear products. CASA AW nearest then grids those samples with
+the original channel count and convolution cache. In the width-two
+control, the channel-width metadata is set so CASA selects the cell for
+the actual sample frequency, accounting for its averaged-width CF lookup
+described above. Both comparisons retain the image grid and check the
+output masks and predictions.
+
+For BARY input and a TOPO image, the release AW gridder can segfault in
+`AWVisResampler::DataToGridImpl_p`. A trace of the three-channel
+`refim_point_linRL.ms` fixture with its test copy tagged BARY shows five
+interpolation frequencies before the native AW map is restored. The standard
+gridder visits the same five frequencies without the stale native map. Across
+14 buffers it flags all but the middle sample. Materializing those samples
+reproduces the standard products. CASA AW nearest on those samples and the
+original cache agrees with casa-rs AW linear on products and masks. Both
+clean runs report three iterations, four major cycles and stop code 1.
+The saved MODEL_DATA agrees within 7.6e-7 normalized RMS.
+
+For Briggs and uniform weighting on the same BARY-to-TOPO axis, the
+control also captures the density-weighted samples at CASA's weight
+interpolation call. The PSF and residual passes give identical weights.
+The materialized data reproduce the standard products within 1.64e-4
+normalized RMS. Natural-weighted CASA AW nearest on the materialized
+weights reproduces the weighted casa-rs AW products within 8.1e-7,
+with identical masks and iteration counts. The saved MODEL_DATA
+agrees within 7.6e-7 normalized RMS.
+
+The stale map also affects cubic AW cubes. On six buffers of
+`refim_point_withline.ms` using LSRK channel frequencies, the release
+AW gridder drops planes on aligned and half-channel-offset axes. With
+eight selected channels on an aligned grid it can segfault. Capturing
+the standard CASA gridder's cubic samples reproduces its dirty
+products exactly when the samples are put on a nearest-neighbor grid.
+CASA AW nearest on those samples and the original cache reproduces
+the native AW dirty products and beam fits. For the offset clean,
+the control cubic-interpolates the CASA AW model back to the stored
+channels, subtracts it before standard CASA's cubic interpolation,
+grids the resulting samples with CASA AW nearest and restores with
+CASA. The dirty and final clean products agree within 9e-7 normalized
+RMS, the masks and controller counts agree exactly, and MODEL_DATA
+agrees within 1.03e-6 normalized RMS. The independent prediction
+uses the exact requested 1.275 GHz start and 50 MHz spacing to apply
+the strict halo bounds. The 1.65 GHz stored channel equals the lower
+bound of the upper halo and remains excluded. CASA's image coordinate
+evaluates that boundary one floating-point step lower, which can
+admit the equality case.
+
+For native-LSRK cubic cubes with Briggs and uniform weighting, CASA's
+standard gridder applies the per-channel density weights by nearest
+neighbor while interpolating the data cubically. Capturing both gives
+identical standard dirty products when replayed with the weights in
+`WEIGHT_SPECTRUM`. CASA AW nearest applies those captured weights
+once, with the original cache. The clean comparison again predicts on
+stored channels before residual resampling. The two dirty and clean
+pairs agree with casa-rs on their masks, beams, controller counts and
+MODEL_DATA.
+
+For TOPO input to the same LSRK cubic cube, the measured input spacing
+after conversion is slightly smaller than the 50 MHz image spacing.
+CASA GridFT builds ten fine-grid samples for the eight image channels.
+The control keeps the ten samples on the materialized MeasurementSet
+and assigns them to the original eight-channel output axis. This
+reproduces all standard dirty products exactly for natural, Briggs
+and uniform weighting. The clean control evaluates predictions at
+each buffer's converted frequencies before sampling the residuals.
+
+For LSRK input into a tracked BARY cubic cube, CASA's
+`BriggsCubeWeightor::getWeightUniform` narrows the visibility buffer's
+reporting LSRK frequency divided by c to Float before forming the
+density coordinates. Applying the equivalent BARY frequency and scaled
+baseline before narrowing moved one sample from v = 619.5 to v =
+619.49994. The adjacent cells gave uniform weights of 1/6 and 1/4.
+The AW catalog route now undoes the wavelength rescaling for this lookup.
+The Briggs and uniform controls each agree across 17 dirty and clean
+products and 48 fitted beams. The worst normalized RMS is 9.38e-7
+for products and 1.11e-6 for MODEL_DATA (#1121).
+
+With native TOPO rows and a natural-weighted tracked TOPO cubic image,
+CASA converts each visibility buffer to LSRK. At 50 MHz spacing the first
+buffer's interpolation includes two lower halo frequencies outside the
+eight image planes. The later buffers interpolate directly on the eight
+centres. Replaying the in-image samples on their LSRK grid through
+CASA AW nearest with the original cache gives the same dirty and clean
+products as casa-rs. The 17 products and 48 beams agree, the masks
+and controller counts match exactly, and the largest product and
+MODEL_DATA normalized RMS are 9.16e-7 and 9.41e-7 (#1121).
+
+In the Briggs and uniform variants of this TOPO cube, the density lookup
+takes the nearest native weight in LSRK. CASA's unit conversion and
+per-hop Doppler arithmetic place plane 5 of the first buffer one Float64
+step above the midpoint. The upper channel changes 55 uniform weights
+and the resulting PSF. Retaining the LSRK interpolation grid and applying
+the per-hop conversion to the native centres reproduces the CASA weights.
+When the image and native channel widths coincide, the spacing of the
+first two selected native channels determines whether CASA uses a finer
+grid or converts each reporting centre directly. The density grid moves
+the reporting reference pixel before evaluating its first spacing. Its
+lookup converts each LSRK channel back to the reporting frame before
+rounding the pixel. A tuned model-column run can select different first
+channels, so the clean control uses the tuned CASA iterator. The three
+weighted dirty and clean pairs agree across 51 products and 132 beams
+with exact masks and controller counts. The largest normalized RMS is
+8.80e-7 for products and 8.98e-7 for MODEL_DATA (#1121).
+
+For TOPO input on a tracked BARY axis, CASA refuses a 50 MHz output
+width because the selected native width converts to 50.0024 MHz. At
+50.01 MHz, all six buffers have two cubic halo samples before the
+eight in-band LSRK frequencies. CASA AW nearest with those in-band
+samples and the original cache reproduces the dirty and clean
+natural-weighted products. The reported BARY WCS comes from direct
+CASA, and the clean control predicts on the original channels before
+resampling the residual. All 17 products and 48 beam comparisons pass,
+with exact masks and controller counts. Maximum normalized RMS is
+9.72e-7 for products and 9.26e-7 for MODEL_DATA (#1121). Briggs and
+uniform on that grid use the captured CASA density weights. All 34
+weighted products and 96 beams pass, with exact masks and controller
+counts and maxima of 9.00e-7 product NRMS and 1.23e-6 MODEL_DATA NRMS.
+
+For BARY input on a tracked TOPO axis, each of the six buffers has the
+same native LSRK frequencies. On the eight-plane, 50.01 MHz grid, the
+two lower cubic halo samples are outside the image. The same-cache
+CASA AW control uses the eight in-band frequencies. The three
+weightings pass all 51 dirty and clean products and 144 beams, with
+exact masks and controller counts. Maximum product normalized RMS is
+9.32e-7 and MODEL_DATA normalized RMS is 1.32e-6 (#1121).
+
+The BARY-to-tracked-BARY cubic case uses the same BARY data and
+50.01 MHz width. Each buffer again places eight LSRK samples inside the
+image after two lower halo samples. The matching-cache AW replay agrees
+for natural, Briggs and uniform weighting across 51 products and 144
+beams, with exact masks and controller counts. The largest normalized
+RMS values are 9.62e-7 for products and 1.08e-6 for MODEL_DATA (#1121).
+
+## AW pointing can read an uninitialized frame on an ephemeris field
+
+CASA 6.7.6.14's `PointingOffsets` owns a default-constructed
+`VisBufferUtil`. With `usepointing=False`, its first field direction
+lookup falls through to `getEphemBasedPhaseDir`. That function resets
+the epoch on the empty frame, raising `Attempt to reset non-existent frame
+member Epoch`. Initializing only the epoch exposes a missing observatory
+position. A local comparison control initializes both from the epoch
+already passed to the call and the VLA observatory used by the normal
+buffer-based constructor. The remaining CASA imaging code is unchanged.
+
+On the three-channel VLA AW fixture with an attached test ephemeris,
+`specmode='cubesource', interpolation='nearest'` maps channels with the
+source-shifted frequencies from `FTMachine::matchChannel`. The executing
+`AWProjectFT::setupVBStore` supplies the stored 1.5 and 2 GHz frequencies
+to the UVW and phase calculation. casa-rs follows both rules. The dirty
+and clean pairs with the frame-initialized CASA control agree on all
+17 products, masks and clean counts, with maximum product normalized RMS
+6.16e-7 and saved MODEL_DATA normalized RMS 5.09e-7. The unscaled native
+comparison had PSF normalized RMS 2.24e-3.
+
+For linear interpolation on this fixture, CASA shifts the input channel
+centres and widths before regridding. A frequency-valued start and width
+already describe the REST grid. The 500 MHz width is below CASA's
+converted 500.028 MHz minimum. At 500.1 MHz, direct CASA reports the
+requested 1.30 GHz start and 500.1 MHz spacing. Its AW resampler
+restores the native channel map after interpolation, which associates
+in-band values with the wrong native ordinals. The unmodified AW path
+with the frame initialized gives PSF NRMS 0.844 against the shared
+resampler's output.
+
+The comparison takes the two in-band samples from CASA GridFT, replays
+them with the original AW cache and preserves the wavelength products
+at each epoch. The clean control predicts on the stored channels,
+resamples the native residual, and restores with CASA. All 17 products
+and 12 beams agree with exact masks and controller counts. Maximum
+product normalized RMS is 3.29e-7 and MODEL_DATA is 3.54e-7 (#1121).
+
+The same native-ordinal problem affects an eight-plane REST cube with
+cubic interpolation. The 20-channel VLA fixture selects channels 3–14
+and asks for a 1.275 GHz start and 50.01 MHz spacing. The frame-initialized
+CASA AW run differs by 0.191 in PSF normalized RMS and 0.549 in residual
+normalized RMS. The CASA GridFT capture and wavelength-preserving
+same-cache replay agree on all 17 dirty and cleaned products and 48 beams.
+Masks and controller counts match exactly. Maximum product normalized
+RMS is 4.30e-5 and stored-channel MODEL_DATA is 1.82e-6 (#1121).
+
+For Briggs and uniform weighting of this moving-source AW cube,
+`BriggsCubeWeightor` accumulates its density through GridFT at the
+rotated baselines and REST wavelengths. Its lookup maps the native
+channel to a REST plane and uses the stored baseline and frequency for
+the density cell. CASA pads this one-field selection by one plane on
+each side. Applying the imaging AW wavelength scale to the density grid
+would move its samples to different cells. The native path keeps the
+density grid and lookup coordinates of this CASA mode. CASA's captured
+weights and original cache give 34 passing dirty and clean products,
+96 beam checks, exact masks and controller counts, maximum product
+normalized RMS 9.09e-7, and MODEL_DATA below 1.81e-6 (#1121).
+
+## Offset data-frame AW cubes reuse the native channel map
+
+With `specmode='cubedata'`, CASA publishes the native spectral grid as
+`Undefined` and leaves frequencies unconverted. The aligned natural
+nearest control agrees directly. On the 20-channel TOPO fixture with
+`spw='0:3~14', start='1.275GHz', width='50MHz', nchan=8`, raw CASA AW
+uses native ordinals after interpolation. Its PSF normalized RMS is
+0.557 for both linear and cubic. Capturing CASA GridFT's interpolated
+samples and replaying them through the matching AW cache preserves
+their frequencies and plane assignment.
+
+The CASA quantity conversion divides by the unit-scale ratio, so the
+first centre is 1274999999.9999998 Hz. Rounding it to 1275000000 Hz moves
+the strict prediction halo boundary onto the 1.65 GHz stored channel
+and incorrectly excludes that channel. The exact conversion matches
+CASA without expanding the halo. Together the aligned nearest and
+offset linear/cubic comparisons pass 51 products and 132 beams, exact
+masks and controller counts, maximum product normalized RMS 9.67e-7
+and MODEL_DATA below 1.73e-6 (#1121).
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
@@ -4234,3 +5015,586 @@ CASA with SIGSEGV while converting the input record. casa-rs raises a
 catchable `ValueError` before conversion. Excessively nested records are
 also refused, and offset, multivalued and unsupported measure kinds are
 explicitly unimplemented (#1053).
+
+## An unused ALMA antenna can choose the standard primary beam
+
+- Date noted: 2026-11-11
+- Status: casa-rs chooses the one dish class used by the selected
+  cross-correlations for this single-MeasurementSet standard continuum
+  case (#1274).
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisImagerVi2.cc`
+  (`makePB`) and `SynthesisImager.cc` (`makePBImage`).
+
+CASA 6.7.6.14 reads ANTENNA row zero from the first MeasurementSet for its
+analytic primary beam. It warns when diameters differ. An ALMA-labelled
+observation then uses the ACA beam if that first diameter is below 12 m,
+even when that antenna does not appear in a selected cross-correlation.
+
+In public `M100-X220-shortened.ms`, the 264 selected field-6 rows use only
+12 m dishes. ANTENNA row zero describes a 7 m dish. Changing only that
+unused row's diameter to 12 m in a scratch copy leaves CASA's dirty PSF,
+residual, restored image and sum weight numerically identical. The
+`.pb.tt0` changes by 0.7893 normalized RMS and the PB-corrected restored
+image by 0.6723. The number of pixels above PB 0.2 falls from 16,384 to
+12,149. The 12 m reference uses the original visibility rows.
+
+For a single ALMA MeasurementSet with both dish classes in its ANTENNA
+table, standard continuum imaging chooses the analytic primary beam
+from the selected cross-correlations. It refuses a selection that
+requires both classes.
+
+## Invalid leakage solutions become unit leakage
+
+- Date noted: 2026-11-12
+- Status: CASA defect corrected under the standing data-corruption rule (#1053)
+- Affected code: `JonesGenLin::setMatByOk` in
+  `code/synthesis/MeasurementComponents/Jones.cc`, called by
+  `VisJones::syncJones` while `Simulator::corrupt` applies a D table.
+- Reference: CASA 6.7.6.14; historical public C++ revision
+  `4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef` reproduces the mechanism.
+
+With either receptor flagged, `JonesGenLin::setMatByOk` replaces both
+leakage coefficients with complex one. A missing antenna solution has the
+same effect. For diagonal gains, one is the neutral coefficient; for linear
+leakage, zero is neutral. `JonesGenLin::applyRight/applyLeft` therefore add
+the parallel hands into the cross hands. With all correlations initially
+`3+4j`, an autocorrelation with one flagged D receptor becomes `9+12j` in
+both cross hands. The simulator does not persist the temporary calibration
+flags, so those large artificial signals remain unflagged.
+
+casa-rs uses zero for both D coefficients when either interpolated receptor
+is invalid, and for an antenna with no solution. Other antennas retain
+their requested time interpolation. G tables retain CASA's per-receptor unit
+substitution. Both paths preserve the input data flags, weights and sigma.
+This corrects fabricated leakage without changing valid D or G solutions.
+
+`tools/simulation/sm_apply_flags_oracle.py` preserves unmodified CASA outputs
+and independent CASA controls with explicit zero leakage for the affected
+antenna. The native comparison uses those neutral controls only at times
+whose interpolated solution is invalid; valid times use the original valid
+CASA table control. C++ consumption of native invalid-solution tables is
+compared with the unmodified defective CASA outputs separately. The
+reference fixture retains both results so this exception cannot silently
+become a relaxed numerical tolerance.
+
+
+## Natural-spline interpolation skips the first interior back-substitution
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing evident-intent rule (#1053)
+- Affected code: `InterpolateArray1D<Double,Float>::interpolatePtr`, natural
+  spline back-substitution, called by `CTPatchedInterp::resampleInFreq`.
+- Reference: installed CASA 6.7.6.14. Historical casacore source
+  `083f0509fd76a03d6ec738c60e9dcfaf3e6c56a5` has the same mechanism:
+  its backward loop stops at `i > 1`, leaving knot 1 partially eliminated.
+
+A scalar Tf table with four equally spaced, real amplitudes `[1,2,1/2,5/4]`
+should have zero endpoint second derivatives and interior second derivatives
+`[-49/10,23/5]` in unit-spacing coordinates. The defining equations are
+`4*m1+m2=-15` and `m1+4*m2=27/2`. At the first three half knots, the
+natural spline is exactly `[289/160,203/160,47/80]`.
+
+CASA leaves the first interior derivative at `-15/4`, rather than `-49/10`,
+and evaluates the first half knot as `1.734375`, rather than `1.80625`.
+The first derivative is then discontinuous at the first interior knot,
+contradicting the stated natural-spline interpolation. With input DATA
+`3+4j` and identical antenna gains, CASA writes approximately
+`9.02417+12.03223j` instead of `9.78762+13.05016j`. The complete four-channel
+visibility result differs by normalized RMS 0.0780.
+
+casa-rs completes back-substitution at every interior knot. The fixture
+`sm_apply_frequency_casa.json.gz` keeps the raw CASA output and an independent
+CASA control: a nearest-interpolated table explicitly containing the exact
+half-knot amplitudes. That control is also checked against the closed-form
+receptor equation; the native spline is compared against it. C++ consumption
+of the original native spline table is checked separately against the raw
+CASA result. This exception changes no numerical tolerance.
+
+
+## Simulator time-spline setup uses an uninitialized interpolator
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing crash/evident-intent rule (#1053)
+- Affected code: CASA 6.7.6.14 `CTTimeInterp1` constructor and
+  `interpolate`, with casacore `Interpolate1D<Float,Array<Float>>`.
+
+For G/D/T/B/Tf/Df calibration tables, `sm.setapply(interp='spline')`
+selects the spline method before supplying the interpolator's data.
+`Interpolate1D::setMethod` accesses the uninitialized sample count and
+knot arrays. All eight independent four-time curve/analytic probes terminate
+with signal 11 during `setapply`; `corrupt` is never called. The later time
+registration supplies data for linear and cubic methods, but has no spline
+branch. The same interpolator also skips the first interior back-substitution
+identified in the natural-spline defect above.
+
+casa-rs initializes a natural amplitude/continuous-phase spline from the
+loaded time series, completes every interior back-substitution and retains
+its coefficients. Exact times and queries outside the range retain the
+registered knot or endpoint; one knot is constant and two knots form a line.
+Flags combine only the adjacent time samples, without removing flagged
+knots, as CASA's other time interpolators do.
+
+`sm_apply_time_casa.json.gz` retains each raw CASA termination and separate
+nearest-CASA controls. A dense NumPy linear-system solution, independent of
+the native tridiagonal solver, samples the corrected amplitude/phase curves
+at the requested times and supplies them to CASA's nearest interpolation.
+The four real amplitudes `[1,2,1/2,5/4]` additionally give exact half-knot
+amplitudes `[289/160,203/160,47/80]`. C++ consumption of the original native
+knot tables uses the separate original-table nearest controls, because the
+CASA spline setup itself crashes. No numerical tolerance is relaxed.
+
+
+## Simulator short cubic time axes can alter DATA before failing
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing data-loss rule (#1053, #1054)
+- Affected code: CASA 6.7.6.14 `CTTimeInterp1::interpolate` and simulator
+  corruption writes.
+
+With two calibration times coincident with the first and last data times,
+G and scalar-T cubic application first writes the exact-time solution.
+The following interior query then asks for a four-time stencil and raises
+`RuntimeError`; the already changed DATA remains. The reference fixture
+retains both partial-write outcomes. With two or three knots and an initial
+interior query, CASA raises before changing DATA. Single-time, exact and
+outside-range queries do not need a cubic stencil.
+
+casa-rs preserves those mathematical success/refusal rules, but evaluates
+the applied term before staging any DATA writes. A short-axis interior
+failure therefore leaves the entire input DATA intact. The regression test
+checks both exact-first partial-write cases as well as the initially interior
+failures. This preserves the simulator's existing fail-closed write contract.
+
+
+## Simulator per-scan calibration does not synchronize its scan number
+
+- Date noted: 2026-11-12
+- Status: corrected under the standing crash rule (#1291)
+- Affected code: CASA 6.7.6.14 `VisCal::syncMeta(const VisBuffer&)`,
+  called by simulator corruption, and `CTPatchedInterp` per-scan lookup.
+
+The old VisBuffer synchronization copies the observation ID but never the
+scan number, leaving `currScan` at its initialized value of -1. The newer
+VisBuffer2 synchronization copies both. A calibration table with valid scan
+numbers activates per-scan lookup; the simulator supplies -1 as the segment
+index. All five independent active-per-scan probes terminate with signal11.
+Tables whose SCAN_NUMBER is -1 disable the modifier and still work.
+
+casa-rs uses each simulated or opened scan's actual SCAN_NUMBER and retains
+OBSERVATION_ID as well. Independent CASA controls explicitly partition the
+input table and select the corresponding one-field-per-scan DATA, using the
+ordinary nearest/linear/cubic method within each partition. These controls
+cover nearest/linear behavior, missing segments, scan-over-observation
+precedence and a short cubic-axis refusal. The ordinary per-observation
+cases run directly in CASA. No tolerance is relaxed.
+
+### Simulator test troposphere initializes before its times exist
+
+`sm.settrop(mode="test", pwv=0.01)` after four 10-second integrations on
+an eight-antenna observation returns False in CASA 6.7.6.14, logging
+`logic error in AtmCorr::init() - slot times not initialized.`
+`SolvableVisCal::setSimulate` calls `TJones::createCorruptor` before filling
+its corruptor's slot times; the test initializer checks that flag immediately.
+The source's explicit deterministic ramp is consequently unreachable.
+
+casa-rs implements the source-defined ramp for default integration sampling:
+for integration i of N and antenna a of A, its excess is
+`(float(i)/N + float(a)/A) * float(pwv) * 10`. It uses the existing corrected
+whole wet phase delay at each channel's CHAN_FREQ, then applies the resulting
+unit phasors through the ordinary Tf path. Seed, beta and deltapwv do not enter
+this debugging formula. Positive custom simint uses CASA's uncombined iterator chunks: a new
+chunk starts when an integration reaches the requested interval from the
+chunk's first integration, with scan/field/window boundaries preserved.
+Saved solutions use the midpoint of each chunk's first and last integration.
+`tools/simulation/sm_trop_test_interval_oracle.py` gets those chunks from the
+installed CASA iterator and evaluates the source formula through CASA ATM.
+
+This corrects an initialization-order failure that contradicts the defined
+mode, under AGENTS.md's standing CASA-bug rule. Evidence:
+`tools/simulation/sm_trop_test_oracle.py` records the actual failure and evaluates
+the formula through independent CASA ATM;
+`crates/casa-simulation/tests/trop_test_ramp.rs` compares native Tf parameters
+and DATA to that reference, including repeated corruption and reopened data.
+The existing wet-delay and channel-frequency corrections still apply.
+
+
+### Simulator on-the-fly simple noise crashes on a newly defined window
+
+In CASA 6.7.6.14, observe four integrations, call
+`setnoise(mode="simplenoise", OTF=True)`, define another spectral window,
+observe it and call `corrupt`: the process exits with signal 11. The same
+control succeeds on the original window. The other five combinations of
+simple/manual/atmospheric noise and OTF on/off safely skip the added window;
+all six combinations apply their original solutions to later integrations
+on an existing window.
+
+casa-rs gates the noise term to the windows present when it was created,
+preserving the new window's DATA and predictions. This corrects the crash
+under the standing crash rule. `tools/simulation/sm_later_noise_oracle.py`
+records each control in a separate CASA process; the native regression is
+`crates/casa-simulation/tests/later_noise.rs`, with actual Metal coverage in
+`tests/backends/offline_noise.rs`.
+
+### Multi-feed observations accumulate the previous feed rotation
+
+CASA 6.7.6.14's `NewMSSimulator::observe` loads a feed's fixed BEAM_OFFSET
+before its integration loop, then rotates that same vector in place by each
+integration's parallactic angle. Later integrations therefore accumulate
+previous rotations instead of rotating the fixed antenna-frame offset once
+at their current epoch. Four integrations with two/three feeds and offsets
+of a few 1e-4 radians differ from otherwise identical single-integration
+calls by up to 0.045/0.092 m in UVW. Feed zero, whose offset is zero, agrees
+exactly; equatorial mounts require no rotation.
+
+casa-rs rotates the fixed offset at the current integration's epoch. This
+corrects a result that depends on how the same observation is split into
+calls and contradicts the fixed BEAM_OFFSET metadata. The independent
+reference consists of actual CASA single-integration controls, matched by
+TIME, antennas and FEED1/FEED2. FEED/POINTING metadata, row order and scan
+numbers still match the combined observation. Evidence is captured in
+`tools/simulation/sm_feeds_oracle.py` and `tests/feeds.rs` (#1293).
+
+### Reopened simulator labels appended rows with the physical window ID
+
+CASA 6.7.6.14 accepts an existing MS whose DATA_DESCRIPTION rows map to
+spectral windows in a different order. However, `sm.observe` writes the
+requested physical SPECTRAL_WINDOW row number into MAIN.DATA_DESC_ID.
+With DD window IDs `[1, 0]`, appending window 0 writes DD 0, which labels
+the new rows as window 1. With DD window IDs `[1]`, appending window 1
+writes DD 1, which is outside the DATA_DESCRIPTION table.
+`NewMSSimulator::observe` writes `spWin` to `dataDescId`, without resolving
+it through DATA_DESCRIPTION.
+
+casa-rs resolves the requested window to its first existing description,
+preserving the window's meaning and producing an in-range foreign key.
+It refuses append when the requested window has no description. This
+corrects data corruption under the standing CASA-bug rule. The raw CASA
+results remain in `sm_data_descriptions_casa.json.gz`; the native and C++
+readback checks explicitly validate the corrected appended label against
+the input mapping. All other row cells and observation metadata still
+compare to CASA. Evidence: `tools/simulation/sm_data_descriptions_oracle.py`
+and `crates/casa-simulation/tests/data_descriptions.rs`.
+
+### Simulator gain application ignores a reversed correlation order
+
+CASA 6.7.6.14's supplied G-table corruption produces the same four ordered
+products for `[XX, XY, YX, YY]` and `[YY, YX, XY, XX]`, even when an aliased
+DATA_DESCRIPTION row selects a POLARIZATION row declaring the latter
+CORR_TYPE and CORR_PRODUCT. With constant input DATA `3+4i` and receptor
+gains `2+0.1i` and `3-0.2i`, its first product remains the XX result
+`(3+4i)*|2+0.1i|²` instead of the declared YY result.
+
+casa-rs applies `g[a,p] * conj(g[b,q])` according to each description's
+actual receptor pair, correcting mislabeled science under the standing
+CASA-bug rule. The oracle retains the raw CASA result; the native and C++
+readback checks reverse each channel's four G products explicitly for
+that case. Other descriptions, unselected rows and metadata still match
+CASA directly. Evidence: the `alias_polarization_gain` case in
+`tools/simulation/sm_data_descriptions_oracle.py` and `tests/data_descriptions.rs`.
+
+### Simulator image direction conversion changes the physical sky
+
+In CASA 6.7.6.14, a J2000 image with only its direction display conversion
+changed to B1950 produces different simulated DATA. The pixels, native
+direction coordinate, spectral coordinate and observation remain identical.
+`DirectionCoordinate::toWorld(MDirection&)` calls the world-value overload,
+which applies the conversion layer, then tags those converted angles with
+the native `type_p`. `FTMachine::initMaps` uses that mislabeled direction
+for its image tangent and UVW rotation.
+
+A display conversion changes coordinate presentation rather than physical
+pixel directions. casa-rs predicts from the native direction coordinate,
+ignoring that presentation layer. The oracle retains the raw CASA result
+and separately predicts an independent CASA control that clears only the
+display conversion. Native and C++ readback comparisons require that
+control's science while retaining the raw case's metadata and quality
+checks. Evidence: `frame_conversion_b1950` in
+`tools/simulation/sm_image_layouts_oracle.py` and
+`crates/casa-simulation/tests/image_layouts.rs`.
+
+## Simulator field selection drops the configured focus distance
+
+CASA 6.7.6.14 `simulator.setdata(fieldid=[0], msselect=...)` changes the
+simulator's `nField` to the length of the field selection without updating its
+configured `distance_p` vector. `Simulator::createSkyEquation` then skips the
+focus distance when `distance_p.nelements() > nField`. The same rows selected
+using only `msselect="FIELD_ID == 0 && ..."` retain the configured focus and
+produce different simulated DATA. A row selection must not change the physical
+sky's finite distance.
+
+casa-rs retains the last configured nonzero field distance for image prediction,
+independently of the selected fields. `tools/simulation/sm_field_distance_oracle.py`
+records the raw CASA field-selection result and an independent CASA control
+selecting exactly the same rows through TaQL alone. The regression compares
+corrected DATA to that control and keeps raw quality and geometry checks. The
+ordinary zero-distance selection behavior is unchanged.
+
+## AWP2 includes an MJD-zero angle for a fully flagged integration
+
+`AWPLPG::init` surveys every selected visibility buffer before the major
+cycle checks row validity. `Utils::getCurrentTimeStamp` returns zero when a
+buffer contains no unflagged cross-correlation. CASA then computes a feed
+angle at MJD zero and uses it when sizing the parallactic-angle lattice.
+This can change the kernels used to grid the unflagged data.
+
+On CASA 6.7.6-14, a three-integration field-1 selection from
+`vla_wideband_2ptg_w_squint.ms` gives a maximum PA of 1.11158 rad. Setting
+`FLAG_ROW` on the first integration's 351 rows changes that maximum to
+1.60999 rad. The native Measures model rejects the MJD-zero conversion.
+casa-rs refuses this combination with a diagnostic before allocating its
+convolution kernels. [Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
+
+## AWP2 can shift a PA plane when the convolution holder grows
+
+`AWConvFuncHolder::appendConvFuncs` saves the old holder shape in
+`newshp`. When a new PA needs more support, it grows and centres the
+old data but copies the incoming PA using that old shape. This can
+place the new plane away from the centre used by gridding and
+degridding.
+
+On the three-integration unflagged field-1 selection described above,
+the holder grows from 306 to 360 fine pixels. The second PA's W=0 tap
+peak stays at (153, 153) instead of the grid origin (180, 180). Before
+the repair the raw CASA and casa-rs residual images differ by 0.99856
+NRMS. An independent CASA control that grows the holder before
+`appendConvFuncs` takes its working shape places the peak at (180,
+180). All eight products then agree with casa-rs within 2.50e-7 NRMS,
+with exact masks and sum of weights. casa-rs always centres the PA
+planes. [Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
+
+## AW projection can use another antenna group's pointing
+
+`BaselineType::findAntennaGroups` writes group means into an array indexed
+by the antennas' positions in the sorted selection. `makeVBRow2BLGMap`
+passes the two baseline group ordinals to
+`PhaseGrad::ComputeFieldPointingGrad`, which indexes that antenna array
+with them. A one-group selection works because every antenna holds the
+same mean. With several groups, a group's ordinal can select an antenna
+from another group.
+
+The CASA 6.7.6-14 four-corner MT-MFS test on
+`refim_heterogeneous_pointings.ms` selects even-even and odd-odd
+baselines at two times, with `usepointing=True` and
+`pointingoffsetsigdev=[20,20]`. In the first time's image the even
+antennas point at (924,1124), but CASA sends (924,924) to
+`PointingOffsets::gradPerPixel` for their baseline. Odd-antenna baselines
+receive (924,1124). Both groups' y coordinates are likewise exchanged at
+the second time, at x=1124. Casa-rs takes the group mean of each baseline's
+actual antenna pair.
+
+A local CASA debugger control substitutes only the correct per-baseline
+pointing pixels at `gradPerPixel`. Using the original saved CASA
+convolution functions, the principal dirty PSF goes from 1.33 NRMS
+against casa-rs to 1.08e-7. Seventeen dirty products pass, with exact
+masks and sums of weights. The near-zero odd Taylor weight still fails
+its existing pointwise comparison. When both runs use the corrected
+CASA dirty inputs and the saved standard-gridder PSFs, all 19 CLEAN
+products agree to 5.02e-7 NRMS or better, with exact masks, ten iterations
+and one major cycle. [Issue #1070](https://github.com/bglenden/casa-rs/issues/1070).
+
+## AW Float tap products perturb cancelling Taylor sensitivities
+
+`AWVisResampler::DataToGridImpl_p` multiplies the saved weight
+convolution tap by a Float complex pointing phasor, then by a Float
+imaging weight. Both products round before the double-complex grid
+accumulation. `PhaseGrad::ComputeFieldPointingGrad` also stores the
+product of the rounded axis phasors as Float complex. The higher Taylor
+orders can expose this rounding where frequency contributions nearly
+cancel, and the principal sensitivity can round across a sharp PB cut.
+
+In CASA 6.7.6-14, the original one-group MT-MFS case on
+`refim_heterogeneous_pointings.ms` has 40 Taylor moment matrices
+outside PB support that fail the PSD bound. One pixel crosses the
+original `abs(pblimit)=0.01` when compared with casa-rs. In the
+four-corner case with CASA's baseline group assignment corrected, the
+odd weight misses its existing pointwise limit by a factor of 88.
+Both differences are already present in the grids before the FFT.
+
+An independent replay using the saved CASA kernels, measured Taylor
+frequencies and source Float arithmetic reproduces the three captured
+grids to at most 5.8e-8 NRMS. A second replay retains the Taylor
+coefficients and widens the pointing and weighted tap products to
+double. Feeding only its weight grids back through CASA's FFT and
+product pipeline clears both failures at the original frequency and
+cutoff. Against this control, casa-rs agrees on all 18 dirty products
+for each selection, with exact masks, sums of weights and controller
+counts. Worst product NRMS is 2.25e-6. The odd weight passes the same
+pointwise and PSD checks. The native operator retains its double
+arithmetic. [Issue #1070](https://github.com/bglenden/casa-rs/issues/1070).
+
+The same four-corner selection can move one PB cutoff pixel when both
+imagers generate their own convolution functions. The 512-square CASA
+kernel transforms use SIMD FFTW, while the native comparison used the
+scalar build. The six imaging and six weight cells differ by at most
+2.37e-7 NRMS. Their PBs at (662,1443) are 0.0099999797 and 0.0100000488
+after controlling the tap rounding described above. Setting only CASA's
+FFTW thread count to one reproduces its original kernels exactly.
+Setting `FFTW_NO_SIMD` only for the 24 kernel transforms makes all
+12 CASA kernel arrays equal to the independently generated native
+arrays. With those CASA kernels and the widened sensitivity control,
+all 18 products pass at the original cutoff, with exact masks and
+controller counts and worst NRMS 2.53e-6. This is a rounding difference
+between FFT plans. Native retains its strict cutoff and its configured
+FFT backend.
+
+## AWP2's Float sensitivity FFT can flip the primary-beam cutoff
+
+AWPLPG accumulates the sensitivity grid in double precision.
+`MosaicFT::finalizeToSky` converts that grid to Float for its inverse FFT.
+`SIImageStore::makePBFromWeight` and `divideResidualByWeight` then apply the
+strict `abs(pblimit)` cut. CASA's single-precision FFT can move a value
+across that cutoff by rounding alone.
+
+The named CASA 6.7.6-14 `test_widefield_mvc_squint_awp2` clean uses two fields
+of `vla_wideband_2ptg_w_squint.ms`, a 2000-square Stokes I image, uniform
+weighting, four W planes, a 15° PA step, and `pblimit=-0.1`. Four of
+20 million cube PB mask pixels differ between the release and native runs.
+The uncut beams at those pixels are within 1.3e-7 of 0.1. In output
+channel 3 (zero-based), one cutoff pixel raises the clean residual error
+to 1.132e-3 NRMS. Its error away from the cutoff crossings is 1.84e-4.
+
+A local CASA C++ control replaces only the Float inverse sensitivity FFT
+with CASA's own `FFT2D::c2cFFTInDouble`, preserving Float image storage
+and the strict cutoff. It reproduces all four PB mask flips within CASA,
+including the residual difference in channel 3. Native keeps its existing
+double-precision transform and the same cutoff. It agrees with this CASA
+control on all 25 clean products, with exact masks and cube sum of weights,
+the same 20 iterations, two major cycles and stop code 1, and a maximum
+per-plane NRMS of 1.60e-5. The channel-3 residual agrees within 7.58e-6.
+[Issue #1071](https://github.com/bglenden/casa-rs/issues/1071).
+
+## Simulator image prediction retains the first window's polarization map
+
+CASA 6.7.6.14 image prediction over windows with different `CORR_TYPE` arrays
+can route later windows using the first window's map. For example, an IQUV
+image predicted into XX/YY followed by YY/XX retains XX/YY values in the
+second window's slots; circular and two/four-correlation combinations also
+misroute or lose image values. `FTMachine::initMaps` builds `polMap` from the
+initial buffer, while `GridFT::get` refreshes channel mappings at window changes
+without refreshing that polarization mapping.
+
+casa-rs prepares the existing forward operator for each selected correlation
+setup and uses only the matching setup for a scan. The mixed-correlation oracle
+retains the raw combined-window CASA result and independently predicts each
+window through a fresh CASA simulator to obtain the correct per-window map.
+Seeded flags, quality and untouched-window cells still use their raw references.
+Combined image/component controls additionally reuse the independent image-only
+plus component-only correction for the flagged-component duplication documented
+above. No CASA tolerance is relaxed.
+
+## Zero observer radius creates spurious diurnal aberration
+
+- Date noted: 2026-11-13
+- Status: CASA defect; casa-rs uses the zero-radius limit (#1295).
+- Affected code: casacore `MeasMath::applyTOPOtoHADEC` and
+  `MVPosition::readjust`; CASA `FTMachine`'s default reference position.
+
+The simulator's unset reference position is the geocentre. Its diurnal
+aberration factor is zero, but `MVPosition::readjust(0)` scales the unit
+correction direction by `1e-6`. The resulting spurious aberration changes
+HADEC, horizon and terrestrial image prediction. The same C++ calculation at
+an ITRF radius of one micrometre has negligible physical aberration and
+removes the discontinuity. For the image-frame control's first baseline,
+C++ gives path delays of -14.597005554443669 m at exactly zero radius and
+-14.597027123114067 m at the one-micrometre limit. Direct C++ calls reproduce
+this without the Python position-record conversion.
+
+casa-rs retains zero aberration at zero radius. The horizon-frame oracle in
+`tools/simulation/sm_image_layouts_oracle.py` prepares and predicts images in
+the same limit frame; it records this correction in the fixture. Separate
+nonzero-delay C++ UVWMachine controls at two visibility epochs check both the
+rotation refresh and the retained construction-time phase centre. The
+end-to-end controls keep the existing 1e-3 tolerance.
+
+## GridFT's visibility phase uses a single-precision pi constant
+
+- Date noted: 2026-11-13
+- Status: CASA defect; casa-rs retains double-precision phase arithmetic (#1295).
+- Affected code: `synthesis/fortran/fgridft.f`, `locuvw`.
+
+`locuvw` declares `pi` double precision but initializes it with the
+default-real literal `data pi/3.14159265358979323846/`. The literal is rounded
+to single precision before conversion. Calling the shipped CASA 6.7.6.14
+Fortran routine directly with a 100 m delay and 100 GHz frequency returns
+`(-0.8458330035, -0.5334478021)`; double-precision pi gives
+`(-0.8427074474, -0.5383717657)`. The returned phasor agrees with pi first
+rounded to float32. Large absolute delays can therefore exceed the usual
+DATA tolerance even when the C++ and Rust UVW and physical path delays agree.
+
+casa-rs keeps the double-precision constant. The image-frame DATA controls
+use matching observer frames and a small initial phase offset; an independent
+C++ projection control also checks a nonzero delay. This avoids assigning
+CASA's phase-constant error to the direction conversion.
+
+## The simulator mosaic beam axis mislabels irregular frequencies
+
+- Date noted: 2026-11-13
+- Status: CASA defect; casa-rs evaluates beams at the actual frequencies (#1295).
+- Affected code: `synthesis/TransformMachines/HetArrayConvFunc.cc`,
+  `findConvFunction`.
+
+`findUsefulChannels` preserves an irregular selected frequency vector, but
+`findConvFunction` constructs the beam image's spectral coordinate with only
+its first frequency and first spacing. For `[100, 150, 210, 300]` GHz the
+beam planes are consequently evaluated at `[100, 150, 200, 250]` GHz. A
+four-plane image with a central source and an offset source reproduces the
+error even in J2000, independently of direction-frame conversion.
+
+casa-rs builds each beam at its actual frequency. The oracle retains CASA's
+raw DATA and obtains the 210 and 300 GHz DATA and CORRECTED_DATA columns from
+independent constant-frequency CASA predictions of the same sky. The first
+two channels, model column, unselected rows and quality columns retain their
+ordinary CASA references. These controls agree with native prediction at
+5.4e-7 NRMS in the J2000 case, without changing the 1e-3 threshold. Reproduce
+a frequency control with `sm_image_layouts_oracle.py --case
+frame_j2000_mosaic --constant-frequency 210000000000 --out OUT --fixture FILE`.
+
+## MVC restoration can drop a newly generated higher-term residual mask
+
+In CASA 6.7.6.14, seed standard, two-term MVC on field 0 of
+`refim_oneshiftpoint.mosaic.ms` with 512 pixels per axis, 10 arcsec cells,
+three channels and `pblimit=0.1`. Remove both saved Taylor residual
+default masks, scale the residual planes independently, and set a 50 Jy
+off-axis pixel in term zero. Resume with `calcpsf=False, calcres=False`,
+five iterations and a 2 Jy threshold.
+
+The first major cycle replaces both Taylor residual tables and their
+masks in `PyMtmfsViaCubeSynthesisImager.cube2tt`. Tracing table identity
+and mask support shows 62,955 valid pixels on both terms immediately
+before `SDAlgorithmMSMFS::restore`. After restoration, term one's table
+header has been replaced again and its default mask is absent. Term
+zero retains all 62,955 valid pixels. The restored term one likewise
+has no mask. Restoration is meant to copy each residual's mask to its
+image and preserve the underlying residual. The observed mask loss
+occurs during restoration after the Python helper has recreated tables
+that the minor cycle also accesses.
+
+casa-rs retains the freshly generated residual mask and copies its
+support to the corresponding restored image. The masked and unmasked
+initial convergence controls follow CASA's saved term-zero mask,
+including all valid pixels when that initial mask is absent. The
+additional both-unmasked probe agrees on the controller and numeric
+products. Only the two term-one masks differ, by 199,189 pixels. Reinstating
+just those masks in CASA after restoration gives all 24 products,
+exact masks and a maximum normalized RMS of 8.309e-6.
+See [#944](https://github.com/bglenden/casa-rs/issues/944) and
+[#1414](https://github.com/bglenden/casa-rs/pull/1414).
+
+## Simulator component-list copies lose the limb-darkening exponent
+
+CASA 6.7.6.14 accepts a limb-darkened disk through a component record/table.
+`ComponentList::readTable` applies `Optional_Parameters` to its shape, but
+`SimpleComponentFTMachine::get` then copies each partition through a record.
+`SkyCompRep::fromRecord` saves `optionalParameters` without applying them to the
+shape. Prediction therefore uses the default exponent 0.05 even when the table
+requests 0, 1, 2.5 or 8. This contradicts the persisted component model.
+
+casa-rs retains the requested exponent, rounded to the shape's stored float32,
+and evaluates `Γ(η+1) (2/r)^η Jη(r)`, with `η=1+n/2`. The simulation oracle
+retains raw CASA DATA. Its corrected reference combines actual CASA point-source
+DATA with the requested shape evaluated by CASA's bundled GSL, using independent
+Cartesian tangent-plane geometry. That same GSL/geometry control first agrees
+with the actual default-exponent CASA prediction at 3.7e-7 NRMS. Native CPU
+W1/W3 predictions agree with these controls below 1e-6 NRMS, including polarized
+spectra, selected replacement/increments and unchanged scratch/quality cells.
+The uniform-disk and projected-sphere analytic limits are checked separately.

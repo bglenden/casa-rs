@@ -4,7 +4,7 @@
 
 use crate::{
     ContinuumProductInputs, PlannedContinuumGeneration, ProductsError, TaylorMomentAccumulator,
-    TaylorPrimaryBeamAccumulator, read_mvc_cube_plane, read_mvc_cube_primary_beam,
+    TaylorPrimaryBeamAccumulator, mvc_cube::read_mvc_channel, read_mvc_cube_primary_beam,
 };
 
 /// Reduce a cube normal state into CASA MVC's two-term Taylor products.
@@ -48,7 +48,42 @@ pub fn reduce_mvc_cube(
         let beam = read_mvc_cube_primary_beam(planned, inputs, channel)?;
         beams.add(&beam.pixels, beam.sum_weight)?;
     }
-    let mean_pb = beams.finish()?;
+    reduce_mvc_cube_moments(
+        planned,
+        inputs,
+        reference_hz,
+        beams.finish()?,
+        residual,
+        Some((psf, sumwt)),
+    )
+}
+
+/// Reduce MVC cube channels with a previously computed common beam.
+/// Used when CASA reuses the saved Taylor PB instead of recomputing it.
+/// The caller owns and admits the output and one channel's read workspace.
+///
+/// # Errors
+///
+/// Invalid planes or weights, failed reads, or non-finite arithmetic.
+pub fn reduce_mvc_cube_with_common_pb(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+    reference_hz: f64,
+    mean_pb: &[f32],
+    residual: &mut [f32],
+) -> Result<(), ProductsError> {
+    reduce_mvc_cube_moments(planned, inputs, reference_hz, mean_pb, residual, None)
+}
+
+fn reduce_mvc_cube_moments(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+    reference_hz: f64,
+    mean_pb: &[f32],
+    residual: &mut [f32],
+    psf_and_sumwt: Option<(&mut [f32], &mut [f32; 3])>,
+) -> Result<(), ProductsError> {
+    let channels = inputs.normal_state().channel_count();
     let corrected = inputs.clone().with_cube_taylor_primary_beam(mean_pb)?;
     let cutoff = inputs
         .problem()
@@ -56,10 +91,16 @@ pub fn reduce_mvc_cube(
         .validity()
         .primary_beam()
         .cutoff();
-    let mut moments =
-        TaylorMomentAccumulator::new(mean_pb, psf, residual, sumwt, reference_hz, cutoff)?;
+    let read_psf = psf_and_sumwt.is_some();
+    let mut moments = TaylorMomentAccumulator::with_outputs(
+        mean_pb,
+        psf_and_sumwt,
+        residual,
+        reference_hz,
+        cutoff,
+    )?;
     for channel in 0..channels {
-        let plane = read_mvc_cube_plane(planned, &corrected, channel)?;
+        let plane = read_mvc_channel(planned, &corrected, channel, read_psf)?;
         moments.add(
             &plane.psf,
             &plane.residual,

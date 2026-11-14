@@ -12,13 +12,18 @@
 //! lies between, except that a one-channel image or a one-channel row
 //! bypasses interpolation and maps like `nearest`.
 
+mod fine_grid;
 mod prediction;
+#[cfg(test)]
+mod reporting_axis_tests;
 mod stencil;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use casa_types::measures::PreparedFrequencyConversion;
 use num_complex::{Complex32, Complex64};
 
+use self::fine_grid::{FineGrid, linear_samples};
 pub use self::prediction::{PlacedRow, PredictionScratch};
 use crate::accumulator::PlaneRange;
 use crate::convolution::{CellHold, ConvolutionFunctionSet, GridEdge, RowContext};
@@ -119,6 +124,18 @@ pub struct SpectralAxis {
     first_hz: f64,
     increment_hz: f64,
     channels: u32,
+    reporting_axis: Option<ReportingAxis>,
+    exact_width_from_below: bool,
+}
+
+/// A retained LSRK axis's reported image coordinate and its conversion.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ReportingAxis {
+    reference_pixel: f64,
+    reference_hz: f64,
+    increment_hz: f64,
+    to_lsrk: PreparedFrequencyConversion,
+    to_reporting: PreparedFrequencyConversion,
 }
 
 impl SpectralAxis {
@@ -145,7 +162,28 @@ impl SpectralAxis {
             first_hz,
             increment_hz,
             channels,
+            reporting_axis: None,
+            exact_width_from_below: false,
         })
+    }
+
+    /// Evaluate unrefined channel centres through the image's reporting
+    /// coordinate. The axis's first-two spacing still sets the fine grid.
+    #[must_use]
+    pub fn with_reporting_conversion(
+        mut self,
+        [reference_pixel, reference_hz, increment_hz]: [f64; 3],
+        to_lsrk: PreparedFrequencyConversion,
+        to_reporting: PreparedFrequencyConversion,
+    ) -> Self {
+        self.reporting_axis = Some(ReportingAxis {
+            reference_pixel,
+            reference_hz,
+            increment_hz,
+            to_lsrk,
+            to_reporting,
+        });
+        self
     }
 
     /// Centre of the first channel in Hz.
@@ -169,7 +207,12 @@ impl SpectralAxis {
     /// Centre of `channel` in Hz.
     #[must_use]
     pub fn centre_hz(self, channel: u32) -> f64 {
-        self.first_hz + f64::from(channel) * self.increment_hz
+        match self.reporting_axis {
+            Some(axis) => axis.to_lsrk.convert_hz(
+                axis.reference_hz + (f64::from(channel) - axis.reference_pixel) * axis.increment_hz,
+            ),
+            None => self.first_hz + f64::from(channel) * self.increment_hz,
+        }
     }
 
     fn last_hz(self) -> f64 {
@@ -192,24 +235,43 @@ impl SpectralAxis {
             .ok_or(OperatorError::SpectralAxis {
                 reason: "the padded axis has too many channels",
             })?;
-        let first_hz = self.first_hz - f64::from(planes_per_side) * self.increment_hz;
-        if !first_hz.is_finite() {
+        let mut axis = Self {
+            channels,
+            reporting_axis: self.reporting_axis.map(|mut axis| {
+                axis.reference_pixel += f64::from(planes_per_side);
+                axis
+            }),
+            ..self
+        };
+        if axis.reporting_axis.is_some() {
+            // CASA shifts the padded coordinate's reference pixel, then
+            // measures the increment again at its first two planes.
+            axis.first_hz = axis.centre_hz(0);
+            axis.increment_hz = axis.centre_hz(1) - axis.first_hz;
+        } else {
+            axis.first_hz -= f64::from(planes_per_side) * axis.increment_hz;
+        }
+        if !axis.first_hz.is_finite() {
             return Err(OperatorError::SpectralAxis {
                 reason: "the padded axis's first channel centre must be finite",
             });
         }
-        Ok(Self {
-            first_hz,
-            channels,
-            ..self
-        })
+        Ok(axis)
     }
 
     /// `FTMachine::matchChannel`: the channel whose rounded spectral pixel
-    /// `floor((ν − ν₀)/Δν + 0.5)` lies on the axis.
+    /// lies on the axis. A converted coordinate applies the inverse
+    /// Doppler hops before computing the reported pixel.
     #[must_use]
     pub fn nearest_channel(self, frequency_hz: f64) -> Option<u32> {
-        let pixel = ((frequency_hz - self.first_hz) / self.increment_hz + 0.5).floor();
+        let pixel = match self.reporting_axis {
+            Some(axis) => {
+                let world_hz = axis.to_reporting.convert_hz(frequency_hz);
+                (world_hz - axis.reference_hz) / axis.increment_hz + axis.reference_pixel
+            }
+            None => (frequency_hz - self.first_hz) / self.increment_hz,
+        };
+        let pixel = (pixel + 0.5).floor();
         (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
     }
 
@@ -227,99 +289,6 @@ impl SpectralAxis {
         (frequency_hz < high + limit && frequency_hz > high - 0.5 * width)
             || (frequency_hz < low + 0.5 * width && frequency_hz > low - limit)
     }
-}
-
-/// CASA's fine frequency grid for linear interpolation: the output centres
-/// when output channels are no wider than native ones, otherwise
-/// `floor(width ratio)` points per output channel.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct FineGrid {
-    start_hz: f64,
-    increment_hz: f64,
-    per_output: usize,
-    output: SpectralAxis,
-}
-
-impl FineGrid {
-    fn compile(output: SpectralAxis, native_increment_hz: f64) -> Option<Self> {
-        let output_increment_hz = output.increment_hz;
-        if native_increment_hz == 0.0 || !native_increment_hz.is_finite() {
-            return None;
-        }
-        let width = output_increment_hz.abs() / native_increment_hz.abs();
-        if width <= 1.0 {
-            let increment_hz = output_increment_hz.abs().copysign(native_increment_hz);
-            let start_hz = if increment_hz.signum() == output_increment_hz.signum() {
-                output.first_hz
-            } else {
-                output.last_hz()
-            };
-            return Some(Self {
-                start_hz,
-                increment_hz,
-                per_output: 1,
-                output,
-            });
-        }
-        let per_output = width.floor() as usize;
-        let fine_abs = output_increment_hz.abs() / per_output as f64;
-        let first_edge = output.first_hz - output_increment_hz / 2.0;
-        let last_edge = output.last_hz() + output_increment_hz / 2.0;
-        let low_edge = first_edge.min(last_edge);
-        let high_edge = first_edge.max(last_edge);
-        let increment_hz = fine_abs.copysign(native_increment_hz);
-        let start_hz = if increment_hz > 0.0 {
-            low_edge + fine_abs / 2.0
-        } else {
-            high_edge - fine_abs / 2.0
-        };
-        Some(Self {
-            start_hz,
-            increment_hz,
-            per_output,
-            output,
-        })
-    }
-
-    fn count(self) -> usize {
-        self.per_output * self.output.channels as usize
-    }
-
-    fn frequency_hz(self, ordinal: usize) -> f64 {
-        self.start_hz + ordinal as f64 * self.increment_hz
-    }
-
-    fn output_channel(self, ordinal: usize) -> u32 {
-        let output_ordinal = (ordinal / self.per_output) as u32;
-        if self.increment_hz.signum() == self.output.increment_hz.signum() {
-            output_ordinal
-        } else {
-            self.output.channels - 1 - output_ordinal
-        }
-    }
-}
-
-/// The most fine-grid points a row of `spectrum` visits against an output
-/// axis of `channels` channels `increment_hz` apart.
-///
-/// [`FineGrid`] takes `p = max(1, floor(|width| / first spacing))` points
-/// per output channel, `|width| / p` apart, and a row visits each point at
-/// most once and only within its span: at most `p · channels` points and
-/// `floor(span / spacing) + 1` of them, plus one for rounding. For evenly
-/// spaced channels that is about one per channel or per output plane. A
-/// one-channel axis or row maps like `nearest`, one sample per channel.
-fn linear_samples(increment_hz: f64, channels: usize, spectrum: RowSpectrum) -> usize {
-    if channels <= 1 || spectrum.channels <= 1 {
-        return spectrum.channels;
-    }
-    if spectrum.first_spacing_hz <= 0.0 {
-        return spectrum.channels.max(channels) + 1;
-    }
-    let width = increment_hz.abs();
-    let per_output = (width / spectrum.first_spacing_hz).floor().max(1.0);
-    let within = (spectrum.span_hz * per_output / width).floor() + 2.0;
-    // Saturating: a bound past the address space fails its allocation.
-    (per_output * channels as f64).min(within) as usize
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -539,6 +508,7 @@ fn sample_weight(
     source: Source,
     placement: &Placement,
     density_axis: Option<SpectralAxis>,
+    (density_wavelength_scale, rest_aw_density): (f64, bool),
 ) -> f32 {
     let channel_weight = |channel: usize| {
         let input = unpolarized_weight(row, npol, channel);
@@ -571,7 +541,20 @@ fn sample_weight(
             plane,
             ..*placement
         };
-        weighting.imaging_weight(&native, DensityUv::casa(uvw_m, frequency_hz), input)
+        let density_uv = if density_axis.is_some() && rest_aw_density {
+            DensityUv::casa(
+                row.context.original_uvw_m.unwrap_or(uvw_m),
+                frequency_hz * row.context.native_frequency_ratio,
+            )
+        } else if density_axis.is_some() && density_wavelength_scale != 1.0 {
+            DensityUv::casa(
+                uvw_m.map(|metres| metres / density_wavelength_scale),
+                frequency_hz * density_wavelength_scale,
+            )
+        } else {
+            DensityUv::casa(uvw_m, frequency_hz)
+        };
+        weighting.imaging_weight(&native, density_uv, input)
     };
     match source {
         Source::Pair { left, right_factor }
@@ -611,19 +594,28 @@ struct RowPlacing {
 }
 
 impl RowPlacing {
-    fn new(cf: &dyn ConvolutionFunctionSet, geometry: &GridGeometry, row: &NativeRow<'_>) -> Self {
-        Self {
+    fn new(
+        cf: &dyn ConvolutionFunctionSet,
+        geometry: &GridGeometry,
+        row: &NativeRow<'_>,
+    ) -> Result<Option<Self>, OperatorError> {
+        cf.validate_row_context(&row.context)?;
+        let gradient = if cf.pointing_ramp() {
+            if !cf.admits_pointing(geometry, row.pointing_offset_rad) {
+                return Ok(None);
+            }
+            geometry.pointing_gradient(row.pointing_offset_rad)
+        } else {
+            [0.0, 0.0]
+        };
+        Ok(Some(Self {
             hold: CellHold::new(),
-            gradient: if cf.pointing_ramp() {
-                geometry.pointing_gradient(row.pointing_offset_rad)
-            } else {
-                [0.0, 0.0]
-            },
+            gradient,
             uniform: cf.uniform_key(),
             key: None,
             oversampling: 0,
             half_support: [0, 0],
-        }
+        }))
     }
 }
 
@@ -728,6 +720,8 @@ pub struct SpectralResampler {
     autocorrelations: bool,
     /// The source span excludes the last output plane from gridding.
     omit_terminal_plane: bool,
+    density_wavelength_scale: f64,
+    rest_aw_density: bool,
 }
 
 impl SpectralResampler {
@@ -744,6 +738,8 @@ impl SpectralResampler {
             basis,
             autocorrelations: false,
             omit_terminal_plane: false,
+            density_wavelength_scale: 1.0,
+            rest_aw_density: false,
         })
     }
 
@@ -762,6 +758,8 @@ impl SpectralResampler {
             },
             autocorrelations: false,
             omit_terminal_plane: false,
+            density_wavelength_scale: 1.0,
+            rest_aw_density: false,
         }
     }
 
@@ -770,6 +768,26 @@ impl SpectralResampler {
     #[must_use]
     pub const fn with_terminal_plane_outside(mut self, outside: bool) -> Self {
         self.omit_terminal_plane = outside;
+        self
+    }
+
+    /// Form cube density lookup wavelengths in the reporting frame. A
+    /// finite positive `scale` converts the working frequency to the
+    /// reporting frequency and the working baseline back to physical metres
+    /// before CASA's Float rounding. Density accumulation and gridding keep
+    /// the working coordinates.
+    #[must_use]
+    pub const fn with_density_wavelength_scale(mut self, scale: f64) -> Self {
+        self.density_wavelength_scale = scale;
+        self
+    }
+
+    /// Use CASA's moving-source AW density coordinates. The density GridFT
+    /// accumulates rotated baselines at REST frequencies. Lookup uses the
+    /// stored frequency and original baseline, with the REST channel map.
+    #[must_use]
+    pub const fn with_rest_aw_density(mut self) -> Self {
+        self.rest_aw_density = true;
         self
     }
 
@@ -1008,7 +1026,7 @@ impl SpectralResampler {
     ) -> Result<(), OperatorError> {
         let npol = operator.polarization().correlations().len();
         self.validate_row(operator, row, npol)?;
-        if is_autocorrelation(row) {
+        if row.row_flag || is_autocorrelation(row) {
             return Ok(());
         }
         let cf = operator.cf();
@@ -1022,7 +1040,9 @@ impl SpectralResampler {
         let mut values = [Complex32::default(); 4];
         let mut weights = [0.0_f32; 4];
         let (values, weights) = (&mut values[..npol], &mut weights[..npol]);
-        let mut placing = RowPlacing::new(cf, geometry, row);
+        let Some(mut placing) = RowPlacing::new(cf, geometry, row)? else {
+            return Ok(());
+        };
         // A directly sampled row's slot per native channel; other samplings
         // weigh every pass.
         let slots = slots.filter(|_| self.sampling == Sampling::Direct);
@@ -1054,7 +1074,15 @@ impl SpectralResampler {
                 return;
             };
             let weight = kept.unwrap_or_else(|| {
-                let weight = sample_weight(weighting, row, npol, source, &placement, density_axis);
+                let weight = sample_weight(
+                    weighting,
+                    row,
+                    npol,
+                    source,
+                    &placement,
+                    density_axis,
+                    (self.density_wavelength_scale, self.rest_aw_density),
+                );
                 if let Some((slots, channel)) = slot {
                     slots.keep(channel, weight);
                 }
@@ -1105,7 +1133,10 @@ impl SpectralResampler {
     ) -> usize {
         match (shape.rule, self.sampling) {
             (DensityCellRule::Cube, Sampling::Interpolated(axis, _)) => {
-                linear_samples(axis.increment_hz, shape.planes, spectrum)
+                let increment_hz = axis
+                    .padded(shape.padding)
+                    .map_or(axis.increment_hz, SpectralAxis::increment_hz);
+                linear_samples(increment_hz, shape.planes, spectrum)
             }
             _ => spectrum.channels,
         }
@@ -1141,10 +1172,11 @@ impl SpectralResampler {
         }
         // `mosweight` grids each field's samples on its own planes alone; a
         // field without planes grids nothing.
-        if shape.density_plane(0, row.context.field).is_none() {
+        if row.row_flag || shape.density_plane(0, row.context.field).is_none() {
             return Ok(());
         }
         let cf = operator.cf();
+        cf.validate_row_context(&row.context)?;
         let mut visit = |plane: u32, frequency_hz: f64, source: Source| {
             let Some(plane) = shape.density_plane(plane, row.context.field) else {
                 return;
@@ -1162,7 +1194,14 @@ impl SpectralResampler {
                     let uv = DensityUv::casa(uvw_m, frequency_hz);
                     (f64::from(uv.u), f64::from(uv.v))
                 }
-                DensityCellRule::Cube => (row.uvw_m[0] * scale, row.uvw_m[1] * scale),
+                DensityCellRule::Cube => {
+                    let scale = if self.rest_aw_density {
+                        scale / row.context.native_frequency_ratio
+                    } else {
+                        scale
+                    };
+                    (row.uvw_m[0] * scale, row.uvw_m[1] * scale)
+                }
             };
             let placement = Placement {
                 u,

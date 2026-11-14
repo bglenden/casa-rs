@@ -20,7 +20,6 @@ use super::{
     MsPlotSpec, MsPlotStyleSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
     export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
-pub use crate::presentation::{UiActionKind, UiArgumentParser, UiCommandSchema, UiValueKind};
 use crate::{MeasurementSet, MsSelection};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
@@ -192,17 +191,6 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     })
 }
 
-/// Build the machine-readable command schema for `msexplore`.
-pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore")
-        .expect("built-in msexplore parameter surface must remain valid");
-    let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
-            .expect("canonical msexplore UI projection must match UiCommandSchema");
-    schema.invocation_name = program_name.to_string();
-    schema.usage = format!("{program_name} [parameters]");
-    schema
-}
 /// Run one command line. Everything a refusal can find is checked before the
 /// first write: the outputs, the flag arguments and the plot (#931). The flag
 /// edit is then made in memory, so a refusal that needs the MeasurementSet

@@ -31,13 +31,13 @@ pub enum Token {
     #[token("WHERE", ignore(ascii_case))]
     Where,
     /// The `ORDER` keyword.
-    #[token("ORDER", ignore(ascii_case))]
+    #[regex("ORDER(BY)?", ignore(ascii_case))]
     Order,
     /// The `BY` keyword.
     #[token("BY", ignore(ascii_case))]
     By,
     /// The `GROUP` keyword.
-    #[token("GROUP", ignore(ascii_case))]
+    #[regex("GROUP(BY)?", ignore(ascii_case))]
     Group,
     /// The `HAVING` keyword.
     #[token("HAVING", ignore(ascii_case))]
@@ -202,6 +202,9 @@ pub enum Token {
     /// Division operator `/`.
     #[token("/")]
     Slash,
+    /// Floor division operator `//`.
+    #[token("//")]
+    DoubleSlash,
     /// Modulo operator `%`.
     #[token("%")]
     Percent,
@@ -289,9 +292,10 @@ pub enum Token {
     IntLiteral,
 
     /// Floating-point literal: digits with decimal point and/or exponent.
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?", priority = 4)]
-    #[regex(r"[0-9]+[eE][+-]?[0-9]+", priority = 4)]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?", priority = 4)]
+    #[regex(
+        r"([0-9]+\.[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+",
+        priority = 4
+    )]
     FloatLiteral,
 
     /// String literal: single- or double-quoted.
@@ -319,6 +323,7 @@ impl Token {
                 | Token::Minus
                 | Token::Star
                 | Token::Slash
+                | Token::DoubleSlash
                 | Token::Percent
                 | Token::DoubleStar
                 | Token::Eq
@@ -417,6 +422,7 @@ impl std::fmt::Display for Token {
             Token::Minus => "-",
             Token::Star => "*",
             Token::Slash => "/",
+            Token::DoubleSlash => "//",
             Token::Percent => "%",
             Token::DoubleStar => "**",
             Token::Eq => "=",
@@ -521,6 +527,7 @@ mod tests {
             (Token::Minus, "-"),
             (Token::Star, "*"),
             (Token::Slash, "/"),
+            (Token::DoubleSlash, "//"),
             (Token::Percent, "%"),
             (Token::DoubleStar, "**"),
             (Token::Eq, "="),

@@ -9,8 +9,7 @@ use std::sync::Arc;
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
-use casa_imaging_model::CompiledProblem;
-use casa_imaging_model::GeometryPlan;
+use casa_imaging_model::{CompiledProblem, GeometryPlan, InstrumentResponse, RestoringBeamPolicy};
 use casa_imaging_products::{
     AnalyticPrimaryBeam, ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse,
     PlannedContinuumGeneration, ProductStoragePlan, ProductsError, PublishedContinuumGeneration,
@@ -24,10 +23,12 @@ use casa_observation::FieldEphemeris;
 use casa_types::measures::MeasuresProvider;
 
 use crate::compile::{OpenedStore, resolve_partitions};
+
+mod psf;
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
-    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome,
+    ApplicationRuntime, AwCatalogDeployment, Awp2Deployment, ImagingOutcome,
 };
 
 /// The observation compile opened, and what its geometry evaluates with.
@@ -48,6 +49,7 @@ pub(crate) struct OpenedObservation {
 pub(crate) struct NativeInput {
     /// Prepared MVC Taylor view for this cube run, when requested.
     pub(crate) mvc_taylor: Option<crate::compile::TaylorView>,
+    pub(crate) psf_view: Option<CompiledProblem>,
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     /// Whether the model column's final write is CASA's `predictModel`, over
@@ -59,6 +61,8 @@ pub(crate) struct NativeInput {
     pub(crate) virtual_model: Vec<crate::virtual_model::VirtualModelPlan>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     pub(crate) start_model: Option<crate::compile::StartModel>,
+    pub(crate) outlier_models: Vec<Option<crate::compile::StartModel>>,
+    pub(crate) outlier_psfs: Vec<Option<crate::restart::ExistingProducts>>,
     /// What the run reads in place of forming it ([`imaging::Forms`]).
     pub(crate) existing: Option<crate::restart::ExistingProducts>,
     pub(crate) forms: imaging::Forms,
@@ -140,9 +144,11 @@ impl From<std::io::Error> for NativeError {
 /// cycles and products need. Its setup chooses and forms its worker teams.
 pub(crate) struct NativeRun {
     mvc_taylor: Option<crate::compile::CompiledTaylorView>,
+    psf_view: Option<psf::PsfRoute>,
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
+    awp2: Option<Awp2Deployment>,
     /// The observation's batches the passes read, and through whose update
     /// session a model or corrected column is written.
     route: Box<imaging::BatchRoute>,
@@ -153,6 +159,8 @@ pub(crate) struct NativeRun {
     products: u64,
     masks: ImageDomainReconstructionMaskPlans,
     start_model: Option<crate::compile::StartModel>,
+    outlier_models: Vec<Option<crate::compile::StartModel>>,
+    outlier_psfs: Vec<Option<crate::restart::ExistingProducts>>,
     existing: Option<crate::restart::ExistingProducts>,
     forms: imaging::Forms,
     image_response: Option<MinorCycleImageResponse>,
@@ -222,8 +230,9 @@ pub(crate) fn batch_route(
         (&runtime.host, &runtime.resource_policy),
     )?;
     opening.join(reservation);
-    let write_back = (model_data || corrected_data)
-        .then(|| imaging::WriteBack::new(model_data, corrected_data, !predicts_final_model));
+    let write_back = (model_data || corrected_data).then(|| {
+        imaging::WriteBack::new(problem, model_data, corrected_data, !predicts_final_model)
+    });
     let stores = routes
         .into_iter()
         .map(|(opened, selection, plan, pointing_budget)| {
@@ -269,11 +278,84 @@ pub(crate) fn prepare(
         .map_err(|error| NativeError::Other(Box::new(error)))?;
     let ApplicationNative {
         runtime,
-        publication,
+        mut publication,
         aw_catalog,
+        awp2,
     } = native;
+    if let Some(existing) = &input.existing
+        && let Some(beam) = existing.mosaic_beam()
+    {
+        publication.controls = publication
+            .controls
+            .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
+    }
+    if !input.forms.psf && !input.outlier_psfs.is_empty() {
+        publication.controls = publication.controls.preserving_saved_psfs(
+            input
+                .existing
+                .iter()
+                .chain(input.outlier_psfs.iter().flatten())
+                .any(|saved| saved.psf_beams().is_none()),
+            input.forms.residual,
+        );
+    }
+    if mvc_taylor.is_none()
+        && !input.forms.psf
+        && !input.forms.residual
+        && input.minor_cycle_image_response.is_none()
+        && problem.reconstruction().controls().max_minor_iterations() == 0
+        && let Some(saved) = &input.existing
+    {
+        let beam_policy = problem.products().restoring_beam();
+        let operator = problem.science().measurement_equation();
+        if saved.reads_taylor_residual() {
+            // CASA keeps the saved Taylor moments and residuals. It fits
+            // and persists a missing principal PSF beam during restore.
+            publication.controls = publication
+                .controls
+                .preserving_saved_psfs(
+                    saved.psf_beams().is_none() && beam_policy != RestoringBeamPolicy::None,
+                    false,
+                )
+                .preserving_saved_residuals();
+        } else if saved.reads_cube_residual()
+            && operator.instrument_response() == InstrumentResponse::Scalar
+            && operator.w_projection().is_none()
+            && beam_policy == RestoringBeamPolicy::Common
+            && saved.psf_beams().is_some()
+        {
+            // SIImageStore::restore gets the common beam from the saved
+            // grid and attaches it only to the restored image.
+            publication.controls = publication
+                .controls
+                .preserving_saved_psfs(false, false)
+                .preserving_saved_residuals();
+        }
+    }
     publication.controls.validate_for_problem(problem)?;
-    let products = products_floor(problem, &publication)?;
+    let keeps_pb_mask = problem.products().validity().uncorrected_mask()
+        == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam;
+    let saved_fields = saved_field_mask_bytes(input.existing.as_ref(), &input.outlier_psfs);
+    let held = |major_cycles| {
+        let controls = controls_after_cycles(
+            publication.controls,
+            input.existing.as_ref(),
+            saved_fields,
+            major_cycles,
+            keeps_pb_mask,
+            input.forms.psf,
+        );
+        products_floor(problem, &publication, controls)
+    };
+    let products = if problem.reconstruction().controls().max_minor_iterations() == 0 {
+        held(0)?
+    } else {
+        held(0)?.max(held(1)?)
+    };
+    let measures = input
+        .psf_view
+        .as_ref()
+        .map(|_| Arc::clone(&input.observation.measures));
     let Admitted {
         value: route,
         reservation: source,
@@ -287,21 +369,93 @@ pub(crate) fn prepare(
         ),
         &runtime,
     )?;
+    let psf_view = input
+        .psf_view
+        .zip(measures)
+        .map(|(view, measures)| psf::PsfRoute::new(view, measures, &route, &runtime))
+        .transpose()?;
     Ok(NativeRun {
         mvc_taylor,
+        psf_view,
         runtime,
         publication,
         aw_catalog,
+        awp2,
         route: Box::new(route),
         source,
         products,
         masks: input.masks,
         start_model: input.start_model,
+        outlier_models: input.outlier_models,
+        outlier_psfs: input.outlier_psfs,
         existing: input.existing,
         forms: input.forms,
         image_response: input.minor_cycle_image_response,
         virtual_model: input.virtual_model,
     })
+}
+
+struct SavedBeams {
+    mosaic: Option<casa_imaging_products::SavedMosaicBeam>,
+    psf: Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    psf_pixels: Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    outliers: Vec<Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
+    outlier_pixels: Vec<Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
+    mask_pixels: Option<Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+}
+
+impl SavedBeams {
+    fn read(
+        existing: Option<&crate::restart::ExistingProducts>,
+        outlier_psfs: &[Option<crate::restart::ExistingProducts>],
+    ) -> Self {
+        use crate::restart::ExistingProducts;
+        Self {
+            mosaic: existing.and_then(ExistingProducts::mosaic_beam).cloned(),
+            psf: existing.and_then(ExistingProducts::psf_beams),
+            psf_pixels: existing.and_then(ExistingProducts::psf_pixel_beams),
+            outliers: outlier_psfs
+                .iter()
+                .map(|saved| saved.as_ref().and_then(ExistingProducts::psf_beams))
+                .collect(),
+            outlier_pixels: outlier_psfs
+                .iter()
+                .map(|saved| saved.as_ref().and_then(ExistingProducts::psf_pixel_beams))
+                .collect(),
+            mask_pixels: existing.and_then(ExistingProducts::mask_beams),
+        }
+    }
+}
+
+fn saved_outlier_products(
+    forms: imaging::Forms,
+    outliers: Vec<Option<crate::restart::ExistingProducts>>,
+) -> Vec<crate::restart::ExistingProducts> {
+    if forms.psf && forms.residual {
+        return Vec::new();
+    }
+    outliers
+        .into_iter()
+        .map(|products| products.expect("checked saved outlier products"))
+        .collect()
+}
+
+fn saved_psf_controls(
+    mut publication: ApplicationPublication,
+    forms: imaging::Forms,
+    missing_beam: bool,
+    problem: &CompiledProblem,
+) -> Result<ApplicationPublication, ProductsError> {
+    if !forms.psf && missing_beam && problem.reconstruction().controls().max_minor_iterations() > 0
+    {
+        publication.controls = publication
+            .controls
+            .with_psf_cutoff(casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF)?;
+    }
+    if !forms.psf {
+        publication.controls = publication.controls.with_reused_single_psf();
+    }
+    Ok(publication)
 }
 
 /// Run the major-cycle passes, the minor cycles between them and any
@@ -315,58 +469,38 @@ pub(crate) fn run(
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, NativeError> {
     let NativeRun {
         mvc_taylor,
+        psf_view,
         runtime,
         publication,
         aw_catalog,
-        route,
+        awp2,
+        mut route,
         source,
         products,
         masks,
         start_model,
+        outlier_models,
+        outlier_psfs,
         existing,
         forms,
         image_response,
         virtual_model,
     } = run;
-    let saved_psf_beams = existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::psf_beams);
-    let psf_beams = existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::psf_pixel_beams);
-    let mask_beams = existing
-        .as_ref()
-        .and_then(crate::restart::ExistingProducts::mask_beams);
+    let SavedBeams {
+        mosaic: saved_mosaic_beam,
+        psf: saved_psf_beams,
+        psf_pixels: psf_beams,
+        outliers: outlier_psf_beams,
+        outlier_pixels: outlier_psf_pixel_beams,
+        mask_pixels: mask_beams,
+    } = SavedBeams::read(existing.as_ref(), &outlier_psfs);
     // An unlabelled saved PSF is fitted by getBeamSet's default cutoff at
     // minor-cycle initialization. Publication must reuse that fit's cutoff.
-    let mut publication = publication;
-    if !forms.psf
-        && psf_beams.is_none()
-        && problem.reconstruction().controls().max_minor_iterations() > 0
-    {
-        let model = publication.controls.primary_beam_model();
-        let mut controls = casa_imaging_products::ContinuumProductControls::new(
-            casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF,
-        )?;
-        if let Some(model) = model {
-            controls = controls.with_primary_beam_model(model);
-        }
-        publication.controls = controls;
-    }
-    // CASA selects the cube's VLA aperture through its LSRK conversion layer,
-    // but evaluates it at each output plane's own frequency.
-    let vla_selection_hz = publication.vla_selection_store.map(|reference| {
-        let factor = route.stores[reference]
-            .plan
-            .output_lsrk_factor()
-            .expect("a tracked cube has an LSRK conversion layer");
-        problem
-            .geometry()
-            .spectral()
-            .channel_centre_hz(0)
-            .expect("a cube has a first channel")
-            * factor
-    });
+    let missing_beam = psf_beams.is_none() || outlier_psf_beams.iter().any(Option::is_none);
+    let publication = saved_psf_controls(publication, forms, missing_beam, problem)?;
+    let vla_selection_hz = publication
+        .vla_selection_store
+        .map(|store| vla_selection_frequency(problem, &route, store));
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {
@@ -379,11 +513,15 @@ pub(crate) fn run(
         }
         None => None,
     };
+    let separate_psf = psf_view
+        .map(|view| view.form(&mut route, &runtime, summary))
+        .transpose()?;
     // The run's source borrows the batch route, which is released with the
     // source's charge once the run has finished with it.
     let visibility_write = route
         .write_back()
         .map(|_| imaging::VisibilityWriteTarget(&route));
+    let saved_fields = saved_field_mask_bytes(existing.as_ref(), &outlier_psfs);
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
@@ -396,6 +534,7 @@ pub(crate) fn run(
                     > 0)
                 .then_some(imaging::MvcCycleSpec {
                     taylor_problem: &view.problem,
+                    start: view.start.as_ref(),
                     expansion_reference_hz: view.expansion_reference_hz,
                     controls: publication.controls,
                     centres: publication.primary_beam_centres.as_ref(),
@@ -407,11 +546,15 @@ pub(crate) fn run(
                 publication.controls.psf_cutoff()
             },
             psf_beams,
+            outlier_psf_beams: outlier_psf_pixel_beams,
             mask_beams,
             source: &route,
+            separate_psf,
             masks,
             start_model,
-            existing,
+            outlier_models,
+            outlier_products: saved_outlier_products(forms, outlier_psfs),
+            existing: existing.clone(),
             forms,
             image_response,
             primary_beam,
@@ -423,6 +566,7 @@ pub(crate) fn run(
             cancel: runtime.cancel.clone(),
             spill_directory: &runtime.spill_directory,
             aw_catalog,
+            awp2,
             backend: runtime.backend,
             grid_precision: runtime.grid_precision,
             ft_padding: runtime.ft_padding,
@@ -440,7 +584,9 @@ pub(crate) fn run(
     let mut lanes = (0, None);
     let mvc_run = mvc_taylor.is_some();
     // CASA creates the cube model when it invokes its first minor cycle.
-    let cube_model_created = outcome.mvc_taylor.is_none() || !outcome.minor_cycles.is_empty();
+    let cube_model_created = outcome.mvc_taylor.is_none()
+        || !outcome.minor_cycles.is_empty()
+        || mvc_taylor.as_ref().is_some_and(|view| view.start.is_some());
     let products: Result<_, NativeError> = run_phase(
         "products",
         &runtime.cancel,
@@ -456,15 +602,30 @@ pub(crate) fn run(
                         facet_sum_weights: outcome.facet_sum_weights,
                         mem_alpha: outcome.mem_alpha,
                         saved_psf_beams,
+                        outlier_psf_beams,
                         vla_selection_hz,
-                        mvc_beam: None,
+                        primary_beam: saved_mosaic_beam
+                            .as_ref()
+                            .map(ProductPrimaryBeam::SavedMosaic),
                     },
                     taylor_view: mvc_taylor,
                     taylor_completion: outcome.mvc_taylor,
                     cube_model_created,
+                    major_cycles: outcome.major_cycle_count,
                 },
                 &runtime,
-                publication,
+                ApplicationPublication {
+                    controls: controls_after_cycles(
+                        publication.controls,
+                        existing.as_ref(),
+                        saved_fields,
+                        outcome.major_cycle_count,
+                        problem.products().validity().uncorrected_mask()
+                            == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam,
+                        forms.psf,
+                    ),
+                    ..publication
+                },
                 team,
                 &mut published,
                 &mut lanes,
@@ -476,22 +637,7 @@ pub(crate) fn run(
     let (products, taylor_names, names_reservation) = products?;
     let mut retained = outcome.retained;
     retained.join(names_reservation);
-    for plan in &virtual_model {
-        run_phase(
-            "virtual model",
-            &runtime.cancel,
-            runtime.diagnostics,
-            summary,
-            || {
-                crate::virtual_model::save(
-                    problem,
-                    products.scientific.final_model(),
-                    plan,
-                    &runtime,
-                )
-            },
-        )?;
-    }
+    save_virtual_models(problem, &runtime, &products, &virtual_model, summary)?;
     let workers = team.workers();
     let problem = problem.clone();
     Ok(move |summary| ImagingOutcome {
@@ -516,6 +662,52 @@ pub(crate) fn run(
     })
 }
 
+/// Save the final virtual models after the image products are published.
+fn save_virtual_models(
+    problem: &CompiledProblem,
+    runtime: &ApplicationRuntime,
+    products: &Products,
+    virtual_model: &[crate::virtual_model::VirtualModelPlan],
+    summary: &mut RunSummary,
+) -> Result<(), NativeError> {
+    for plan in virtual_model {
+        run_phase(
+            "virtual model",
+            &runtime.cancel,
+            runtime.diagnostics,
+            summary,
+            || {
+                crate::virtual_model::save(
+                    problem,
+                    products.scientific.final_model(),
+                    plan,
+                    runtime,
+                )
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// CASA selects the cube's VLA aperture through its LSRK conversion layer,
+/// but evaluates it at each output plane's own frequency.
+fn vla_selection_frequency(
+    problem: &CompiledProblem,
+    route: &imaging::BatchRoute,
+    store: usize,
+) -> f64 {
+    let factor = route.stores[store]
+        .plan
+        .output_lsrk_factor()
+        .expect("a tracked cube has an LSRK conversion layer");
+    problem
+        .geometry()
+        .spectral()
+        .channel_centre_hz(0)
+        .expect("a cube has a first channel")
+        * factor
+}
+
 /// One run's cube or continuum products and, for MVC, its Taylor view.
 struct RunProductInputs<'a> {
     problem: &'a CompiledProblem,
@@ -523,6 +715,7 @@ struct RunProductInputs<'a> {
     taylor_view: Option<crate::compile::CompiledTaylorView>,
     taylor_completion: Option<Admitted<crate::mvc::TaylorCompletion>>,
     cube_model_created: bool,
+    major_cycles: usize,
 }
 
 /// Reduce MVC's cube before staging both families, or publish an ordinary run.
@@ -540,6 +733,7 @@ fn publish_run_products(
         taylor_view,
         taylor_completion,
         cube_model_created,
+        major_cycles,
     } = inputs;
     if let Some(view) = taylor_view {
         let crate::compile::CompiledTaylorView {
@@ -547,7 +741,9 @@ fn publish_run_products(
             coordinates,
             expansion_reference_hz,
             reservation: _view_reservation,
+            start,
         } = view;
+        let saved = start.as_ref().and_then(|start| start.saved_psf.as_ref());
         let taylor = if let Some(taylor) = taylor_completion {
             taylor
         } else {
@@ -559,6 +755,7 @@ fn publish_run_products(
                     expansion_reference_hz,
                     controls: publication.controls,
                     centres: publication.primary_beam_centres.as_ref(),
+                    read_saved_residual: false,
                 },
                 (&runtime.host, &runtime.resource_policy, &runtime.cancel),
             )?
@@ -571,6 +768,10 @@ fn publish_run_products(
                 taylor_problem: &taylor_problem,
                 taylor,
                 taylor_coordinates: coordinates,
+                saved,
+                saved_residual_mask_bytes: (major_cycles == 0)
+                    .then(|| saved.and_then(|saved| saved.taylor.saved_residual_mask_bytes()))
+                    .flatten(),
             },
             runtime,
             publication,
@@ -612,9 +813,14 @@ struct Products {
 /// What the products are formed from: the final completion, its
 /// reconstruction masks and the faceted domains' facets' own sums of
 /// weights.
-enum MvcProductBeam<'a> {
-    Cube(&'a [f32]),
-    Taylor(&'a [f32]),
+enum ProductPrimaryBeam<'a> {
+    MvcCube(
+        &'a [f32],
+        Option<&'a casa_imaging_products::SavedMosaicBeam>,
+        bool,
+    ),
+    MvcTaylor(&'a [f32], Option<&'a crate::compile::MvcSavedPsf>),
+    SavedMosaic(&'a casa_imaging_products::SavedMosaicBeam),
 }
 
 struct ProductSource<'a> {
@@ -623,9 +829,91 @@ struct ProductSource<'a> {
     facet_sum_weights: FacetSumWeights,
     mem_alpha: Option<f32>,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    outlier_psf_beams: Vec<Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
     vla_selection_hz: Option<f64>,
-    /// A separately admitted common PB, borrowed until the family is staged.
-    mvc_beam: Option<MvcProductBeam<'a>>,
+    /// A separately admitted PB, borrowed until the family is staged.
+    primary_beam: Option<ProductPrimaryBeam<'a>>,
+}
+
+/// Per-member mask admission before and after a major cycle. Each
+/// publication lane reads one field at a time.
+fn saved_field_mask_bytes(
+    main: Option<&crate::restart::ExistingProducts>,
+    outliers: &[Option<crate::restart::ExistingProducts>],
+) -> Option<[u64; 3]> {
+    let main = main.filter(|saved| !outliers.is_empty() && saved.reads_residual())?;
+    let mut before = 0;
+    let mut after = 0;
+    let mut retained = 0;
+    for saved in std::iter::once(main).chain(outliers.iter().flatten()) {
+        let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
+        retained = retained.max(saved.restored_mask_bytes());
+        if saved.custom_residual_mask() {
+            retained = retained.max(bytes);
+        }
+        before = before.max(bytes);
+        after = after.max(bytes).max(saved.primary_beam_mask_bytes());
+    }
+    Some([before.max(retained), after.max(retained), retained])
+}
+
+/// CASA keeps the saved residual in image units until the first major
+/// cycle, then retains its mask when residual division leaves it in place.
+fn controls_after_cycles(
+    controls: casa_imaging_products::ContinuumProductControls,
+    existing: Option<&crate::restart::ExistingProducts>,
+    saved_fields: Option<[u64; 3]>,
+    major_cycles: usize,
+    keeps_pb_mask: bool,
+    forms_psf: bool,
+) -> casa_imaging_products::ContinuumProductControls {
+    if let Some([before, after, retained]) = saved_fields {
+        let rebuilds_pb = forms_psf && controls.primary_beam_model().is_some();
+        let (bytes, refreshed) = if major_cycles == 0 {
+            (before, false)
+        } else {
+            (if keeps_pb_mask { after } else { retained }, true)
+        };
+        // CASA's makePB keeps any generated mask on the old PB. Its
+        // reader is also live for a stopped run that rebuilds the PB.
+        let bytes = if rebuilds_pb { bytes.max(after) } else { bytes };
+        return controls.with_saved_field_residuals(
+            bytes,
+            refreshed,
+            keeps_pb_mask,
+            (forms_psf, rebuilds_pb),
+        );
+    }
+    let Some(existing) = existing else {
+        return controls;
+    };
+    let Some(bytes) = existing.saved_residual_mask_bytes() else {
+        return controls;
+    };
+    let cube = existing.reads_mosaic_cube_residual();
+    let controls = if cube {
+        controls.with_saved_cube_pbcor_mask(existing.saved_pbcor_mask_bytes())
+    } else {
+        controls
+    };
+    if major_cycles == 0 {
+        controls.preserving_weighted_residuals(bytes)
+    } else if cube {
+        let controls = controls.with_saved_cube_model(existing.saved_model_plane_bytes());
+        if keeps_pb_mask
+            && existing
+                .mosaic_beam()
+                .is_none_or(|beam| beam.has_generated_mask())
+        {
+            controls
+        } else {
+            controls.with_saved_residual_mask(bytes)
+        }
+    } else if keeps_pb_mask && existing.reads_mosaic_residual() && bytes > 0 {
+        controls.with_saved_residual_mask(bytes)
+    } else {
+        controls
+    }
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -634,12 +922,11 @@ struct ProductSource<'a> {
 fn products_floor(
     problem: &CompiledProblem,
     publication: &ApplicationPublication,
+    controls: casa_imaging_products::ContinuumProductControls,
 ) -> Result<u64, NativeError> {
-    Ok(
-        PlannedContinuumGeneration::for_problem(problem, &publication.controls)?
-            .planned_demand(problem, ProductStoragePlan::new(1, 1)?, &publication.writer)?
-            .peak_residency_bytes(),
-    )
+    Ok(PlannedContinuumGeneration::for_problem(problem, &controls)?
+        .planned_demand(problem, ProductStoragePlan::new(1, 1)?, &publication.writer)?
+        .peak_residency_bytes())
 }
 
 /// Generate every planned product member into the writer's private staging,
@@ -684,6 +971,8 @@ struct MvcProductSource<'a> {
     cube: ProductSource<'a>,
     taylor_problem: &'a CompiledProblem,
     taylor: Admitted<crate::mvc::TaylorCompletion>,
+    saved: Option<&'a crate::compile::MvcSavedPsf>,
+    saved_residual_mask_bytes: Option<u64>,
     taylor_coordinates: Vec<(
         casa_imaging_model::ImageDomainRole,
         casa_coordinates::CoordinateSystem,
@@ -726,6 +1015,8 @@ fn publish_mvc_products(
         taylor_problem,
         taylor,
         taylor_coordinates,
+        saved,
+        saved_residual_mask_bytes,
     } = source;
     let Admitted {
         value:
@@ -741,11 +1032,14 @@ fn publish_mvc_products(
         facet_sum_weights,
         mem_alpha: _,
         saved_psf_beams,
+        outlier_psf_beams,
         vla_selection_hz,
-        mvc_beam: _,
+        primary_beam: _,
     } = cube;
     let taylor_publication = ApplicationPublication {
-        controls: publication.controls,
+        controls: saved_residual_mask_bytes.map_or(publication.controls, |bytes| {
+            publication.controls.preserving_weighted_residuals(bytes)
+        }),
         primary_beam_centres: publication.primary_beam_centres.clone(),
         vla_selection_store: None,
         writer: publication.writer.with_coordinates(taylor_coordinates),
@@ -758,8 +1052,13 @@ fn publish_mvc_products(
             facet_sum_weights,
             mem_alpha: None,
             saved_psf_beams,
+            outlier_psf_beams,
             vla_selection_hz,
-            mvc_beam: Some(MvcProductBeam::Cube(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcCube(
+                &primary_beam,
+                saved.map(|saved| &saved.cube_pb),
+                saved_residual_mask_bytes.is_some(),
+            )),
         },
         runtime,
         &publication,
@@ -774,9 +1073,10 @@ fn publish_mvc_products(
             masks,
             facet_sum_weights: Default::default(),
             mem_alpha: None,
-            saved_psf_beams: None,
+            saved_psf_beams: saved.and_then(|saved| saved.taylor.psf_beams()),
+            outlier_psf_beams: Vec::new(),
             vla_selection_hz: None,
-            mvc_beam: Some(MvcProductBeam::Taylor(&primary_beam)),
+            primary_beam: Some(ProductPrimaryBeam::MvcTaylor(&primary_beam, saved)),
         },
         runtime,
         &taylor_publication,
@@ -842,23 +1142,46 @@ fn stage_products(
         facet_sum_weights,
         mem_alpha: _,
         saved_psf_beams,
+        outlier_psf_beams,
         vla_selection_hz,
-        mvc_beam,
+        primary_beam,
     } = source;
+    let mut controls = publication.controls;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
-    if let Some(beam) = mvc_beam {
-        inputs = match beam {
-            MvcProductBeam::Cube(beam) => inputs.with_cube_taylor_primary_beam(beam)?,
-            MvcProductBeam::Taylor(beam) => inputs
-                .with_taylor_primary_beam(beam)?
-                .with_taylor_residual_sum_weight(1.0)?,
+    let mut preserve_cube_residual = false;
+    if let Some(beam) = primary_beam {
+        let saved = match beam {
+            ProductPrimaryBeam::MvcCube(beam, saved, preserve_residual) => {
+                preserve_cube_residual = preserve_residual;
+                if !preserve_residual {
+                    inputs = inputs.with_cube_taylor_primary_beam(beam)?;
+                }
+                saved.map(|beam| (beam, false))
+            }
+            ProductPrimaryBeam::MvcTaylor(beam, saved) => {
+                inputs = inputs
+                    .with_taylor_primary_beam(beam)?
+                    .with_taylor_residual_sum_weight(1.0)?;
+                saved.map(|saved| (&saved.taylor_pb, saved.taylor.has_higher_primary_beam()))
+            }
+            ProductPrimaryBeam::SavedMosaic(beam) => {
+                inputs = inputs.with_saved_mosaic_beam(beam)?;
+                None
+            }
         };
+        if let Some((beam, higher)) = saved {
+            inputs = inputs.with_saved_mosaic_beam(beam)?;
+            controls = controls.preserving_mosaic_products(beam.reading_bytes(), higher);
+        }
     }
     if let Some(frequency) = vla_selection_hz {
         inputs = inputs.with_vla_selection_frequency(frequency);
     }
     if let Some(beams) = saved_psf_beams.as_deref() {
         inputs = inputs.with_saved_psf_beams(beams)?;
+    }
+    if !outlier_psf_beams.is_empty() {
+        inputs = inputs.with_saved_outlier_psf_beams(&outlier_psf_beams)?;
     }
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {
@@ -872,9 +1195,12 @@ fn stage_products(
     if !facet_sum_weights.is_empty() {
         inputs = inputs.with_facet_sum_weights(&facet_sum_weights);
     }
-    let mut planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
+    let mut planned = PlannedContinuumGeneration::new(&inputs, &controls)?;
     if omit_uncreated_mvc_cube_model {
         planned = planned.without_uncreated_mvc_cube_model();
+    }
+    if preserve_cube_residual {
+        planned = planned.without_mvc_cube_residual();
     }
     // The products' scratch grows with their lanes, and the gridding's
     // workers were chosen without it: the products take the most lanes, up

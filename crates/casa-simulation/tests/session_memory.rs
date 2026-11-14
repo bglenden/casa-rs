@@ -88,21 +88,72 @@
 //! the blocks that are not a write batch's ([`heap`]); the counters are the
 //! process's, so each law runs alone in a process of its own ([`alone`]).
 
+#[path = "session_memory/total_power.rs"]
+mod total_power;
+
+#[path = "session_memory/single_dish_model.rs"]
+mod single_dish_model;
+
 #[path = "session_memory/apply.rs"]
 mod apply;
+#[path = "session_memory/apply_frequency.rs"]
+mod apply_frequency;
+#[path = "session_memory/captured_selection.rs"]
+mod captured_selection;
+#[path = "session_memory/coverage.rs"]
+mod coverage;
+#[path = "session_memory/data_descriptions.rs"]
+mod data_descriptions;
+#[path = "session_memory/existing_append.rs"]
+mod existing_append;
+#[path = "session_memory/feeds.rs"]
+mod feeds;
 #[path = "session_memory/field_grids.rs"]
 mod field_grids;
+#[path = "session_memory/focus.rs"]
+mod focus;
+#[path = "session_memory/frequency_curves.rs"]
+mod frequency_curves;
+#[path = "session_memory/ft_modes.rs"]
+mod ft_modes;
 #[path = "session_memory/gain_setters.rs"]
 mod gain_setters;
 #[path = "session_memory/heap.rs"]
 mod heap;
+#[path = "session_memory/image_beams.rs"]
+mod image_beams;
+#[path = "session_memory/image_stokes.rs"]
+mod image_stokes;
+#[path = "session_memory/irregular_channels.rs"]
+mod irregular_channels;
 #[path = "session_memory/jones.rs"]
 mod jones;
+#[path = "session_memory/mixed_correlations.rs"]
+mod mixed_correlations;
+#[path = "session_memory/mixed_creation.rs"]
+mod mixed_creation;
+
 #[path = "session_memory/mosaic.rs"]
 mod mosaic;
+#[path = "session_memory/noise_tables.rs"]
+mod noise_tables;
+#[path = "session_memory/offline_noise.rs"]
+mod offline_noise;
 mod pass_summary;
 #[path = "session_memory/patch.rs"]
 mod patch;
+#[path = "session_memory/pointings.rs"]
+mod pointings;
+#[path = "session_memory/polynomial_fields.rs"]
+mod polynomial_fields;
+#[path = "session_memory/saved_curves.rs"]
+mod saved_curves;
+#[path = "session_memory/selection.rs"]
+mod selection;
+#[path = "selection/input.rs"]
+mod selection_input;
+#[path = "session_memory/squint.rs"]
+mod squint;
 #[path = "session_memory/troposphere.rs"]
 mod troposphere;
 #[path = "session_memory/tsys.rs"]
@@ -434,6 +485,37 @@ fn configured_with_dishes(
     channels: usize,
     dishes: &[f64],
 ) -> Simulator {
+    configured_with_products(ms, measures, budget, channels, dishes, "XX YY")
+}
+
+fn configured_with_products(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
+    stokes: &str,
+) -> Simulator {
+    configured_with_beam(
+        ms,
+        measures,
+        budget,
+        channels,
+        dishes,
+        stokes,
+        ("ALMA", FREQUENCY_HZ),
+    )
+}
+
+fn configured_with_beam(
+    ms: &Path,
+    measures: &Arc<dyn MeasuresProvider>,
+    budget: u64,
+    channels: usize,
+    dishes: &[f64],
+    stokes: &str,
+    (telescope, frequency): (&str, f64),
+) -> Simulator {
     let mut sm = Simulator::open(
         ms,
         SimulatorOptions {
@@ -450,7 +532,7 @@ fn configured_with_dishes(
             .collect()
     };
     sm.set_config(&ArrayConfig {
-        telescope: "ALMA".to_string(),
+        telescope: telescope.to_string(),
         x: along(0, 50.0),
         y: along(1, -15.0),
         z: along(2, 30.0),
@@ -464,12 +546,12 @@ fn configured_with_dishes(
     .expect("setconfig");
     sm.set_spectral_window(&SpectralWindowSpec {
         name: "band6".to_string(),
-        start_frequency_hz: FREQUENCY_HZ,
+        start_frequency_hz: frequency,
         channel_width_hz: CHANNEL_HZ,
         resolution_hz: CHANNEL_HZ,
         frame: FrequencyRef::TOPO,
         channel_count: channels,
-        stokes: "XX YY".to_string(),
+        stokes: stokes.to_string(),
     })
     .expect("setspwindow");
     sm.set_field(
@@ -1052,7 +1134,7 @@ fn predict_components(
     (list, channels): (&Path, usize),
     measures: &Arc<dyn MeasuresProvider>,
     budget: u64,
-) -> (Predicted, Closed) {
+) -> (Predicted, Closed, u64) {
     let mut sm = configured(ms, measures, budget, channels);
     sm.observe(&scan(20)).expect("observe");
     sm.set_vp(&VoltagePatternSpec::default()).expect("setvp");
@@ -1080,7 +1162,14 @@ fn predict_components(
         },
     };
     drop(window);
-    (predicted, measured_close(sm, ms, false).0)
+    let own = OWN_LIVE.load(Ordering::Relaxed);
+    OWN_PEAK.store(own, Ordering::Relaxed);
+    let allocated = BATCH_ALLOCATED.load(Ordering::Relaxed);
+    let (closed, pass) = measured_close(sm, ms, true);
+    assert!(pass.unwrap().batches > 0);
+    assert!(BATCH_ALLOCATED.load(Ordering::Relaxed) > allocated);
+    let non_batch = OWN_PEAK.load(Ordering::Relaxed).saturating_sub(own);
+    (predicted, closed, non_batch)
 }
 
 /// `predict(complist=…)` admits, once the list is read, the list and what
@@ -1136,10 +1225,8 @@ fn components_hold_their_admission(
     };
     let [(few, few_beyond), (many, many_beyond)] = [0, 1].map(|case| {
         let count = counts[case];
-        // `close`'s peak depends on whether the band writer's I/O thread
-        // still holds a band when the next fills, which varies from run to
-        // run on a loaded host (59.2 or 61.4 MB here on CI), so its worst run
-        // is compared: a per-component cost raises every run alike.
+        // Admitted writer batches overlap differently on a loaded host.
+        // Keep the full admission check; compare non-batch owner growth.
         let most = Closed {
             heap: 0,
             admitted: 0,
@@ -1153,6 +1240,7 @@ fn components_hold_their_admission(
                     kept,
                 },
                 closed,
+                non_batch,
             ) = predict_components(
                 &ms,
                 (&lists[case], channels),
@@ -1162,7 +1250,7 @@ fn components_hold_their_admission(
             println!(
                 "{count} components in {channels} channels: predict held {} bytes against {} \
                  admitted, {beyond} at most beyond its reservations, and kept {} against {} \
-                 charged; close held {} against {}",
+                 charged; close held {} against {}, non-batch peak {non_batch}",
                 during.heap,
                 during.admitted,
                 kept.heap,
@@ -1202,7 +1290,7 @@ fn components_hold_their_admission(
             );
             predicts.heap = predicts.heap.min(during.heap);
             predicts.admitted = predicts.admitted.max(during.admitted);
-            closes.heap = closes.heap.max(closed.heap);
+            closes.heap = closes.heap.max(non_batch);
             closes.admitted = closes.admitted.max(closed.admitted);
         }
         ([predicts, closes], least_beyond)
@@ -1307,39 +1395,6 @@ fn predict_single_dish(model: &Path, measures: &Arc<dyn MeasuresProvider>) -> Pr
     predicted
 }
 
-/// A model of `planes` planes, one per channel of the law's window, with
-/// [`write_model`]'s points in every plane.
-fn write_cube(path: &Path, planes: usize) {
-    let mut coordinates = ImageCoordinates::new();
-    coordinates.add_coordinate(DirectionCoordinate::new(
-        DirectionRef::J2000,
-        Projection::new(ProjectionType::SIN),
-        CENTRE_RAD,
-        [-CELL_RAD, CELL_RAD],
-        [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
-    ));
-    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
-    coordinates.add_coordinate(SpectralCoordinate::new(
-        FrequencyRef::LSRK,
-        FREQUENCY_HZ,
-        CHANNEL_HZ,
-        0.0,
-        FREQUENCY_HZ,
-    ));
-    let shape = vec![PIXELS, PIXELS, 1, planes];
-    let mut image =
-        PagedImage::<f32>::create(shape.clone(), coordinates, path).expect("create model");
-    let mut pixels = ArrayD::zeros(IxDyn(&shape));
-    for plane in 0..planes {
-        for (x, y, flux) in [(32, 32, 1.0_f32), (41, 28, 0.5), (12, 50, 0.25)] {
-            pixels[IxDyn(&[x, y, 0, plane])] = flux;
-        }
-    }
-    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
-    image.set_units("Jy/pixel").expect("units");
-    image.save().expect("save model");
-}
-
 /// `predict` through `SDGrid` admits its samples and its preparation (the
 /// kernel, as tabulated and as kept, the plane read and each pointing's
 /// scratch) before it forms them (#874, #841 Phase 2): while it runs, the
@@ -1359,9 +1414,9 @@ fn a_total_power_predict_keeps_what_it_charges() {
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
     let plane = root.path().join("model.image");
-    write_model(&plane, SINGLE_DISH_CHANNELS);
+    single_dish_model::write_model(&plane, 1);
     let cube = root.path().join("cube.image");
-    write_cube(&cube, SINGLE_DISH_CHANNELS);
+    single_dish_model::write_model(&cube, SINGLE_DISH_CHANNELS);
     for model in [plane, cube] {
         total_power_holds_its_admission(&model, &measures);
     }

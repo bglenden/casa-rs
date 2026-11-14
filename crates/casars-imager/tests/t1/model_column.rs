@@ -3,6 +3,8 @@
 //! Standard gridder, natural weighting, MFS Hogbom with the final model
 //! predicted into `MODEL_DATA`.
 
+use casa_ms::{MeasurementSet, VisibilityDataColumn};
+use casa_types::{ArrayValue, Complex32, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Observation, box_sum, component_pixel};
@@ -63,4 +65,77 @@ fn model_column_predicts_the_deconvolved_sky_at_every_sample() {
         "gain {gain:?}, injected/model flux {expected}"
     );
     assert!(gain[1].abs() < 5.0e-3, "gain {gain:?} has a phase");
+}
+
+/// CASA's standard direct GridFT applies the OR of correlation flags to
+/// the MODEL_DATA prediction for a channel (CTB80, #1276). Both saving
+/// after CLEAN and saving a persisted model follow that rule.
+#[test]
+fn a_standard_continuum_model_zeroes_both_hands_of_a_partly_flagged_channel() {
+    let observation = Observation::synthesise_band(2, &[("point", POINT)]);
+    let path = observation.measurement_set();
+    let mut ms = MeasurementSet::open(path).unwrap();
+    let row = 0;
+    let ArrayValue::Bool(mut flags) = ms.flag_column().get(row).unwrap().clone() else {
+        panic!("a boolean FLAG cell");
+    };
+    assert!(flags.iter().all(|flag| !flag));
+    flags[[0, 0]] = true;
+    ms.main_table_mut()
+        .cell_accessor_mut(row, "FLAG")
+        .unwrap()
+        .set(Value::Array(ArrayValue::Bool(flags.clone())))
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+
+    let prefix = "partly-flagged-model";
+    observation.image(prefix, json!({"niter": 10, "savemodel": "modelcolumn"}));
+    let read_model = |ms: &MeasurementSet| {
+        let ArrayValue::Complex32(model) = ms
+            .data_column(VisibilityDataColumn::ModelData)
+            .unwrap()
+            .get(row)
+            .unwrap()
+            .clone()
+        else {
+            panic!("a complex MODEL_DATA cell");
+        };
+        assert_eq!(
+            ms.flag_column().get(row).unwrap(),
+            &ArrayValue::Bool(flags.clone())
+        );
+        model
+    };
+    let assert_model = |model: &ndarray::ArrayD<Complex32>| {
+        for hand in 0..2 {
+            assert_eq!(model[[hand, 0]], Complex32::default(), "hand {hand}");
+            assert!(
+                model[[hand, 1]].norm() > 0.1,
+                "the unflagged channel predicts"
+            );
+        }
+    };
+
+    let mut ms = MeasurementSet::open(path).unwrap();
+    let mut model = read_model(&ms);
+    assert_model(&model);
+    model[[0, 0]] = Complex32::new(17.0, -3.0);
+    model[[1, 0]] = Complex32::new(17.0, -3.0);
+    ms.main_table_mut()
+        .cell_accessor_mut(row, "MODEL_DATA")
+        .unwrap()
+        .set(Value::Array(ArrayValue::Complex32(model)))
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+
+    observation.image(
+        prefix,
+        json!({
+            "niter": 0, "calcpsf": false, "calcres": false, "restoration": false,
+            "restart": true, "savemodel": "modelcolumn",
+        }),
+    );
+    assert_model(&read_model(&MeasurementSet::open(path).unwrap()));
 }

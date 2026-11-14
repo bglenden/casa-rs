@@ -48,8 +48,8 @@ pub enum Unsupported {
     FacetedKernelSet,
     /// W-facet modes outside the verified scalar continuum scope (#1063).
     FacetedWMode,
-    /// Multi-channel AW cubes use nearest sampling in the data or LSRK
-    /// frame. Tracked TOPO/BARY, rest, linear and cubic modes wait for #1121.
+    /// Multi-channel AW cubes use the verified interpolation, frame
+    /// and weighting combinations (#1121).
     MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
@@ -96,8 +96,9 @@ impl fmt::Display for Unsupported {
                  weighting, explicit W planes and one image domain (#1063)",
             ),
             Self::MultiChannelWindowAwCube => formatter.write_str(
-                "AW projection of a multi-channel window needs nearest interpolation in \
-                 the data or LSRK frame; other cube modes wait for #1121",
+                "AW projection of a multi-channel window supports the interpolation, \
+                 frame and weighting combinations documented for tclean; this combination \
+                 is tracked in #1121",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -298,11 +299,13 @@ pub fn check(
             .any(|window| window.channel_indices().len() > 1)
         && !aw_multichannel_sampling_supported(
             problem.science().spectral().sampling().kernel(),
+            problem.geometry().spectral().source_frame(),
             problem.geometry().spectral().output_frame(),
             matches!(
                 problem.geometry().spectral().anchor(),
                 SpectralFrameAnchor::Conversion { .. }
             ),
+            problem.weighting().scheme(),
         )
     {
         unsupported.push(Unsupported::MultiChannelWindowAwCube);
@@ -393,20 +396,51 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
                     | ProductKind::TaylorTerms
                     | ProductKind::SpectralIndex
                     | ProductKind::SpectralIndexError
+                    | ProductKind::SpectralCurvature
             )
     )
 }
 
-/// Nearest avoids interpolated AW samples. A tracked TOPO/BARY cube needs
-/// the anchor scale in its prediction W cell before it can run (#1121).
+/// Nearest uses native channels. Linear keeps the interpolated plane and
+/// frequency together through the shared resampler (#1121).
 fn aw_multichannel_sampling_supported(
     kernel: SpectralKernel,
-    frame: FrequencyFrame,
-    has_frame_anchor: bool,
+    source: FrequencyFrame,
+    output: FrequencyFrame,
+    tracked: bool,
+    weighting: WeightingScheme,
 ) -> bool {
-    kernel == SpectralKernel::Nearest
-        && frame != FrequencyFrame::Rest
-        && !(frame.gridded_through_lsrk() && has_frame_anchor)
+    use FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
+
+    let common_weighting = matches!(
+        weighting,
+        WeightingScheme::Natural | WeightingScheme::Briggs { .. } | WeightingScheme::Uniform
+    );
+    match kernel {
+        SpectralKernel::Nearest => {
+            output != Rest || (source == Topocentric && weighting == WeightingScheme::Natural)
+        }
+        SpectralKernel::Cubic => match (source, output) {
+            (Topocentric, Rest) => common_weighting,
+            (Topocentric, Topocentric) => {
+                tracked && common_weighting || weighting == WeightingScheme::Natural
+            }
+            (Topocentric | Barycentric, Topocentric | Barycentric) => tracked && common_weighting,
+            (Lsrk | Topocentric | Barycentric, Lsrk) | (Lsrk, Topocentric | Barycentric) => {
+                common_weighting
+            }
+            _ => false,
+        },
+        SpectralKernel::Linear => match (source, output) {
+            (Topocentric, Rest) => weighting == WeightingScheme::Natural,
+            (Lsrk, Lsrk) => true,
+            (Lsrk | Topocentric | Barycentric, Lsrk | Topocentric | Barycentric) => {
+                common_weighting
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -414,36 +448,174 @@ mod tests {
     use super::*;
 
     #[test]
-    fn multi_channel_aw_accepts_nearest_in_data_or_lsrk_frame() {
-        for frame in [
-            FrequencyFrame::Lsrk,
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Barycentric,
-        ] {
-            assert!(aw_multichannel_sampling_supported(
-                SpectralKernel::Nearest,
-                frame,
-                false
-            ));
-            assert_eq!(
-                aw_multichannel_sampling_supported(SpectralKernel::Nearest, frame, true),
-                frame == FrequencyFrame::Lsrk,
-            );
-            for kernel in [
-                SpectralKernel::Linear,
-                SpectralKernel::Cubic,
-                SpectralKernel::Identity,
+    fn multi_channel_aw_rest_accepts_natural_nearest_from_topo() {
+        use FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
+
+        for source in [Topocentric, Lsrk, Barycentric, Rest] {
+            for weighting in [
+                WeightingScheme::Natural,
+                WeightingScheme::Briggs { robust: 0.5 },
+                WeightingScheme::Uniform,
             ] {
-                assert!(!aw_multichannel_sampling_supported(kernel, frame, false));
-                assert!(!aw_multichannel_sampling_supported(kernel, frame, true));
+                assert_eq!(
+                    aw_multichannel_sampling_supported(
+                        SpectralKernel::Nearest,
+                        source,
+                        Rest,
+                        true,
+                        weighting
+                    ),
+                    source == Topocentric && weighting == WeightingScheme::Natural,
+                    "REST from {source:?} with {weighting:?}",
+                );
             }
         }
-        for anchored in [false, true] {
+    }
+
+    #[test]
+    fn multi_channel_aw_accepts_verified_linear_frame_pairs() {
+        let lsrk = FrequencyFrame::Lsrk;
+        let topo = FrequencyFrame::Topocentric;
+        let bary = FrequencyFrame::Barycentric;
+        let natural = WeightingScheme::Natural;
+        for frame in [
+            lsrk,
+            topo,
+            FrequencyFrame::Barycentric,
+            FrequencyFrame::Rest,
+        ] {
+            assert_eq!(
+                aw_multichannel_sampling_supported(
+                    SpectralKernel::Nearest,
+                    lsrk,
+                    frame,
+                    true,
+                    natural
+                ),
+                frame != FrequencyFrame::Rest,
+            );
+            for (weighting, converted) in [
+                (natural, true),
+                (WeightingScheme::Briggs { robust: 0.5 }, true),
+                (WeightingScheme::Uniform, true),
+                (WeightingScheme::Radial, false),
+                (
+                    WeightingScheme::BriggsAbsolute {
+                        robust: 0.5,
+                        noise_jy: 1.0,
+                    },
+                    false,
+                ),
+                (WeightingScheme::BriggsBandwidthTaper { robust: 0.5 }, false),
+            ] {
+                assert_eq!(
+                    aw_multichannel_sampling_supported(
+                        SpectralKernel::Linear,
+                        frame,
+                        lsrk,
+                        true,
+                        weighting
+                    ),
+                    frame == lsrk
+                        || (matches!(
+                            frame,
+                            FrequencyFrame::Topocentric | FrequencyFrame::Barycentric
+                        ) && converted),
+                    "linear from {frame:?} with {weighting:?}",
+                );
+                for (source, expected) in [
+                    (
+                        lsrk,
+                        frame == lsrk || ((frame == topo || frame == bary) && converted),
+                    ),
+                    (
+                        topo,
+                        (converted && (frame == lsrk || frame == topo || frame == bary))
+                            || (frame == FrequencyFrame::Rest && weighting == natural),
+                    ),
+                    (
+                        bary,
+                        converted && (frame == lsrk || frame == topo || frame == bary),
+                    ),
+                    (FrequencyFrame::Rest, false),
+                ] {
+                    assert_eq!(
+                        aw_multichannel_sampling_supported(
+                            SpectralKernel::Linear,
+                            source,
+                            frame,
+                            true,
+                            weighting
+                        ),
+                        expected,
+                        "linear from {source:?} to {frame:?} with {weighting:?}",
+                    );
+                }
+            }
             assert!(!aw_multichannel_sampling_supported(
-                SpectralKernel::Nearest,
-                FrequencyFrame::Rest,
-                anchored
+                SpectralKernel::Identity,
+                lsrk,
+                frame,
+                true,
+                natural
             ));
+        }
+    }
+
+    #[test]
+    fn multi_channel_aw_cubic_accepts_verified_frame_pairs() {
+        use FrequencyFrame::{Barycentric, Lsrk, Rest, Topocentric};
+
+        for source in [Lsrk, Topocentric, Barycentric, Rest] {
+            for output in [Lsrk, Topocentric, Barycentric, Rest] {
+                for (weighting, supported) in [
+                    (WeightingScheme::Natural, true),
+                    (WeightingScheme::Briggs { robust: 0.5 }, true),
+                    (WeightingScheme::Uniform, true),
+                    (WeightingScheme::Radial, false),
+                ] {
+                    assert_eq!(
+                        aw_multichannel_sampling_supported(
+                            SpectralKernel::Cubic,
+                            source,
+                            output,
+                            true,
+                            weighting
+                        ),
+                        match (source, output) {
+                            (Topocentric, Rest) => supported,
+                            (
+                                Lsrk | Topocentric | Barycentric,
+                                Lsrk | Topocentric | Barycentric,
+                            ) => {
+                                supported
+                            }
+                            _ => false,
+                        },
+                        "cubic from {source:?} to {output:?} with {weighting:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multi_channel_aw_cubic_accepts_natural_on_the_topo_data_axis() {
+        for weighting in [
+            WeightingScheme::Natural,
+            WeightingScheme::Briggs { robust: 0.5 },
+            WeightingScheme::Uniform,
+        ] {
+            assert_eq!(
+                aw_multichannel_sampling_supported(
+                    SpectralKernel::Cubic,
+                    FrequencyFrame::Topocentric,
+                    FrequencyFrame::Topocentric,
+                    false,
+                    weighting,
+                ),
+                weighting == WeightingScheme::Natural,
+            );
         }
     }
 

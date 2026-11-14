@@ -113,6 +113,13 @@ pub fn write_model_of(
 /// A model of points and a blob spread over the image, one plane spanning
 /// the band.
 pub fn extended_model(dir: &Path, name: &str) -> PathBuf {
+    extended_model_of(dir, name, N)
+}
+
+/// The same sky padded with zeros, for a kernel needing a wider image.
+pub fn extended_model_of(dir: &Path, name: &str, n: usize) -> PathBuf {
+    assert!(n >= N);
+    let shift = (n - N) / 2;
     let mut points = vec![
         (N / 2, N / 2, 1.5),
         (N / 2 + 9, N / 2 - 4, 0.75),
@@ -123,7 +130,11 @@ pub fn extended_model(dir: &Path, name: &str) -> PathBuf {
             points.push((20 + dx, 14 + dy, 0.05));
         }
     }
-    write_model(dir, name, &[points])
+    for (x, y, _) in &mut points {
+        *x += shift;
+        *y += shift;
+    }
+    write_model_of(dir, name, n, &[points])
 }
 
 /// A model with one plane per channel, each with its own flux.
@@ -212,10 +223,52 @@ pub fn session_with_dishes(
     dishes: &[f64],
     resources: SessionResources,
 ) -> Simulator {
+    session_with_measures(
+        path,
+        telescope,
+        stokes,
+        channels,
+        dishes,
+        resources,
+        casa_test_support::deterministic_measures_provider(),
+    )
+}
+
+/// Configure the same array with the reference's measured Earth orientation.
+pub fn session_with_measures(
+    path: &Path,
+    telescope: &str,
+    stokes: &str,
+    channels: usize,
+    dishes: &[f64],
+    resources: SessionResources,
+    measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+) -> Simulator {
+    session_with_band(
+        path,
+        telescope,
+        stokes,
+        (channels, FREQUENCY_HZ, CHANNEL_HZ),
+        dishes,
+        resources,
+        measures,
+    )
+}
+
+/// The same array with an explicit frequency band and reference measures.
+pub fn session_with_band(
+    path: &Path,
+    telescope: &str,
+    stokes: &str,
+    (channels, start_hz, step_hz): (usize, f64, f64),
+    dishes: &[f64],
+    resources: SessionResources,
+    measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+) -> Simulator {
     let mut session = Simulator::open(
         path,
         SimulatorOptions {
-            measures: casa_test_support::deterministic_measures_provider(),
+            measures,
             resources,
             now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
         },
@@ -243,9 +296,9 @@ pub fn session_with_dishes(
     session
         .set_spectral_window(&SpectralWindowSpec {
             name: "band6".to_string(),
-            start_frequency_hz: FREQUENCY_HZ,
-            channel_width_hz: CHANNEL_HZ,
-            resolution_hz: CHANNEL_HZ,
+            start_frequency_hz: start_hz,
+            channel_width_hz: step_hz,
+            resolution_hz: step_hz,
             frame: FrequencyRef::TOPO,
             channel_count: channels,
             stokes: stokes.to_string(),
@@ -395,8 +448,9 @@ pub fn reference_through(
     let predictors = [CENTRE_RAD, OFFSET_RAD].map(|pointing| {
         ModelPredictor::new(&model, correlations, pointing, &options).expect("predictor")
     });
-    let projections = [CENTRE_RAD, OFFSET_RAD]
-        .map(|phase| GridFtProjection::between_j2000_directions(phase, model.centre_rad()));
+    let projections = [CENTRE_RAD, OFFSET_RAD].map(|phase| {
+        GridFtProjection::between_j2000_directions(phase, model.centre_rad().unwrap())
+    });
     let mut workspace = PredictionWorkspace::default();
     let flags = vec![false; CHANNELS * correlations.len()];
     rows.iter()

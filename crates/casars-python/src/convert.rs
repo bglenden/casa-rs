@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's argument conventions, shared by every `casars.tools` class
-//! (ADR-0019 item 5).
+//! (ADR-0017).
 //!
 //! CASA tools take three kinds of loosely typed arguments, and scripts rely on
 //! how CASA's C++ layer (`CasacSupport.cc` in casatools) reads each:

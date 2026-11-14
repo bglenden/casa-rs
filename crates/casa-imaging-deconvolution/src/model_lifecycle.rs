@@ -93,6 +93,51 @@ impl ModelGeneration {
         let [width, height] = self.shape.domains()[domain].pixels();
         self.samples.read(start..start + width * height)
     }
+
+    /// Read a model plane for prediction, excluding sky pixels owned by a
+    /// later image field. The stored generation keeps its restored overlap
+    /// for publication and subsequent deconvolution.
+    ///
+    /// # Errors
+    /// The plane is outside the model, reading it fails, or a direction
+    /// conversion required for field overlap fails.
+    pub fn prediction_plane(
+        &self,
+        domain: usize,
+        coefficient: usize,
+        polarization: usize,
+    ) -> Result<Box<[ModelSample]>, ModelLifecycleError> {
+        let mut samples = self.read_plane(domain, coefficient, polarization)?;
+        let shape = self.shape();
+        let later = domain + 1..shape.domains().len();
+        if later.is_empty() {
+            return Ok(samples);
+        }
+        let coordinate = |index| {
+            shape
+                .direction(index)
+                .map(DirectionCoordinateSpec::coordinate)
+                .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)
+        };
+        let target = coordinate(domain)?;
+        let [width, _] = shape.domains()[domain].pixels();
+        for owner in later {
+            let source = coordinate(owner)?;
+            let source_shape = shape.domains()[owner].pixels();
+            for (index, sample) in samples.iter_mut().enumerate() {
+                if sample.support() != ModelSupport::Valid || sample.value().value() == 0.0 {
+                    continue;
+                }
+                let pixel = [index % width, index / width];
+                let covered = crate::mask::reprojected_pixel(&source, source_shape, &target, pixel)
+                    .map_err(|_| ModelLifecycleError::UnsupportedDirectionConversion)?;
+                if covered.is_some() {
+                    *sample = ModelSample::invalid();
+                }
+            }
+        }
+        Ok(samples)
+    }
 }
 
 /// A major cycle's final model: its base generation with the minor cycle's

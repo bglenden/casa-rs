@@ -22,7 +22,7 @@ use CasaDefault::{Bool, Empty, Float, Floats, Int, Ints, Text, Texts};
 use Kind as K;
 use Status::{DeprecatedInCasa, DisabledInCasa, Implemented};
 
-/// The keyword-only constructor controls CASA lacks (ADR-0019 item 3), with
+/// The keyword-only constructor controls CASA lacks (ADR-0017), with
 /// casa-rs's defaults: CASA's constructor takes none.
 const CONSTRUCTOR: &[Parameter] = &[
     param("memory_budget", K::Int, CasaDefault::None),

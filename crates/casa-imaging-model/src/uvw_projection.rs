@@ -5,6 +5,7 @@
 
 use casa_types::measures::UvwMachine;
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{MeasFrame, MeasureError};
 
 /// One of CASA's reprojections of rows from one phase centre to an image's
 /// tangent point, built once and applied to every row:
@@ -42,6 +43,74 @@ enum Reprojection {
 }
 
 impl GridFtProjection {
+    /// GridFT's rotation including conversion into the image tangent's frame.
+    ///
+    /// # Errors
+    ///
+    /// The reference conversion is unavailable or lacks required context.
+    pub fn between_directions_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        Ok(Self {
+            machine: Reprojection::Rotate(UvwMachine::with_frame(
+                tangent_point,
+                phase_centre,
+                frame,
+            )?),
+        })
+    }
+
+    /// MosaicFT's two-stage reprojection into a native image frame.
+    /// The correlator direction is first converted to that frame, as
+    /// `FTMachine::girarUVW` does before constructing its two UVW machines.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion lacks required epoch or position context.
+    pub fn mosaic_between_directions_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        let in_field = phase_centre.convert_to(tangent_point.refer(), frame)?;
+        Ok(Self {
+            machine: Reprojection::Girar {
+                frame: UvwMachine::with_frame(&in_field, phase_centre, frame)?,
+                phase: UvwMachine::with_frame(tangent_point, &in_field, frame)?,
+            },
+        })
+    }
+
+    /// Refresh a visibility buffer's frame-dependent rotation while keeping
+    /// the phase centre converted at construction, as `FTMachine` does.
+    ///
+    /// The directions and `initial_frame` are those used at construction;
+    /// `current_frame` supplies the new visibility-buffer epoch.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion lacks required frame context.
+    pub fn recalculate_with_frame(
+        &mut self,
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        initial_frame: &MeasFrame,
+        current_frame: &MeasFrame,
+    ) -> Result<(), MeasureError> {
+        match &mut self.machine {
+            Reprojection::Rotate(machine) | Reprojection::Faceted(machine) => {
+                machine.recalculate_with_frame(tangent_point, phase_centre, current_frame)
+            }
+            Reprojection::Girar { frame, phase } => {
+                let in_field = phase_centre.convert_to(tangent_point.refer(), initial_frame)?;
+                frame.recalculate_with_frame(&in_field, phase_centre, current_frame)?;
+                phase.recalculate_with_frame(tangent_point, &in_field, current_frame)
+            }
+        }
+    }
+
     /// `GridFT`'s rotation from rows phased on `phase_centre` to an image
     /// whose tangent point is `tangent_point`, both J2000.
     #[must_use]

@@ -190,6 +190,130 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     (observation, controls)
 }
 
+/// A rebuilt PSF still cleans the saved, normalized residual and uses the
+/// same physical model in prediction as a continuation with the saved PSF.
+#[test]
+fn a_mosaic_cube_rebuilds_the_psf_and_cleans_the_saved_residual() {
+    use casa_images::PagedImage;
+
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    let (_, seed) = observation.image("saved-psf", controls.clone());
+    observation.image("rebuilt-psf", controls.clone());
+    let psf_path = observation.scratch("rebuilt-psf.psf");
+    let mut psf = PagedImage::<f32>::open(&psf_path).unwrap();
+    let [x, y] = observation.geometry().centre();
+    let altered = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1; 4]), 0.125);
+    psf.put_slice(&altered, &[x, y, 0, 1]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+
+    controls["calcres"] = json!(false);
+    controls["calcpsf"] = json!(true);
+    let path = observation.scratch("rebuilt-psf.residual");
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    let mut mask = residual.get_mask().unwrap().unwrap();
+    let hidden = [x, y, 0, 1];
+    assert!(mask[hidden]);
+    mask[hidden] = false;
+    let saved = residual.get().unwrap();
+    let mut peak = saved.clone();
+    peak[hidden] = 50.0;
+    residual.put_slice(&peak, &[0; 4]).unwrap();
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let before = super::restart::snapshot(&path);
+    controls["threshold"] = json!("2Jy");
+    let (stop, products) = observation.image("rebuilt-psf", controls.clone());
+    assert_eq!((stop.minor_iterations, stop.major_cycles), (0, 0));
+    assert_eq!(products.get(".image").mask().as_ref(), Some(&mask));
+    assert_eq!(products.get(".psf").values(), seed.get(".psf").values());
+    super::restart::assert_unchanged(&before, &super::restart::snapshot(&path));
+
+    // Use identical saved inputs to compare prediction after actual CLEAN.
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    residual.put_slice(&saved, &[0; 4]).unwrap();
+    mask[hidden] = true;
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    controls["threshold"] = json!("0Jy");
+    controls["niter"] = json!(12);
+    let (rebuilt_run, rebuilt) = observation.image("rebuilt-psf", controls.clone());
+    controls["calcpsf"] = json!(false);
+    let (saved_run, saved) = observation.image("saved-psf", controls);
+    assert!(rebuilt_run.major_cycles > 0);
+    assert_eq!(
+        (rebuilt_run.minor_iterations, rebuilt_run.major_cycles),
+        (saved_run.minor_iterations, saved_run.major_cycles)
+    );
+    for suffix in [".model", ".residual", ".image", ".image.pbcor"] {
+        let peak = saved
+            .get(suffix)
+            .values()
+            .iter()
+            .map(|x| x.abs())
+            .fold(0.0, f32::max);
+        let difference = rebuilt.get(suffix).values() - saved.get(suffix).values();
+        assert!(
+            difference.iter().all(|value| value.abs() <= 1e-5 * peak),
+            "{suffix} diverges when rebuilding the PSF"
+        );
+    }
+}
+
+/// Before gridding both signs use the saved mask. After a major cycle
+/// positive pblimit copies the rebuilt PB's mask and negative keeps it.
+#[test]
+fn a_rebuilt_mosaic_cube_psf_refreshes_the_residual_mask_only_for_positive_cutoff() {
+    use casa_images::PagedImage;
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    controls["pblimit"] = json!(0.2);
+    let (_, seed) = observation.image("positive-cutoff", controls.clone());
+    observation.image("negative-cutoff", controls.clone());
+    let pb = seed.get(".pb").mask().unwrap();
+    let [x, y] = observation.geometry().centre();
+    let hidden = [x, y, 0, 1];
+    assert!(pb[hidden]);
+    let mut saved_mask = pb.clone();
+    saved_mask[hidden] = false;
+    let off_axis = pb
+        .indexed_iter()
+        .find_map(|(index, &inside)| (index[3] == 1 && !inside).then_some(index))
+        .expect("the PB rejects part of channel two");
+    saved_mask[off_axis] = true;
+    controls["calcres"] = json!(false);
+    controls["cycleniter"] = json!(2);
+    controls["niter"] = json!(12);
+    for (prefix, cutoff, expected) in [
+        ("positive-cutoff", 0.2, &pb),
+        ("negative-cutoff", -0.2, &saved_mask),
+    ] {
+        let path = observation.scratch(&format!("{prefix}.residual"));
+        let mut residual = PagedImage::<f32>::open(path).unwrap();
+        residual
+            .put_mask_slice("mask0", &saved_mask, &[0; 4])
+            .unwrap();
+        residual.save().unwrap();
+        drop(residual);
+        controls["pblimit"] = json!(cutoff);
+        let (resumed, products) = observation.image(prefix, controls.clone());
+        assert!(resumed.major_cycles > 1, "exercise a second CLEAN boundary");
+        for suffix in [".residual", ".image"] {
+            assert_eq!(
+                products.get(suffix).mask().as_ref(),
+                Some(expected),
+                "{suffix} follows the signed cutoff after gridding"
+            );
+        }
+        assert_eq!(products.get(".image.pbcor").mask().as_ref(), Some(&pb));
+    }
+}
+
 /// A mosaic's start model on a channel no sample reaches stays as it is:
 /// `SIImageStore::divideModelByWeight` skips a plane whose PB's peak is zero
 /// (#1067). The channel with data is converted as ever.
@@ -258,6 +382,72 @@ fn a_mosaic_without_pointing_samples_points_at_its_fields() {
             "{suffix}: {largest} against a peak of {scale}"
         );
     }
+}
+
+/// On a chart centred on field 0, field 2's pointing is 160 pixels
+/// away and outside a 256-pixel image. Field 1 stays inside. Selecting
+/// field 2 must change neither the normal images nor the model prediction.
+#[test]
+fn a_mosaic_excludes_pointings_outside_the_image_from_gridding_and_prediction() {
+    use casa_ms::{MeasurementSet, VisibilityDataColumn};
+    use casa_types::{ArrayValue, ScalarValue};
+
+    let (observation, mut controls) = mosaic_run(false);
+    controls["imsize"] = json!(256);
+    controls["phasecenter"] = json!("0");
+    controls["niter"] = json!(5);
+    controls["threshold"] = json!("0Jy");
+    controls["field"] = json!("0,1");
+    let (_, inside) = observation.image("mosaic-inside-pointings", controls.clone());
+    controls["field"] = json!("0,1,2");
+    controls["savemodel"] = json!("modelcolumn");
+    let (_, all) = observation.image("mosaic-with-outside-pointing", controls);
+    let sum_weights = inside.get(".sumwt").channel_values();
+    assert!(sum_weights[0] > 0.0);
+    assert_eq!(all.get(".sumwt").channel_values(), sum_weights, ".sumwt");
+    // Separate runs can differ in their floating-point FFT and reduction order.
+    for suffix in [".psf", ".residual", ".pb", ".weight"] {
+        let expected = inside.get(suffix);
+        let actual = all.get(suffix);
+        assert_eq!(actual.pixels.shape(), expected.pixels.shape(), "{suffix}");
+        assert_eq!(actual.mask(), expected.mask(), "{suffix} mask");
+        let mut error_squared = 0.0;
+        let mut reference_squared = 0.0;
+        for (&actual, &expected) in actual.pixels.iter().zip(&expected.pixels) {
+            let expected = f64::from(expected);
+            error_squared += (f64::from(actual) - expected).powi(2);
+            reference_squared += expected.powi(2);
+        }
+        let nrms = (error_squared / reference_squared).sqrt();
+        assert!(nrms < 1e-5, "{suffix} normalized RMS {nrms:.3e}");
+    }
+
+    let ms = MeasurementSet::open(observation.measurement_set()).expect("imaged MS");
+    let model = ms
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("MODEL_DATA");
+    let mut outside_rows = 0;
+    let mut inside_nonzero = false;
+    for row in 0..ms.row_count() {
+        let field = ms
+            .main_table()
+            .cell_accessor(row, "FIELD_ID")
+            .expect("field cell");
+        let ArrayValue::Complex32(values) = model.get(row).expect("model row") else {
+            panic!("MODEL_DATA must be complex");
+        };
+        let nonzero = values.iter().any(|value| value.norm_sqr() > 0.0);
+        if matches!(field.scalar().expect("field id"), ScalarValue::Int32(2)) {
+            outside_rows += 1;
+            assert!(
+                !nonzero,
+                "outside pointing predicted MODEL_DATA at row {row}"
+            );
+        } else {
+            inside_nonzero |= nonzero;
+        }
+    }
+    assert!(outside_rows > 0 && inside_nonzero);
 }
 
 #[test]

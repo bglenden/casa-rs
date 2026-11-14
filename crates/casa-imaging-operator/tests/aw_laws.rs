@@ -19,7 +19,8 @@ use casa_imaging_operator::{
     GridGeometry, GridPadding, GridPrecision, GridScalar, ImageExtent, KernelNormalisation,
     MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeCacheLock,
     NativeCacheState, NativeManifest, NativeRow, Placement, PlaneRange, PolarizationRouting,
-    RowContext, SampleBuffer, SpectralResampler, TapLayout, WeightingGeneration, Work,
+    RowContext, SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, TapLayout,
+    WeightingGeneration, Work,
 };
 use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
@@ -109,6 +110,9 @@ fn indexing(conjugate_beams: bool) -> AwIndexing {
     AwIndexing {
         conjugate_beams,
         image_reference_hz: REFERENCE_HZ,
+        pa_tolerance_rad: 360.0_f32.to_radians(),
+        feed_zero_angles_rad: None,
+        rotation: None,
     }
 }
 
@@ -119,7 +123,6 @@ fn context(pa_deg: f64, spectral_window: u32) -> RowContext {
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types: [0, 0],
-        // CASA's operator angle is the negative of the physical angle.
         parallactic_angle_rad: [-pa_deg.to_radians(); 2],
         field: 0,
         spectral_window,
@@ -227,12 +230,12 @@ fn generated_cells_open_with_casa_index_rules_and_swapped_mueller_tables() {
     assert_eq!(catalog.w_cell(w_of(0.49)), 0);
     assert_eq!(catalog.w_cell(-w_of(0.51)), 1);
     assert_eq!(catalog.w_cell(w_of(40.0)), W_PLANES - 1);
-    // The frequency cell is the nearest listed value; the PA cell the
-    // nearest angle on the circle.
+    // The frequency cell is the nearest listed value. The PA lookup
+    // takes the first angle within the absolute tolerance.
     assert_eq!(catalog.frequency_cell(1.49e9), 0);
     assert_eq!(catalog.frequency_cell(1.51e9), 1);
-    assert_eq!(catalog.pa_cell(17.0), 0);
-    assert_eq!(catalog.pa_cell(-350.0), 0);
+    assert_eq!(catalog.pa_cell(17.0_f32.to_radians()), Some(0));
+    assert_eq!(catalog.pa_cell((-350.0_f32).to_radians()), None);
     // Keys: the same group for ±w; the cube field names the native-frequency
     // cell, which without conjugate beams is the gridding cell itself.
     let key = catalog.key(&context(17.0, 1), 1.6e9, w_of(0.9));
@@ -403,6 +406,89 @@ fn aw_cells_use_native_frequency_across_a_frame_conversion() {
         actual, expected,
         "both gridding and prediction cells follow the native channel"
     );
+}
+
+#[test]
+fn linear_aw_places_the_interpolated_frequency_in_each_output_plane() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), false, usize::MAX);
+    let expected_group = catalog.group_index(0, 1, 0);
+    let axis = SpectralAxis::new(1.51e9, 0.1e9, 2).expect("axis");
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let operator = MeasurementOperator::new(
+        geometry(),
+        resampler.basis(),
+        routing(),
+        Box::new(catalog),
+        GridPrecision::F64,
+    );
+    let row = NativeRow {
+        uvw_m: [15.0, 0.0, 0.0],
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &[1.4e9, 1.6e9, 1.8e9],
+        values: &[Complex32::new(1.0, 0.0); 6],
+        weights: &[1.0; 6],
+        flags: &[false; 6],
+        row_flag: false,
+        context: context(17.0, 0),
+    };
+    let mut output = SampleBuffer::new(2);
+    resampler
+        .place(
+            &operator,
+            &WeightingGeneration::Natural { taper: None },
+            &row,
+            &mut output,
+        )
+        .expect("place linear AW samples");
+    assert_eq!(output.placements().len(), 2);
+    for (plane, frequency_hz) in [1.51e9, 1.61e9].into_iter().enumerate() {
+        let sample = &output.placements()[plane];
+        assert_eq!(sample.plane, plane as u32);
+        assert_eq!(usize::from(sample.cf.group), expected_group);
+        let expected_u = row.uvw_m[0] * frequency_hz / 299_792_458.0;
+        assert!((sample.u - expected_u).abs() < 1e-12, "{sample:?}");
+    }
+}
+
+#[test]
+fn prediction_w_cell_uses_the_same_frequency_scale_as_gridding() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let frequency_scale = 0.999_98;
+    let catalog =
+        generated(root.path(), false, usize::MAX).with_prediction_frequency_scale(frequency_scale);
+    let frequency_hz = FREQUENCIES_HZ[0];
+    let boundary_w = 0.25 / catalog.w_increment();
+    let unscaled_w = boundary_w / ((1.0 + frequency_scale) / 2.0);
+    let row = RowContext {
+        original_uvw_m: Some([0.0, 0.0, unscaled_w * 299_792_458.0 / frequency_hz]),
+        ..context(17.0, 0)
+    };
+    assert_eq!(catalog.w_cell(unscaled_w), 1);
+    let key = catalog.key(&row, frequency_hz, unscaled_w);
+    assert_eq!(usize::from(key.group), catalog.group_index(0, 0, 1));
+    assert_eq!(usize::from(key.cube), catalog.group_index(0, 0, 0));
+}
+
+#[test]
+fn rest_aw_prediction_w_uses_the_native_wavelength() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), false, usize::MAX).with_native_prediction_frequency(true);
+    let frequency_hz = FREQUENCIES_HZ[0];
+    let native_ratio = 1.000_1;
+    let boundary = 0.25 / catalog.w_increment();
+    let rest_w = boundary / ((1.0 + native_ratio) / 2.0);
+    let native_w = rest_w * native_ratio;
+    let row = RowContext {
+        native_frequency_ratio: native_ratio,
+        original_uvw_m: Some([0.0, 0.0, rest_w * 299_792_458.0 / frequency_hz]),
+        ..context(17.0, 0)
+    };
+    assert_eq!(catalog.w_cell(rest_w), 0);
+    assert_eq!(catalog.w_cell(native_w), 1);
+    let key = catalog.key(&row, frequency_hz, native_w);
+    assert_eq!(usize::from(key.cube), catalog.group_index(0, 0, 1));
 }
 
 #[test]

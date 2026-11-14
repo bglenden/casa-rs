@@ -55,9 +55,9 @@ pub struct NoiseSpec {
     pub mode: String,
     /// `simplenoise`: σ of each real and imaginary draw, Jy.
     pub simple_noise_jy: f64,
-    /// `table`: the calibration table's name. CASA writes no table for a
-    /// `simplenoise` term set with `OTF`; for the Tsys modes it writes the
-    /// `T` term's to `<table>.T.cal`, which casa-rs does not yet.
+    /// `table`: the calibration-table root. Tsys modes write T/Tf noise-scale
+    /// parameters to `<table>.T.cal` at close (CASA writes at `setnoise`).
+    /// A `simplenoise` term with `OTF=True` writes no table.
     pub table: String,
     /// `pwv`, mm: in the Tsys modes, a value above 100 mm is refused, as
     /// CASA refuses it. `tsys-atm` sees the sky through this column of
@@ -69,9 +69,10 @@ pub struct NoiseSpec {
     /// `tsys-atm`'s site and atmosphere (`pground`, `relhum`, `altitude`,
     /// `waterheight`); the ground's temperature is `tsys`'s `tground`.
     pub atmosphere: AtmosphereSpec,
-    /// `OTF`: corrupt on the fly. CASA writes no calibration table then,
-    /// whatever `table` says; without it, it writes one, which casa-rs does
-    /// not yet.
+    /// `OTF`: draw fresh additive noise at each corrupt. False reuses a
+    /// precomputed A Noise field. Tsys modes scale its unit draws by their
+    /// noise model. A named field is saved as `<root>.A.cal`. This is separate
+    /// from the optional Tsys noise-scale table.
     pub on_the_fly: bool,
 }
 
@@ -144,13 +145,14 @@ impl Simulator {
     }
 
     /// `sm.setnoise(...)`: add a noise term with the current seed.
+    /// Later observations use the original nearest A/T solutions; windows
+    /// added after this call are outside the term's coverage. Named output
+    /// tables are written at close from this call's snapshots.
     ///
     /// # Errors
     ///
     /// - A mode CASA does not know: CASA logs "unsupported mode … in
     ///   setnoise()" and returns `False`.
-    /// - `OTF=False`: not yet implemented; nor is a Tsys mode with a
-    ///   `table`, which CASA writes.
     /// - No rows observed yet: CASA cannot size the term on an empty
     ///   MeasurementSet and returns `False`, adding no term.
     /// - A Tsys mode with a water vapour above 100 mm, or a zenith Tsys at
@@ -172,12 +174,6 @@ impl Simulator {
                 )));
             }
         };
-        if !spec.on_the_fly {
-            return Err(SimulatorError::not_yet_implemented(
-                "setnoise(OTF=False), which writes a calibration table, is not yet implemented \
-                 in casa-rs (#1053)",
-            ));
-        }
         if mode == NoiseMode::Simple {
             tracing::info!(
                 "Using simple noise model with noise level of {} Jy",
@@ -204,6 +200,9 @@ impl Simulator {
                 NoiseLevel::TsysAtm(Arc::new(self.tsys_atm(spec, water_vapour_mm)?))
             }
         };
+        let domain = self.noise_domain(mode == NoiseMode::Simple && spec.on_the_fly)?;
+        let table = self.prepare_noise_table(&level, &spec.table, &domain)?;
+        let snapshot = table.as_ref().map(|table| Arc::clone(&table.snapshot));
         tracing::info!("Creating A NOISE Calibration structure for data corruption.");
         match mode {
             NoiseMode::Simple => {}
@@ -214,11 +213,21 @@ impl Simulator {
                 tracing::info!("Creating TF NOISE Calibration structure for data corruption.");
             }
         }
-        self.noise_terms.push(NoiseTerm {
-            seed: self.seed,
-            level,
-            applications: 0,
-        });
+        if spec.on_the_fly {
+            self.noise_terms.push(NoiseTerm {
+                domain,
+                snapshot,
+                seed: self.seed,
+                level,
+                applications: 0,
+            });
+        } else {
+            self.set_offline_noise(spec, level, domain, snapshot)?;
+        }
+        if let Some(table) = table {
+            self.noise_tables.retain(|old| old.path != table.path);
+            self.noise_tables.push(table);
+        }
         Ok(())
     }
 
@@ -264,22 +273,48 @@ impl Simulator {
     ///   4, which CASA cannot corrupt ("No such VisVector type"); leakage on
     ///   a scan without all four correlations (CASA's `JonesGenLin` raises);
     ///   or a noise term applied 2²⁴ times.
-    /// - A scan in a spectral window a gain or leakage term has no solution
-    ///   for, which CASA leaves uncorrupted, or one defined after a
-    ///   `tsys-atm` term was set: not yet implemented.
+    /// - Antennas added after a noise term: not yet implemented (#1293).
+    ///
+    /// A window any term has no solution for skips the entire step, including
+    /// noise and corrected-data updates.
     pub fn corrupt(&mut self) -> SimulatorResult<()> {
         if self.noise_terms.is_empty() && self.jones_terms.is_empty() {
             return Ok(());
         }
         self.check_visibility_correlations("corrupted")?;
-        // A `setapply` table is evaluated over the scans observed by now.
+        // CASA gates the complete step before evaluating any term. The
+        // predicate intersects simulated and applied metadata without a
+        // per-window allocation; an excluded window forms no table grid.
+        let covered = |window| {
+            self.noise_terms
+                .iter()
+                .all(|term| term.domain.covers(window))
+                && self.jones_terms.iter().all(|source| source.covers(window))
+        };
+        // A `setapply` table is evaluated over the covered scans observed now.
         let terms = self
             .jones_terms
             .iter()
-            .map(|source| self.jones_term(source))
+            .filter(|source| source.additive().is_none())
+            .map(|source| self.jones_term(source, &covered))
             .collect::<SimulatorResult<Vec<_>>>()?;
-        self.check_jones_coverage(&terms)?;
-        self.check_noise_coverage()?;
+        let applied_noise = self
+            .jones_terms
+            .iter()
+            .filter_map(super::apply::JonesSource::additive)
+            .map(|table| self.applied_noise(table, &covered))
+            .collect::<SimulatorResult<Vec<_>>>()?;
+        let baseline = if !self.noise_terms.is_empty() || !applied_noise.is_empty() {
+            self.jones_terms
+                .iter()
+                .filter_map(super::apply::JonesSource::baseline)
+                .map(|table| self.applied_baseline_field(table, &covered))
+                .collect::<SimulatorResult<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+        self.check_jones_coverage(&terms, &covered)?;
+        self.prepare_later_noise(&terms, &applied_noise)?;
         if self
             .noise_terms
             .iter()
@@ -292,9 +327,11 @@ impl Simulator {
         tracing::info!("Doing visibility corruption.");
         let applications = self.noise_terms.iter_mut().map(|term| {
             let application = NoiseApplication {
+                domain: Arc::clone(&term.domain),
                 seed: term.seed,
-                level: term.level.clone(),
+                level: term.application_level(self.scans.len()),
                 ordinal: term.applications,
+                baseline: baseline.clone(),
             };
             term.applications += 1;
             application
@@ -305,19 +342,31 @@ impl Simulator {
         let mut jones: Vec<(usize, Arc<HeldTerm>)> = terms.into_iter().enumerate().collect();
         jones.sort_by(|a, b| b.1.kind.cmp(&a.1.kind).then(b.0.cmp(&a.0)));
         let jones: Vec<Arc<HeldTerm>> = jones.into_iter().map(|(_, term)| term).collect();
-        self.data_plan
-            .corrupt(applications, jones, self.scans.len());
+        self.data_plan.corrupt(
+            applications.chain(applied_noise.into_iter().map(|mut application| {
+                application.baseline.clone_from(&baseline);
+                application
+            })),
+            jones,
+            self.scans.len(),
+        );
         Ok(())
     }
 
-    /// Refuse gains or leakage on a scan observed so far that they cannot
-    /// corrupt as CASA does: leakage without all four correlations, which
-    /// CASA's `JonesGenLin` raises on, and a spectral window a term has no
-    /// solution for, which CASA leaves wholly uncorrupted.
-    fn check_jones_coverage(&self, terms: &[Arc<HeldTerm>]) -> SimulatorResult<()> {
+    /// Validate the correlations of covered scans. CASA gates the entire
+    /// corruption step before checking or applying any Jones operator.
+    fn check_jones_coverage(
+        &self,
+        terms: &[Arc<HeldTerm>],
+        covered: &impl Fn(usize) -> bool,
+    ) -> SimulatorResult<()> {
         for scan in &self.scans {
-            let window = &self.spectral_windows[scan.spectral_window_id];
-            let products = window.correlation_products();
+            // VisEquation::spwOK gates the entire step: no term is
+            // applied when any Jones term has no solution in this window.
+            if !covered(scan.spectral_window_id) {
+                continue;
+            }
+            let products = super::spectral::correlation_products(self.correlations_for_scan(scan));
             // The linearised D takes the parallel hands into the cross
             // hands: CASA's 4-vector apply needs all four.
             let full = [[0, 0], [0, 1], [1, 0], [1, 1]]
@@ -329,43 +378,21 @@ impl Simulator {
                         "JonesGenLin matrix apply (J::aR) incompatible with VisVector.",
                     ));
                 }
-                if !term.covers(scan.spectral_window_id) {
-                    return Err(SimulatorError::not_yet_implemented(format!(
-                        "corrupt of spectral window {}, observed after a setgain, setleakage or \
-                         settrop term was set, is not yet implemented in casa-rs (#1053): \
-                         CASA leaves it uncorrupted",
-                        window.name
-                    )));
+                let needs_matrix = term.kind == JonesKind::General
+                    || (term.kind == JonesKind::SkyGeneral
+                        && !self
+                            .correlations_for_scan(scan)
+                            .first()
+                            .is_some_and(|c| (5..=8).contains(c)));
+                if needs_matrix && !full {
+                    return Err(SimulatorError::raised(
+                        "Jones matrix apply (J::aR) incompatible with VisVector.",
+                    ));
                 }
             }
         }
         Ok(())
     }
-
-    /// Refuse a scan observed so far in a spectral window defined after a
-    /// `tsys-atm` term was set: as CASA's corruptor, the term built its
-    /// atmosphere for the windows defined then.
-    fn check_noise_coverage(&self) -> SimulatorResult<()> {
-        for term in &self.noise_terms {
-            let NoiseLevel::TsysAtm(model) = &term.level else {
-                continue;
-            };
-            if let Some(scan) = self
-                .scans
-                .iter()
-                .find(|scan| !model.covers(scan.spectral_window_id))
-            {
-                return Err(SimulatorError::not_yet_implemented(format!(
-                    "corrupt of spectral window {}, defined after a setnoise(mode='tsys-atm') \
-                     term was set, is not yet implemented in casa-rs (#1053): \
-                     the term has no atmosphere for it",
-                    self.spectral_windows[scan.spectral_window_id].name
-                )));
-            }
-        }
-        Ok(())
-    }
-
     /// `sm.reset()`: remove every noise, gain and leakage term.
     /// Corruptions already applied, and the seed, stay.
     pub fn reset(&mut self) {
@@ -389,9 +416,7 @@ impl Simulator {
     /// Raised: "No such VisVector type".
     pub(super) fn check_visibility_correlations(&self, what: &str) -> SimulatorResult<()> {
         for scan in &self.scans {
-            let correlations = self.spectral_windows[scan.spectral_window_id]
-                .correlations
-                .len();
+            let correlations = self.correlations_for_scan(scan).len();
             if !matches!(correlations, 1 | 2 | 4) {
                 return Err(SimulatorError::raised(format!(
                     "No such VisVector type: scan {} has {correlations} correlations; \
@@ -428,20 +453,13 @@ fn check_tsys_spec(spec: &NoiseSpec) -> SimulatorResult<()> {
             spec.water_vapour_mm
         )));
     }
-    if let Some(table) = calibration_table_root(&spec.table) {
-        return Err(SimulatorError::not_yet_implemented(format!(
-            "setnoise(mode='{}', table=...), which writes the T calibration table {table}.T.cal, \
-             is not yet implemented in casa-rs (#1053)",
-            spec.mode
-        )));
-    }
     Ok(())
 }
 
 /// The root of the calibration table `setnoise` writes for `table`, as
 /// `Simulator::setnoise` trims it (blanks, then a trailing `cal`, `.` and
 /// `_`), or `None` when it writes none (a root of at most one character).
-fn calibration_table_root(table: &str) -> Option<&str> {
+pub(super) fn calibration_table_root(table: &str) -> Option<&str> {
     let mut root = table.trim();
     if root.len() > 3 {
         root = root.strip_suffix("cal").unwrap_or(root);

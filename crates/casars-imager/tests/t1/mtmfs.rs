@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Standard gridder, natural weighting, MT-MFS with two Taylor terms and
-//! with one.
+//! Standard gridder, natural weighting, and Taylor spectral products.
 
 use casa_ms::{SyntheticPolarizationBasis, SyntheticPolarizationSetup};
 use serde_json::json;
@@ -118,6 +117,54 @@ fn mtmfs_two_terms_recover_flux_and_spectral_index() {
         alpha_error.is_finite() && alpha_error < 0.05,
         "alpha error {alpha_error}"
     );
+}
+
+#[test]
+fn mtmfs_three_terms_publish_spectral_curvature_on_alpha_support() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let (_, products) = observation.image(
+        "mtmfs-beta",
+        json!({
+            "weighting": "natural",
+            "deconvolver": "mtmfs",
+            "nterms": 3,
+            "niter": 20,
+            "pbcor": true,
+        }),
+    );
+    let beta = products.get(".beta");
+    let alpha = products.get(".alpha");
+    let mask = beta.mask().expect("spectral curvature validity mask");
+    assert_eq!(mask, alpha.mask().expect("spectral index validity mask"));
+    assert_eq!(beta.restoring_beam(), alpha.restoring_beam());
+    assert!(products.suffixes().contains(".image.tt2.pbcor"));
+    assert!(!products.suffixes().contains(".beta.pbcor"));
+
+    let taylor0 = &products.get(".image.tt0").pixels;
+    let taylor2 = &products.get(".image.tt2").pixels;
+    let mut nonzero = false;
+    for ((((&value, &valid), &index), &image0), &image2) in beta
+        .pixels
+        .iter()
+        .zip(&mask)
+        .zip(&alpha.pixels)
+        .zip(taylor0)
+        .zip(taylor2)
+    {
+        if valid {
+            let expected = f64::from(image2) / f64::from(image0)
+                - 0.5 * f64::from(index) * (f64::from(index) - 1.0);
+            assert!(
+                (f64::from(value) - expected).abs() <= 2.0e-6 * expected.abs().max(1.0),
+                "spectral curvature {value}, expected {expected}"
+            );
+            nonzero |= value.abs() > 1.0e-3;
+        } else {
+            assert_eq!(value, 0.0);
+        }
+    }
+    assert!(nonzero);
+    assert!(mask.iter().any(|valid| !valid));
 }
 
 /// `‖a − b‖ / ‖b‖` of product `a` of one run and product `b` of another.

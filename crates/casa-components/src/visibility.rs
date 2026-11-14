@@ -12,8 +12,6 @@
 //! component").
 //!
 //! What casa-rs does not evaluate is refused rather than approximated:
-//! - a limb-darkened disk, whose visibility needs a Bessel function of real
-//!   order (`gsl_sf_bessel_Jnu`);
 //! - a tabular spectrum whose reference frequency is in another frame than
 //!   its tabulation, which CASA converts through a frame casa-rs would have
 //!   to build, and a table of fewer than two points, which CASA's linear
@@ -29,6 +27,9 @@ use crate::error::ComponentError;
 use crate::shape::{ComponentShape, Ellipse, ShapeKind};
 use crate::spectrum::{SpectralKind, SpectralModel, TabularSpectrum};
 use crate::{Flux, SkyComponent};
+
+mod limb_darkening;
+use limb_darkening::LimbDarkening;
 
 /// The speed of light, m/s (casacore `C::c`).
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -243,20 +244,22 @@ fn tabular_stokes(
 
 impl ComponentShape {
     /// The shape's visibility at `uvw_m` and `frequency_hz` (`visibility`
-    /// of `PointShape`, `GaussianShape` and `DiskShape`), real.
+    /// of `PointShape`, `GaussianShape`, `DiskShape` and
+    /// `LimbDarkenedDiskShape`), real.
     ///
     /// # Errors
     ///
-    /// [`ComponentError::Visibility`] for a limb-darkened disk.
+    /// [`ComponentError::Visibility`] if the Fourier transform cannot be
+    /// evaluated. A shape alone uses the default limb-darkening exponent;
+    /// [`SkyComponent::transform`] includes its optional parameters.
     pub fn visibility_scale(
         &self,
         uvw_m: [f64; 3],
         frequency_hz: f64,
     ) -> Result<f64, ComponentError> {
-        Ok(self
-            .transform()?
+        self.transform()?
             .at_baseline(uvw_m)
-            .at_frequency(frequency_hz))
+            .at_frequency(frequency_hz)
     }
 
     /// The shape's Fourier transform, prepared from its axes for evaluation
@@ -265,22 +268,28 @@ impl ComponentShape {
     ///
     /// # Errors
     ///
-    /// [`ComponentError::Visibility`] for a limb-darkened disk.
+    /// [`ComponentError::Visibility`] for invalid limb-darkening parameters.
     pub fn transform(&self) -> Result<ShapeTransform, ComponentError> {
+        self.transform_with_limb_darkening(crate::DEFAULT_LIMB_DARKENING_EXPONENT)
+    }
+
+    fn transform_with_limb_darkening(
+        &self,
+        exponent: f64,
+    ) -> Result<ShapeTransform, ComponentError> {
         Ok(ShapeTransform(match self.kind() {
             ShapeKind::Point => Transform::Point,
             ShapeKind::Gaussian { axes, .. } => Transform::gaussian(axes),
-            ShapeKind::Disk { axes, .. } => Transform::Disk {
-                rotation: (axes.position_angle().abs() > NEAR_ABS)
-                    .then(|| axes.position_angle().sin_cos()),
-                minor_axis: axes.minor_axis(),
-                major_axis: axes.major_axis(),
-            },
-            ShapeKind::LimbDarkenedDisk { .. } => {
-                return Err(ComponentError::Visibility {
-                    shape: "limb-darkened disk",
-                    reason: "its visibility needs a Bessel function of real order".to_string(),
-                });
+            ShapeKind::Disk { axes, .. } | ShapeKind::LimbDarkenedDisk { axes, .. } => {
+                Transform::Disk {
+                    rotation: (axes.position_angle().abs() > NEAR_ABS)
+                        .then(|| axes.position_angle().sin_cos()),
+                    minor_axis: axes.minor_axis(),
+                    major_axis: axes.major_axis(),
+                    limb: matches!(self.kind(), ShapeKind::LimbDarkenedDisk { .. })
+                        .then(|| LimbDarkening::new(exponent))
+                        .transpose()?,
+                }
             }
         }))
     }
@@ -310,6 +319,7 @@ enum Transform {
         rotation: Option<(f64, f64)>,
         minor_axis: f64,
         major_axis: f64,
+        limb: Option<LimbDarkening>,
     },
 }
 
@@ -360,13 +370,15 @@ impl ShapeTransform {
                 rotation,
                 minor_axis,
                 major_axis,
+                limb,
             } => {
                 let (u, v) =
                     rotation.map_or((u, v), |(sin, cos)| (u * cos - v * sin, u * sin + v * cos));
-                AtBaseline::Disk(
-                    (u * minor_axis).hypot(v * major_axis) * std::f64::consts::PI
+                AtBaseline::Disk {
+                    per_hz: (u * minor_axis).hypot(v * major_axis) * std::f64::consts::PI
                         / SPEED_OF_LIGHT_M_PER_S,
-                )
+                    limb,
+                }
             }
         })
     }
@@ -381,24 +393,34 @@ enum AtBaseline {
     One,
     /// `exp(−g ν²)`.
     Gaussian(f64),
-    /// `2 J₁(r)/r` with `r = R ν`.
-    Disk(f64),
+    /// A uniform or limb-darkened disk at `r = R ν`.
+    Disk {
+        per_hz: f64,
+        limb: Option<LimbDarkening>,
+    },
 }
 
 impl BaselineTransform {
     /// The shape's visibility at `frequency_hz`, real.
-    #[must_use]
-    pub fn at_frequency(&self, frequency_hz: f64) -> f64 {
-        match self.0 {
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentError::Visibility`] when a real-order Bessel evaluation
+    /// fails or cannot be normalized without losing its result.
+    pub fn at_frequency(&self, frequency_hz: f64) -> Result<f64, ComponentError> {
+        Ok(match self.0 {
             AtBaseline::One => 1.0,
             AtBaseline::Gaussian(per_hz_squared) => {
                 (-per_hz_squared * frequency_hz * frequency_hz).exp()
             }
-            AtBaseline::Disk(per_hz) => {
+            AtBaseline::Disk { per_hz, limb } => {
                 let r = per_hz * frequency_hz;
-                2.0 * libm::j1(r) / r
+                match limb {
+                    Some(limb) => limb.at_radius(r)?,
+                    None => 2.0 * libm::j1(r) / r,
+                }
             }
-        }
+        })
     }
 }
 
@@ -412,6 +434,19 @@ fn near_zero(x: f64) -> bool {
 }
 
 impl SkyComponent {
+    /// Prepare this component's shape transform, including its optional
+    /// limb-darkening exponent rounded to CASA's stored single precision.
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentError::Visibility`] for invalid limb-darkening parameters.
+    pub fn transform(&self) -> Result<ShapeTransform, ComponentError> {
+        self.shape().transform_with_limb_darkening(
+            self.limb_darkening_exponent()
+                .unwrap_or(crate::DEFAULT_LIMB_DARKENING_EXPONENT),
+        )
+    }
+
     /// The component's visibility at `uvw_m` (rotated to its reference
     /// direction, CASA's sign) and `frequency_hz`, in `basis`'s order
     /// (`SkyCompRep::visibility`): the Stokes flux in Jy sampled by the
@@ -427,7 +462,10 @@ impl SkyComponent {
         basis: Polarisation,
     ) -> Result<[Complex64; 4], ComponentError> {
         let flux = self.flux_in(frequency_hz, basis)?;
-        let scale = self.shape().visibility_scale(uvw_m, frequency_hz)?;
+        let scale = self
+            .transform()?
+            .at_baseline(uvw_m)
+            .at_frequency(frequency_hz)?;
         Ok(flux.map(|value| value * scale))
     }
 

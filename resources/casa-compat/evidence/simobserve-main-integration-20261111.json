@@ -1,0 +1,832 @@
+{
+ "schema": "simobserve-parity-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-11",
+ "oracle": "casatasks 6.7.6.14, casatools 6.7.6-14",
+ "native_revision": "d5923d215f54c134d477cf246ef875fe19328e50",
+ "source_revision": "d5923d215f54c134d477cf246ef875fe19328e50",
+ "main_revision": "2097720482c08093531d12b70b4480ef71a161ac",
+ "native_binary_sha256": "1a15ce60f1e3d3983254357074885355f98d0ad7b93b1fd0e955b72da624fddc",
+ "build": "cargo build --release -p casars-simulation --bin simobserve; macOS arm64, Rust 1.99.0, CARGO_INCREMENTAL=0, own worktree target; task default backend/worker settings",
+ "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+ "source_audit": {
+  "tracked_files_match": true,
+  "extra_rust_sources": [],
+  "method": "Full tracked-source archive with refreshed mtimes, then comparison of every tracked file SHA-256 against the local commit. An older scratch copy predated a main merge; the original historical receipts retain those earlier source pins, and this new source/binary was rebuilt for this replay."
+ },
+ "inputs": "Original public casatestdata core5ps.skymodel, core5ps.clist and flatone.model; committed multiple-pointing file; installed ALMA alma.out01.cfg. Both CASA and native sides rerun together.",
+ "comparison": {
+  "data_nrms_limit": 0.001,
+  "uvw_absolute_limit_m": 0.001,
+  "timing": "Compare equal stored TIME using the approved TAI-labelled-UTC alignment.",
+  "other": "Unchanged compare_sm_ms.py checks MS descriptors, keywords, subtables, row/cell values, flags and existing documented differences. Model pixels/coordinates, exact non-graphics product names and byte-identical pointing files are checked. Spectral reference code agrees and frequencies use absolute tolerance 1e-3 Hz. Only coarse_cell is an expected matched refusal; all other cases must succeed."
+ },
+ "summary": {
+  "cases": 17,
+  "agree": 17,
+  "successful": 16,
+  "expected_refusals": 1,
+  "data_nrms_max": 1.05e-06,
+  "uvw_max_m": 1.61e-06
+ },
+ "measured": [
+  {
+   "case": "pointing_file_multiple",
+   "uvw_max_m": 3.76e-08,
+   "data_nrms": 3.21e-07
+  },
+  {
+   "case": "pointing_explicit_spacing",
+   "uvw_max_m": 3.84e-08,
+   "data_nrms": 3.65e-07
+  },
+  {
+   "case": "frame_topo",
+   "uvw_max_m": 3.81e-08,
+   "data_nrms": 1.05e-06
+  },
+  {
+   "case": "frame_lsrd",
+   "uvw_max_m": 3.57e-08,
+   "data_nrms": 7.01e-07
+  },
+  {
+   "case": "frame_geo",
+   "uvw_max_m": 3.57e-08,
+   "data_nrms": 7.01e-07
+  },
+  {
+   "case": "frame_galacto",
+   "uvw_max_m": 3.57e-08,
+   "data_nrms": 7.01e-07
+  },
+  {
+   "case": "frame_lgroup",
+   "uvw_max_m": 3.57e-08,
+   "data_nrms": 7.01e-07
+  },
+  {
+   "case": "frame_cmb",
+   "uvw_max_m": 3.57e-08,
+   "data_nrms": 7.01e-07
+  },
+  {
+   "case": "schedule_hour_number",
+   "uvw_max_m": 1.61e-06,
+   "data_nrms": 6.88e-07
+  },
+  {
+   "case": "schedule_hour_quantity",
+   "uvw_max_m": 1.39e-06,
+   "data_nrms": 7.94e-07
+  },
+  {
+   "case": "schedule_refdate_modern",
+   "uvw_max_m": 9.91e-07,
+   "data_nrms": 6.96e-07
+  },
+  {
+   "case": "schedule_square",
+   "uvw_max_m": 8.04e-07,
+   "data_nrms": 6.26e-07
+  },
+  {
+   "case": "model_direction",
+   "uvw_max_m": 4.61e-08,
+   "data_nrms": 6.84e-07
+  },
+  {
+   "case": "model_cell",
+   "uvw_max_m": 3.97e-08,
+   "data_nrms": 5.71e-07
+  },
+  {
+   "case": "model_direction_cell",
+   "uvw_max_m": 4.87e-08,
+   "data_nrms": 4.64e-07
+  },
+  {
+   "case": "components_cube",
+   "uvw_max_m": 3.68e-08,
+   "data_nrms": 5.64e-08
+  }
+ ],
+ "cases": [
+  {
+   "name": "pointing_file_multiple",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:00:16\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "pointing_file_multiple: OK, 9 known (UVW within 3.76e-08 m); DATA NRMS 3.21e-07 over 29400 samples (cross 3.21e-07)"
+   ],
+   "seconds": {
+    "casa": 4.290123625018168,
+    "casa-rs": 3.68880775
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": false,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "120s",
+    "thermalnoise": "",
+    "ptgfile": "inputs/multiple.pointings.ptg.txt"
+   }
+  },
+  {
+   "name": "pointing_explicit_spacing",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:00:32\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "pointing_explicit_spacing: OK, 9 known (UVW within 3.84e-08 m); DATA NRMS 3.65e-07 over 29400 samples (cross 3.65e-07)"
+   ],
+   "seconds": {
+    "casa": 4.420600999990711,
+    "casa-rs": 4.198534875
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "hexagonal",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "120s",
+    "thermalnoise": "",
+    "mapsize": [
+     "16arcsec",
+     "12arcsec"
+    ],
+    "pointingspacing": "4arcsec"
+   }
+  },
+  {
+   "name": "frame_topo",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 5,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 5,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:00:55\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_topo: OK, 9 known (UVW within 3.81e-08 m); DATA NRMS 1.05e-06 over 73500 samples (cross 1.05e-06)"
+   ],
+   "seconds": {
+    "casa": 10.638991541985888,
+    "casa-rs": 5.998609292
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "300s",
+    "thermalnoise": "",
+    "outframe": "TOPO"
+   }
+  },
+  {
+   "name": "frame_lsrd",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 2,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 2,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:01:12\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_lsrd: OK, 9 known (UVW within 3.57e-08 m); DATA NRMS 7.01e-07 over 14700 samples (cross 7.01e-07)"
+   ],
+   "seconds": {
+    "casa": 3.268118707987014,
+    "casa-rs": 3.770642375
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "outframe": "LSRD"
+   }
+  },
+  {
+   "name": "frame_geo",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 4,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 4,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:01:25\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_geo: OK, 9 known (UVW within 3.57e-08 m); DATA NRMS 7.01e-07 over 14700 samples (cross 7.01e-07)"
+   ],
+   "seconds": {
+    "casa": 3.2669151249865536,
+    "casa-rs": 3.799646334
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "outframe": "GEO"
+   }
+  },
+  {
+   "name": "frame_galacto",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 6,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 6,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:01:38\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_galacto: OK, 9 known (UVW within 3.57e-08 m); DATA NRMS 7.01e-07 over 14700 samples (cross 7.01e-07)"
+   ],
+   "seconds": {
+    "casa": 3.4863828329835087,
+    "casa-rs": 3.940812959
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "outframe": "GALACTO"
+   }
+  },
+  {
+   "name": "frame_lgroup",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 7,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 7,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:01:51\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_lgroup: OK, 9 known (UVW within 3.57e-08 m); DATA NRMS 7.01e-07 over 14700 samples (cross 7.01e-07)"
+   ],
+   "seconds": {
+    "casa": 3.3960555410012603,
+    "casa-rs": 3.99825875
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "outframe": "LGROUP"
+   }
+  },
+  {
+   "name": "frame_cmb",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 8,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 8,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:02:04\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_cmb: OK, 9 known (UVW within 3.57e-08 m); DATA NRMS 7.01e-07 over 14700 samples (cross 7.01e-07)"
+   ],
+   "seconds": {
+    "casa": 3.597985166008584,
+    "casa-rs": 4.0107145
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "outframe": "CMB"
+   }
+  },
+  {
+   "name": "schedule_hour_number",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:02:17\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "schedule_hour_number: OK, 9 known (UVW within 1.61e-06 m); DATA NRMS 6.88e-07 over 14700 samples (cross 6.88e-07)"
+   ],
+   "seconds": {
+    "casa": 3.366914000012912,
+    "casa-rs": 3.929538916
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "hourangle": "-1.5",
+    "refdate": "2017/01/02/09:30:00"
+   }
+  },
+  {
+   "name": "schedule_hour_quantity",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:02:30\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "schedule_hour_quantity: OK, 9 known (UVW within 1.39e-06 m); DATA NRMS 7.94e-07 over 14700 samples (cross 7.94e-07)"
+   ],
+   "seconds": {
+    "casa": 3.3316225829767063,
+    "casa-rs": 3.884906084
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "hourangle": "90min",
+    "refdate": "2016/06/21/12:34:56"
+   }
+  },
+  {
+   "name": "schedule_refdate_modern",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:02:43\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "schedule_refdate_modern: OK, 9 known (UVW within 9.91e-07 m); DATA NRMS 6.96e-07 over 14700 samples (cross 6.96e-07)"
+   ],
+   "seconds": {
+    "casa": 3.4266663329908624,
+    "casa-rs": 3.960994708
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "hourangle": "transit",
+    "refdate": "2025/01/15"
+   }
+  },
+  {
+   "name": "schedule_square",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:02:56\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "schedule_square: OK, 9 known (UVW within 8.04e-07 m); DATA NRMS 6.26e-07 over 14700 samples (cross 6.26e-07)"
+   ],
+   "seconds": {
+    "casa": 3.336276916990755,
+    "casa-rs": 3.799866208
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "hourangle": "-30min",
+    "refdate": "2015/06/29"
+   }
+  },
+  {
+   "name": "model_direction",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:03:08\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "model_direction: OK, 9 known (UVW within 4.61e-08 m); DATA NRMS 6.84e-07 over 14700 samples (cross 6.84e-07)"
+   ],
+   "seconds": {
+    "casa": 3.291824625019217,
+    "casa-rs": 3.832327792
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "indirection": "J2000 19h30m00 -30d00m00"
+   }
+  },
+  {
+   "name": "model_cell",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:03:21\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "model_cell: OK, 9 known (UVW within 3.97e-08 m); DATA NRMS 5.71e-07 over 14700 samples (cross 5.71e-07)"
+   ],
+   "seconds": {
+    "casa": 3.2446621670096647,
+    "casa-rs": 3.779575625
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "incell": "0.03arcsec"
+   }
+  },
+  {
+   "name": "model_direction_cell",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:03:33\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "model_direction_cell: OK, 9 known (UVW within 4.87e-08 m); DATA NRMS 4.64e-07 over 14700 samples (cross 4.64e-07)"
+   ],
+   "seconds": {
+    "casa": 3.239881458983291,
+    "casa-rs": 3.783380708
+   },
+   "parameters": {
+    "skymodel": "inputs/core5ps.skymodel",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "indirection": "J2000 19h30m00 -30d00m00",
+    "incell": "0.03arcsec"
+   }
+  },
+  {
+   "name": "components_cube",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       342000000000.0,
+       344000000000.0,
+       346000000000.0,
+       348000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       342000000000.0,
+       344000000000.0,
+       346000000000.0,
+       348000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-11 23:03:39\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "components_cube: OK, 9 known (UVW within 3.68e-08 m); DATA NRMS 5.64e-08 over 58800 samples (cross 5.64e-08)"
+   ],
+   "seconds": {
+    "casa": 0.3393280830059666,
+    "casa-rs": 0.152172
+   },
+   "parameters": {
+    "skymodel": "",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "60s",
+    "thermalnoise": "",
+    "complist": "inputs/core5ps.clist",
+    "compwidth": "8GHz",
+    "comp_nchan": 4
+   }
+  },
+  {
+   "name": "coarse_cell",
+   "differences": [],
+   "refused": "Sky model cell of 4.0 asec is very large compared to highest resolution 1.450637756194225 asec - this will lead to blank or erroneous output. (Did you set incell?)",
+   "seconds": {
+    "casa": null,
+    "casa-rs": null
+   },
+   "parameters": {
+    "skymodel": "inputs/flatone.model",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "ALMA",
+    "obsmode": "int",
+    "antennalist": "alma.out01.cfg",
+    "totaltime": "300s",
+    "thermalnoise": ""
+   }
+  }
+ ],
+ "validation": {
+  "all_target_clippy": "passed for simulation/task crates",
+  "targeted_crates": "simobserve, simutil_casa, readantenna_casa, skymodel_casa and the simulation task pass after complete source synchronization",
+  "fmt": "passed",
+  "docs": "passed",
+  "architecture": "passed on repaired main"
+ },
+ "limits": "These are bounded correctness comparisons for the 17 named scenarios, not exhaustive combinations, graphics, noise, performance or whole-programme memory acceptance. Release timings are run diagnostics, with no performance claim. The plan goal of 1 micrometre UVW is stricter than the retained 1 millimetre oracle gate; the largest measured difference is reported without relaxing either requirement."
+}

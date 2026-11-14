@@ -107,14 +107,16 @@ static inline float2 tap_value(Table t, device const float *rows, device const f
     }
     uint sx = t.support.x;
     uint sy = t.support.y;
-    ulong tile = (ulong(s.fine.y) * ulong(t.oversampling + 1) + ulong(s.fine.x))
+    uint fine_centre = (uint(t.oversampling) + 1u) / 2u;
+    uint fine_rows = 2u * fine_centre + 1u;
+    ulong tile = (ulong(s.fine.y) * ulong(fine_rows) + ulong(s.fine.x))
                      * ulong(t.mueller_planes) + ulong(mueller);
     float2 tap = dense[ulong(t.offset) + tile * ulong(sx * sy) + ulong(iy * sx + ix)];
     if (w_positive) {
         tap = cconj(tap);
     }
     if (s.gradient.x != 0.0f || s.gradient.y != 0.0f) {
-        float mid = float(t.oversampling) * 0.5f;
+        float mid = float(fine_centre);
         float shift = (s.flags & (1u << 3)) != 0 ? 1.0f : 0.0f;
         float kx = float(int(ix) - int(sx / 2)) + (float(s.fine.x) - mid - shift) / float(t.oversampling);
         float ky = float(int(iy) - int(sy / 2)) + (float(s.fine.y) - mid - shift) / float(t.oversampling);

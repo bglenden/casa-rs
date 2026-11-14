@@ -6,18 +6,17 @@
 //! CASA leaves its images standing when it does not form them again
 //! (`task_tclean.py`; `SIImageStore` opens what exists, and
 //! `FTMachine::finalizeToSkyNew` keeps a `.sumwt` already filled). The
-//! images on disk are normalized: the PSF to its peak, the residual by its
-//! sum of weights. The normal state holds them unnormalized, as a pass
-//! grids them, and products and minor cycles normalize them again; so the
-//! reader returns what a pass would have returned: the PSF times its
-//! principal sum of weights (the PSF peak of a direction-independent
-//! gridder) and the residual times the sum of weights that normalized it.
-//! Normalizing them again gives back the images read, to the rounding of
-//! one `f32` product and quotient.
+//! A scalar residual returns to gridding units by multiplying by its sum
+//! of weights. A saved weighted residual stays in image units until the
+//! first major cycle. The single-term PSF keeps its saved pixels for beam
+//! fitting and publication. The solver scales it by its peak for the minor
+//! cycle. A Taylor PSF family still uses the principal sum of weights to
+//! return all its moments in gridding units.
 //!
-//! Only direction-independent gridders (standard and W-projection, one
-//! facet) are read: their sensitivity is the sum of weights alone
-//! ([`super::check_inputs`] refuses the rest).
+//! Direction-independent gridders (standard and W-projection, one facet)
+//! use the sum of weights alone. A single-term continuum or cube mosaic reads its
+//! saved sensitivity and primary beam when it reuses the PSF, as does an
+//! AW-projected MT-MFS continuum image.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -25,6 +24,7 @@ use std::sync::Arc;
 
 use casa_images::{ImageBeamSet, ImageError, PagedImage};
 use casa_imaging_deconvolution::{PassImages, RestoringBeam};
+use casa_imaging_products::SavedMosaicBeam;
 
 use super::{Family, product_path};
 use crate::PrepareError;
@@ -46,6 +46,25 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
+    cube: bool,
+    saved_model_plane_bytes: u64,
+    saved_pbcor_mask_bytes: Option<u64>,
+    /// Whether the saved residual already uses the solver's image units.
+    residual_in_image_units: bool,
+    /// Scratch for reading the saved residual's pixel mask.
+    /// Zero when there is no default mask.
+    saved_residual_mask_bytes: Option<u64>,
+    /// Scratch for the saved PB mask when a field needs it after gridding.
+    primary_beam_mask_bytes: u64,
+    /// A user-named residual mask survives either sign of pblimit.
+    custom_residual_mask: bool,
+    /// Scratch for a prior restored mask CASA may retain.
+    restored_mask_bytes: u64,
+    /// A default mask exists on at least one saved Taylor residual.
+    masked_taylor_residual: Option<PathBuf>,
+    /// Saved PB reader. The mosaic's normal-state sensitivity also comes
+    /// from the saved `.weight` when this reader is present.
+    mosaic_beam: Option<SavedMosaicBeam>,
     /// A complete PSF beam set read from the earlier image, channel-major.
     psf_beams: Option<Arc<[RestoringBeam]>>,
     /// The same beam grid in pixels for minor-cycle preparation.
@@ -65,12 +84,25 @@ impl ExistingProducts {
         family: Family,
         (shape, polarizations, channels): ([usize; 2], usize, usize),
         (psf, residual): (bool, bool),
+        weight: bool,
+        read_residual_mask: bool,
+        cube: bool,
     ) -> Result<Self, PrepareError> {
         let planes = match family {
             Family::Single => channels,
             Family::Taylor { .. } => 1,
         };
         let mut tile_bytes = 0;
+        let mut mosaic_beam = None;
+        let residual_in_image_units = residual
+            && (weight
+                || (read_residual_mask && (cube || matches!(family, Family::Taylor { .. }))));
+        let mut saved_residual_mask_bytes =
+            (residual && (weight || read_residual_mask)).then_some(0);
+        let mut primary_beam_mask_bytes = 0;
+        let mut custom_residual_mask = false;
+        let mut restored_mask_bytes = 0;
+        let mut masked_taylor_residual = None;
         let mut bases = Vec::new();
         if psf {
             bases.extend(["psf", "sumwt"]);
@@ -78,10 +110,43 @@ impl ExistingProducts {
         if residual {
             bases.push("residual");
         }
+        if weight {
+            bases.extend(["weight", "pb"]);
+        }
         for base in bases {
             for name in family.names(base) {
                 let path = product_path(prefix, &name);
                 let image = open(&path)?;
+                if base == "pb" {
+                    mosaic_beam = Some(SavedMosaicBeam::new(&path, &image).map_err(|error| {
+                        PrepareError::Restart {
+                            path: path.clone(),
+                            reason: error.to_string(),
+                        }
+                    })?);
+                    continue;
+                }
+                if base == "residual"
+                    && let Some(bytes) = &mut saved_residual_mask_bytes
+                    && image.default_mask_name().is_some()
+                {
+                    match family {
+                        Family::Taylor { .. } => {
+                            masked_taylor_residual.get_or_insert_with(|| path.clone());
+                        }
+                        Family::Single if image.default_mask_name().as_deref() != Some("mask0") => {
+                            if weight || cube {
+                                return Err(PrepareError::Restart {
+                                    path,
+                                    reason: "this saved residual must use CASA's generated mask0 or have no default mask (#944)".into(),
+                                });
+                            }
+                            custom_residual_mask = true;
+                        }
+                        Family::Single => {}
+                    }
+                    *bytes = (*bytes).max(residual_mask_bytes(&image, &path)?);
+                }
                 tile_bytes = image
                     .tile_shape()
                     .iter()
@@ -99,6 +164,49 @@ impl ExistingProducts {
                 }
             }
         }
+        if residual && read_residual_mask && !weight && !cube && matches!(family, Family::Single) {
+            let path = product_path(prefix, "pb");
+            let has_pb = path.exists();
+            if has_pb {
+                let image = open(&path)?;
+                if image.default_mask_name().as_deref() == Some("mask0") {
+                    primary_beam_mask_bytes = residual_mask_bytes(&image, &path)?;
+                }
+            }
+            let path = product_path(prefix, "image");
+            if path.exists() {
+                let image = open(&path)?;
+                if image
+                    .default_mask_name()
+                    .is_some_and(|name| !has_pb || name != "mask0")
+                {
+                    restored_mask_bytes = residual_mask_bytes(&image, &path)?;
+                }
+            }
+        }
+        let mut saved_model_plane_bytes = 0;
+        let mut saved_pbcor_mask_bytes = None;
+        if cube && residual_in_image_units {
+            let path = product_path(prefix, "model");
+            if path.exists() {
+                let model = open(&path)?;
+                let cells = (shape[0] * shape[1]) as u64;
+                let backing = if model.tiled_io_stats().is_some() {
+                    let tile = 4 * model.tile_shape().iter().product::<usize>() as u64;
+                    CACHE_BYTES as u64 + 2 * tile
+                } else {
+                    12 * model.shape().iter().product::<usize>() as u64
+                };
+                saved_model_plane_bytes = 4 * cells + backing;
+            }
+            let path = product_path(prefix, "image.pbcor");
+            if path.exists() {
+                let image = open(&path)?;
+                if image.default_mask_name().is_some() {
+                    saved_pbcor_mask_bytes = Some(residual_mask_bytes(&image, &path)?);
+                }
+            }
+        }
         Ok(Self {
             prefix: prefix.to_path_buf(),
             family,
@@ -107,6 +215,16 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
+            cube,
+            saved_model_plane_bytes,
+            saved_pbcor_mask_bytes,
+            residual_in_image_units,
+            saved_residual_mask_bytes,
+            primary_beam_mask_bytes,
+            custom_residual_mask,
+            restored_mask_bytes,
+            masked_taylor_residual,
+            mosaic_beam,
             psf_beams: None,
             psf_pixel_beams: None,
             mask_beams: None,
@@ -235,6 +353,81 @@ impl ExistingProducts {
         self.residual
     }
 
+    /// Whether restoration reads this saved single-term cube residual.
+    pub(crate) const fn reads_cube_residual(&self) -> bool {
+        self.residual && self.cube
+    }
+
+    /// Whether restoration reads this saved Taylor residual family.
+    pub(crate) const fn reads_taylor_residual(&self) -> bool {
+        self.residual && matches!(self.family, Family::Taylor { .. })
+    }
+
+    /// A direction-dependent saved residual is already in the image
+    /// units CASA restores and passes to its next minor cycle.
+    pub(crate) const fn residual_in_image_units(&self) -> bool {
+        self.residual_in_image_units
+    }
+
+    /// Scratch for one saved residual mask, with zero
+    /// bytes when the residual has no pixel mask.
+    pub(crate) const fn saved_residual_mask_bytes(&self) -> Option<u64> {
+        self.saved_residual_mask_bytes
+    }
+
+    pub(crate) const fn primary_beam_mask_bytes(&self) -> u64 {
+        self.primary_beam_mask_bytes
+    }
+
+    pub(crate) const fn custom_residual_mask(&self) -> bool {
+        self.custom_residual_mask
+    }
+
+    pub(crate) const fn restored_mask_bytes(&self) -> u64 {
+        self.restored_mask_bytes
+    }
+
+    pub(crate) fn primary_beam_mask(
+        &self,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
+        self.pixel_mask("pb", 0)
+    }
+
+    /// Whether a saved single-term residual governs the first minor cycle.
+    pub(crate) const fn reads_mosaic_residual(&self) -> bool {
+        matches!(self.family, Family::Single) && self.residual_in_image_units()
+    }
+
+    /// A split mosaic cube major cycle writes only residual values before
+    /// the outer imager optionally copies the saved PB mask.
+    pub(crate) const fn reads_mosaic_cube_residual(&self) -> bool {
+        self.cube && self.reads_mosaic_residual()
+    }
+
+    pub(crate) const fn saved_model_plane_bytes(&self) -> u64 {
+        self.saved_model_plane_bytes
+    }
+
+    pub(crate) const fn saved_pbcor_mask_bytes(&self) -> Option<u64> {
+        self.saved_pbcor_mask_bytes
+    }
+
+    /// The first masked Taylor residual a CLEAN continuation would use.
+    pub(crate) fn masked_taylor_residual(&self) -> Option<&Path> {
+        self.masked_taylor_residual.as_deref()
+    }
+
+    /// Saved PB and mask, independent of the new residual cutoff.
+    pub(crate) fn mosaic_beam(&self) -> Option<&SavedMosaicBeam> {
+        self.mosaic_beam.as_ref()
+    }
+
+    /// Whether the two-term correction already left its auxiliary PB image.
+    pub(crate) fn has_higher_primary_beam(&self) -> bool {
+        matches!(self.family, Family::Taylor { terms: 2 })
+            && product_path(&self.prefix, "pb.tt1").exists()
+    }
+
     /// The `(terms, moments)` of each channel: one of each, or a Taylor
     /// family's coefficients and PSF moments.
     const fn terms(&self) -> (usize, usize) {
@@ -259,12 +452,40 @@ impl ExistingProducts {
     }
 
     /// Bytes the pass images of `channels` channels hold: the residual
-    /// terms and PSF moments in `f32` and two sums of weights per moment.
+    /// terms, PSF moments and saved sensitivity in `f32`, plus two
+    /// sums of weights per moment.
     pub(crate) fn images_bytes(&self, channels: usize) -> u64 {
         let (terms, moments) = self.terms();
         let planes = channels * self.polarizations;
         let cells = self.shape[0] * self.shape[1];
-        (planes * (cells * (terms + moments) * 4 + moments * 2 * 8)) as u64
+        let weight_planes = if self.mosaic_beam.is_some() {
+            moments
+        } else {
+            0
+        };
+        let image_planes = terms + moments + weight_planes;
+        (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
+    }
+
+    /// The scalar sum in this field's stored PSF normalization, if filled.
+    pub(crate) fn positive_scalar_sum(&self) -> Result<Option<f64>, ImageError> {
+        let path = product_path(&self.prefix, "sumwt");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let image = PagedImage::<f32>::open_with_cache(path, CACHE_BYTES)?;
+        let values = image.get_slice(&[0; 4], &[1; 4])?;
+        let value = f64::from(values[&[0; 4][..]]);
+        Ok((value.is_finite() && value > 0.0).then_some(value))
+    }
+
+    /// The saved-residual path cannot normalize with an unfilled sum.
+    /// CASA fills the sum only when it grids the field.
+    pub(crate) fn nonpositive_sum_weight(&self) -> ImageError {
+        ImageError::InvalidMetadata(format!(
+            "{} has a nonpositive saved sum of weights; use calcres=True to refill it by gridding (#944)",
+            product_path(&self.prefix, "sumwt").display()
+        ))
     }
 
     /// The images of domain 0 a pass forming its PSF and residual would
@@ -285,9 +506,14 @@ impl ExistingProducts {
                 }
             }
         }
-        // A pass's PSF peaks at its principal sum of weights; every moment
-        // shares that one divisor (`SIImageStore::normPSF`).
         let principal = |channel: usize, pol: usize| sums[channel * moments * pols + pol];
+        // Single-term consumers fit and publish the saved PSF in image
+        // units. Taylor consumers take every moment in the gridding units
+        // obtained by undoing the shared principal normalization.
+        let psf_scale = |channel: usize, pol: usize| match self.family {
+            Family::Single => 1.0,
+            Family::Taylor { .. } => principal(channel, pol),
+        };
         let mut psf = vec![0.0; channels.len() * moments * pols * cells];
         for (moment, name) in self.family.names("psf").iter().enumerate() {
             let read = self.read(name, channels.clone())?;
@@ -298,11 +524,40 @@ impl ExistingProducts {
                         &mut psf[plane * cells..(plane + 1) * cells],
                         &read,
                         (channel, pol),
-                        principal(channel, pol),
+                        psf_scale(channel, pol),
                     );
                 }
             }
         }
+        // SIImageStore::divideWeightBySumwt normalizes only the principal
+        // weight. The higher Taylor moments on disk already have their raw
+        // scale. Multiply the principal weight by its saved sum of weights
+        // to recover the sensitivity the normal state expects.
+        let weight = if self.mosaic_beam.is_some() {
+            let mut weight = vec![0.0; channels.len() * moments * pols * cells];
+            for (moment, name) in self.family.names("weight").iter().enumerate() {
+                let read = self.read(name, channels.clone())?;
+                for channel in 0..channels.len() {
+                    for pol in 0..pols {
+                        let plane = (channel * moments + moment) * pols + pol;
+                        let scale = if moment == 0 {
+                            principal(channel, pol)
+                        } else {
+                            1.0
+                        };
+                        self.write_plane(
+                            &mut weight[plane * cells..(plane + 1) * cells],
+                            &read,
+                            (channel, pol),
+                            scale,
+                        );
+                    }
+                }
+            }
+            Some(weight)
+        } else {
+            None
+        };
         let mut images = PassImages {
             domain: 0,
             shape: self.shape,
@@ -312,10 +567,82 @@ impl ExistingProducts {
             psf: Some(psf),
             sum_weights: sums.clone(),
             published_sum_weights: sums,
-            weight: None,
+            weight,
         };
         self.fill_residual(&mut images)?;
         Ok(images)
+    }
+
+    /// MVC Taylor moments already use the normalized image units of the
+    /// solver and publisher. Read each saved PSF directly in that scale.
+    pub(crate) fn mvc_taylor_psf(&self, psf: &mut [f32]) -> Result<[f32; 3], ImageError> {
+        let cells = self.shape[0] * self.shape[1];
+        let mut weights = [0.0; 3];
+        for (term, weight) in weights.iter_mut().enumerate() {
+            let plane = self.read(&format!("psf.tt{term}"), 0..1)?;
+            self.write_plane(
+                &mut psf[term * cells..(term + 1) * cells],
+                &plane,
+                (0, 0),
+                1.0,
+            );
+            let sum = self.read(&format!("sumwt.tt{term}"), 0..1)?;
+            *weight = sum[&[0, 0, 0, 0][..]];
+        }
+        Ok(weights)
+    }
+
+    /// Read the principal saved residual's default mask for SIImageStore's
+    /// initial peak measurement in the single-plane continuation.
+    pub(crate) fn residual_mask(
+        &self,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
+        self.residual_mask_at(0)
+    }
+
+    /// Default pixel mask of one channel in a saved Stokes-I residual.
+    pub(crate) fn residual_mask_at(
+        &self,
+        channel: usize,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
+        let name = match self.family {
+            Family::Single => "residual",
+            Family::Taylor { .. } => "residual.tt0",
+        };
+        self.pixel_mask(name, channel)
+    }
+
+    fn pixel_mask(
+        &self,
+        name: &str,
+        channel: usize,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, ImageError> {
+        let image =
+            PagedImage::<f32>::open_with_cache(product_path(&self.prefix, name), CACHE_BYTES)?;
+        let [nx, ny] = self.shape;
+        let mask = image.get_mask_slice(&[0, 0, 0, channel], &[nx, ny, 1, 1], &[1; 4])?;
+        Ok(mask.map(|mask| {
+            casa_imaging_deconvolution::Support::new(
+                casa_imaging_deconvolution::PlaneShape::new(nx, ny),
+                mask.iter().copied().collect(),
+            )
+        }))
+    }
+
+    /// Read MVC's saved normalized Taylor residuals independently of the
+    /// cube. CASA's first minor cycle can use these before any cube refresh.
+    pub(crate) fn read_mvc_taylor_residual(&self, residual: &mut [f32]) -> Result<(), ImageError> {
+        let cells = self.shape[0] * self.shape[1];
+        for term in 0..2 {
+            let plane = self.read(&format!("residual.tt{term}"), 0..1)?;
+            self.write_plane(
+                &mut residual[term * cells..(term + 1) * cells],
+                &plane,
+                (0, 0),
+                1.0,
+            );
+        }
+        Ok(())
     }
 
     /// Set the residual of `images`, a pass's images of domain 0 with
@@ -323,7 +650,8 @@ impl ExistingProducts {
     /// the PSF alone), to the residual read times the sum of weights that
     /// normalizes it: each plane's own, or a Taylor family's principal one
     /// for every term (`SIImageStoreMultiTerm::divideResidualByWeight`).
-    /// Without a residual read it is zero.
+    /// A direction-dependent continuation reads the saved normalized
+    /// residual as-is. Without a residual read it is zero.
     pub(crate) fn fill_residual(&self, images: &mut PassImages) -> Result<(), ImageError> {
         let (_, moments) = self.terms();
         let pols = images.polarizations;
@@ -371,7 +699,9 @@ impl ExistingProducts {
         if !self.residual {
             return Ok(residual);
         }
+        let normalized = self.residual_in_image_units();
         let scale = |channel: usize, pol: usize| match self.family {
+            _ if normalized => 1.0,
             Family::Single => principal(channel, pol),
             Family::Taylor { .. } => principal(0, pol),
         };
@@ -430,6 +760,28 @@ impl ExistingProducts {
         };
         image.get_slice(&[0, 0, 0, start], &[shape[0], shape[1], shape[2], count])
     }
+}
+
+/// One mask slice and its x-major copy, beside the image reader and mask
+/// backing. Direction-dependent single-term reuse is limited to one plane.
+fn residual_mask_bytes(image: &PagedImage<f32>, path: &Path) -> Result<u64, PrepareError> {
+    let backing = image
+        .mask_slice_working_bytes()
+        .map_err(|error| PrepareError::Restart {
+            path: path.to_path_buf(),
+            reason: error.to_string(),
+        })?;
+    let cells = image.shape().iter().product::<usize>() as u64;
+    // Reopening the residual holds its image-table metadata alongside the
+    // mask's own table and tile buffers. The image-side bound is the same
+    // as reading tile-backed pixels, or the full map cell for legacy images.
+    let image_backing = if image.tiled_io_stats().is_some() {
+        let tile = 4 * image.tile_shape().iter().product::<usize>() as u64;
+        CACHE_BYTES as u64 + 2 * tile
+    } else {
+        12 * cells
+    };
+    Ok(2 * cells + backing + image_backing)
 }
 
 /// CASA reuses the PSF header only when its complete beam matrix has the

@@ -22,9 +22,9 @@ pub(super) struct TimeContext<'a, 'b> {
     pub(super) time: usize,
     pub(super) time_mjd_s: f64,
     pub(super) field: FieldId,
-    /// The phase-tracking direction: the pointing law's fallback.
+    /// The phase-tracking direction requested for imaging.
     pub(super) phase: SkyDirection,
-    /// The field's observation direction.
+    /// The field's observation direction, also used when AW has no pointing sample.
     pub(super) observation: SkyDirection,
     pub(super) rows: &'a [bool],
 }
@@ -138,7 +138,7 @@ impl GeometryPlan {
                         antenna,
                         [time_s, centroid.seconds_since(sample, mjd_origin)],
                         context.scale(),
-                        context.phase,
+                        context.observation,
                     )?;
                     directions
                         .centroid
@@ -272,7 +272,7 @@ impl GeometryPlan {
             antenna,
             [context.partition_time_s(), context.time_mjd_s],
             context.scale(),
-            context.phase,
+            context.observation,
         )?;
         directions.visibility.insert(antenna, direction);
         Ok(direction)

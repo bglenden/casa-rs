@@ -366,6 +366,23 @@ CARGO_INCREMENTAL=0 cargo run -p casa-measures-tools --bin package_snapshot \
   -- --input /path/to/measures-data
 ```
 
+### Simulation antenna configurations
+
+`simobserve` searches for an antenna configuration in the project directory,
+at the supplied path, then under `alma/simmos` in the discovered data roots.
+Names such as `alma.out01.cfg` and resolution forms such as
+`alma;0.078arcsec` need that configuration repository. Explicit configuration
+file paths also work with the compact measures snapshot.
+
+The public configuration files are in NRAO's
+[CASA runtime-data archives](https://casa.nrao.edu/download/casaconfig/data/).
+Use an existing CASA data root, or copy the archive's `alma/simmos` directory
+to `<measures-data>/alma/simmos` in an already valid measures runtime, then
+set `CASA_RS_MEASURESPATH` to `<measures-data>`. The default `~/.casa/data`
+location works as well. The compact packaged measures snapshot does not
+include antenna configurations; simulation reads the external files without
+downloading them or requiring CASA software at runtime.
+
 ## Development and Verification
 
 [`AGENTS.md`](AGENTS.md) is the repository operating contract;

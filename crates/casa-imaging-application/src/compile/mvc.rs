@@ -28,6 +28,12 @@ pub(crate) fn cube_request(
     cube.mvc_output_channels = Some(channels);
     cube.mvc_auto_channels = false;
     let channels = channels.get();
+    if let crate::Gridder::Awproject(aw) = &mut cube.gridder {
+        // CASA's MVC helper always builds wideband cube cells and uses the
+        // direct, rather than conjugate, frequency for the cube passes.
+        aw.wbawp = true;
+        aw.conjbeams = false;
+    }
     cube.specmode = SpecMode::Cube;
     cube.deconvolver = Deconvolver::Hogbom;
     cube.nterms = 1;
@@ -35,7 +41,11 @@ pub(crate) fn cube_request(
     cube.start = Some(format!("{lower}Hz"));
     cube.width = Some(format!("{}Hz", (upper - lower) / channels as f64));
     cube.interpolation = CubeInterpolation::Nearest;
+    // CASA's MVC cube uses usecubebriggs=False and reuses the continuum density.
+    cube.perchanweightdensity = false;
     cube.restoration = false;
+    cube.startmodel.clear();
+    cube.continued_model = false;
     cube.write_pb = true;
     Ok(casa_imaging_runtime::Admitted {
         value: cube,
@@ -91,6 +101,7 @@ pub(crate) struct TaylorView {
         casa_coordinates::CoordinateSystem,
     )>,
     pub(crate) expansion_reference_hz: f64,
+    pub(crate) start: Option<MvcStart>,
     /// Held for the lifetime of this additional view and its compiled form.
     pub(crate) reservation: casa_imaging_runtime::Reservation,
 }
@@ -107,6 +118,7 @@ pub(crate) struct CompiledTaylorView {
         casa_coordinates::CoordinateSystem,
     )>,
     pub(crate) expansion_reference_hz: f64,
+    pub(crate) start: Option<MvcStart>,
     /// The prepared and compiled view stays charged while it is resident.
     pub(crate) reservation: casa_imaging_runtime::Reservation,
 }
@@ -132,6 +144,7 @@ impl TaylorView {
             problem,
             coordinates: self.coordinates,
             expansion_reference_hz: self.expansion_reference_hz,
+            start: self.start,
             reservation: self.reservation,
         })
     }
@@ -152,8 +165,8 @@ pub(super) struct TaylorInputs<'a> {
 }
 
 /// Build the Taylor image view without opening or surveying the observation
-/// again. CASA keeps its Taylor image WCS at the band centre while the
-/// supplied `reffreq` governs its cube-to-Taylor expansion.
+/// again. The published Taylor axis spans the cube channels. The expansion
+/// uses `reffreq` or the midpoint of the surveyed band.
 pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, super::PrepareError> {
     use casa_imaging_model::{ModelBounds, ModelLifecycleRequirements, NumericPrecision};
     let TaylorInputs {
@@ -169,11 +182,11 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
         has_primary_beam,
     } = inputs;
     // This initial MVC implementation owns exactly one fixed-centre image
-    // domain and one Stokes-I, two-term standard-gridder problem. In
+    // domain and one Stokes-I, two-term problem. In
     // particular, an outlier file or facets would make the small metadata
     // envelope below scale with data it does not yet account for.
     check_view_scope(parent, surveyed.stores.len(), centre.ephemeris.is_some())?;
-    let reservation = casa_imaging_runtime::admit(
+    let mut reservation = casa_imaging_runtime::admit(
         &context.host,
         &context.policy,
         &casa_imaging_runtime::Demand {
@@ -191,11 +204,14 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
         None,
         None,
     )?;
-    // CASA's `cube2tt` copies the cube image coordinates and changes only
-    // the spectral reference pixel, value and increment. The rest-frequency
-    // label therefore comes from the cube, not the independently prepared
-    // continuum axis (`PyMtmfsViaCubeSynthesisImager::copy_image`).
-    spectral.image.rest_frequency_hz = surveyed.spectral.image.rest_frequency_hz;
+    // CASA's `PyMtmfsViaCubeSynthesisImager::copy_image` gives the Taylor
+    // plane the cube's end-channel midpoint, full width and rest label.
+    let cube = surveyed.spectral;
+    let first_hz = cube.image.reference_frequency_hz;
+    let last_hz = first_hz + (cube.output_channels - 1) as f64 * cube.image.increment_hz;
+    spectral.image.reference_frequency_hz = (first_hz + last_hz) / 2.0;
+    spectral.image.increment_hz = cube.output_channels as f64 * cube.image.increment_hz;
+    spectral.image.rest_frequency_hz = cube.image.rest_frequency_hz;
     let taylor_surveyed = super::Surveyed {
         stores: surveyed.stores,
         reference: surveyed.reference,
@@ -223,6 +239,13 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     let specification =
         super::specification::specification(request, &spectral, specification_inputs)?;
     let geometry = super::geometry(request, &domains, centre, &spectral);
+    let start = prepare_start(
+        parent,
+        &domains[0],
+        cube.output_channels,
+        context,
+        &mut reservation,
+    )?;
     let samples = super::domains::model_samples(&domains, request.nterms, &request.stokes)?;
     Ok(TaylorView {
         specification,
@@ -236,32 +259,41 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
             .map(|domain| (domain.role, domain.coordinates))
             .collect(),
         expansion_reference_hz,
+        start,
         reservation,
     })
 }
 
-/// The first native MVC slice forms a fresh cube and its two-term Taylor
-/// products. Cleaning uses nsigma=0 and spatial-only user boxes. Restart
-/// and side effects remain refused (#1069).
+/// MVC forms a fresh cube and its two-term Taylor products. Cleaning uses
+/// nsigma=0 and spatial-only user boxes. A standard-gridder continuation
+/// reads both model families or projects explicit Taylor start models using
+/// the saved primary beams (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
 ) -> Result<(), super::PrepareError> {
     use casa_imaging_model::RestoringBeamPolicy;
     use casa_types::measures::frequency::FrequencyRef;
+    let field_limit = if matches!(
+        request.gridder,
+        crate::Gridder::Awp2 { computepastep, .. } if computepastep < 180.0
+    ) {
+        2
+    } else {
+        1
+    };
     if request.vis.len() != 1
-        || selected_fields != 1
+        || !(1..=field_limit).contains(&selected_fields)
         || (request.niter != 0
             && (request.nsigma != 0.0
                 || request.mask_box.iter().any(|region| region.range.is_some())))
-        || !request.calcpsf
-        || !request.calcres
-        || request.tclean_restart
-        || request.has_start_model()
+        || (!request.calcpsf && (!restarts_standard_clean(request) || request.has_start_model()))
+        || (!request.calcres && request.calcpsf)
+        || ((request.tclean_restart || request.has_start_model())
+            && !restarts_standard_clean(request))
         || request.savemodel != crate::SaveModel::None
         || request.outlierfile.is_some()
         || request.fitspw.is_some()
-        || request.pbcor
         || request.usemask != crate::UseMask::User
         || request.mask_image.is_some()
         || request.pbmask != 0.0
@@ -276,6 +308,188 @@ pub(super) fn check_execution_scope(
     Ok(())
 }
 
+fn restarts_standard_clean(request: &ImagingRequest) -> bool {
+    request.tclean_restart
+        && request.niter > 0
+        && (!request.has_start_model()
+            || (request.startmodel.len() == 2 && request.startmodel.iter().all(Option::is_some)))
+        && matches!(request.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
+}
+
+/// The two saved Taylor terms, with beams when CASA projects an explicit
+/// start model to the cube before its first prediction.
+pub(crate) struct MvcStart {
+    pub(crate) model: super::StartModel,
+    pub(crate) projection_beams: Option<(MvcPrimaryBeam, MvcPrimaryBeam)>,
+    pub(crate) saved_psf: Option<MvcSavedPsf>,
+}
+
+/// The two saved normal families. The cube normal state reads its PSF and
+/// weights through ExistingProducts. MVC separately reads its saved beams
+/// and Taylor Hessian, which CASA keeps when makePSF is skipped.
+pub(crate) struct MvcSavedPsf {
+    pub(crate) cube_pb: casa_imaging_products::SavedMosaicBeam,
+    pub(crate) taylor_pb: casa_imaging_products::SavedMosaicBeam,
+    pub(crate) taylor: crate::restart::ExistingProducts,
+}
+
+/// A saved Float PB with a bounded tile cache and its read workspace.
+pub(crate) struct MvcPrimaryBeam {
+    path: std::path::PathBuf,
+    reading_bytes: u64,
+}
+
+impl MvcPrimaryBeam {
+    const CACHE_BYTES: usize = 64 * 1024;
+
+    fn prepare(path: std::path::PathBuf) -> Result<Self, super::PrepareError> {
+        let image = casa_images::PagedImage::<f32>::open_with_cache(&path, Self::CACHE_BYTES)
+            .map_err(|error| super::PrepareError::Restart {
+                path: path.clone(),
+                reason: error.to_string(),
+            })?;
+        let tile_bytes = image
+            .tile_shape()
+            .iter()
+            .fold(4_u64, |n, &axis| n.saturating_mul(axis as u64));
+        let reading_bytes = (Self::CACHE_BYTES as u64).saturating_add(tile_bytes.saturating_mul(2));
+        Ok(Self {
+            path,
+            reading_bytes,
+        })
+    }
+
+    pub(crate) fn open(&self) -> Result<casa_images::PagedImage<f32>, casa_images::ImageError> {
+        casa_images::PagedImage::open_with_cache(&self.path, Self::CACHE_BYTES)
+    }
+
+    pub(crate) fn reading_bytes(&self) -> u64 {
+        self.reading_bytes
+    }
+}
+
+fn prepare_start(
+    request: &ImagingRequest,
+    domain: &super::domains::PreparedImageDomain,
+    channels: usize,
+    context: &crate::RunContext,
+    view_charge: &mut casa_imaging_runtime::Reservation,
+) -> Result<Option<MvcStart>, super::PrepareError> {
+    use crate::restart::{
+        check_grid, continuation_products, mvc_cube_product, product_path, suffix,
+    };
+    if !restarts_standard_clean(request) {
+        return Ok(None);
+    }
+    let [nx, ny] = domain.image_size;
+    let template = casa_images::RegridTemplate {
+        coordinates: domain.coordinates.clone(),
+        shape: vec![nx, ny, 1, 1],
+    };
+    for path in continuation_products(request, &request.imagename)? {
+        let name = suffix(&request.imagename, &path);
+        if !mvc_cube_product(&name) {
+            check_grid(&path, &name, &template, None)?;
+        }
+    }
+    let required = |name, reason: &str| {
+        let path = product_path(&request.imagename, name);
+        if path.exists() {
+            Ok(path)
+        } else {
+            Err(super::PrepareError::Restart {
+                path,
+                reason: reason.into(),
+            })
+        }
+    };
+    let (model, projection_beams) = if request.has_start_model() {
+        let reason = "MVC startmodel requires the saved cube PSF and both primary beams (#1069)";
+        required("psf", reason)?;
+        let cube_pb = MvcPrimaryBeam::prepare(required("pb", reason)?)?;
+        let taylor_pb = MvcPrimaryBeam::prepare(required("pb.tt0", reason)?)?;
+        let model = super::StartModel::prepare(&request.startmodel, domain, 1, (2, 2))?;
+        (model, Some((cube_pb, taylor_pb)))
+    } else {
+        let reason =
+            "MVC continuation requires the saved cube and both Taylor model images (#1069)";
+        required("model", reason)?;
+        let tt0 = required("model.tt0", reason)?;
+        let tt1 = required("model.tt1", reason)?;
+        let model = super::StartModel::restart(
+            Box::new([Some(tt0), Some(tt1)]),
+            casa_images::RegridTemplate {
+                shape: vec![nx, ny, 1, 2],
+                ..template
+            },
+        );
+        (model, None)
+    };
+    let saved_psf = if request.calcpsf {
+        None
+    } else {
+        use casa_imaging_products::SavedMosaicBeam;
+        let reason = "MVC continuation requires saved cube and Taylor primary beams (#944)";
+        let beam = |name, expected| {
+            let path = required(name, reason)?;
+            let image = casa_images::PagedImage::<f32>::open_with_cache(
+                &path,
+                SavedMosaicBeam::CACHE_BYTES,
+            )
+            .map_err(|error| super::PrepareError::Restart {
+                path: path.clone(),
+                reason: error.to_string(),
+            })?;
+            let beam = SavedMosaicBeam::new(&path, &image).map_err(|error| {
+                super::PrepareError::Restart {
+                    path: path.clone(),
+                    reason: error.to_string(),
+                }
+            })?;
+            if beam.shape() != expected {
+                return Err(super::PrepareError::Restart {
+                    path,
+                    reason: format!(
+                        "saved MVC primary beam has shape {:?}, expected {expected:?}",
+                        beam.shape()
+                    ),
+                });
+            }
+            Ok(beam)
+        };
+        let mut taylor = crate::restart::ExistingProducts::new(
+            &request.imagename,
+            crate::restart::Family::Taylor { terms: 2 },
+            ([nx, ny], 1, 1),
+            (true, !request.calcres),
+            false,
+            !request.calcres,
+            false,
+        )?;
+        let mut charge = casa_imaging_runtime::admit(
+            &context.host,
+            &context.policy,
+            &casa_imaging_runtime::Demand {
+                phase: "saved MVC Taylor beam metadata",
+                memory: crate::restart::ExistingProducts::beam_reading_bytes(1, 1),
+            },
+        )?;
+        taylor.read_psf_beams(1, domain.direction.increment_rad()[0].abs())?;
+        charge.retain(taylor.beam_resident_bytes());
+        view_charge.join(charge);
+        Some(MvcSavedPsf {
+            cube_pb: beam("pb", [nx, ny, 1, channels])?,
+            taylor_pb: beam("pb.tt0", [nx, ny, 1, 1])?,
+            taylor,
+        })
+    };
+    Ok(Some(MvcStart {
+        model,
+        projection_beams,
+        saved_psf,
+    }))
+}
+
 /// The metadata envelope below applies only to this bounded view.
 fn check_view_scope(
     parent: &ImagingRequest,
@@ -285,10 +499,29 @@ fn check_view_scope(
     if store_count != 1
         || parent.outlierfile.is_some()
         || moving_centre
-        || !matches!(parent.gridder, crate::Gridder::Standard { facets } if facets.get() == 1)
+        || !(matches!(
+            parent.gridder,
+            crate::Gridder::Standard { facets } | crate::Gridder::Wproject { facets, .. }
+                if facets.get() == 1
+        ) || matches!(
+            parent.gridder,
+            crate::Gridder::Mosaic {
+                normtype: casa_imaging_model::ProductNormalization::FlatNoise,
+                conjbeams: false,
+                ..
+            } if parent.psfphasecenter.is_none()
+        ) || matches!(
+            parent.gridder,
+            crate::Gridder::Awproject(crate::AwProjection {
+                normtype: casa_imaging_model::ProductNormalization::FlatNoise,
+                ..
+            }) | crate::Gridder::Awp2 { .. }
+        ))
         || parent.stokes != [casa_imaging_model::PolarizationCoordinate::StokesI]
         || parent.nterms != 2
-        || parent.weighting != crate::Weighting::Natural
+        || (parent.weighting != crate::Weighting::Natural
+            && !matches!(parent.gridder, crate::Gridder::Awp2 { computepastep, .. }
+                if computepastep < 180.0 && parent.weighting == crate::Weighting::Uniform))
     {
         return Err(super::PrepareError::MvcViewUnsupported);
     }
@@ -400,9 +633,6 @@ mod tests {
         other.fitspw = Some("0".into());
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
-        other.pbcor = true;
-        assert!(check_execution_scope(&other, 1).is_err());
-        let mut other = parent.clone();
         other.usemask = crate::UseMask::Pb;
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
@@ -449,6 +679,45 @@ mod tests {
         let mut other = parent;
         other.weighting = crate::Weighting::Uniform;
         assert!(check_view_scope(&other, 1, false).is_err());
+    }
+
+    /// The CASA MVC helper forces wideband cells and direct frequency
+    /// selection for the cube, regardless of the input AW flags.
+    #[test]
+    fn aw_mvc_cube_uses_wideband_direct_frequency_cells() {
+        let parent = request(json!({
+            "gridder": "awproject", "specmode": "mvc", "deconvolver": "mtmfs",
+            "nterms": 2, "nchan": 3, "cfcache": "test.cf",
+            "wbawp": false, "conjbeams": true,
+        }));
+        let context = crate::RunContext {
+            host: casa_imaging_runtime::HostResources::detect().unwrap(),
+            policy: parent.resource_policy(),
+            cancel: casa_imaging_runtime::pass::Cancel::default(),
+            summary: None,
+        };
+        let cube = cube_request(&parent, [1.2e9, 1.8e9], &context).unwrap();
+        let crate::Gridder::Awproject(aw) = &cube.value.gridder else {
+            panic!("the cube uses the AW gridder");
+        };
+        assert!(aw.wbawp);
+        assert!(!aw.conjbeams);
+        let crate::Gridder::Awproject(aw) = &parent.gridder else {
+            panic!("the parent uses the AW gridder");
+        };
+        assert!(!aw.wbawp);
+        assert!(aw.conjbeams);
+    }
+
+    #[test]
+    fn awp2_mvc_taylor_view_keeps_the_one_domain_envelope() {
+        let parent = request(json!({
+            "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs",
+            "nterms": 2, "nchan": 3,
+        }));
+        assert!(check_view_scope(&parent, 1, false).is_ok());
+        assert!(check_view_scope(&parent, 2, false).is_err());
+        assert!(check_view_scope(&parent, 1, true).is_err());
     }
 
     #[test]

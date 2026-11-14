@@ -50,6 +50,9 @@ pub enum PsfBeamFitError {
     /// `StokesImageUtil::FitGaussianPSF` refuses to fit it.
     #[error("Peak of psf is outside the inner quarter of defined image")]
     PeakOutsideInnerQuarter,
+    /// The main-lobe fit samples lie on one line and cannot determine an ellipse.
+    #[error("collinear PSF samples cannot determine a restoring beam")]
+    CollinearMainLobe,
     /// No attempt, from `cutoff` down by factors of 1.5, fitted the main
     /// lobe (`StokesImageUtil::FitGaussianPSF`).
     #[error(
@@ -82,6 +85,12 @@ pub enum FitAttemptFailure {
         /// The attempt's cutoff.
         cutoff: f32,
     },
+    /// The selected samples lie on one line.
+    #[error("collinear samples at psfcutoff={cutoff:.6}")]
+    Collinear {
+        /// The attempt's cutoff.
+        cutoff: f32,
+    },
     /// The Gaussian fit did not converge.
     #[error("fit failed to converge at psfcutoff={cutoff:.6}")]
     NotConverged {
@@ -92,6 +101,7 @@ pub enum FitAttemptFailure {
 
 const CASA_FWHM_TO_INTERNAL: f64 = 0.600_561_204_393_224_9;
 const MAX_FIT_ATTEMPTS: usize = 50;
+const MIN_FIT_SAMPLES: usize = 12;
 const MIN_SIGMA_RAD: f64 = 1.0e-12;
 const TARGET_INTERPOLATED_POINTS: usize = 3001;
 const PSF_PATCH_RADIUS: usize = 20;
@@ -263,32 +273,30 @@ fn restoring_beam(beam: EllipticalGaussian) -> RestoringBeam {
 /// Returns [`PsfBeamFitError::EmptyPsf`] or
 /// [`PsfBeamFitError::PeakNotPositive`] for a PSF without a positive peak,
 /// [`PsfBeamFitError::PeakOutsideInnerQuarter`] for one peaking away from the
-/// plane's centre, and [`PsfBeamFitError::NotFitted`] when no attempt
-/// converges.
+/// plane's centre, [`PsfBeamFitError::CollinearMainLobe`] when the selected
+/// samples cannot constrain an ellipse, or [`PsfBeamFitError::NotFitted`]
+/// when no attempt converges.
 pub fn fit_restoring_beam(
     psf: &[f32],
     shape: [usize; 2],
     cell_size_rad: [f64; 2],
     cutoff: f32,
 ) -> Result<RestoringBeam, PsfBeamFitError> {
-    if peak_outside_inner_quarter(psf, shape)? {
+    let (peak_index, _) = positive_peak(psf)?;
+    if peak_outside_inner_quarter(peak_index, shape) {
         return Err(PsfBeamFitError::PeakOutsideInnerQuarter);
     }
     fit_main_lobe(psf, shape, cell_size_rad, cutoff)
 }
 
-/// Whether `psf`'s peak lies outside the plane's inner quarter
+/// Whether the peak lies outside the plane's inner quarter
 /// (`StokesImageUtil::FitGaussianPSF`).
-pub(crate) fn peak_outside_inner_quarter(
-    psf: &[f32],
-    shape: [usize; 2],
-) -> Result<bool, PsfBeamFitError> {
-    let (peak_index, _) = positive_peak(psf)?;
+pub(crate) fn peak_outside_inner_quarter(peak_index: usize, shape: [usize; 2]) -> bool {
     let pixel = [peak_index / shape[1], peak_index % shape[1]];
-    Ok(pixel.iter().zip(shape).any(|(&at, extent)| {
+    pixel.iter().zip(shape).any(|(&at, extent)| {
         let (at, extent) = (at as f64, extent as f64);
         at < extent / 4.0 || at > 3.0 * extent / 4.0
-    }))
+    })
 }
 
 /// [`fit_restoring_beam`] around the peak, wherever it lies.
@@ -303,27 +311,41 @@ pub(crate) fn fit_main_lobe(
     let mut last = FitAttemptFailure::NotConverged {
         cutoff: active_cutoff,
     };
+    let mut saw_collinear = false;
+    let mut attempted_fit = false;
     for _attempt in 1..=MAX_FIT_ATTEMPTS {
         let failure =
             match extract_fit_samples(psf, shape, peak_index, peak, cell_size_rad, active_cutoff) {
                 None => FitAttemptFailure::NoMainLobe {
                     cutoff: active_cutoff,
                 },
-                Some((samples, _active)) if samples.len() < 12 => {
+                Some(FitSamples::Collinear) => {
+                    saw_collinear = true;
+                    FitAttemptFailure::Collinear {
+                        cutoff: active_cutoff,
+                    }
+                }
+                Some(FitSamples::Points(samples)) if samples.len() < MIN_FIT_SAMPLES => {
                     FitAttemptFailure::TooFewSamples {
                         samples: samples.len(),
                         cutoff: active_cutoff,
                     }
                 }
-                Some((samples, _active)) => match fit_gaussian_beam_casa(&samples, cell_size_rad) {
-                    Some(beam) => return Ok(beam),
-                    None => FitAttemptFailure::NotConverged {
+                Some(FitSamples::Points(samples)) => {
+                    attempted_fit = true;
+                    if let Some(beam) = fit_gaussian_beam_casa(&samples, cell_size_rad) {
+                        return Ok(beam);
+                    }
+                    FitAttemptFailure::NotConverged {
                         cutoff: active_cutoff,
-                    },
-                },
+                    }
+                }
             };
         last = failure;
         active_cutoff /= 1.5;
+    }
+    if saw_collinear && !attempted_fit {
+        return Err(PsfBeamFitError::CollinearMainLobe);
     }
     Err(PsfBeamFitError::NotFitted {
         attempts: MAX_FIT_ATTEMPTS,
@@ -334,7 +356,7 @@ pub(crate) fn fit_main_lobe(
 
 /// The flat index and value of `psf`'s peak, which must be positive and
 /// finite.
-fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
+pub(crate) fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
     let (peak_index, peak) = peak_flat(psf).ok_or(PsfBeamFitError::EmptyPsf)?;
     if !(peak.is_finite() && peak > 0.0) {
         return Err(PsfBeamFitError::PeakNotPositive { peak });
@@ -347,15 +369,14 @@ fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
 ///
 /// CASA defines the positive sidelobe as `max(psf - fitted_gaussian)` while
 /// preserving the magnitude of the most-negative original PSF sample. The
-/// Gaussian is unit peak and is scaled to the measured PSF peak before the
-/// subtraction.
+/// Gaussian is scaled to the PSF peak when measuring a normalized fraction.
 #[cfg(test)]
 pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
     psf: &[f32],
     shape: [usize; 2],
     beam: RestoringBeam,
 ) -> Result<f64, PsfBeamFitError> {
-    fitted_psf_sidelobe_fraction_with_cell(psf, shape, beam, [1.0, 1.0])
+    fitted_psf_sidelobe_fraction_with_cell(psf, shape, beam, [1.0, 1.0], false)
 }
 
 /// `beam` is in units of the first direction-axis pixel; `cell` gives each
@@ -365,6 +386,7 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
     shape: [usize; 2],
     beam: RestoringBeam,
     cell: [f64; 2],
+    image_units: bool,
 ) -> Result<f64, PsfBeamFitError> {
     if psf.len() != shape[0].saturating_mul(shape[1]) {
         return Err(PsfBeamFitError::ShapeMismatch {
@@ -373,6 +395,9 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
         });
     }
     let (_, peak) = positive_peak(psf)?;
+    // An existing CASA PSF keeps its image amplitude. MakeGaussianPSF
+    // subtracts a unit Gaussian and the result stays in those units.
+    let scale = if image_units { 1.0 } else { peak };
     // CASA's MakeGaussianPSF puts the beam at the image reference pixel,
     // not at the PSF's (possibly off-centre) maximum.
     let peak_pixel = [shape[0] / 2, shape[1] / 2];
@@ -381,7 +406,7 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
     let cos_pa = beam.position_angle_rad().cos();
     let sin_pa = beam.position_angle_rad().sin();
     // Beyond 16 times the larger sigma, exp(-r²/2) <= exp(-128)
-    // rounds to exactly zero in f32, before multiplication by the PSF peak.
+    // rounds to exactly zero in f32, before multiplication by the Gaussian scale.
     // Keep all PSF extrema, but evaluate the Gaussian only where it can matter.
     let radius = if sigma_minor > 0.0 {
         (16.0 * sigma_major.max(sigma_minor)).ceil() as usize
@@ -419,19 +444,28 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
             let dy = (y as f64 - peak_pixel[1] as f64) * cell[1];
             let u = dx * cos_pa + dy * sin_pa;
             let v = -dx * sin_pa + dy * cos_pa;
-            let gaussian = (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp()
-                as f32
-                * peak;
+            let exponent = 0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2));
+            // MakeGaussianPSF sets the saved-image Gaussian to zero at 20.
+            let gaussian = if !image_units || exponent < 20.0 {
+                (-exponent).exp() as f32 * scale
+            } else {
+                0.0
+            };
             maximum_delobed = maximum_delobed.max(sample - gaussian);
         }
     }
-    Ok(f64::from(minimum.abs().max(maximum_delobed)) / f64::from(peak))
+    Ok(f64::from(minimum.abs().max(maximum_delobed)) / f64::from(scale))
 }
 
 struct FitSample {
     x_rad: f64,
     y_rad: f64,
     value: f64,
+}
+
+enum FitSamples {
+    Points(Vec<FitSample>),
+    Collinear,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -489,7 +523,7 @@ fn extract_fit_samples(
     peak: f32,
     cell_size_rad: [f64; 2],
     cutoff: f32,
-) -> Option<(Vec<FitSample>, f32)> {
+) -> Option<FitSamples> {
     let deltas = [cell_size_rad[0].abs(), cell_size_rad[1].abs()];
     let nrow = PSF_PATCH_RADIUS
         .min(shape[0].saturating_sub(1))
@@ -532,6 +566,11 @@ fn extract_fit_samples(
         nrow_re,
         cutoff,
     )?;
+    if second_pass.samples.len() >= MIN_FIT_SAMPLES
+        && collinear_about_peak(&second_pass.samples, resampled_peak)
+    {
+        return Some(FitSamples::Collinear);
+    }
     let samples = second_pass
         .samples
         .iter()
@@ -543,7 +582,22 @@ fn extract_fit_samples(
             value: resampled[[sample.x_index, sample.y_index]] as f64,
         })
         .collect::<Vec<_>>();
-    Some((samples, cutoff))
+    Some(FitSamples::Points(samples))
+}
+
+/// The Gaussian is centred at the peak. Use the integer sample grid so the
+/// collinearity check is independent of cell units and coordinate rounding.
+fn collinear_about_peak(samples: &[SampleIndex], peak: (usize, usize)) -> bool {
+    let offset = |sample: &SampleIndex| {
+        [
+            sample.x_index as i128 - peak.0 as i128,
+            sample.y_index as i128 - peak.1 as i128,
+        ]
+    };
+    let Some([dx, dy]) = samples.iter().map(offset).find(|offset| *offset != [0, 0]) else {
+        return true;
+    };
+    samples.iter().map(offset).all(|[x, y]| dx * y == dy * x)
 }
 
 /// Port of casacore's `findPointsInLobe` main-lobe sample walk: spiral out
@@ -813,12 +867,12 @@ struct CasaParams {
 }
 
 fn fit_gaussian_beam_casa(samples: &[FitSample], cell_size_rad: [f64; 2]) -> Option<RestoringBeam> {
-    // StokesImageUtil::FitGaussianPSF seeds the fit with a 2.5-pixel-wide
-    // Gaussian at axial ratio 0.5 and position angle zero.
+    // StokesImageUtil::FitGaussianPSF starts with a 2.5-pixel-wide
+    // Gaussian at axial ratio 0.5 and a position angle of one radian.
     let accepted_params = CasaParams {
         width_fwhm_rad: 2.5 * cell_size_rad[0].abs().max(cell_size_rad[1].abs()),
         axial_ratio: 0.5,
-        position_angle_rad: 0.0,
+        position_angle_rad: 1.0,
     };
     let mut accepted_params = accepted_params;
     let (mut accepted_normal, mut accepted_known) =
@@ -1070,6 +1124,36 @@ fn casa_wrap_beam_position_angle(mut angle: f64) -> f64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_sparse_aw_psf_fits_with_casas_initial_position_angle() {
+        const SIZE: usize = 51;
+        let mut psf = include_bytes!("../tests/fixtures/sparse_aw_psf.f32le")
+            .chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("Float sample")))
+            .collect::<Vec<_>>();
+        let adjacent = 26 * SIZE + 26;
+        let sample = psf[adjacent];
+        let cell = [10.0_f64.to_radians() / 3600.0; 2];
+        for value in [sample, sample.next_up(), sample.next_down()] {
+            psf[adjacent] = value;
+            let beam = fit_restoring_beam(&psf, [SIZE, SIZE], cell, 0.35).expect("sparse AW beam");
+            let major_arcsec = beam.major_fwhm_rad().to_degrees() * 3600.0;
+            let minor_arcsec = beam.minor_fwhm_rad().to_degrees() * 3600.0;
+            assert!(
+                (major_arcsec / 1619.6436767578125 - 1.0).abs() < 1e-3,
+                "{beam:?}"
+            );
+            assert!(
+                (minor_arcsec / 64.02716064453125 - 1.0).abs() < 1e-3,
+                "{beam:?}"
+            );
+            assert!(
+                (beam.position_angle_rad().to_degrees() - 69.26249694824219).abs() < 0.01,
+                "{beam:?}"
+            );
+        }
+    }
+
     /// A plane of `[20, 20]` with a unit point at `pixel`, x-major.
     fn point_at(pixel: [usize; 2]) -> Vec<f32> {
         let mut psf = vec![0.0; 400];
@@ -1082,11 +1166,13 @@ mod tests {
     #[test]
     fn a_peak_outside_the_inner_quarter_is_refused_as_casa_refuses_it() {
         for inside in [[5, 5], [15, 15], [10, 10]] {
-            assert!(!peak_outside_inner_quarter(&point_at(inside), [20, 20]).unwrap());
+            let (peak, _) = positive_peak(&point_at(inside)).unwrap();
+            assert!(!peak_outside_inner_quarter(peak, [20, 20]));
         }
         for outside in [[4, 10], [16, 10], [10, 4], [10, 16]] {
             let psf = point_at(outside);
-            assert!(peak_outside_inner_quarter(&psf, [20, 20]).unwrap());
+            let (peak, _) = positive_peak(&psf).unwrap();
+            assert!(peak_outside_inner_quarter(peak, [20, 20]));
             assert!(matches!(
                 fit_restoring_beam(&psf, [20, 20], [1.0, 1.0], 0.35),
                 Err(PsfBeamFitError::PeakOutsideInnerQuarter)
@@ -1116,6 +1202,46 @@ mod tests {
             fit_window([512, 512], (236, 236), (276, 276)),
             ([231, 231], [51, 51])
         );
+    }
+
+    #[test]
+    fn the_fit_grid_detects_oblique_collinearity() {
+        let mut samples: Vec<_> = (10..=25)
+            .map(|x| SampleIndex {
+                x_index: x,
+                y_index: 2 * x - 1,
+            })
+            .collect();
+        assert!(collinear_about_peak(&samples, (20, 39)));
+        samples[0].y_index += 1;
+        assert!(!collinear_about_peak(&samples, (20, 39)));
+    }
+
+    #[test]
+    fn a_lower_cutoff_can_recover_a_two_dimensional_fit() {
+        let shape = [64, 64];
+        let psf: Vec<_> = (0..64 * 64)
+            .map(|index| {
+                let x = (index / 64) as f32 - 32.0;
+                let y = (index % 64) as f32 - 32.0;
+                (-(1.2 * x * x + y * y / 512.0)).exp()
+            })
+            .collect();
+        let cell = [1.0e-4; 2];
+        assert!(matches!(
+            extract_fit_samples(&psf, shape, 32 * 65, 1.0, cell, 0.35),
+            Some(FitSamples::Collinear)
+        ));
+        let lower_cutoff = 0.35_f32 / 1.5;
+        assert!(matches!(
+            extract_fit_samples(&psf, shape, 32 * 65, 1.0, cell, lower_cutoff),
+            Some(FitSamples::Points(samples)) if samples.len() >= MIN_FIT_SAMPLES
+        ));
+        let direct = fit_restoring_beam(&psf, shape, cell, lower_cutoff)
+            .expect("the lower cutoff includes transverse samples");
+        let retried = fit_restoring_beam(&psf, shape, cell, 0.35)
+            .expect("the collinear first attempt must retry");
+        assert_eq!(retried, direct);
     }
 
     #[test]

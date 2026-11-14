@@ -327,6 +327,26 @@ fn predict(
         lists.push(PathBuf::from(&run.parameters.complist));
     }
     lists.extend(calibrator.map(|calibrator| calibrator.list.clone()));
+    // CASA's simulator refuses these conversions, but its task ignores
+    // predict=False and publishes an unpredicted MS. Report the same cause
+    // before close writes DATA. REST image prediction remains supported.
+    if run.uvmode {
+        let frame = run
+            .parameters
+            .outframe
+            .parse::<FrequencyRef>()
+            .map_err(|error| SimobserveError::raised(error.to_string()))?;
+        if frame == FrequencyRef::Undefined {
+            return Err(SimobserveError::raised(
+                "Transformations to/from frame \"Undefined\" are not possible.",
+            ));
+        }
+        if frame == FrequencyRef::REST && !lists.is_empty() {
+            return Err(SimobserveError::raised(
+                "No MeasFrame specified for conversion of Frequency",
+            ));
+        }
+    }
     let named = lists
         .iter()
         .map(|list| list.display().to_string())

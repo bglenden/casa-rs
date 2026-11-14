@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Normal states assembled from major-cycle pass images.
 //!
-//! A major-cycle pass yields unnormalised dirty or residual images, PSF
+//! A gridding pass yields unnormalised dirty or residual images, PSF
 //! moments and `sumwt` per output channel. [`PassNormalState`] writes them
 //! into the normal-state representation the minor cycle and products read:
 //! resident coefficient families for the constant and Taylor bases, paged
-//! channel planes for a channel-local basis. A refresh keeps the previous
-//! state's PSF, `sumwt` and validity and replaces only the residual.
+//! channel planes for a channel-local basis. A refresh replaces the residual
+//! and keeps the previous PSF, `sumwt` and validity. A standard MFS restart can
+//! refill an unfilled scalar sum from the same residual pass.
 
 use std::ops::Range;
 
@@ -20,7 +21,7 @@ use super::{
 };
 use crate::FinalNormalState;
 
-/// Unnormalised images of one image domain from one pass over a contiguous
+/// Images of one image domain from one pass over a contiguous
 /// range of output channels.
 ///
 /// Planes are x-major (`index = x · height + y`), the layout every
@@ -40,6 +41,8 @@ pub struct PassImages {
     /// Dirty or residual planes, one per data term.
     pub residual: Vec<f32>,
     /// PSF moment planes on an initial pass; `None` on a residual pass.
+    /// Gridding supplies raw PSFs. A restart reusing a single-term PSF
+    /// supplies its saved image values.
     pub psf: Option<Vec<f32>>,
     /// `sumwt` of the PSF gridding per PSF-moment plane on an initial pass;
     /// empty otherwise. It normalises the PSF and weight planes.
@@ -157,6 +160,15 @@ impl PassNormalState {
         Ok(state)
     }
 
+    pub(crate) fn needs_scalar_weight(&self) -> bool {
+        self.basis == SpectralBasisPlan::Constant
+            && self.polarizations == 1
+            && self.domains.iter().any(|state| {
+                matches!(state, DomainState::Coupled { domain, .. }
+                if domain.primitives.published_sum_weights[0] <= 0.0)
+            })
+    }
+
     /// Add one pass's images of one domain.
     ///
     /// A non-finite image value or `sumwt` is a generated non-finite value,
@@ -164,15 +176,28 @@ impl PassNormalState {
     /// policies differ only on non-finite inputs, which the source flags or
     /// rejects before gridding. Nothing is changed when an append fails
     /// validation.
-    pub(crate) fn append(&mut self, images: PassImages) -> Result<(), NormalStateError> {
+    pub(crate) fn append(
+        &mut self,
+        images: PassImages,
+        gridded_scalar_weight: Option<f64>,
+    ) -> Result<(), NormalStateError> {
         let index = images.domain;
         if self.shapes.get(index) != Some(&images.shape)
             || images.polarizations != self.polarizations
         {
             return Err(NormalStateError::ProblemMismatch);
         }
-        if !all_finite(&images) {
+        if !all_finite(&images)
+            || gridded_scalar_weight.is_some_and(|weight| !(weight as f32).is_finite())
+        {
             return Err(NormalStateError::GeneratedNonfinite);
+        }
+        if gridded_scalar_weight.is_some()
+            && (self.basis != SpectralBasisPlan::Constant
+                || self.polarizations != 1
+                || !matches!(self.domains[index], DomainState::Coupled { .. }))
+        {
+            return Err(NormalStateError::ProblemMismatch);
         }
         if let DomainState::Channels {
             domain,
@@ -192,6 +217,15 @@ impl PassNormalState {
             let primitives = &mut domain.primitives;
             if images.psf.is_some() || images.residual.len() != primitives.dirty.len() {
                 return Err(NormalStateError::ProblemMismatch);
+            }
+            if let Some(sum) = gridded_scalar_weight
+                && primitives.published_sum_weights[0] <= 0.0
+            {
+                let sum = f64::from(sum as f32);
+                primitives.sum_weights[0] = sum;
+                primitives.published_sum_weights[0] = sum;
+                primitives.validity[0] = validity(sum, sum);
+                domain.refilled_sum_weight = true;
             }
             primitives.dirty = widen(&images.residual);
             *refreshed = true;

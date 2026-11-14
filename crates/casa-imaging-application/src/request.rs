@@ -42,6 +42,9 @@ pub struct ImagingRequest {
     /// run wrote its own; never a catalog value.
     #[serde(skip)]
     pub(crate) continued_model: bool,
+    /// Outlier destinations selected with the main image before execution.
+    #[serde(skip)]
+    pub(crate) numbered_outlier_outputs: Option<Vec<(PathBuf, PathBuf)>>,
     /// A supplied region file with no regions means zero support, not no mask.
     /// Internal reader provenance only; this is never a catalog parameter.
     #[serde(default)]
@@ -98,6 +101,9 @@ pub struct ImagingRequest {
     /// ephemeris name or table.
     #[serde(deserialize_with = "optional")]
     pub phasecenter: Option<String>,
+    /// Fixed direction for a mosaic PSF formed separately from the main image.
+    #[serde(default, deserialize_with = "optional")]
+    pub psfphasecenter: Option<String>,
     /// First selected channel when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_start: Option<usize>,
@@ -526,43 +532,6 @@ impl Weighting {
     }
 }
 
-/// Convolution-function set (`gridder`) and the parameters only it reads.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(tag = "gridder", rename_all = "lowercase")]
-pub enum Gridder {
-    /// The prolate-spheroidal kernel.
-    Standard {
-        /// Facets along each axis of the main image (CASA's `facets`): each
-        /// is gridded about its own centre.
-        facets: NonZeroUsize,
-    },
-    /// W-projection.
-    Wproject {
-        /// Facets along each image axis, each with its own W kernel set.
-        facets: NonZeroUsize,
-        /// W planes; `None` derives the count from the selected W range.
-        #[serde(deserialize_with = "optional")]
-        wprojplanes: Option<NonZeroUsize>,
-    },
-    /// The heterogeneous-array mosaic beams.
-    Mosaic {
-        /// Point each field's beam along the `POINTING` table.
-        usepointing: bool,
-        /// Flat-noise or flat-sky products.
-        #[serde(deserialize_with = "normalization")]
-        normtype: ProductNormalization,
-        /// Grid with each beam at its conjugate frequency about the image
-        /// frequency, on an image of one plane (tclean `conjbeams`).
-        conjbeams: bool,
-        /// Weigh each field by its own visibility density (tclean
-        /// `mosweight`, which `task_tclean.py` keeps only for the gridder
-        /// named `mosaic`); density weighting only.
-        mosweight: bool,
-    },
-    /// EVLA A-projection with W-projection.
-    Awproject(AwProjection),
-}
-
 /// The parameters of `gridder = awproject`.
 ///
 /// The four terms are tclean's, as `AWProjectFT::makeCFObject` reads them.
@@ -588,6 +557,10 @@ pub struct AwProjection {
     /// `√(2f₀² − f²)` about the image frequency `f₀`, and weigh it with the
     /// beam there (tclean `conjbeams`).
     pub conjbeams: bool,
+    /// The maximum PA distance of an imported buffer, in degrees.
+    pub computepastep: f64,
+    /// The PA change that triggers rotation of an imported buffer, degrees.
+    pub rotatepastep: f64,
     /// Sample each row's pointing from the `POINTING` table.
     pub usepointing: bool,
     /// Flat-noise or flat-sky products.
@@ -681,7 +654,7 @@ impl ImagingRequest {
     /// field's existing product, an unreadable output directory, an invalid
     /// outlier-name file, or an earlier PSF or residual that is missing.
     pub fn check_tclean_output_prefixes(&self) -> Result<(), crate::PrepareError> {
-        crate::restart::check(self)
+        crate::restart::check(self).map(|_| ())
     }
 
     /// Clone this request with task continuation enabled after output preflight.
@@ -690,38 +663,53 @@ impl ImagingRequest {
     /// # Errors
     /// An unsupported existing product or a conflicting explicit start model.
     pub fn with_tclean_restart(&self) -> Result<Self, crate::PrepareError> {
-        self.check_tclean_output_prefixes()?;
+        let (continuing, model) = crate::restart::check(self)?;
         let mut request = self.clone();
-        request.tclean_restart = !crate::restart::products(&self.imagename)?.is_empty();
-        request.continued_model = crate::restart::continues_model(&request);
+        request.tclean_restart = continuing;
+        request.continued_model = model;
         Ok(request)
     }
 
     /// Apply CASA's task output policy before summary creation or execution.
-    /// `restart=true` continues on the products at `imagename`; `false`
-    /// selects the next single-main-image namespace and protects every
-    /// existing chosen product.
+    /// `restart=true` continues on the products at `imagename`. With
+    /// `restart=false`, the main image and its outliers receive a common
+    /// suffix and every selected destination is checked before imaging.
     ///
     /// # Errors
-    /// Unsupported coordinated outlier numbering, invalid numbered names,
-    /// unreadable directories, or an occupied chosen scientific namespace.
+    ///
+    /// Invalid or duplicate names, unreadable directories or outlier file,
+    /// an occupied destination, or missing saved inputs.
     pub fn with_tclean_output_policy(&self, restart: bool) -> Result<Self, crate::PrepareError> {
         if restart {
             return self.with_tclean_restart();
         }
+        let mut prefixes = vec![self.imagename.clone()];
         if let Some(path) = &self.outlierfile {
-            return Err(crate::PrepareError::Restart {
-                path: path.clone(),
-                reason: "restart=False coordinated outlier numbering is unfinished (#944)".into(),
-            });
+            prefixes.extend(crate::compile::outlier_output_prefixes(path)?);
+        }
+        let mut outputs = crate::restart::next_prefixes(&prefixes)?.into_iter();
+        let mut unique = std::collections::BTreeSet::new();
+        for output in outputs.as_slice() {
+            let member = crate::restart::product_path(output, "model");
+            let absolute = std::path::absolute(&member).unwrap_or(member);
+            if !unique.insert(absolute) {
+                return Err(crate::PrepareError::DuplicateOutput {
+                    path: output.clone(),
+                });
+            }
+            crate::restart::check_prefix(output)?;
         }
         let mut request = self.clone();
-        request.imagename = crate::restart::next_prefix(&self.imagename)?;
-        crate::restart::check_prefix(&request.imagename)?;
+        request.imagename = outputs.next().expect("always a main image");
+        request.numbered_outlier_outputs = self
+            .outlierfile
+            .as_ref()
+            .map(|_| prefixes.into_iter().skip(1).zip(outputs).collect());
         // A new namespace holds no PSF or residual for calcpsf or calcres to
         // leave standing.
         crate::restart::check_inputs(&request, false)?;
         request.tclean_restart = false;
+        request.continued_model = false;
         Ok(request)
     }
 
@@ -729,6 +717,8 @@ impl ImagingRequest {
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {
         execution::validate_ft_padding(self)?;
+        self.validate_psf_phase_centre()?;
+        execution::validate_awp2_scope(self)?;
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         if self.phasecenter.is_some() && self.phasecenter_field.is_some() {
             return invalid(
@@ -870,6 +860,29 @@ impl ImagingRequest {
         Ok(())
     }
 
+    /// CASA forms a separate PSF only for the mosaic gridder.
+    pub(crate) fn uses_separate_psf(&self) -> bool {
+        self.psfphasecenter.is_some() && matches!(self.gridder, Gridder::Mosaic { .. })
+    }
+
+    pub(crate) fn supports_separate_psf(&self) -> bool {
+        matches!(self.gridder, Gridder::Mosaic { .. })
+            && self.specmode == SpecMode::Mfs
+            && self.deconvolver != Deconvolver::Mtmfs
+            && self.outlierfile.is_none()
+    }
+
+    /// A separately formed mosaic PSF uses the single-term MFS route.
+    pub(crate) fn validate_psf_phase_centre(&self) -> Result<(), InvalidRequest> {
+        if self.calcpsf && self.uses_separate_psf() && !self.supports_separate_psf() {
+            return Err(InvalidRequest {
+                parameters: "psfphasecenter",
+                reason: "a separate PSF centre is supported for a single-term MFS mosaic without outliers (#1062)",
+            });
+        }
+        Ok(())
+    }
+
     /// Guard the tested MEM subset at both the CASA reader and typed request.
     pub(crate) fn validate_mem_scope(&self) -> Result<(), InvalidRequest> {
         if self.deconvolver == Deconvolver::Mem
@@ -950,9 +963,12 @@ impl ImagingRequest {
     /// file's, which an unreadable file leaves out.
     #[must_use]
     pub fn image_names(&self) -> Vec<PathBuf> {
-        let outliers = self.outlierfile.as_deref().map_or_else(Vec::new, |path| {
-            crate::compile::outlier_output_prefixes(path).unwrap_or_default()
-        });
+        let outliers = match &self.numbered_outlier_outputs {
+            Some(outputs) => outputs.iter().map(|(_, output)| output.clone()).collect(),
+            None => self.outlierfile.as_deref().map_or_else(Vec::new, |path| {
+                crate::compile::outlier_output_prefixes(path).unwrap_or_default()
+            }),
+        };
         std::iter::once(self.imagename.clone())
             .chain(outliers)
             .collect()
@@ -1001,6 +1017,12 @@ impl AwProjection {
         self.wbawp && self.aterm
     }
 
+    /// The imported-buffer tolerance. CASA stores the image parameter in
+    /// Float degrees before converting the Quantity to Float radians.
+    pub(crate) fn pa_tolerance_rad(&self) -> f32 {
+        f64::from(self.computepastep as f32).to_radians() as f32
+    }
+
     fn validate(&self) -> Result<(), InvalidRequest> {
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         let Some(planes) = self.wprojplanes else {
@@ -1010,6 +1032,16 @@ impl AwProjection {
                  implemented by casa-rs yet (#980)",
             );
         };
+        let pa_step_rad = self.pa_tolerance_rad();
+        if !pa_step_rad.is_finite() || pa_step_rad <= 0.0 {
+            return invalid("computepastep", "the PA step must be finite and positive");
+        }
+        if !(self.rotatepastep as f32).is_finite() || self.rotatepastep as f32 <= 0.0 {
+            return invalid(
+                "rotatepastep",
+                "the rotation step must be finite and positive",
+            );
+        }
         // `AWConvFunc`'s constructor: a cell needs one of the two.
         if !self.aterm && !self.psterm {
             return invalid(
@@ -1032,6 +1064,12 @@ impl AwProjection {
             ..
         } = &self.cf_source
         {
+            if self.rotatepastep != 360.0 {
+                return invalid(
+                    "rotatepastep",
+                    "runtime rotation is supported for imported caches (#1070)",
+                );
+            }
             let size = *native_cf_working_size;
             if size < 8
                 || !size.is_multiple_of(2)
@@ -1427,7 +1465,10 @@ fn rest_frequencies_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec
     Ok(frequencies)
 }
 
-mod execution;
+pub(crate) mod execution;
+mod gridder;
+
+pub use gridder::Gridder;
 
 mod beam;
 mod uv_taper;

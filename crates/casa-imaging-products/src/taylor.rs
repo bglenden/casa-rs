@@ -2,7 +2,7 @@
 
 //! Product-local completion of one released MT-MFS normal family.
 
-use casa_imaging_deconvolution::FinalNormalStateWindow;
+use casa_imaging_deconvolution::{FinalNormalStateWindow, PlaneShape};
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, TaylorSupportReference,
@@ -139,7 +139,7 @@ impl TaylorFamily {
         (state, polarization): (&FinalNormalStateWindow<'_>, usize),
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
         directional: Option<MosaicSensitivity<'_>>,
-        residual_sum_weight: f64,
+        residual_sum_weight: Option<f64>,
     ) -> Result<Self, ProductsError> {
         let principal_sum_weight = state
             .normal_moment(0, polarization)
@@ -200,8 +200,9 @@ impl TaylorFamily {
                     .coefficient_term(term, polarization)
                     .expect("every coefficient term")
                     .residual();
-                match directional {
-                    Some(response) => residual
+                match (residual_sum_weight, directional) {
+                    (None, _) => Ok(residual.iter().map(|value| value.re as f32).collect()),
+                    (Some(residual_sum_weight), Some(response)) => residual
                         .iter()
                         .enumerate()
                         .map(|(index, value)| {
@@ -215,7 +216,7 @@ impl TaylorFamily {
                             )? as f32)
                         })
                         .collect(),
-                    None => Ok(normalize_plane(
+                    (Some(residual_sum_weight), None) => Ok(normalize_plane(
                         &residual
                             .iter()
                             .map(|value| value.re as f32)
@@ -230,8 +231,10 @@ impl TaylorFamily {
             .collect::<Result<Vec<_>, _>>()?;
         // CASA restores and publishes the flat-noise and pbsquare model in
         // apparent units, through the PB (flat noise) or PB² (pbsquare)
-        // (`SynthesisNormalizer::multiplyModelByWeight`).
-        if let Some(response) = directional {
+        // (`SynthesisNormalizer::multiplyModelByWeight`). A restore-only
+        // continuation reads both saved residuals and model in image units
+        // (`SDAlgorithmMSMFS::restore` and `SIImageStore::restore`).
+        if let (Some(response), Some(_)) = (directional, residual_sum_weight) {
             for plane in &mut model {
                 for (index, value) in plane.iter_mut().enumerate() {
                     *value = response.physical_to_apparent(
@@ -254,7 +257,9 @@ impl TaylorFamily {
 }
 
 /// The Taylor normal block at the PSF peak, inverted, and the principal
-/// solution's residuals it gives.
+/// solution's residuals it gives. Direct AW restoration selects the peak
+/// in the central patch used by `MatrixCleaner::validatePsf`. An off-axis
+/// grating lobe can be brighter than the central peak.
 ///
 /// CASA forms the block from the published PSFs, every term divided by the
 /// term-0 PSF's peak (`SIImageStore::normPSF`, then
@@ -264,14 +269,23 @@ impl TaylorFamily {
 fn principal_residuals(
     psf: &[Vec<f32>],
     residual: &[Vec<f32>],
+    central_patch: Option<PlaneShape>,
 ) -> Result<(Vec<f64>, Vec<Vec<f32>>), ProductsError> {
     let terms = residual.len();
-    let peak = psf[0]
-        .iter()
-        .enumerate()
-        .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
-        .map(|(index, _)| index)
-        .expect("a PSF plane has pixels");
+    let peak = if let Some(shape) = central_patch {
+        casa_imaging_deconvolution::psf_peak(&psf[0], shape)
+            .filter(|&peak| psf[0][peak].is_finite() && psf[0][peak] > 0.0)
+            .ok_or_else(|| {
+                ProductsError::BeamFitFailed("no positive central Taylor PSF peak".into())
+            })?
+    } else {
+        psf[0]
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+            .map(|(index, _)| index)
+            .expect("a PSF plane has pixels")
+    };
     let psf_scale = f64::from(psf_peak(psf[0].iter().copied())?);
     let mut normal = vec![0.0; terms * terms];
     for row in 0..terms {
@@ -371,6 +385,7 @@ fn spectral_index(
     validity: casa_imaging_model::ProductValidityPolicies,
     principal_residual: &[Vec<f32>],
     restored: &[Vec<f32>],
+    peak_mask: Option<&[bool]>,
 ) -> Result<SpectralIndexPlanes, ProductsError> {
     let policy = validity.taylor();
     if policy.reference() != TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
@@ -385,6 +400,7 @@ fn spectral_index(
         &restored[0],
         &restored[1],
         policy.peak_fraction(),
+        peak_mask,
     ))
 }
 
@@ -481,9 +497,9 @@ impl<'a> SolvedFamily<'a> {
         inputs: &ContinuumProductInputs<'_>,
         state: &'a FinalNormalStateWindow<'_>,
         polarization: usize,
-        psf_cutoff: f32,
-        primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+        planned: &crate::PlannedContinuumGeneration,
     ) -> Result<Self, ProductsError> {
+        let primary_beam_model = planned.primary_beam_model;
         let principal_normal = state
             .normal_moment(0, polarization)
             .expect("the zeroth normal moment");
@@ -522,28 +538,39 @@ impl<'a> SolvedFamily<'a> {
             (state, polarization),
             primary_beam_model,
             directional,
-            residual_sum_weight,
+            planned
+                .saved_residual_mask_read_bytes
+                .is_none()
+                .then_some(residual_sum_weight),
         )?;
         let sensitivity = principal_normal
             .sensitivity()
             .iter()
             .map(|value| *value as f32)
             .collect::<Vec<_>>();
-        let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
+        let [nx, ny] = state.shape();
+        let central_patch = inputs
+            .problem()
+            .science()
+            .measurement_equation()
+            .aw_projection()
+            .map(|_| PlaneShape::new(nx, ny));
+        let (inverse, principal_residual) =
+            principal_residuals(&family.psf, &family.residual, central_patch)?;
         let list = inputs.problem().product_list();
         let needs_beam = list.publication().members().iter().any(|id| {
             list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
         });
         let fit = if !needs_beam {
             PlaneBeam::Blank
-        } else if let Some(saved) = inputs.saved_psf_beams() {
+        } else if let Some(saved) = inputs.saved_psf_beams(0) {
             PlaneBeam::Fitted(saved[polarization])
         } else {
             fit_plane_beam(
                 &family.psf[0],
                 state.shape(),
                 inputs.cell_size_rad_for_domain(domain_role(state)),
-                psf_cutoff,
+                planned.psf_cutoff,
             )?
         };
         Ok(Self {
@@ -566,7 +593,8 @@ impl<'a> SolvedFamily<'a> {
         state: &FinalNormalStateWindow<'_>,
         fitted_beam: Option<RestoringBeam>,
         restoring_beam: Option<RestoringBeam>,
-        primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+        planned: &crate::PlannedContinuumGeneration,
+        output: &crate::CasaImageWriter,
     ) -> Result<TaylorPlane, ProductsError> {
         let Self {
             polarization,
@@ -578,6 +606,7 @@ impl<'a> SolvedFamily<'a> {
             fit: _,
         } = self;
         let domain_role = domain_role(state);
+        let primary_beam_model = planned.primary_beam_model;
         let shape = state.shape();
         let cells = shape[0] * shape[1];
         let terms = state.coefficient_term_count();
@@ -592,25 +621,57 @@ impl<'a> SolvedFamily<'a> {
             None => vec![vec![0.0; cells]; terms],
         };
 
-        let pb0 = principal_primary_beam(
-            inputs,
-            domain_role,
-            primary_beam_model,
-            directional,
-            &family.weight[0],
-        )?;
-        let (primary_beam_validity, pb_corrected) =
-            primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
+        let saved_beam = inputs.saved_mosaic_beam();
+        let (pb0, primary_beam_validity, pb_corrected) = if let Some(beam) =
+            saved_beam.filter(|_| {
+                publishes(inputs, |role| {
+                    matches!(role, ProductRole::PbCorrectedImage(_))
+                })
+            }) {
+            // SIImageStore::pbcor divides by positive saved PB values and
+            // copies the saved pixel mask independently of pblimit.
+            let pb = beam.read_values(0, polarization)?;
+            let mask = beam.read_mask(0, polarization)?;
+            let corrected = restored
+                .iter()
+                .map(|image| crate::plane::correct_primary_beam(image, &pb, 0.0))
+                .collect::<Result<_, _>>()?;
+            (pb, mask, corrected)
+        } else {
+            let pb = principal_primary_beam(
+                inputs,
+                domain_role,
+                primary_beam_model,
+                directional,
+                &family.weight[0],
+            )?;
+            let (mut mask, corrected) =
+                primary_beam_corrected(inputs.problem().products().validity(), &pb, &restored)?;
+            if let Some(beam) = saved_beam {
+                mask = beam.read_mask(0, polarization)?;
+            }
+            (pb, mask, corrected)
+        };
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0;
 
         let spectral_index = publishes(inputs, |role| role == ProductRole::SpectralIndex)
             .then(|| {
+                // The residual lattice's masked maximum sets the cutoff
+                // in SIImageStoreMultiTerm::calculateAlphaBeta. The alpha
+                // support itself comes from the restored intensity.
+                let peak_mask = if planned.saved_residual_mask_read_bytes.is_some() {
+                    output.saved_residual_mask(domain_role, ProductTerm::Taylor(0), false, false)?
+                } else {
+                    None
+                };
                 let (alpha, alpha_error, alpha_validity) = spectral_index(
                     inputs.problem().products().validity(),
                     &principal_residual,
                     &restored,
+                    peak_mask.as_deref(),
                 )?;
+                drop(peak_mask);
                 let alpha_pbcor =
                     if publishes(inputs, |role| role == ProductRole::PbCorrectedSpectralIndex) {
                         if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
@@ -676,9 +737,10 @@ fn domain_role<'a>(
 impl TaylorProducts {
     pub(crate) fn build(
         inputs: &ContinuumProductInputs<'_>,
-        psf_cutoff: f32,
-        primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+        planned: &crate::PlannedContinuumGeneration,
+        output: &crate::CasaImageWriter,
     ) -> Result<Self, ProductsError> {
+        let primary_beam_model = planned.primary_beam_model;
         let state = inputs.normal_state();
         // Binding the inputs established one domain, `terms` coefficient
         // terms and 2·terms − 1 normal moments per polarization.
@@ -691,9 +753,7 @@ impl TaylorProducts {
             return blank::build(inputs, state, primary_beam_model);
         }
         let solved = (0..state.polarization_count())
-            .map(|polarization| {
-                SolvedFamily::read(inputs, state, polarization, psf_cutoff, primary_beam_model)
-            })
+            .map(|polarization| SolvedFamily::read(inputs, state, polarization, planned))
             .collect::<Result<Vec<_>, _>>()?;
         // The restoring-beam policy applies across the polarizations as
         // across any image's planes: each its own, one enclosing them all,
@@ -706,13 +766,7 @@ impl TaylorProducts {
             .enumerate()
             .map(|(polarization, family)| {
                 let beam = restoring.get(polarization).copied().flatten();
-                family.restore(
-                    inputs,
-                    state,
-                    fitted[polarization],
-                    beam,
-                    primary_beam_model,
-                )
+                family.restore(inputs, state, fitted[polarization], beam, planned, output)
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
@@ -747,11 +801,16 @@ impl TaylorProducts {
     }
 
     /// The pixels `rule` holds valid, in [`Self::payload`]'s order.
-    pub(crate) fn validity(&self, rule: ProductValidityRule) -> Result<Vec<bool>, ProductsError> {
+    pub(crate) fn validity(
+        &self,
+        role: ProductRole,
+        rule: ProductValidityRule,
+        refresh_mvc_mask: bool,
+    ) -> Result<Vec<bool>, ProductsError> {
         Ok(interleave(
             self.planes
                 .iter()
-                .map(|plane| plane.validity(rule, self.shape))
+                .map(|plane| plane.validity(role, rule, self.shape, refresh_mvc_mask))
                 .collect::<Result<_, _>>()?,
         ))
     }
@@ -779,6 +838,33 @@ impl TaylorPlane {
             .ok_or(ProductsError::UnsupportedProblem)
     }
 
+    /// CASA's `SIImageStoreMultiTerm::calculateAlphaBeta` spectral curvature.
+    /// Use the same support as alpha and form the payload only when publishing.
+    fn spectral_curvature(&self) -> Option<Vec<f32>> {
+        let spectral_index = self.spectral_index.as_ref()?;
+        let taylor0 = self.restored.first()?;
+        let taylor2 = self.restored.get(2)?;
+        Some(
+            taylor0
+                .iter()
+                .zip(taylor2)
+                .zip(
+                    spectral_index
+                        .alpha
+                        .iter()
+                        .zip(&spectral_index.alpha_validity),
+                )
+                .map(|((&image0, &image2), (&alpha, &valid))| {
+                    if valid {
+                        image2 / image0 - 0.5 * alpha * (alpha - 1.0)
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        )
+    }
+
     fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
@@ -800,6 +886,11 @@ impl TaylorPlane {
             ProductRole::PrimaryBeam(value) => self.primary_beam.get(term(value)?),
             ProductRole::PbCorrectedImage(value) => self.pb_corrected.get(term(value)?),
             ProductRole::SpectralIndex => self.spectral_index.as_ref().map(|index| &index.alpha),
+            ProductRole::SpectralCurvature => {
+                return self
+                    .spectral_curvature()
+                    .ok_or(ProductsError::UnsupportedProductRole { role });
+            }
             ProductRole::PbCorrectedSpectralIndex => {
                 self.spectral_index.as_ref().map(|index| &index.alpha_pbcor)
             }
@@ -817,12 +908,31 @@ impl TaylorPlane {
 
     fn validity(
         &self,
+        role: ProductRole,
         rule: ProductValidityRule,
         shape: [usize; 2],
+        refresh_mvc_mask: bool,
     ) -> Result<Vec<bool>, ProductsError> {
         match rule {
             ProductValidityRule::All | ProductValidityRule::FinalNormalState => {
                 Ok(vec![true; shape[0] * shape[1]])
+            }
+            ProductValidityRule::PrimaryBeam(policy)
+                if refresh_mvc_mask
+                    && matches!(
+                        role,
+                        ProductRole::Residual(_) | ProductRole::RestoredImage(_)
+                    ) =>
+            {
+                // MVC's cube2tt recreates each residual and applies the
+                // current cutoff to the saved PB lattice. Restore copies
+                // this mask; pbcor separately uses the saved PB mask.
+                Ok(self
+                    .primary_beam_validity
+                    .iter()
+                    .zip(&self.primary_beam[0])
+                    .map(|(&valid, &pb)| valid && pb > policy.cutoff())
+                    .collect())
             }
             ProductValidityRule::PrimaryBeam(_) => Ok(self.primary_beam_validity.clone()),
             ProductValidityRule::Taylor(_) => Ok(self.spectral_index_validity()?.to_vec()),
@@ -842,6 +952,7 @@ fn taylor_alpha_products(
     restored_taylor0: &[f32],
     restored_taylor1: &[f32],
     peak_fraction: f32,
+    peak_mask: Option<&[bool]>,
 ) -> (Vec<f32>, Vec<f32>, Vec<bool>) {
     let cells = restored_taylor0.len();
     let mut alpha = vec![0.0; cells];
@@ -850,7 +961,11 @@ fn taylor_alpha_products(
     let Some(positive_maximum) = principal_residual_taylor0
         .iter()
         .copied()
-        .filter(|value| value.is_finite() && *value > 0.0)
+        .enumerate()
+        .filter_map(|(index, value)| {
+            (value.is_finite() && value > 0.0 && peak_mask.is_none_or(|mask| mask[index]))
+                .then_some(value)
+        })
         .reduce(f32::max)
     else {
         return (alpha, alpha_error, validity);
@@ -983,6 +1098,39 @@ mod tests {
     }
 
     #[test]
+    fn aw_principal_taylor_solution_uses_the_central_psf_patch() {
+        let shape = super::PlaneShape::new(100, 100);
+        let mut psf = vec![vec![0.0; shape.len()]; 3];
+        let central = shape.index(49, 50);
+        let outer = shape.index(9, 50);
+        for (moment, (inner, outside)) in
+            psf.iter_mut().zip([(0.5, 1.0), (0.125, 0.0), (0.25, 0.5)])
+        {
+            moment[central] = inner;
+            moment[outer] = outside;
+        }
+        let residual = vec![vec![1.5; shape.len()], vec![1.25; shape.len()]];
+        let (_, restored) = super::principal_residuals(&psf, &residual, Some(shape)).unwrap();
+        assert_eq!(restored[0][central], 2.0);
+        assert_eq!(restored[1][central], 4.0);
+    }
+
+    #[test]
+    fn saved_taylor_mask_changes_the_peak_but_does_not_mask_alpha() {
+        let (alpha, _, validity) = super::taylor_alpha_products(
+            &[10.0, 5.0, 0.75, 0.5],
+            &[2.0; 4],
+            &[10.0, 5.0, 0.75, 0.5],
+            &[2.0; 4],
+            0.1,
+            Some(&[false, true, true, true]),
+        );
+        assert_eq!(validity, [true, true, true, false]);
+        assert_eq!(alpha[0], 0.2);
+        assert_eq!(alpha[3], 0.0);
+    }
+
+    #[test]
     fn negative_only_principal_residual_has_no_taylor_support_or_payload() {
         let (alpha, alpha_error, validity) = super::taylor_alpha_products(
             &[f32::NEG_INFINITY, f32::NAN, -4.0, -1.0, 0.0],
@@ -990,6 +1138,7 @@ mod tests {
             &[8.0, 4.0, 2.0, 1.0, 0.5],
             &[2.0; 5],
             0.1,
+            None,
         );
         assert!(validity.iter().all(|valid| !valid));
         assert!(alpha.iter().all(|value| *value == 0.0));

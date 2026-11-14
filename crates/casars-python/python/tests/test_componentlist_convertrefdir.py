@@ -39,9 +39,7 @@ def test_conversion_matches_casa():
         compare(snapshot(c), case['before'])
         frame = case['frame'].encode() if case['case'] == 'frame_bytes' else case['frame']
         which = np.bool_(case['which']) if case['case'].startswith('numpy_bool_') else case['which']
-        if case['case'] == 'bmean':
-            with pytest.raises(NotImplementedError, match='#1053'): c.convertrefdir(which, frame)
-        elif 'error' in case:
+        if 'error' in case:
             error = case['error']
             with pytest.raises({'TypeError': TypeError, 'RuntimeError': RuntimeError}[error['type']]) as caught:
                 c.convertrefdir(which, frame)

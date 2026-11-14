@@ -21,6 +21,7 @@ mod normalization;
 mod plan;
 mod plane;
 mod restore;
+mod saved_mosaic_beam;
 mod source;
 mod storage;
 mod taylor;
@@ -38,7 +39,7 @@ pub use mvc_cube::{
     MvcCubePlane, MvcCubePrimaryBeam, read_mvc_cube_plane, read_mvc_cube_primary_beam,
 };
 pub use mvc_normal::{encode_mvc_blank_taylor_planes, encode_mvc_taylor_planes};
-pub use mvc_reduction::reduce_mvc_cube;
+pub use mvc_reduction::{reduce_mvc_cube, reduce_mvc_cube_with_common_pb};
 pub use normalization::{
     MinorCycleImageResponse, MosaicSensitivity, ResidualFamily, normalize_plane,
 };
@@ -49,6 +50,7 @@ pub use plan::{
 pub use restore::{
     ResidualBeamScaling, fft_convolve, gaussian_beam_image, rescale_residual_to_beam,
 };
+pub use saved_mosaic_beam::SavedMosaicBeam;
 pub use source::{ContinuumProductInputs, FacetSumWeights, PrimaryBeamCentres};
 pub use storage::{ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout};
 pub use taylor_beam::TaylorPrimaryBeamAccumulator;

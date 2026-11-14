@@ -15,6 +15,9 @@
 //! C++ equivalent: `casacore/tables/DataMan/ISMBase`, `ISMBucket`, `ISMIndex`,
 //! `ISMColumn`.
 
+mod array_shapes;
+pub(crate) use array_shapes::read_ism_array_column_shapes;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};

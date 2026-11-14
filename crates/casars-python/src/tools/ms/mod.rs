@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `ms` tool (ms): every method of CASA 6.7.6.14's binding,
-//! with its signature (ADR-0019, #1025). A method casa-rs does not implement
+//! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
 
 mod stubs;

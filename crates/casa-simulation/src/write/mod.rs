@@ -18,10 +18,14 @@
 //!
 //! A session `openfromms` opened is patched in place instead ([`patch`]).
 
+pub(crate) mod append;
 mod components;
-mod geometry;
+mod data;
+pub(crate) mod geometry;
 mod grids;
+mod mixed;
 mod patch;
+mod patch_ranges;
 mod pipeline;
 mod prediction;
 mod resources;
@@ -47,10 +51,11 @@ use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::PlannedScan;
 use crate::session::plan::DataPlan;
-use geometry::{ArrayGeometry, RowGeometry};
+use data::DataStage;
+pub(crate) use geometry::ArrayGeometry;
+use geometry::RowGeometry;
 pub(crate) use patch::patch_measurement_set;
 use pipeline::{NoiseContext, Pipeline};
-use prediction::PredictionStage;
 use resources::{MainAdmission, MainShape, NoiseScales};
 
 /// The readme CASA's simulator gives MAIN.
@@ -65,6 +70,9 @@ fn write_error(what: &str) -> impl Fn(casa_ms::MeasurementSetWriteError) -> Simu
 
 /// Create the session's MeasurementSet.
 pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> {
+    if mixed::needed(session) {
+        return mixed::write(session);
+    }
     let window = ReservationWindow::open();
     let planned = PlannedScan::of_all(session.scans()).ok_or_else(|| {
         SimulatorError::raised("only a session's planned scans make a new MeasurementSet")
@@ -73,7 +81,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let shape = cell.map(|cell| main_shape(session, &planned, cell));
     let resources = &session.options().resources;
     let prediction = match cell {
-        Some(cell) => PredictionStage::new(session, cell, resources.prediction_backend())?,
+        Some(cell) => DataStage::new(session, cell, resources.prediction_backend())?,
         None => None,
     };
     // Admitted before anything is written, so a refusal leaves nothing.
@@ -84,24 +92,8 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let target = MeasurementSetCreateTarget::prepare(session.path(), true)
         .map_err(write_error("prepare the MeasurementSet"))?;
     let staging = target.staging_path().to_path_buf();
-    let mut ms = MeasurementSet::create(
-        &staging,
-        MeasurementSetBuilder::new()
-            .with_main_column(OptionalMainColumn::Data)
-            .with_optional_subtable(SubtableId::Source),
-    )
-    .map_err(|error| SimulatorError::raised(format!("create the MeasurementSet: {error}")))?;
-    std::fs::create_dir_all(&staging).map_err(|error| {
-        SimulatorError::raised(format!("create {}: {error}", staging.display()))
-    })?;
-    let info = ms.main_table().info().clone();
-    ms.main_table_mut().set_info(TableInfo {
-        table_type: info.table_type,
-        sub_type: "simulator".to_string(),
-        readme: MAIN_README.iter().map(|line| (*line).to_string()).collect(),
-    });
-    subtables::write_subtables(&mut ms, session)?;
-    let generated = subtables::subtable_overrides(&planned)?;
+    let mut ms = create_staged_ms(session, &staging)?;
+    let generated = subtables::subtable_overrides(session, &planned)?;
     match shape.zip(admission) {
         Some((shape, admission)) => {
             let main = MainTarget {
@@ -118,7 +110,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
             )?;
         }
         None => ms
-            .save()
+            .save_with_column_overrides(&ColumnOverrides::for_row_count(0), &generated)
             .map_err(|error| SimulatorError::raised(format!("save the MeasurementSet: {error}")))?,
     }
     target
@@ -126,12 +118,39 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         .map_err(write_error("publish the MeasurementSet"))
 }
 
+fn create_staged_ms(
+    session: &Simulator,
+    staging: &std::path::Path,
+) -> SimulatorResult<MeasurementSet> {
+    let mut ms = MeasurementSet::create(
+        staging,
+        MeasurementSetBuilder::new()
+            .with_main_column(OptionalMainColumn::Data)
+            .with_optional_subtable(SubtableId::Source),
+    )
+    .map_err(|error| SimulatorError::raised(format!("create the MeasurementSet: {error}")))?;
+    std::fs::create_dir_all(staging).map_err(|error| {
+        SimulatorError::raised(format!("create {}: {error}", staging.display()))
+    })?;
+    let info = ms.main_table().info().clone();
+    ms.main_table_mut().set_info(TableInfo {
+        table_type: info.table_type,
+        sub_type: "simulator".to_string(),
+        readme: MAIN_README.iter().map(|line| (*line).to_string()).collect(),
+    });
+    subtables::write_subtables(&mut ms, session)?;
+    Ok(ms)
+}
+
 /// The cell shape every scan shares: (correlations, channels).
 fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     let mut shape = None;
     for scan in session.scans() {
         let window = &session.spectral_windows()[scan.spectral_window_id];
-        let this = (window.correlations.len(), window.channel_count);
+        let this = (
+            session.correlations_for_scan(scan).len(),
+            window.channel_count,
+        );
         match shape {
             None => shape = Some(this),
             Some(first) if first != this => {
@@ -146,20 +165,49 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     Ok(shape)
 }
 
-/// `[window]`: the receptors of each correlation of the session's spectral
-/// windows (`Stokes::receptor1`, `receptor2`), which gains and leakage take.
-pub(super) fn window_receptors(session: &Simulator) -> Vec<Vec<[usize; 2]>> {
-    session
-        .spectral_windows()
+/// Each polarization setup's receptors, admitted before their expansion.
+pub(super) type Receptors = std::sync::Arc<casa_imaging_runtime::Admitted<Vec<Vec<[usize; 2]>>>>;
+
+fn polarization_receptors(session: &Simulator) -> SimulatorResult<Receptors> {
+    use casa_imaging_runtime::{Demand, admit};
+    let polarizations = session.polarizations();
+    let bytes = polarizations.len() * size_of::<Vec<[usize; 2]>>()
+        + polarizations
+            .iter()
+            .map(|codes| codes.len() * (size_of::<[usize; 2]>() + size_of::<[i32; 2]>()))
+            .sum::<usize>()
+        + 256;
+    let resources = &session.options().resources;
+    let mut reservation = admit(
+        resources.host(),
+        resources.policy(),
+        &Demand {
+            phase: "the simulator's polarization receptor products",
+            memory: bytes as u64,
+        },
+    )
+    .map_err(SimulatorError::admission)?;
+    let value: Vec<Vec<[usize; 2]>> = polarizations
         .iter()
-        .map(|window| {
-            window
-                .correlation_products()
-                .iter()
+        .map(|codes| {
+            crate::session::spectral::correlation_products(codes)
+                .into_iter()
                 .map(|pair| pair.map(|receptor| usize::try_from(receptor).unwrap_or(0)))
                 .collect()
         })
-        .collect()
+        .collect();
+    reservation.retain(
+        (value.capacity() * size_of::<Vec<[usize; 2]>>()
+            + value
+                .iter()
+                .map(|p| p.capacity() * size_of::<[usize; 2]>())
+                .sum::<usize>()
+            + 64) as u64,
+    );
+    Ok(std::sync::Arc::new(casa_imaging_runtime::Admitted {
+        value,
+        reservation,
+    }))
 }
 
 /// MAIN as the session's planned scans make it, with cells of
@@ -220,62 +268,27 @@ fn write_main<'s>(
     (session, planned): (&'s Simulator, &[PlannedScan<'_>]),
     target: &MainTarget<'_>,
     shape: &MainShape<'_>,
-    (admission, mut prediction): (MainAdmission, Option<PredictionStage<'s>>),
+    (admission, prediction): (MainAdmission, Option<DataStage<'s>>),
 ) -> SimulatorResult<()> {
     let started = Instant::now();
-    let batch_rows = admission.plan.batch_rows().max(1);
-    if let Some(stage) = &mut prediction {
-        stage.start(
-            admission.block_rows,
-            admission.cores.streaming_workers,
-            admission.grid_bytes,
-        );
-    }
-    let backend = prediction.as_ref().map_or_else(
-        || session.options().resources.resolved_backend(false),
-        PredictionStage::backend,
-    );
     let mut writer = MainWriter::start(target.staging, admission.plan.clone())?;
-    let geometry = ArrayGeometry::new(
-        session.telescope(),
-        session.antennas(),
-        session.options().measures.clone(),
-    )?
-    .with_airmass(noise_varies_by_row(session.data_plan()));
-    let team = WorkerTeam::new(admission.cores.streaming_workers)
-        .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
-    let mut pipeline = Pipeline::new(
-        (session.scans(), planned),
-        &geometry,
-        &team,
-        (
-            prediction,
-            session.data_plan(),
-            NoiseContext::of(session),
-            shape.noise_scales,
-        ),
-        (
-            shape.correlations,
-            shape.channels,
-            window_receptors(session),
-        ),
-    );
-    let integrations = planned
-        .iter()
-        .enumerate()
-        .filter(|(_, scan)| scan.rows.baseline_count() > 0)
-        .flat_map(|(index, scan)| {
-            scan.rows
-                .integration_times_s()
-                .map(move |time| (index, time))
-        });
-    let setup = started.elapsed();
-    pipeline.write_rows(&mut writer, integrations, shape.rows, batch_rows)?;
+    let summary = run_main(
+        session,
+        planned,
+        shape,
+        (&admission, prediction),
+        &mut writer,
+        0..session.scans().len(),
+        0..shape.rows,
+    )?;
+    let batch_rows = admission.plan.batch_rows().max(1);
+    let backend = summary.backend;
+    let setup = summary.setup;
     let finishing = Instant::now();
     let written = writer.finish(ms, shape.rows, target.generated)?;
     let finish = finishing.elapsed();
-    let times = &pipeline.times;
-    let (grid_preparations, grid_prepare) = pipeline.grid_preparations();
+    let times = &summary.times;
+    let (grid_preparations, grid_prepare) = summary.grids;
     tracing::info!(
         rows = shape.rows,
         batch_rows,
@@ -289,7 +302,7 @@ fn write_main<'s>(
         geometry_s = times.geometry.as_secs_f64(),
         zero_s = times.zero.as_secs_f64(),
         predict_s = times.predict.as_secs_f64(),
-        block_fill_s = pipeline.block_fill_time().as_secs_f64(),
+        block_fill_s = summary.block_fill.as_secs_f64(),
         grid_bytes = admission.grid_bytes,
         grid_preparations,
         grid_prepare_s = grid_prepare.as_secs_f64(),
@@ -306,12 +319,89 @@ fn write_main<'s>(
     Ok(())
 }
 
+struct RunSummary {
+    setup: std::time::Duration,
+    backend: casa_imaging_runtime::pass::BackendChoice,
+    times: pipeline::StageTimes,
+    grids: (usize, std::time::Duration),
+    block_fill: std::time::Duration,
+}
+
+fn run_main<'s>(
+    session: &'s Simulator,
+    planned: &[PlannedScan<'s>],
+    shape: &MainShape<'_>,
+    (admission, mut prediction): (&MainAdmission, Option<DataStage<'s>>),
+    writer: &mut MainWriter,
+    scan_scope: std::ops::Range<usize>,
+    rows: std::ops::Range<usize>,
+) -> SimulatorResult<RunSummary> {
+    let started = Instant::now();
+    let batch_rows = admission.plan.batch_rows().max(1);
+    if let Some(stage) = &mut prediction {
+        stage.start(
+            admission.block_rows,
+            admission.cores.streaming_workers,
+            admission.grid_bytes,
+            batch_rows,
+        );
+    }
+    let backend = prediction.as_ref().map_or_else(
+        || session.options().resources.resolved_backend(false),
+        DataStage::backend,
+    );
+    let geometry = ArrayGeometry::new(
+        session.telescope(),
+        session.antennas(),
+        session.options().measures.clone(),
+    )?
+    .with_airmass(noise_varies_by_row(session.data_plan()));
+    let team = WorkerTeam::new(admission.cores.streaming_workers)
+        .map_err(|error| SimulatorError::raised(format!("the worker team: {error}")))?;
+    let receptors = prediction.as_ref().map(DataStage::shared_receptors);
+    let mut pipeline = Pipeline::new(
+        (session.scans(), planned),
+        &geometry,
+        &team,
+        (
+            prediction,
+            session.data_plan(),
+            NoiseContext::of(session),
+            shape.noise_scales,
+        ),
+        (shape.correlations, shape.channels, receptors),
+    );
+    let integrations = planned
+        .iter()
+        .enumerate()
+        .skip(scan_scope.start)
+        .take(scan_scope.len())
+        .filter(|(_, scan)| scan.rows.baseline_count() > 0)
+        .flat_map(|(index, scan)| {
+            scan.rows
+                .integration_times_s()
+                .map(move |time| (index, time))
+        });
+    let setup = started.elapsed();
+    pipeline.write_range(writer, integrations, rows, batch_rows)?;
+    let grids = pipeline.grid_preparations();
+    let block_fill = pipeline.block_fill_time();
+    Ok(RunSummary {
+        setup,
+        backend,
+        grids,
+        block_fill,
+        times: pipeline.times,
+    })
+}
+
 /// Whether any noise of `plan` has a σ that varies by row (the Tsys
 /// modes), whose rows then need their antennas' airmasses and exposure.
 /// Every `corrupt` covers scan 0, so its noise is all the plan's.
 fn noise_varies_by_row(plan: &DataPlan) -> bool {
-    plan.noise_for_scan(0)
+    plan.phases()
         .iter()
+        .flat_map(|phase| phase.noise_for_scan(0))
         .any(crate::corrupt::NoiseApplication::varies_by_row)
 }
 
@@ -333,12 +423,19 @@ struct MainWriter {
     antenna1: Vec<i32>,
     antenna2: Vec<i32>,
     flag_row: Vec<bool>,
+    variable: Option<(usize, usize)>,
+    recycled: Option<VisibilityColumns>,
+    _reservation: casa_imaging_runtime::Reservation,
 }
 
 impl MainWriter {
     fn start(staging: &std::path::Path, plan: MeasurementSetWritePlan) -> SimulatorResult<Self> {
         let session = MeasurementSetWriteSession::start(staging, plan)
             .map_err(write_error("start the MAIN write"))?;
+        Self::from_session(session)
+    }
+
+    fn from_session(session: MeasurementSetWriteSession) -> SimulatorResult<Self> {
         let id = |name: &str| {
             session
                 .scalar_column(name)
@@ -371,6 +468,9 @@ impl MainWriter {
             antenna1: Vec::new(),
             antenna2: Vec::new(),
             flag_row: Vec::new(),
+            variable: None,
+            recycled: None,
+            _reservation: casa_imaging_runtime::Reservation::none(),
         })
     }
 
@@ -419,13 +519,15 @@ impl MainWriter {
         }
         for (column, name) in columns.constants {
             let value = match name {
-                "DATA_DESC_ID" => ScalarValue::Int32(scan.spectral_window_id as i32),
+                "ARRAY_ID" => ScalarValue::Int32(planned.array_id),
+                "DATA_DESC_ID" => ScalarValue::Int32(scan.data_description_id as i32),
                 "EXPOSURE" | "INTERVAL" => ScalarValue::Float64(planned.integration_s),
                 "FIELD_ID" => ScalarValue::Int32(scan.field_id as i32),
                 "OBSERVATION_ID" => ScalarValue::Int32(planned.observation_id),
                 "SCAN_NUMBER" => ScalarValue::Int32(scan.scan_number),
                 "STATE_ID" => ScalarValue::Int32(planned.state_id as i32),
-                // ARRAY_ID, FEED1, FEED2 and PROCESSOR_ID.
+                "FEED1" | "FEED2" => ScalarValue::Int32(planned.feed_id),
+                // PROCESSOR_ID.
                 _ => ScalarValue::Int32(0),
             };
             session
@@ -437,13 +539,20 @@ impl MainWriter {
 
     /// An empty batch, with the buffers of one the writer has finished with
     /// when there is one.
-    fn visibility_columns(&self) -> VisibilityColumns {
-        self.session.visibility_columns()
+    fn visibility_columns(&mut self) -> VisibilityColumns {
+        if self.variable.is_some() {
+            self.recycled.take().unwrap_or_default()
+        } else {
+            self.session.visibility_columns()
+        }
     }
 
     /// Queue a full batch for the writer's thread; blocks while its queue is
     /// full.
-    fn send(&self, batch: VisibilityColumns) -> SimulatorResult<()> {
+    fn send(&mut self, batch: VisibilityColumns) -> SimulatorResult<()> {
+        if let Some(cell) = self.variable {
+            return mixed::send(self, batch, cell);
+        }
         self.session
             .send_visibility_columns(batch)
             .map_err(write_error("MAIN visibility batch"))

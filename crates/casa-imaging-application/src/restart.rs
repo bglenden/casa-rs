@@ -19,7 +19,7 @@ pub(crate) use grid::check_grid;
 mod mask;
 pub(crate) use mask::MaskInput;
 mod numbering;
-pub(crate) use numbering::next_prefix;
+pub(crate) use numbering::next_prefixes;
 
 use std::{
     fmt, fs, io,
@@ -91,53 +91,118 @@ impl Family {
                 BASES.contains(&image) && (!pbcor || image == "image")
                     || matches!(suffix, "image.pbcor")
             }
-            Self::Taylor { .. } => {
-                matches!(
-                    suffix,
-                    "alpha" | "alpha.error" | "alpha.pbcor" | "beta" | "beta.error"
-                ) || BASES
-                    .iter()
-                    .any(|base| self.names(base).iter().any(|name| name == image))
-                    && (!pbcor || image.starts_with("image."))
+            Self::Taylor { terms } => {
+                let is_primary_beam = image.starts_with("pb.tt")
+                    && (0..terms).any(|term| image == format!("pb.tt{term}"));
+                (!pbcor && is_primary_beam)
+                    || matches!(
+                        suffix,
+                        "alpha" | "alpha.error" | "alpha.pbcor" | "beta" | "beta.error"
+                    )
+                    || BASES
+                        .iter()
+                        .any(|base| self.names(base).iter().any(|name| name == image))
+                        && (!pbcor || image.starts_with("image."))
             }
         }
     }
 }
 
+/// The cube products MVC publishes beside its Taylor images.
+pub(crate) fn mvc_cube_product(suffix: &str) -> bool {
+    matches!(suffix, "model" | "pb" | "psf" | "residual" | "sumwt")
+}
+
 /// Check that `request` can continue on what exists at its `imagename`.
 /// Task entry points call this before creating a run summary.
-pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
-    let existing = products(&request.imagename)?;
-    if let (Some(path), Some(_)) = (existing.first(), &request.outlierfile) {
+pub(crate) fn check(request: &ImagingRequest) -> Result<(bool, bool), PrepareError> {
+    let existing = continuation_products(request, &request.imagename)?;
+    let outliers = request
+        .outlierfile
+        .as_deref()
+        .map(crate::compile::outlier_output_prefixes)
+        .transpose()?
+        .unwrap_or_default();
+    let mut all = vec![(request.imagename.as_path(), existing)];
+    for output in &outliers {
+        all.push((output, products(output)?));
+    }
+    let continuing = all.iter().any(|(_, paths)| !paths.is_empty());
+    if !outliers.is_empty()
+        && !supports_outlier_restart(request)
+        && let Some(path) = all.iter().find_map(|(_, paths)| paths.first())
+    {
         return Err(PrepareError::ExistingImageProduct { path: path.clone() });
     }
     let family = Family::of(request);
-    for path in &existing {
-        let suffix = suffix(&request.imagename, path);
+    let mut model = false;
+    for (prefix, paths) in all {
+        model |= check_products(request, family, prefix, &paths)?;
+    }
+    check_inputs(request, continuing)?;
+    Ok((continuing, model))
+}
+
+fn supports_outlier_restart(request: &ImagingRequest) -> bool {
+    matches!(request.gridder, Gridder::Standard { facets } if facets.get() == 1)
+        && request.specmode == crate::SpecMode::Mfs
+        && request.deconvolver == Deconvolver::Hogbom
+        && request.weighting == crate::Weighting::Natural
+        && request.stokes == [crate::PolarizationCoordinate::StokesI]
+        && request.usemask == UseMask::User
+        && (request.calcpsf && request.calcres
+            || request.savemodel == crate::SaveModel::None && !request.pbcor)
+}
+
+pub(crate) fn supports_saved_automask(request: &ImagingRequest) -> bool {
+    matches!(request.gridder, Gridder::Standard { facets } if facets.get() == 1)
+        && request.specmode == crate::SpecMode::Mfs
+        && request.deconvolver == Deconvolver::Hogbom
+        && request.stokes == [crate::PolarizationCoordinate::StokesI]
+        && request.outlierfile.is_none()
+        && request.calcpsf
+        && request.calcres
+}
+
+fn check_products(
+    request: &ImagingRequest,
+    family: Family,
+    prefix: &Path,
+    paths: &[PathBuf],
+) -> Result<bool, PrepareError> {
+    let mvc = request.mvc_output_channels.is_some() || request.mvc_auto_channels;
+    let mut has_model = false;
+    for path in paths {
+        let suffix = suffix(prefix, path);
         let refuse = |reason: String| PrepareError::Restart {
             path: path.clone(),
             reason,
         };
-        if !family.admits(&suffix) {
+        let cube_product = mvc && mvc_cube_product(&suffix);
+        if !family.admits(&suffix) && !cube_product {
             return Err(refuse(format!(
-                "it is not a product of this run's {family} images; choose a new imagename"
+                "it is not a product of this run's {family} images; choose a new imagename (#944)"
             )));
         }
-        if suffix.starts_with("model") && request.has_start_model() {
-            return Err(refuse(
-                "startmodel cannot be supplied when the output model already exists".into(),
-            ));
+        if suffix.starts_with("model") && !(mvc && suffix == "model") {
+            has_model |= path.exists();
+            if request.has_start_model() {
+                return Err(refuse(
+                    "startmodel cannot be supplied when the output model already exists".into(),
+                ));
+            }
         }
         if suffix == "mask" && request.niter > 0 {
-            if request.usemask == UseMask::AutoMultithresh {
+            if request.usemask == UseMask::AutoMultithresh && !supports_saved_automask(request) {
                 return Err(refuse(
-                    "continuing auto-multithresh on an existing CLEAN mask is not implemented yet"
+                    "continuing auto-multithresh on an existing CLEAN mask is not implemented for these controls (#944)"
                         .into(),
                 ));
             }
-            if request.mask_image.is_some()
-                || !request.mask_box.is_empty()
-                || request.explicit_empty_mask
+            if prefix == request.imagename
+                && (request.mask_image.is_some()
+                    || !request.mask_box.is_empty()
+                    || request.explicit_empty_mask)
             {
                 return Err(refuse(
                     "merging a new mask into an existing CLEAN mask is not implemented yet".into(),
@@ -145,11 +210,68 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
             }
         }
     }
-    check_inputs(request, !existing.is_empty())?;
-    if let Some(path) = &request.outlierfile {
-        super::compile::check_outlier_outputs(path)?;
+    Ok(has_model)
+}
+
+/// Whether a direction-dependent run reuses its PSF, weight and PB
+/// products for a residual pass or saved-product restoration.
+pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
+    if request.calcpsf {
+        return false;
     }
-    Ok(())
+    match (&request.gridder, Family::of(request)) {
+        (Gridder::Mosaic { .. }, Family::Single) => {
+            if request.calcres {
+                matches!(
+                    request.specmode,
+                    crate::SpecMode::Mfs | crate::SpecMode::Cube
+                )
+            } else {
+                supports_saved_mosaic_residual(request)
+            }
+        }
+        (Gridder::Awproject(_), Family::Taylor { terms }) => {
+            request.specmode == crate::SpecMode::Mfs
+                && if request.calcres {
+                    !request.pbcor || terms == 2
+                } else {
+                    terms == 2
+                        && request.restoration
+                        && request.savemodel == crate::SaveModel::None
+                        && !request.pbcor
+                }
+        }
+        _ => false,
+    }
+}
+
+/// Ordinary single-term CLEAN or restoration from a saved mosaic residual.
+fn supports_saved_mosaic_residual(request: &ImagingRequest) -> bool {
+    matches!(
+        request.gridder,
+        Gridder::Mosaic {
+            normtype: casa_imaging_model::ProductNormalization::FlatNoise,
+            ..
+        }
+    ) && matches!(
+        request.specmode,
+        crate::SpecMode::Mfs | crate::SpecMode::Cube
+    ) && request.deconvolver == Deconvolver::Hogbom
+        && request.weighting == crate::Weighting::Natural
+        && request.stokes == [crate::PolarizationCoordinate::StokesI]
+        && request.usemask == UseMask::User
+        && request.nsigma == 0.0
+        && request.pbmask == 0.0
+        && request.savemodel == crate::SaveModel::None
+}
+
+/// Whether the ordinary mosaic cube reforms its PSF before using its saved residual.
+pub(crate) fn rebuilds_mosaic_cube_psf(request: &ImagingRequest) -> bool {
+    request.calcpsf
+        && !request.calcres
+        && request.specmode == crate::SpecMode::Cube
+        && !request.uses_separate_psf()
+        && supports_saved_mosaic_residual(request)
 }
 
 /// Check that what `calcpsf=False` and `calcres=False` read exists and that
@@ -165,14 +287,35 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
         (false, true) => "calcpsf=False",
         _ => "calcres=False",
     };
+    if !request.calcpsf
+        && !request.calcres
+        && request.niter > 0
+        && request.pblimit > 0.0
+        && matches!(request.gridder, Gridder::Awproject(_))
+        && reuses_direction_dependent_psf(request)
+    {
+        return refuse(
+            request.imagename.clone(),
+            "AW CLEAN from a saved Taylor residual with a positive pblimit requires saved residual-mask support (#944)".into(),
+        );
+    }
     let unsupported = match &request.gridder {
-        _ if request.outlierfile.is_some() => Some("with outlier fields"),
+        _ if request.outlierfile.is_some() && !supports_outlier_restart(request) => {
+            Some("with outlier fields")
+        }
         Gridder::Standard { facets } | Gridder::Wproject { facets, .. } if facets.get() > 1 => {
             Some("with facets")
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
+        Gridder::Mosaic { .. } | Gridder::Awproject(_)
+            if reuses_direction_dependent_psf(request) =>
+        {
+            None
+        }
+        Gridder::Mosaic { .. } if rebuilds_mosaic_cube_psf(request) => None,
         Gridder::Mosaic { .. } => Some("with the mosaic gridder"),
         Gridder::Awproject(_) => Some("with A-projection"),
+        Gridder::Awp2 { .. } => Some("with AWP2 (#1071)"),
     };
     if let Some(unsupported) = unsupported {
         return refuse(
@@ -189,27 +332,60 @@ pub(crate) fn check_inputs(request: &ImagingRequest, continuing: bool) -> Result
             .find(|path| !continuing || !path.exists())
     };
     if !request.calcpsf {
-        for base in ["psf", "sumwt"] {
+        check_saved_psf(&request.imagename, family, continuing)?;
+    }
+    if reuses_direction_dependent_psf(request) {
+        for base in ["weight", "pb"] {
             if let Some(path) = missing(base) {
+                let gridder = match request.gridder {
+                    Gridder::Mosaic { .. } => "the mosaic gridder",
+                    _ => "A-projection",
+                };
                 return refuse(
                     path,
-                    "calcpsf=False reads the PSF and sums of weights an earlier run left at \
-                     imagename, and this one does not exist"
-                        .into(),
+                    format!("calcpsf=False with {gridder} requires the saved weight and PB images"),
                 );
             }
         }
     }
     if !request.calcres
-        && request.niter > 0
+        && (request.niter > 0
+            || request.outlierfile.is_some()
+            || reuses_direction_dependent_psf(request)
+            || rebuilds_mosaic_cube_psf(request))
         && let Some(path) = missing("residual")
     {
         return refuse(
             path,
-            "calcres=False with niter > 0 cleans the residual an earlier run left at imagename, \
-             and this one does not exist"
-                .into(),
+            if request.niter > 0 {
+                "calcres=False with niter > 0 cleans the residual an earlier run left at imagename, \
+                 and this one does not exist"
+            } else {
+                "calcres=False requires the saved residual at imagename for this restart"
+            }
+            .into(),
         );
+    }
+    Ok(())
+}
+
+fn check_saved_psf(prefix: &Path, family: Family, continuing: bool) -> Result<(), PrepareError> {
+    for base in ["psf", "sumwt"] {
+        if let Some(path) = family
+            .names(base)
+            .into_iter()
+            .map(|name| product_path(prefix, &name))
+            .find(|path| !continuing || !path.exists())
+        {
+            return Err(PrepareError::Restart {
+                path,
+                reason: concat!(
+                    "calcpsf=False reads the PSF and sums of weights an earlier run left at ",
+                    "imagename, and this one does not exist"
+                )
+                .into(),
+            });
+        }
     }
     Ok(())
 }
@@ -225,15 +401,6 @@ pub(crate) fn reads_residual(request: &ImagingRequest) -> bool {
             .names("residual")
             .iter()
             .all(|name| product_path(&request.imagename, name).exists())
-}
-
-/// Whether a continuation starts from the model an earlier run left.
-pub(crate) fn continues_model(request: &ImagingRequest) -> bool {
-    request.tclean_restart
-        && Family::of(request)
-            .names("model")
-            .iter()
-            .any(|name| product_path(&request.imagename, name).exists())
 }
 
 /// Whether the run forms or reads a residual, and so writes the residual,
@@ -268,6 +435,27 @@ pub(crate) fn check_prefix(prefix: &Path) -> Result<(), PrepareError> {
     Ok(())
 }
 
+/// Products to reuse on a continuation. A user may deliberately name a
+/// separate mask image such as `image.mask.dim.source` as an input. CASA
+/// opens `image.mask` as the output mask and reads the named mask independently.
+pub(crate) fn continuation_products(
+    request: &ImagingRequest,
+    prefix: &Path,
+) -> Result<Vec<PathBuf>, PrepareError> {
+    let mut existing = products(prefix)?;
+    if let Some(input) = request
+        .mask_image
+        .as_ref()
+        .and_then(|path| fs::canonicalize(path).ok())
+    {
+        existing.retain(|path| {
+            !suffix(prefix, path).starts_with("mask.")
+                || fs::canonicalize(path).map_or(true, |path| path != input)
+        });
+    }
+    Ok(existing)
+}
+
 pub(crate) fn products(prefix: &Path) -> Result<Vec<PathBuf>, PrepareError> {
     let mut products = Vec::new();
     // Publication appends to the original path bytes, including a trailing
@@ -297,16 +485,20 @@ pub(crate) fn products(prefix: &Path) -> Result<Vec<PathBuf>, PrepareError> {
     let Some(stem) = model.file_name() else {
         return Ok(products);
     };
-    let stem = stem.to_string_lossy();
-    let stem = stem.strip_suffix(".model").expect("appended suffix");
+    let stem = stem.as_encoded_bytes();
+    let stem = stem.strip_suffix(b".model").expect("appended suffix");
     for entry in entries {
         let entry = entry.map_err(|source| PrepareError::InspectOutputDirectory {
             path: directory.into(),
             source,
         })?;
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let Some(suffix) = name.strip_prefix(stem).and_then(|s| s.strip_prefix('.')) else {
+        let Some(suffix) = name
+            .as_encoded_bytes()
+            .strip_prefix(stem)
+            .and_then(|name| name.strip_prefix(b"."))
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        else {
             continue;
         };
         // Includes Taylor terms and derived products (.image.tt0.pbcor),
@@ -328,7 +520,7 @@ pub(crate) fn products(prefix: &Path) -> Result<Vec<PathBuf>, PrepareError> {
                     | "gridwt"
             )
         ) {
-            products.push(entry.path());
+            products.push(product_path(prefix, suffix));
         }
     }
     products.sort();
@@ -420,6 +612,7 @@ mod tests {
             "sumwt.tt2",
             "weight.tt2",
             "pb.tt0",
+            "pb.tt1",
             "alpha",
             "alpha.error",
             "alpha.pbcor",
@@ -432,7 +625,7 @@ mod tests {
             "psf",
             "model.tt2",
             "psf.tt3",
-            "pb.tt1",
+            "pb.tt2",
             "psf.tt0.pbcor",
         ] {
             assert!(!taylor.admits(suffix), "{suffix}");
@@ -496,12 +689,12 @@ mod tests {
     }
 
     #[test]
-    fn a_new_or_automatic_mask_over_an_existing_one_is_refused_only_when_cleaning() {
+    fn an_existing_mask_refuses_explicit_masks_and_unsupported_automatic_modes_while_cleaning() {
         let directory = tempfile::tempdir().unwrap();
         let prefix = directory.path().join("result");
         fs::create_dir(directory.path().join("result.mask")).unwrap();
         for overrides in [
-            serde_json::json!({"usemask": "auto-multithresh"}),
+            serde_json::json!({"usemask": "auto-multithresh", "specmode": "cube"}),
             serde_json::json!({"mask": "box[[1pix,1pix],[4pix,4pix]]"}),
         ] {
             let mut cleaning = overrides.clone();

@@ -15,7 +15,7 @@ pub use elliptical_gaussian::{
     EllipticalGaussian, EllipticalGaussianError, common_enclosing_gaussian, deconvolving_gaussian,
     gaussian_covariance, normalize_position_angle,
 };
-pub use primary_beam::{BeamPattern, FrequencyPattern, PrimaryBeam};
+pub use primary_beam::{BeamPattern, DefaultRadial, FrequencyPattern, PrimaryBeam};
 pub use vla_beams::{EvlaBand, EvlaPowerPattern, VlaBand};
 
 use nalgebra::{DMatrix, DVector};

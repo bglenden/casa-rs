@@ -83,8 +83,8 @@ pub enum ComponentError {
         /// What is wrong.
         reason: String,
     },
-    /// A visibility casa-rs does not evaluate (a limb-darkened disk's).
-    #[error("the visibility of a {shape} is not yet implemented in casa-rs: {reason}")]
+    /// A shape or direction whose visibility cannot be evaluated.
+    #[error("cannot evaluate {shape} visibility: {reason}")]
     Visibility {
         /// The shape.
         shape: &'static str,

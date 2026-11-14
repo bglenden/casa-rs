@@ -29,7 +29,9 @@ mod corrected_export;
 mod execute;
 mod fluxscale;
 mod gencal;
+mod interpolation;
 mod lookup;
+mod lookup_frequency;
 mod managed_output;
 mod model;
 mod plan;
@@ -65,10 +67,11 @@ pub use fluxscale::{
 };
 pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
 pub use lookup::{
-    CalibrationTableLookup, ComplexSolution, FieldSelection, LOOKUP_KEPT_ROW_BYTES,
-    LOOKUP_LOADING_ROW_BYTES,
+    CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection,
+    LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES, TimeInterpolation, TimeInterpolationOptions,
 };
-pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
+pub use lookup_frequency::FrequencyInterpolation;
+pub use managed_output::CalibrationTaskResult;
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
@@ -90,9 +93,9 @@ pub use session::{
     solve_calibration,
 };
 pub use simulated::{
-    SIMULATED_TABLE_ROW_BYTES, SIMULATED_TABLE_VALUE_BYTES, SimulatedJones, SimulatedSolution,
-    SolutionValues, check_simulated_table_destination, simulated_table_bytes,
-    write_simulated_jones_table,
+    SIMULATED_TABLE_ROW_BYTES, SIMULATED_TABLE_VALUE_BYTES, SimulatedJones, SimulatedNoiseSolution,
+    SimulatedSolution, SimulatedTableMetadata, SolutionValues, check_simulated_table_destination,
+    simulated_table_bytes, write_simulated_jones_table, write_simulated_noise_table,
 };
 pub use solve::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,

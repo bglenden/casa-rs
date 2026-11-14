@@ -76,10 +76,12 @@ fn setup(
     MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        outlier_psf_beams: Vec::new(),
         mask_beams: None,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,
         response,
+        saved_weighted_residual: false,
         nsigma: 0.0,
         noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
         automask: false,

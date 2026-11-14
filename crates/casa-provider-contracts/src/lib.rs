@@ -28,7 +28,7 @@ pub use casa_value::{
 pub use components::{ProviderComponentSchemas, merged_components};
 pub use parameters::*;
 pub use projection::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata, project_ui_form,
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
 };
 pub use provider::{
     NoAdditionalProviderSchemas, ProviderContractEnvelope, ProviderContractValidationError,

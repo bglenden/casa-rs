@@ -15,3 +15,16 @@ values are 0.2783987820148468 and 0.3704831302165985.
 
 This fixture covers CASA's image-plane MEM step, including its masked-out
 model floor and its virtual residual dispatch. See issue #1060.
+
+## Sparse AW restoring-beam fixture
+
+`sparse_aw_psf.f32le` contains the 51 × 51 fit window of the first
+plane of a CASA 6.7.6.14 AW PSF, with little-endian Float samples and
+the y index varying fastest. It comes from `refim_point_linRL.ms`
+with linear sampling, `start=0, width=1, nchan=3`, LSRK output, and a
+1024-square image with 10 arcsec pixels. The window spans zero-based
+pixels 487 through 537 along each spatial axis. The CASA fit selected
+405 samples after cropping. The recorded beam was 1619.6436768 by
+64.0271606 arcsec at 69.2624969 degrees for the original PSF and the
+one-Float-step perturbations of pixel (513, 513). [Reproduction and
+measurements in #1140](https://github.com/bglenden/casa-rs/issues/1140#issuecomment-6802113024).

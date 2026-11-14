@@ -98,6 +98,15 @@ pub fn read_mvc_cube_plane(
     inputs: &ContinuumProductInputs<'_>,
     channel: usize,
 ) -> Result<MvcCubePlane, ProductsError> {
+    read_mvc_channel(planned, inputs, channel, true)
+}
+
+pub(crate) fn read_mvc_channel(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+    channel: usize,
+    read_psf: bool,
+) -> Result<MvcCubePlane, ProductsError> {
     let state = inputs.normal_state();
     if !supports_cube_taylor_beam(
         state.basis(),
@@ -116,12 +125,16 @@ pub fn read_mvc_cube_plane(
             .find(|member| member.role() == role)
             .ok_or(ProductsError::UnsupportedProblem)
     };
-    let psf_member = member(ProductRole::Psf(ProductTerm::Single))?;
     let residual_member = member(ProductRole::Residual(ProductTerm::Single))?;
     let pb_member = member(ProductRole::PrimaryBeam(ProductTerm::Single))?;
     member(ProductRole::SumWeights(ProductTerm::Single))?;
     let plane = state.read_plane(0, channel, 0)?;
-    let psf = make_plane(psf_member, &plane, planned, inputs)?;
+    let psf = if read_psf {
+        let psf_member = member(ProductRole::Psf(ProductTerm::Single))?;
+        make_plane(psf_member, &plane, planned, inputs)?
+    } else {
+        Vec::new()
+    };
     let mut residual = raw_plane(residual_member, &plane, planned, inputs)?;
     // The raw PB is needed for the residual adjustment; publication blanks
     // its unsupported values only after that adjustment has been evaluated.
@@ -172,6 +185,9 @@ fn raw_plane(
         plane,
         domain_ordinal: 0,
         polarization: 0,
+        reuses_single_psf: false,
+        saved_weighted_residual: false,
+        saved_cube_model_plane: None,
         fitted_beam: None,
         restoring_beam: None,
         primary_beam_model: planned.primary_beam_model(),
@@ -214,7 +230,7 @@ fn apply_validity(
                 plane,
                 planned.primary_beam_model(),
                 inputs,
-                &ImageDomainRole::Main,
+                (&ImageDomainRole::Main, 0),
             )?;
             zero_invalid_plane_values(values, &valid);
         }

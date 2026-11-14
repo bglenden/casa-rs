@@ -25,6 +25,8 @@ use num_complex::{Complex32, Complex64};
 
 mod cells;
 mod screen;
+mod simple;
+pub use simple::SimpleMosaicScreens;
 
 use cells::FrequencyCells;
 use screen::{
@@ -215,6 +217,7 @@ pub struct MosaicWindow {
 /// CASA's split sinc correction.
 #[derive(Clone, Debug)]
 pub struct MosaicPb {
+    bounded_pointings: bool,
     dishes: usize,
     windows: Vec<FrequencyCells>,
     cells_per_plane: usize,
@@ -672,27 +675,8 @@ impl MosaicScreens {
             ..
         } = self;
         let half_support = u16::try_from(max_half_support).expect("support fits u16");
-        let sinc = |len: usize| {
-            (0..len)
-                .map(|index| {
-                    // `MosaicFT::getImage`, `prepGridForDegrid`: Float
-                    // arithmetic, unity at the centre.
-                    let x = std::f32::consts::PI * (index as f32 - (len / 2) as f32)
-                        / (len as f32 * f32::from(MOSAIC_OVERSAMPLING));
-                    if index == len / 2 {
-                        1.0
-                    } else {
-                        f64::from(x.sin() / x)
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-        let [grid_nx, grid_ny] = grid;
-        let model_x = sinc(grid_nx);
-        let model_y = sinc(grid_ny);
-        let image_x = model_x.iter().map(|value| 1.0 / value).collect();
-        let image_y = model_y.iter().map(|value| 1.0 / value).collect();
         Ok(MosaicPb {
+            bounded_pointings: true,
             dishes,
             windows: cells,
             cells_per_plane: cell_count,
@@ -702,7 +686,7 @@ impl MosaicScreens {
             max_half_support: half_support,
             conv_size,
             mueller,
-            correction: ImageCorrection::split(image_x, image_y, model_x, model_y),
+            correction: ImageCorrection::mosaic_sinc(grid, MOSAIC_OVERSAMPLING),
         })
     }
 }
@@ -837,6 +821,15 @@ impl ConvolutionFunctionSet for MosaicPb {
 
     fn pointing_ramp(&self) -> bool {
         true
+    }
+
+    /// `HetArrayConvFunc::checkPBOfField` converts the pointing's pixel to
+    /// integer coordinates before testing the image bounds. A pointing
+    /// outside has no convolution function, even if its beam overlaps.
+    /// `SimplePBConvFunc` retains its phase ramp outside the image.
+    fn admits_pointing(&self, geometry: &GridGeometry, offset_rad: [f64; 2]) -> bool {
+        !self.bounded_pointings
+            || crate::convolution::mosaic_pointing_on_image(geometry, offset_rad)
     }
 
     /// `MosaicFT::put` grids through `sectgmosd2` and `gmoswgtd2`, which

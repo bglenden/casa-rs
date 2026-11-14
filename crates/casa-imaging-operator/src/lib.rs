@@ -34,6 +34,7 @@
 mod accumulator;
 mod aw;
 mod backend;
+mod boxcar;
 mod compensation;
 mod continuum;
 mod convolution;
@@ -58,9 +59,10 @@ pub use accumulator::{
     GridStorage, Mode, ModeSet, PlaneRange, Tile,
 };
 pub use aw::{
-    AwCatalog, AwCatalogError, AwIndexing, CacheBound, CacheCharge, EvlaApertureGrid,
-    EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair, NativeAwPlane,
-    NativeCacheLock, NativeCacheState, NativeManifest,
+    AwCatalog, AwCatalogError, AwIndexing, AwPaRotation, Awp2, Awp2Sampling, Awp2Screens,
+    CacheBound, CacheCharge, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
+    NativeAwGenerationError, NativeAwPair, NativeAwPlane, NativeCacheLock, NativeCacheState,
+    NativeManifest, first_covered_pa, stored_pa_rad,
 };
 pub use backend::{GridBackend, ModelPlaneGrids, PreparedModelGrids, Work};
 /// A mosaic dish class's voltage pattern ([`MosaicPb::screens`]).
@@ -78,7 +80,8 @@ pub use edge::{CellBox, Reach, clipped_kernel_sum};
 pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 pub use mosaic::{
-    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicRules, MosaicScreens, MosaicWindow, pair_plane,
+    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicRules, MosaicScreens, MosaicWindow,
+    SimpleMosaicScreens, pair_plane,
 };
 pub use native::{
     DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, STENCIL,
@@ -111,3 +114,6 @@ pub const FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;
 pub const fn grid_planning_bytes(cells: usize) -> u64 {
     casa_fft::planning_bytes::<f64>(cells)
 }
+
+// CASA simulator GridFT BOX mode.
+pub use boxcar::Boxcar;

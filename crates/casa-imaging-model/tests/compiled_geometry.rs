@@ -252,7 +252,7 @@ fn every_observation_pointing_semantic_is_retained() {
         observation_pointing().with_time_sampling(PointingTimeSampling::VisibilityTime),
         observation_pointing().with_interpolation(PointingInterpolation::Nearest),
         observation_pointing().with_extrapolation(PointingExtrapolation::HoldNearest),
-        observation_pointing().with_missing(MissingPointingPolicy::UsePhaseTrackingCentre),
+        observation_pointing().with_missing(MissingPointingPolicy::UseFieldPhaseCentre),
     ];
     let compiled = variants.map(|law| {
         let input = geometry().with_centres(CentreLaws::new(

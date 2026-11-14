@@ -245,6 +245,8 @@ fn cube_request_copy_accounts_for_aw_owned_buffers() {
             psterm: true,
             wbawp: false,
             conjbeams: false,
+            computepastep: 360.0,
+            rotatepastep: 360.0,
             usepointing: false,
             normtype: ProductNormalization::UnitResponse,
             cf_resident_mb: None,
@@ -621,4 +623,137 @@ fn mvc_clean_run_stays_within_its_held_admission() {
         "{}",
         admission_breach("MVC clean run", &measured).unwrap_or_default()
     );
+}
+
+/// The mosaic cube reads sensitivity while building its Taylor moments and
+/// refreshing the cube model. The overlapping state must stay admitted.
+#[test]
+fn mvc_mosaic_clean_stays_within_its_held_admission() {
+    if !alone("mvc_view::mvc_mosaic_clean_stays_within_its_held_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation_as(root.path(), 6, "ALMA");
+    warm(&ms, root.path());
+    let request = request(
+        &ms,
+        &root.path().join("mvc-mosaic"),
+        512,
+        json!({
+            "specmode": "mvc", "gridder": "mosaic", "normtype": "flatnoise",
+            "deconvolver": "mtmfs", "nterms": 2, "nchan": 3,
+            "niter": 2, "cycleniter": 1, "pblimit": 0.1, "pbcor": true,
+        }),
+    );
+    let mut breaches = Vec::new();
+    let measured = check(&mut breaches, "mosaic MVC", &request, 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    let outcome = measured.outcome.unwrap();
+    assert_eq!(outcome.total_actual_minor_iterations, 2);
+    assert!(outcome.major_cycle_count >= 3);
+}
+
+/// The saved cube prediction and separately saved Taylor model overlap
+/// through an ordinary restart with both normal products re-formed.
+#[test]
+fn mvc_restart_keeps_both_saved_model_families_admitted() {
+    if !alone("mvc_view::mvc_restart_keeps_both_saved_model_families_admitted") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation(root.path(), 6);
+    warm(&ms, root.path());
+    let prefix = root.path().join("mvc-restart");
+    let mut controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "niter": 1, "write_pb": true, "pblimit": 0.1,
+    });
+    let initial = request(&ms, &prefix, 1024, controls.clone());
+    casa_imaging_application::execute(
+        &initial,
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("initial MVC");
+    controls["threshold"] = json!("100Jy");
+    let mut breaches = Vec::new();
+    for (label, calcpsf, calcres) in [
+        ("MVC restart", true, true),
+        ("saved MVC PSF", false, true),
+        ("saved MVC residual", false, false),
+    ] {
+        controls["calcpsf"] = json!(calcpsf);
+        controls["calcres"] = json!(calcres);
+        let resumed = request(&ms, &prefix, 1024, controls.clone())
+            .with_tclean_restart()
+            .unwrap();
+        let measured = check(&mut breaches, label, &resumed, 1, AMPLE);
+        assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+        let outcome = measured.outcome.unwrap();
+        assert_eq!(outcome.major_cycle_count, usize::from(calcres));
+        assert_eq!(outcome.total_minor_iterations, 0);
+        assert!(outcome.product_names().iter().any(|name| name == ".model"));
+    }
+}
+
+/// The first resumed cube pass overlaps a Taylor model, one saved beam
+/// channel and the previous Taylor beam, all within the run's admission.
+#[test]
+fn mvc_start_model_keeps_live_allocations_admitted() {
+    if !alone("mvc_view::mvc_start_model_keeps_live_allocations_admitted") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation(root.path(), 6);
+    warm(&ms, root.path());
+    let prefix = root.path().join("mvc-start");
+    let mut controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "niter": 1, "write_pb": true, "pblimit": -0.1,
+    });
+    let initial = request(&ms, &prefix, 256, controls.clone());
+    casa_imaging_application::execute(
+        &initial,
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("initial MVC");
+    let start = [root.path().join("seed.tt0"), root.path().join("seed.tt1")];
+    let tt0 = root.path().join("mvc-start.model.tt0");
+    let coordinates = casa_images::PagedImage::<f32>::open(&tt0)
+        .unwrap()
+        .coordinates()
+        .clone();
+    std::fs::remove_dir_all(tt0).unwrap();
+    // A start image can cover a wider field than the output. Its regrid
+    // workspace must be admitted separately from the small cube's passes.
+    let mut wide =
+        casa_images::PagedImage::<f32>::create(vec![3072, 3072, 1, 1], coordinates, &start[0])
+            .unwrap();
+    wide.set_units("Jy/pixel").unwrap();
+    wide.save().unwrap();
+    drop(wide);
+    std::fs::rename(root.path().join("mvc-start.model.tt1"), &start[1]).unwrap();
+    controls["startmodel"] = json!(start);
+    controls["threshold"] = json!("100Jy");
+    let resumed = request(&ms, &prefix, 256, controls)
+        .with_tclean_restart()
+        .unwrap();
+    let mut breaches = Vec::new();
+    let measured = check(&mut breaches, "seeded MVC", &resumed, 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    let outcome = measured.outcome.unwrap();
+    assert_eq!(outcome.major_cycle_count, 1);
+    assert_eq!(outcome.total_minor_iterations, 0);
+    assert!(outcome.product_names().iter().any(|name| name == ".model"));
 }

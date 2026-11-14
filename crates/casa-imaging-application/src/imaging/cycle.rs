@@ -32,8 +32,8 @@ use casa_imaging_runtime::pass::{
 use casa_imaging_runtime::{
     Admitted, CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup,
     MinorLayout, PsfCache, Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes,
-    prepare_bytes, prepare_bytes_for, prepare_minor_cycle, psf_cache_bytes, run_bytes,
-    run_bytes_for, run_minor_cycle, run_phase,
+    prepare_bytes, prepare_bytes_for, prepare_minor_cycle_with_residual_masks, psf_cache_bytes,
+    run_bytes, run_bytes_for, run_minor_cycle, run_phase,
 };
 
 use super::charts::{Chart, ChartStitch, charts};
@@ -51,9 +51,15 @@ use crate::compile::StartModel;
 mod clean;
 mod continuation;
 mod prediction;
+mod separate_psf;
+pub(crate) use separate_psf::form as form_separate_psf;
 mod seeding;
+type BeamGrid = Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>;
 use crate::restart::ExistingProducts;
-use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason, PlaneRows};
+use crate::{
+    AwCatalogDeployment, Awp2Deployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
+    PlaneRows,
+};
 pub(crate) use continuation::Forms;
 
 /// What one native imaging run needs besides the compiled problem.
@@ -61,14 +67,18 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
     pub(crate) mvc: Option<MvcCycleSpec<'a>>,
     pub(crate) psf_cutoff: f32,
-    pub(crate) psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
-    pub(crate) mask_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    pub(crate) psf_beams: BeamGrid,
+    pub(crate) outlier_psf_beams: Vec<BeamGrid>,
+    pub(crate) mask_beams: BeamGrid,
     /// The observation's batches the passes read.
     pub(crate) source: &'a BatchRoute,
+    pub(crate) separate_psf: Option<Admitted<Vec<f32>>>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     /// The main domain's start model, which the initial pass seeds the
     /// model from.
     pub(crate) start_model: Option<StartModel>,
+    pub(crate) outlier_models: Vec<Option<StartModel>>,
+    pub(crate) outlier_products: Vec<ExistingProducts>,
     /// The PSF, sums of weights and residual an earlier run left, which the
     /// run reads where it does not form them.
     pub(crate) existing: Option<ExistingProducts>,
@@ -93,6 +103,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) spill_directory: &'a Path,
     /// The AW catalog of an A-projection run.
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
+    pub(crate) awp2: Option<Awp2Deployment>,
     pub(crate) backend: BackendChoice,
     /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
@@ -100,10 +111,24 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) diagnostics: Diagnostics,
 }
 
+impl ImagingInputs<'_> {
+    fn kernel_deployments(&self) -> (Option<(&AwCatalogDeployment, f64)>, Option<&Awp2Deployment>) {
+        // Availability restricts AW to a single MeasurementSet.
+        let aw = self.aw_catalog.as_ref().map(|catalog| {
+            (
+                catalog,
+                self.source.stores[0].plan.gridding_frequency_scale(),
+            )
+        });
+        (aw, self.awp2.as_ref())
+    }
+}
+
 /// The independently compiled Taylor view used by an MVC cleaning cycle.
 #[derive(Clone, Copy)]
 pub(crate) struct MvcCycleSpec<'a> {
     pub(crate) taylor_problem: &'a CompiledProblem,
+    pub(crate) start: Option<&'a crate::compile::MvcStart>,
     pub(crate) expansion_reference_hz: f64,
     pub(crate) controls: casa_imaging_products::ContinuumProductControls,
     pub(crate) centres: Option<&'a casa_imaging_products::PrimaryBeamCentres>,
@@ -143,6 +168,7 @@ struct Run<'a> {
     /// The image domains' images from their charts.
     stitch: ChartStitch,
     source: Box<dyn BoundedSource + 'a>,
+    separate_psf: Option<Admitted<Vec<f32>>>,
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
     _weights: Reservation,
@@ -157,6 +183,8 @@ struct Run<'a> {
     /// The start model the initial generation is seeded from; with one,
     /// the initial pass grids the residual of its prediction.
     start_model: Option<StartModel>,
+    outlier_models: Vec<Option<StartModel>>,
+    outlier_products: Vec<ExistingProducts>,
     /// The flat-noise response the start model is made physical with,
     /// after an initial pass without it has formed the weights
     /// ([`seeding`]); `None` when it is physical already.
@@ -174,7 +202,7 @@ struct Run<'a> {
     visibility_write_bytes: u64,
     /// Planes per wave of the most finely waved pass so far.
     planes_per_wave: Option<u32>,
-    /// Each main-image plane's start-model flux, in `.model`'s units.
+    /// Each image plane's start-model flux, in `.model`'s units.
     start_model_flux: Vec<([usize; 3], f64)>,
     /// Whether the initial pass also grids the sensitivity image
     /// (`Mode::Weight`): a kernel set with weight taps on any domain.
@@ -250,7 +278,7 @@ impl ImagingOutcome {
 /// completes and the stop reason. A cancelled run stops at the next block
 /// boundary of a pass or before the next phase.
 pub(crate) fn run(
-    inputs: ImagingInputs<'_>,
+    mut inputs: ImagingInputs<'_>,
     summary: &mut RunSummary,
 ) -> Result<ImagingOutcome, ImagingError> {
     let problem = inputs.problem;
@@ -258,13 +286,28 @@ pub(crate) fn run(
     let reconstruction = mvc.map_or(problem, |view| view.taylor_problem);
     let controls = reconstruction.reconstruction().controls();
     let cleaning = controls.max_minor_iterations() > 0;
+    // MVC's cube-to-Taylor reduction has already applied the beam response.
+    let minor_response = if mvc.is_some() {
+        None
+    } else {
+        inputs.image_response
+    };
     let setup = minor_setup(
         reconstruction,
-        (inputs.image_response, inputs.primary_beam),
+        (minor_response, inputs.primary_beam),
         &inputs.masks,
         inputs.psf_cutoff,
-        inputs.psf_beams.clone(),
-        inputs.mask_beams.clone(),
+        match mvc
+            .and_then(|view| view.start)
+            .and_then(|start| start.saved_psf.as_ref())
+        {
+            Some(saved) => saved.taylor.psf_pixel_beams(),
+            None => inputs.psf_beams.clone(),
+        },
+        (
+            inputs.mask_beams.clone(),
+            std::mem::take(&mut inputs.outlier_psf_beams),
+        ),
     );
     let mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
@@ -290,7 +333,7 @@ pub(crate) fn run(
     // setup that then fails still reports it.
     let mut chosen = None;
     let opened = run_phase("setup", &cancel, diagnostics, summary, || {
-        Run::open(inputs, (&minor, refresh), &mut chosen)
+        Run::open(inputs, (&minor, refresh), &mut chosen, false)
     });
     if let Some(workers) = chosen {
         summary.workers = workers.cores.workers;
@@ -307,7 +350,13 @@ pub(crate) fn run(
         &cancel,
         diagnostics,
         summary,
-        || run.initial(!cleaning),
+        || {
+            run.initial(
+                !cleaning,
+                mvc.and_then(|view| view.start)
+                    .is_some_and(|start| start.projection_beams.is_some()),
+            )
+        },
     )?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
@@ -320,8 +369,9 @@ pub(crate) fn run(
         return Ok(outcome);
     }
     let mvc = if let Some(spec) = mvc {
-        let (state, taylor) = clean::MvcState::begin(spec, outcome.scientific, &run)?;
+        let (state, taylor) = clean::MvcState::begin(spec, outcome.scientific, &mut run)?;
         outcome.scientific = taylor;
+        outcome.plane_rows.start_model_flux = std::mem::take(&mut run.start_model_flux);
         Some(state)
     } else {
         None
@@ -461,6 +511,7 @@ fn predict_final_model(
         outcome.scientific,
         (Vec::new(), Vec::new(), Reservation::none()),
         true,
+        outcome.major_cycle_count == 0,
     )?;
     if outcome.major_cycle_count == 0 {
         let visibility = major.visibility.take();
@@ -486,17 +537,22 @@ fn minor_setup<'a>(
     ),
     masks: &ImageDomainReconstructionMaskPlans,
     psf_cutoff: f32,
-    psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
-    mask_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    psf_beams: BeamGrid,
+    (mask_beams, outlier_psf_beams): (
+        BeamGrid,
+        Vec<Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>>,
+    ),
 ) -> MinorCycleSetup<'a> {
     let controls = problem.reconstruction().controls();
     MinorCycleSetup {
         psf_cutoff,
         psf_beams,
         mask_beams,
+        outlier_psf_beams,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: controls.hogbom_iteration_accounting(),
         response,
+        saved_weighted_residual: false,
         nsigma: controls.noise_sigma().unwrap_or(0.0),
         noise: controls.noise_estimate(),
         automask: matches!(
@@ -507,6 +563,16 @@ fn minor_setup<'a>(
         residual_pixel_mask: problem.products().validity().uncorrected_mask()
             == UncorrectedImageMaskPolicy::PrimaryBeam,
         pbmask: controls.primary_beam_mask(),
+    }
+}
+
+impl ImagingInputs<'_> {
+    fn seeding_bytes(&self, reseeds: bool) -> Option<u64> {
+        seeding::model_bytes(self.start_model.as_ref(), &self.outlier_models, reseeds)
+    }
+
+    fn has_model_seed(&self) -> bool {
+        self.start_model.is_some() || self.outlier_models.iter().any(Option::is_some)
     }
 }
 
@@ -522,6 +588,7 @@ impl<'a> Run<'a> {
         inputs: ImagingInputs<'a>,
         (minor, refresh): (&dyn Fn(usize) -> u64, Option<RefreshDemand>),
         chosen: &mut Option<WorkerChoice>,
+        psf_only: bool,
     ) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
         let backend = inputs.backend;
@@ -549,19 +616,18 @@ impl<'a> Run<'a> {
                     backend,
                     inputs.grid_precision,
                     inputs.ft_padding,
-                    inputs.aw_catalog.as_ref(),
+                    inputs.kernel_deployments(),
                     &keys,
                     admission,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let weight_image = domains.iter().any(|domain| domain.weight_image);
+        let weight_image = !psf_only && domains.iter().any(|domain| domain.weight_image);
         if inputs.visibility_write.is_some() && problem.geometry().domains().len() > 1 {
             return Err(ImagingError::Unsupported {
                 reason: "visibilities are written back for one image domain",
             });
         }
-        let cancel = inputs.cancel;
         let channel_local = matches!(domains[0].operator.basis(), Basis::ChannelLocal { .. });
         let planes = domains[0].operator.basis().planes();
         let pointing_ramp = domains
@@ -582,7 +648,11 @@ impl<'a> Run<'a> {
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
             .unwrap_or(0);
-        let initial = initial_modes(weight_image);
+        let initial = ModeSet {
+            data: !psf_only,
+            psf: true,
+            weight: weight_image,
+        };
         let reseed = seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response);
         let demand = SetupDemand {
             problem,
@@ -599,12 +669,10 @@ impl<'a> Run<'a> {
                 ModelLifecycle::new(problem, ModelStoragePlan::resident(usize::MAX)?)
                     .resident_bytes()
             },
-            start_model: inputs.start_model.as_ref().map(|start| {
-                start.seeding_bytes() + reseed.map_or(0, |_| start.conversion_bytes())
-            }),
+            start_model: inputs.seeding_bytes(reseed.is_some()),
             reseeds: reseed.is_some(),
             write: inputs.visibility_write.as_ref().map(|_| {
-                let seeded = (inputs.start_model.is_some(), reseed.is_some());
+                let seeded = (inputs.has_model_seed(), reseed.is_some());
                 let (modes, with_model) = write_pass(problem, inputs.forms, initial, seeded);
                 (modes, with_model, visibility_write_bytes)
             }),
@@ -623,6 +691,7 @@ impl<'a> Run<'a> {
             source: inputs.products.1,
             free: free_memory(&host, &policy),
         };
+        let cancel = inputs.cancel;
         let choice = setup::fit_workers(ceiling, demand.free, |cores| demand.bytes(cores))?;
         *chosen = Some(choice.clone());
         // The products run after the passes: a run whose products do not
@@ -699,6 +768,7 @@ impl<'a> Run<'a> {
             stitch,
             charts,
             source,
+            separate_psf: inputs.separate_psf,
             weighting,
             _weights: weights,
             teams,
@@ -708,6 +778,8 @@ impl<'a> Run<'a> {
             cube,
             lifecycle,
             start_model: inputs.start_model,
+            outlier_models: inputs.outlier_models,
+            outlier_products: inputs.outlier_products,
             reseed,
             existing: inputs.existing,
             forms: inputs.forms,
@@ -738,7 +810,7 @@ impl<'a> Run<'a> {
             self.problem,
             self.forms,
             self.initial_modes(),
-            (self.start_model.is_some(), self.reseed.is_some()),
+            (self.has_model_seed(), self.reseed.is_some()),
         );
         // Without a minor cycle the first major cycle writes, and seeds
         // beside it.
@@ -770,21 +842,40 @@ impl<'a> Run<'a> {
             Reservation,
         ),
         last: bool,
+        first_residual_pass: bool,
     ) -> Result<Major, ImagingError> {
         // The retained charge still covers the normal state and model the
         // pass refreshes; the pass adds its scratch and the new residual,
         // and the minor cycle's charge covers its terms until the model
         // holds them.
-        let (normal_state, model) = completion.into_parts();
+        let (normal_state, mut model) = completion.into_parts();
+        let saved_seed = self.reseed.filter(|_| {
+            first_residual_pass
+                && !self.forms.residual
+                && self
+                    .existing
+                    .as_ref()
+                    .is_some_and(ExistingProducts::residual_in_image_units)
+        });
+        let seeding = saved_seed.map_or(0, |_| self.seeding_bytes());
         let Admitted {
             value: plan,
             reservation: mut pass,
         } = self.admit_pass(
             ModeSet::DATA,
             true,
-            self.write_bytes(last),
+            self.write_bytes(last) + seeding,
             self.writes(last),
         )?;
+        if let Some(response) = saved_seed {
+            let _seeding = pass.split(seeding);
+            let start = self
+                .start_model
+                .clone()
+                .expect("a restart model to convert");
+            drop(model);
+            model = self.physical_generation(&start, &normal_state, response)?;
+        }
         let model = if dense.is_empty() {
             self.lifecycle.prepare_final_model(model, terms)?
         } else {
@@ -1114,6 +1205,14 @@ impl<'a> Run<'a> {
         let team = self.teams.streaming();
         let domains = pass_domains(&self.domains, team.workers(), self.row_work(modes));
         let charts = &self.charts;
+        let saved_by_domain = |domain| match domain {
+            0 => self.existing.as_ref(),
+            index => self.outlier_products.get(index - 1),
+        };
+        let refills_saved_sums = !self.forms.psf
+            && self.forms.residual
+            && !self.outlier_products.is_empty()
+            && state.needs_scalar_weight();
         let prepare = |chart: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
             let Chart { domain, window } = charts[chart];
@@ -1129,6 +1228,7 @@ impl<'a> Run<'a> {
             domains: &domains,
             weighting: &self.weighting,
             modes,
+            refill_scalar_sum_weight: refills_saved_sums,
             model: model.map(|_| &prepare as &ModelPreparation<'_>),
             residency,
             native_spacing_hz: self.native_spacing_hz,
@@ -1154,25 +1254,39 @@ impl<'a> Run<'a> {
             &self.cancel,
             &mut |chart, images| {
                 let basis = self.domains[chart].operator.basis();
+                let gridded_sum = refills_saved_sums.then(|| images.data_sumwt(0, 0, 0));
                 let images = self
                     .stitch
                     .accept(chart, pass_images(chart, &images, initial, basis))
                     .map_err(|error| PassError::Images(error.into()))?;
                 match images {
                     Some(mut images) => {
+                        // Keep the main view's sensitivity and sums. Only the
+                        // unnormalised PSF samples come from the separate view.
+                        let mut psf_resident = Reservation::none();
+                        if initial && let Some(separate) = self.separate_psf.take() {
+                            images.psf = Some(separate.value);
+                            psf_resident = separate.reservation;
+                        }
                         // A pass of the PSF alone takes the residual it does
                         // not form ([`continuation`]).
                         if !modes.data {
+                            let saved = saved_by_domain(images.domain);
                             continuation::set_residual(
-                                self.existing.as_ref(),
+                                saved,
                                 &mut images,
                                 basis.data_terms(),
+                                !self.outlier_products.is_empty(),
                             )
                             .map_err(|error| PassError::Images(Box::new(error)))?;
                         }
-                        state
-                            .append(images)
-                            .map_err(|error| PassError::Images(Box::new(error)))
+                        let appended = match gridded_sum {
+                            Some(sum) => state.append_with_scalar_weight(images, sum),
+                            None => state.append(images),
+                        }
+                        .map_err(|error| PassError::Images(Box::new(error)));
+                        drop(psf_resident);
+                        appended
                     }
                     None => Ok(()),
                 }

@@ -1311,20 +1311,6 @@ pub fn imhead_custom_value(
     }
 }
 
-/// Backwards-compatible entry point for changing user-defined metadata.
-///
-/// # Errors
-///
-/// Returns an error when the value or metadata operation is unsupported.
-pub fn imhead_custom_scalar(
-    path: impl AsRef<Path>,
-    mode: &str,
-    key: &str,
-    value: &ParameterValue,
-) -> Result<ImageHeaderSummary, ImageError> {
-    imhead_custom_value_change(path, mode, key, value)
-}
-
 /// Write or remove user-defined scalar, record, and array metadata.
 ///
 /// `mode` is `"add"`, `"put"`, or `"del"`. Adds refuse an existing field;
@@ -1492,7 +1478,7 @@ fn imhead_change_string(
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     if imhead_is_custom_key(hdkey) {
-        return imhead_custom_scalar(
+        return imhead_custom_value_change(
             path,
             mode,
             hdkey,

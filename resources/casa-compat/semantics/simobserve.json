@@ -12,7 +12,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "refusals-1099-20261104"
+    "refusals-1099-20261104",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "outputs"
@@ -25,7 +26,11 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111",
+    "main-integration-20261111",
+    "interferometric-projects-20261114",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -38,7 +43,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -51,7 +57,10 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111",
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -64,7 +73,10 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111",
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -77,7 +89,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -90,7 +103,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -103,7 +117,10 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111",
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "sky-model"
@@ -116,7 +133,9 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -131,7 +150,9 @@
     "parity-20261103",
     "skymodel-fixture",
     "casa-suite-20261103",
-    "refusals-1099-20261104"
+    "refusals-1099-20261104",
+    "model-overrides-20261111",
+    "main-integration-20261111"
    ],
    "behaviors": [
     "sky-model"
@@ -143,7 +164,10 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111",
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -155,7 +179,10 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111",
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -167,7 +194,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -179,7 +207,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -191,7 +220,10 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111",
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -203,7 +235,10 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "scheduling-20261111",
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -215,7 +250,10 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111",
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "pointings"
@@ -227,7 +265,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -239,7 +278,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -251,7 +291,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "observation"
@@ -263,7 +304,12 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "scheduling-20261111",
+    "main-integration-20261111",
+    "uvw-sidereal-20261112",
+    "uvw-long-baselines-20261112",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -275,7 +321,12 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "scheduling-20261111",
+    "main-integration-20261111",
+    "uvw-sidereal-20261112",
+    "uvw-long-baselines-20261112",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -287,7 +338,10 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "pointings-20261111",
+    "main-integration-20261111",
+    "pointing-calibrators-20261114"
    ],
    "behaviors": [
     "schedule"
@@ -299,7 +353,10 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "uvw-long-baselines-20261112",
+    "array-configuration-controls",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "antennas"
@@ -333,12 +390,16 @@
   },
   "outframe": {
    "status": "Implemented",
-   "scope": "The spectral frame written. LSRK, TOPO and BARY are compared with CASA; other frames remain untested against the task.",
+   "scope": "The spectral frame written. LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB have scoped CASA task comparisons. Interferometric REST image prediction is supported; Undefined image/component predictions and REST component or joint predictions report CASA simulator failure before publishing an unpredicted MS, correcting the task's ignored predict=False outcome. Frame combinations with other observation modes are outside these receipts.",
    "evidence": [
     "signature",
     "task-tests",
     "parity-20261103",
-    "frequency-frames-20261106"
+    "frequency-frames-20261106",
+    "additional-frames-20261111",
+    "main-integration-20261111",
+    "interferometric-projects-20261114",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "observation"
@@ -352,7 +413,9 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "noise-seeds-20261103"
+    "noise-seeds-20261103",
+    "interferometric-projects-20261114",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "noise"
@@ -366,7 +429,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "noise-seeds-20261103"
+    "noise-seeds-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -378,7 +442,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -390,7 +455,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -404,7 +470,8 @@
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
-    "noise-seeds-20261103"
+    "noise-seeds-20261103",
+    "interferometric-projects-20261114"
    ],
    "behaviors": [
     "noise"
@@ -430,7 +497,9 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "interferometric-projects-20261114",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "noise"
@@ -450,7 +519,7 @@
   },
   "graphics": {
    "status": "Partial",
-   "scope": "The Python host renders complete .skymodel.png and .observe.png figures for file/screen/both; none draws nothing. Rust prepares all scientific data, transferred by bounded typed file views without thinning. Interferometric file/screen/both also writes the numerical .quick.psf before corruption; none and single-dish do not. Direct headless use without the caller payload warns that PNGs require the Python host. Broader combinations remain unverified (#1053).",
+   "scope": "The Python host renders complete .skymodel.png and .observe.png figures for file/screen/both; none draws nothing. Rust prepares all scientific data, transferred by bounded typed file views without thinning. Interferometric file/screen/both also writes the numerical .quick.psf before corruption using the accepted legacy single-field padding 1.0; none and single-dish do not. Direct headless use without the caller payload warns that PNGs require the Python host. Additional plotting combinations and public helpers belong to #1304.",
    "evidence": [
     "signature",
     "task-tests",
@@ -481,7 +550,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "project-lifecycle-20261114"
    ],
    "behaviors": [
     "outputs"
@@ -494,21 +564,26 @@
    "title": "Sky model and component list",
    "status": "Partial",
    "scope": "skymodel through modifymodel and flatimage with inbright, indirection, incell, incenter and inwidth; complist with compwidth and comp_nchan, alone or with a sky model.",
-   "gap": "Compared in 6 of #920's 11 cases and by the skymodel fixture; the indirection and incell overrides and comp_nchan > 1 are not exercised against CASA's task.",
+   "gap": "Scoped CASA task evidence covers scalar indirection and incell overrides separately and together, four-channel component-only models, combined image/component inputs with brightness/cell/direction/frequency overrides, and a polarized four-Stokes, four-channel image with components. The receipts cover these representative workflows, not an exhaustive Cartesian product of inputs.",
    "evidence": [
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "model-overrides-20261111",
+    "main-integration-20261111",
+    "interferometric-projects-20261114"
    ]
   },
   {
    "id": "antennas",
    "title": "Antenna lists",
-   "status": "Partial",
+   "status": "Implemented",
    "scope": "antennalist and sdantlist as files, ALMA resolution strings ('alma;0.5arcsec'), the search through the project directory and CASA's alma/simmos, and sdant.",
-   "gap": "Configuration names need CASA's data directory: casa-rs does not ship alma/simmos (an open owner question on #1053).",
+   "gap": "Named configurations require external public alma/simmos files in a valid CASA_RS_MEASURESPATH or ~/.casa/data runtime. README describes obtaining them from NRAO's runtime-data archive; the compact measures snapshot does not bundle them. Project-local and explicit configuration files remain supported.",
    "evidence": [
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "uvw-long-baselines-20261112",
+    "array-configuration-controls"
    ]
   },
   {
@@ -516,10 +591,13 @@
    "title": "Pointings",
    "status": "Partial",
    "scope": "setpointings with direction, mapsize, maptype and pointingspacing, or a ptgfile; written to <stem>.ptg.txt and checked against the model.",
-   "gap": "maptype='square' is compared only through the single-dish case.",
+   "gap": "CASA task evidence includes square interferometric pointings, a three-entry user pointing file with 10/20/30-second dwell times over two full passes, and a 16 by 12 arcsecond hexagonal map with explicit 4 arcsecond spacing. Other file formats and pointing/model/mode combinations remain outside these receipts.",
    "evidence": [
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "scheduling-20261111",
+    "pointings-20261111",
+    "main-integration-20261111"
    ]
   },
   {
@@ -527,10 +605,13 @@
    "title": "Calibrator and observing schedule",
    "status": "Partial",
    "scope": "caldirection and calflux, integration, totaltime, refdate and hourangle.",
-   "gap": "The calibrator cases are compared with CASA's sm re-predict, since CASA's task leaves the calibrator unpredicted (decision). hourangle other than 'transit' and refdate is compared only at 2012/06/21.",
+   "gap": "Paired task evidence now covers numeric and quantity non-transit hour angles, reference dates in 2015/2016/2017/2025 and discarded time suffixes. The historical calibrator cases still use CASA sm re-prediction because the CASA task leaves calibrator scans unpredicted (approved decision); these four new cases have no calibrator.",
    "evidence": [
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "scheduling-20261111",
+    "main-integration-20261111",
+    "uvw-long-baselines-20261112"
    ]
   },
   {
@@ -538,11 +619,16 @@
    "title": "Observation and prediction",
    "status": "Partial",
    "scope": "obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.",
-   "gap": "outframe LSRK, TOPO and BARY are compared; other frames are not yet compared against CASA.",
+   "gap": "Image-model interferometry has scoped CASA comparisons for LSRK, TOPO, BARY, LSRD, GEO, GALACTO, LGROUP and CMB. REST image prediction succeeds; Undefined image/component predictions and REST component or joint predictions resolve to documented failures before native MS publication. Stateful controls also cover continuation of REST image and BARY MeasurementSets, an ignored Undefined output-frame request, single-dish continuation, manual/atmospheric noise and ignored leakage with prediction disabled; original MS spectral frames are preserved. These are scoped workflows rather than an exhaustive Cartesian product of inputs.",
    "evidence": [
     "task-tests",
     "parity-20261103",
-    "frequency-frames-20261106"
+    "frequency-frames-20261106",
+    "additional-frames-20261111",
+    "main-integration-20261111",
+    "uvw-long-baselines-20261112",
+    "interferometric-projects-20261114",
+    "project-lifecycle-20261114"
    ]
   },
   {
@@ -563,13 +649,14 @@
    "title": "Files, overwrite and graphics",
    "status": "Partial",
    "scope": "CASA's file names under the project, overwrite, verbose and graphics.",
-   "gap": "Complete image/component/dense-pointing/single-dish figures are verified through the Python host. Direct headless use without its payload does not render PNGs; broader task/output combinations and simulation-facing public simutil graphics remain unfinished (#1053).",
+   "gap": "Complete image/component/dense-pointing/single-dish figures are verified through the Python host. Direct headless use without its payload does not render PNGs; broader task/output combinations and simulation-facing public simutil graphics remain unfinished (#1304).",
    "evidence": [
     "task-tests",
     "parity-20261103",
     "casa-suite-20261103",
     "quick-psf-20261111",
     "quick-psf-relative-project-20261111",
+    "project-lifecycle-20261114",
     "graphics-20261111"
    ]
   }
@@ -686,6 +773,19 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
+  },
+  {
+   "id": "report-failed-frequency-predictions",
+   "inputs": "Interferometric simobserve with Undefined output frames, or REST frames and component inputs/calibrators.",
+   "casa": "The simulator rejects frequency conversion with predict=False; simobserve ignores it, succeeds and publishes zero unpredicted DATA.",
+   "ours": "Report the simulator failure cause before close publishes an unpredicted MS; preserve prepared model/pointing products and support valid REST image prediction.",
+   "rationale": "A rejected prediction cannot produce a valid simulated science dataset. Do not hide the failure behind a successful zero-MS task result.",
+   "impact": "Scripts now receive the calculation error instead of silently continuing with invalid DATA. Valid other frame/model combinations are unchanged.",
+   "evidence": [
+    "interferometric-projects-20261114"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: where CASA loses/corrupts data or contradicts its evident intent, casa-rs corrects it. This applies that existing policy to ignored predict=False outcomes."
   }
  ],
  "evidence": {
@@ -813,6 +913,82 @@
    "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata LOCAL_COPY --only frame_topo frame_bary (bg-mac-mini, CPU)",
    "receipt": "resources/casa-compat/evidence/simobserve-frequency-frames-20261106.json"
   },
+  "model-overrides-20261111": {
+   "kind": "CASA-paired task runs",
+   "state": "passed",
+   "result": "Four new successful cases agree: scalar direction override (DATA NRMS 6.81e-7), scalar cell override (5.71e-7), both overrides (4.64e-7), and four-channel component-only input (5.64e-8). A TOPO control and expected coarse-cell refusal also agree. Image metadata/pixels, byte-identical pointings and MS comparisons pass with existing tolerances and known differences.",
+   "scope": "Interferometric ALMA simobserve model preparation and prediction with scalar indirection/incell overrides and comp_nchan=4; six bounded cases including controls. Does not establish exhaustive model/noise/graphics coverage or performance acceptance.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "169376e710d325fab1134102d857795ba6b345c3",
+   "source_revision": "5b3552389f5c2f8ef644272dee9a62d80b661a0d",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-model-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/simobserve-model-overrides-20261111.json"
+  },
+  "scheduling-20261111": {
+   "kind": "CASA-paired task runs",
+   "state": "passed",
+   "scope": "Four ALMA image-model simulations: numeric hours, a time quantity, a modern transit date, and interferometric square pointings across 2015/2016/2017/2025. Covers discarded refdate time suffixes and TAI-UTC offsets of 35, 36 and 37 seconds. Calibrator, noise, graphics and exhaustive scheduling combinations are outside this receipt.",
+   "result": "4/4 agree: DATA NRMS 6.88e-7, 7.88e-7, 6.96e-7 and 6.26e-7 (limit 1e-3); maximum UVW difference 1.61e-6 m (existing limit 1e-3 m). Image metadata/pixels, byte-identical pointing files and MeasurementSet comparisons pass with existing known differences.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d23c5eea15e3c89f39dcd4bb92d776bd805c2c14",
+   "source_revision": "d23c5eea15e3c89f39dcd4bb92d776bd805c2c14",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-schedule-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/simobserve-scheduling-20261111.json"
+  },
+  "additional-frames-20261111": {
+   "kind": "CASA-paired task runs",
+   "state": "passed",
+   "scope": "ALMA interferometric image-model predictions with LSRD, GEO, GALACTO, LGROUP and CMB frequency frames. REST/Undefined and combinations with other modes remain unverified.",
+   "result": "5/5 agree on spectral-frame codes and channel frequencies, image metadata/pixels, byte-identical pointing files and MS comparisons with existing known differences. DATA NRMS ranges from 7.013e-7 to 7.025e-7 (limit 1e-3); maximum UVW difference 3.69e-8 m.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d23c5eea15e3c89f39dcd4bb92d776bd805c2c14",
+   "source_revision": "ae1556d08df55fe9794b133cf52ac0dfceb62b98",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-frame-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/simobserve-additional-frames-20261111.json"
+  },
+  "pointings-20261111": {
+   "kind": "CASA-paired task scenarios",
+   "state": "passed",
+   "result": "2/2 successful simulations agree. DATA NRMS at most 3.65e-7 (limit 1e-3); UVW at most 3.84e-8 m (existing allowance 1e-3 m). Pointing files are byte-identical; images, MS metadata and cells pass their existing checks.",
+   "scope": "Three input pointings with 10/20/30-second dwell times over two map passes, and explicit 16 by 12 arcsecond hexagonal mapping at 4 arcsecond spacing.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/data/simobserve-multiple-pointings.ptg.txt",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d23c5eea15e3c89f39dcd4bb92d776bd805c2c14",
+   "source_revision": "e57cf38dcf50f986aa17538ca630904f59dbfe64",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out target/1053-pointing-coverage --casars-bin TARGET/debug/simobserve --casatestdata LOCAL_COPY --only pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simobserve-pointings-20261111.json"
+  },
+  "main-integration-20261111": {
+   "kind": "Source-verified repaired-main CASA task replay",
+   "state": "passed",
+   "result": "All 17 named model/frame/scheduling/pointing cases agree: 16 successes and the expected coarse-cell refusal. Maximum reported DATA NRMS 1.05e-6 against 1e-3; UVW 1.61e-6 m against the existing 1e-3 m oracle gate. Pointing files are byte-identical.",
+   "scope": "The exact four preceding 2026-11-11 coverage groups, freshly rerun on repaired main with a source-audited release binary; bounded correctness only.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d5923d215f54c134d477cf246ef875fe19328e50",
+   "source_revision": "d5923d215f54c134d477cf246ef875fe19328e50",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simobserve-main-integration-20261111.json"
+  },
   "quick-psf-20261111": {
    "kind": "Independent CASA numerical quick PSFs and ordinary tclean control",
    "state": "passed",
@@ -845,6 +1021,101 @@
    "source_revision": "ca11bbddc581ab9f7efb22c6a09bfe03b309bf55",
    "command": "RUST_TEST_THREADS=1 cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture; CASAPY tools/simulation/check_quick_psf_casa.py --native DIR --reference FIXTURE --out OUT",
    "receipt": "resources/casa-compat/evidence/simobserve-quick-psf-20261111.json"
+  },
+  "uvw-sidereal-20261112": {
+   "kind": "Independent CASA sidereal angles and paired full MeasurementSets",
+   "state": "passed",
+   "result": "All 17 scenario outcomes agree (16 successful, one expected refusal) at the stricter 1e-6 m UVW limit. Maximum UVW 9.228972431e-08 m; DATA NRMS 1.046009822e-06 under 1e-3. Five LAST residuals are <=1.70e-11 rad. Three-crate regression: 1514 passed, nine documented ignores; one shared-helper review has no findings.",
+   "scope": "Existing simobserve scheduling/model/frame/pointing scenarios and the shared simulation UVW sidereal calculation. Full metadata, pointings and numerical visibility checks retained. No all-mode or whole-task performance claim.",
+   "links": [
+    "crates/casa-types/src/measures/baseline.rs",
+    "crates/casa-types/tests/simulation_sidereal.rs",
+    "crates/casa-types/tests/data/casa_simulation_sidereal.json",
+    "tools/simulation/sidereal_oracle.py",
+    "tools/simulation/simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "68f863c1d280a9145b5fa507291e60cde4030e71",
+   "source_revision": "68f863c1d280a9145b5fa507291e60cde4030e71",
+   "command": "CASAPY tools/simulation/sidereal_oracle.py --out crates/casa-types/tests/data/casa_simulation_sidereal.json; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simulation-uvw-sidereal-20261112.json"
+  },
+  "uvw-long-baselines-20261112": {
+   "kind": "Independent CASA baseline rotation matrices and paired full MeasurementSets",
+   "state": "passed",
+   "result": "All 20 outcomes agree: 19 successful simulations and one expected refusal. Three extended-array cases require exactly equal stored TIME and UVW <=1e-6 m absolutely: VLA 2017 5.836e-7 m, VLA 2025 7.266e-7 m, ALMA 2017 1.978e-7 m. Maximum DATA NRMS across all nineteen successes is 1.0442e-6 under 1e-3. Six independent aberration matrix residuals are <=1.352e-13 (2e-12 limit).",
+   "scope": "Extended VLA/ALMA arrays and a fresh replay of seventeen compact scheduling/model/frame/pointing outcomes. All tables, images, pointing files and frequency metadata compared. One shared-helper review resolved two acceptance-gate findings with regressions; no re-review. Other modes remain open.",
+   "links": [
+    "crates/casa-types/src/measures/baseline.rs",
+    "crates/casa-types/tests/data/casa_baseline_aberration.json",
+    "tools/simulation/baseline_aberration_oracle.py",
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d7d5aa380ac1f7d0ec3ea87c623fff9ac7fbaa8b",
+   "source_revision": "d7d5aa380ac1f7d0ec3ea87c623fff9ac7fbaa8b",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --only uvw_long_vla_2017 uvw_long_vla_2025 uvw_long_alma_2017; CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release-validation/release/simobserve --casatestdata PUBLIC_LOCAL_COPY --uvw-tolerance-m 1e-6 --only model_direction model_cell model_direction_cell components_cube frame_topo coarse_cell schedule_hour_number schedule_hour_quantity schedule_refdate_modern schedule_square frame_lsrd frame_geo frame_galacto frame_lgroup frame_cmb pointing_file_multiple pointing_explicit_spacing",
+   "receipt": "resources/casa-compat/evidence/simulation-uvw-long-baselines-20261112.json"
+  },
+  "array-configuration-controls": {
+   "kind": "CASA-paired installed native task controls",
+   "state": "recorded",
+   "result": "CASA 6.7.6.14 and the installed native task agree for alma.out01.cfg, alma;0.078arcsec (out20), and project-local custom.cfg. Each writes 1,225 rows; names, stations, mounts, dish sizes, row IDs, scan numbers and TIME agree exactly. Maximum position/UVW differences are 4.66e-10/8.22e-8 m; DATA NRMS is zero. Standard runtime discovery and a separate runtime with 253 public configurations from casarundata-2026.10.27-1 both pass. Existing measures tables are held constant between implementations.",
+   "scope": "Configuration discovery and resulting array/observation metadata. Public configuration files remain external runtime inputs; no new bundled-data policy or updater changes.",
+   "command": "CASAPY tools/simulation/simobserve_configurations_oracle.py --out OUT --native-python VENV/bin/python --native-bin TARGET/release/simobserve [--measures-root DATA_ROOT]",
+   "links": [
+    "https://github.com/bglenden/casa-rs/issues/1293"
+   ]
+  },
+  "pointing-calibrators-20261114": {
+   "kind": "CASA-paired pointing and calibrator projects",
+   "state": "passed",
+   "scope": "SIM-20/SIM-23: OT and untimed files, ALMA/ALMA2012 tilings, explicit component-map directions, variable dwell times and whole/partial calibrator schedules, mJy flux, ICRS, hour angle/date, and ignored single-dish calibrators.",
+   "result": "9/9 projects agree on products, byte-identical pointing lists, scan timing, source/field metadata, flags and DATA. Maximum DATA NRMS 1.80e-7; direction difference 2.23e-16 rad; UVW difference 6.85e-9 m. Existing scientific tolerances and documented corrections retained.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/test_simobserve_parity.py",
+    "crates/casa-types/src/measures/direction.rs"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "cc592d3ad005e5255084179fd57f8109fe56a64c",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --only schedule_ot_file schedule_untimed_file schedule_alma_nyquist schedule_cycle0_pb schedule_list_components schedule_calibrator_file schedule_calibrator_partial schedule_calibrator_components schedule_sd_calibrator_ignored",
+   "receipt": "resources/casa-compat/evidence/simobserve-schedules-20261114.json",
+   "source_revision": "cc592d3ad005e5255084179fd57f8109fe56a64c"
+  },
+  "interferometric-projects-20261114": {
+   "kind": "CASA-paired interferometric projects and simulator refusal controls",
+   "state": "passed",
+   "scope": "SIM-21 remaining REST/Undefined image/component/joint outcomes, VLA/ALMA sky overrides, polarized joint prediction, manual/atmospheric noise with leakage and environment settings.",
+   "result": "8/8 agree: four successful projects (eight native MS C++ readbacks) and four corrected failed-prediction outcomes. Model DATA NRMS <=3.06e-4 under 1e-3; leakage and noise gates pass, KS p 0.18/0.31. Products, images, pointings, scans, source/field/spectral metadata pass; numerical quick-PSF regressions retained.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/compare_sm_ms.py",
+    "crates/casa-simulation/src/simobserve/observe.rs",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "64b576b487c48236a4c14977a844352e8a40e15a",
+   "source_revision": "35f6705616f5aef85e53ae879e413b86959b0005",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --atmosphere-model TARGET/debug/examples/at_tool_quantities --only if_image_rest if_image_undefined if_components_rest if_components_undefined if_joint_manual if_joint_polarized if_joint_atmosphere if_joint_rest",
+   "receipt": "resources/casa-compat/evidence/simobserve-interferometric-20261114.json"
+  },
+  "project-lifecycle-20261114": {
+   "kind": "CASA-paired stateful simulation project scenarios",
+   "state": "passed",
+   "scope": "SIM-24/25 continuation with REST/BARY and Undefined requests, manual/atmospheric noise and ignored leakage; single dish; successful/rejected overwrite, missing/ambiguous MS detection, relative/absolute paths and input preservation.",
+   "result": "13/13 agree: eight successful project scenarios, five refusals/corrected failures, 14 native MS C++ readbacks. Model DATA NRMS <=1.81e-7 under 1e-3; all noise gates pass, minimum KS p 0.16. Original MS science, inputs and unrelated products are preserved; existing noisy outputs and requested prediction products are replaced.",
+   "links": [
+    "tools/simulation/simobserve_projects_parity.py",
+    "crates/casa-simulation/tests/simobserve.rs",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "casa_version": "6.7.6.14",
+   "revision": "cd6b94a073c381bd8bdb28335e7566d6f58526e5",
+   "source_revision": "f0367e3d448e220b3bae12defad04935cbceb5d0",
+   "command": "CASAPY tools/simulation/simobserve_projects_parity.py --out OUT --casars-bin TARGET/debug/simobserve --atmosphere-model TARGET/debug/examples/at_tool_quantities",
+   "receipt": "resources/casa-compat/evidence/simobserve-projects-20261114.json"
   },
   "graphics-20261111": {
    "kind": "Installed CASA artists, real task rendering and C++ image readback",

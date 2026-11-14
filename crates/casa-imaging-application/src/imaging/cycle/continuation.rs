@@ -24,7 +24,7 @@ use casa_imaging_operator::{Basis, ModeSet};
 use casa_imaging_runtime::pass::Residency;
 use casa_imaging_runtime::{Admitted, Cancelled};
 
-use super::{Major, Run, seeding};
+use super::{Major, Run};
 use crate::imaging::ImagingError;
 use crate::restart::ExistingProducts;
 
@@ -63,9 +63,18 @@ pub(super) fn set_residual(
     existing: Option<&ExistingProducts>,
     images: &mut PassImages,
     terms: usize,
+    preserve_field_sum: bool,
 ) -> Result<(), ImageError> {
     match existing {
-        Some(existing) => existing.fill_residual(images),
+        Some(existing) => {
+            // A serial standard-gridder PSF pass fills only an empty sum.
+            // It still normalizes the new PSF by its freshly gridded peak.
+            if preserve_field_sum && let Some(sum) = existing.positive_scalar_sum()? {
+                images.sum_weights[0] = sum;
+                images.published_sum_weights[0] = sum;
+            }
+            existing.fill_residual(images)
+        }
         None => {
             let cells = images.shape[0] * images.shape[1];
             images.residual =
@@ -81,12 +90,12 @@ impl Run<'_> {
     /// an empty one: no pass. It is charged as the initial pass would be,
     /// whose normal state it forms, and reads a window of channels at a
     /// time beside it.
-    pub(super) fn read_existing(&mut self) -> Result<Major, ImagingError> {
+    pub(super) fn read_existing(&mut self, seed_model: bool) -> Result<Major, ImagingError> {
         let existing = self
             .existing
             .clone()
             .expect("a run that reads its PSF has the earlier run's products");
-        let seeding = self.seeding_bytes();
+        let seeding = if seed_model { self.seeding_bytes() } else { 0 };
         let Admitted {
             value: plan,
             reservation: mut charge,
@@ -96,34 +105,46 @@ impl Run<'_> {
             self.lifecycle.resident_bytes() + seeding,
             false,
         )?;
-        let generation = match &self.start_model {
-            Some(start) => {
-                let _seeding = charge.split(seeding);
-                let samples = start.main_samples().map_err(ImagingError::StartModel)?;
-                self.start_model_flux = seeding::plane_fluxes(self.problem, start, &samples);
-                self.lifecycle.initial_from_start_model(&samples)?
-            }
-            None => self.lifecycle.initial_empty()?,
+        let generation = if seed_model {
+            let _seeding = charge.split(seeding);
+            self.seed_generation()?
+        } else {
+            self.lifecycle.initial_empty()?
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let mut cycle =
             MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
         let window = self.read_window(plan.residency);
+        let (_, mut state) = cycle.parts();
+        for (domain, saved) in std::iter::once(&existing)
+            .chain(&self.outlier_products)
+            .enumerate()
         {
             let _reading = self.admit(
                 "existing products",
-                existing.reading_bytes(window) + existing.images_bytes(window),
+                saved.reading_bytes(window) + saved.images_bytes(window),
             )?;
-            let (_, mut state) = cycle.parts();
+            tracing::debug!(
+                target: "casa_imaging::saved_products",
+                domain,
+                admitted_bytes = _reading.memory(),
+                "read the saved normal state"
+            );
             for channels in windows(self.total_channels(), window) {
                 if self.cancel.is_cancelled() {
                     return Err(Cancelled.into());
                 }
-                state.append(
-                    existing
-                        .pass_images(channels)
-                        .map_err(ImagingError::Existing)?,
-                )?;
+                let mut images = saved
+                    .pass_images(channels)
+                    .map_err(ImagingError::Existing)?;
+                if !self.forms.residual
+                    && !self.outlier_products.is_empty()
+                    && images.sum_weights.iter().any(|sum| *sum <= 0.0)
+                {
+                    return Err(ImagingError::Existing(saved.nonpositive_sum_weight()));
+                }
+                images.domain = domain;
+                state.append(images)?;
             }
         }
         let major = Major {
@@ -153,23 +174,21 @@ impl Run<'_> {
             self.lifecycle.resident_bytes() + seeding,
             false,
         )?;
-        let generation = match &self.start_model {
-            Some(start) => {
-                let _seeding = pass.split(seeding);
-                let samples = start.main_samples().map_err(ImagingError::StartModel)?;
-                self.start_model_flux = seeding::plane_fluxes(self.problem, start, &samples);
-                self.lifecycle.initial_from_start_model(&samples)?
-            }
-            None => self.lifecycle.initial_empty()?,
+        let generation = {
+            let _seeding = pass.split(seeding);
+            self.seed_generation()?
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
         // The residual each wave takes, read beside the pass.
         let window = self.read_window(plan.residency);
-        let reading = self.existing.as_ref().map_or_else(
-            || self.residual_bytes(window),
-            |existing| existing.reading_bytes(window) + existing.images_bytes(window),
-        );
+        let reading = self
+            .existing
+            .iter()
+            .chain(&self.outlier_products)
+            .map(|saved| saved.reading_bytes(window) + saved.images_bytes(window))
+            .max()
+            .unwrap_or_else(|| self.residual_bytes(window));
         let _reading = self.admit("existing residual", reading)?;
         let major = self.reconcile(cycle, modes, false, false, plan)?;
         self.retain(&major, pass)?;

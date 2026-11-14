@@ -270,17 +270,9 @@ fn setapply_refuses_what_casa_or_casa_rs_cannot_apply() {
             "not D",
         ),
         (
-            ApplySpec {
-                calwt: true,
-                ..apply(&gains, "linear")
-            },
-            CasaOutcome::NotYetImplemented,
-            "calwt",
-        ),
-        (
-            apply(&gains, "cubic"),
-            CasaOutcome::NotYetImplemented,
-            "cubic",
+            apply(&gains, "unknown-time-mode"),
+            CasaOutcome::Raises,
+            "Unrecognized",
         ),
     ] {
         let (outcome, message) = outcome(&mut sm, spec);
@@ -303,7 +295,8 @@ fn write_gains(ms: &Path, output: &Path, solutions: &[(f64, i32, f32)]) {
             values: SolutionValues::Receptors([Complex32::new(gain, 0.0); 2]),
         })
     });
-    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows).expect("write the table");
+    write_simulated_jones_table(&ms, output, SimulatedJones::Gain, rows, None)
+        .expect("write the table");
 }
 
 /// The first and last integration times of a session `observed` makes.
@@ -422,4 +415,41 @@ fn read_times(path: &Path) -> Vec<f64> {
             other => panic!("TIME: {other:?}"),
         })
         .collect()
+}
+
+/// CASA skips the new window beyond the mapping snapshot captured by setapply.
+#[test]
+fn a_new_window_after_setapply_skips_the_corruption_step() {
+    use casa_simulation::SpectralWindowSpec;
+    use casa_types::measures::frequency::FrequencyRef;
+    use predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
+    let directory = tempfile::tempdir().unwrap();
+    let point = point(directory.path());
+    let (reference, times) = observed_times(directory.path(), &point);
+    let gains = directory.path().join("gains.cal");
+    write_gains(&reference, &gains, &[(times[0], 0, 2.0)]);
+    let mut sm = observed(
+        &directory.path().join("new-window.ms"),
+        "XX YY",
+        &point,
+        10.0,
+    );
+    let mut spec = apply(&gains, "linear");
+    spec.spwmap = vec![0];
+    sm.set_apply(&spec).unwrap();
+    sm.set_spectral_window(&SpectralWindowSpec {
+        name: "later".into(),
+        start_frequency_hz: FREQUENCY_HZ,
+        channel_width_hz: CHANNEL_HZ,
+        resolution_hz: CHANNEL_HZ,
+        frame: FrequencyRef::TOPO,
+        channel_count: 4,
+        stokes: "XX YY".into(),
+    })
+    .unwrap();
+    let mut later = scan("target", 180.0, 190.0);
+    later.spectral_window = "later".into();
+    sm.observe(&later).unwrap();
+    sm.corrupt().unwrap();
+    sm.close().unwrap();
 }

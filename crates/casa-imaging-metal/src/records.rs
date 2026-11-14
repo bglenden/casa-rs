@@ -192,7 +192,7 @@ pub(crate) struct KnownTable {
     pub oversampling: u16,
     /// Half the support along each axis.
     pub half_support: [u16; 2],
-    /// `norm[(oy · (oversampling + 1) + ox) · mueller_planes + m]`,
+    /// `norm[(oy · fine_rows + ox) · mueller_planes + m]`,
     /// unconjugated.
     norms: Vec<Complex64>,
     fine_rows: usize,
@@ -202,7 +202,7 @@ pub(crate) struct KnownTable {
 impl KnownTable {
     /// [`TapLayout::norm`] for every fine offset and Mueller plane of `taps`.
     pub(crate) fn new(index: u32, taps: &TapLayout<'_>) -> Self {
-        let fine_rows = usize::from(taps.oversampling()) + 1;
+        let fine_rows = CellLocation::fine_rows(taps.oversampling());
         let mueller_planes = usize::from(taps.mueller_planes());
         let mut norms = Vec::with_capacity(fine_rows * fine_rows * mueller_planes);
         for oy in 0..fine_rows {

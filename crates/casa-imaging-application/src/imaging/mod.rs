@@ -13,24 +13,36 @@ mod setup;
 mod trace;
 mod visibility_write;
 
-pub(crate) use cycle::{Forms, ImagingInputs, MvcCycleSpec, plane_bounds, run};
+pub(crate) use cycle::{Forms, ImagingInputs, MvcCycleSpec, form_separate_psf, plane_bounds, run};
 pub(crate) use images::prepare_model;
 pub(crate) use measurement::{
     KernelAdmission, domain_operator, image_extent, metal_kernel_set, multi_store_kernel_set,
     reference_frequency_hz, row_samples, selected_correlations, standard_kernel_set,
 };
 pub(crate) use observation_source::{
-    BatchRoute, ObservationSource, PartitionSelection, RouteStore, SelectedPartition, StoreBatches,
-    StoreKeys, StoreRoute, WriteBack, admit_batches, pointing_direction,
+    BatchRoute, Batching, ObservationSource, PartitionSelection, RouteStore, SelectedPartition,
+    StoreBatches, StoreKeys, StoreRoute, WriteBack, admit_batches, pointing_direction,
 };
 pub(crate) use visibility_write::VisibilityWriteTarget;
 
 use casa_imaging_deconvolution::{
     MajorCycleError, MaskError, ModelLifecycleError, NormalStateError,
 };
+use casa_imaging_model::{CompiledProblem, FrequencyFrame};
 use casa_imaging_operator::OperatorError;
 use casa_imaging_runtime::pass::PassError;
 use casa_imaging_runtime::{Admission, Cancelled, MinorCycleRunError};
+
+/// CASA's REST AW channel map uses source-shifted frequencies, while
+/// AWProjectFT::setupVBStore supplies the native wavelengths to the gridder.
+fn rest_aw_uses_native_wavelengths(problem: &CompiledProblem) -> bool {
+    problem
+        .science()
+        .measurement_equation()
+        .aw_projection()
+        .is_some()
+        && problem.geometry().spectral().output_frame() == FrequencyFrame::Rest
+}
 
 /// A failure of a native imaging run.
 #[derive(Debug, thiserror::Error)]

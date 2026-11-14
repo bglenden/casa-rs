@@ -23,49 +23,6 @@ fn parse_args(args: Vec<OsString>) -> Result<CliOptions, String> {
 }
 
 #[test]
-fn command_schema_describes_core_arguments_and_actions() {
-    let schema = command_schema("msexplore-test");
-
-    assert_eq!(schema.command_id, "msexplore");
-    assert_eq!(schema.invocation_name, "msexplore-test");
-    assert_eq!(schema.display_name, "MSExplore");
-    assert_eq!(schema.category, "MeasurementSet");
-    assert_eq!(schema.usage, "msexplore-test [parameters]");
-    assert!(schema.render_help().contains("<ms-path>"));
-    assert!(schema.render_help().contains("--plot-output"));
-
-    let ms_path = schema.argument("vis").expect("canonical vis argument");
-    assert!(matches!(
-        ms_path.parser,
-        UiArgumentParser::Positional { .. }
-    ));
-    assert_eq!(ms_path.group, "Input");
-    assert!(ms_path.required);
-
-    let format = schema.argument("format").expect("format argument");
-    assert_eq!(format.default.as_deref(), Some("text"));
-    assert_eq!(format.group, "Output");
-    assert!(matches!(format.value_kind, UiValueKind::Choice));
-
-    let selectdata = schema.argument("selectdata").expect("selectdata argument");
-    assert_eq!(selectdata.default_bool(), Some(true));
-    assert_eq!(selectdata.group, "Selection");
-    assert!(matches!(selectdata.parser, UiArgumentParser::Toggle { .. }));
-
-    let help = schema.argument("help").expect("help action");
-    assert!(matches!(
-        help.parser,
-        UiArgumentParser::Action {
-            action: UiActionKind::Help,
-            ..
-        }
-    ));
-
-    // The runner injects nothing, so the user's `format` decides stdout.
-    assert!(schema.managed_output.is_none());
-}
-
-#[test]
 fn parse_args_captures_dense_single_plot_configuration() {
     let options = parse_args(cli_args(&[
         "--format",

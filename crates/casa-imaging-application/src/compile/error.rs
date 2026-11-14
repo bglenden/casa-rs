@@ -22,12 +22,12 @@ use casa_types::measures::{
 pub enum PrepareError {
     /// The initial MVC execution cannot honour this run's controls yet.
     #[error(
-        "MVC supports fresh imaging of one selected field and MeasurementSet with LSRK coordinates, no side effects or PB correction, and a user box or full mask; cleaning requires nsigma=0 and spatial-only user boxes (#1069)"
+        "MVC supports fresh imaging, or standard-gridder CLEAN continuation with a recalculated residual or both saved PSF and residual, from one selected MeasurementSet with LSRK coordinates, up to two fields for squinted AWP2 or one field for the other modes, no model-column or virtual-model writes, and a user box or full mask; cleaning requires nsigma=0 and spatial-only user boxes (#1069)"
     )]
     MvcExecutionUnsupported,
     /// The additional MVC view is not yet bounded for this configuration.
     #[error(
-        "MVC currently supports one fixed-centre Stokes I domain, one standard-gridder facet, natural weighting, and two Taylor terms (#1069)"
+        "MVC supports one fixed-centre Stokes I domain and two Taylor terms, with natural weighting for a single standard or W-projection facet, a flat-noise mosaic or AW projection, or unsquinted zero-W AWP2, or uniform weighting for squinted AWP2 (#1069, #1071)"
     )]
     MvcViewUnsupported,
     /// CASA MVC could not choose enough output channels for its Taylor terms.
@@ -36,6 +36,21 @@ pub enum PrepareError {
         /// The invalid band or channel count.
         reason: &'static str,
     },
+    /// The selected observation falls outside the initial AWP2 branch.
+    #[error(
+        "AWP2 currently requires fixed VLA or EVLA fields and L-band TOPO data from one MeasurementSet, with one continuum window, single-channel windows for multi-window MT-MFS, or nearest interpolation for a cube that includes multichannel windows (#1071)"
+    )]
+    Awp2Selection,
+    /// AWPLPG would evaluate a buffer with no valid cross-row at MJD zero.
+    #[error(
+        "AWP2 squint with an integration that has no unflagged cross-correlation uses an MJD-zero PA in CASA and is unsupported (#1071)"
+    )]
+    Awp2FlaggedPaEpoch,
+    /// The required physical dish surface could not be located.
+    #[error(
+        "AWP2 needs the VLA dish surface: supply evla_surface or install VLA.surface under ~/.casa/data/nrao/VLA/"
+    )]
+    Awp2SurfacePath,
     /// Existing products require CASA restart, which is not implemented yet.
     #[error(
         "existing image product {path:?}: this CASA restart configuration is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
@@ -222,6 +237,12 @@ pub enum PrepareError {
          yet (#980)"
     )]
     SourceFrameCubeDensity,
+    /// The verified moving-source AW density scope.
+    #[error(
+        "Briggs and uniform AW density on a source-frame cube require one TOPO field, \
+         cubic interpolation, perchanweightdensity=True and no uv taper (#1121)"
+    )]
+    RestAwCubeDensity,
     /// A CRTF region's spectral range has an end that is not a finite pixel
     /// on the image's spectral axis.
     #[error("mask: the spectral range {range:?} has no finite pixel on the image's axis")]
@@ -321,6 +342,9 @@ pub enum PrepareError {
         /// The given angle.
         angle: String,
     },
+    /// A separately formed PSF is currently compiled for a fixed mosaic direction.
+    #[error("psfphasecenter with a moving mosaic phase centre is not implemented yet (#1062)")]
+    MovingMosaicPsf,
     /// A moving source's fields are only partly attached to ephemerides.
     #[error("moving-source selection mixes FIELD rows with and without attached ephemerides")]
     MixedEphemerisFields,
@@ -463,6 +487,19 @@ pub enum PrepareError {
     /// cross-correlation sample, and the selection has none.
     #[error("native AW has no unflagged cross-correlation sample")]
     NoCrossCorrelationRow,
+    /// Native cache generation at a non-default PA compute step outside its verified scope.
+    #[error(
+        "native computepastep currently supports MFS with one selected EVLA field and spectral window (#1070)"
+    )]
+    NativeAwPaScope,
+    /// CASA cannot reload both generated PA buffers at this spacing.
+    #[error("computepastep cannot preserve native PA coverage when CASA reloads the cache (#1070)")]
+    NativeAwPaSpacing,
+    /// Runtime rotation's remaining imaging combinations.
+    #[error(
+        "rotatepastep currently supports fresh imported AW continuum on one VLA or EVLA field with the aperture, default computepastep and recomputed PSF and residual: dirty or Högbom with one spectral window, or wideband MT-MFS with one partition per window, a common array and feed angle, and matching valid integration times (#1070)"
+    )]
+    AwRotationScope,
     /// `cf_resident_mb` is larger than the address space.
     #[error("cf_resident_mb {megabytes} exceeds addressable memory")]
     CfResidentSize {

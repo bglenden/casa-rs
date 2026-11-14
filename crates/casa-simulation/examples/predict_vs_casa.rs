@@ -101,7 +101,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let model = SkyModel::open(&model_path)?;
     let projection =
-        GridFtProjection::between_j2000_directions(phase_centre_rad, model.centre_rad());
+        GridFtProjection::between_j2000_directions(phase_centre_rad, model.centre_rad().unwrap());
 
     let started = Instant::now();
     let predictor = ModelPredictor::new(&model, &correlations, phase_centre_rad, &options)?;

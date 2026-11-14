@@ -143,6 +143,7 @@ pub(super) fn continuum_envelope(
     survey: &Survey,
     selected: &WindowChannels,
     output: FrequencyRef,
+    field: Option<i32>,
 ) -> Result<SpectralEnvelope, PrepareError> {
     let mut edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
     // Each field's direction, once: only the conversion epoch varies.
@@ -156,7 +157,7 @@ pub(super) fn continuum_envelope(
             (catalogue, engine),
             (survey, window),
             &edges,
-            output,
+            (output, field),
             &mut directions,
             &mut |hz| {
                 edges_hz[0] = edges_hz[0].min(hz);
@@ -196,7 +197,7 @@ pub(super) fn selection_band(
         (catalogue, engine),
         (survey, window),
         &[lowest, highest],
-        output,
+        (output, None),
         &mut BTreeMap::new(),
         &mut |hz| {
             band[0] = band[0].min(hz);
@@ -221,7 +222,7 @@ fn fold_over_epochs(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     (survey, window): (&Survey, &SourceSpectralWindow),
     frequencies_hz: &[f64],
-    output: FrequencyRef,
+    (output, selected_field): (FrequencyRef, Option<i32>),
     directions: &mut BTreeMap<i32, MDirection>,
     fold: &mut impl FnMut(f64),
 ) -> Result<bool, PrepareError> {
@@ -232,7 +233,11 @@ fn fold_over_epochs(
     }
     let mut converter = MFrequencyConverter::new(source, output);
     let mut converted = false;
-    for epoch in survey.window_epochs(window.spw_id) {
+    for epoch in survey
+        .window_epochs(window.spw_id)
+        .iter()
+        .filter(|epoch| selected_field.is_none_or(|field| epoch.field_id == field))
+    {
         let direction = match directions.get(&epoch.field_id) {
             Some(direction) => direction.clone(),
             None => {

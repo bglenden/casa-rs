@@ -158,7 +158,7 @@ pub fn operator(kernels: Kernels, basis: Basis, rng: &mut Rng) -> MeasurementOpe
             geometry(),
         ),
         Kernels::Separable => (Box::new(Separable::new(5, 4, rng)), geometry()),
-        Kernels::Dense => (Box::new(Dense::new(5, 4, rng)), geometry()),
+        Kernels::Dense => (Box::new(Dense::new(5, 9, rng)), geometry()),
         Kernels::WideDense => (Box::new(Dense::new(11, 4, rng)), geometry()),
         Kernels::Mosaic => (Box::new(mosaic_set()), geometry_of(MOSAIC_IMAGE)),
     };
@@ -269,7 +269,7 @@ struct Dense {
 
 impl Dense {
     fn new(support: u16, oversampling: u16, rng: &mut Rng) -> Self {
-        let fine = usize::from(oversampling) + 1;
+        let fine = casa_imaging_operator::CellLocation::fine_rows(oversampling);
         let count = fine * fine * 2 * usize::from(support).pow(2);
         let mut cell = || {
             let data = (0..count)

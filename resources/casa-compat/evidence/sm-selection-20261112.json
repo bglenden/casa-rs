@@ -1,0 +1,429 @@
+{
+ "schema": "sm-selection-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-12",
+ "native_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+ "readback_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+ "main_revision": "1814e475351863063d43c6707f74c75302b7d573",
+ "oracle": "casatools6.7.6-14, casatasks6.7.6.14",
+ "host": "bg-mac-mini, macOS arm64, Apple M2",
+ "fixture": "crates/casa-simulation/tests/data/sm_selection_casa.json.gz",
+ "fixture_sha256": "b5e2274138e762143479a8e0f7341ac008a1be99c0295c338f8728d4f36378ff",
+ "upstream_read": {
+  "repository": "https://github.com/radio-astro/casa",
+  "revision": "4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef",
+  "path": "code/synthesis/MeasurementEquations/Simulator.cc",
+  "sections": [
+   "setdata 2706-2861",
+   "predict 2113 onward"
+  ],
+  "scope": "Historical public C++ source, checked against independent controls on installed CASA6.7.6.14; not claimed as that release source pin."
+ },
+ "summary": {
+  "cases": 51,
+  "deterministic_cases": 48,
+  "noise_cases": 3,
+  "fresh_cases": 3,
+  "cpu_workers": [
+   1,
+   3
+  ],
+  "cpu_worker_comparison": "identical DATA in the recorded workloads",
+  "actual_metal_image_cases": 48,
+  "other_metal_requests": 3,
+  "other_metal_scope": "One component-only and two noise-only requests compute on CPU.",
+  "cpp_readback_runs": 153,
+  "reference_rows": 14832,
+  "data_nrms_max": 3.1293862554042243e-06,
+  "data_nrms_limit": 0.001,
+  "metal_cpu_maximum_relative_error": 3.53589e-07,
+  "metal_cpu_limit": 0.0001,
+  "stored_time_residual_s": 0.0
+ },
+ "source_audit": {
+  "tracked_files": 3603,
+  "all_hashes_match": true,
+  "extra_sources": [],
+  "method": "Full tracked-file SHA256 and extra .rs/.py/.toml audit for each checkpoint; dedicated physical source and targets. All sources refreshed after the private release-cache copy, before building."
+ },
+ "demonstrations": [
+  {
+   "revision": "a907d4aa634d23d06b08f4ecef41ee4669da8080",
+   "test": "fresh_selection_and_observe_reset_match_casa",
+   "before": "Refuses selecting two of four scans as not implemented.",
+   "after": "Independent fresh subset and observe-reset controls pass."
+  },
+  {
+   "revision": "5414e02d6f77c8818addd91c7cb980472e4054f8",
+   "test": "selected_existing_rows_preserve_data_and_scratch_columns",
+   "before": "Unselected MODEL_DATA row0 is overwritten with1 instead of7-2j.",
+   "fix": "7ee007f26235b48a745e6cd3b93cdae6d0394b8e"
+  },
+  {
+   "revision": "e6e0f4f4d44f8a13117a1112822198741a69289e",
+   "test": "selection::fragmented_selections_hold_their_admission_without_retaining_rows",
+   "before": "Existing-MS batch scratch requires219073483 bytes while71663640 are free; shrinking prediction blocks alone does not suffice.",
+   "fix": "b45f0616a07d6953cfc95f438139f6420c4e0fc2",
+   "after": "Writer batch also shrinks; both fresh and existing tenfold-row laws pass."
+  }
+ ],
+ "semantics": [
+  "Field/window selections are intersections on the original MS; an empty result falls back to all rows. Empty TaQL retains the field/window base. Invalid TaQL returns False after committing that base.",
+  "Each predict/corrupt retains its immutable selection; observe resets only the current selection for future operations.",
+  "Selected replacement preserves other DATA, MODEL_DATA and CORRECTED_DATA. Prediction sets selected MODEL_DATA to1; CORRECTED_DATA follows DATA on touched rows.",
+  "Ordered phases reuse the existing image/component/SD/noise/Jones stages; adjacent additive operations fuse, and the ordinary all-row replacement removes prior phases.",
+  "An increment after nonidentity gains adds the new model after those gains: constant receptor gain2 distinguishes4A+B from4(A+B).",
+  "Query evaluation and selected-run/mask/model scratch are bounded by admitted read/write batches. No dataset-sized retained selection bitmap.",
+  "Exact C++ readback checks row metadata, TIME, flags, weights, sigma and preserved cells. Deterministic changed DATA uses NRMS1e-3; independent random draws use support and five-standard-error mean/variance tests.",
+  "Row-query types are checked for every operand before row evaluation. Numeric division, floor division, signed modulo, powers and IEEE comparisons follow CASA through the existing table evaluator; no local duplicate math path."
+ ],
+ "validation": {
+  "full_simulation": {
+   "passed": 306,
+   "failed": 0,
+   "ignored": 2,
+   "note": "Two subprocess helpers are executed by their parent tests. Runtime source b45f0616a; unit-harness adaptation1b91b3b57; export helper438bb0ed5 does not alter calculation."
+  },
+  "clippy": "All targets of casa-tables, casa-simulation and casars-python pass -D warnings at47ad82ce6.",
+  "counted_memory": "tests/session_memory/selection.rs passes fresh and opened MS at60 and600 integrations, three measured runs each after warmups; ordinary memory/backend laws also pass in full suite.",
+  "python_binding": {
+   "revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+   "rust_tests": {
+    "passed": 58,
+    "failed": 0,
+    "ignored": 0
+   },
+   "installed_wheel_simulator_tests": {
+    "passed": 57,
+    "failed": 0,
+    "skipped": 2,
+    "skip_reasons": [
+     "live casatools signature import unavailable in native venv",
+     "empty parameterization of the future unimplemented-method template"
+    ]
+   },
+   "wheel_sha256": "a81f1d5e579a5c54d822e6611a5600a9826b8642ae45c9c03c602b56c7fbd5c2",
+   "scope": "Includes actual Metal comparison, supported subsets, both invalid Boolean type regressions and analytic selected-component call ordering."
+  },
+  "format_architecture_docs": "passed",
+  "post_review_full": {
+   "source_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+   "crates": [
+    "casa-tables",
+    "casa-simulation",
+    "casars-python"
+   ],
+   "command": "RUST_TEST_THREADS=1 cargo test -p casa-tables -p casa-simulation -p casars-python --lib --tests",
+   "passed": 1419,
+   "failed": 0,
+   "ignored": 3,
+   "scope": "Full touched library/integration gates, including all simulation backend and counting-heap laws. Standalone helper ignores remain executed by their parent laws."
+  },
+  "scalar_arithmetic": {
+   "cases": 26,
+   "oracle": "tools/simulation/query_arithmetic_oracle.py",
+   "fixture": "crates/casa-tables/tests/data/casa_simulation_query_arithmetic.json",
+   "test": "crates/casa-tables/tests/taql_simulation_arithmetic.rs",
+   "scope": "Exact CASA result types and values: real/floor division, signed modulo, large integer powers, IEEE infinity/NaN/zero ordering, and invalid Boolean arithmetic."
+  }
+ },
+ "limits": [
+  "This outcome proves GridFT selection combinations. Existing WProjectFT, mosaic, SDGrid, flagged-sample, Tsys and tropospheric controls are regression gates, not new all-selection-mode CASA evidence.",
+  "Supported predicate columns: ANTENNA1, ANTENNA2, TIME, FIELD_ID, DATA_DESC_ID, SCAN_NUMBER; scalar functions abs/near/nearabs. Other MAIN columns, functions and query forms remain explicit #1053 refusals. Complex ordered predicates remain an explicit refusal.",
+  "Existing MS layout restrictions remain; no claim of complete simulation equivalence.",
+  "No plotting work."
+ ],
+ "performance": {
+  "rayon_environment_threads": 1,
+  "simulation_execution_controls": "Unmodified task defaults: balanced workers and auto backend; RAYON_NUM_THREADS does not force simulator worker count.",
+  "warmup_pairs": 1,
+  "measured_interleaved_pairs": 3,
+  "binaries": {
+   "control": {
+    "path": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-long-baselines/release-validation/release/simobserve",
+    "sha256": "1b413855a91474d3c97e8f20ce951a9171b712e0a955c3d113d5dccc976fe9be"
+   },
+   "candidate": {
+    "path": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-selection/release-validation/release/simobserve",
+    "sha256": "14e46e8768580b019338449a49696b5beea87e02a2da5c052832b5b12a2c74f0"
+   }
+  },
+  "summary": {
+   "uvw_long_vla_2017": {
+    "control": {
+     "task_seconds": 3.329317666,
+     "wall_seconds": 3.33,
+     "user_seconds": 3.14,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 298483712
+    },
+    "candidate": {
+     "task_seconds": 3.346579,
+     "wall_seconds": 3.35,
+     "user_seconds": 3.16,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 299892736
+    }
+   },
+   "uvw_long_vla_2025": {
+    "control": {
+     "task_seconds": 3.338993042,
+     "wall_seconds": 3.34,
+     "user_seconds": 3.15,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 298827776
+    },
+    "candidate": {
+     "task_seconds": 3.348330792,
+     "wall_seconds": 3.35,
+     "user_seconds": 3.16,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 300269568
+    }
+   },
+   "uvw_long_alma_2017": {
+    "control": {
+     "task_seconds": 3.340724916,
+     "wall_seconds": 3.34,
+     "user_seconds": 3.15,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 302891008
+    },
+    "candidate": {
+     "task_seconds": 3.330418417,
+     "wall_seconds": 3.33,
+     "user_seconds": 3.14,
+     "system_seconds": 0.09,
+     "max_rss_bytes": 305266688
+    }
+   }
+  },
+  "schema": "sm-selection-performance/1",
+  "work_issue": 1053,
+  "control_source_revision": "4328701bc7a654fdd6b4596c534f5e0dcae6ad7a",
+  "candidate_source_revision": "438bb0ed50a7102d665ecb076d0e58cba2d2a725",
+  "scope": "Matched existing all-row simobserve task defaults; no claim for selected-row speedup or serial worker count. Native runtime matches the final code throughb45f0616a; later Python documentation/test and readback edits do not affect these binaries.",
+  "receipt": "resources/casa-compat/evidence/sm-selection-performance-20261112.json",
+  "fftw": {
+   "version": "3.3.11",
+   "matching_resolved_linker_records": {
+    "control": [
+     [
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-lib=static=fftw3f_threads",
+      "cargo:rustc-link-lib=static=fftw3_threads",
+      "cargo:rustc-link-lib=static=fftw3f",
+      "cargo:rustc-link-lib=static=fftw3"
+     ]
+    ],
+    "candidate": [
+     [
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+      "cargo:rustc-link-lib=static=fftw3f_threads",
+      "cargo:rustc-link-lib=static=fftw3_threads",
+      "cargo:rustc-link-lib=static=fftw3f",
+      "cargo:rustc-link-lib=static=fftw3"
+     ]
+    ]
+   },
+   "archives_sha256": {
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3.a": "247587e68efd458914df09148d24caf4802589eff9c6a946c17a9fac914ab3aa",
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3_threads.a": "a8be24ae0c79d98b32f216a163096607ca7d578fb852ca3d831a5db61bb4af22",
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3f.a": "17914bcd9c8ff937ecc48f0fe6cc800b7bcd5e4869d0ef7bab423b0175ec30e6",
+    "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3f_threads.a": "9b316ec16945847fed9bf05d5c3f5b3c8cb3ec63a49bbe92240c33e2167ef0db"
+   }
+  },
+  "operation_diagnostics": {
+   "boundary": "setdata/predict/corrupt calls through close; models and initial existing-MS input construction excluded",
+   "scope": "single observations on synthetic 288-row controls; native process has warm shared caches, CASA starts a separate worker for each case; diagnostic evidence only, no broad speedup claim",
+   "native_source_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c",
+   "runs": [
+    {
+     "case": "all_replace",
+     "casa_seconds": 0.03148925001733005,
+     "native_cpu_w1_seconds": 0.010580791,
+     "native_cpu_w3_seconds": [
+      0.010888583,
+      0.010962917
+     ],
+     "native_w1_over_casa": 0.33601279783344734
+    },
+    {
+     "case": "intersection_replace",
+     "casa_seconds": 0.016492833994561806,
+     "native_cpu_w1_seconds": 0.010880167,
+     "native_cpu_w3_seconds": [
+      0.011130833,
+      0.011101209
+     ],
+     "native_w1_over_casa": 0.6596905664355516
+    },
+    {
+     "case": "cross_correlations",
+     "casa_seconds": 0.018544374994235113,
+     "native_cpu_w1_seconds": 0.01241025,
+     "native_cpu_w3_seconds": [
+      0.012798208,
+      0.012962583
+     ],
+     "native_w1_over_casa": 0.6692191030357169
+    }
+   ]
+  }
+ },
+ "commands": {
+  "oracle": "CASAPY tools/simulation/sm_selection_oracle.py --out OUT --fixture FIXTURE",
+  "calculation_matrix": "CASA_RS_SELECTION_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test selection -- --nocapture",
+  "cpp_readback": "CASAPY tools/simulation/sm_selection_readback.py --root EXPORT --fixture FIXTURE --out REPORT",
+  "full_crate": "RUST_TEST_THREADS=1 cargo test -p casa-simulation",
+  "lint": "cargo clippy -p casa-simulation --all-targets -- -D warnings",
+  "python_binding": "CASA_RS_MEASURESPATH=SNAPSHOT python -m pytest -q -p no:cacheprovider crates/casars-python/python/tests/test_tools_simulator.py"
+ },
+ "whole_task_regression": [
+  {
+   "name": "uvw_long_vla_2017",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1399999999.9999998
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1400000000.0
+      ]
+     }
+    ]
+   },
+   "geometry": {
+    "uvw_absolute_limit_m": 1e-06,
+    "times_equal": true,
+    "rows": 1053,
+    "max_uvw_difference_m": 5.835590854985639e-07
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-12 04:31:36\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "uvw_long_vla_2017: OK, 9 known (UVW within 5.84e-07 m); DATA NRMS 2.19e-07 over 2106 samples (cross 2.19e-07)"
+   ],
+   "seconds": {
+    "casa": null,
+    "casa-rs": 4.213313333
+   }
+  },
+  {
+   "name": "uvw_long_vla_2025",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1399999999.9999998
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       1400000000.0
+      ]
+     }
+    ]
+   },
+   "geometry": {
+    "uvw_absolute_limit_m": 1e-06,
+    "times_equal": true,
+    "rows": 1053,
+    "max_uvw_difference_m": 7.265662134159356e-07
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-12 04:31:46\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "uvw_long_vla_2025: OK, 9 known (UVW within 7.27e-07 m); DATA NRMS 1.86e-07 over 2106 samples (cross 1.86e-07)"
+   ],
+   "seconds": {
+    "casa": null,
+    "casa-rs": 4.138070625
+   }
+  },
+  {
+   "name": "uvw_long_alma_2017",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "geometry": {
+    "uvw_absolute_limit_m": 1e-06,
+    "times_equal": true,
+    "rows": 3675,
+    "max_uvw_difference_m": 1.9777235138462856e-07
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-12 04:31:55\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "uvw_long_alma_2017: OK, 9 known (UVW within 1.98e-07 m); DATA NRMS 1.64e-07 over 7350 samples (cross 1.64e-07)"
+   ],
+   "seconds": {
+    "casa": null,
+    "casa-rs": 4.127719291
+   }
+  }
+ ],
+ "cpp_readback_receipt": "resources/casa-compat/evidence/sm-selection-readback-20261112.json",
+ "source_arithmetic": {
+  "repository": "https://github.com/casacore/casacore",
+  "revision": "083f0509fd76a03d6ec738c60e9dcfaf3e6c56a5",
+  "paths": [
+   "tables/TaQL/ExprNode.cc",
+   "tables/TaQL/ExprMathNode.cc",
+   "tables/TaQL/ExprFuncNode.cc",
+   "casa/BasicMath/Math.h"
+  ]
+ },
+ "review": {
+  "kind": "One fresh-context Astra xhigh review",
+  "revision": "c13de8b3a4caa2f756ca85a0e79d207d8b17b1f5",
+  "findings": [
+   {
+    "priority": "P1",
+    "finding": "Integer division and signed remainder select different rows than CASA.",
+    "demonstration_revision": "7f4cff1cbe810f39c1b6c652d640bb562f3dd1a3",
+    "before": "fractional_integer_division leaves row8 MODEL_DATA at7-2j while CASA selects it and writes1.",
+    "fix_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c"
+   },
+   {
+    "priority": "P2",
+    "finding": "Invalid Boolean arithmetic can panic instead of returning False with the installed base.",
+    "demonstration_wheel_sha256": "a17a724918213a8477104cfc0a6fc3475a0aed56736df0c8844aae0e9b0ce3ae",
+    "before": "TRUE+TRUE>0 raises PyO3 PanicException at eval.rs813.",
+    "fix_revision": "47ad82ce645e213fed9ee5ab726473df03e4626c"
+   }
+  ],
+  "resolution": "Both reproduced and fixed in one batch with independent scalar and selected-DATA controls. No re-review."
+ }
+}

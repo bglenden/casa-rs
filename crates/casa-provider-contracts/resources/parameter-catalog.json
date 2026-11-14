@@ -7580,7 +7580,7 @@
       "semantic_role": "input_data",
       "documentation": {
         "summary": "EVLA dish surface model",
-        "details": "Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery.",
+        "details": "Radius, height and slope reference data for the homogeneous 25 m VLA or EVLA dish.",
         "examples": []
       },
       "persistence_class": "profile"

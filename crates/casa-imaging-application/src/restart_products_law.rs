@@ -15,7 +15,8 @@ pub struct Input(ExistingProducts);
 impl Input {
     /// Open the products at `prefix` of a run of `taylor_terms` Taylor terms
     /// (`.psf.tt0`, ...; `None` for a single image, `.psf`) of `shape`,
-    /// `polarizations` and `channels`; the residual too when `residual`.
+    /// `polarizations` and `channels`; the residual and mosaic sensitivity
+    /// too when their respective flags are set.
     ///
     /// # Errors
     /// An image cannot be opened, or its sums of weights are not one per
@@ -24,7 +25,7 @@ impl Input {
         prefix: &Path,
         taylor_terms: Option<usize>,
         (shape, polarizations, channels): ([usize; 2], usize, usize),
-        residual: bool,
+        (residual, weight): (bool, bool),
     ) -> Result<Self, crate::PrepareError> {
         let family = taylor_terms.map_or(Family::Single, |terms| Family::Taylor { terms });
         ExistingProducts::new(
@@ -32,6 +33,9 @@ impl Input {
             family,
             (shape, polarizations, channels),
             (true, residual),
+            weight,
+            weight,
+            channels > 1 && matches!(family, Family::Single),
         )
         .map(Self)
     }
@@ -85,6 +89,12 @@ impl Input {
         self.0.beam_resident_bytes()
     }
 
+    /// Access the saved mosaic PB as product generation does.
+    #[must_use]
+    pub fn mosaic_beam(&self) -> Option<&casa_imaging_products::SavedMosaicBeam> {
+        self.0.mosaic_beam()
+    }
+
     /// Bytes admitted for reading `channels` channels, besides the images.
     #[must_use]
     pub fn reading_bytes(&self, channels: usize) -> u64 {
@@ -95,6 +105,22 @@ impl Input {
     #[must_use]
     pub fn images_bytes(&self, channels: usize) -> u64 {
         self.0.images_bytes(channels)
+    }
+
+    /// Charge for reading and keeping the saved residual's pixel mask.
+    #[must_use]
+    pub fn residual_mask_bytes(&self) -> Option<u64> {
+        self.0.saved_residual_mask_bytes()
+    }
+
+    /// Read the saved single-plane residual mask through the production reader.
+    ///
+    /// # Errors
+    /// The residual or its mask cannot be opened.
+    pub fn residual_mask(
+        &self,
+    ) -> Result<Option<casa_imaging_deconvolution::Support>, casa_images::ImageError> {
+        self.0.residual_mask()
     }
 
     /// Read `channels` as the production reader does.

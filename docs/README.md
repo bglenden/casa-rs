@@ -6,10 +6,8 @@ Verification: just docs-check
 
 casa-rs is used from the Python package `casars` and from the task
 executables of the application catalog (such as `calibrate gaincal ...`),
-which Python also starts for its task calls
-([ADR-0017](adr/0017-python-first-surface.md)). All computation is in Rust,
-and the Python package is its interface
-([ADR-0018](adr/0018-rust-computes-python-is-the-interface.md)).
+which Python also starts for its task calls. Computation is in Rust, and
+the Python package is its interface ([ADR-0017](adr/0017-python-first-surface.md)).
 
 ## User documentation
 

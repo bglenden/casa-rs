@@ -6,8 +6,7 @@
 //! [`ResourcePolicy`] on the detected [`HostResources`], and runs its
 //! geometry and noise on the runtime's worker team.
 //!
-//! The controls are the Python tool's constructor arguments (ADR-0019 item
-//! 3), [`ExecutionControls`]:
+//! The controls are the Python tool's constructor arguments (ADR-0017), [`ExecutionControls`]:
 //! - with neither a memory budget nor a worker count, the session takes the
 //!   balanced policy: three quarters of the host's free memory and of its
 //!   threads, at most its performance cores, except that a `close` that
@@ -25,12 +24,10 @@
 //! The backend is where a session predicts its model
 //! ([`SessionResources::prediction_backend`]); noise never runs on a device,
 //! so a session that predicts nothing writes the same MeasurementSet
-//! whatever the request. Metal predicts through the standard `GridFT`
-//! kernel set, which the imaging runtime's Metal laws and the simulator's
-//! own (`tests/backends.rs`) cover, so `Auto` takes the host's Metal device
-//! whenever there is one, except for a session that projects w
-//! (`setoptions(ftmachine='wproject')`): `close` predicts that on the CPU,
-//! and `predict` refuses it on an explicit `Metal`.
+//! whatever the request. GridFT, WProjectFT and mosaic prediction use the
+//! shared runtime's CPU or Metal kernels. `Auto` takes the host's Metal
+//! device whenever one is available. Total-power image sampling is prepared
+//! on the CPU, including the single-dish term in joint `both` prediction.
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -83,7 +80,7 @@ impl FromStr for BackendRequest {
 }
 
 /// Controls CASA's `sm` lacks: the Python tool's keyword-only constructor
-/// arguments (ADR-0019 item 3).
+/// arguments (ADR-0017).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionControls {
     /// Bytes the session may hold at once while `close` writes, capped at

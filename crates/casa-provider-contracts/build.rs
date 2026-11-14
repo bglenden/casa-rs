@@ -84,8 +84,7 @@ fn main() {
         std::fs::write(out.join(&name), json).expect("write generated surface");
         writeln!(
             source,
-            "GeneratedSurface {{ id: {id:?}, aliases: &{:?}, json: include_str!(concat!(env!(\"OUT_DIR\"), \"/{name}\")), parsed: OnceLock::new() }},",
-            surface.former_ids()
+            "GeneratedSurface {{ id: {id:?}, json: include_str!(concat!(env!(\"OUT_DIR\"), \"/{name}\")), parsed: OnceLock::new() }},"
         )
         .expect("write generated source");
     }

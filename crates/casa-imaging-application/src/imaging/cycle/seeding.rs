@@ -44,7 +44,7 @@ pub(super) fn reseed_response(
     })
 }
 
-/// Each main-image plane's flux in a start model's `samples`, in `.model`'s
+/// Each seeded image plane's flux in a start model's `samples`, in `.model`'s
 /// units, as `SIImageStore::getModelFlux` sums it; a Taylor family's is its
 /// first term's, under its first channel. Sorted by `[domain, channel,
 /// polarization]`.
@@ -52,6 +52,7 @@ pub(super) fn plane_fluxes(
     problem: &CompiledProblem,
     start: &StartModel,
     samples: &[f32],
+    domain: usize,
 ) -> Vec<([usize; 3], f64)> {
     let polarizations = start.polarizations();
     let [width, height] = start.image_size();
@@ -59,8 +60,9 @@ pub(super) fn plane_fluxes(
         .chunks_exact(width * height)
         .enumerate()
         .filter_map(|(index, plane)| {
-            plane_key(problem, polarizations, index)
-                .map(|key| (key, plane.iter().map(|value| f64::from(*value)).sum()))
+            let mut key = plane_key(problem, polarizations, index)?;
+            key[0] = domain;
+            Some((key, plane.iter().map(|value| f64::from(*value)).sum()))
         })
         .collect()
 }
@@ -76,12 +78,29 @@ fn plane_key(problem: &CompiledProblem, polarizations: usize, index: usize) -> O
     (cube || coefficient == 0).then_some([0, if cube { coefficient } else { 0 }, polarization])
 }
 
+/// Bytes held beside the model while the source reads one domain at a time.
+pub(super) fn model_bytes(
+    main: Option<&StartModel>,
+    outliers: &[Option<StartModel>],
+    reseed: bool,
+) -> Option<u64> {
+    let main =
+        main.map(|start| start.seeding_bytes() + if reseed { start.conversion_bytes() } else { 0 });
+    main.into_iter()
+        .chain(outliers.iter().flatten().map(StartModel::seeding_bytes))
+        .max()
+}
+
 impl Run<'_> {
     /// The initial major cycle: data and PSF, from the start model when there
     /// is one (its residual) and from an empty model otherwise; it writes
     /// visibilities when it is also final. A run that reads its PSF or
     /// residual forms what it does not read ([`super::continuation`]).
-    pub(super) fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
+    pub(super) fn initial(&mut self, last: bool, mvc_start: bool) -> Result<Major, ImagingError> {
+        if mvc_start {
+            self.measure_row_work()?;
+            return self.psf_pass();
+        }
         match (self.forms.psf, self.forms.residual) {
             (true, true) => {}
             (true, false) => {
@@ -90,14 +109,18 @@ impl Run<'_> {
             }
             (false, true) => {
                 self.measure_row_work()?;
-                let read = self.read_existing()?;
+                let read = self.read_existing(self.reseed.is_none())?;
+                if let Some(response) = self.reseed {
+                    return self.reseed(read, response, last);
+                }
                 return self.refresh(
                     read.completion,
                     (Vec::new(), Vec::new(), Reservation::none()),
                     last,
+                    true,
                 );
             }
-            (false, false) => return self.read_existing(),
+            (false, false) => return self.read_existing(true),
         }
         self.measure_row_work()?;
         match self.reseed {
@@ -105,7 +128,7 @@ impl Run<'_> {
                 let unseeded = self.initial_pass(false, false)?;
                 self.reseed(unseeded, response, last)
             }
-            None => self.initial_pass(self.start_model.is_some(), last),
+            None => self.initial_pass(self.has_model_seed(), last),
         }
     }
 
@@ -124,15 +147,16 @@ impl Run<'_> {
             self.lifecycle.resident_bytes() + self.write_bytes(last) + seeding,
             self.writes(last),
         )?;
-        let generation = match &self.start_model {
-            Some(start) if seeded => {
-                // Released once the generation holds the samples.
-                let _seeding = pass.split(seeding);
-                let samples = start.main_samples().map_err(ImagingError::StartModel)?;
-                self.start_model_flux = plane_fluxes(self.problem, start, &samples);
-                self.lifecycle.initial_from_start_model(&samples)?
-            }
-            _ => self.lifecycle.initial_empty()?,
+        let generation = if seeded {
+            let scope = pass.split(seeding);
+            tracing::debug!(
+                target: "casa_imaging::model_seed",
+                admitted_bytes = scope.memory(),
+                "seed the first model generation"
+            );
+            self.seed_generation()?
+        } else {
+            self.lifecycle.initial_empty()?
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
@@ -188,7 +212,7 @@ impl Run<'_> {
     /// through the PB (flat noise) or PB² (pbsquare) of `normal`'s weights
     /// where that supports them and zero elsewhere (`divideModelByWeight`),
     /// as the minor cycle maps solved values to the physical model.
-    fn physical_generation(
+    pub(super) fn physical_generation(
         &mut self,
         start: &StartModel,
         normal: &FinalNormalState,
@@ -263,17 +287,69 @@ impl Run<'_> {
         Ok(self.lifecycle.initial_from_start_model(&physical)?)
     }
 
-    /// What seeding the model from the start model holds besides the model
-    /// ([`StartModel::seeding_bytes`], and its conversion when it is made
-    /// physical); 0 without one.
-    pub(super) fn seeding_bytes(&self) -> u64 {
-        self.start_model.as_ref().map_or(0, |start| {
-            start.seeding_bytes()
-                + if self.reseed.is_some() {
-                    start.conversion_bytes()
-                } else {
-                    0
+    /// The initial generation from each field's existing image, retaining
+    /// at most one field's samples beside the model. A field with no
+    /// saved model supplies zeros in its own span of the compiled grid.
+    pub(super) fn seed_generation(&mut self) -> Result<ModelGeneration, ImagingError> {
+        if self.outlier_models.is_empty() {
+            let Some(start) = &self.start_model else {
+                return Ok(self.lifecycle.initial_empty()?);
+            };
+            let samples = start.main_samples().map_err(ImagingError::StartModel)?;
+            self.start_model_flux = plane_fluxes(self.problem, start, &samples, 0);
+            return Ok(self.lifecycle.initial_from_start_model(&samples)?);
+        }
+        let target = self.problem.model_lifecycle().target();
+        let mut domains = target
+            .domains()
+            .iter()
+            .zip(
+                std::iter::once(self.start_model.as_ref())
+                    .chain(self.outlier_models.iter().map(Option::as_ref)),
+            )
+            .enumerate();
+        let mut range = 0..0;
+        let mut samples = Vec::new();
+        let mut fluxes = Vec::new();
+        let generation = self.lifecycle.initial_from_fn(|index| {
+            if index == range.end {
+                let (domain, (shape, seed)) = domains.next().expect("seed for each compiled field");
+                let [nx, ny] = shape.pixels();
+                let count = nx * ny * target.polarizations() * target.coefficients();
+                range = index..index + count;
+                // Drop the previous field before opening this one's image.
+                drop(std::mem::take(&mut samples));
+                if let Some(seed) = seed {
+                    samples = seed.main_samples().map_err(ImagingError::StartModel)?;
+                    if samples.len() != count {
+                        return Err(ImagingError::Model(
+                            casa_imaging_deconvolution::ModelLifecycleError::SampleCountMismatch {
+                                expected: count,
+                                actual: samples.len(),
+                            },
+                        ));
+                    }
+                    fluxes.extend(plane_fluxes(self.problem, seed, &samples, domain));
                 }
-        })
+            }
+            Ok(samples.get(index - range.start).copied().unwrap_or(0.0))
+        })?;
+        self.start_model_flux = fluxes;
+        Ok(generation)
+    }
+
+    pub(super) fn has_model_seed(&self) -> bool {
+        self.start_model.is_some() || self.outlier_models.iter().any(Option::is_some)
+    }
+
+    /// What seeding holds besides the model, including conversion to
+    /// physical samples when necessary.
+    pub(super) fn seeding_bytes(&self) -> u64 {
+        model_bytes(
+            self.start_model.as_ref(),
+            &self.outlier_models,
+            self.reseed.is_some(),
+        )
+        .unwrap_or(0)
     }
 }

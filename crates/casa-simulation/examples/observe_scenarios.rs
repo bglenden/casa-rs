@@ -365,6 +365,7 @@ fn set_options(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
             .get("wprojplanes")
             .and_then(Value::as_i64)
             .unwrap_or(defaults.w_planes),
+        ..defaults
     })
 }
 

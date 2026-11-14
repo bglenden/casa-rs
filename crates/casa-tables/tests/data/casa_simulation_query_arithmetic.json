@@ -1,0 +1,170 @@
+{
+ "casa_version": "6.7.6.14",
+ "cases": [
+  {
+   "expression": "7/2",
+   "type": "float64",
+   "values": [
+    3.5
+   ]
+  },
+  {
+   "expression": "-7/2",
+   "type": "float64",
+   "values": [
+    -3.5
+   ]
+  },
+  {
+   "expression": "7//2",
+   "type": "float64",
+   "values": [
+    3.0
+   ]
+  },
+  {
+   "expression": "-7//2",
+   "type": "float64",
+   "values": [
+    -4.0
+   ]
+  },
+  {
+   "expression": "7%-3",
+   "type": "int64",
+   "values": [
+    -2
+   ]
+  },
+  {
+   "expression": "-7%3",
+   "type": "int64",
+   "values": [
+    2
+   ]
+  },
+  {
+   "expression": "-7%-3",
+   "type": "int64",
+   "values": [
+    -1
+   ]
+  },
+  {
+   "expression": "-7.0%3.0",
+   "type": "float64",
+   "values": [
+    2.0
+   ]
+  },
+  {
+   "expression": "7.0%-3.0",
+   "type": "float64",
+   "values": [
+    -2.0
+   ]
+  },
+  {
+   "expression": "2**63",
+   "type": "float64",
+   "values": [
+    9.223372036854776e+18
+   ]
+  },
+  {
+   "expression": "1/0",
+   "type": "float64",
+   "values": [
+    {
+     "nonfinite": "+inf"
+    }
+   ]
+  },
+  {
+   "expression": "0/0",
+   "type": "float64",
+   "values": [
+    {
+     "nonfinite": "nan"
+    }
+   ]
+  },
+  {
+   "expression": "(0.0/0.0)<1",
+   "type": "bool",
+   "values": [
+    false
+   ]
+  },
+  {
+   "expression": "(0.0/0.0)<=1",
+   "type": "bool",
+   "values": [
+    false
+   ]
+  },
+  {
+   "expression": "(0.0/0.0)>1",
+   "type": "bool",
+   "values": [
+    false
+   ]
+  },
+  {
+   "expression": "(0.0/0.0)>=1",
+   "type": "bool",
+   "values": [
+    false
+   ]
+  },
+  {
+   "expression": "-0.0<0.0",
+   "type": "bool",
+   "values": [
+    false
+   ]
+  },
+  {
+   "expression": "-0.0>=0.0",
+   "type": "bool",
+   "values": [
+    true
+   ]
+  },
+  {
+   "expression": "-0.0==0.0",
+   "type": "bool",
+   "values": [
+    true
+   ]
+  },
+  {
+   "expression": "TRUE+TRUE",
+   "error_type": "RuntimeError"
+  },
+  {
+   "expression": "TRUE+1",
+   "error_type": "RuntimeError"
+  },
+  {
+   "expression": "TRUE-TRUE",
+   "error_type": "RuntimeError"
+  },
+  {
+   "expression": "TRUE*TRUE",
+   "error_type": "RuntimeError"
+  },
+  {
+   "expression": "TRUE/TRUE",
+   "error_type": "RuntimeError"
+  },
+  {
+   "expression": "TRUE%TRUE",
+   "error_type": "RuntimeError"
+  },
+  {
+   "expression": "TRUE**TRUE",
+   "error_type": "RuntimeError"
+  }
+ ]
+}

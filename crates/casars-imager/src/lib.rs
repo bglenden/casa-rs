@@ -16,7 +16,6 @@
 mod casa_return;
 mod history;
 pub mod interrupt;
-mod schema;
 mod task_contract;
 
 use std::{path::PathBuf, time::Instant};
@@ -29,7 +28,6 @@ use casa_task_runtime::{
 use serde_json::{Map, Value};
 
 pub use casa_return::{RunReturn, tclean_record};
-pub use schema::command_schema;
 pub use task_contract::*;
 
 fn imager_surface() -> Result<SurfaceContractBundle, String> {
@@ -47,7 +45,7 @@ fn workspace() -> Result<PathBuf, String> {
 fn request_from(
     resolved: Map<String, Value>,
 ) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
-    let request = ImagingRequest::from_tclean(&resolved).map_err(|refusal| {
+    let mut request = ImagingRequest::from_tclean(&resolved).map_err(|refusal| {
         let failure = TaskFailure::validation(refusal.message);
         if refusal.parameter.is_empty() {
             failure
@@ -55,6 +53,14 @@ fn request_from(
             failure.at(refusal.parameter)
         }
     })?;
+    // AWP2 reads the same physical dish data as CASA when the host has
+    // the local data tree. The imaging library takes an explicit path.
+    if let casa_imaging_application::Gridder::Awp2 { evla_surface, .. } = &mut request.gridder
+        && evla_surface.is_none()
+    {
+        *evla_surface = std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(".casa/data/nrao/VLA/VLA.surface"));
+    }
     Ok((ImagingParameters(resolved), request))
 }
 

@@ -86,12 +86,16 @@ fn patch(case: PatchCase<'_>, ms: &Path, measures: &Arc<dyn MeasuresProvider>) -
 /// Give each MAIN row of `ms` a SCAN_NUMBER of its own: each is a scan
 /// after `openfromms`.
 fn number_each_row(ms: &Path) {
+    index_rows(ms, "SCAN_NUMBER", 1);
+}
+
+pub(super) fn index_rows(ms: &Path, column: &str, offset: i32) {
     let mut ms = MeasurementSet::open(ms).expect("open");
     let rows = ms.row_count();
     let plan = MeasurementSetWritePlan::selected_row_mutation(
         (0..rows).collect(),
         vec![MeasurementSetWriteColumnPlan {
-            name: "SCAN_NUMBER".to_string(),
+            name: column.to_string(),
             bytes_per_row: size_of::<ScalarValue>(),
             mode: MeasurementSetColumnWriteMode::Replace,
             storage_manager: MeasurementSetColumnStorage::Persisted,
@@ -99,7 +103,7 @@ fn number_each_row(ms: &Path) {
             create_source_column: None,
         }],
         MeasurementSetWriteResources {
-            available_bytes: 1 << 20,
+            available_bytes: 64 << 20,
             maximum_live_batches: 1,
             tiled_column_buffer_bytes: 0,
         },
@@ -114,7 +118,7 @@ fn number_each_row(ms: &Path) {
         }
         let numbers = rows
             .iter()
-            .map(|&row| ScalarValue::Int32(row as i32 + 1))
+            .map(|&row| ScalarValue::Int32(row as i32 + offset))
             .collect();
         writer
             .write_mutation_batch(
@@ -122,7 +126,7 @@ fn number_each_row(ms: &Path) {
                 MeasurementSetMutationBatch {
                     row_indices: rows,
                     columns: vec![MeasurementSetMutationColumnBatch {
-                        name: "SCAN_NUMBER".to_string(),
+                        name: column.to_string(),
                         values: MeasurementSetMutationColumnValues::Scalars(numbers),
                     }],
                 },

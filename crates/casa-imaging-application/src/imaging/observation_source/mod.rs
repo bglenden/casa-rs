@@ -370,7 +370,17 @@ impl<'a> ObservationSource<'a> {
     ) -> Result<Vec<PartitionWindow>, SourceError> {
         let problem = self.packer.problem;
         let route: &'a BatchRoute = self.route;
+        // A converted AW density axis chooses its fine-grid branch from
+        // the first two iterator channels. Keep that spacing in every wave.
+        let rest_aw_density = super::rest_aw_uses_native_wavelengths(problem)
+            && problem.weighting().casa_cube_density_padding().is_some();
         let bounds = (restrict
+            && !rest_aw_density
+            && problem
+                .geometry()
+                .spectral()
+                .reporting_conversions()
+                .is_none()
             && problem.visibility_transform().is_none()
             && planes != PlaneRange::new(0, self.planes))
         .then(|| self.bounds.as_ref().map(|bounds| bounds(planes)))

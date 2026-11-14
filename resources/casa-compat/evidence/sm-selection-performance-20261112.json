@@ -1,0 +1,392 @@
+{
+ "rayon_environment_threads": 1,
+ "simulation_execution_controls": "Unmodified task defaults: balanced workers and auto backend; RAYON_NUM_THREADS does not force simulator worker count.",
+ "warmup_pairs": 1,
+ "measured_interleaved_pairs": 3,
+ "binaries": {
+  "control": {
+   "path": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-long-baselines/release-validation/release/simobserve",
+   "sha256": "1b413855a91474d3c97e8f20ce951a9171b712e0a955c3d113d5dccc976fe9be"
+  },
+  "candidate": {
+   "path": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/targets/codex-1053-simulation-selection/release-validation/release/simobserve",
+   "sha256": "14e46e8768580b019338449a49696b5beea87e02a2da5c052832b5b12a2c74f0"
+  }
+ },
+ "summary": {
+  "uvw_long_vla_2017": {
+   "control": {
+    "task_seconds": 3.329317666,
+    "wall_seconds": 3.33,
+    "user_seconds": 3.14,
+    "system_seconds": 0.09,
+    "max_rss_bytes": 298483712
+   },
+   "candidate": {
+    "task_seconds": 3.346579,
+    "wall_seconds": 3.35,
+    "user_seconds": 3.16,
+    "system_seconds": 0.09,
+    "max_rss_bytes": 299892736
+   }
+  },
+  "uvw_long_vla_2025": {
+   "control": {
+    "task_seconds": 3.338993042,
+    "wall_seconds": 3.34,
+    "user_seconds": 3.15,
+    "system_seconds": 0.09,
+    "max_rss_bytes": 298827776
+   },
+   "candidate": {
+    "task_seconds": 3.348330792,
+    "wall_seconds": 3.35,
+    "user_seconds": 3.16,
+    "system_seconds": 0.09,
+    "max_rss_bytes": 300269568
+   }
+  },
+  "uvw_long_alma_2017": {
+   "control": {
+    "task_seconds": 3.340724916,
+    "wall_seconds": 3.34,
+    "user_seconds": 3.15,
+    "system_seconds": 0.09,
+    "max_rss_bytes": 302891008
+   },
+   "candidate": {
+    "task_seconds": 3.330418417,
+    "wall_seconds": 3.33,
+    "user_seconds": 3.14,
+    "system_seconds": 0.09,
+    "max_rss_bytes": 305266688
+   }
+  }
+ },
+ "runs": [
+  {
+   "run": 0,
+   "warmup": true,
+   "case": "uvw_long_vla_2017",
+   "variant": "control",
+   "task_seconds": 3.442713833,
+   "wall_seconds": 3.51,
+   "user_seconds": 3.16,
+   "system_seconds": 0.11,
+   "max_rss_bytes": 298860544,
+   "raw_time": "        3.51 real         3.16 user         0.11 sys\n           298860544  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               18630  page reclaims\n                 514  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                 108  voluntary context switches\n                2092  involuntary context switches\n         55453902915  instructions retired\n         11154757865  cycles elapsed\n           290390928  peak memory footprint\n"
+  },
+  {
+   "run": 0,
+   "warmup": true,
+   "case": "uvw_long_vla_2017",
+   "variant": "candidate",
+   "task_seconds": 3.45052825,
+   "wall_seconds": 4.0,
+   "user_seconds": 3.18,
+   "system_seconds": 0.11,
+   "max_rss_bytes": 300007424,
+   "raw_time": "        4.00 real         3.18 user         0.11 sys\n           300007424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19296  page reclaims\n                   9  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  51  voluntary context switches\n                1688  involuntary context switches\n         55427080614  instructions retired\n         11093847155  cycles elapsed\n           292422544  peak memory footprint\n"
+  },
+  {
+   "run": 0,
+   "warmup": true,
+   "case": "uvw_long_vla_2025",
+   "variant": "control",
+   "task_seconds": 3.342525334,
+   "wall_seconds": 3.35,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 300580864,
+   "raw_time": "        3.35 real         3.15 user         0.09 sys\n           300580864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19240  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  55  voluntary context switches\n                1704  involuntary context switches\n         55394616910  instructions retired\n         11054377104  cycles elapsed\n           293946256  peak memory footprint\n"
+  },
+  {
+   "run": 0,
+   "warmup": true,
+   "case": "uvw_long_vla_2025",
+   "variant": "candidate",
+   "task_seconds": 3.303643292,
+   "wall_seconds": 3.31,
+   "user_seconds": 3.13,
+   "system_seconds": 0.08,
+   "max_rss_bytes": 299778048,
+   "raw_time": "        3.31 real         3.13 user         0.08 sys\n           299778048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19288  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  48  voluntary context switches\n                1738  involuntary context switches\n         55173577341  instructions retired\n         10966263817  cycles elapsed\n           292488080  peak memory footprint\n"
+  },
+  {
+   "run": 0,
+   "warmup": true,
+   "case": "uvw_long_alma_2017",
+   "variant": "control",
+   "task_seconds": 3.333309791,
+   "wall_seconds": 3.34,
+   "user_seconds": 3.16,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 302678016,
+   "raw_time": "        3.34 real         3.16 user         0.09 sys\n           302678016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19458  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  52  voluntary context switches\n                1491  involuntary context switches\n         55425916472  instructions retired\n         11059492102  cycles elapsed\n           295928720  peak memory footprint\n"
+  },
+  {
+   "run": 0,
+   "warmup": true,
+   "case": "uvw_long_alma_2017",
+   "variant": "candidate",
+   "task_seconds": 3.323131,
+   "wall_seconds": 3.33,
+   "user_seconds": 3.14,
+   "system_seconds": 0.08,
+   "max_rss_bytes": 301678592,
+   "raw_time": "        3.33 real         3.14 user         0.08 sys\n           301678592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19296  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  51  voluntary context switches\n                1827  involuntary context switches\n         55320526927  instructions retired\n         10996334897  cycles elapsed\n           293389200  peak memory footprint\n"
+  },
+  {
+   "run": 1,
+   "warmup": false,
+   "case": "uvw_long_vla_2017",
+   "variant": "candidate",
+   "task_seconds": 3.333428834,
+   "wall_seconds": 3.34,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 299892736,
+   "raw_time": "        3.34 real         3.15 user         0.09 sys\n           299892736  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19275  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  52  voluntary context switches\n                1675  involuntary context switches\n         55360407461  instructions retired\n         11042619187  cycles elapsed\n           292127632  peak memory footprint\n"
+  },
+  {
+   "run": 1,
+   "warmup": false,
+   "case": "uvw_long_vla_2017",
+   "variant": "control",
+   "task_seconds": 3.329317666,
+   "wall_seconds": 3.33,
+   "user_seconds": 3.14,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 298483712,
+   "raw_time": "        3.33 real         3.14 user         0.09 sys\n           298483712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19093  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  51  voluntary context switches\n                1600  involuntary context switches\n         55281258606  instructions retired\n         11023306273  cycles elapsed\n           289702800  peak memory footprint\n"
+  },
+  {
+   "run": 1,
+   "warmup": false,
+   "case": "uvw_long_vla_2025",
+   "variant": "candidate",
+   "task_seconds": 3.325394959,
+   "wall_seconds": 3.33,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 299483136,
+   "raw_time": "        3.33 real         3.15 user         0.09 sys\n           299483136  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19243  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  49  voluntary context switches\n                1790  involuntary context switches\n         55288439129  instructions retired\n         11038041918  cycles elapsed\n           291160976  peak memory footprint\n"
+  },
+  {
+   "run": 1,
+   "warmup": false,
+   "case": "uvw_long_vla_2025",
+   "variant": "control",
+   "task_seconds": 3.328660333,
+   "wall_seconds": 3.33,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 299171840,
+   "raw_time": "        3.33 real         3.15 user         0.09 sys\n           299171840  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19137  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  51  voluntary context switches\n                1640  involuntary context switches\n         55280414988  instructions retired\n         11042468614  cycles elapsed\n           291160976  peak memory footprint\n"
+  },
+  {
+   "run": 1,
+   "warmup": false,
+   "case": "uvw_long_alma_2017",
+   "variant": "candidate",
+   "task_seconds": 3.330418417,
+   "wall_seconds": 3.33,
+   "user_seconds": 3.14,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 301776896,
+   "raw_time": "        3.33 real         3.14 user         0.09 sys\n           301776896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19398  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  51  voluntary context switches\n                1522  involuntary context switches\n         55314851492  instructions retired\n         11030478592  cycles elapsed\n           293553040  peak memory footprint\n"
+  },
+  {
+   "run": 1,
+   "warmup": false,
+   "case": "uvw_long_alma_2017",
+   "variant": "control",
+   "task_seconds": 3.340724916,
+   "wall_seconds": 3.34,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 302891008,
+   "raw_time": "        3.34 real         3.15 user         0.09 sys\n           302891008  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19474  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  49  voluntary context switches\n                1470  involuntary context switches\n         55565153149  instructions retired\n         11063409538  cycles elapsed\n           296420240  peak memory footprint\n"
+  },
+  {
+   "run": 2,
+   "warmup": false,
+   "case": "uvw_long_vla_2017",
+   "variant": "control",
+   "task_seconds": 3.347812625,
+   "wall_seconds": 3.35,
+   "user_seconds": 3.16,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 298270720,
+   "raw_time": "        3.35 real         3.16 user         0.09 sys\n           298270720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19161  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  42  voluntary context switches\n                1581  involuntary context switches\n         55469948806  instructions retired\n         11070691527  cycles elapsed\n           289342352  peak memory footprint\n"
+  },
+  {
+   "run": 2,
+   "warmup": false,
+   "case": "uvw_long_vla_2017",
+   "variant": "candidate",
+   "task_seconds": 3.346579,
+   "wall_seconds": 3.35,
+   "user_seconds": 3.16,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 299679744,
+   "raw_time": "        3.35 real         3.16 user         0.09 sys\n           299679744  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19175  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  52  voluntary context switches\n                1831  involuntary context switches\n         55395972877  instructions retired\n         11082609757  cycles elapsed\n           292062096  peak memory footprint\n"
+  },
+  {
+   "run": 2,
+   "warmup": false,
+   "case": "uvw_long_vla_2025",
+   "variant": "control",
+   "task_seconds": 3.338993042,
+   "wall_seconds": 3.34,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 298827776,
+   "raw_time": "        3.34 real         3.15 user         0.09 sys\n           298827776  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19208  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  51  voluntary context switches\n                1566  involuntary context switches\n         55292995034  instructions retired\n         11046368021  cycles elapsed\n           290669456  peak memory footprint\n"
+  },
+  {
+   "run": 2,
+   "warmup": false,
+   "case": "uvw_long_vla_2025",
+   "variant": "candidate",
+   "task_seconds": 3.355389042,
+   "wall_seconds": 3.36,
+   "user_seconds": 3.16,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 300826624,
+   "raw_time": "        3.36 real         3.16 user         0.09 sys\n           300826624  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19355  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  54  voluntary context switches\n                1603  involuntary context switches\n         55403242051  instructions retired\n         11105547665  cycles elapsed\n           293651344  peak memory footprint\n"
+  },
+  {
+   "run": 2,
+   "warmup": false,
+   "case": "uvw_long_alma_2017",
+   "variant": "control",
+   "task_seconds": 3.344731667,
+   "wall_seconds": 3.35,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 301875200,
+   "raw_time": "        3.35 real         3.15 user         0.09 sys\n           301875200  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19401  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  53  voluntary context switches\n                1600  involuntary context switches\n         55325509792  instructions retired\n         11049075515  cycles elapsed\n           294093712  peak memory footprint\n"
+  },
+  {
+   "run": 2,
+   "warmup": false,
+   "case": "uvw_long_alma_2017",
+   "variant": "candidate",
+   "task_seconds": 3.314705542,
+   "wall_seconds": 3.32,
+   "user_seconds": 3.13,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 305266688,
+   "raw_time": "        3.32 real         3.13 user         0.09 sys\n           305266688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19622  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  53  voluntary context switches\n                1475  involuntary context switches\n         55237344041  instructions retired\n         11001553027  cycles elapsed\n           298926992  peak memory footprint\n"
+  },
+  {
+   "run": 3,
+   "warmup": false,
+   "case": "uvw_long_vla_2017",
+   "variant": "candidate",
+   "task_seconds": 3.347352375,
+   "wall_seconds": 3.35,
+   "user_seconds": 3.16,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 300826624,
+   "raw_time": "        3.35 real         3.16 user         0.09 sys\n           300826624  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19258  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  52  voluntary context switches\n                1754  involuntary context switches\n         55390763154  instructions retired\n         11096602882  cycles elapsed\n           294486928  peak memory footprint\n"
+  },
+  {
+   "run": 3,
+   "warmup": false,
+   "case": "uvw_long_vla_2017",
+   "variant": "control",
+   "task_seconds": 3.316460083,
+   "wall_seconds": 3.32,
+   "user_seconds": 3.14,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 299384832,
+   "raw_time": "        3.32 real         3.14 user         0.09 sys\n           299384832  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19155  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  53  voluntary context switches\n                1696  involuntary context switches\n         55175824200  instructions retired\n         10992740502  cycles elapsed\n           291586960  peak memory footprint\n"
+  },
+  {
+   "run": 3,
+   "warmup": false,
+   "case": "uvw_long_vla_2025",
+   "variant": "candidate",
+   "task_seconds": 3.348330792,
+   "wall_seconds": 3.35,
+   "user_seconds": 3.16,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 300269568,
+   "raw_time": "        3.35 real         3.16 user         0.09 sys\n           300269568  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19303  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  51  voluntary context switches\n                1566  involuntary context switches\n         55382358990  instructions retired\n         11098259862  cycles elapsed\n           293077904  peak memory footprint\n"
+  },
+  {
+   "run": 3,
+   "warmup": false,
+   "case": "uvw_long_vla_2025",
+   "variant": "control",
+   "task_seconds": 3.3539255,
+   "wall_seconds": 3.36,
+   "user_seconds": 3.16,
+   "system_seconds": 0.1,
+   "max_rss_bytes": 298188800,
+   "raw_time": "        3.36 real         3.16 user         0.10 sys\n           298188800  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19066  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  53  voluntary context switches\n                1704  involuntary context switches\n         55359607934  instructions retired\n         11086815748  cycles elapsed\n           288899984  peak memory footprint\n"
+  },
+  {
+   "run": 3,
+   "warmup": false,
+   "case": "uvw_long_alma_2017",
+   "variant": "candidate",
+   "task_seconds": 3.346138042,
+   "wall_seconds": 3.35,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 307118080,
+   "raw_time": "        3.35 real         3.15 user         0.09 sys\n           307118080  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19755  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  52  voluntary context switches\n                1578  involuntary context switches\n         55330197905  instructions retired\n         11063835795  cycles elapsed\n           302269328  peak memory footprint\n"
+  },
+  {
+   "run": 3,
+   "warmup": false,
+   "case": "uvw_long_alma_2017",
+   "variant": "control",
+   "task_seconds": 3.326392292,
+   "wall_seconds": 3.33,
+   "user_seconds": 3.15,
+   "system_seconds": 0.09,
+   "max_rss_bytes": 304594944,
+   "raw_time": "        3.33 real         3.15 user         0.09 sys\n           304594944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19564  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  52  voluntary context switches\n                1520  involuntary context switches\n         55324370588  instructions retired\n         11039401562  cycles elapsed\n           297272208  peak memory footprint\n"
+  }
+ ],
+ "schema": "sm-selection-performance/1",
+ "work_issue": 1053,
+ "control_source_revision": "4328701bc7a654fdd6b4596c534f5e0dcae6ad7a",
+ "candidate_source_revision": "438bb0ed50a7102d665ecb076d0e58cba2d2a725",
+ "scope": "Matched existing all-row simobserve task defaults; no claim for selected-row speedup or serial worker count. Native runtime matches the final code throughb45f0616a; later Python documentation/test and readback edits do not affect these binaries.",
+ "fftw": {
+  "version": "3.3.11",
+  "matching_resolved_linker_records": {
+   "control": [
+    [
+     "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+     "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+     "cargo:rustc-link-lib=static=fftw3f_threads",
+     "cargo:rustc-link-lib=static=fftw3_threads",
+     "cargo:rustc-link-lib=static=fftw3f",
+     "cargo:rustc-link-lib=static=fftw3"
+    ]
+   ],
+   "candidate": [
+    [
+     "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+     "cargo:rustc-link-search=native=/opt/homebrew/Cellar/fftw/3.3.11/lib",
+     "cargo:rustc-link-lib=static=fftw3f_threads",
+     "cargo:rustc-link-lib=static=fftw3_threads",
+     "cargo:rustc-link-lib=static=fftw3f",
+     "cargo:rustc-link-lib=static=fftw3"
+    ]
+   ]
+  },
+  "archives_sha256": {
+   "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3.a": "247587e68efd458914df09148d24caf4802589eff9c6a946c17a9fac914ab3aa",
+   "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3_threads.a": "a8be24ae0c79d98b32f216a163096607ca7d578fb852ca3d831a5db61bb4af22",
+   "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3f.a": "17914bcd9c8ff937ecc48f0fe6cc800b7bcd5e4869d0ef7bab423b0175ec30e6",
+   "/opt/homebrew/Cellar/fftw/3.3.11/lib/libfftw3f_threads.a": "9b316ec16945847fed9bf05d5c3f5b3c8cb3ec63a49bbe92240c33e2167ef0db"
+  }
+ }
+}

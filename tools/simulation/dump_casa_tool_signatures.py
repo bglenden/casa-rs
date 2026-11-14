@@ -7,7 +7,7 @@ For the constructor and every public method of a `casatools` class (or of
 `casatasks.private.simutil.simutil`, which is a Python helper class rather than
 a tool), the script records the `inspect.signature` parameters (name, kind and
 the `repr` of the default) and the CASA version. The installed binding's
-defaults are the contract the `casars` classes reproduce (ADR-0019); the CASA
+defaults are the contract the `casars` classes reproduce (ADR-0017); the CASA
 XML text is not. The Python tests under `crates/casars-python/python/tests/`
 compare each casa-rs class with the checked-in output in
 `crates/casars-python/python/tests/data/casa_<tool>_signatures.json`.

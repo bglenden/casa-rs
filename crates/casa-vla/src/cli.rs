@@ -14,7 +14,6 @@ use crate::task_contract::{ImportVlaTaskResult, importvla_task_schema_bundle};
 use crate::{
     ImportReport, ImportVlaOptions, VlaError, import_archive_files_to_measurement_set_from_options,
 };
-pub use casa_ms::presentation::UiCommandSchema;
 
 /// The front end of the `importvla` binary.
 pub fn task_front_end()
@@ -26,18 +25,6 @@ pub fn task_front_end()
         run_task,
     )
     .expect("the importvla contract carries its surface")
-}
-
-/// Build the machine-readable command schema for `importvla`.
-pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    let bundle = casa_provider_contracts::builtin_surface_bundle("importvla")
-        .expect("built-in importvla parameter surface must remain valid");
-    let mut schema: UiCommandSchema =
-        serde_json::from_value(casa_provider_contracts::project_ui_form(&bundle))
-            .expect("canonical importvla UI projection must match UiCommandSchema");
-    schema.invocation_name = program_name.to_string();
-    schema.usage = format!("{program_name} [parameters]");
-    schema
 }
 
 /// Import one resolved request; CASA's `importvla` returns None.

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use super::*;
 
-/// Make constant-tap caches, optionally extending each even cell to an
-/// odd side. The area-normalized taps then agree at both array origins.
-fn prepare_constant_cache(root: &std::path::Path, make_odd: bool) {
+/// Make constant-tap caches, optionally extending either kind of cell to
+/// an odd side. The area-normalized taps agree at both array origins.
+fn prepare_constant_cache(root: &std::path::Path, odd: [bool; 2]) {
     for entry in std::fs::read_dir(root).expect("cache entries") {
         let path = entry.expect("entry").path();
         let name = path.file_name().expect("name").to_string_lossy();
@@ -13,7 +13,7 @@ fn prepare_constant_cache(root: &std::path::Path, make_odd: bool) {
         let mut image = casa_images::PagedImage::<Complex32>::open(&path).expect("open cell");
         let shape = image.shape().to_vec();
         assert!(shape[0].is_multiple_of(2) && shape[1].is_multiple_of(2));
-        if !make_odd {
+        if !odd[usize::from(name.starts_with("WTCFS_"))] {
             let values =
                 ndarray::ArrayD::from_elem(ndarray::IxDyn(&shape), Complex32::new(1.0, 0.0));
             image
@@ -45,41 +45,30 @@ fn prepare_constant_cache(root: &std::path::Path, make_odd: bool) {
     }
 }
 
-/// An opened odd CASA cache applies the one-fine-pixel phase in every AW
-/// grid mode and conjugates it for prediction (#1070). Its even twin reads
-/// identical taps, so their ratio comes directly from the C++ array origin.
+/// Open a cache whose indexed taps are identical at both parities.
+fn constant_cache(odd: [bool; 2]) -> (tempfile::TempDir, MeasurementOperator) {
+    let root = tempfile::tempdir().expect("constant cache");
+    AwCatalog::generate_native(root.path(), &request(false), false, 1).expect("generate");
+    prepare_constant_cache(root.path(), odd);
+    let operator = operator_with(
+        AwCatalog::open_casa(
+            root.path(),
+            indexing(false),
+            &geometry(),
+            &routing(),
+            usize::MAX,
+        )
+        .expect("open constant cache"),
+    );
+    (root, operator)
+}
+
+/// An odd CASA buffer shifts the pointing phase one fine pixel in its own
+/// grid modes. Prediction takes the conjugate of the imaging phase (#1070).
 #[test]
-fn odd_cache_origin_reaches_gridding_and_prediction() {
-    let even_root = tempfile::tempdir().expect("even cache");
-    let odd_root = tempfile::tempdir().expect("odd cache");
-    AwCatalog::generate_native(even_root.path(), &request(false), false, 1).expect("generate even");
-    AwCatalog::generate_native(odd_root.path(), &request(false), false, 1).expect("generate odd");
-    prepare_constant_cache(even_root.path(), false);
-    prepare_constant_cache(odd_root.path(), true);
-    let even = operator_with(
-        AwCatalog::open_casa(
-            even_root.path(),
-            indexing(false),
-            &geometry(),
-            &routing(),
-            usize::MAX,
-        )
-        .expect("open even cache"),
-    );
-    let odd = operator_with(
-        AwCatalog::open_casa(
-            odd_root.path(),
-            indexing(false),
-            &geometry(),
-            &routing(),
-            usize::MAX,
-        )
-        .expect("open odd cache"),
-    );
+fn cache_buffer_origins_reach_gridding_and_prediction() {
+    let (_root, even) = constant_cache([false, false]);
     let key = even.cf().key(&context(17.0, 0), FREQUENCIES_HZ[0], 0.0);
-    assert!(!even.cf().pointing_origin_shift(key, false));
-    assert!(odd.cf().pointing_origin_shift(key, false));
-    assert!(odd.cf().pointing_origin_shift(key, true));
     let gradient = [0.37_f32, -0.21_f32];
     let placement = Placement {
         u: 13.0,
@@ -92,7 +81,7 @@ fn odd_cache_origin_reaches_gridding_and_prediction() {
         cf: key,
         gradient,
     };
-    assert!(fits(&even, &placement) && fits(&odd, &placement));
+    assert!(fits(&even, &placement));
     let mut samples = SampleBuffer::new(2);
     samples.push(
         placement,
@@ -100,23 +89,6 @@ fn odd_cache_origin_reaches_gridding_and_prediction() {
         &[1.0; 2],
     );
     let phase = Complex32::from_polar(1.0, -(gradient[0] + gradient[1]) / OVERSAMPLING as f32);
-    for mode in [Mode::Data, Mode::Psf, Mode::Weight] {
-        let (a, wa) = grid(&even, &samples, mode);
-        let (b, wb) = grid(&odd, &samples, mode);
-        assert!(
-            a.iter().any(|v| v.norm() > 1e-6),
-            "{mode:?} must exercise taps"
-        );
-        for (before, after) in a.iter().zip(&b) {
-            assert!(
-                (*after - *before * phase).norm() < 1e-5,
-                "{mode:?}: {before} -> {after}"
-            );
-        }
-        for (before, after) in wa.iter().zip(wb) {
-            assert!((*before - after).abs() < 1e-9, "{mode:?} sumwt");
-        }
-    }
     let mut sky = Array2::zeros((IMAGE, IMAGE));
     sky[(IMAGE / 2 + 5, IMAGE / 2 - 3)] = 1.0;
     let model = ModelImages {
@@ -140,16 +112,46 @@ fn odd_cache_origin_reaches_gridding_and_prediction() {
             .expect("predict");
         out
     };
-    let a = predict(&even);
-    let b = predict(&odd);
+    let baseline = predict(&even);
     assert!(
-        a.iter().any(|v| v.norm() > 1e-6),
-        "prediction must exercise taps"
+        baseline.iter().any(|v| v.norm() > 1e-6),
+        "nonzero prediction"
     );
-    for (before, after) in a.iter().zip(b) {
-        assert!(
-            (after - *before * phase.conj()).norm() < 1e-5,
-            "predict: {before} -> {after}"
-        );
+    for odd in [[true, true], [true, false], [false, true]] {
+        let (_root, operator) = constant_cache(odd);
+        assert!(fits(&operator, &placement));
+        for mode in [Mode::Data, Mode::Psf, Mode::Weight] {
+            let (a, wa) = grid(&even, &samples, mode);
+            let (b, wb) = grid(&operator, &samples, mode);
+            assert!(
+                a.iter().any(|v| v.norm() > 1e-6),
+                "{mode:?} must exercise taps"
+            );
+            let shift = if odd[usize::from(mode != Mode::Data)] {
+                phase
+            } else {
+                Complex32::new(1.0, 0.0)
+            };
+            for (before, after) in a.iter().zip(&b) {
+                assert!(
+                    (*after - *before * shift).norm() < 1e-5,
+                    "{odd:?} {mode:?}: {before} -> {after}"
+                );
+            }
+            for (before, after) in wa.iter().zip(wb) {
+                assert!((*before - after).abs() < 1e-9, "{mode:?} sumwt");
+            }
+        }
+        let shift = if odd[0] {
+            phase.conj()
+        } else {
+            Complex32::new(1.0, 0.0)
+        };
+        for (before, after) in baseline.iter().zip(predict(&operator)) {
+            assert!(
+                (after - *before * shift).norm() < 1e-5,
+                "{odd:?} predict: {before} -> {after}"
+            );
+        }
     }
 }

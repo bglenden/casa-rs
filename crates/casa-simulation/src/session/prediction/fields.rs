@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Grids retained or prepared for a simulation pointing.
+use super::*;
+
+impl Prediction {
+    /// Index the grids by antenna beam direction, independently of FIELD.
+    pub(crate) fn grid_id(&self, scan: &super::super::observe::Scan) -> usize {
+        match &self.grids {
+            StepGrids::Prepared(..) => 0,
+            StepGrids::ImageBeam(_) => self
+                .image_visit(scan, None)
+                .expect("prepared image-beam visit"),
+            StepGrids::PerField(held) => held
+                .centres
+                .binary_search_by_key(&scan.pointing_rad.map(f64::to_bits), |(direction, _)| {
+                    *direction
+                })
+                .expect("prepared pointing"),
+        }
+    }
+
+    pub(crate) fn grid_id_at(&self, scan: &super::super::observe::Scan, time: f64) -> usize {
+        if matches!(self.grids, StepGrids::ImageBeam(_)) {
+            self.image_visit(scan, Some(time))
+                .expect("prepared timed image-beam visit")
+        } else {
+            self.grid_id(scan)
+        }
+    }
+
+    pub(crate) fn has_timed_grids(&self) -> bool {
+        matches!(&self.grids, StepGrids::ImageBeam(held) if held.timed)
+    }
+
+    pub(super) fn image_visit(
+        &self,
+        scan: &super::super::observe::Scan,
+        time: Option<f64>,
+    ) -> Option<usize> {
+        let StepGrids::ImageBeam(held) = &self.grids else {
+            return None;
+        };
+        let visit = image_beams::visit_key(scan);
+        let first = held
+            .visits
+            .partition_point(|((known, _), _)| *known < visit);
+        let index = time.map_or(first, |time| {
+            held.visits
+                .partition_point(|((known, epoch), _)| {
+                    *known < visit || (*known == visit && *epoch <= time)
+                })
+                .saturating_sub(1)
+                .max(first)
+        });
+        held.visits
+            .get(index)
+            .filter(|((known, _), _)| *known == visit)
+            .map(|(_, grid)| *grid)
+    }
+
+    /// Where the grids rows of `field` are predicted from come from; `None`
+    /// for a field the step did not observe.
+    pub(crate) fn grids_for(&self, field: usize) -> Option<FieldGrids<'_>> {
+        match &self.grids {
+            StepGrids::Prepared(grid_field, grids) => grid_field
+                .is_none_or(|grid_field| grid_field == field)
+                .then_some(FieldGrids::Prepared(grids)),
+            StepGrids::PerField(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
+            StepGrids::ImageBeam(held) => held.centres.get(field).map(|_| FieldGrids::PerField),
+        }
+    }
+
+    /// Bytes the grids prepared at `predict` hold: one set, or none when
+    /// `close` prepares each field's.
+    pub(crate) fn prepared_bytes(&self) -> u64 {
+        match &self.grids {
+            StepGrids::Prepared(_, grids) => grids.bytes(),
+            StepGrids::PerField(_) | StepGrids::ImageBeam(_) => 0,
+        }
+    }
+
+    /// Whether `close` prepares each field's grids
+    /// ([`Self::prepare_field`]).
+    pub(crate) fn per_field(&self) -> bool {
+        matches!(self.grids, StepGrids::PerField(_) | StepGrids::ImageBeam(_))
+    }
+
+    /// Bytes one set of grids holds ([`PreparedModelGrids::bytes`]).
+    pub(crate) fn set_bytes(&self) -> u64 {
+        self.model.grid_bytes()
+    }
+
+    /// Bytes preparing a field's grids holds beside them on `workers`
+    /// workers: a plane's scratch for each worker that has a plane
+    /// ([`ModelOperator::plane_scratch_bytes`]); none when `close` prepares
+    /// no grids.
+    pub(crate) fn preparation_bytes(&self, workers: usize) -> u64 {
+        match &self.grids {
+            StepGrids::Prepared(..) => 0,
+            StepGrids::ImageBeam(held) => {
+                workers.clamp(1, held.model.planes().max(1)) as u64
+                    * self.model.image_beam_scratch_bytes(&held.model)
+            }
+            StepGrids::PerField(held) => {
+                workers.clamp(1, held.model.planes().max(1)) as u64
+                    * self.model.plane_scratch_bytes(&held.model)
+            }
+        }
+    }
+
+    /// Prepare the grids of `field`, which the step observed under the
+    /// beam, on `team`: the planes held, multiplied by the beam's power
+    /// centred on the field and transformed, as `predict` prepares one
+    /// field's ([`ModelOperator::prepare`]); the same grids whatever the
+    /// workers.
+    ///
+    /// # Errors
+    ///
+    /// A raised error for a field the step did not observe or a step whose
+    /// grids were prepared at `predict`, and the operator's refusal, which
+    /// for a model `predict` read is only a transform's failure.
+    pub(crate) fn prepare_field(
+        &self,
+        field: usize,
+        team: &WorkerTeam,
+    ) -> SimulatorResult<PreparedModelGrids> {
+        if let StepGrids::ImageBeam(held) = &self.grids {
+            let (key, angle) = held
+                .centres
+                .get(field)
+                .ok_or_else(|| SimulatorError::raised("image-beam pointing was not prepared"))?;
+            return self
+                .model
+                .prepare_image_beam(
+                    &held.model,
+                    &held.image,
+                    key.0.map(f64::from_bits),
+                    *angle,
+                    team,
+                )
+                .map_err(model_error);
+        }
+        let StepGrids::PerField(held) = &self.grids else {
+            return Err(SimulatorError::raised(
+                "the step's grids were prepared at predict",
+            ));
+        };
+        let centre = held
+            .centres
+            .get(field)
+            .map(|(_, centre)| *centre)
+            .ok_or_else(|| {
+                SimulatorError::raised(format!("predict did not observe field {field}"))
+            })?;
+        self.model
+            .prepare(&held.model, Some((&held.pattern, centre)), Some(team))
+            .map_err(model_error)
+    }
+}

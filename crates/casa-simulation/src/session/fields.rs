@@ -13,6 +13,9 @@ pub(crate) struct Field {
     pub(crate) code: String,
     /// The J2000 direction, radians: DELAY_DIR, PHASE_DIR and REFERENCE_DIR.
     pub(crate) direction_rad: [f64; 2],
+    /// An opened FIELD has several PHASE_DIR coefficients; CASA cannot
+    /// append an observation to that field.
+    pub(crate) polynomial: bool,
     /// `distance`, metres; zero for a source at infinity. Used by `predict`.
     pub(crate) distance_m: f64,
     /// The SOURCE row's TIME: the reference time when `setfield` was

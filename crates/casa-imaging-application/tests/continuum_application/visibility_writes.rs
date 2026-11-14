@@ -320,21 +320,24 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
         model.iter().all(|value| *value != Complex32::new(9.0, 9.0)),
         "no selected destination retains its stale pre-run value"
     );
-    for correlation in 0..4 {
-        for channel in 0..2 {
+    for channel in 0..2 {
+        // GridFT's scalar model prediction suppresses the entire channel
+        // when any correlation is flagged.
+        let channel_flagged = (0..4).any(|correlation| flags[[correlation, channel]]);
+        for correlation in 0..4 {
             let model_value = model[[correlation, channel]];
             let parallel_hand = matches!(correlation, 0 | 3);
-            if flags[[correlation, channel]] || !parallel_hand {
+            if channel_flagged || !parallel_hand {
                 assert_eq!(
                     model_value,
                     Complex32::new(0.0, 0.0),
-                    "flagged and unsupported cross-hand predictions persist as CASA zeros"
+                    "partially flagged channels and unsupported cross-hands persist as CASA zeros"
                 );
             } else {
                 assert_ne!(
                     model_value,
                     Complex32::new(0.0, 0.0),
-                    "unflagged parallel-hand predictions retain the solved Stokes-I model"
+                    "parallel hands of a fully unflagged channel retain the solved Stokes-I model"
                 );
             }
         }

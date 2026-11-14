@@ -14,6 +14,8 @@ const MODES: [&str; 3] = ["perfect R L", "perfect X Y", "list"];
 pub(crate) struct Feed {
     pub(crate) antenna_id: i32,
     pub(crate) feed_id: i32,
+    /// BEAM_OFFSET in radians, common to both receptors.
+    pub(crate) offset_rad: [f64; 2],
     /// POLARIZATION_TYPE of the two receptors.
     pub(crate) polarization: [&'static str; 2],
 }
@@ -21,9 +23,8 @@ pub(crate) struct Feed {
 /// The FEED rows of `setfeed(mode, x, y, pol)` for `antenna_count`
 /// antennas.
 ///
-/// Only one feed per antenna is supported: CASA chooses list mode, one feed
-/// per position, whenever `x` has more than one element, and the simulator
-/// writes such multi-feed observations from Phase 2 on.
+/// CASA chooses list mode whenever `x` has more than one element, regardless
+/// of the requested mode; list circular receptors are L/R, perfect ones R/L.
 pub(crate) fn feeds(
     mode: &str,
     x: &[f64],
@@ -53,9 +54,24 @@ pub(crate) fn feeds(
                 "Feed polarization list must be same length as the number of positions",
             ));
         }
-        return Err(SimulatorError::raised(
-            "setfeed: more than one feed per antenna (list mode) is not yet implemented in casa-rs",
-        ));
+        return Ok((0..antenna_count)
+            .flat_map(|antenna| {
+                x.iter()
+                    .zip(y)
+                    .zip(pol)
+                    .enumerate()
+                    .map(move |(feed, ((&x, &y), pol))| Feed {
+                        antenna_id: antenna as i32,
+                        feed_id: feed as i32,
+                        offset_rad: [x, y],
+                        polarization: if pol.contains('X') {
+                            ["X", "Y"]
+                        } else {
+                            ["L", "R"]
+                        },
+                    })
+            })
+            .collect());
     }
     Ok(perfect_feeds(mode, antenna_count))
 }
@@ -72,6 +88,7 @@ pub(crate) fn perfect_feeds(mode: &str, antenna_count: usize) -> Vec<Feed> {
         .map(|antenna| Feed {
             antenna_id: antenna as i32,
             feed_id: 0,
+            offset_rad: [0.; 2],
             polarization,
         })
         .collect()

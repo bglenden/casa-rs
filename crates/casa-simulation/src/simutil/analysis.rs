@@ -2,7 +2,7 @@
 //! The `simutil` analysis that `simanalyze` and `simalma` run on a simulated
 //! image (simulation Phase 6f, #841): CASA 6.7.6's `simutil.py` and the
 //! analysis section of `task_simanalyze.py`, ported as their specification
-//! (ADR-0018).
+//! (ADR-0017).
 //!
 //! | CASA | casa-rs |
 //! |---|---|

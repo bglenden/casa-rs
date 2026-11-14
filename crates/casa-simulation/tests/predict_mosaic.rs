@@ -10,8 +10,7 @@ mod predict_support;
 use std::path::Path;
 
 use casa_simulation::{
-    CasaOutcome, ObserveManySpec, Pointing, PredictionOptions, Simulator, SimulatorResult,
-    VoltagePatternSpec,
+    CasaOutcome, PredictionOptions, Simulator, SimulatorResult, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use predict_support::{
@@ -57,20 +56,16 @@ fn refusal(result: SimulatorResult<()>) -> (CasaOutcome, String) {
 }
 
 #[test]
-fn setoptions_takes_the_mosaic_machine_but_not_both_or_pbwproject() {
+fn setoptions_records_mosaic_both_and_pbwproject() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let mut sm = session(&directory.path().join("options.ms"), "ALMA");
     sm.set_options(&mosaic()).expect("mosaic");
-    for machine in ["both", "pbwproject"] {
-        let (outcome, message) = refusal(sm.set_options(&PredictionOptions {
+    for machine in ["both", "pbwproject", "mosaic"] {
+        sm.set_options(&PredictionOptions {
             ftmachine: machine.to_string(),
             ..PredictionOptions::default()
-        }));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{machine}");
-        assert!(
-            message.contains(machine) && message.contains("#1053"),
-            "{message}"
-        );
+        })
+        .expect("CASA records the mode; any refusal occurs at prediction");
     }
     sm.close().expect("close");
 }
@@ -109,29 +104,24 @@ fn the_mosaic_beams_are_in_its_kernels_whatever_setvp_says() {
     );
 }
 
-/// What the mosaic machine refuses: a telescope other than ALMA and ACA
-/// (CASA's `MosaicFTNew` keeps `SimplePBConvFunc` of the VLA's beam), a
-/// field pointed outside the model (for which CASA predicts nothing), and a
-/// pointing `observemany` moved off its field. The session closes after.
+/// Unknown telescopes need a supplied beam; uncovered pointings contribute zero.
 #[test]
-fn the_mosaic_refuses_what_casa_rs_does_not_build_yet() {
+fn the_mosaic_refuses_unknown_beams_and_zeroes_uncovered_pointings() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
     let refused = |mut sm: Simulator, needle: &str| {
         let (outcome, message) = refusal(sm.predict(&predict_spec(&model, false)));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{message}");
-        assert!(
-            message.contains(needle) && message.contains("ftmachine='mosaic'"),
-            "{message}"
-        );
+        assert_eq!(outcome, CasaOutcome::ReturnsFalse, "{message}");
+        assert!(message.contains(needle), "{message}");
         sm.close().expect("close");
     };
     refused(
-        observed(&directory.path().join("vla.ms"), "VLA"),
-        "telescope VLA",
+        observed(&directory.path().join("unknown.ms"), "UNKNOWN"),
+        "beam for UNKNOWN",
     );
 
-    let mut far = session(&directory.path().join("far.ms"), "ALMA");
+    let far_path = directory.path().join("far.ms");
+    let mut far = session(&far_path, "ALMA");
     far.set_field(
         "far",
         &MDirection::from_angles(CENTRE_RAD[0] + 1.0e-3, CENTRE_RAD[1], DirectionRef::J2000),
@@ -141,27 +131,13 @@ fn the_mosaic_refuses_what_casa_rs_does_not_build_yet() {
     .expect("setfield");
     far.observe(&scan("far", 0.0, 60.0)).expect("observe");
     far.set_options(&mosaic()).expect("setoptions");
-    refused(far, "outside the model image");
-
-    let mut moved = session(&directory.path().join("moved.ms"), "ALMA");
-    let base = scan("target", 0.0, 20.0);
-    let pointing = |start_s: f64, direction: Option<MDirection>| Pointing {
-        source: "target".to_string(),
-        start_s,
-        stop_s: start_s + 20.0,
-        direction,
-    };
-    let off = MDirection::from_angles(CENTRE_RAD[0] + 1.0e-5, CENTRE_RAD[1], DirectionRef::J2000);
-    moved
-        .observe_many(&ObserveManySpec {
-            pointings: vec![pointing(0.0, None), pointing(20.0, Some(off))],
-            spectral_window: base.spectral_window.clone(),
-            add_observation: false,
-            state: base.state.clone(),
-            observer: base.observer.clone(),
-            project: base.project.clone(),
-        })
-        .expect("observemany");
-    moved.set_options(&mosaic()).expect("setoptions");
-    refused(moved, "pointed away");
+    far.predict(&predict_spec(&model, false))
+        .expect("predict outside");
+    far.close().expect("close outside");
+    assert!(
+        read_main(&far_path)
+            .0
+            .iter()
+            .all(|row| row.data.iter().all(|value| value.norm() == 0.))
+    );
 }

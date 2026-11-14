@@ -83,12 +83,16 @@ fn every_not_yet_implemented_refusal_names_an_issue() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_files(&source, &mut files);
-    let mut refusals = 0;
+    // Check that the scan reaches the simulator, independently of how many
+    // capabilities remain unimplemented (eventually there should be none).
+    assert!(
+        files.contains(&source.join("session/mod.rs")),
+        "source scan did not find the simulator session"
+    );
     let mut unnamed = Vec::new();
     for file in files {
         let text = fs::read_to_string(&file).expect("read source file");
         for (at, _) in text.match_indices(REFUSAL) {
-            refusals += 1;
             let literals = call_literals(&text[at + REFUSAL.len()..]);
             if !names_an_issue(&literals) || literals.contains("Phase") {
                 let line = text[..at].lines().count();
@@ -96,10 +100,6 @@ fn every_not_yet_implemented_refusal_names_an_issue() {
             }
         }
     }
-    assert!(
-        refusals > 30,
-        "found only {refusals} refusals: is the scan reading the sources?"
-    );
     assert!(
         unnamed.is_empty(),
         "refusals that name no issue:\n{}",

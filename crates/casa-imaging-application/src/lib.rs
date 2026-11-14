@@ -107,6 +107,7 @@ pub(crate) struct ApplicationNative {
     pub(crate) runtime: ApplicationRuntime,
     pub(crate) publication: ApplicationPublication,
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
+    pub(crate) awp2: Option<Awp2Deployment>,
 }
 
 /// The AW catalog a run opens (`AwCatalog::open_casa`): a directory of CASA
@@ -128,6 +129,20 @@ pub(crate) struct AwCatalogDeployment {
     /// `None` when it generated none (#708).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) generation_workers: Option<usize>,
+}
+
+/// The observing frequencies and bounded physical data of an AWPLPG run.
+/// The operator owns generating the convolution functions.
+pub(crate) struct Awp2Deployment {
+    pub(crate) single_field: bool,
+    pub(crate) legacy_vla: bool,
+    pub(crate) frequencies_hz: Box<[f64]>,
+    pub(crate) w_planes: Box<[f64]>,
+    pub(crate) row_frequency_hz: f64,
+    pub(crate) pa_centres: Box<[f64]>,
+    pub(crate) feed_angle_rad: f32,
+    pub(crate) surface: casa_imaging_model::EvlaDishSurface,
+    pub(crate) _charge: casa_imaging_runtime::Reservation,
 }
 
 /// Product-generation controls, the analytic primary beam's pointings and
@@ -241,7 +256,7 @@ impl ImagingOutcome {
 /// Each plane's part of each minor cycle (CASA's `summaryminor`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlaneRows {
-    /// Each main-image plane's start-model flux, in `.model`'s units, sorted
+    /// Each image plane's start-model flux, in `.model`'s units, sorted
     /// by `[domain, channel, polarization]`; a plane absent starts from zero.
     pub start_model_flux: Vec<([usize; 3], f64)>,
     /// Each minor cycle's rows, in order.
@@ -468,13 +483,24 @@ fn compile_run(
     let observation = compile_observation(prepared.snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
     drop(prepared.survey);
+    let model_lifecycle = prepared.model_lifecycle;
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,
         observation,
-        prepared.model_lifecycle,
+        model_lifecycle,
     ))
     .map_err(ApplicationDispatchError::Compile)?;
+    let psf_view = prepared
+        .psf_view
+        .map(|view| {
+            let view = view.compile(&problem, model_lifecycle)?;
+            // Its writer coordinates remain live through publication.
+            resident.join(view.reservation);
+            Ok(view.value)
+        })
+        .transpose()
+        .map_err(ApplicationDispatchError::Compile)?;
     let backend = availability::resolve_backend(
         &problem,
         request.backend,
@@ -490,6 +516,7 @@ fn compile_run(
         .map_err(ApplicationDispatchError::Preparation)?;
     let input = NativeInput {
         mvc_taylor: prepared.mvc_taylor,
+        psf_view,
         observation: prepared.observation,
         write_model_column: prepared.write_model_column,
         predicts_final_model: prepared.predicts_final_model,
@@ -497,6 +524,8 @@ fn compile_run(
         virtual_model: prepared.virtual_model,
         masks: prepared.masks,
         start_model: prepared.start_model,
+        outlier_models: prepared.outlier_models,
+        outlier_psfs: prepared.outlier_psfs,
         existing: prepared.existing,
         forms: imaging::Forms {
             psf: request.calcpsf,

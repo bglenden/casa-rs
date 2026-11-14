@@ -10,18 +10,9 @@ use serde::{Deserialize, Serialize};
 
 #[path = "casa_signature.rs"]
 mod casa_signature;
-#[path = "migration.rs"]
-mod migration;
-#[path = "migration_list.rs"]
-mod migration_list;
-#[path = "migration_set.rs"]
-mod migration_set;
 #[path = "surface_validation.rs"]
 mod surface_validation;
 
-use migration::validate_migrations;
-pub use migration::{MigrationStep, MigrationTransform, SurfaceMigration};
-pub use migration_list::ListElement;
 use surface_validation::{SurfaceContractRef, validate_surface_views};
 
 pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_float, python_repr};
@@ -843,8 +834,6 @@ pub struct SurfaceParameterBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface_note: Option<String>,
     pub projections: ParameterProjections,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_homonym: Option<ReviewedHomonym>,
     /// Set for a CASA parameter casa-rs accepts only at its default.
@@ -1005,16 +994,9 @@ pub struct TaskDefinition {
     /// (#931); `None` for a surface not yet CASA-exact or a casa-rs task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub casa_task: Option<String>,
-    /// The ids this surface had before it was renamed, which a saved
-    /// profile may still name: `imager`, re-surfaced as CASA's `tclean`
-    /// (#931). Its migrations carry such a profile to the current contract.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub former_ids: Vec<String>,
     #[serde(default)]
     pub execution: SurfaceExecutionProjection,
     pub bindings: Vec<SurfaceParameterBinding>,
-    #[serde(default)]
-    pub migrations: Vec<SurfaceMigration>,
 }
 
 /// Shared definition for every configurable executable surface. Every surface
@@ -1052,26 +1034,12 @@ impl SurfaceDefinition {
         self.task().casa_task.as_deref()
     }
 
-    /// The ids the surface had before it was renamed.
-    pub fn former_ids(&self) -> &[String] {
-        &self.task().former_ids
-    }
-
-    /// Whether `id` names this surface, now or before it was renamed.
-    pub fn answers_to(&self, id: &str) -> bool {
-        self.id() == id || self.former_ids().iter().any(|former| former == id)
-    }
-
     pub fn bindings(&self) -> &[SurfaceParameterBinding] {
         &self.task().bindings
     }
 
     pub fn execution(&self) -> &SurfaceExecutionProjection {
         &self.task().execution
-    }
-
-    pub fn migrations(&self) -> &[SurfaceMigration] {
-        &self.task().migrations
     }
 
     pub fn display_name(&self) -> &str {
@@ -1113,10 +1081,7 @@ impl SurfaceCatalogBundle {
     /// The surface `id` names, now or, for a saved profile's header, before
     /// it was renamed.
     pub fn surface(&self, id: &str) -> Option<&SurfaceDefinition> {
-        self.surfaces
-            .iter()
-            .find(|surface| surface.id() == id)
-            .or_else(|| self.surfaces.iter().find(|surface| surface.answers_to(id)))
+        self.surfaces.iter().find(|surface| surface.id() == id)
     }
 
     pub fn embedded_surface(&self, id: &str) -> Option<SurfaceContractBundle> {
@@ -1212,8 +1177,6 @@ fn validate_one_surface(
         .iter()
         .map(|binding| binding.name.clone())
         .collect::<BTreeSet<_>>();
-
-    validate_aliases(surface, &known, errors);
 
     if surface.id().is_empty() || surface.contract_version() == 0 {
         errors.push(
@@ -1381,43 +1344,6 @@ fn validate_one_surface(
         validate_refinements(concept, binding, surface.id(), errors);
     }
     validate_default_cycles(surface, errors);
-    validate_migrations(surface, errors);
-}
-
-fn validate_aliases(
-    surface: &SurfaceDefinition,
-    canonical_names: &BTreeSet<String>,
-    errors: &mut Vec<ContractValidationError>,
-) {
-    let mut aliases = BTreeMap::<&str, &str>::new();
-    for binding in surface.bindings() {
-        for alias in &binding.aliases {
-            if canonical_names.contains(alias) {
-                errors.push(
-                    ContractValidationError::new(
-                        "alias_canonical_collision",
-                        format!(
-                            "alias {alias:?} for parameter {:?} collides with a canonical parameter name",
-                            binding.name
-                        ),
-                    )
-                    .at(surface.id(), Some(&binding.name)),
-                );
-            }
-            if let Some(existing) = aliases.insert(alias, &binding.name) {
-                errors.push(
-                    ContractValidationError::new(
-                        "duplicate_alias",
-                        format!(
-                            "alias {alias:?} for parameter {:?} is already used by parameter {existing:?}",
-                            binding.name
-                        ),
-                    )
-                    .at(surface.id(), Some(&binding.name)),
-                );
-            }
-        }
-    }
 }
 
 /// Runtime authority and UI/process state must never enter a portable profile.
@@ -2203,7 +2129,6 @@ mod tests {
                     hidden: false,
                 },
             },
-            aliases: Vec::new(),
             reviewed_homonym: None,
             unimplemented: None,
             unimplemented_forms: None,
@@ -2224,10 +2149,8 @@ mod tests {
                 summary: "Example".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
-                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![binding],
-                migrations: Vec::new(),
             }),
             catalog: ParameterCatalog {
                 schema_version: PARAMETER_CATALOG_SCHEMA_VERSION,
@@ -2239,16 +2162,6 @@ mod tests {
     fn set_surface_id(bundle: &mut SurfaceContractBundle, id: &str) {
         let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.id = id.to_string();
-    }
-
-    fn add_binding(
-        bundle: &mut SurfaceContractBundle,
-        concept: ParameterConcept,
-        binding: SurfaceParameterBinding,
-    ) {
-        bundle.catalog.concepts.push(concept);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.bindings.push(binding);
     }
 
     #[test]
@@ -2267,63 +2180,6 @@ mod tests {
     fn unsupported_pattern_constraints_are_rejected() {
         let serialized = serde_json::json!({"kind": "pattern", "pattern": "^value$"});
         assert!(serde_json::from_value::<Constraint>(serialized).is_err());
-    }
-
-    #[test]
-    fn aliases_cannot_shadow_canonical_parameter_names_regardless_of_order() {
-        let first = concept("example.first", "first", ParameterType::String);
-        let mut first_binding = binding(
-            &first,
-            DefaultSpec::Literal {
-                value: "first".into(),
-            },
-        );
-        first_binding.aliases.push("second".to_string());
-        let mut bundle = bundle(first, first_binding);
-
-        let second = concept("example.second", "second", ParameterType::String);
-        let mut second_binding = binding(
-            &second,
-            DefaultSpec::Literal {
-                value: "second".into(),
-            },
-        );
-        second_binding.order = 1;
-        add_binding(&mut bundle, second, second_binding);
-
-        let errors = bundle.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "alias_canonical_collision")
-        );
-    }
-
-    #[test]
-    fn aliases_must_be_unique_across_the_entire_surface() {
-        let first = concept("example.first", "first", ParameterType::String);
-        let mut first_binding = binding(
-            &first,
-            DefaultSpec::Literal {
-                value: "first".into(),
-            },
-        );
-        first_binding.aliases.push("legacy".to_string());
-        let mut bundle = bundle(first, first_binding);
-
-        let second = concept("example.second", "second", ParameterType::String);
-        let mut second_binding = binding(
-            &second,
-            DefaultSpec::Literal {
-                value: "second".into(),
-            },
-        );
-        second_binding.order = 1;
-        second_binding.aliases.push("legacy".to_string());
-        add_binding(&mut bundle, second, second_binding);
-
-        let errors = bundle.validate().unwrap_err();
-        assert!(errors.iter().any(|error| error.code == "duplicate_alias"));
     }
 
     fn overwrite_bundle(default: bool) -> SurfaceContractBundle {
@@ -2855,10 +2711,8 @@ mod tests {
                 summary: "Cycle".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
-                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![first_binding, second_binding],
-                migrations: Vec::new(),
             }),
             catalog: ParameterCatalog {
                 schema_version: PARAMETER_CATALOG_SCHEMA_VERSION,
@@ -2867,32 +2721,6 @@ mod tests {
         };
         let errors = bundle.validate().unwrap_err();
         assert!(errors.iter().any(|error| error.code == "default_cycle"));
-    }
-
-    #[test]
-    fn empty_migrations_declare_a_current_only_surface() {
-        let concept = concept("example.name", "name", ParameterType::String);
-        let mut binding = binding(
-            &concept,
-            DefaultSpec::Literal {
-                value: "default".into(),
-            },
-        );
-        let mut current_only_bundle = bundle(concept.clone(), binding.clone());
-        let SurfaceDefinition::Task(definition) = &mut current_only_bundle.surface;
-        definition.contract_version = 2;
-        current_only_bundle.validate().unwrap();
-
-        binding.aliases.push("legacy_name".to_string());
-        let mut aliased_bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut aliased_bundle.surface;
-        definition.contract_version = 2;
-        let errors = aliased_bundle.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "current_only_alias")
-        );
     }
 
     #[test]

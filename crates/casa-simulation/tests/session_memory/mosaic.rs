@@ -10,6 +10,9 @@ use super::{
     charge_process_caches, predict_after, predict_through, resources, scan_from, write_model,
 };
 
+#[path = "mosaic/simple.rs"]
+mod simple;
+
 /// The mosaic law's session budget: the 32-channel cases' and room for the
 /// screens beside `close`'s writer.
 const BUDGET_MOSAIC: u64 = BUDGET_32 + (32 << 20);

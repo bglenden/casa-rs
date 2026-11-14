@@ -7,19 +7,21 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, LinearCoordinate, SpectralCoordinate, StokesCoordinate,
-    StokesType,
+    CoordinateModel, CoordinateSystem, CoordinateType, LinearCoordinate, SpectralCoordinate,
+    StokesCoordinate, StokesType,
 };
-use casa_images::PagedImage;
+use casa_images::{PagedImage, regrid::regrid_complex_plane};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
-use num_complex::{Complex32, Complex64};
+use num_complex::Complex32;
 
+use super::rotation::pixel_rotation;
 use super::{
     AwCatalogError, CellFiles, CellHeader, Group, Loaded, MUELLER_ELEMENTS, NativeAwPlane,
     STAGING_PREFIX, cache_error,
 };
 use crate::convolution::DenseCell;
+use crate::geometry::CellLocation;
 
 /// `CFCache::getCFParams`: the cell's coordinates and misc info.
 pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
@@ -52,15 +54,8 @@ pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
     }
     let misc = image.misc_info();
     let sampling = required_f64(&misc, "Sampling", path)?;
-    if sampling.fract() != 0.0
-        || sampling < 2.0
-        || sampling > f64::from(u16::MAX)
-        || sampling % 2.0 != 0.0
-    {
-        return Err(cache_error(
-            path,
-            "Sampling must be a positive even integer",
-        ));
+    if sampling.fract() != 0.0 || sampling < 1.0 || sampling > f64::from(u16::MAX) {
+        return Err(cache_error(path, "Sampling must be a positive integer"));
     }
     let support = [
         required_support(&misc, "Xsupport", path)?,
@@ -113,6 +108,14 @@ pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
     let working_field = sky_increment_rad
         .zip(working_size)
         .map(|(increment, size)| increment * size as f64);
+    let rotatable = matches!(
+        coordinates.coordinate(0),
+        CoordinateModel::Linear(linear) if linear.pc_matrix().shape() == [2, 2]
+            && linear.pc_matrix()[[0, 0]] == 1.0
+            && linear.pc_matrix()[[0, 1]] == 0.0
+            && linear.pc_matrix()[[1, 0]] == 0.0
+            && linear.pc_matrix()[[1, 1]] == 1.0
+    );
     Ok(CellHeader {
         path: path.to_path_buf(),
         shape: [shape[0], shape[1]],
@@ -124,6 +127,7 @@ pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
         pa_deg,
         frequency_hz,
         working_field_rad: working_field,
+        rotatable,
     })
 }
 
@@ -183,39 +187,16 @@ fn read_plane(header: &CellHeader) -> Result<Vec<Complex32>, AwCatalogError> {
     Ok(plane)
 }
 
-/// `AWConvFunc::cfArea`: `Σ` over `[−support, support)` of the integer taps
-/// about `shape/2`.
-pub(super) fn cf_area(
-    plane: &[Complex32],
-    shape: [usize; 2],
-    support: [u16; 2],
-    sampling: u16,
-) -> Complex64 {
-    let origin = [shape[0] / 2, shape[1] / 2];
-    let mut area = Complex64::default();
-    for iy in -i64::from(support[1])..i64::from(support[1]) {
-        for ix in -i64::from(support[0])..i64::from(support[0]) {
-            let x = origin[0] as i64 + ix * i64::from(sampling);
-            let y = origin[1] as i64 + iy * i64::from(sampling);
-            if x < 0 || y < 0 || x as usize >= shape[0] || y as usize >= shape[1] {
-                continue;
-            }
-            let value = plane[y as usize * shape[0] + x as usize];
-            area += Complex64::new(f64::from(value.re), f64::from(value.im));
-        }
-    }
-    area
-}
-
-/// Load one group's Mueller planes (its `cells`, at `group`'s supports)
-/// into an imaging and a weight cell:
-/// every plane normalised by its own area (`AWConvFunc::cfArea`), tiled at
-/// its kind's largest support with zero beyond a smaller plane's image.
+/// Load one group's persisted imaging and weight cells and tile them at
+/// each kind's largest support. CASA normalizes the cells while generating
+/// them; `CFCache::getCFParams` reads their saved pixels as-is.
 pub(super) fn load_group(
     cells: &[CellFiles],
     group: &Group,
     sampling: u16,
+    rotation_rad: f64,
 ) -> Result<Loaded, AwCatalogError> {
+    let rotation = (rotation_rad != 0.0).then(|| pixel_rotation(rotation_rad));
     let build = |select: fn(&CellFiles) -> &CellHeader,
                  half: [u16; 2]|
      -> Result<Arc<DenseCell>, AwCatalogError> {
@@ -223,13 +204,11 @@ pub(super) fn load_group(
         let mut planes = Vec::with_capacity(headers.len());
         for header in &headers {
             let mut plane = read_plane(header)?;
-            let area = cf_area(&plane, header.shape, header.support, header.sampling);
-            if !(area.norm().is_finite() && area.norm() > 0.0) {
-                return Err(cache_error(&header.path, "cell area is not positive"));
+            if plane.iter().any(|value| !value.is_finite()) {
+                return Err(cache_error(&header.path, "cell pixels must be finite"));
             }
-            let scale = Complex32::new((1.0 / area).re as f32, (1.0 / area).im as f32);
-            for value in &mut plane {
-                *value *= scale;
+            if let Some(matrix) = rotation {
+                plane = regrid_complex_plane(&plane, header.shape, matrix);
             }
             planes.push((plane, header.shape, header.support));
         }
@@ -267,8 +246,8 @@ pub(super) fn dense_cell_padded(
 ) -> DenseCell {
     let support = [2 * half[0] + 1, 2 * half[1] + 1];
     let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
-    let rows = usize::from(sampling) + 1;
-    let fine_half = i64::from(sampling / 2);
+    let rows = CellLocation::fine_rows(sampling);
+    let fine_half = i64::from(CellLocation::fine_centre(sampling));
     let mut data = Vec::with_capacity(rows * rows * planes.len() * sx * sy);
     for oy in 0..rows {
         let off_y = oy as i64 - fine_half;
