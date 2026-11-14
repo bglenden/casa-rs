@@ -26,7 +26,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from simobserve_parity import CASES, casars_params, compare_case, compare_frequency_frames, compare_images, copy_inputs, main, repredict
+from simobserve_parity import CASES, casars_params, compare_case, compare_components, compare_frequency_frames, compare_images, copy_inputs, main, repredict
 
 
 class ComponentLists:
@@ -292,6 +292,27 @@ class ExpectedOutcomeTest(unittest.TestCase):
 
 
 class ScheduleAlignmentTest(unittest.TestCase):
+    def test_component_flux_keeps_only_the_documented_float_rounding_exception(self):
+        flux = {"casa": float(np.float32(0.35)), "native": 0.35}
+        state = SimpleNamespace(path=None)
+
+        def component(_):
+            return {
+                "flux": {"value": [flux[state.path], 0.0, 0.0, 0.0]},
+                "shape": {"type": "Point", "direction": {"refer": "J2000",
+                    "m0": {"value": 1.0}, "m1": {"value": 0.5}}},
+                "spectrum": {"frequency": {"m0": {"value": 1.42e9}}},
+                "label": "phase calibrator",
+            }
+
+        tools = {"cl": SimpleNamespace(open=lambda path: setattr(state, "path", path),
+            close=lambda: None, length=lambda: 1, getcomponent=component),
+            "qa": SimpleNamespace(convert=lambda value, unit: value)}
+        self.assertEqual(compare_components(tools, "casa", "native"), [])
+        flux["native"] = 0.351
+        self.assertTrue(any(": flux " in difference
+            for difference in compare_components(tools, "casa", "native")))
+
     def test_time_alignment_preserves_the_numeric_hours_input_form(self):
         params = {"hourangle": "-1.5", "refdate": "2017/01/02/09:30:00"}
         with (patch("simobserve_parity.hour_angle_s", return_value=-5400.0),

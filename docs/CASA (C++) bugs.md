@@ -1019,6 +1019,12 @@ flags the antenna behind. casa-rs's simulator flags the antenna behind
 (`casa_ms::shadowing::ShadowedAntenna::Behind`); the CASA convention remains
 available as `CasaSimulatorFront`.
 
+The compact-array scheduling cases in `tools/simulation/simobserve_parity.py`
+retain the raw task projects under `casa-raw`. Their independent control uses
+CASA's `agentflagger` tool to clear flags and apply its behind-antenna shadow
+agent, then predicts again so newly unflagged rows carry the sky signal.
+Calling the tool avoids adding unrelated task HISTORY to the reference.
+
 ## `setspwindow` relabels every spectral window's frame
 
 - Date noted: 2026-10-21
@@ -2897,6 +2903,13 @@ CASA's own simulator doing what the task meant: CASA's MeasurementSet
 predicted again over every field, from the model image and the lists
 merged into one. DATA agrees to an NRMS of 5.3e-9 and 5.5e-9.
 
+The `schedule_calibrator_partial` control also retains the raw project and
+reruns the same CASA task with its final queued `observemany` flushed when
+`srces` is nonempty. Only that condition changes: CASA still constructs the
+schedule and writes the scans. The calibrator component-list comparison
+allows only the already documented `cl.addcomponent` float32 rounding of
+flux; direction and frequency tolerances stay unchanged.
+
 ## simobserve ignores failed frequency-frame predictions
 
 - Date noted: 2026-11-14
@@ -2919,6 +2932,7 @@ projects, require all raw DATA to be zero, independently verify False from
 CASA's simulator, and require the native error and matching pre-prediction
 products with no native MS. This is a corrected failure outcome, not a claim
 that CASA's task itself raises that error.
+
 
 ## simobserve leaves `<stem>.noisier.T.cal`
 

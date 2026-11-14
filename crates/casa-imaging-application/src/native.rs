@@ -9,8 +9,7 @@ use std::sync::Arc;
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
-use casa_imaging_model::CompiledProblem;
-use casa_imaging_model::GeometryPlan;
+use casa_imaging_model::{CompiledProblem, GeometryPlan, RestoringBeamPolicy};
 use casa_imaging_products::{
     AnalyticPrimaryBeam, ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse,
     PlannedContinuumGeneration, ProductStoragePlan, ProductsError, PublishedContinuumGeneration,
@@ -300,6 +299,25 @@ pub(crate) fn prepare(
             input.forms.residual,
         );
     }
+    if mvc_taylor.is_none()
+        && !input.forms.psf
+        && !input.forms.residual
+        && input.minor_cycle_image_response.is_none()
+        && problem.reconstruction().controls().max_minor_iterations() == 0
+        && let Some(saved) = &input.existing
+        && saved.reads_taylor_residual()
+    {
+        // Restoration consumes the saved Taylor moments and residuals.
+        // Their on-disk Float PSFs need no normalization round trip.
+        publication.controls = publication
+            .controls
+            .preserving_saved_psfs(
+                saved.psf_beams().is_none()
+                    && problem.products().restoring_beam() != RestoringBeamPolicy::None,
+                false,
+            )
+            .preserving_saved_residuals();
+    }
     publication.controls.validate_for_problem(problem)?;
     let keeps_pb_mask = problem.products().validity().uncorrected_mask()
         == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam;
@@ -311,6 +329,7 @@ pub(crate) fn prepare(
             saved_fields,
             major_cycles,
             keeps_pb_mask,
+            input.forms.psf,
         );
         products_floor(problem, &publication, controls)
     };
@@ -398,7 +417,7 @@ fn saved_outlier_products(
     forms: imaging::Forms,
     outliers: Vec<Option<crate::restart::ExistingProducts>>,
 ) -> Vec<crate::restart::ExistingProducts> {
-    if forms.psf {
+    if forms.psf && forms.residual {
         return Vec::new();
     }
     outliers
@@ -589,6 +608,7 @@ pub(crate) fn run(
                         outcome.major_cycle_count,
                         problem.products().validity().uncorrected_mask()
                             == casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam,
+                        forms.psf,
                     ),
                     ..publication
                 },
@@ -810,18 +830,17 @@ fn saved_field_mask_bytes(
     let main = main.filter(|saved| !outliers.is_empty() && saved.reads_residual())?;
     let mut before = 0;
     let mut after = 0;
-    let mut without_pb = 0;
+    let mut retained = 0;
     for saved in std::iter::once(main).chain(outliers.iter().flatten()) {
         let bytes = saved.saved_residual_mask_bytes().unwrap_or(0);
-        without_pb = without_pb.max(saved.restored_mask_without_pb_bytes());
+        retained = retained.max(saved.restored_mask_bytes());
+        if saved.custom_residual_mask() {
+            retained = retained.max(bytes);
+        }
         before = before.max(bytes);
-        after = after.max(if bytes > 0 {
-            bytes
-        } else {
-            saved.primary_beam_mask_bytes()
-        });
+        after = after.max(bytes).max(saved.primary_beam_mask_bytes());
     }
-    Some([before.max(without_pb), after.max(without_pb), without_pb])
+    Some([before.max(retained), after.max(retained), retained])
 }
 
 /// CASA keeps the saved residual in image units until the first major
@@ -832,14 +851,24 @@ fn controls_after_cycles(
     saved_fields: Option<[u64; 3]>,
     major_cycles: usize,
     keeps_pb_mask: bool,
+    forms_psf: bool,
 ) -> casa_imaging_products::ContinuumProductControls {
-    if let Some([before, after, without_pb]) = saved_fields {
-        return if major_cycles == 0 {
-            controls.with_saved_field_residuals(before, false, false)
+    if let Some([before, after, retained]) = saved_fields {
+        let rebuilds_pb = forms_psf && controls.primary_beam_model().is_some();
+        let (bytes, refreshed) = if major_cycles == 0 {
+            (before, false)
         } else {
-            let bytes = if keeps_pb_mask { after } else { without_pb };
-            controls.with_saved_field_residuals(bytes, true, keeps_pb_mask)
+            (if keeps_pb_mask { after } else { retained }, true)
         };
+        // CASA's makePB keeps any generated mask on the old PB. Its
+        // reader is also live for a stopped run that rebuilds the PB.
+        let bytes = if rebuilds_pb { bytes.max(after) } else { bytes };
+        return controls.with_saved_field_residuals(
+            bytes,
+            refreshed,
+            keeps_pb_mask,
+            (forms_psf, rebuilds_pb),
+        );
     }
     let Some(existing) = existing else {
         return controls;

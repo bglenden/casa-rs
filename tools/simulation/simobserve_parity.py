@@ -72,6 +72,13 @@ INPUTS = {
 }
 LOCAL_INPUTS = {
     "if-polarized.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_image_layouts/iquv.image"),
+
+    "schedule-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_ft_modes/large.image"),
+    "schedule-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_telescope_beams/sky.cl"),
+    "schedule-ot.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-ot.ptg.txt"),
+    "schedule-untimed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-untimed.ptg.txt"),
+    "schedule-timed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-timed.ptg.txt"),
+
     "sd-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/pb_alma.image"),
     "sd-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/point.cl"),
     "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
@@ -110,6 +117,12 @@ SD_CORE = dict(skymodel="inputs/sd-sky.image", setpointings=True, integration="1
 IF_CORE = dict(SD_CORE, obsmode="int", antennalist="vla.d.cfg",
     incenter="8GHz", inwidth="20MHz", totaltime="60s")
 
+SCHEDULE = dict(skymodel="inputs/schedule-sky.image", setpointings=True,
+    integration="6s", maptype="square", obsmode="int", antennalist="aca.i.cfg",
+    direction="J2000 10h00m00 34d00m00", mapsize=["20arcsec", "16arcsec"],
+    pointingspacing="8arcsec", totaltime="2", refdate="2024/06/01", thermalnoise="")
+
+
 # The cases: CASA's parameters (graphics off, overwrite on), with paths
 # relative to OUT. `complist_from` makes a component list in CASA first.
 CASES = [
@@ -140,6 +153,34 @@ CASES = [
         direction="J2000 10h00m00 -23d00m00",
         incell="0.5arcsec", thermalnoise="tsys-atm", user_pwv=0.8, t_ground=269.0,
         leakage=0.015, integration="10s", totaltime="600s", hourangle="-0.5")},
+
+    {"name": "schedule_ot_file", "shadow_control": True, "params": dict(SCHEDULE, setpointings=False,
+        ptgfile="inputs/schedule-ot.ptg.txt", integration="10s", hourangle="-30min")},
+    {"name": "schedule_untimed_file", "shadow_control": True, "params": dict(SCHEDULE, setpointings=False,
+        ptgfile="inputs/schedule-untimed.ptg.txt", integration="7", totaltime="1.5")},
+    {"name": "schedule_alma_nyquist", "shadow_control": True, "params": dict(SCHEDULE, maptype="ALMA",
+        pointingspacing="nyquist", hourangle="0.25", refdate="2016/06/21/19:30:00")},
+    {"name": "schedule_cycle0_pb", "shadow_control": True, "params": dict(SCHEDULE, maptype="ALMA2012",
+        pointingspacing="0.5PB", mapsize=["24arcsec", "20arcsec"])},
+    {"name": "schedule_list_components", "shadow_control": True, "params": dict(SCHEDULE, skymodel="",
+        complist="inputs/schedule-components.cl", compwidth="20MHz",
+        direction=["J2000 10h00m00 34d00m00", "J2000 10h00m00.3 34d00m00"],
+        hourangle="45min", totaltime="30s")},
+    {"name": "schedule_calibrator_file", "repredict": True, "shadow_control": True,
+        "params": dict(SCHEDULE, setpointings=False, ptgfile="inputs/schedule-timed.ptg.txt",
+        integration="10s", caldirection="J2000 10h01m00 34d30m00", calflux="350mJy",
+        hourangle="-0.5", refdate="2017/01/02/09:30:00")},
+    {"name": "schedule_calibrator_partial", "repredict": True, "shadow_control": True, "complete_partial_pass": True,
+        "params": dict(SCHEDULE, setpointings=False, ptgfile="inputs/schedule-timed.ptg.txt",
+        integration="10s", caldirection="ICRS 10h01m00 34d30m00", calflux="0.75Jy",
+        totaltime="20s", hourangle="15min")},
+    {"name": "schedule_calibrator_components", "repredict": True, "shadow_control": True,
+        "params": dict(SCHEDULE, skymodel="", complist="inputs/schedule-components.cl",
+        compwidth="20MHz", caldirection="J2000 10h01m00 34d30m00", calflux="2Jy")},
+    {"name": "schedule_sd_calibrator_ignored", "params": dict(SCHEDULE,
+        obsmode="sd", sdantlist="aca.tp.cfg", sdant=0, caldirection="J2000 10h01m00 34d30m00",
+        calflux="1Jy", setpointings=False, ptgfile="inputs/schedule-timed.ptg.txt")},
+
     {"name": "sd_project", "params": dict(SD_CORE)},
     {"name": "sd_project_manual", "params": dict(SD_CORE, thermalnoise="tsys-manual", totaltime="3600s")},
     {"name": "sd_project_atmosphere", "params": dict(SD_CORE, thermalnoise="tsys-atm", totaltime="3600s")},
@@ -434,9 +475,65 @@ def run_casa(t, case: dict, out: str) -> str:
     try:
         shutil.rmtree(case["name"], ignore_errors=True)
         simobserve(project=case["name"], graphics="none", overwrite=True, **params)
+        if case.get("complete_partial_pass"):
+            complete_final_pass(case["name"], params, out)
+        elif case.get("shadow_control"):
+            raw = os.path.join(out, "casa-raw", case["name"])
+            shutil.rmtree(raw, ignore_errors=True)
+            shutil.copytree(case["name"], raw)
     finally:
         os.chdir(cwd)
     return os.path.join(work, case["name"])
+
+
+def complete_final_pass(project: str, params: dict, out: str) -> None:
+    """CASA control for the documented dropped final calibrator-map pass.
+
+    Preserve the raw task project, then rerun CASA with its final queued
+    ``observemany`` flushed even when a calibrator is enabled. No scheduling
+    calculation or native result is used to construct this reference.
+    """
+    import inspect
+    from casatasks import simobserve
+    from casatasks.private import task_simobserve
+
+    raw = os.path.join(out, "casa-raw", project)
+    shutil.rmtree(raw, ignore_errors=True)
+    shutil.copytree(project, raw)
+    task = task_simobserve.simobserve
+    source = inspect.getsource(task)
+    dropped = "if not docalibrator:\n                sm.observemany(sourcenames=srces,"
+    assert source.count(dropped) == 1, "CASA final-pass control requires source review"
+    namespace = dict(task.__globals__)
+    corrected = source.replace(dropped, "if srces:\n                sm.observemany(sourcenames=srces,")
+    exec(compile(corrected, inspect.getfile(task), "exec"), namespace)
+    original = task.__code__
+    try:
+        task.__code__ = namespace[task.__name__].__code__
+        simobserve(project=project, graphics="none", overwrite=True, **params)
+    finally:
+        task.__code__ = original
+
+
+def correct_shadow_flags(project: str) -> None:
+    """Use CASA's behind-antenna flagger for its documented simulator bug.
+
+    Call the tool directly so reference construction adds no task HISTORY.
+    The caller then predicts again on the corrected unflagged rows.
+    """
+    from casatools import agentflagger
+
+    ms = stem_of(project, ".ms")
+    for mode in ("unflag", "shadow"):
+        agent = agentflagger()
+        try:
+            assert agent.open(ms)
+            assert agent.selectdata()
+            assert agent.parseagentparameters({"mode": mode, "tolerance": 0.0, "apply": True})
+            assert agent.init()
+            agent.run(writeflags=True)
+        finally:
+            agent.done()
 
 
 def run_casars(t, case: dict, out: str, binary: str) -> tuple[str, dict]:
@@ -565,7 +662,12 @@ def compare_components(t, casa: str, casars: str) -> list[str]:
     for key in ("count", "refer", "shape", "label"):
         if a[key] != b[key]:
             differences.append(f"{name}: {key} {a[key]!r} against {b[key]!r}")
-    for key in ("flux", "direction", "frequency_hz"):
+    # cl.addcomponent rounds through float32; native lists retain the given
+    # double. Require the same float32 bin under the standing documented
+    # correction, while keeping the direction/frequency checks unchanged.
+    if not np.array_equal(np.asarray(a["flux"], dtype=np.float32), np.asarray(b["flux"], dtype=np.float32)):
+        differences.append(f"{name}: flux {a['flux']} against {b['flux']}")
+    for key in ("direction", "frequency_hz"):
         if not np.allclose(a[key], b[key], rtol=1e-12, atol=1e-15):
             differences.append(f"{name}: {key} {a[key]} against {b[key]}")
     return differences
@@ -927,6 +1029,13 @@ def main() -> int:
                     repredict(t, case, casa, out)
                 if case.get("joint_control"):
                     correct_joint_prediction(t, case, casa, out)
+
+                if case.get("shadow_control"):
+                    # CASA's flagger shadows the antenna behind, correcting
+                    # its simulator's documented front-antenna defect.
+                    correct_shadow_flags(casa)
+                    repredict(t, case, casa, out)
+
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))

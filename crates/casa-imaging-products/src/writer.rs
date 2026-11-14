@@ -358,8 +358,37 @@ impl CasaImageWriter {
         Ok(())
     }
 
+    /// In-place CASA field rebuilds leave a filled scalar .sumwt table alone.
+    pub(crate) fn has_positive_saved_scalar_sum(
+        &self,
+        domain: &ImageDomainRole,
+    ) -> Result<bool, ProductsError> {
+        let path = self.saved_image_path(domain, ".sumwt");
+        if !path.exists() {
+            return Ok(false);
+        }
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let values = image.get_slice(&[0; 4], &[1; 4]).map_err(image_error)?;
+        let value = values[&[0; 4][..]];
+        Ok(value.is_finite() && value > 0.0)
+    }
+
     pub(crate) fn has_saved_pb(&self, domain: &ImageDomainRole) -> bool {
         self.saved_image_path(domain, ".pb").exists()
+    }
+
+    /// Read the generated mask retained when standard imaging rebuilds the PB.
+    pub(crate) fn existing_pb_mask(
+        &self,
+        domain: &ImageDomainRole,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        Ok(self
+            .existing_mask(domain, ".pb", |name| name == "mask0")?
+            .map(|mask| mask.pixels))
     }
 
     /// Read a persisted mask in channel, polarization, x, y order.
@@ -368,6 +397,19 @@ impl CasaImageWriter {
         domain: &ImageDomainRole,
         suffix: &str,
     ) -> Result<Option<Vec<bool>>, ProductsError> {
+        Ok(self
+            .existing_mask(domain, suffix, |_| true)?
+            .map(|mask| mask.pixels))
+    }
+
+    /// Read one default mask after checking its name, so an ignored mask
+    /// does not allocate an image plane or open its backing table.
+    pub(crate) fn existing_mask(
+        &self,
+        domain: &ImageDomainRole,
+        suffix: &str,
+        accepts_name: impl FnOnce(&str) -> bool,
+    ) -> Result<Option<SavedPixelMask>, ProductsError> {
         let path = self.saved_image_path(domain, suffix);
         if !path.exists() {
             return Ok(None);
@@ -377,10 +419,19 @@ impl CasaImageWriter {
             source,
         };
         let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let Some(name) = image.default_mask_name() else {
+            return Ok(None);
+        };
+        if !accepts_name(&name) {
+            return Ok(None);
+        }
         let mask = image
-            .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
+            .get_named_mask_slice(&name, &[0; 4], image.shape(), &[1; 4])
             .map_err(image_error)?;
-        Ok(mask.map(pixel_mask_planes))
+        Ok(Some(SavedPixelMask {
+            name,
+            pixels: pixel_mask_planes(mask),
+        }))
     }
 
     /// One on-disk apparent model plane retained by CASA's cube major cycle.
@@ -454,17 +505,7 @@ impl CasaImageWriter {
         Ok(mask.map(pixel_mask_planes))
     }
 
-    /// Create one member's image in private staging beside its target, with
-    /// its units, beams and metadata.
-    pub(crate) fn begin(
-        &self,
-        member: &PlannedMember,
-        layout: ProductWindowLayout,
-        beams: &[Option<RestoringBeam>],
-        uses_weight_image: bool,
-        explicit_mask: Option<bool>,
-    ) -> Result<MemberImage<'_>, ProductsError> {
-        let started = Instant::now();
+    fn stage(&self, member: &PlannedMember) -> Result<StagedImage, ProductsError> {
         let output = self.output(member.axes().domain());
         let mut target = output.base.clone().into_os_string();
         target.push(member.name());
@@ -487,8 +528,76 @@ impl CasaImageWriter {
             .tempdir_in(parent)
             .map_err(io("staging", parent))?;
         let staging = directory.path().join("image");
+        Ok(StagedImage {
+            _directory: directory,
+            staging,
+            target,
+        })
+    }
+
+    /// Attach a fitted beam without reading or normalizing the saved Float
+    /// samples. Use the ordinary staging and replacement path.
+    pub(crate) fn stage_saved_psf_beam(
+        &self,
+        member: &PlannedMember,
+        beams: &[Option<RestoringBeam>],
+    ) -> Result<(), ProductsError> {
+        let staged = self.stage(member)?;
+        copy_directory(&staged.target, &staged.staging).map_err(|source| ProductsError::Io {
+            operation: "staging saved PSF",
+            path: staged.target.clone(),
+            source,
+        })?;
+        {
+            let image_error = |source| ProductsError::Image {
+                path: staged.target.clone(),
+                source,
+            };
+            let mut image = PagedImage::<f32>::open_with_cache(&staged.staging, 64 * 1024)
+                .map_err(image_error)?;
+            let mut info = image.image_info().map_err(image_error)?;
+            info.beam_set = persisted_beam_set(beams, member.axes().spectral().output_channels())?;
+            image.set_image_info(&info).map_err(image_error)?;
+            image.save().map_err(image_error)?;
+        }
+        // PagedImage serializes table.info when it edits keywords. Retain
+        // the original file, including formatting from a CASA writer.
+        fs::copy(
+            staged.target.join("table.info"),
+            staged.staging.join("table.info"),
+        )
+        .map_err(|source| ProductsError::Io {
+            operation: "retaining saved PSF table info",
+            path: staged.target.clone(),
+            source,
+        })?;
+        self.keep_staged(staged);
+        Ok(())
+    }
+
+    fn keep_staged(&self, image: StagedImage) {
+        self.staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(image);
+    }
+
+    /// Create one member's image in private staging beside its target, with
+    /// its units, beams and metadata.
+    pub(crate) fn begin(
+        &self,
+        member: &PlannedMember,
+        layout: ProductWindowLayout,
+        beams: &[Option<RestoringBeam>],
+        uses_weight_image: bool,
+        mask_override: Option<Option<&str>>,
+    ) -> Result<MemberImage<'_>, ProductsError> {
+        let started = Instant::now();
+        let staged = self.stage(member)?;
+        let target = &staged.target;
+        let output = self.output(member.axes().domain());
         let image_error = |source| ProductsError::Image {
-            path: target.clone(),
+            path: target.to_path_buf(),
             source,
         };
         let mut tile = layout.shape();
@@ -497,7 +606,7 @@ impl CasaImageWriter {
             layout.shape().to_vec(),
             tile.to_vec(),
             self.member_coordinates(member).clone(),
-            &staging,
+            &staged.staging,
             layout.maximum_values() * size_of::<f32>(),
         )
         .map_err(image_error)?;
@@ -557,28 +666,42 @@ impl CasaImageWriter {
         image
             .set_misc_info(RecordValue::new(miscinfo))
             .map_err(image_error)?;
+        let mask_name = mask_override.unwrap_or(
+            matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)).then_some("mask0"),
+        );
+        if let Some(name) = mask_name
+            && (name.eq_ignore_ascii_case("logtable")
+                || !matches!(
+                    Path::new(name).components().next(),
+                    Some(std::path::Component::Normal(part)) if part == name
+                )
+                || staged.staging.join(name).exists())
+        {
+            return Err(image_error(casa_images::ImageError::InvalidMetadata(
+                format!("invalid output pixel-mask name {name:?}"),
+            )));
+        }
         Ok(MemberImage {
             image,
-            explicit_mask: explicit_mask.unwrap_or(matches!(
-                storage.pixel_mask(),
-                ProductPixelMask::Explicit(_)
-            )),
+            mask_name: mask_name.map(str::to_owned),
             writer: self,
-            staged: StagedImage {
-                _directory: directory,
-                staging,
-                target,
-            },
+            staged,
             begin_nanos: started.elapsed().as_nanos(),
             window_nanos: 0,
         })
     }
 }
 
+/// A saved default mask's name and channel, polarization, x, y values.
+pub(crate) struct SavedPixelMask {
+    pub(crate) name: String,
+    pub(crate) pixels: Vec<bool>,
+}
+
 /// One member's image in staging, written a window at a time.
 pub(crate) struct MemberImage<'a> {
     image: PagedImage<f32>,
-    explicit_mask: bool,
+    mask_name: Option<String>,
     writer: &'a CasaImageWriter,
     staged: StagedImage,
     begin_nanos: u128,
@@ -600,11 +723,11 @@ impl MemberImage<'_> {
         self.image
             .put_slice_view(data.view(), &start)
             .map_err(image_error)?;
-        if self.explicit_mask {
+        if let Some(name) = &self.mask_name {
             let mask = ArrayD::from_shape_vec(IxDyn(&shape), validity)
                 .expect("a product window's validity fills its shape");
             self.image
-                .put_mask_slice("mask0", &mask, &start)
+                .put_mask_slice(name, &mask, &start)
                 .map_err(image_error)?;
         }
         self.window_nanos += started.elapsed().as_nanos();
@@ -619,8 +742,8 @@ impl MemberImage<'_> {
             path: target.clone(),
             source,
         };
-        if self.explicit_mask {
-            self.image.set_default_mask("mask0").map_err(image_error)?;
+        if let Some(name) = &self.mask_name {
+            self.image.set_default_mask(name).map_err(image_error)?;
         }
         self.image.save().map_err(image_error)?;
         if let Some(stats) = self.image.tiled_io_stats() {
@@ -650,11 +773,7 @@ impl MemberImage<'_> {
             finish_nanos = started.elapsed().as_nanos(),
             "product image staged"
         );
-        writer
-            .staged
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(staged);
+        writer.keep_staged(staged);
         Ok(())
     }
 }

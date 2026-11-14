@@ -56,8 +56,10 @@ pub(crate) struct ExistingProducts {
     saved_residual_mask_bytes: Option<u64>,
     /// Scratch for the saved PB mask when a field needs it after gridding.
     primary_beam_mask_bytes: u64,
-    /// Scratch to read the previous restored mask when no PB exists.
-    restored_mask_without_pb_bytes: u64,
+    /// A user-named residual mask survives either sign of pblimit.
+    custom_residual_mask: bool,
+    /// Scratch for a prior restored mask CASA may retain.
+    restored_mask_bytes: u64,
     /// A default mask exists on at least one saved Taylor residual.
     masked_taylor_residual: Option<PathBuf>,
     /// Saved PB reader. The mosaic's normal-state sensitivity also comes
@@ -98,7 +100,8 @@ impl ExistingProducts {
         let mut saved_residual_mask_bytes =
             (residual && (weight || read_residual_mask)).then_some(0);
         let mut primary_beam_mask_bytes = 0;
-        let mut restored_mask_without_pb_bytes = 0;
+        let mut custom_residual_mask = false;
+        let mut restored_mask_bytes = 0;
         let mut masked_taylor_residual = None;
         let mut bases = Vec::new();
         if psf {
@@ -132,10 +135,13 @@ impl ExistingProducts {
                             masked_taylor_residual.get_or_insert_with(|| path.clone());
                         }
                         Family::Single if image.default_mask_name().as_deref() != Some("mask0") => {
-                            return Err(PrepareError::Restart {
-                                path,
-                                reason: "the saved residual must use CASA's generated mask0 or have no default mask (#944)".into(),
-                            });
+                            if weight || cube {
+                                return Err(PrepareError::Restart {
+                                    path,
+                                    reason: "this saved residual must use CASA's generated mask0 or have no default mask (#944)".into(),
+                                });
+                            }
+                            custom_residual_mask = true;
                         }
                         Family::Single => {}
                     }
@@ -160,24 +166,21 @@ impl ExistingProducts {
         }
         if residual && read_residual_mask && !weight && !cube && matches!(family, Family::Single) {
             let path = product_path(prefix, "pb");
-            if path.exists() {
+            let has_pb = path.exists();
+            if has_pb {
                 let image = open(&path)?;
                 if image.default_mask_name().as_deref() == Some("mask0") {
                     primary_beam_mask_bytes = residual_mask_bytes(&image, &path)?;
                 }
-            } else {
-                let path = product_path(prefix, "image");
-                if path.exists() {
-                    let image = open(&path)?;
-                    if let Some(name) = image.default_mask_name() {
-                        if name != "mask0" {
-                            return Err(PrepareError::Restart {
-                                path,
-                                reason: "restoring without a saved PB requires a generated restored-image mask0 or no mask (#944)".into(),
-                            });
-                        }
-                        restored_mask_without_pb_bytes = residual_mask_bytes(&image, &path)?;
-                    }
+            }
+            let path = product_path(prefix, "image");
+            if path.exists() {
+                let image = open(&path)?;
+                if image
+                    .default_mask_name()
+                    .is_some_and(|name| !has_pb || name != "mask0")
+                {
+                    restored_mask_bytes = residual_mask_bytes(&image, &path)?;
                 }
             }
         }
@@ -218,7 +221,8 @@ impl ExistingProducts {
             residual_in_image_units,
             saved_residual_mask_bytes,
             primary_beam_mask_bytes,
-            restored_mask_without_pb_bytes,
+            custom_residual_mask,
+            restored_mask_bytes,
             masked_taylor_residual,
             mosaic_beam,
             psf_beams: None,
@@ -349,6 +353,11 @@ impl ExistingProducts {
         self.residual
     }
 
+    /// Whether restoration reads this saved Taylor residual family.
+    pub(crate) const fn reads_taylor_residual(&self) -> bool {
+        self.residual && matches!(self.family, Family::Taylor { .. })
+    }
+
     /// A direction-dependent saved residual is already in the image
     /// units CASA restores and passes to its next minor cycle.
     pub(crate) const fn residual_in_image_units(&self) -> bool {
@@ -365,8 +374,12 @@ impl ExistingProducts {
         self.primary_beam_mask_bytes
     }
 
-    pub(crate) const fn restored_mask_without_pb_bytes(&self) -> u64 {
-        self.restored_mask_without_pb_bytes
+    pub(crate) const fn custom_residual_mask(&self) -> bool {
+        self.custom_residual_mask
+    }
+
+    pub(crate) const fn restored_mask_bytes(&self) -> u64 {
+        self.restored_mask_bytes
     }
 
     pub(crate) fn primary_beam_mask(
@@ -447,6 +460,18 @@ impl ExistingProducts {
         };
         let image_planes = terms + moments + weight_planes;
         (planes * (cells * image_planes * 4 + moments * 2 * 8)) as u64
+    }
+
+    /// The scalar sum in this field's stored PSF normalization, if filled.
+    pub(crate) fn positive_scalar_sum(&self) -> Result<Option<f64>, ImageError> {
+        let path = product_path(&self.prefix, "sumwt");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let image = PagedImage::<f32>::open_with_cache(path, CACHE_BYTES)?;
+        let values = image.get_slice(&[0; 4], &[1; 4])?;
+        let value = f64::from(values[&[0; 4][..]]);
+        Ok((value.is_finite() && value > 0.0).then_some(value))
     }
 
     /// The saved-residual path cannot normalize with an unfilled sum.

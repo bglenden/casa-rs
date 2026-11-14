@@ -258,8 +258,8 @@ fn restart_mask_refresh(run: &Run<'_>, setup: &mut MinorCycleSetup<'_>, mvc: boo
         (!uses_new_pb, uses_new_pb)
     } else {
         (
-            (mosaic || outliers) && positive_cutoff,
-            positive_cutoff && !outliers,
+            (mosaic && positive_cutoff) || outliers,
+            positive_cutoff && (!outliers || run.forms.psf),
         )
     }
 }
@@ -303,6 +303,10 @@ fn read_saved_masks(
         .enumerate()
     {
         for channel in 0..channels {
+            if refreshed && !positive_cutoff && !saved.custom_residual_mask() {
+                masks.push(None);
+                continue;
+            }
             let (mask, mut charge) =
                 read_saved_mask(run, saved, channel, refreshed && positive_cutoff)?;
             let pixels = mask.as_ref().map_or(0, |mask| mask.as_slice().len() as u64);
