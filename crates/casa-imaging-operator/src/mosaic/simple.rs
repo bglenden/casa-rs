@@ -33,7 +33,9 @@ impl Layout {
         } else {
             (5000. / largest as f64).ceil().max(1.) as u16
         };
-        let side = next_larger_even_composite(largest / 2 * 2 * 2 * usize::from(sampling));
+        // CompositeNumber::nextLargerEven is strictly larger, including
+        // when the requested size is already an even composite.
+        let side = next_larger_even_composite(largest / 2 * 2 * 2 * usize::from(sampling) + 1);
         let crop = side / 8 / 2 * 2;
         let increments_deg = std::array::from_fn(|axis| {
             (image.increment_rad[axis] * 2. * f64::from(sampling) * image.shape[axis] as f64
