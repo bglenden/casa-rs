@@ -4527,7 +4527,10 @@ natural-weighted products. The reported BARY WCS comes from direct
 CASA, and the clean control predicts on the original channels before
 resampling the residual. All 17 products and 48 beam comparisons pass,
 with exact masks and controller counts. Maximum normalized RMS is
-9.72e-7 for products and 9.26e-7 for MODEL_DATA (#1121).
+9.72e-7 for products and 9.26e-7 for MODEL_DATA (#1121). Briggs and
+uniform on that grid use the captured CASA density weights. All 34
+weighted products and 96 beams pass, with exact masks and controller
+counts and maxima of 9.00e-7 product NRMS and 1.23e-6 MODEL_DATA NRMS.
 
 ## AW pointing can read an uninitialized frame on an ephemeris field
 
