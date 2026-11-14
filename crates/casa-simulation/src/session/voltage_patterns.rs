@@ -217,21 +217,17 @@ fn saved_curve(session: &Simulator, record: &RecordValue) -> SimulatorResult<Bea
         ));
     }
     let voltage = boolean(record, "isthisvp")?;
+    if text(record, "name")? == "IPOLY" && record.get("fitfreqs").is_some() {
+        return saved_frequency_curve(session, record, radius, voltage);
+    }
     let mut reservation = reserve(session, 2 * BeamPattern::BYTES + 256)?;
     let pattern = match text(record, "name")? {
-        "POLY" | "IPOLY" => {
-            if record.get("fitfreqs").is_some() {
-                return Err(SimulatorError::not_yet_implemented(
-                    "saved frequency-dependent inverse-polynomial beam records (#1297)",
-                ));
-            }
-            BeamPattern::polynomial(
-                radius,
-                &numbers(record, "coeff")?,
-                text(record, "name")? == "IPOLY",
-                voltage,
-            )
-        }
+        "POLY" | "IPOLY" => BeamPattern::polynomial(
+            radius,
+            &numbers(record, "coeff")?,
+            text(record, "name")? == "IPOLY",
+            voltage,
+        ),
         "COSPOLY" => BeamPattern::cosine_polynomial(
             radius,
             &numbers(record, "coeff")?,
@@ -253,6 +249,50 @@ fn saved_curve(session: &Simulator, record: &RecordValue) -> SimulatorResult<Bea
     }
     .ok_or_else(|| raised("invalid support, coefficients or voltage samples"))?;
     reservation.retain(BeamPattern::BYTES + 128);
+    Ok(BeamSource::Tabulated(Arc::new(Admitted {
+        value: pattern,
+        reservation,
+    })))
+}
+
+fn saved_frequency_curve(
+    session: &Simulator,
+    record: &RecordValue,
+    radius: f64,
+    voltage: bool,
+) -> SimulatorResult<BeamSource> {
+    let Some(Value::Array(casa_types::ArrayValue::Float64(coefficients))) = record.get("coeff")
+    else {
+        return Err(raised("missing coefficient matrix"));
+    };
+    let Some(Value::Array(casa_types::ArrayValue::Float64(frequencies))) = record.get("fitfreqs")
+    else {
+        return Err(raised("missing fit frequency vector"));
+    };
+    if coefficients.ndim() != 2
+        || frequencies.ndim() != 1
+        || coefficients.shape()[1] != frequencies.len()
+    {
+        return Err(raised(
+            "coefficient columns and fit frequencies do not match",
+        ));
+    }
+    let bytes = ((coefficients.len() + frequencies.len()) * size_of::<f64>()) as u64;
+    let mut reservation = reserve(session, 2 * bytes + 256)?;
+    let mut columns = Vec::with_capacity(coefficients.len());
+    for fit in 0..frequencies.len() {
+        for power in 0..coefficients.shape()[0] {
+            columns.push(coefficients[[power, fit]]);
+        }
+    }
+    let pattern = BeamPattern::frequency_inverse_polynomial(
+        radius,
+        columns,
+        frequencies.iter().copied().collect(),
+        voltage,
+    )
+    .ok_or_else(|| raised("invalid inverse-polynomial fit matrix or frequencies"))?;
+    reservation.retain(bytes + 256);
     Ok(BeamSource::Tabulated(Arc::new(Admitted {
         value: pattern,
         reservation,

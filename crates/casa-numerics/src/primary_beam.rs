@@ -11,16 +11,21 @@
 
 use crate::{AnnularApertureVoltageTable, EvlaPowerPattern, VlaBand};
 
+mod defaults;
+mod frequency;
 mod gaussian;
 mod sma;
 mod squint;
 mod tabulated;
+pub use defaults::DefaultRadial;
 use gaussian::GaussianVoltageTable;
 use sma::SmaVoltageTable;
 
 /// A primary-beam voltage pattern of CASA's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PrimaryBeam {
+    /// CASA's other sampled, cosine and polynomial telescope defaults.
+    DefaultRadial(DefaultRadial),
     /// SMA's spheroidal power samples, sinc interpolated by PBMath1DNumeric.
     Sma,
     /// CASA `PBMath1DAiry`: an Airy pattern for a dish with a central
@@ -113,6 +118,9 @@ impl PrimaryBeam {
     ///   the bands CASA recognises and [`Self::VLA_NVSS`] between them;
     /// - `EVLA`: [`Self::Evla`], which picks its fit per frequency;
     /// - `NGVLA`, `ATA`, and `SMA`: their Airy or sampled spheroidal beams.
+    /// - `HATCREEK`/`BIMA`, `IRAMPDB`/`IRAM30M`, `OVRO`, `GMRT`,
+    ///   `NRAO12M`, `GBT`, `WSRT` and `ATCA`: their Gaussian, Airy,
+    ///   numeric, cosine or band-dependent polynomial profiles.
     ///
     /// `None` for every other telescope, whose patterns casa-rs does not yet
     /// have.
@@ -135,8 +143,23 @@ impl PrimaryBeam {
             Some(Self::Sma)
         } else if telescope.starts_with("ATA") {
             Some(Self::ATA)
+        } else if telescope.starts_with("HATCREEK") || telescope.starts_with("BIMA") {
+            Some(Self::Gaussian {
+                half_width_arcmin_ghz: 191.67 / 2.,
+                maximum_radius_arcmin_ghz: 215.,
+                is_voltage: false,
+            })
+        } else if telescope.starts_with("IRAMPDB")
+            || telescope.starts_with("IRAM30M")
+            || (telescope.contains("IRAM") && telescope.contains("PDB"))
+        {
+            Some(Self::Airy {
+                dish_diameter_m: 15.,
+                blockage_diameter_m: 1.,
+                maximum_radius_arcmin_ghz: 1.784 * 60.,
+            })
         } else {
-            None
+            DefaultRadial::for_telescope(telescope, reference_frequency_hz).map(Self::DefaultRadial)
         }
     }
 
@@ -153,6 +176,7 @@ impl PrimaryBeam {
     #[must_use]
     pub const fn maximum_radius_arcmin_ghz(self) -> f64 {
         match self {
+            Self::DefaultRadial(profile) => profile.maximum_radius(),
             Self::Sma => SmaVoltageTable::MAXIMUM_RADIUS,
             Self::Airy {
                 maximum_radius_arcmin_ghz,
@@ -183,6 +207,7 @@ impl PrimaryBeam {
     #[must_use]
     pub fn pattern(self) -> BeamPattern {
         BeamPattern(match self {
+            Self::DefaultRadial(profile) => return profile.pattern(),
             Self::Sma => Lookup::Sma(SmaVoltageTable::new()),
             Self::Airy {
                 dish_diameter_m,
@@ -213,6 +238,8 @@ pub struct BeamPattern(Lookup);
 
 #[derive(Clone)]
 enum Lookup {
+    Frequency(std::sync::Arc<frequency::Curve>),
+    WideInverse(DefaultRadial),
     Tabulated(tabulated::VoltageTable),
     Sma(SmaVoltageTable),
     /// An Airy pattern's voltage table.
@@ -223,7 +250,8 @@ enum Lookup {
 }
 
 impl BeamPattern {
-    /// The most bytes a pattern holds: an Airy pattern's table.
+    /// Fixed default lookup storage. Supplied frequency curves keep their
+    /// separately sized admission with their owner.
     pub const BYTES: u64 = AnnularApertureVoltageTable::BYTES as u64 + 32;
 
     /// The pattern at `frequency_hz`: the Airy table, or the EVLA's fit of
@@ -231,6 +259,8 @@ impl BeamPattern {
     #[must_use]
     pub fn at_frequency(&self, frequency_hz: f64) -> FrequencyPattern<'_> {
         FrequencyPattern(match &self.0 {
+            Lookup::Frequency(curve) => FrequencyLookup::Frequency(curve.at(frequency_hz)),
+            Lookup::WideInverse(profile) => FrequencyLookup::WideInverse(profile.fit(frequency_hz)),
             Lookup::Tabulated(table) => FrequencyLookup::Tabulated(table),
             Lookup::Sma(table) => FrequencyLookup::Sma(table),
             Lookup::Airy(table) => FrequencyLookup::Airy(table),
@@ -269,6 +299,8 @@ impl BeamPattern {
     #[must_use]
     pub fn support_pixels(&self, increment_x_rad: f64, frequency_hz: f64) -> usize {
         let maximum_arcmin_ghz = match &self.0 {
+            Lookup::Frequency(curve) => curve.maximum_radius,
+            Lookup::WideInverse(profile) => profile.maximum_radius(),
             Lookup::Tabulated(table) => table.maximum_radius,
             Lookup::Sma(_) => SmaVoltageTable::MAXIMUM_RADIUS,
             Lookup::Airy(table) => table.maximum_radius(),
@@ -291,6 +323,8 @@ fn support_pixels(maximum_arcmin_ghz: f64, increment_x_rad: f64, frequency_hz: f
 pub struct FrequencyPattern<'a>(FrequencyLookup<'a>);
 
 enum FrequencyLookup<'a> {
+    Frequency(frequency::Interpolated<'a>),
+    WideInverse(defaults::InverseFit),
     Tabulated(&'a tabulated::VoltageTable),
     Sma(&'a SmaVoltageTable),
     Airy(&'a AnnularApertureVoltageTable),
@@ -315,6 +349,8 @@ impl FrequencyPattern<'_> {
     #[must_use]
     pub fn voltage(&self, radius_arcmin_ghz: f64) -> f32 {
         match &self.0 {
+            FrequencyLookup::Frequency(fit) => fit.voltage(radius_arcmin_ghz),
+            FrequencyLookup::WideInverse(fit) => fit.voltage(radius_arcmin_ghz),
             FrequencyLookup::Tabulated(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Sma(table) => table.evaluate(radius_arcmin_ghz),
             FrequencyLookup::Airy(table) => table.evaluate(radius_arcmin_ghz),
