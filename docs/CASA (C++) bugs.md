@@ -3329,7 +3329,7 @@ or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 
 - Date noted: 2026-10-31
 - Status: CASA bug; owner approved preserving the correct directory (#944).
-  Native `restart=False` numbering is still unfinished.
+  Native numbering keeps absolute paths for both the main image and outliers.
 - Affected build/code: CASA 6.7.6.14, casatasks
   `private/imagerhelpers/input_parameters.py`, `incrementImageNameList`.
 
@@ -3340,8 +3340,8 @@ absolute imagename under `/Volumes/`, this instead produces `olumes/` and
 fails to create the numbered PSF. Relative prefixes in the same probe
 correctly produce `_2` and `_3`. The exact build, parameters and failure
 are recorded on #944 and in the lifecycle receipt linked from the generated
-compatibility reference. The approved casa-rs target keeps the requested
-absolute directory; this decision is not evidence that restart is complete.
+compatibility reference. The native implementation keeps the requested absolute directory and
+uses the same suffix across the main and outlier prefixes.
 
 ## `tclean` cleans nothing with `nsigma`, `fastnoise=False` and no mask
 
