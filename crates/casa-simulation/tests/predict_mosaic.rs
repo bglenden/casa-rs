@@ -108,28 +108,24 @@ fn the_mosaic_beams_are_in_its_kernels_whatever_setvp_says() {
     );
 }
 
-/// An unknown telescope and a pointing outside the model remain unsupported.
-/// VLA's common beam and pointings displaced from FIELD are implemented and
-/// checked against CASA by `telescope_beams` and `fresh_pointings`.
+/// Unknown telescopes need a supplied beam; uncovered pointings contribute zero.
 #[test]
-fn the_mosaic_refuses_what_casa_rs_does_not_build_yet() {
+fn the_mosaic_refuses_unknown_beams_and_zeroes_uncovered_pointings() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let model = extended_model(directory.path(), "model.image");
     let refused = |mut sm: Simulator, needle: &str| {
         let (outcome, message) = refusal(sm.predict(&predict_spec(&model, false)));
-        assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{message}");
-        assert!(
-            message.contains(needle) && message.contains("ftmachine='mosaic'"),
-            "{message}"
-        );
+        assert_eq!(outcome, CasaOutcome::ReturnsFalse, "{message}");
+        assert!(message.contains(needle), "{message}");
         sm.close().expect("close");
     };
     refused(
         observed(&directory.path().join("unknown.ms"), "UNKNOWN"),
-        "telescope UNKNOWN",
+        "beam for UNKNOWN",
     );
 
-    let mut far = session(&directory.path().join("far.ms"), "ALMA");
+    let far_path = directory.path().join("far.ms");
+    let mut far = session(&far_path, "ALMA");
     far.set_field(
         "far",
         &MDirection::from_angles(CENTRE_RAD[0] + 1.0e-3, CENTRE_RAD[1], DirectionRef::J2000),
@@ -139,5 +135,13 @@ fn the_mosaic_refuses_what_casa_rs_does_not_build_yet() {
     .expect("setfield");
     far.observe(&scan("far", 0.0, 60.0)).expect("observe");
     far.set_options(&mosaic()).expect("setoptions");
-    refused(far, "outside the model image");
+    far.predict(&predict_spec(&model, false))
+        .expect("predict outside");
+    far.close().expect("close outside");
+    assert!(
+        read_main(&far_path)
+            .0
+            .iter()
+            .all(|row| row.data.iter().all(|value| value.norm() == 0.))
+    );
 }

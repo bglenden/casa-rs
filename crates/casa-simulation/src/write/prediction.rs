@@ -350,6 +350,10 @@ impl<'s> PredictionStage<'s> {
                     segments.len() - 1
                 }
             };
+            if segments[segment].steps.is_empty() {
+                scan_segments.push(None);
+                continue;
+            }
             if scan_segments.last() != Some(&Some(segment)) {
                 let Segment { steps, .. } = &segments[segment];
                 for &step in steps {
@@ -365,6 +369,9 @@ impl<'s> PredictionStage<'s> {
                 }
             }
             scan_segments.push(Some(segment));
+        }
+        if !scan_segments.iter().any(Option::is_some) {
+            return Ok(None);
         }
         tracing::trace!(
             simulation_prepared_scans = prepared_scans as u64,

@@ -217,6 +217,7 @@ pub struct MosaicWindow {
 /// CASA's split sinc correction.
 #[derive(Clone, Debug)]
 pub struct MosaicPb {
+    bounded_pointings: bool,
     dishes: usize,
     windows: Vec<FrequencyCells>,
     cells_per_plane: usize,
@@ -675,6 +676,7 @@ impl MosaicScreens {
         } = self;
         let half_support = u16::try_from(max_half_support).expect("support fits u16");
         Ok(MosaicPb {
+            bounded_pointings: true,
             dishes,
             windows: cells,
             cells_per_plane: cell_count,
@@ -824,8 +826,10 @@ impl ConvolutionFunctionSet for MosaicPb {
     /// `HetArrayConvFunc::checkPBOfField` converts the pointing's pixel to
     /// integer coordinates before testing the image bounds. A pointing
     /// outside has no convolution function, even if its beam overlaps.
+    /// `SimplePBConvFunc` retains its phase ramp outside the image.
     fn admits_pointing(&self, geometry: &GridGeometry, offset_rad: [f64; 2]) -> bool {
-        crate::convolution::mosaic_pointing_on_image(geometry, offset_rad)
+        !self.bounded_pointings
+            || crate::convolution::mosaic_pointing_on_image(geometry, offset_rad)
     }
 
     /// `MosaicFT::put` grids through `sectgmosd2` and `gmoswgtd2`, which
