@@ -35,17 +35,9 @@ pub(super) fn run(
         .existing
         .as_ref()
         .is_some_and(ExistingProducts::residual_in_image_units);
-    let use_pb_mask = setup.residual_pixel_mask;
-    let read_mvc_residual = mvc.is_some() && !run.forms.residual;
-    let (read_mosaic_residual, read_mosaic_cube) = mosaic_restart_masks(run.existing.as_ref());
-    let read_field_residuals = !run.forms.residual && !run.outlier_products.is_empty();
-    let read_after_refresh =
-        read_mosaic_cube || (read_mosaic_residual || read_field_residuals) && use_pb_mask;
-    if read_mvc_residual || read_mosaic_residual || read_field_residuals {
-        // The saved residual's own mask governs the initial measurement.
-        // Without a mask, CASA measures every valid pixel.
-        setup.residual_pixel_mask = false;
-    }
+    let positive_cutoff = setup.residual_pixel_mask;
+    let (read_after_refresh, use_formed_mask) =
+        restart_mask_refresh(&run, &mut setup, mvc.is_some());
     let mut controller = Controller::new(&controls);
     let mut cache = psf_cache(run.forms, &outcome.scientific);
     // What outlives each minor cycle: the masks it forms (the latest, and the
@@ -88,7 +80,7 @@ pub(super) fn run(
                     &run,
                     mvc.as_ref(),
                     refreshed,
-                    (read_after_refresh, use_pb_mask),
+                    (read_after_refresh, positive_cutoff),
                     outcome.scientific.normal_state().slab().total_channels(),
                 )?;
                 let prepared = prepare_minor_cycle_with_residual_masks(
@@ -206,11 +198,16 @@ pub(super) fn run(
                     visibility: None,
                 })
             } else {
-                run.refresh(scientific, (minor.terms, minor.dense, minor.results), last)
+                run.refresh(
+                    scientific,
+                    (minor.terms, minor.dense, minor.results),
+                    last,
+                    outcome.major_cycle_count == 0,
+                )
             }
         })?;
         setup.saved_weighted_residual = false;
-        setup.residual_pixel_mask = use_pb_mask && !(read_field_residuals || read_mosaic_cube);
+        setup.residual_pixel_mask = use_formed_mask;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
         outcome.visibility_products = major.visibility;
@@ -243,13 +240,28 @@ fn psf_cache(forms: Forms, scientific: &MajorCycleCompletion) -> PsfCache {
     }
 }
 
-fn mosaic_restart_masks(saved: Option<&ExistingProducts>) -> (bool, bool) {
-    saved.map_or((false, false), |saved| {
+/// Measure the saved residual with its own mask at the first boundary.
+fn restart_mask_refresh(run: &Run<'_>, setup: &mut MinorCycleSetup<'_>, mvc: bool) -> (bool, bool) {
+    let positive_cutoff = setup.residual_pixel_mask;
+    let saved = run.existing.as_ref();
+    let mosaic = saved.is_some_and(ExistingProducts::reads_mosaic_residual);
+    let cube = saved.is_some_and(ExistingProducts::reads_mosaic_cube_residual);
+    let outliers = !run.forms.residual && !run.outlier_products.is_empty();
+    if mosaic || outliers || mvc && !run.forms.residual {
+        setup.residual_pixel_mask = false;
+    }
+    if cube {
+        // Positive cutoff copies the new PB's mask when the PSF pass
+        // formed it. Otherwise the controller reads a persisted mask.
+        let uses_new_pb =
+            positive_cutoff && saved.is_some_and(|saved| saved.mosaic_beam().is_none());
+        (!uses_new_pb, uses_new_pb)
+    } else {
         (
-            saved.reads_mosaic_residual(),
-            saved.reads_mosaic_cube_residual(),
+            (mosaic || outliers) && positive_cutoff,
+            positive_cutoff && !outliers,
         )
-    })
+    }
 }
 
 /// CASA's pixel mask determines the peak independently of CLEAN support.

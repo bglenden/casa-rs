@@ -113,6 +113,7 @@ fn read_domain(
         existing: None,
     };
     let family = Family::of(request);
+    let rebuilds_mosaic_psf = restart::rebuilds_mosaic_cube_psf(request);
     let [nx, ny] = domain.image_size;
     let polarizations = request.stokes.len();
     let planes = match family {
@@ -257,7 +258,7 @@ fn read_domain(
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
             weight,
-            weight || (residual && request.outlierfile.is_some()),
+            weight || rebuilds_mosaic_psf || (residual && request.outlierfile.is_some()),
             request.specmode != crate::SpecMode::Mfs && matches!(family, Family::Single),
         )?;
         if request.niter > 0

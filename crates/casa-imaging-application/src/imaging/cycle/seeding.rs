@@ -117,6 +117,7 @@ impl Run<'_> {
                     read.completion,
                     (Vec::new(), Vec::new(), Reservation::none()),
                     last,
+                    true,
                 );
             }
             (false, false) => return self.read_existing(true),

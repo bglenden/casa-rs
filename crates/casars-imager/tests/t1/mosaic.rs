@@ -190,6 +190,80 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     (observation, controls)
 }
 
+/// A rebuilt PSF still cleans the saved, normalized residual and uses the
+/// same physical model in prediction as a continuation with the saved PSF.
+#[test]
+fn a_mosaic_cube_rebuilds_the_psf_and_cleans_the_saved_residual() {
+    use casa_images::PagedImage;
+
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    let (_, seed) = observation.image("saved-psf", controls.clone());
+    observation.image("rebuilt-psf", controls.clone());
+    let psf_path = observation.scratch("rebuilt-psf.psf");
+    let mut psf = PagedImage::<f32>::open(&psf_path).unwrap();
+    let [x, y] = observation.geometry().centre();
+    let altered = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1; 4]), 0.125);
+    psf.put_slice(&altered, &[x, y, 0, 1]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+
+    controls["calcres"] = json!(false);
+    controls["calcpsf"] = json!(true);
+    let path = observation.scratch("rebuilt-psf.residual");
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    let mut mask = residual.get_mask().unwrap().unwrap();
+    let hidden = [x, y, 0, 1];
+    assert!(mask[hidden]);
+    mask[hidden] = false;
+    let saved = residual.get().unwrap();
+    let mut peak = saved.clone();
+    peak[hidden] = 50.0;
+    residual.put_slice(&peak, &[0; 4]).unwrap();
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let before = super::restart::snapshot(&path);
+    controls["threshold"] = json!("2Jy");
+    let (stop, products) = observation.image("rebuilt-psf", controls.clone());
+    assert_eq!((stop.minor_iterations, stop.major_cycles), (0, 0));
+    assert_eq!(products.get(".image").mask().as_ref(), Some(&mask));
+    assert_eq!(products.get(".psf").values(), seed.get(".psf").values());
+    super::restart::assert_unchanged(&before, &super::restart::snapshot(&path));
+
+    // Use identical saved inputs to compare prediction after actual CLEAN.
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    residual.put_slice(&saved, &[0; 4]).unwrap();
+    mask[hidden] = true;
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    controls["threshold"] = json!("0Jy");
+    controls["niter"] = json!(12);
+    let (rebuilt_run, rebuilt) = observation.image("rebuilt-psf", controls.clone());
+    controls["calcpsf"] = json!(false);
+    let (saved_run, saved) = observation.image("saved-psf", controls);
+    assert!(rebuilt_run.major_cycles > 0);
+    assert_eq!(
+        (rebuilt_run.minor_iterations, rebuilt_run.major_cycles),
+        (saved_run.minor_iterations, saved_run.major_cycles)
+    );
+    for suffix in [".model", ".residual", ".image", ".image.pbcor"] {
+        let peak = saved
+            .get(suffix)
+            .values()
+            .iter()
+            .map(|x| x.abs())
+            .fold(0.0, f32::max);
+        let difference = rebuilt.get(suffix).values() - saved.get(suffix).values();
+        assert!(
+            difference.iter().all(|value| value.abs() <= 1e-5 * peak),
+            "{suffix} diverges when rebuilding the PSF"
+        );
+    }
+}
+
 /// A mosaic's start model on a channel no sample reaches stays as it is:
 /// `SIImageStore::divideModelByWeight` skips a plane whose PB's peak is zero
 /// (#1067). The channel with data is converted as ever.

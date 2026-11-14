@@ -1036,7 +1036,7 @@
     },
     "calcres": {
       "status": "Partial",
-      "scope": "Contract 36: False runs no major cycle before the first minor cycle and cleans the residual an earlier run left at imagename, read with its sums of weights as the unnormalized normal state (task_tclean.py; not counted in nmajordone). With no residual and niter=0 the run makes the PSF alone in a PSF-only pass (psf, sumwt, pb). niter=0 with savemodel predicts the read model (predictModel) and leaves the residual as read. Refused: niter>0 with no earlier residual, and mosaic, A-projection, facets or outliers (#980).",
+      "scope": "Contract 36: False runs no major cycle before the first minor cycle and cleans the residual an earlier run left at imagename, read with its sums of weights as the unnormalized normal state (task_tclean.py; not counted in nmajordone). With no residual and niter=0 the run makes the PSF alone in a PSF-only pass (psf, sumwt, pb). niter=0 with savemodel predicts the read model (predictModel) and leaves the residual as read. Ordinary natural-weighted Stokes I Högbom mosaic cubes with a user mask may rebuild their PSF and then clean or restore the saved residual, or reuse both products with the saved sensitivity and PB (#944). Other mosaic and A-projection combinations, facets, and unsupported outlier combinations are tracked in #980.",
       "evidence": [
         "signature",
         "reader",
