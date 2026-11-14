@@ -270,8 +270,9 @@ impl PlannedContinuumGeneration {
             let stages = taylor_stages(shapes, beam_scratch_bytes)?;
             let building = checked_add(
                 stages.building,
-                self.saved_mosaic_beam_read_bytes,
-                "Taylor saved primary beam",
+                self.saved_mosaic_beam_read_bytes
+                    .max(self.saved_taylor_mask_read_bytes.unwrap_or(0)),
+                "Taylor saved image mask",
             )?;
             let publishing = [
                 bounds.member_payload,
@@ -279,6 +280,7 @@ impl PlannedContinuumGeneration {
                 bounds.window_payload,
                 bounds.window_validity,
                 writer_bytes,
+                self.saved_taylor_mask_read_bytes.unwrap_or(0),
             ]
             .into_iter()
             .try_fold(stages.retained, |sum, bytes| {
@@ -375,11 +377,22 @@ impl PlannedContinuumGeneration {
         } else {
             generic_scratch_bytes(self, shapes)?
         };
-        bytes = checked_add(
-            bytes,
-            self.saved_mosaic_beam_read_bytes,
-            "saved primary beam",
-        )?;
+        bytes = if taylor {
+            // The saved PB is read while building, then a saved residual
+            // mask may be read while writing one restored image.
+            checked_add(
+                bytes,
+                self.saved_mosaic_beam_read_bytes
+                    .max(self.saved_taylor_mask_read_bytes.unwrap_or(0)),
+                "saved Taylor product",
+            )?
+        } else {
+            checked_add(
+                bytes,
+                self.saved_mosaic_beam_read_bytes,
+                "saved primary beam",
+            )?
+        };
         bytes = checked_add(
             bytes,
             checked_add(

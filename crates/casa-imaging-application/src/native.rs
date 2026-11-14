@@ -285,6 +285,9 @@ pub(crate) fn prepare(
         publication.controls = publication
             .controls
             .preserving_mosaic_products(beam.reading_bytes(), existing.has_higher_primary_beam());
+        if let Some(bytes) = existing.taylor_mask_read_bytes() {
+            publication.controls = publication.controls.preserving_taylor_residuals(bytes);
+        }
     }
     publication.controls.validate_for_problem(problem)?;
     let products = products_floor(problem, &publication)?;

@@ -544,6 +544,9 @@ fn aw_mtmfs_restart_uses_its_saved_psf_and_weights() {
     }
 }
 
+#[path = "aw_saved_restore.rs"]
+mod aw_saved_restore;
+
 /// A resumed correction divides both Taylor images by the saved principal
 /// PB. CASA opens the auxiliary PB image without replacing it if it exists.
 #[test]

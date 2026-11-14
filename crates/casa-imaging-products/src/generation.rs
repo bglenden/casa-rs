@@ -88,6 +88,7 @@ fn produce_plane_members(
             windows.layout,
             &planned.beams_for_member(member, &fitted_beams, &restoring_beams),
             planned.uses_weight_image,
+            None,
         )?;
         windows.write(ProductMemberWriter::new(windows.layout, image), execution)?;
     }
@@ -516,7 +517,7 @@ fn produce_taylor_members(
     storage_plan: ProductStoragePlan,
     output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
-    let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
+    let products = TaylorProducts::build(inputs, planned, output)?;
     let fitted_beams = if planned.requires_beam() {
         products.fitted_beams()
     } else {
@@ -546,14 +547,26 @@ fn produce_taylor_members(
         if member.validity != ProductValidityRule::All && !supplied_pb {
             zero_invalid_plane_values(&mut payload, &products.validity(member.validity)?);
         }
-        let validity = match member.storage.pixel_mask() {
-            ProductPixelMask::Absent
-            | ProductPixelMask::Explicit(
-                ProductValidityRule::All | ProductValidityRule::FinalNormalState,
-            ) => {
-                vec![true; member.payload_values]
+        let saved_residual_mask = match member.role {
+            ProductRole::RestoredImage(ProductTerm::Taylor(term))
+                if planned.saved_taylor_mask_read_bytes.is_some() =>
+            {
+                Some(output.saved_taylor_residual_mask(member.axes().domain(), term)?)
             }
-            ProductPixelMask::Explicit(rule) => products.validity(rule)?,
+            _ => None,
+        };
+        let explicit_mask = saved_residual_mask.as_ref().map(Option::is_some);
+        let validity = match (saved_residual_mask, member.storage.pixel_mask()) {
+            (Some(Some(mask)), _) => mask,
+            (Some(None), _)
+            | (None, ProductPixelMask::Absent)
+            | (
+                None,
+                ProductPixelMask::Explicit(
+                    ProductValidityRule::All | ProductValidityRule::FinalNormalState,
+                ),
+            ) => vec![true; member.payload_values],
+            (None, ProductPixelMask::Explicit(rule)) => products.validity(rule)?,
         };
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {
@@ -567,6 +580,7 @@ fn produce_taylor_members(
             layout,
             &planned.beams_for_member(member, &fitted_beams, &restoring_beams),
             planned.uses_weight_image,
+            explicit_mask,
         )?;
         let mut writer = ProductMemberWriter::new(layout, image);
         writer.write_coupled(&payload, &validity)?;
