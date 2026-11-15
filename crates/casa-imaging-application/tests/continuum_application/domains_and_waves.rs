@@ -203,6 +203,78 @@ fn alternate_mosaic_cube_psf_uses_its_own_frequency_grid() {
     );
 }
 
+/// A direction-dependent Doppler shift wider than a native channel
+/// selects a different set of samples for the two imaging passes.
+#[test]
+fn each_mosaic_cube_psf_reads_its_own_native_channels() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_mosaic_measurement_set(root.path());
+    let mut ms = MeasurementSet::open(&measurement_set).unwrap();
+    let mut window = ms.spectral_window_mut().unwrap();
+    let frequencies = (0..32)
+        .map(|channel| 44.0e9 + f64::from(channel) * 100.0)
+        .collect();
+    window
+        .set_array(
+            0,
+            "CHAN_FREQ",
+            ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], frequencies).unwrap()),
+        )
+        .unwrap();
+    for column in ["CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+        window
+            .set_array(
+                0,
+                column,
+                ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], vec![100.0; 32]).unwrap()),
+            )
+            .unwrap();
+    }
+    window.set_f64(0, "TOTAL_BANDWIDTH", 3_200.0).unwrap();
+    ms.save().unwrap();
+    drop(ms);
+
+    let alternate = "J2000 1.00006rad 0.5rad";
+    let run = |label, phase, alternate_psf| {
+        let path = root.path().join(label);
+        let imaging = line_cube(
+            &measurement_set,
+            &path,
+            json!({
+                "imsize": 128, "gridder": "mosaic", "weighting": "natural",
+                "outframe": "LSRK", "spw": "0", "start": "11", "channel_start": 11,
+                "channel_count": 6, "phasecenter": phase, "psfphasecenter": alternate_psf,
+            }),
+        );
+        let outcome =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(4 << 30)))
+                .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+        let selection = outcome
+            .problem
+            .observation_transaction()
+            .read_set()
+            .sources()[0]
+            .selection()
+            .spectral_windows()[0]
+            .channel_indices()
+            .to_vec();
+        (selection, read_product(&path, ".psf").1)
+    };
+    let (main_selection, _) = run("narrow-main", "J2000 1rad 0.5rad", None::<&str>);
+    let (alternate_selection, expected) = run("narrow-alternate", alternate, None::<&str>);
+    assert_ne!(
+        main_selection, alternate_selection,
+        "the conversion must change the input selection"
+    );
+    let (retained_main, separate) = run("narrow-separate", "J2000 1rad 0.5rad", Some(alternate));
+    assert_eq!(
+        retained_main, main_selection,
+        "the main view retains its native selection"
+    );
+    assert_eq!(separate, expected, "read the alternate native channels");
+}
+
 /// A source-defined LSRK grid and the waves that read it use the same
 /// frequency frame, although the published image is TOPO (#1198).
 #[test]
