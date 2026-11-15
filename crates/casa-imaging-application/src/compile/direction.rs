@@ -674,7 +674,7 @@ pub(super) fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, P
     ))
 }
 
-pub(crate) fn parse_phase_center_angle(text: &str, longitude: bool) -> Result<f64, PrepareError> {
+fn parse_phase_center_angle(text: &str, longitude: bool) -> Result<f64, PrepareError> {
     let lower = text.to_ascii_lowercase();
     let angle = if let Some(radians) = lower.strip_suffix("rad") {
         radians.trim().parse::<f64>().ok()

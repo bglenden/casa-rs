@@ -250,6 +250,15 @@ fn sky_polygon_masks_fractional_vertices_and_clips_to_the_image() {
             "outside",
             vec![[-0.6, 12.2], [-0.2, 12.5], [-0.2, 20.7], [-0.5, 21.2]],
         ),
+        (
+            "outside-snap",
+            vec![
+                [-1.6, 12.2],
+                [-0.999_999, 12.5],
+                [-0.999_999, 20.7],
+                [-1.5, 21.2],
+            ],
+        ),
     ];
     for (name, vertices) in cases {
         let angular = vertices
@@ -278,12 +287,12 @@ fn sky_polygon_masks_fractional_vertices_and_clips_to_the_image() {
                 }
                 "boundary" => i >= 6 && j >= 6 && i + j <= 30,
                 "clipped" => i <= 2 && (11..=14).contains(&j),
-                "outside" => false,
+                "outside" | "outside-snap" => false,
                 _ => unreachable!(),
             };
             assert_eq!(*value, f32::from(expected), "{name} at [{i}, {j}]");
         }
-        if name == "outside" {
+        if name.starts_with("outside") {
             assert_eq!(run.actual_minor_iterations, 0);
         }
         assert_model_inside(&products.get(".model").pixels, mask);

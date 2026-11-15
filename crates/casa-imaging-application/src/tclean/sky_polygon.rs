@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::sync::Arc;
+
+use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Serialize};
 
 use super::TcleanRefusal;
-use crate::compile::parse_phase_center_angle;
 
 /// An unqualified CRTF polygon, with angular direction vertices in radians.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct MaskPolygon {
-    pub(crate) vertices: Vec<[f64; 2]>,
+    pub(crate) vertices: Arc<[[f64; 2]]>,
     /// Explicit J2000 overrides the output direction coordinate's frame.
     pub(crate) j2000: bool,
 }
@@ -50,6 +52,7 @@ pub(super) fn parse_polygon(text: &str) -> Result<Option<MaskPolygon>, TcleanRef
         return Err(refuse());
     }
 
+    let radians = Unit::new("rad").expect("radian unit");
     let mut vertices = Vec::new();
     loop {
         let (vertex, tail) = rest
@@ -58,13 +61,14 @@ pub(super) fn parse_polygon(text: &str) -> Result<Option<MaskPolygon>, TcleanRef
             .and_then(|vertex| vertex.split_once(']'))
             .ok_or_else(refuse)?;
         let (longitude, latitude) = vertex.split_once(',').ok_or_else(refuse)?;
-        let angle = |value: &str, is_longitude| {
-            parse_phase_center_angle(value.trim(), is_longitude)
+        let angle = |value: &str| {
+            Quantity::read(value.trim())
                 .ok()
+                .and_then(|quantity| quantity.get_value_in(&radians).ok())
                 .filter(|angle| angle.is_finite())
                 .ok_or_else(refuse)
         };
-        let direction = [angle(longitude, true)?, angle(latitude, false)?];
+        let direction = [angle(longitude)?, angle(latitude)?];
         if direction[1].abs() > std::f64::consts::FRAC_PI_2 {
             return Err(refuse());
         }
@@ -84,11 +88,34 @@ pub(super) fn parse_polygon(text: &str) -> Result<Option<MaskPolygon>, TcleanRef
     if vertices.len() < 3 {
         return Err(refuse());
     }
-    Ok(Some(MaskPolygon { vertices, j2000 }))
+    Ok(Some(MaskPolygon {
+        vertices: vertices.into(),
+        j2000,
+    }))
 }
 
 fn j2000_frame(text: &str) -> bool {
     text.split_once('=').is_some_and(|(key, value)| {
         key.trim() == "coord" && value.trim().eq_ignore_ascii_case("J2000")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crtf_longitude_respects_explicit_degrees_and_hours() {
+        let polygon = parse_polygon("poly [[10d00m00s,20deg],[00h40m00s,21deg],[11deg,20deg]]")
+            .unwrap()
+            .unwrap();
+        for vertex in &polygon.vertices[..2] {
+            assert!(
+                (vertex[0] - 10.0_f64.to_radians()).abs() < 1.0e-15,
+                "longitude {} rad",
+                vertex[0]
+            );
+        }
+        assert_eq!(polygon.vertices.len(), 3);
+    }
 }

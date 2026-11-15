@@ -54,7 +54,7 @@ pub(crate) fn support(
         coordinate = coordinate.with_conversion_direction_ref(DirectionRef::J2000);
     }
     let mut vertices = Vec::with_capacity(polygon.vertices.len());
-    for sky in &polygon.vertices {
+    for sky in polygon.vertices.iter() {
         let pixel = coordinate
             .world_to_pixel(*sky)
             .map_err(|source| PrepareError::MaskPolygonProjection { source })?;
@@ -178,9 +178,9 @@ fn start(value: f32) -> i64 {
 }
 
 fn end(value: f32) -> i64 {
-    let toward_pixel = f64::from(value) + 0.1;
-    if near(value, toward_pixel.floor() as f32) {
-        toward_pixel as i64
+    let inclusive_pixel = (f64::from(value) + 0.1).floor();
+    if near(value, inclusive_pixel as f32) {
+        inclusive_pixel as i64
     } else {
         // Truncation toward zero in LCPolygon lets a wholly negative
         // interval less than a pixel away select column zero (#823).

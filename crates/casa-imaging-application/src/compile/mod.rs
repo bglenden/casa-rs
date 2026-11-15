@@ -14,7 +14,6 @@ mod aw_plan_tests;
 mod awp2;
 mod continuation;
 mod direction;
-pub(crate) use direction::parse_phase_center_angle;
 mod domains;
 mod envelope;
 mod error;

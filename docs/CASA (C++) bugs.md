@@ -6021,8 +6021,9 @@ column zero at rows 3 through 10 and performs five Högbom iterations.
 
 `LCPolygon::truncateEnd` converts its fractional upper coordinate to an
 integer toward zero. When the upper crossing lies between −1 and 0, it
-becomes 0 and admits the first column. Native tclean floors that upper
-crossing before clipping. A wholly outside polygon therefore produces
+becomes 0 and admits the first column. The near-integer branch also
+converts a crossing near −1 toward zero after adding 0.1. Native
+tclean floors both upper-bound branches before clipping. A wholly outside polygon therefore produces
 an empty mask and stops with code 7, as stock CASA does when the polygon
 is farther outside. Ordinary off-grid, partially clipped and
 pixel-boundary polygons retain CASA's exact support.

@@ -235,10 +235,23 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
     }
     assert!(breaches.is_empty(), "{breaches}");
     let coordinate = target.coordinate();
-    let vertices = [[8.25, 6.25], [94.25, 6.25], [94.25, 32.25], [8.25, 32.25]]
-        .into_iter()
+    // Many vertices on the same four edges make a deep clone visible
+    // to the allocator without changing the expected support.
+    let corners = [[8.25, 6.25], [94.25, 6.25], [94.25, 32.25], [8.25, 32.25]];
+    let vertices = corners
+        .iter()
+        .zip(corners.iter().cycle().skip(1))
+        .flat_map(|(&a, &b)| {
+            (0..1024).map(move |index| {
+                let fraction = f64::from(index) / 1024.0;
+                [
+                    a[0] + fraction * (b[0] - a[0]),
+                    a[1] + fraction * (b[1] - a[1]),
+                ]
+            })
+        })
         .map(|pixel| coordinate.pixel_to_world(pixel).unwrap())
-        .collect::<Vec<_>>();
+        .collect();
     PEAK.store(0, Ordering::Relaxed);
     let baseline = LIVE.load(Ordering::Relaxed);
     BASELINE.store(baseline, Ordering::Relaxed);

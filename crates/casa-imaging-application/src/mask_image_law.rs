@@ -61,7 +61,7 @@ impl Input {
 /// # Errors
 /// A vertex cannot be projected, or the polygon's crossings are invalid.
 pub fn read_polygon(
-    vertices: Vec<[f64; 2]>,
+    vertices: Arc<[[f64; 2]]>,
     direction: DirectionCoordinateSpec,
     shape: [usize; 2],
 ) -> Result<(Arc<[bool]>, u64, u64), crate::PrepareError> {
@@ -70,10 +70,10 @@ pub fn read_polygon(
         vertices,
         j2000: true,
     };
-    let (read, kept) = mask_polygon::bytes(&polygon, shape);
-    Ok((
-        mask_polygon::support(&polygon, direction, shape)?,
-        read,
-        kept,
-    ))
+    // As in request_mask and mask_plans, the domain and plan share the
+    // request's immutable vertices. Charge the raster separately.
+    let domain = polygon.clone();
+    let input = domain.clone();
+    let (read, kept) = mask_polygon::bytes(&input, shape);
+    Ok((mask_polygon::support(&input, direction, shape)?, read, kept))
 }
