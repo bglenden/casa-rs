@@ -581,18 +581,66 @@ fn a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane() {
     assert!(beams(&full).single_beam().is_some());
 }
 
+/// W projection recovers the simulated circular polarization in both
+/// Taylor terms of one IQUV reconstruction.
+#[test]
+fn w_projection_recovers_circular_polarization_in_both_taylor_terms() {
+    const V_FRACTION: f32 = 0.4;
+    let observation = Observation::synthesise_polarized(
+        Setup::vla_q_band(CHANNELS),
+        PolarizationSetup {
+            basis: PolarizationBasis::Linear,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.0, 0.0, f64::from(V_FRACTION)],
+        },
+        &[("point", POINT)],
+    );
+    let (summary, products) = observation.image(
+        "w-polarized",
+        json!({
+            "gridder": "wproject",
+            "wprojplanes": 16,
+            "deconvolver": "mtmfs",
+            "nterms": 2,
+            "niter": 1000,
+            "threshold": THRESHOLD,
+            "stokes": "IQUV",
+        }),
+    );
+    assert!(summary.actual_minor_iterations > 0);
+    let [x, y] = component_pixel(POINT);
+    for (suffix, tolerance) in [(".image.tt0", 0.01), (".image.tt1", 0.03)] {
+        let values = products.get(suffix).values();
+        let i = values[&[x, y, 0, 0][..]];
+        let v = values[&[x, y, 3, 0][..]];
+        assert!(
+            (v / i - V_FRACTION).abs() <= tolerance * V_FRACTION,
+            "{suffix}: V {v}, I {i}"
+        );
+    }
+}
+
 /// Empty cross-hands cannot erase the signed spectral moments of the
-/// observed parallel hands. Requesting Q and U leaves the I and V mosaics
+/// observed parallel hands. Requesting Q and U leaves the I and V images
 /// unchanged, including the dirty first term used by the Taylor solve.
 #[test]
 fn mosaic_keeps_signed_taylor_moments_with_empty_cross_hands() {
+    check_signed_taylor_moments("mosaic");
+}
+
+#[test]
+fn w_projection_keeps_signed_taylor_moments_with_empty_cross_hands() {
+    check_signed_taylor_moments("wproject");
+}
+
+fn check_signed_taylor_moments(gridder: &str) {
     let mut setup = super::mosaic::setup();
     setup.geometry = Geometry::square(128, 3.0);
     setup.spectral_windows[0].channel_count = 4;
     let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
     let controls = |stokes: &str| {
         json!({
-            "gridder": "mosaic",
+            "gridder": gridder,
             "deconvolver": "mtmfs",
             "nterms": 2,
             "niter": 10,
@@ -601,8 +649,8 @@ fn mosaic_keeps_signed_taylor_moments_with_empty_cross_hands() {
             "stokes": stokes,
         })
     };
-    let (iv_run, iv) = observation.image("mosaic-iv", controls("IV"));
-    let (full_run, full) = observation.image("mosaic-iquv", controls("IQUV"));
+    let (iv_run, iv) = observation.image("signed-iv", controls("IV"));
+    let (full_run, full) = observation.image("signed-iquv", controls("IQUV"));
     assert_eq!(
         iv_run.actual_minor_iterations,
         full_run.actual_minor_iterations
