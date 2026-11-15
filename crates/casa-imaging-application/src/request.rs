@@ -49,6 +49,9 @@ pub struct ImagingRequest {
     /// Internal reader provenance only; this is never a catalog parameter.
     #[serde(default)]
     pub(crate) explicit_empty_mask: bool,
+    /// Split the CRTF boxes around the image in tclean's ordered mask list.
+    #[serde(default)]
+    pub(crate) mask_regions_before_image: Option<usize>,
     /// MVC's internally resolved output cube size, separate from the input
     /// `channel_count` selector. Set after its selected band is surveyed.
     #[serde(skip)]
@@ -796,12 +799,22 @@ impl ImagingRequest {
             self.validate_virtual_model()?;
         }
         let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
-        if (self.mask_image.is_some() && has_boxes)
-            || (self.usemask != UseMask::User && (self.mask_image.is_some() || has_boxes))
-        {
+        if self.usemask != UseMask::User && (self.mask_image.is_some() || has_boxes) {
             return invalid(
                 "usemask, mask_image, mask_box",
-                "name one mask: auto-multithresh, the primary beam's, a mask image or boxes",
+                "auto-multithresh and primary-beam masks do not take user images or boxes",
+            );
+        }
+        let list_position = self.mask_regions_before_image;
+        if list_position.is_some_and(|before| before > self.mask_box.len())
+            || (self.mask_image.is_some()
+                && has_boxes
+                && (list_position.is_none()
+                    || self.mask_box.iter().any(|region| region.range.is_some())))
+        {
+            return invalid(
+                "mask_image, mask_box",
+                "a tclean mask list can combine an image with pixel regions covering all planes (#823)",
             );
         }
         if !(0.0..1.0).contains(&self.pbmask) {
