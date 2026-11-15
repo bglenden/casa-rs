@@ -17,6 +17,7 @@ use casa_imaging_products::PrimaryBeamCentres;
 use casa_ms::{EphemerisBudget, PhaseCentreEphemeris};
 use casa_observation::Catalogue;
 use casa_types::measures::{
+    MeasFrame,
     direction::{DirectionRef, MDirection},
     epoch::MEpoch,
     frequency::FrequencyRef,
@@ -100,9 +101,7 @@ pub(super) fn resolve_centre(
             stored_phase = MDirection::from_angles(longitude, latitude, reference);
             let frame =
                 engine.spectral_frame_observatory_direction(anchor_time, stored_phase.clone())?;
-            let converted = stored_phase.convert_to(DirectionRef::J2000, &frame)?;
-            let (longitude, latitude) = converted.as_angles();
-            let direction = SkyDirection::new(DirectionFrame::J2000, longitude, latitude);
+            let direction = j2000_phase_direction(&stored_phase, &frame)?;
             (PhaseCentreLaw::Fixed(direction), None, direction)
         }
         (Some("TRACKFIELD"), None) => {
@@ -671,6 +670,20 @@ const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
     }
 }
 
+/// Express the fixed tracking direction in the planner's J2000 frame.
+fn j2000_phase_direction(
+    direction: &MDirection,
+    frame: &MeasFrame,
+) -> Result<SkyDirection, PrepareError> {
+    let converted = direction.convert_to(DirectionRef::J2000, frame)?;
+    let (longitude, latitude) = converted.as_angles();
+    Ok(SkyDirection::new(
+        DirectionFrame::J2000,
+        longitude,
+        latitude,
+    ))
+}
+
 /// The frame of a fixed literal in the main image's phasecenter. A bare
 /// ICRS token takes CASA's source-name route and is refused there.
 fn main_phase_center_reference(text: &str) -> Option<DirectionRef> {
@@ -830,6 +843,16 @@ mod tests {
             parse_phase_center_angles(text).unwrap(),
             [-1.0494884409453524, 0.7108217103529783],
         );
+        let [longitude, latitude] = parse_phase_center_angles(text).unwrap();
+        let raw = MDirection::from_angles(longitude, latitude, DirectionRef::ICRS);
+        let tracking = j2000_phase_direction(&raw, &MeasFrame::new()).unwrap();
+        assert_eq!(tracking.frame(), DirectionFrame::J2000);
+        // CASA's J2000 direction that was converted to the ICRS literal.
+        let ra_error = (tracking.longitude_rad() + 1.0494882958398402 + std::f64::consts::PI)
+            .rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        assert!(ra_error.abs() < 1e-12);
+        assert!((tracking.latitude_rad() - 0.7108216989007741).abs() < 1e-12);
         assert_eq!(main_phase_center_reference("ICRS"), None);
         assert_eq!(main_phase_center_reference("ICRS "), None);
         assert!(matches!(

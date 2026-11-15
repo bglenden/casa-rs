@@ -165,7 +165,12 @@ fn tclean_preserves_an_explicit_icrs_phase_centre() {
             "ICRS reference {actual}, expected {expected}"
         );
     }
-    assert_eq!(peak(&product.pixels).1, component_pixel(POINT));
+    let (_, source_pixel, offset) = peak(&product.pixels);
+    assert_eq!(source_pixel, component_pixel(POINT));
+    assert!(
+        offset.iter().all(|value| value.abs() < 0.1),
+        "source offset {offset:?} px"
+    );
 }
 
 #[test]
