@@ -32,8 +32,8 @@ from CASA is recorded in <code>docs/CASA (C++) bugs.md</code>.</p>
 tool predicts it (<code>sm.predict</code> with its default <code>GridFT</code>, with
 <code>WProjectFT</code> after <code>setoptions(ftmachine='wproject')</code>, or with
 <code>MosaicFTNew</code> after <code>setoptions(ftmachine='mosaic')</code>).</dd><dt><a class="mod" href="readantenna/index.html" title="mod casa_simulation::readantenna">readantenna</a></dt><dd>Antenna configuration files: CASA’s <code>simutil.readantenna</code>.</dd><dt><a class="mod" href="session/index.html" title="mod casa_simulation::session">session</a></dt><dd>The simulator session: CASA’s <code>sm</code> tool in Rust.</dd><dt><a class="mod" href="simanalyze/index.html" title="mod casa_simulation::simanalyze">simanalyze</a></dt><dd>CASA’s simulation imaging and analysis, composed from native applications.
-The single-observation route serves the ALMA disk tutorial (#180); the
-programme’s multi-array and total-power routes are tracked by #841.</dd><dt><a class="mod" href="simobserve/index.html" title="mod casa_simulation::simobserve">simobserve</a></dt><dd>The <code>simobserve</code> task (simulation Phase 5c, #841): CASA 6.7.6’s
+Project discovery, weighted synthesis concatenation, total-power gridding,
+seed models, feathering and image analysis share the native applications.</dd><dt><a class="mod" href="simobserve/index.html" title="mod casa_simulation::simobserve">simobserve</a></dt><dd>The <code>simobserve</code> task (simulation Phase 5c, #841): CASA 6.7.6’s
 <code>task_simobserve.py</code>, ported as its specification (ADR-0017) onto the
 simulator session (<a href="session/struct.Simulator.html" title="struct casa_simulation::session::Simulator"><code>Simulator</code></a>) and the <code>simutil</code> helpers
 (<a href="simutil/index.html" title="mod casa_simulation::simutil"><code>crate::simutil</code></a>).</dd><dt><a class="mod" href="simutil/index.html" title="mod casa_simulation::simutil">simutil</a></dt><dd>CASA’s <code>simutil</code> helpers that <code>simobserve</code> uses (simulation Phase 5,

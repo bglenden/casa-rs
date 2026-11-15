@@ -4151,6 +4151,43 @@ the threshold itself (<code>casa_imaging_singledish::weight_mask_threshold</code
 the image is empty, and <code>tsdimaging</code> only warns that no weight is positive.
 casa-rs refuses that kernel, asking for a support of at least 1 or CASA's
 default of 3 (<code>casa_imaging_singledish::GridFunction::from_casa</code>).</p>
+<h2 id="simanalyze-retains-missing-or-shadowed-python-task-bindings"><code>simanalyze</code> retains missing or shadowed Python task bindings<a class="headerlink" href="#simanalyze-retains-missing-or-shadowed-python-task-bindings" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-15</li>
+<li>Status: corrected by native Rust composition (#841 Phase 6g)</li>
+<li>Affected code: CASA 6.7.6.14 <code>task_simanalyze.get_concatweights</code> and its
+  <code>from .simutil import *</code> import</li>
+</ul>
+<p>A multi-MS call reaches the obsolete <code>gentools(['tb', 'msmd'])</code> without
+defining that factory and raises <code>NameError</code>. The simutil star import also
+shadows the public feather callable with a module, causing a feather call
+to raise <code>TypeError: 'module' object is not callable</code>. The independent
+<code>simanalyze_multi_oracle.py</code> recipe restores only those bindings before
+running the unchanged algorithms. Production computation is native Rust.</p>
+<h2 id="simanalyze-changes-a-callers-seed-image-unit-in-place"><code>simanalyze</code> changes a caller's seed-image unit in place<a class="headerlink" href="#simanalyze-changes-a-callers-seed-image-unit-in-place" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-15</li>
+<li>Status: caller data preserved (#841 Phase 6g, accepted Phase 6 decision)</li>
+<li>Affected code: CASA 6.7.6.14 <code>task_simanalyze</code>, before <code>simutil.imtclean</code></li>
+</ul>
+<p>CASA opens <code>modelimage</code> and sets its brightness unit to Jy/pixel before
+calling tclean. A total-power or previously restored synthesis image loses
+its Jy/beam label, including when it was supplied by the caller. Native
+simanalyze preserves CASA's numerical seed convention in a private copy
+and leaves the supplied image's pixels, mask and unit unchanged. The TP
+seed case compares the synthesis results and verifies the source label.</p>
+<h2 id="repeated-simanalyze-concatenation-can-duplicate-observations">Repeated <code>simanalyze</code> concatenation can duplicate observations<a class="headerlink" href="#repeated-simanalyze-concatenation-can-duplicate-observations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-15</li>
+<li>Status: new native simulation concatenations replace prior results (#841 Phase 6g)</li>
+<li>Affected code: CASA 6.7.6.14 <code>task_simanalyze</code>, multiple interferometric MS branch</li>
+</ul>
+<p>The task invokes concat on <code>&lt;project&gt;.concat.ms</code> without clearing an earlier
+result; concat appends when that output exists. Default discovery can also
+select that old combined MS alongside its original inputs. Native simanalyze
+excludes the previous combination when the originals are present and stages
+a fresh combination before replacing its own output. Input observations
+remain read-only.</p>
 <h2 id="simanalyze-writes-the-fidelitys-floor-to-six-decimal-places"><code>simanalyze</code> writes the fidelity's floor to six decimal places<a class="headerlink" href="#simanalyze-writes-the-fidelitys-floor-to-six-decimal-places" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-27</li>
