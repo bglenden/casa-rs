@@ -1,0 +1,161 @@
+{
+ "oracle": "CASA 6.7.6.14",
+ "acceptance_nrms": 0.001,
+ "images": {
+  "skymodel": {
+   "nrms": 0.0,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/pixel",
+    "Jy/pixel"
+   ]
+  },
+  "skymodel.flat": {
+   "nrms": 0.0,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/pixel",
+    "Jy/pixel"
+   ]
+  },
+  "psf": {
+   "nrms": 1.295376093256137e-07,
+   "mask_disagreements": 0,
+   "units": [
+    "",
+    ""
+   ]
+  },
+  "model": {
+   "nrms": 3.414727790242406e-07,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/pixel",
+    "Jy/pixel"
+   ]
+  },
+  "residual": {
+   "nrms": 1.8074709742934627e-05,
+   "mask_disagreements": 0,
+   "units": [
+    "",
+    ""
+   ]
+  },
+  "image": {
+   "nrms": 2.952188104223162e-07,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/beam",
+    "Jy/beam"
+   ]
+  },
+  "pb": {
+   "nrms": 0.0,
+   "mask_disagreements": 0,
+   "units": [
+    "",
+    ""
+   ]
+  },
+  "image.pbcor": {
+   "nrms": 2.9521475266952294e-07,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/beam",
+    "Jy/beam"
+   ]
+  },
+  "sumwt": {
+   "nrms": 0.0,
+   "mask_disagreements": 0,
+   "units": [
+    "",
+    ""
+   ]
+  },
+  "mask": {
+   "nrms": 0.0,
+   "mask_disagreements": 0,
+   "units": [
+    "",
+    ""
+   ]
+  },
+  "image.flat": {
+   "nrms": 2.952188104223162e-07,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/beam",
+    "Jy/beam"
+   ]
+  },
+  "skymodel.flat.regrid": {
+   "nrms": 2.889616150436273e-08,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/pixel",
+    "Jy/pixel"
+   ]
+  },
+  "skymodel.flat.regrid.conv": {
+   "nrms": 2.0077708662902842e-07,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/beam",
+    "Jy/beam"
+   ]
+  },
+  "diff": {
+   "nrms": 4.4216561349927555e-06,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/beam",
+    "Jy/beam"
+   ]
+  },
+  "fidelity": {
+   "nrms": 0.014061025237953169,
+   "mask_disagreements": 0,
+   "units": [
+    "Jy/beam",
+    ""
+   ]
+  },
+  "fidelity_corrected": {
+   "nrms": 1.5841417739814643e-05
+  }
+ },
+ "measurement_set": {
+  "rows": 147000,
+  "data_nrms": 1.657188466177505e-07,
+  "uvw_max_m": 6.502088467641443e-08,
+  "time_flags_weights_sigma": "exact"
+ },
+ "figures": [
+  {
+   "figure": "psim2.alma.out20.skymodel.png",
+   "axes": 2,
+   "maximum_plane_nrms": 0.0,
+   "fidelity_control": false
+  },
+  {
+   "figure": "psim2.alma.out20.observe.png",
+   "axes": 4,
+   "maximum_plane_nrms": 1.2825375505564092e-07,
+   "fidelity_control": false
+  },
+  {
+   "figure": "psim2.alma.out20.image.png",
+   "axes": 8,
+   "maximum_plane_nrms": 1.8074709742934624e-05,
+   "fidelity_control": false
+  },
+  {
+   "figure": "psim2.alma.out20.analysis.png",
+   "axes": 12,
+   "maximum_plane_nrms": 1.8074709742934624e-05,
+   "fidelity_control": true
+  }
+ ]
+}

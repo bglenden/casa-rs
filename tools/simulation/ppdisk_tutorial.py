@@ -59,7 +59,10 @@ def run(engine: str, root: Path, model: Path, config: Path, repeats: int):
     savefig = Figure.savefig
 
     def capture(figure, filename, *args, **kwargs):
-        captured[Path(filename).name] = artists(figure)
+        name = Path(filename).name
+        if name.startswith('.'):  # native atomic PNG staging filename
+            name = name[1:].rsplit('.', 2)[0]
+        captured[name] = artists(figure)
         return savefig(figure, filename, *args, **kwargs)
 
     Figure.savefig = capture

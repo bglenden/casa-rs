@@ -45,6 +45,7 @@ model as start model, and residual/convolved-model analysis panels.
 | Fidelity | Preserve CASA's original result, plus an independent CASA control changing only its `%f` floor to full precision. Native fidelity follows the existing [documented corrections](../CASA%20(C%2B%2B)%20bugs.md#simanalyze-writes-the-fidelitys-floor-to-six-decimal-places): full-precision floor and dimensionless ratio. |
 | Seven selected analysis panels | CASA warns about six axes, then draws fidelity over difference in the sixth panel. The native document retains both complete layers and their colour scales in that panel. |
 | `.tclean.last` | Not produced: the programme's existing task-parameter policy does not save implicit last files. Numerical products are independent of graphics. |
+| Failed rerun / selected input overlap | Native preparation preserves prior products and refuses input/output collisions, correcting CASA's deletion before preparation succeeds; recorded in the CASA bugs document. |
 
 All four workflow figures are reproduced. No Guide output table is present.
 The input's scientific interpretation, image/MS persistence and dependency
@@ -64,6 +65,9 @@ RMS ≤0.001. The figure check compares every plotted sample/pixel, panel
 count, selection, axes, labels, units, display limits, markers, colours,
 statistics annotations and font sizes. Numerical limits use the same
 relative scientific tolerance; raster subtraction is not an acceptance gate.
+WCS references, increments and reference pixels are checked axis by axis,
+with frame identifiers and projection; negative controls reject angular
+errors even when a much larger spectral value is unchanged.
 Original CASA fidelity is reported separately from its corrected control.
 
 Each row below places the original Guide illustration, current CASA and
@@ -88,7 +92,7 @@ Use separate output directories and the same model/configuration files.
 
 ```sh
 python tools/simulation/ppdisk_tutorial.py --engine download --out target/ppdisk-inputs
-cargo build --release -p casars-simulation --bins -p casa-images --bins
+cargo build --release -p casars-simulation --bins -p casa-images --bins -p casars-imexplore --bin imexplore
 CASAPY tools/simulation/ppdisk_tutorial.py --engine casa \
   --out target/ppdisk/casa --model target/ppdisk-inputs/ppdisk672_GHz_50pc.fits \
   --config /path/to/alma/simmos/alma.out20.cfg --repeats 3
@@ -107,6 +111,7 @@ CASA run, including the documented full-precision fidelity control:
 ```sh
 cargo test -p casa-images --test legacy_simulation_fits
 cargo test -p casa-simulation --test simanalyze_task_casa
+python crates/casars-python/python/tests/test_ppdisk_tutorial.py
 ```
 
 ## Timing
@@ -116,3 +121,12 @@ release native binaries, the same host and inputs, serial runs without
 concurrent compilation, and includes import, task-process startup, all
 scientific outputs and file rendering. These small end-to-end timings are
 not representative imaging benchmarks.
+
+[Timing samples](ppdisk-alma/timing.json), median of three runs:
+
+| Engine | Import | Simulate + figures | Image/analyze + figures | Total |
+| --- | ---: | ---: | ---: | ---: |
+| CASA 6.7.6.14 | 0.019 s | 2.385 s | 7.774 s | 10.182 s |
+| casa-rs release | 0.013 s | 3.227 s | 3.340 s | 6.587 s |
+
+Native total time is 1.55× faster on this case. Both runs include evidence artist capture; source/runtime imports and initial header inspection precede the timed task sequence.

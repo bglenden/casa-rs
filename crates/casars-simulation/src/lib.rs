@@ -2,8 +2,9 @@
 #![warn(missing_docs)]
 
 //! The command-line and task surface of casa-rs's simulation tasks:
-//! `simobserve` (simulation Phase 5c, #841), with `simanalyze` and
-//! `simalma` to come, on the shared task front end (#931).
+//! `simobserve` and single-array `simanalyze` (simulation Phases 5c/6,
+//! #841), on the shared task front end (#931). Multi-array/total-power
+//! orchestration and `simalma` remain on #841.
 //!
 //! As for the imager, the front end resolves the parameters through the
 //! provider-contracts catalog: command-line flags and a `--json-run` request

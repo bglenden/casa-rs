@@ -15,8 +15,6 @@ from pathlib import Path
 
 os.environ.setdefault('MPLBACKEND', 'Agg')
 import numpy as np
-from matplotlib import colors, pyplot as plt
-from casatools import image, table
 from ppdisk_tutorial import FIGURES
 
 STEM = 'psim2/psim2.alma.out20'
@@ -37,12 +35,16 @@ def close(actual, expected, tolerance=1e-3):
 
 
 def read(path):
+    from casatools import image
     tool = image()
     assert tool.open(str(path))
     cs = tool.coordsys()
     result = dict(pixels=tool.getchunk(), mask=tool.getchunk(getmask=True),
                   unit=tool.brightnessunit(), beam=tool.restoringbeam(),
-                  reference=cs.referencevalue()['numeric'], increment=cs.increment()['numeric'])
+                  reference=cs.referencevalue()['numeric'], increment=cs.increment()['numeric'],
+                  reference_pixel=cs.referencepixel()['numeric'], projection=cs.projection(),
+                  frames={kind: cs.referencecode(kind) for kind in ['direction', 'spectral']
+                          if cs.findcoordinate(kind)['return']})
     cs.done()
     tool.done()
     return result
@@ -59,6 +61,17 @@ def compare_metadata(actual, expected):
         close(actual, expected)
 
 
+def compare_coordinates(actual, expected):
+    # Each axis has its own physical unit. A frequency value must never set
+    # the tolerance for an angle, pixel position or angular cell increment.
+    for key in ['reference', 'increment', 'reference_pixel']:
+        a, e = np.asarray(actual[key]), np.asarray(expected[key])
+        assert a.shape == e.shape and np.all(np.isfinite(a)) and np.all(np.isfinite(e))
+        np.testing.assert_allclose(a, e, rtol=1e-10, atol=1e-15)
+    assert actual['frames'] == expected['frames']
+    compare_metadata(actual['projection'], expected['projection'])
+
+
 def compare_images(casa, native):
     results = {}
     for suffix in ['skymodel', 'skymodel.flat', 'psf', 'model', 'residual', 'image',
@@ -68,8 +81,7 @@ def compare_images(casa, native):
         error = nrms(actual['pixels'], truth['pixels'])
         assert np.array_equal(actual['mask'], truth['mask']), suffix + ' masks'
         compare_metadata(actual['beam'], truth['beam'])
-        close(actual['reference'], truth['reference'], 1e-10)
-        close(actual['increment'], truth['increment'], 1e-10)
+        compare_coordinates(actual, truth)
         if suffix != 'fidelity':
             assert actual['unit'] == truth['unit'], suffix + ' units'
             assert error <= 1e-3, (suffix, error)
@@ -85,6 +97,7 @@ def compare_images(casa, native):
 
 
 def compare_ms(casa, native):
+    from casatools import table
     sets = []
     for root in [casa, native]:
         tool = table()
@@ -103,6 +116,7 @@ def compare_ms(casa, native):
 
 
 def compare_artists(actual, expected):
+    from matplotlib import colors
     # CASA adds each colour scale immediately, the native host adds them after
     # the data axes. This changes creation order, not panel placement/content.
     order = lambda axes: sorted(axes, key=lambda axis: not bool(axis['images']))
@@ -148,6 +162,7 @@ def compare_artists(actual, expected):
 
 
 def review_figures(casa, native, guides, out):
+    from matplotlib import pyplot as plt
     with gzip.open(casa / 'artists.json.gz', 'rt') as source:
         raw = json.load(source)
     with gzip.open(casa / 'corrected-artists.json.gz', 'rt') as source:

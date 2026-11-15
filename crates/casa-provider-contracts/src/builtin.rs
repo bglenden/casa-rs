@@ -199,9 +199,12 @@ mod tests {
             {
                 if surface.id() == "simanalyze" {
                     assert_eq!(binding.concept.id.as_str(), "simulation.analysis.imsize");
-                    assert_eq!(binding.default, crate::DefaultSpec::Literal {
-                        value: ParameterValue::Array(vec![0_i64.into(), 0_i64.into()]),
-                    });
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::Array(vec![0_i64.into(), 0_i64.into()]),
+                        }
+                    );
                     continue;
                 }
                 assert_eq!(binding.concept, imsize.reference());
@@ -214,9 +217,12 @@ mod tests {
             {
                 if surface.id() == "simanalyze" {
                     assert_eq!(binding.concept.id.as_str(), "simulation.analysis.cell");
-                    assert_eq!(binding.default, crate::DefaultSpec::Literal {
-                        value: ParameterValue::String(String::new()),
-                    });
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::String(String::new()),
+                        }
+                    );
                     continue;
                 }
                 assert_eq!(binding.concept, cell.reference());
@@ -670,17 +676,25 @@ mod tests {
         };
         assert_eq!(
             concept_ids("vis"),
-            ["data.input.vis", "data.output.vis", "simulation.analysis.vis"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
+            [
+                "data.input.vis",
+                "data.output.vis",
+                "simulation.analysis.vis"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         );
         assert_eq!(
             concept_ids("imagename"),
-            ["image.input.imagename", "image.output.imagename", "simulation.analysis.imagename"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
+            [
+                "image.input.imagename",
+                "image.output.imagename",
+                "simulation.analysis.imagename"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         );
         assert_eq!(
             concept_ids("width"),

@@ -128,9 +128,7 @@ fn run(
             crate::BackendRequest::Metal => casa_imaging_application::BackendRequest::Gpu,
             crate::BackendRequest::Auto => casa_imaging_application::BackendRequest::Auto,
         };
-        for suffix in [".image", ".model"] {
-            replace(&plan.file(suffix), parameters.flag("overwrite"))?;
-        }
+        preflight_inputs(&plan, &image_request, parameters.flag("overwrite"))?;
         casa_imaging_application::execute(
             &image_request,
             RunContext {
@@ -187,6 +185,57 @@ fn run(
     replace(&plan.file(".residual.flat"), true)?;
     outcome.products = plan.products()?;
     Ok(outcome)
+}
+
+// The lower-level imager already publishes fresh products atomically. Do not
+// delete old results before its preparation/admission, or select an input that
+// a successful publication would overwrite.
+fn preflight_inputs(
+    plan: &plan::Plan,
+    imaging: &ImagingRequest,
+    overwrite: bool,
+) -> Result<(), SimobserveError> {
+    if !overwrite {
+        for suffix in [".image", ".model"] {
+            let path = plan.file(suffix);
+            match std::fs::symlink_metadata(&path) {
+                Ok(_) => return Err(failure(format!("{} already exists", path.display()))),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(failure(error)),
+            }
+        }
+    }
+    let inputs = std::iter::once(&plan.model).chain(imaging.startmodel.iter().flatten());
+    for input in inputs {
+        let input = std::fs::canonicalize(input).map_err(failure)?;
+        for suffix in [
+            ".image",
+            ".model",
+            ".psf",
+            ".residual",
+            ".pb",
+            ".image.pbcor",
+            ".sumwt",
+            ".mask",
+            ".image.flat",
+            ".diff",
+            ".fidelity",
+        ] {
+            let output = plan.file(suffix);
+            match std::fs::canonicalize(&output) {
+                Ok(output) if output == input => {
+                    return Err(failure(format!(
+                        "input {} would be overwritten by simulation imaging",
+                        input.display()
+                    )));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(failure(error)),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn replace(path: &Path, overwrite: bool) -> Result<(), SimobserveError> {

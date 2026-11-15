@@ -107,6 +107,8 @@ fn single_array_imaging_analysis_and_complete_plot_payload_match_casa() {
             .all(|p| p.is_dir() && !p.to_string_lossy().ends_with(".ms"))
     );
     assert!(!project.join("analyze.small.residual.flat").exists());
+    repeat_fresh_against_casa(&request, &project, &oracle);
+    safety_cases(&request, &project, &model);
     // Refusing overwrite must leave the successful image untouched.
     let mut refusal = request;
     refusal.parameters.insert("overwrite".into(), json!(false));
@@ -117,4 +119,75 @@ fn single_array_imaging_analysis_and_complete_plot_payload_match_casa() {
             .to_string()
             .contains("already exists")
     );
+}
+
+fn repeat_fresh_against_casa(request: &SimanalyzeRequest, project: &Path, oracle: &Value) {
+    let mut repeated = SimanalyzeRequest {
+        resources: request.resources,
+        parameters: request.parameters.clone(),
+    };
+    repeated.parameters.insert("graphics".into(), json!("none"));
+    casa_simulation::simanalyze::simanalyze(&repeated).unwrap();
+    for (suffix, expected) in oracle["images"].as_object().unwrap() {
+        compare(&project.join(format!("analyze.small.{suffix}")), expected);
+    }
+}
+
+fn safety_cases(request: &SimanalyzeRequest, project: &Path, model: &Path) {
+    let read = |suffix: &str| {
+        PagedImage::<f32>::open(project.join(format!("analyze.small.{suffix}")))
+            .unwrap()
+            .get()
+            .unwrap()
+    };
+    let previous = (read("image"), read("model"));
+    let mut run = SimanalyzeRequest {
+        resources: request.resources,
+        parameters: request.parameters.clone(),
+    };
+    run.parameters.insert("graphics".into(), json!("none"));
+    run.parameters.insert("dryrun".into(), json!(true));
+    run.parameters.insert("imsize".into(), json!([0, 0]));
+    run.parameters.insert("cell".into(), json!("2e-6rad"));
+    let positive = casa_simulation::simanalyze::simanalyze(&run)
+        .unwrap()
+        .imaging_parameters;
+    run.parameters.insert("cell".into(), json!("-2e-6rad"));
+    let negative = casa_simulation::simanalyze::simanalyze(&run)
+        .unwrap()
+        .imaging_parameters;
+    assert_eq!(positive, negative);
+    assert_eq!(positive["imsize"], json!([64, 64]));
+    for cell in ["0rad", "1e-300rad"] {
+        run.parameters.insert("cell".into(), json!(cell));
+        assert!(casa_simulation::simanalyze::simanalyze(&run).is_err());
+    }
+    run.parameters = request.parameters.clone();
+    run.parameters.insert("graphics".into(), json!("none"));
+    run.parameters.insert(
+        "modelimage".into(),
+        json!(project.join("analyze.small.model")),
+    );
+    assert!(
+        casa_simulation::simanalyze::simanalyze(&run)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("would be overwritten")
+    );
+    assert_eq!((read("image"), read("model")), previous);
+    // The old wrapper deleted both products before this native preparation
+    // error. An external start model in K cannot initialize a Jy/pixel model.
+    let mut invalid = PagedImage::<f32>::open(model).unwrap();
+    invalid.set_units("K").unwrap();
+    invalid.save().unwrap();
+    run.parameters.insert("modelimage".into(), json!(model));
+    assert!(
+        casa_simulation::simanalyze::simanalyze(&run)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("unit")
+    );
+    assert_eq!((read("image"), read("model")), previous);
 }

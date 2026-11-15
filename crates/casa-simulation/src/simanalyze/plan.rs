@@ -89,7 +89,7 @@ fn analysis_memory(source: u64, output: u64) -> Result<u64, SimobserveError> {
 
 #[cfg(test)]
 mod tests {
-    use super::analysis_memory;
+    use super::{analysis_memory, planned_sizes, positive_cells};
 
     #[test]
     fn analysis_counting_law_scales_with_both_image_grids_and_refuses_overflow() {
@@ -101,6 +101,28 @@ mod tests {
         }
         assert!(analysis_memory(u64::MAX, 1).is_err());
         assert!(analysis_memory(1, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn invalid_cells_and_unrepresentable_dimensions_are_refused_before_fft_sizing() {
+        for value in [0., f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(positive_cells([value, 1.]).is_err());
+        }
+        assert_eq!(positive_cells([-2e-6, 2e-6]).unwrap(), [2e-6, 2e-6]);
+        let resources =
+            crate::SessionResources::from_controls(&crate::ExecutionControls::default()).unwrap();
+        assert!(
+            planned_sizes(
+                &[i64::MAX, 64],
+                &[64, 64],
+                [2e-6; 2],
+                [2e-6; 2],
+                0.,
+                resources
+            )
+            .is_err()
+        );
+        assert!(planned_sizes(&[0, 0], &[64, 64], [2e-6; 2], [1e-300; 2], 0., resources).is_err());
     }
 }
 
@@ -273,6 +295,7 @@ fn imaging(
             .try_into()
             .expect("two cells")
     };
+    let cell = positive_cells(cell)?;
     let mut size: Vec<_> = p.0["imsize"]
         .as_array()
         .expect("resolved imsize")
@@ -285,15 +308,9 @@ fn imaging(
     if size.len() == 1 {
         size.push(size[0]);
     }
-    for axis in 0..2 {
-        if size[axis] <= 0 {
-            size[axis] = (model.shape()[axis] as f64 * model_cell[axis] / cell[axis]).ceil() as i64;
-        }
-    }
     let frequency = model.coordinates().coordinate(2).reference_value()[0];
     let minimum = minimum_size(ms_path, cell[0], frequency, resources)?;
-    let size =
-        [0, 1].map(|a| casa_imaging_model::optimum_image_size((size[a] as usize).max(minimum)));
+    let size = planned_sizes(&size, model.shape(), model_cell, cell, minimum, resources)?;
     let ms = MeasurementSet::open(ms_path).map_err(failure)?;
     let source = ms
         .subtable(SubtableId::Source)
@@ -310,7 +327,7 @@ fn imaging(
         .num_chan(0)
         .map_err(failure)?;
     Ok(json!({ "vis": ms_path, "selectdata": false, "imagename": root,
-        "cell": cell.map(|v|format!("{}rad",v.abs())), "imsize": size,
+        "cell": cell.map(|v|format!("{v}rad")), "imsize": size,
         "phasecenter": if p.text("imdirection").is_empty() {refdir.as_str()} else {p.text("imdirection")},
         "stokes": p.text("stokes"), "startmodel": if startmodel.exists() && !p.text("modelimage").is_empty() {startmodel.to_string_lossy().into_owned()} else {String::new()},
         "specmode": if nchan==1 {"mfs"} else {"cube"}, "gridder": if fields==1 {"standard"} else {"mosaic"},
@@ -328,7 +345,7 @@ fn minimum_size(
     cell: f64,
     frequency: f64,
     resources: SessionResources,
-) -> Result<usize, SimobserveError> {
+) -> Result<f64, SimobserveError> {
     casa_imaging_runtime::charge_process_caches(resources.host(), resources.policy())
         .map_err(failure)?;
     let ms = MeasurementSet::open(path).map_err(failure)?;
@@ -341,5 +358,47 @@ fn minimum_size(
     if maximum <= 0. {
         return Err(failure("an interferometric image needs positive u or v"));
     }
-    Ok(8 * (300_000_000. / frequency / maximum / cell.abs()).floor() as usize)
+    Ok(8. * (300_000_000. / frequency / maximum / cell).floor())
+}
+
+fn positive_cells(cell: [f64; 2]) -> Result<[f64; 2], SimobserveError> {
+    if cell.iter().any(|value| !value.is_finite() || *value == 0.) {
+        return Err(failure("cell sizes must be finite and nonzero"));
+    }
+    Ok(cell.map(f64::abs))
+}
+
+fn planned_sizes(
+    requested: &[i64],
+    shape: &[usize],
+    model_cell: [f64; 2],
+    cell: [f64; 2],
+    minimum: f64,
+    resources: SessionResources,
+) -> Result<[usize; 2], SimobserveError> {
+    if !minimum.is_finite() {
+        return Err(failure("cell implies an unrepresentable image size"));
+    }
+    let mut size = [0usize; 2];
+    for axis in 0..2 {
+        let extent = if requested[axis] <= 0 {
+            (shape[axis] as f64 * model_cell[axis].abs() / cell[axis]).ceil()
+        } else {
+            requested[axis] as f64
+        };
+        let extent = extent.max(minimum);
+        // CASA's image extents are Int32, and a float image must fit within
+        // the run's memory even before its FFT/statistic working buffers.
+        if !extent.is_finite() || !(0. ..=f64::from(i32::MAX)).contains(&extent) {
+            return Err(failure("cell/imsize implies an unrepresentable image size"));
+        }
+        size[axis] = extent as usize;
+    }
+    let bytes = (size[0] as u64)
+        .checked_mul(size[1] as u64)
+        .and_then(|cells| cells.checked_mul(4));
+    if bytes.is_none_or(|bytes| bytes > resources.policy().memory(resources.host())) {
+        return Err(failure("image dimensions exceed the run's memory budget"));
+    }
+    Ok(size.map(casa_imaging_model::optimum_image_size))
 }
