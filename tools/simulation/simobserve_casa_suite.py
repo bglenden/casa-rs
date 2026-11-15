@@ -106,6 +106,8 @@ def run_suite(test_file: Path, env: dict, work: Path, only: list[str] | None) ->
               "--rootdir", str(test_file.parent), "-c", "/dev/null"]
     collected = subprocess.run([*pytest, "-q", "--collect-only", str(test_file)], cwd=work,
                                capture_output=True, text=True, env=env)
+    if collected.returncode:
+        raise RuntimeError(f"upstream test collection failed:\n{collected.stdout}\n{collected.stderr}")
     nodes = [f"{test_file}::{line.split('::', 1)[1]}" for line in collected.stdout.splitlines() if "::" in line]
     if only:
         nodes = [node for node in nodes if any(name in node for name in only)]
@@ -117,6 +119,8 @@ def run_suite(test_file: Path, env: dict, work: Path, only: list[str] | None) ->
         summary = result.stdout.split("short test summary info")[-1] if "short test summary info" in result.stdout else ""
         found = [m.group(1).lower() for m in map(OUTCOME.match, summary.splitlines()) if m]
         name = node.split("::", 1)[1]
+        (work / (name.replace("::", "-") + ".log")).write_text(
+            result.stdout + result.stderr, encoding="utf-8")
         outcomes[name] = found[0] if found else f"crashed (exit {result.returncode})"
         if outcomes[name] != "passed":
             reasons = [line for line in result.stdout.splitlines() if line.startswith("E ")][:3]
