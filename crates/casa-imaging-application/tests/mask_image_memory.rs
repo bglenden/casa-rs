@@ -17,6 +17,9 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_application::mask_image_law::Input;
 use casa_imaging_deconvolution::{MaskPlanes, ReconstructionMaskPlan};
+use casa_imaging_model::{
+    DirectionCoordinateSpec, DirectionFrame, Projection as ImagingProjection, SkyDirection,
+};
 use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use ndarray::{ArrayD, Dimension, IxDyn};
 
@@ -112,8 +115,16 @@ fn write_mask(path: &Path, stokes: usize, channels: usize, set: impl Fn(&[usize]
 
 /// Read the mask at `path` onto an image of `channels` channels and
 /// `polarizations` Stokes planes, measuring the read and what it keeps.
-fn measure(path: &Path, channels: usize, polarizations: usize) -> (ReconstructionMaskPlan, String) {
-    let input = Input::open(path, channels, polarizations).unwrap();
+fn measure(
+    path: &Path,
+    channels: usize,
+    polarizations: usize,
+    target: Option<DirectionCoordinateSpec>,
+) -> (ReconstructionMaskPlan, String, u64) {
+    let mut input = Input::open(path, channels, polarizations).unwrap();
+    if let Some(target) = target {
+        input = input.with_target_direction(target);
+    }
     let reading = input.reading_bytes();
     let retained = input.retained_bytes();
     PEAK.store(0, Ordering::Relaxed);
@@ -131,7 +142,7 @@ fn measure(path: &Path, channels: usize, polarizations: usize) -> (Reconstructio
     if held > retained {
         breaches += &format!("{}: plan held {held}, kept {retained}", path.display());
     }
-    (plan, breaches)
+    (plan, breaches, reading)
 }
 
 /// A cube Stokes I mask of 32 channels read onto a full-polarization cube
@@ -150,7 +161,7 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
     let continuum = root.path().join("continuum-iquv.mask");
     write_mask(&continuum, 4, 1, |index| index[0] < 32 * (index[2] + 1));
     let mut breaches = String::new();
-    let (plan, breach) = measure(&cube, channels, 4);
+    let (plan, breach, _) = measure(&cube, channels, 4, None);
     breaches += &breach;
     let ReconstructionMaskPlan::Reprojected {
         planes, support, ..
@@ -164,7 +175,7 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
         let count = plane.iter().filter(|set| **set).count();
         assert_eq!(count, (16 + 4 * channel) * 64, "channel {channel}");
     }
-    let (plan, breach) = measure(&continuum, 8, 4);
+    let (plan, breach, aligned) = measure(&continuum, 8, 4, None);
     breaches += &breach;
     let ReconstructionMaskPlan::Reprojected {
         planes, support, ..
@@ -183,5 +194,22 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
             "Stokes plane {stokes}"
         );
     }
+    // A different projection keeps one map with two coordinates per
+    // pixel. All four planes share it, and the plan only retains support.
+    let target = DirectionCoordinateSpec::new(
+        ImagingProjection::Tan,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+        [SIDE as f64 / 2.0; 2],
+        [-1e-5, 1e-5],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 90.0],
+    );
+    let (plan, breach, mapped) = measure(&continuum, 8, 4, Some(target));
+    breaches += &breach;
+    assert_eq!(
+        mapped - aligned,
+        (SIDE * SIDE * size_of::<[f64; 2]>()) as u64
+    );
+    assert!(matches!(plan, ReconstructionMaskPlan::Reprojected { .. }));
     assert!(breaches.is_empty(), "{breaches}");
 }

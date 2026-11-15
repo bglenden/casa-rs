@@ -119,13 +119,35 @@ fn mem_uses_the_support_in_a_user_mask_image() {
     let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
     let reference = mask.coordinates().coordinate(0).reference_pixel();
     mask.set_reference_pixel(0, reference[0] + 0.5).unwrap();
+    let mut valid = ndarray::ArrayD::from_elem(ndarray::IxDyn(mask.shape()), true);
+    valid[[px, py, 0, 0]] = false;
+    mask.put_mask("shifted-valid", &valid).unwrap();
+    mask.set_default_mask("shifted-valid").unwrap();
     mask.save().unwrap();
     drop(mask);
-    let Err(reason) = observation.try_image("mem-mask-shifted", controls) else {
-        panic!("reject a mask that needs direction regridding");
+    let (_, shifted) = observation.image("mem-mask-shifted", controls.clone());
+    let support = &shifted.get(".mask").pixels;
+    for ((i, j), pixel) in support.indexed_iter() {
+        // Map output i to source i + 0.5, using signed values. The
+        // corner with -1 removes two samples, one by exact cancellation.
+        // The invalid interior input pixel contributes zero to its two
+        // neighbours, which still have positive support.
+        let inside = (px - 7..=px + 6).contains(&i) && (py - 6..=py + 6).contains(&j);
+        let cancelled_corner = j == y && (i == x - 1 || i == x);
+        assert_eq!(*pixel, f32::from(inside && !cancelled_corner), "[{i}, {j}]");
+    }
+    assert_mem_model_support(&shifted.get(".model").pixels, support);
+
+    let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let reference = mask.coordinates().coordinate(0).reference_value();
+    mask.set_reference_value(0, reference[0] + 1e-5).unwrap();
+    mask.save().unwrap();
+    drop(mask);
+    let Err(reason) = observation.try_image("mem-mask-other-tangent-plane", controls) else {
+        panic!("MEM currently supports aligned and shared-tangent-plane image masks");
     };
     assert!(
-        reason.contains("must use the output direction grid (#823)"),
+        reason.contains("must share the output tangent plane (#823)"),
         "{reason}"
     );
 }

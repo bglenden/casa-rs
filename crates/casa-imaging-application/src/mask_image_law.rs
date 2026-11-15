@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use casa_imaging_deconvolution::ReconstructionMaskPlan;
+use casa_imaging_model::DirectionCoordinateSpec;
 
 /// A mask image opened onto its own direction grid, before any pixels are
 /// read.
@@ -22,6 +23,13 @@ impl Input {
         polarizations: usize,
     ) -> Result<Self, crate::PrepareError> {
         crate::compile::open_mask_image_onto_itself(path, channels, polarizations).map(Self)
+    }
+
+    /// Set the output direction coordinate, keeping the source shape and
+    /// the existing channel and polarization plan.
+    #[must_use]
+    pub fn with_target_direction(self, target: DirectionCoordinateSpec) -> Self {
+        Self(self.0.with_target_direction(target))
     }
 
     /// Bytes admitted before the pixels are read.

@@ -48,6 +48,7 @@ CASA behaviours casa-rs does not follow:
 [a TOPO cube's cache-dependent endpoint selection](#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history),
 [an overflowing FIELD ID](#an-overflowing-field-id-can-select-field-zero),
 [a bare FIELD escape](#a-bare-field-escape-can-silently-change-the-selection),
+[direction regridding of a CLEAN mask](#roundoff-in-direction-regridding-can-enlarge-a-clean-mask),
 [a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
 [the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
 [multiscale on an off-centre PSF](#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre),
@@ -5864,3 +5865,31 @@ Native tclean explicitly rejects the invalid bare term before selecting any
 rows. This keeps an unintended prefix from changing the user's selection.
 [Issue #54](https://github.com/bglenden/casa-rs/issues/54) and
 [the casacore FIELD scanner](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.ll#L63-L69).
+
+## Roundoff in direction regridding can enlarge a CLEAN mask
+
+On `refim_eptwochan.ms`, use a standard natural-weighted 32 × 32 Stokes I
+MFS image with 8 arcsec cells and the binary mask
+`box[[10pix,10pix],[21pix,21pix]]`. Shift only the saved mask's first
+reference pixel from 16 to 16.5. The direction map is exactly
+`(x, y) → (x + 0.5, y)`. Linear interpolation then gives 156 positive
+pixels, at `x=9..21` and `y=10..21`.
+
+Stock CASA 6.7.6.14 produces 172 positive pixels. Its default
+decimation-10 direction mapping and linear interpolation give 16 samples
+from 6.39e-14 to 2.03e-12 just outside that rectangle, on analytically
+zero rows. `SDMaskHandler::fillMask` includes every positive sample.
+Calling CASA's same linear image regrid with decimation 1 changes the
+extra support and leaves 166 positives.
+
+Native tclean uses the exact affine direction map for a shared tangent
+plane. It samples signed mask values before taking positive support.
+Both native solvers match CASA when CASA reads the analytically aligned
+156-pixel support. The direct CASA result with the rounding-only pixels
+leaves the Högbom products other than the mask unchanged within rounding.
+It changes the two-iteration MEM model by 0.315 normalized RMS and the
+restored image by 0.00389. The added pixels have zero analytical support and their locations follow
+roundoff in the coordinate grid.
+
+[Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
+[the casacore coordinate-grid interpolation](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/images/Images/ImageRegrid.tcc#L1392).

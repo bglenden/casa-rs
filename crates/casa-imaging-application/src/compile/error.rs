@@ -572,8 +572,8 @@ pub enum PrepareError {
         /// Its shape.
         shape: Vec<usize>,
     },
-    /// MEM's image mask needs the output direction grid until import matches CASA.
-    #[error("MEM mask image {} must use the output direction grid (#823)", path.display())]
+    /// MEM's image mask needs the output tangent plane for direction import.
+    #[error("MEM mask image {} must share the output tangent plane (#823)", path.display())]
     MemMaskGrid {
         /// The supplied mask image.
         path: PathBuf,
