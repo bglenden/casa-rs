@@ -32,8 +32,9 @@ fn defaults(surface_id: &str) -> SnapshotView {
 fn the_catalog_view_projects_every_task_surface() {
     let catalog = CatalogEnvelopeView::new(builtin_surface_catalog().expect("catalog"));
     let json = serde_json::to_value(&catalog).expect("serialize");
-    // Simanalyze joins the existing 27 CASA task surfaces.
-    assert_eq!(json["surfaces"].as_array().expect("surfaces").len(), 30);
+    // Simalma joins the existing 30 CASA task surfaces.
+    assert_eq!(json["surfaces"].as_array().expect("surfaces").len(), 31);
+    assert!(parameter_bundle("simalma").is_ok());
     assert!(parameter_bundle("simanalyze").is_ok());
     let imstat = BundleView::from(&parameter_bundle("imstat").expect("imstat bundle"));
     let imstat = serde_json::to_value(&imstat).expect("serialize");
