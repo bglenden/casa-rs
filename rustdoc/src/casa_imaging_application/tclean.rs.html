@@ -1268,7 +1268,7 @@
 <a href=#1268 id=1268 data-nosnippet>1268</a>}
 <a href=#1269 id=1269 data-nosnippet>1269</a>
 <a href=#1270 id=1270 data-nosnippet>1270</a><span class="kw">fn </span>region_mask&lt;<span class="lifetime">'a</span>&gt;(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;UserMask&lt;<span class="lifetime">'a</span>&gt;, TcleanRefusal&gt; {
-<a href=#1271 id=1271 data-nosnippet>1271</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(polygon) = sky_polygon::parse_polygon(text)<span class="question-mark">? </span>{
+<a href=#1271 id=1271 data-nosnippet>1271</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(polygon) = sky_polygon::parse_sky_region(text)<span class="question-mark">? </span>{
 <a href=#1272 id=1272 data-nosnippet>1272</a>        <span class="prelude-val">Ok</span>(UserMask {
 <a href=#1273 id=1273 data-nosnippet>1273</a>            polygon: <span class="prelude-val">Some</span>(polygon),
 <a href=#1274 id=1274 data-nosnippet>1274</a>            ..UserMask::default()
