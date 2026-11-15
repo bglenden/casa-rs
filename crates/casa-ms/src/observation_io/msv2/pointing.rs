@@ -143,22 +143,19 @@ mod tests {
 
     use crate::MeasurementSet;
     use crate::observation_io::{OpenOptions, open};
-    use crate::simulation::{
-        SyntheticAntenna, SyntheticField, SyntheticObservationRequest,
-        generate_synthetic_observation_ms,
-    };
+    use casa_simulation::synthetic::{Antenna, Field, ObservationRequest, generate_unflagged};
 
     /// A simulated MSv2 whose `POINTING` rows differ by antenna: antenna 0's
     /// have a rate term, antenna 1's no interval, antenna 2's intervals
     /// that overlap, so a time between two rows is covered by both.
     fn fixture(root: &std::path::Path) -> std::path::PathBuf {
-        let mut request = SyntheticObservationRequest::vla_ppdisk(
+        let mut request = ObservationRequest::vla_ppdisk(
             root.join("unused.fits"),
             root.join("pointing.ms"),
             vec![
-                SyntheticAntenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
-                SyntheticAntenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
-                SyntheticAntenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
+                Antenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
+                Antenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
+                Antenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
             ],
         );
         request.predict_model = false;
@@ -166,11 +163,11 @@ mod tests {
         request.integration_seconds = 10.0;
         // Fields of their own give a `POINTING` row per antenna and
         // integration.
-        request.fields = vec![SyntheticField {
+        request.fields = vec![Field {
             name: "target".to_string(),
             phase_center_rad: [1.23, -0.45],
         }];
-        generate_synthetic_observation_ms(&request).expect("simulate");
+        generate_unflagged(&request).expect("simulate");
         let mut ms = MeasurementSet::open(&request.output_ms).expect("ms");
         {
             let mut pointing = ms.pointing_mut().expect("POINTING");

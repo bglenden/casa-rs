@@ -10,15 +10,12 @@ use casa_ms::observation_io::convert::{
     ConversionOptions, Loss, LossKind, PaddingRows, to_msv2, to_msv4,
 };
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open, open_update};
-use casa_ms::{
-    SyntheticAntenna, SyntheticObservationRequest, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms,
-};
 use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, Grouping, ObservationError, PartitionId,
     PatchValues, ReadEvent, Roles, SigmaFallback, TimeSelection, UpdateTarget, WeightChannels,
     WeightRequest, WritableRole,
 };
+use casa_simulation::synthetic::{Antenna, ObservationRequest, SpectralSetup, generate_unflagged};
 use num_complex::Complex32;
 
 use super::{Key, Sample, fixture, samples};
@@ -133,11 +130,11 @@ fn an_msv2_converts_to_the_msv4_xradio_makes_of_it() {
     );
 }
 
-fn antennas() -> Vec<SyntheticAntenna> {
+fn antennas() -> Vec<Antenna> {
     vec![
-        SyntheticAntenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
+        Antenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
+        Antenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
+        Antenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
     ]
 }
 
@@ -145,7 +142,7 @@ fn antennas() -> Vec<SyntheticAntenna> {
 /// (two partitions of different shapes), with `DATA` and a `MODEL_DATA`
 /// written through an update session, each value distinct.
 fn two_windows(root: &Path) -> PathBuf {
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         root.join("two_windows.ms"),
         antennas(),
@@ -156,20 +153,20 @@ fn two_windows(root: &Path) -> PathBuf {
     request.duration_seconds = 65.0;
     request.integration_seconds = 10.0;
     request.spectral_windows = vec![
-        SyntheticSpectralSetup {
+        SpectralSetup {
             name: "low".to_string(),
             start_frequency_hz: 672.0e9,
             channel_width_hz: 2.0e6,
             channel_count: 4,
         },
-        SyntheticSpectralSetup {
+        SpectralSetup {
             name: "high".to_string(),
             start_frequency_hz: 676.0e9,
             channel_width_hz: -1.0e6,
             channel_count: 3,
         },
     ];
-    generate_synthetic_observation_ms(&request).expect("simulate");
+    generate_unflagged(&request).expect("simulate");
     let path = request.output_ms;
     let targets = [
         UpdateTarget::new("base", WritableRole::Visibilities),

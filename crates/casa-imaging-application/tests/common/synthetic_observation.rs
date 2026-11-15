@@ -4,10 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticField,
-    SyntheticObservationRequest, SyntheticSkyModel, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+use casa_simulation::synthetic::{
+    AnalyticComponent, AnalyticSpectrum, Field, ObservationRequest, SkyModel, SpectralSetup,
+    generate, tutorial_vla_a_antennas,
 };
 
 /// Cell of every image of the observation; the natural beam spans about
@@ -61,14 +60,11 @@ fn synthesise(
             antenna.dish_diameter_m = 12.0;
         }
     }
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
-        root.join("unused.fits"),
-        &measurement_set,
-        antennas,
-    );
+    let mut request =
+        ObservationRequest::vla_ppdisk(root.join("unused.fits"), &measurement_set, antennas);
     request.telescope_name = telescope.to_string();
     if pointed {
-        request.fields = vec![SyntheticField {
+        request.fields = vec![Field {
             name: request.field_name.clone(),
             phase_center_rad: request.phase_center_rad,
         }];
@@ -76,7 +72,7 @@ fn synthesise(
     request.duration_seconds = 600.0;
     request.integration_seconds = 60.0;
     request.spectral_windows = (0..windows)
-        .map(|window| SyntheticSpectralSetup {
+        .map(|window| SpectralSetup {
             name: format!("admission-{window}"),
             start_frequency_hz: 44.0e9 + (window * channels) as f64 * 128.0e6,
             channel_width_hz: 128.0e6,
@@ -84,7 +80,7 @@ fn synthesise(
         })
         .collect();
     let cell_rad = (CELL_ARCSEC / 3_600.0_f64).to_radians();
-    let spectrum = |flux_jy: f64, spectral_index: f64| SyntheticAnalyticSpectrum {
+    let spectrum = |flux_jy: f64, spectral_index: f64| AnalyticSpectrum {
         flux_jy,
         spectral_index,
         reference_frequency_hz: Some(44.2e9),
@@ -95,18 +91,18 @@ fn synthesise(
         absorption_center_fraction: 0.5,
         absorption_sigma_fraction: 0.1,
     };
-    request.model = Some(SyntheticSkyModel::AnalyticComponents {
+    request.model = Some(SkyModel::AnalyticComponents {
         path: None,
         schema_version: Some(1),
         name: Some("admission".to_string()),
         components: vec![
-            SyntheticAnalyticComponent::Point {
+            AnalyticComponent::Point {
                 name: Some("point".to_string()),
                 l_rad: -20.0 * cell_rad,
                 m_rad: 12.0 * cell_rad,
                 spectrum: spectrum(1.0, -0.7),
             },
-            SyntheticAnalyticComponent::Gaussian {
+            AnalyticComponent::Gaussian {
                 name: Some("gaussian".to_string()),
                 l_rad: 30.0 * cell_rad,
                 m_rad: -25.0 * cell_rad,
@@ -117,6 +113,6 @@ fn synthesise(
             },
         ],
     });
-    generate_synthetic_observation_ms(&request).expect("synthesise the admission MS");
+    generate(&request).expect("synthesise the admission MS");
     measurement_set
 }

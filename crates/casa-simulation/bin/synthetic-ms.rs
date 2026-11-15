@@ -1,27 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `synthetic-ms`: the synthetic MeasurementSet generator as a developer
-//! tool (simulation Phase 5d, #841).
-//!
-//! It runs one request of the generator in `casa_ms::simulation`, unchanged,
-//! from JSON:
-//!
-//! ```text
-//! synthetic-ms --json-run <request.json | ->
-//! ```
-//!
-//! The request is `{"kind": "run", "request": ...}` (a
-//! `casa_ms::simulation_task::SimobserveRunTaskRequest`) or `{"kind":
-//! "family", "request": ...}` (a `SimobserveFamilyTaskRequest`), and the
-//! result envelope is printed as `simobserve --json-run` printed it. The
-//! benchmark and dataset tools under `tools/perf/imager` call it, so their
-//! datasets stay as they were when `simobserve` becomes CASA's task
-//! (Phase 5c). It is not a catalog task and is not installed with the suite.
-
+//! Developer MeasurementSet staging through casa-simulation's native session.
+//! Run/family JSON inputs are described by synthetic::task::Request.
 use std::ffi::OsString;
 use std::io::Read;
 use std::process::ExitCode;
 
-use casa_ms::simulation_task::SimobserveTaskRequest;
+use casa_simulation::synthetic::task::Request;
 
 const USAGE: &str = "\
 Usage: synthetic-ms --json-run <request.json | ->
@@ -86,8 +70,22 @@ fn run(args: &[OsString]) -> Result<Option<String>, String> {
         std::fs::read_to_string(source)
             .map_err(|error| format!("failed to read the request from {source}: {error}"))?
     };
-    let request: SimobserveTaskRequest = serde_json::from_str(&payload)
+    let mut request: Request = serde_json::from_str(&payload)
         .map_err(|error| format!("failed to parse the request: {error}"))?;
+    if let Request::Family(family) = &mut request {
+        for name in ["CASA_RS_SIMOBSERVE_CONFIG_ROOT", "CASADATA"] {
+            if let Some(paths) = std::env::var_os(name) {
+                family.data_roots.extend(std::env::split_paths(&paths));
+            }
+        }
+        if let Some(paths) = std::env::var_os("CASAPATH")
+            && let Some(first) = paths.to_string_lossy().split_whitespace().next()
+        {
+            family
+                .data_roots
+                .push(std::path::Path::new(first).join("data"));
+        }
+    }
     tracing::info!("synthetic-ms started");
     let result = request.execute()?;
     tracing::info!("synthetic-ms completed");

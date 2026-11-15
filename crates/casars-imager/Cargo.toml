@@ -28,6 +28,7 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 
 [dev-dependencies]
+casa-simulation = { path = "../casa-simulation" }
 base64 = "0.22"
 flate2 = "1"
 # T1's store law converts a track to MSv4 and reads it back.
@@ -37,7 +38,6 @@ casa-coordinates = { path = "../casa-coordinates" }
 # T1's cube law measures each PSF plane's sidelobe as the minor cycle does.
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-numerics = { path = "../casa-numerics" }
-casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
 casa-tables = { path = "../casa-tables" }
 casa-test-support = { path = "../casa-test-support" }
 casa-types = { path = "../casa-types" }

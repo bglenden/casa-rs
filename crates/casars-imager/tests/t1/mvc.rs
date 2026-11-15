@@ -492,7 +492,8 @@ fn mvc_taylor_rest_frequency_follows_the_cube_label() {
     }
 }
 
-/// CASA 6.7.6 on this weighted, wide-field fixture makes a cube model from
+/// CASA 6.7.6.14 on the current native fixture (t1_fixture_imaging_oracle.py)
+/// makes a cube model from
 /// the Taylor model after each minor cycle, then grids that cube model to
 /// form the next Taylor residual (#1069). Three one-iteration minor cycles
 /// exercise more than one model handoff and an expansion reference that is
@@ -504,16 +505,16 @@ fn mvc_clean_refreshes_the_cube_from_the_taylor_model() {
         (
             1,
             2,
-            [0.481_774_9_f32, -0.441_601_57],
-            [4.416_162_f32, -0.089_114_144],
-            [0.491_723_6_f32, 0.490_279_85, 0.488_836_23],
+            [0.478_747_58_f32, -0.604_882_84],
+            [4.418_581_f32, -0.089_169_73],
+            [0.492_324_92_f32, 0.490_416_53, 0.488_508_6],
         ),
         (
             3,
             4,
-            [1.305_975_3_f32, -1.178_515_7],
-            [3.577_092_2_f32, -0.072_181_99],
-            [1.332_531_3_f32, 1.328_670_6, 1.324_810_1],
+            [1.297_793_6_f32, -1.619_726_7],
+            [3.579_058_f32, -0.072_227_14],
+            [1.334_154_8_f32, 1.329_038_6, 1.323_923_6],
         ),
     ] {
         let (summary, products) = observation.image(
@@ -961,8 +962,8 @@ fn mvc_cleans_the_saved_taylor_residual_before_its_first_major_cycle() {
 fn mvc_clean_with_positive_pblimit_uses_casa_taylor_support() {
     let observation = weighted_observation();
     for (iterations, model) in [
-        (1, [0.481_774_9_f32, -0.441_406_25]),
-        (3, [1.305_981_4_f32, -1.177_929_6]),
+        (1, [0.478_756_73_f32, -0.604_492_2]),
+        (3, [1.297_812_f32, -1.619_140_6]),
     ] {
         let (summary, products) = observation.image(
             &format!("mvc-clean-positive-pb-{iterations}"),

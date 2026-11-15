@@ -18,14 +18,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_ms::MeasurementSet;
 use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_ms::observation_io::{Msv4Codec, Msv4Observation, OpenOptions};
-use casa_ms::{
-    MeasurementSet, SyntheticField, SyntheticObservationRequest, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
-};
 use casa_observation::{
     AntennaId, Observation, ObservationError, PartitionId, PointingDirection, PointingRequest,
+};
+use casa_simulation::synthetic::{
+    Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
 };
 use casa_tables::ColumnSchema;
 use casa_types::PrimitiveType;
@@ -131,7 +131,7 @@ struct Shape {
 /// groups.
 fn converted(root: &Path, label: &str, shape: Shape) -> PathBuf {
     let measurement_set = root.join(format!("{label}.ms"));
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
         tutorial_vla_a_antennas()[..shape.antennas].to_vec(),
@@ -142,13 +142,13 @@ fn converted(root: &Path, label: &str, shape: Shape) -> PathBuf {
     request.duration_seconds = 10.0 * shape.integrations as f64;
     request.integration_seconds = 10.0;
     request.predict_model = false;
-    request.fields = vec![SyntheticField {
+    request.fields = vec![Field {
         name: request.field_name.clone(),
         phase_center_rad: request.phase_center_rad,
     }];
     request.spectral_windows.truncate(1);
     request.spectral_windows[0].channel_count = shape.channels;
-    generate_synthetic_observation_ms(&request).expect("synthesise the MS");
+    generate_unflagged(&request).expect("synthesise the MS");
     if shape.corrected {
         let mut ms = MeasurementSet::open(&measurement_set).expect("open");
         let Some(Value::Array(ArrayValue::Complex32(data))) = ms

@@ -23,11 +23,11 @@ use casa_ms::observation_io::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, HistoryRow, LossKind, MemoryCharges,
     PaddingRows,
 };
-use casa_ms::{
-    MeasurementSet, SubtableId, SyntheticField, SyntheticObservationRequest,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
-};
+use casa_ms::{MeasurementSet, SubtableId};
 use casa_observation::{MergeTolerance, ObservationError};
+use casa_simulation::synthetic::{
+    Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
+};
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 #[global_allocator]
@@ -145,7 +145,7 @@ fn track(
     (offset_s, integrations, channels): (f64, usize, usize),
 ) -> PathBuf {
     let synthetic = root.join(format!("synthetic-{name}.ms"));
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &synthetic,
         tutorial_vla_a_antennas(),
@@ -156,11 +156,11 @@ fn track(
     request.predict_model = false;
     request.spectral_windows[0].channel_count = channels;
     request.spectral_windows[0].channel_width_hz = 1.0e6;
-    request.fields = vec![SyntheticField {
+    request.fields = vec![Field {
         name: request.field_name.clone(),
         phase_center_rad: request.phase_center_rad,
     }];
-    generate_synthetic_observation_ms(&request).expect("synthesise the MS");
+    generate_unflagged(&request).expect("synthesise the MS");
     let three = root.join(format!("{name}.ms"));
     let groups = ["base", "corrected", "model"].map(String::from).to_vec();
     CreationPlan::new(

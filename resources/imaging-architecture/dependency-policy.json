@@ -59,7 +59,6 @@
   "casa-imaging-runtime": "execution",
   "casa-imaging-singledish": "execution",
   "casa-imaging-metal": "backend",
-  "casa-simulation-synthesis": "science",
   "casa-simulation": "application",
   "casa-atmosphere": "science",
   "casars-imager": "frontend",
@@ -125,10 +124,6 @@
    "casa-numerics",
    "casa-observation"
   ],
-  "casa-simulation-synthesis": [
-   "casa-fft",
-   "casa-numerics"
-  ],
   "casa-atmosphere": [],
   "casa-simulation": [
    "casa-atmosphere",
@@ -143,6 +138,7 @@
    "casa-imaging-runtime",
    "casa-imaging-singledish",
    "casa-lattices",
+   "casa-logging",
    "casa-ms",
    "casa-numerics",
    "casa-provider-contracts",
@@ -232,7 +228,6 @@
     "crates/casa-types/src",
     "crates/casa-values/src",
     "crates/casa-aipsio/src",
-    "crates/casa-simulation-synthesis/src",
     "crates/casa-measures-data/src",
     "crates/casa-task-runtime/src"
    ],
@@ -247,7 +242,6 @@
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b(?!::current_dir\\b)",
    "grandfathered": [
     "crates/casa-measures-data/src/lib.rs",
-    "crates/casa-ms/src/simulation_task.rs",
     "crates/casa-task-runtime/src/storage.rs"
    ]
   },
@@ -274,7 +268,6 @@
     "crates/casa-types/src",
     "crates/casa-values/src",
     "crates/casa-aipsio/src",
-    "crates/casa-simulation-synthesis/src",
     "crates/casa-measures-data/src",
     "crates/casa-task-runtime/src"
    ],

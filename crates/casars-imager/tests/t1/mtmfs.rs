@@ -2,7 +2,7 @@
 
 //! Standard gridder, natural weighting, and Taylor spectral products.
 
-use casa_ms::{SyntheticPolarizationBasis, SyntheticPolarizationSetup};
+use casa_simulation::synthetic::{PolarizationBasis, PolarizationSetup};
 use serde_json::json;
 
 use super::fixture::{
@@ -497,8 +497,8 @@ fn a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane() {
     const V_FRACTION: f32 = 0.4;
     let observation = Observation::synthesise_polarized(
         Setup::vla_q_band(CHANNELS),
-        SyntheticPolarizationSetup {
-            basis: SyntheticPolarizationBasis::Linear,
+        PolarizationSetup {
+            basis: PolarizationBasis::Linear,
             correlation_count: 4,
             source_stokes_fractional_quv: [0.0, 0.0, f64::from(V_FRACTION)],
         },

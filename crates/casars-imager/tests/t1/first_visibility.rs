@@ -69,13 +69,24 @@ fn observation(arrays: [i32; 2]) -> Observation {
             )
             .unwrap();
     }
-    let source = ms.add_optional_subtable(SubtableId::Source).unwrap();
+    // The native Simulator creates SOURCE. Replace its rows with this
+    // test's deliberately distinct line frequencies.
+    let source = ms.subtable_mut(SubtableId::Source).unwrap();
+    let prototype = source.row_accessor().row(0).unwrap().clone();
     source
-        .add_column(
-            ColumnSchema::array_variable("REST_FREQUENCY", PrimitiveType::Float64, Some(1)),
-            None,
-        )
+        .remove_rows(&(0..source.row_count()).collect::<Vec<_>>())
         .unwrap();
+    if !source
+        .schema()
+        .is_some_and(|schema| schema.contains_column("REST_FREQUENCY"))
+    {
+        source
+            .add_column(
+                ColumnSchema::array_variable("REST_FREQUENCY", PrimitiveType::Float64, Some(1)),
+                None,
+            )
+            .unwrap();
+    }
     TableMeasDesc::new_fixed("REST_FREQUENCY", MeasureType::Frequency, "LSRK")
         .write(source)
         .unwrap();
@@ -86,24 +97,27 @@ fn observation(arrays: [i32; 2]) -> Observation {
     };
     let int = |value: i32| Value::Scalar(ScalarValue::Int32(value));
     for (field, line_hz) in LINES_HZ.into_iter().enumerate() {
-        source
-            .add_row(RecordValue::new(vec![
-                RecordField::new("CALIBRATION_GROUP", int(-1)),
-                RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
-                RecordField::new("DIRECTION", floats(&PHASE_CENTER_RAD)),
-                RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(0.0))),
-                RecordField::new(
-                    "NAME",
-                    Value::Scalar(ScalarValue::String(format!("source{field}"))),
-                ),
-                RecordField::new("NUM_LINES", int(1)),
-                RecordField::new("PROPER_MOTION", floats(&[0.0, 0.0])),
-                RecordField::new("SOURCE_ID", int(field as i32)),
-                RecordField::new("SPECTRAL_WINDOW_ID", int(0)),
-                RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(0.0))),
-                RecordField::new("REST_FREQUENCY", floats(&[line_hz])),
-            ]))
-            .unwrap();
+        let edited = RecordValue::new(vec![
+            RecordField::new("CALIBRATION_GROUP", int(-1)),
+            RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
+            RecordField::new("DIRECTION", floats(&PHASE_CENTER_RAD)),
+            RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String(format!("source{field}"))),
+            ),
+            RecordField::new("NUM_LINES", int(1)),
+            RecordField::new("PROPER_MOTION", floats(&[0.0, 0.0])),
+            RecordField::new("SOURCE_ID", int(field as i32)),
+            RecordField::new("SPECTRAL_WINDOW_ID", int(0)),
+            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new("REST_FREQUENCY", floats(&[line_hz])),
+        ]);
+        let mut row = prototype.clone();
+        for field in edited.fields() {
+            row.upsert(field.name.clone(), field.value.clone());
+        }
+        source.add_row(row).unwrap();
     }
     ms.save().unwrap();
     drop(ms);

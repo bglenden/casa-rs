@@ -244,6 +244,7 @@ dependencies = [
  "casa-numerics",
  "casa-observation",
  "casa-provider-contracts",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
@@ -334,6 +335,7 @@ dependencies = [
  "casa-numerics",
  "casa-observation",
  "casa-provider-contracts",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
@@ -542,7 +544,7 @@ dependencies = [
  "casa-numerics",
  "casa-observation",
  "casa-provider-contracts",
- "casa-simulation-synthesis",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
@@ -614,6 +616,7 @@ dependencies = [
  "casa-imaging-runtime",
  "casa-imaging-singledish",
  "casa-lattices",
+ "casa-logging",
  "casa-ms",
  "casa-numerics",
  "casa-provider-contracts",
@@ -624,6 +627,8 @@ dependencies = [
  "flate2",
  "ndarray",
  "num-complex",
+ "schemars",
+ "serde",
  "serde_json",
  "sha2",
  "tar",
@@ -631,17 +636,6 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "casa-simulation-synthesis"
-version = "0.27.0"
-dependencies = [
- "casa-fft",
- "casa-numerics",
- "ndarray",
- "num-complex",
- "thiserror",
 ]
 
 [[package]]
@@ -759,7 +753,7 @@ dependencies = [
  "casa-ms",
  "casa-numerics",
  "casa-provider-contracts",
- "casa-simulation-synthesis",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
