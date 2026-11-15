@@ -1112,7 +1112,7 @@
 <a href=#1112 id=1112 data-nosnippet>1112</a>            {
 <a href=#1113 id=1113 data-nosnippet>1113</a>                <span class="kw">let </span>expected_concept = <span class="kw">if </span>surface.id() == <span class="string">"tsdimaging" </span>{
 <a href=#1114 id=1114 data-nosnippet>1114</a>                    <span class="string">"single_dish.imsize"
-<a href=#1115 id=1115 data-nosnippet>1115</a>                </span>} <span class="kw">else if </span>surface.id() == <span class="string">"simanalyze" </span>{
+<a href=#1115 id=1115 data-nosnippet>1115</a>                </span>} <span class="kw">else if </span><span class="macro">matches!</span>(surface.id(), <span class="string">"simanalyze" </span>| <span class="string">"simalma"</span>) {
 <a href=#1116 id=1116 data-nosnippet>1116</a>                    <span class="string">"simulation.analysis.imsize"
 <a href=#1117 id=1117 data-nosnippet>1117</a>                </span>} <span class="kw">else </span>{
 <a href=#1118 id=1118 data-nosnippet>1118</a>                    IMSIZE_CONCEPT_ID
@@ -1136,7 +1136,7 @@
 <a href=#1136 id=1136 data-nosnippet>1136</a>            }
 <a href=#1137 id=1137 data-nosnippet>1137</a>        }
 <a href=#1138 id=1138 data-nosnippet>1138</a>        surfaces.sort();
-<a href=#1139 id=1139 data-nosnippet>1139</a>        <span class="macro">assert_eq!</span>(surfaces, [<span class="string">"simanalyze"</span>, <span class="string">"tclean"</span>, <span class="string">"tsdimaging"</span>]);
+<a href=#1139 id=1139 data-nosnippet>1139</a>        <span class="macro">assert_eq!</span>(surfaces, [<span class="string">"simalma"</span>, <span class="string">"simanalyze"</span>, <span class="string">"tclean"</span>, <span class="string">"tsdimaging"</span>]);
 <a href=#1140 id=1140 data-nosnippet>1140</a>    }
 <a href=#1141 id=1141 data-nosnippet>1141</a>
 <a href=#1142 id=1142 data-nosnippet>1142</a>    <span class="attr">#[test]

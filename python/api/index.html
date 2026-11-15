@@ -1472,6 +1472,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.simalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simalma
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.simanalyze" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2465,6 +2476,17 @@
     <span class="md-ellipsis">
       
         run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.simalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simalma
       
     </span>
   </a>
@@ -7527,6 +7549,104 @@ and then raised here.</p>
     <span class="k">if</span> <span class="n">values</span><span class="p">:</span>
         <span class="n">resolved</span><span class="o">.</span><span class="n">set_many</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">_execute</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">resolved</span><span class="p">,</span> <span class="n">resolved_workspace</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.simalma" class="doc doc-heading">
+            <code class=" language-python"><span class="n">simalma</span><span class="p">(</span><span class="n">project</span><span class="o">=</span><span class="s1">'sim'</span><span class="p">,</span> <span class="n">dryrun</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skymodel</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">inbright</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">indirection</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">incell</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">incenter</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">inwidth</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">complist</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">compwidth</span><span class="o">=</span><span class="s1">'"8GHz"'</span><span class="p">,</span> <span class="n">setpointings</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">ptgfile</span><span class="o">=</span><span class="s1">'$project.ptg.txt'</span><span class="p">,</span> <span class="n">integration</span><span class="o">=</span><span class="s1">'10s'</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="p">[],</span> <span class="n">mapsize</span><span class="o">=</span><span class="p">[</span><span class="s1">''</span><span class="p">,</span> <span class="s1">''</span><span class="p">],</span> <span class="n">antennalist</span><span class="o">=</span><span class="p">[</span><span class="s1">'alma.cycle1.1.cfg'</span><span class="p">,</span> <span class="s1">'aca.cycle1.cfg'</span><span class="p">],</span> <span class="n">correlator</span><span class="o">=</span><span class="p">[</span><span class="s1">'BLC'</span><span class="p">,</span> <span class="s1">'BLC'</span><span class="p">,</span> <span class="s1">'ACASpec'</span><span class="p">],</span> <span class="n">hourangle</span><span class="o">=</span><span class="s1">'transit'</span><span class="p">,</span> <span class="n">totaltime</span><span class="o">=</span><span class="p">[</span><span class="s1">'20min'</span><span class="p">,</span> <span class="s1">'1h'</span><span class="p">],</span> <span class="n">tpnant</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tptime</span><span class="o">=</span><span class="s1">'0s'</span><span class="p">,</span> <span class="n">pwv</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">imsize</span><span class="o">=</span><span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">],</span> <span class="n">imdirection</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">niter</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="s1">'0.1mJy'</span><span class="p">,</span> <span class="n">graphics</span><span class="o">=</span><span class="s1">'both'</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.simalma" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Simulate ALMA and ACA observations and combine their images</p>
+<p>CASA's <code>simalma</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1211</span>
+<span class="normal">1212</span>
+<span class="normal">1213</span>
+<span class="normal">1214</span>
+<span class="normal">1215</span>
+<span class="normal">1216</span>
+<span class="normal">1217</span>
+<span class="normal">1218</span>
+<span class="normal">1219</span>
+<span class="normal">1220</span>
+<span class="normal">1221</span>
+<span class="normal">1222</span>
+<span class="normal">1223</span>
+<span class="normal">1224</span>
+<span class="normal">1225</span>
+<span class="normal">1226</span>
+<span class="normal">1227</span>
+<span class="normal">1228</span>
+<span class="normal">1229</span>
+<span class="normal">1230</span>
+<span class="normal">1231</span>
+<span class="normal">1232</span>
+<span class="normal">1233</span>
+<span class="normal">1234</span>
+<span class="normal">1235</span>
+<span class="normal">1236</span>
+<span class="normal">1237</span>
+<span class="normal">1238</span>
+<span class="normal">1239</span>
+<span class="normal">1240</span>
+<span class="normal">1241</span>
+<span class="normal">1242</span>
+<span class="normal">1243</span>
+<span class="normal">1244</span>
+<span class="normal">1245</span>
+<span class="normal">1246</span>
+<span class="normal">1247</span>
+<span class="normal">1248</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simalma</span><span class="p">(</span>
+    <span class="n">project</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'sim'</span><span class="p">,</span>
+    <span class="n">dryrun</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">skymodel</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">inbright</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">indirection</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">incell</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">incenter</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">inwidth</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">complist</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">compwidth</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'"8GHz"'</span><span class="p">,</span>
+    <span class="n">setpointings</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">ptgfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">'$project.ptg.txt'</span><span class="p">,</span>
+    <span class="n">integration</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'10s'</span><span class="p">,</span>
+    <span class="n">direction</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">mapsize</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s1">''</span><span class="p">,</span> <span class="s1">''</span><span class="p">],</span>
+    <span class="n">antennalist</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'alma.cycle1.1.cfg'</span><span class="p">,</span> <span class="s1">'aca.cycle1.cfg'</span><span class="p">],</span>
+    <span class="n">correlator</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'BLC'</span><span class="p">,</span> <span class="s1">'BLC'</span><span class="p">,</span> <span class="s1">'ACASpec'</span><span class="p">],</span>
+    <span class="n">hourangle</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'transit'</span><span class="p">,</span>
+    <span class="n">totaltime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'20min'</span><span class="p">,</span> <span class="s1">'1h'</span><span class="p">],</span>
+    <span class="n">tpnant</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">tptime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'0s'</span><span class="p">,</span>
+    <span class="n">pwv</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">image</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">imsize</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">],</span>
+    <span class="n">imdirection</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">niter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'0.1mJy'</span><span class="p">,</span>
+    <span class="n">graphics</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">''</span><span class="p">,</span> <span class="s1">'both'</span><span class="p">,</span> <span class="s1">'file'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">,</span> <span class="s1">'screen'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'both'</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Simulate ALMA and ACA observations and combine their images</span>
+
+<span class="sd">    CASA's ``simalma``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">simalma</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

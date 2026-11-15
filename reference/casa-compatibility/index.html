@@ -684,6 +684,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#simalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simalma
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#simanalyze" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5326,6 +5337,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#simalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simalma
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#simanalyze" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9698,6 +9720,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;"></td>
 </tr>
 <tr>
+<td>simalma</td>
+<td>simalma</td>
+<td>yes</td>
+<td style="text-align: right;">31</td>
+<td style="text-align: right;">31</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
 <td>simanalyze</td>
 <td>simanalyze</td>
 <td>yes</td>
@@ -10037,6 +10070,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Implementation: <code>casaplotms/private/task_plotms.py</code>, <code>plotms</code> (line 36): 0 return statements, 27 raise statements</li>
 <li>Called with its defaults in an empty directory, CASA raises <code>RuntimeError</code>: ERROR: DISPLAY environment variable is not set! Cannot run plotms.</li>
 <li>casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI</li>
+</ul>
+<h3 id="simalma">simalma<a class="headerlink" href="#simalma" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/simalma.py</code>, 31 parameters</li>
+<li>Implementation: <code>casatasks/private/task_simalma.py</code>, <code>simalma</code> (line 11): 0 return statements, 22 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>Exception</code>: At least one of skymodel or complist must be set.</li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 31, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h3 id="simanalyze">simanalyze<a class="headerlink" href="#simanalyze" title="Permanent link">&para;</a></h3>
 <ul>
@@ -11413,7 +11457,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>mask</code> → <code>mask_box or mask_image</code></td>
 <td>Partial</td>
-<td>One mask image with finite positive support, or CRTF pixel boxes and circles, inline or in a region file, each optionally limited to a spectral range=[...] in frequency or pixels (CASA's channel rounding; a region whose range misses the image is left out). A range over part of a cube masks its channels only, a plane per channel. A mask list can combine one image with unqualified pixel regions, in list order. A signed image value of -1 or lower clears a pixel selected by an earlier region, while a later region sets it again. Bounds clip to the image and outside/empty-region unions mean zero support, not full-plane support. 38 small paired rows pass across CPU64/CPU32/Metal32 and public Python; explicit empty-file + fresh numbering preserves old products and adds no components. Absent masks still permit normal cleaning. A mask image is linearly regridded before taking finite positive support. Its direction and default validity remain in use when expanding the planes (CASA divergences #823). The plane counts follow SDMaskHandler::expandMask (a continuum Stokes I mask to every plane, a continuum mask of the image's Stokes planes to every channel, a cube Stokes I mask to every Stokes plane). Regridding a mask along frequency or Stokes (copyMask) is refused (issue 980). A single unqualified sky-coordinate CRTF polygon or box, inline or saved, keeps fractional projected vertices and rasterizes on the output grid. A sky box forms all four corners in the input frame before projection. It uses the image direction frame by default and accepts an explicit coord=J2000. Fully clipped polygons leave empty support, including the negative edge CASA truncates to column zero (#823). Fractional pixel boxes, other general CRTF regions, polygons combined with other masks, lists with multiple images or restricted spectral ranges, and new masks on occupied default-restart outputs remain unfinished. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: list[<code>string</code>], length 0..many; scalar allowed</td>
+<td>One mask image with finite positive support, or CRTF pixel boxes (including fractional corners) and circles, inline or in a region file, each optionally limited to a spectral range=[...] in frequency or pixels (CASA's channel rounding; a region whose range misses the image is left out). A range over part of a cube masks its channels only, a plane per channel. A mask list can combine one image with unqualified pixel regions, in list order. A signed image value of -1 or lower clears a pixel selected by an earlier region, while a later region sets it again. Bounds clip to the image and outside/empty-region unions mean zero support, not full-plane support. 38 small paired rows pass across CPU64/CPU32/Metal32 and public Python; explicit empty-file + fresh numbering preserves old products and adds no components. Absent masks still permit normal cleaning. A mask image is linearly regridded before taking finite positive support. Its direction and default validity remain in use when expanding the planes (CASA divergences #823). The plane counts follow SDMaskHandler::expandMask (a continuum Stokes I mask to every plane, a continuum mask of the image's Stokes planes to every channel, a cube Stokes I mask to every Stokes plane). Regridding a mask along frequency or Stokes (copyMask) is refused (issue 980). A single unqualified sky-coordinate CRTF polygon or box, inline or saved, keeps fractional projected vertices and rasterizes on the output grid. A sky box forms all four corners in the input frame before projection. It uses the image direction frame by default and accepts an explicit coord=J2000. Fully clipped polygons leave empty support, including the negative edge CASA truncates to column zero (#823). Other general CRTF regions, polygons combined with other masks, lists with multiple images or restricted spectral ranges, and new masks on occupied default-restart outputs remain unfinished. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: list[<code>string</code>], length 0..many; scalar allowed</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-approved-comparisons-restart">approved-comparisons-restart</a>, <a href="#tclean-evidence-scalars-empty-mask">scalars-empty-mask</a>, <a href="#tclean-evidence-mask-boxes">mask-boxes</a></td>
 </tr>
 <tr>

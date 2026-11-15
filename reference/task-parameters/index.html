@@ -731,6 +731,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#simalma-simalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SimALMA (simalma)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1390,6 +1401,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#simalma-simalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SimALMA (simalma)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1418,9 +1440,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 599</li>
-<li>Surfaces: 30 (30 task, 0 session)</li>
-<li>Surface bindings: 865</li>
+<li>Concepts: 606</li>
+<li>Surfaces: 31 (31 task, 0 session)</li>
+<li>Surface bindings: 896</li>
 </ul>
 <table>
 <thead>
@@ -1673,6 +1695,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>concat</code></td>
 <td style="text-align: right;">9</td>
 <td>Concatenate simulated interferometric MeasurementSets with per-input weights.</td>
+</tr>
+<tr>
+<td><a href="#surface-simalma">SimALMA</a><br><code>simalma</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>simalma</code></td>
+<td style="text-align: right;">31</td>
+<td>Simulate ALMA and ACA observations and combine their images</td>
 </tr>
 </tbody>
 </table>
@@ -9283,6 +9313,277 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>""</code>; optional</td>
 <td>MeasurementSet</td>
 <td>Make sure that there is only one joint ephemeris for every field in this list</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-simalma"></a></p>
+<h2 id="simalma-simalma">SimALMA (<code>simalma</code>)<a class="headerlink" href="#simalma-simalma" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Simulation</li>
+<li>Provider family: <code>simalma</code></li>
+<li>Summary: Simulate ALMA and ACA observations and combine their images</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>project</code></td>
+<td><code>simulation.project@r1</code></td>
+<td><code>string</code></td>
+<td><code>"sim"</code>; optional</td>
+<td>Simulation</td>
+<td>Project: its directory and the first part of every file's name.</td>
+</tr>
+<tr>
+<td><code>dryrun</code></td>
+<td><code>simulation.analysis.dryrun@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Simulation</td>
+<td>CASA simanalyze dryrun.</td>
+</tr>
+<tr>
+<td><code>skymodel</code></td>
+<td><code>parameter.skymodel@r2</code></td>
+<td><code>path (image)</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>Sky model image: a CASA image or FITS file.</td>
+</tr>
+<tr>
+<td><code>inbright</code></td>
+<td><code>parameter.inbright@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>Input brightness.</td>
+</tr>
+<tr>
+<td><code>indirection</code></td>
+<td><code>parameter.indirection@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>Input direction.</td>
+</tr>
+<tr>
+<td><code>incell</code></td>
+<td><code>parameter.incell@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>Input cell.</td>
+</tr>
+<tr>
+<td><code>incenter</code></td>
+<td><code>parameter.incenter@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>Input center.</td>
+</tr>
+<tr>
+<td><code>inwidth</code></td>
+<td><code>parameter.inwidth@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>Input width.</td>
+</tr>
+<tr>
+<td><code>complist</code></td>
+<td><code>parameter.complist@r1</code></td>
+<td><code>path (product)</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>Component list.</td>
+</tr>
+<tr>
+<td><code>compwidth</code></td>
+<td><code>parameter.compwidth@r1</code></td>
+<td><code>string</code></td>
+<td><code>"\"8GHz\""</code>; optional</td>
+<td>Simulation</td>
+<td>Component width.</td>
+</tr>
+<tr>
+<td><code>setpointings</code></td>
+<td><code>parameter.setpointings@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Simulation</td>
+<td>Generate pointings.</td>
+</tr>
+<tr>
+<td><code>ptgfile</code></td>
+<td><code>parameter.ptgfile@r2</code></td>
+<td><code>path (any)</code></td>
+<td><code>"$project.ptg.txt"</code>; optional</td>
+<td>Simulation</td>
+<td>Pointing file read when pointings are not laid out.</td>
+</tr>
+<tr>
+<td><code>integration</code></td>
+<td><code>parameter.integration@r1</code></td>
+<td><code>string</code></td>
+<td><code>"10s"</code>; optional</td>
+<td>Simulation</td>
+<td>Integration time.</td>
+</tr>
+<tr>
+<td><code>direction</code></td>
+<td><code>parameter.direction@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Simulation</td>
+<td>Map centre, or the pointings themselves when several are given.</td>
+</tr>
+<tr>
+<td><code>mapsize</code></td>
+<td><code>parameter.mapsize@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>["",""]</code>; optional</td>
+<td>Simulation</td>
+<td>Map size along each axis; one value for both.</td>
+</tr>
+<tr>
+<td><code>antennalist</code></td>
+<td><code>simulation.alma.antennalist@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>["alma.cycle1.1.cfg","aca.cycle1.cfg"]</code>; optional</td>
+<td>Simulation</td>
+<td>antenna position files of ALMA 12m and 7m arrays</td>
+</tr>
+<tr>
+<td><code>correlator</code></td>
+<td><code>simulation.alma.correlator@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>["BLC","BLC","ACASpec"]</code>; optional</td>
+<td>Simulation</td>
+<td>Name of the correlator, used to lookup the efficiency. Allowed options are based on</td>
+</tr>
+<tr>
+<td><code>hourangle</code></td>
+<td><code>parameter.hourangle@r1</code></td>
+<td><code>string</code></td>
+<td><code>"transit"</code>; optional</td>
+<td>Simulation</td>
+<td>Hour angle.</td>
+</tr>
+<tr>
+<td><code>totaltime</code></td>
+<td><code>simulation.alma.totaltime@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>["20min","1h"]</code>; optional</td>
+<td>Simulation</td>
+<td>total time of observation; vector corresponding to antennalist</td>
+</tr>
+<tr>
+<td><code>tpnant</code></td>
+<td><code>simulation.alma.tpnant@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Simulation</td>
+<td>Number of total power antennas to use (0-4)</td>
+</tr>
+<tr>
+<td><code>tptime</code></td>
+<td><code>simulation.alma.tptime@r1</code></td>
+<td><code>string</code></td>
+<td><code>"0s"</code>; optional</td>
+<td>Simulation</td>
+<td>total observation time for total power</td>
+</tr>
+<tr>
+<td><code>pwv</code></td>
+<td><code>simulation.alma.pwv@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.5</code>; optional</td>
+<td>Simulation</td>
+<td>Precipitable Water Vapor in mm. 0 for noise-free simulation</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td><code>simulation.analysis.image@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Simulation</td>
+<td>CASA simanalyze image.</td>
+</tr>
+<tr>
+<td><code>imsize</code></td>
+<td><code>simulation.analysis.imsize@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[128,128]</code>; optional</td>
+<td>Simulation</td>
+<td>CASA simanalyze imsize.</td>
+</tr>
+<tr>
+<td><code>imdirection</code></td>
+<td><code>simulation.analysis.imdirection@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>CASA simanalyze imdirection.</td>
+</tr>
+<tr>
+<td><code>cell</code></td>
+<td><code>simulation.alma.cell@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Simulation</td>
+<td>cell size with units or "" to equal model</td>
+</tr>
+<tr>
+<td><code>niter</code></td>
+<td><code>parameter.niter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Simulation</td>
+<td>Minor-cycle iteration budget; ignored when Dirty Only is enabled</td>
+</tr>
+<tr>
+<td><code>threshold</code></td>
+<td><code>image.deconvolution.threshold@r2</code></td>
+<td><code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code></td>
+<td><code>"0.1mJy"</code>; optional</td>
+<td>Simulation</td>
+<td>Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled</td>
+</tr>
+<tr>
+<td><code>graphics</code></td>
+<td><code>parameter.graphics@r2</code></td>
+<td><code>choice (5 values)</code></td>
+<td><code>"both"</code>; optional</td>
+<td>Simulation</td>
+<td>Graphics output.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Simulation</td>
+<td>Verbose logging.</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Simulation</td>
+<td>Replace an existing output file</td>
 </tr>
 </tbody>
 </table>

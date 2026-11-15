@@ -1890,6 +1890,16 @@ At the pointing's own direction, they agree to 1.2e-7 and 5.6e-8, and the
 clean matches iteration for iteration (900, model 1.7e-7). The mosaic of
 the same cube differs by 3.3e-3 under Briggs and agrees within 1e-6 under
 natural weighting.</p>
+<h3 id="simalma-configuration-names-and-zero-minute-tp-exposures">simalma configuration names and zero-minute TP exposures<a class="headerlink" href="#simalma-configuration-names-and-zero-minute-tp-exposures" title="Permanent link">&para;</a></h3>
+<p>CASA 6.7.6.14's <code>task_simalma.py</code> records an unknown cycle as integer <code>-1</code>
+then compares it with string <code>'-1'</code>. A valid ALMA/ACA configuration whose
+name has no cycle number raises <code>TypeError</code> on Python 3. Native simalma
+classifies the configuration directly; the independent oracle corrects only
+that comparison. The compact ALMA/ACA integration case exercises these names.</p>
+<p>The task formats TP exposure with <code>%dmin</code>. A positive <code>tptime</code> below one
+minute becomes zero and cannot observe its planned pointings. Native simalma
+refuses that request before replacing a project. Whole-minute truncation for
+valid TP exposures is preserved.</p>
 <h2 id="casa-omits-the-final-row-and-column-of-its-cube-density-grid">CASA omits the final row and column of its cube density grid<a class="headerlink" href="#casa-omits-the-final-row-and-column-of-its-cube-density-grid" title="Permanent link">&para;</a></h2>
 <p><code>BriggsCubeWeightor::fillImgWeightCol</code> builds its density with <code>GridFT</code>.
 In <code>FTMachine::findGridSector</code>, a sector reaching the grid's right edge
@@ -6685,6 +6695,11 @@ tclean floors both upper-bound branches before clipping. A wholly outside polygo
 an empty mask and stops with code 7, as stock CASA does when the polygon
 is farther outside. Ordinary off-grid, partially clipped and
 pixel-boundary polygons retain CASA's exact support.</p>
+<p>The same clipping defect affects fractional CRTF pixel boxes. For
+<code>box[[-0.6pix,5.2pix],[-0.2pix,10.7pix]]</code> and one whose upper x bound
+is −0.999999, stock CASA paints column zero at rows 6 through 10.
+Both native masks are empty and return stop code 7. The ordinary
+fractional, near-integer and partly clipped controls retain CASA's support.</p>
 <p><a href="https://github.com/bglenden/casa-rs/issues/823">Issue #823</a> and
 <a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/LRegions/LCPolygon.cc#L198-L208">casacore's upper crossing bound</a>.</p>
 

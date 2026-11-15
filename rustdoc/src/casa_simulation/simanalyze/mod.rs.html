@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! Project discovery, weighted synthesis concatenation, total-power gridding,
 <a href=#4 id=4 data-nosnippet>4</a>//! seed models, feathering and image analysis share the native applications.
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">mod </span>feather;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">mod </span>imaging;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>imaging;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">mod </span>inputs;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">mod </span>plan;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">mod </span>plots;
@@ -233,7 +233,7 @@
 <a href=#233 id=233 data-nosnippet>233</a>}
 <a href=#234 id=234 data-nosnippet>234</a>
 <a href=#235 id=235 data-nosnippet>235</a><span class="comment">// Value payload plus container slots, without serializing another copy.
-<a href=#236 id=236 data-nosnippet>236</a></span><span class="kw">fn </span>parameter_bytes(value: <span class="kw-2">&amp;</span>Value) -&gt; u64 {
+<a href=#236 id=236 data-nosnippet>236</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parameter_bytes(value: <span class="kw-2">&amp;</span>Value) -&gt; u64 {
 <a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">match </span>value {
 <a href=#238 id=238 data-nosnippet>238</a>        Value::String(value) =&gt; value.len() <span class="kw">as </span>u64,
 <a href=#239 id=239 data-nosnippet>239</a>        Value::Array(values) =&gt; values.iter().map(|value| <span class="number">32 </span>+ parameter_bytes(value)).sum(),

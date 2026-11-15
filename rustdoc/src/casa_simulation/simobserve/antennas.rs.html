@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>
 <a href=#30 id=30 data-nosnippet>30</a><span class="doccomment">/// `project + "." + &lt;configuration&gt;`: the antenna list's file name without
 <a href=#31 id=31 data-nosnippet>31</a>/// `.cfg`, with `;` made `_` in ALMA resolution strings.
-<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>stem(project: <span class="kw-2">&amp;</span>str, antennalist: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;String, SimobserveError&gt; {
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>stem(project: <span class="kw-2">&amp;</span>str, antennalist: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;String, SimobserveError&gt; {
 <a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>name = <span class="kw">if </span>upper_prefix(antennalist, <span class="number">4</span>) == <span class="string">"ALMA" </span>{
 <a href=#34 id=34 data-nosnippet>34</a>        antennalist.replace(<span class="string">';'</span>, <span class="string">"_"</span>)
 <a href=#35 id=35 data-nosnippet>35</a>    } <span class="kw">else if </span>!antennalist.is_empty() {
@@ -52,7 +52,7 @@
 <a href=#52 id=52 data-nosnippet>52</a>
 <a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// `ctsys.resolve("alma/simmos")`: the first data root holding it, or the
 <a href=#54 id=54 data-nosnippet>54</a>/// unresolved name.
-<a href=#55 id=55 data-nosnippet>55</a></span><span class="kw">fn </span>repository(data_roots: <span class="kw-2">&amp;</span>[PathBuf]) -&gt; PathBuf {
+<a href=#55 id=55 data-nosnippet>55</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>repository(data_roots: <span class="kw-2">&amp;</span>[PathBuf]) -&gt; PathBuf {
 <a href=#56 id=56 data-nosnippet>56</a>    data_roots
 <a href=#57 id=57 data-nosnippet>57</a>        .iter()
 <a href=#58 id=58 data-nosnippet>58</a>        .map(|root| root.join(<span class="string">"alma"</span>).join(<span class="string">"simmos"</span>))
@@ -112,7 +112,7 @@
 <a href=#112 id=112 data-nosnippet>112</a><span class="doccomment">/// The configuration an ALMA resolution string names, in `repository`:
 <a href=#113 id=113 data-nosnippet>113</a>/// Cycle 1's or Cycle 2's (`alma.cycle1;0.5arcsec`), else the full array's
 <a href=#114 id=114 data-nosnippet>114</a>/// (`alma;0.5arcsec`), at `frequency_ghz`; any other string unchanged.
-<a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">fn </span>alma_configuration(
+<a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>alma_configuration(
 <a href=#116 id=116 data-nosnippet>116</a>    antennalist: <span class="kw-2">&amp;</span>str,
 <a href=#117 id=117 data-nosnippet>117</a>    frequency_ghz: f64,
 <a href=#118 id=118 data-nosnippet>118</a>    repository: <span class="kw-2">&amp;</span>Path,
