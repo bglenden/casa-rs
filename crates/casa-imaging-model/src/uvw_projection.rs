@@ -144,13 +144,20 @@ impl GridFtProjection {
         phase_centre: &MDirection,
         tangent_point: &MDirection,
     ) -> Self {
+        Self::mosaic_through_shifted_field(phase_centre, phase_centre, tangent_point)
+    }
+
+    /// `FTMachine::girarUVW` with moving tracking: the first machine
+    /// reprojects onto the shifted correlator direction; the image-plane
+    /// machine uses the unshifted correlator direction and fixed image.
+    pub(crate) fn mosaic_through_shifted_field(
+        phase_centre: &MDirection,
+        shifted_field: &MDirection,
+        tangent_point: &MDirection,
+    ) -> Self {
         Self {
             machine: Reprojection::Girar {
-                // `girarUVW` first runs an explicit-output machine from the
-                // correlator direction to the in-field direction. Both are
-                // the phase centre here, and CASA does not collapse this
-                // machine to a no-op.
-                frame: UvwMachine::new(phase_centre, phase_centre),
+                frame: UvwMachine::new(shifted_field, phase_centre),
                 phase: UvwMachine::new(tangent_point, phase_centre),
             },
         }

@@ -13,6 +13,7 @@
 
 use std::collections::BTreeMap;
 
+use casa_ms::PhaseCentreEphemeris;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_observation::Catalogue;
 use casa_types::measures::PreparedFrequencyConversion;
@@ -268,22 +269,21 @@ fn fold_over_epochs(
     Ok(converted)
 }
 
-/// Each selected window's factor from its frame to LSRK at the first
+/// Each selected window's beam frequency conversion at the first
 /// visibility buffer CASA's tclean iterates of it, by window number.
 ///
 /// `SynthesisImagerVi2::createVisSet` iterates by `ARRAY_ID`,
 /// `DATA_DESC_ID`, `FIELD_ID` and `TIME`, so a window's first buffer is
 /// its least selected field at that field's earliest selected time
 /// ([`Epoch`]; one array). `FTMachine::matchChannel` converts the buffer's
-/// frequencies to LSRK there, towards the field, whatever frame the image
-/// records, and `HetArrayConvFunc::findConvFunction` evaluates a mosaic's
-/// beams at them once for the window. A window in `REST`, or already in
-/// LSRK, keeps its frequencies (factor 1), as `matchChannel` keeps a rest
-/// frame's.
-pub(super) fn first_buffer_lsrk_factors(
+/// frequencies to LSRK there for ordinary imaging, or to REST using
+/// the tracking ephemeris for `cubesource`. `MosaicFT::put` uses these
+/// channels directly or interpolates them before choosing the beams.
+pub(super) fn first_buffer_beam_factors(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
-) -> Result<BTreeMap<usize, f64>, PrepareError> {
+    tracking: Option<&PhaseCentreEphemeris>,
+) -> Result<BTreeMap<usize, [f64; 2]>, PrepareError> {
     let mut factors = BTreeMap::new();
     for window in &survey.spectral_windows {
         let source = window.frequency_reference;
@@ -296,20 +296,37 @@ pub(super) fn first_buffer_lsrk_factors(
                     .cmp(&b.field_id)
                     .then(a.time_mjd_seconds.total_cmp(&b.time_mjd_seconds))
             });
-        let factor = match first {
-            Some(epoch) if !matches!(source, FrequencyRef::REST | FrequencyRef::LSRK) => {
-                let frame = epoch_frame((catalogue, engine), epoch)?;
-                PreparedFrequencyConversion::new(
-                    source,
-                    FrequencyRef::LSRK,
-                    Some(&frame),
-                    Some(&frame),
-                )?
-                .convert_hz(1.0)
+        let scales = match (first, tracking) {
+            (Some(epoch), Some(ephemeris)) => {
+                let frame = epoch_frame((catalogue, engine), epoch)?.with_radial_velocity(
+                    engine.ephemeris_radial_velocity(
+                        epoch.time_mjd_seconds,
+                        epoch.field_id as usize,
+                        ephemeris,
+                    )?,
+                );
+                let factor = |output| {
+                    PreparedFrequencyConversion::new(source, output, Some(&frame), Some(&frame))
+                        .map(|conversion| conversion.convert_hz(1.0))
+                };
+                [factor(FrequencyRef::REST)?, factor(FrequencyRef::TOPO)?]
             }
-            _ => 1.0,
+            (Some(epoch), None) if !matches!(source, FrequencyRef::REST | FrequencyRef::LSRK) => {
+                let frame = epoch_frame((catalogue, engine), epoch)?;
+                [
+                    PreparedFrequencyConversion::new(
+                        source,
+                        FrequencyRef::LSRK,
+                        Some(&frame),
+                        Some(&frame),
+                    )?
+                    .convert_hz(1.0),
+                    1.0,
+                ]
+            }
+            _ => [1.0; 2],
         };
-        factors.insert(window.spw_id, factor);
+        factors.insert(window.spw_id, scales);
     }
     Ok(factors)
 }

@@ -58,6 +58,7 @@ fn window(spectral_window: u32, selected: Vec<f64>, window_top: f64) -> MosaicWi
         window_frequencies_hz: vec![window_top - 2.0e9, window_top],
         channel_width_hz: 1.0e6,
         selected_frequencies_hz: selected,
+        buffer_band: None,
     }
 }
 
@@ -354,6 +355,7 @@ fn pair_supports(
         window_frequencies_hz: vec![frequency_hz],
         channel_width_hz: 1.28e8,
         selected_frequencies_hz: vec![frequency_hz],
+        buffer_band: None,
     }];
     let set = MosaicPb::new(rules, geometry, &routing(), frequency_hz, dishes, &windows)
         .expect("mosaic set");
@@ -517,6 +519,7 @@ fn the_evla_weight_image_is_the_evla_beam_power_at_the_pointing() {
             window_frequencies_hz: vec![EVLA_HZ - 1.0e8, EVLA_HZ],
             channel_width_hz: 1.0e6,
             selected_frequencies_hz: vec![EVLA_HZ],
+            buffer_band: None,
         }],
     )
     .expect("EVLA mosaic set");

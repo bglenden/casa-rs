@@ -300,6 +300,7 @@ impl Simulator {
                 window_frequencies_hz: frequencies.clone(),
                 channel_width_hz: window.channel_width_hz,
                 selected_frequencies_hz: frequencies,
+                buffer_band: None,
             });
         }
         Ok((

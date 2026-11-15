@@ -344,7 +344,7 @@ pub(crate) fn prepare_with_view_hooks(
         domains::mask_plans(&domains, spectral.output_channels, context)?;
     mask_resident.join(continuation.mask_resident);
     let (snapshot, stores, survey_charge) =
-        snapshot_input(stores, &channels, &spectral.window_reads)?;
+        snapshot_input(stores, &channels, &spectral, request, &centre)?;
     Ok(Prepared {
         specification,
         geometry,
@@ -692,7 +692,9 @@ fn density_field_keys(stores: &[stores::SurveyedStore]) -> Option<DensityFieldKe
 fn snapshot_input(
     stores: Vec<stores::SurveyedStore>,
     channels: &[WindowChannels],
-    bands: &[spectral::WindowReads],
+    spectral: &PreparedSpectralAxis<'_>,
+    request: &ImagingRequest,
+    centre: &Centre,
 ) -> Result<
     (
         ObservationSnapshotInput,
@@ -701,10 +703,17 @@ fn snapshot_input(
     ),
     PrepareError,
 > {
+    let beam_ephemeris = if request.specmode == SpecMode::Cubesource
+        && matches!(request.gridder, Gridder::Mosaic { .. })
+    {
+        centre.ephemeris.as_ref()
+    } else {
+        None
+    };
     let mut sources = Vec::with_capacity(stores.len());
     let mut opened = Vec::with_capacity(stores.len());
     let mut charge = casa_imaging_runtime::Reservation::none();
-    for ((store, channels), bands) in stores.into_iter().zip(channels).zip(bands) {
+    for ((store, channels), bands) in stores.into_iter().zip(channels).zip(&spectral.window_reads) {
         let visibility = store.columns.visibility;
         let weights = partitions::stored_weights(
             &store.opened.value,
@@ -716,10 +725,13 @@ fn snapshot_input(
             visibility,
         );
         // Each MeasurementSet's first buffers are its own.
-        let lsrk_factors =
-            envelope::first_buffer_lsrk_factors((store.catalogue(), &store.engine), &store.survey)?;
+        let beam_factors = envelope::first_buffer_beam_factors(
+            (store.catalogue(), &store.engine),
+            &store.survey,
+            beam_ephemeris,
+        )?;
         let selection =
-            selection::observation_selection(store.survey, channels, &lsrk_factors, bands)?;
+            selection::observation_selection(store.survey, channels, &beam_factors, bands)?;
         sources.push(ObservationSourceInput::new(
             ObservationSourceProvenance::new(store.selection.vis.display().to_string()),
             selection,

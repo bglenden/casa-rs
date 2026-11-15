@@ -9,8 +9,9 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Awp2Sampling, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet,
     DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent,
-    MeasurementOperator, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting,
-    PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    MeasurementOperator, MosaicBufferBand, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor,
+    PolarizationRouting, PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -480,7 +481,11 @@ fn kernel_set(
                 })
                 .collect::<Vec<_>>();
             let frequency_hz = reference_frequency_hz(problem)?;
-            let windows = mosaic_windows(problem, keys)?;
+            let rest = problem.geometry().spectral().output_frame() == FrequencyFrame::Rest;
+            let rest_resampler = rest
+                .then(|| resampler(problem, basis(problem)?))
+                .transpose()?;
+            let windows = mosaic_windows(problem, keys, rest_resampler.as_ref())?;
             let rules = if mosaic_conjugate_beams(problem) {
                 MosaicRules::TcleanConjugateBeams
             } else {
@@ -576,12 +581,13 @@ fn kernel_set(
 /// The selected spectral windows of every store under their keys
 /// (`keys`), as the mosaic set keys them (CASA's `msId_spw`): every
 /// channel of the window, its first channel width and the selected
-/// channels' frequencies in LSRK at the window's first visibility buffer
-/// in its store, where `HetArrayConvFunc` evaluates the window's beams
-/// (`interpVisFreq_p`, `FTMachine::matchChannel`).
+/// channels at its first visibility buffer in the beam selection frame.
+/// For tracked cubes, use the frequencies passed by `MosaicFT::put`
+/// after `FTMachine::interpolateFrequencyTogrid` in REST.
 fn mosaic_windows(
     problem: &CompiledProblem,
     keys: &StoreKeys,
+    rest_resampler: Option<&SpectralResampler>,
 ) -> Result<Vec<MosaicWindow>, ImagingError> {
     let mut windows = Vec::new();
     let sources = problem.observation_transaction().read_set().sources();
@@ -592,11 +598,12 @@ fn mosaic_windows(
                 .ok_or(ImagingError::Unsupported {
                     reason: "the mosaic set needs every window's channel frequencies",
                 })?;
-            let factor = window
-                .first_buffer_lsrk_factor()
-                .ok_or(ImagingError::Unsupported {
-                    reason: "the mosaic set needs every window's LSRK factor",
-                })?;
+            let [factor, topo] =
+                window
+                    .first_buffer_beam_factors()
+                    .ok_or(ImagingError::Unsupported {
+                        reason: "the mosaic set needs every window's LSRK factor",
+                    })?;
             let selected = window
                 .channel_indices()
                 .iter()
@@ -609,11 +616,25 @@ fn mosaic_windows(
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let (selected, buffer_band) = if let Some(resampler) = rest_resampler {
+                let native_band = MosaicBufferBand {
+                    channels: selected.len(),
+                    lowest_topocentric_hz: selected.iter().copied().fold(f64::INFINITY, f64::min)
+                        * (topo / factor),
+                };
+                (
+                    resampler.mosaic_buffer_frequencies(selected),
+                    Some(native_band),
+                )
+            } else {
+                (selected, None)
+            };
             windows.push(MosaicWindow {
                 spectral_window: keys.window(store, window.spectral_window_id()),
                 window_frequencies_hz: catalog.channel_frequencies_hz().to_vec(),
                 channel_width_hz: catalog.first_channel_width_hz(),
                 selected_frequencies_hz: selected,
+                buffer_band,
             });
         }
     }

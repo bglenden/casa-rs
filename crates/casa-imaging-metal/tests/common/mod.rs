@@ -175,6 +175,7 @@ fn mosaic_set() -> MosaicPb {
         window_frequencies_hz: vec![hz - 1.0e8, hz],
         channel_width_hz: 1.0e6,
         selected_frequencies_hz: vec![hz],
+        buffer_band: None,
     };
     let dishes = MOSAIC_DISHES_M
         .map(|diameter_m| PrimaryBeam::from(AiryDish::casa_alma(diameter_m, &geometry)));

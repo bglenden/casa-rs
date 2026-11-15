@@ -257,10 +257,10 @@ fn output_role_selection(
             if let Some(catalog) = selection.coordinate_catalog() {
                 output = output.with_coordinate_catalog(catalog.clone());
             }
-            if let Some(factor) = selection.first_buffer_lsrk_factor() {
+            if let Some(factors) = selection.first_buffer_beam_factors() {
                 output = output
-                    .with_first_buffer_lsrk_factor(factor)
-                    .expect("a bound factor is finite and positive");
+                    .with_first_buffer_beam_factors(factors)
+                    .expect("bound factors are finite and positive");
             }
             if let Some(bands) = selection.frequency_bands() {
                 output = output.with_frequency_bands(bands.clone());
