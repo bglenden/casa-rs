@@ -26133,7 +26133,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "start"
+              "name": "start",
+              "type_hint": "int | str"
             },
             "presentation": {
               "label": "start",
@@ -26179,7 +26180,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "width"
+              "name": "width",
+              "type_hint": "int | str"
             },
             "presentation": {
               "label": "width",
@@ -26775,7 +26777,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "truncate"
+              "name": "truncate",
+              "type_hint": "int | float | str"
             },
             "presentation": {
               "label": "truncate",
@@ -26818,7 +26821,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "gwidth"
+              "name": "gwidth",
+              "type_hint": "int | float | str"
             },
             "presentation": {
               "label": "gwidth",
@@ -26861,7 +26865,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "jwidth"
+              "name": "jwidth",
+              "type_hint": "int | float | str"
             },
             "presentation": {
               "label": "jwidth",
