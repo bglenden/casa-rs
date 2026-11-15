@@ -18,6 +18,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 2 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 8 | 4 | 0 |
+| concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
@@ -70,6 +71,18 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 - Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `corrdepflags`, `append`, `fillgaps`, `visnorm`, `maskcenter`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
+- Defaults that differ: none
+
+### concat
+
+- CASA source: `casatasks/concat.py`, 9 parameters
+- Implementation: `casatasks/private/task_concat.py`, `concat` (line 18): 0 return statements, 14 raise statements
+- Called with its defaults in an empty directory, CASA raises `RuntimeError`: *** Error 'list index out of range' while checking MS setup consistency
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #939: `respectname`, `timesort`, `forcesingleephemfield`
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 9, in CASA's order: yes
 - Defaults that differ: none
 
 ### exportfits

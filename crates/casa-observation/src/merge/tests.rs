@@ -135,6 +135,7 @@ fn processor(mode_id: i32) -> ProcessorEntry {
 
 fn record(window: SourceWindow, rest_hz: f64, longitude: f64) -> SourceRecord {
     SourceRecord {
+        model: None,
         window,
         time: Some(MEpoch::from_mjd_seconds(5.0e9, EpochRef::UTC)),
         interval_s: Some(100.0),

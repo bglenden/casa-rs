@@ -206,7 +206,7 @@ pub fn flagmanager_task_schema_bundle() -> TaskProviderContract {
     )
 }
 
-fn one_shot_contract<R: JsonSchema, O: JsonSchema>(
+pub(crate) fn one_shot_contract<R: JsonSchema, O: JsonSchema>(
     protocol_name: &str,
     surface_ids: &[&str],
 ) -> TaskProviderContract {

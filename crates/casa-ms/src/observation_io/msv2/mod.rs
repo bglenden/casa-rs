@@ -820,6 +820,13 @@ impl Msv2Observation {
         &self.ms
     }
 
+    /// Bound the rows loaded when preserving the original POINTING table.
+    pub(crate) fn pointing_loaded_bytes(&self) -> usize {
+        self.ms
+            .subtable(crate::SubtableId::Pointing)
+            .map_or(0, held::loaded_bytes)
+    }
+
     /// The time scale of MAIN `TIME` (every partition's).
     #[must_use]
     pub fn time_scale(&self) -> EpochRef {

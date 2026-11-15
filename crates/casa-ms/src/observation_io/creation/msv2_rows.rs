@@ -169,10 +169,11 @@ struct Scalars {
     centroid: ScalarColumnId,
     interval: ScalarColumnId,
     exposure: ScalarColumnId,
+    row_flag: ScalarColumnId,
     /// Columns constant over an input partition: `ARRAY_ID`,
     /// `DATA_DESC_ID`, `FEED1`, `FEED2`, `FLAG_ROW`, `OBSERVATION_ID`,
     /// `PROCESSOR_ID`.
-    constant: [ScalarColumnId; 7],
+    constant: [ScalarColumnId; 6],
     /// `STATE_ID`, constant over an input partition unless its rows'
     /// states are written row by row ([`StateIds::PerRow`]).
     state: ScalarColumnId,
@@ -191,6 +192,7 @@ struct Keys {
     centroid: Vec<f64>,
     interval: Vec<f64>,
     exposure: Vec<f64>,
+    row_flag: Vec<bool>,
 }
 
 impl Keys {
@@ -204,6 +206,7 @@ impl Keys {
         self.centroid.clear();
         self.interval.clear();
         self.exposure.clear();
+        self.row_flag.clear();
     }
 }
 
@@ -261,6 +264,7 @@ struct Scratch {
     flags: Vec<bool>,
     weights: Vec<f32>,
     sigmas: Vec<f32>,
+    spectrum: Vec<f32>,
     model: Vec<Complex32>,
 }
 
@@ -279,6 +283,7 @@ pub(super) struct MainRows {
     outputs: Vec<Output>,
     padding: PaddingRows,
     data_columns: Vec<&'static str>,
+    spectra: Vec<&'static str>,
     scalars: Scalars,
     planned: usize,
     rows: usize,
@@ -295,7 +300,7 @@ impl MainRows {
     pub(super) fn start(
         (staging, plan): (&Path, MeasurementSetWritePlan),
         catalogue: &Catalogue,
-        data_columns: Vec<&'static str>,
+        (data_columns, spectra): (Vec<&'static str>, Vec<&'static str>),
         occupancy: &Occupancy,
         layout: Layout,
         padding: PaddingRows,
@@ -312,12 +317,12 @@ impl MainRows {
             centroid: id("TIME_CENTROID")?,
             interval: id("INTERVAL")?,
             exposure: id("EXPOSURE")?,
+            row_flag: id("FLAG_ROW")?,
             constant: [
                 id("ARRAY_ID")?,
                 id("DATA_DESC_ID")?,
                 id("FEED1")?,
                 id("FEED2")?,
-                id("FLAG_ROW")?,
                 id("OBSERVATION_ID")?,
                 id("PROCESSOR_ID")?,
             ],
@@ -342,6 +347,7 @@ impl MainRows {
             outputs,
             padding,
             data_columns,
+            spectra,
             scalars,
             planned,
             rows: 0,
@@ -360,6 +366,7 @@ impl MainRows {
         map: &RowMap,
         batches: &[VisibilityBatch<'_>],
         states: Option<&[i32]>,
+        stored: Option<&super::stored_weights::StoredWeights>,
     ) -> Result<(), ObservationError> {
         let batch = &batches[0];
         let missing = |role: &str| request_error(format!("a converted batch carries its {role}"));
@@ -413,25 +420,37 @@ impl MainRows {
         let interval = self.outputs[placement.output].interval;
         self.keys.clear();
         for sample in 0..batch.samples() {
+            let coordinate = batch.sample(sample);
+            let time = batch
+                .time
+                .seconds_since(sample / batch.samples_per_time(), origin);
+            let preserved = stored.and_then(|stored| stored.sample(sample));
             let sample_weights = weights.index_axis(Axis(0), sample);
-            let acquisition = acquired(sample_weights)?;
+            // A real MSv2 row can have NaN weights (for example after
+            // flagging). Its stored row, rather than its statistics, proves
+            // its existence and carries channel-varying spectra unchanged.
+            let acquisition = if stored.is_some() {
+                preserved.is_some()
+            } else {
+                acquired(sample_weights)?
+            };
             if !acquisition && self.padding == PaddingRows::Omitted {
                 continue;
             }
+            self.keys
+                .row_flag
+                .push(preserved.is_some_and(|sample| sample.row_flag));
             self.push_cells(
                 sample,
                 shape,
                 (&values, flags, sample_weights),
                 (acquisition, map.weight_scale),
+                preserved,
             )?;
             self.session
                 .push_f64_row("UVW", &[3], &uvw.metres_at(sample))
                 .map_err(storage)?;
-            let coordinate = batch.sample(sample);
             let scan = batch.scan(sample).ok_or_else(|| missing("scans"))?;
-            let time = batch
-                .time
-                .seconds_since(sample / batch.samples_per_time(), origin);
             let keys = &mut self.keys;
             keys.antenna1
                 .push(map.antennas[coordinate.baseline.antenna1.0 as usize]);
@@ -472,14 +491,15 @@ impl MainRows {
 
     /// One sample's visibility, flag, weight and sigma cells; padding's
     /// flagged throughout with NaN weights, padding's one mark. An
-    /// acquisition's weights are multiplied by `scale`, and its sigmas
-    /// derived from the scaled weights, so `SIGMA` is `1/√(W·w)`.
+    /// acquisition's weights are multiplied by `scale`; stored sigmas are
+    /// divided by its square root, or derived where the input supplies none.
     fn push_cells(
         &mut self,
         sample: usize,
         shape: [usize; 2],
         (values, flags, weights): Cells<'_, '_>,
         (acquisition, scale): (bool, f32),
+        preserved: Option<super::stored_weights::StoredSample<'_>>,
     ) -> Result<(), ObservationError> {
         // A sample's `[channel, correlation]` cells, correlation fastest,
         // are an MSv2 cell of shape `[correlation, channel]` as casacore
@@ -494,7 +514,9 @@ impl MainRows {
                 .push_complex32_row(column, &shape, cell)
                 .map_err(storage)?;
         }
-        let cell = if acquisition {
+        let cell = if let Some(stored) = preserved {
+            stored.flags
+        } else if acquisition {
             contiguous(flags.index_axis(Axis(0), sample), &mut scratch.flags)
         } else {
             scratch.flags.clear();
@@ -516,16 +538,52 @@ impl MainRows {
             scratch.weights.resize(shape[0], f32::NAN);
         }
         scratch.sigmas.clear();
-        scratch
-            .sigmas
-            .extend(scratch.weights.iter().map(|weight| sigma(*weight)));
+        if let Some(stored) = preserved {
+            scratch.weights.clear();
+            scratch
+                .weights
+                .extend(stored.weights.iter().map(|weight| *weight * scale));
+            if let Some(sigmas) = stored.sigmas {
+                scratch
+                    .sigmas
+                    .extend(sigmas.iter().map(|sigma| *sigma / scale.sqrt()));
+            }
+        }
+        if scratch.sigmas.is_empty() {
+            scratch
+                .sigmas
+                .extend(scratch.weights.iter().map(|weight| sigma(*weight)));
+        }
         let correlations = [shape[0]];
         self.session
             .push_f32_row("WEIGHT", &correlations, &scratch.weights)
             .map_err(storage)?;
         self.session
             .push_f32_row("SIGMA", &correlations, &scratch.sigmas)
-            .map_err(storage)
+            .map_err(storage)?;
+        for column in &self.spectra {
+            scratch.spectrum.clear();
+            if let Some(stored) = preserved {
+                let (values, factor) = if *column == "WEIGHT_SPECTRUM" {
+                    (stored.weight_spectrum, scale)
+                } else {
+                    (stored.sigma_spectrum, 1.0 / scale.sqrt())
+                };
+                if let Some(values) = values {
+                    scratch
+                        .spectrum
+                        .extend(values.iter().map(|value| *value * factor));
+                }
+            }
+            if scratch.spectrum.is_empty() {
+                self.session.push_undefined_row(column).map_err(storage)?;
+            } else {
+                self.session
+                    .push_f32_row(column, &shape, &scratch.spectrum)
+                    .map_err(storage)?;
+            }
+        }
+        Ok(())
     }
 
     /// The batch's gathered keys, and its input partition's constant ones.
@@ -545,6 +603,7 @@ impl MainRows {
             (scalars.field, StreamedScalarValues::Int32(&keys.field)),
             (scalars.scan, StreamedScalarValues::Int32(&keys.scan)),
             (scalars.time, StreamedScalarValues::Float64(&keys.time)),
+            (scalars.row_flag, StreamedScalarValues::Bool(&keys.row_flag)),
             (
                 scalars.centroid,
                 StreamedScalarValues::Float64(&keys.centroid),
@@ -569,7 +628,6 @@ impl MainRows {
             ScalarValue::Int32(self.layout.data_description[output]),
             ScalarValue::Int32(feed1),
             ScalarValue::Int32(feed2),
-            ScalarValue::Bool(false),
             ScalarValue::Int32(self.outputs[output].observation),
             ScalarValue::Int32(placement.processor),
         ];
@@ -612,7 +670,12 @@ impl MainRows {
             )));
         }
         let mut overrides = ColumnOverrides::for_row_count(self.rows);
-        for column in self.data_columns.iter().chain(&ARRAY_COLUMNS) {
+        for column in self
+            .data_columns
+            .iter()
+            .chain(&self.spectra)
+            .chain(&ARRAY_COLUMNS)
+        {
             overrides.insert_deferred(*column);
         }
         self.session
@@ -663,10 +726,13 @@ pub(super) fn write_plan(
 /// of `samples` samples with the reading of their states ([`RowStates`]),
 /// and a cell of `cell` elements of each kind.
 pub(super) fn held_bytes(samples: usize, cell: usize) -> usize {
-    let keys = 5 * size_of::<i32>() + 4 * size_of::<f64>();
+    let keys = 5 * size_of::<i32>() + 4 * size_of::<f64>() + size_of::<bool>();
     let states = size_of::<usize>() + size_of::<i32>();
-    let scratch = 2 * size_of::<Complex32>() + size_of::<bool>() + 2 * size_of::<f32>();
-    samples * (keys + states) + cell * scratch
+    let scratch = 2 * size_of::<Complex32>() + size_of::<bool>() + 4 * size_of::<f32>();
+    // Capacity growth of original row indices, mappings, flags, row weights,
+    // sigma and both spectra; the maximum cell also bounds correlation rows.
+    let stored = samples * (3 * size_of::<usize>() + size_of::<bool>() + 34 * cell);
+    samples * (keys + states) + cell * scratch + stored
 }
 
 /// MAIN's array columns for the `occupancy` of `catalogue`'s partitions
@@ -736,7 +802,11 @@ pub(super) fn array_columns(
         .map(|name| {
             column(
                 name,
-                StreamedTiledShapeValueType::Complex32,
+                if name.ends_with("_SPECTRUM") {
+                    StreamedTiledShapeValueType::Float32
+                } else {
+                    StreamedTiledShapeValueType::Complex32
+                },
                 visibility.clone(),
                 shaped,
             )

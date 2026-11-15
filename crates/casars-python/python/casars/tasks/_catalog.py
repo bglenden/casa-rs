@@ -1189,6 +1189,25 @@ def tsdimaging(
     """
     return _call_casa(tsdimaging, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging')
+def concat(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    concatvis: StrPath = '',
+    freqtol: int | float | str | dict[str, object] = '',
+    dirtol: int | float | str | dict[str, object] = '',
+    respectname: bool = False,
+    timesort: bool = False,
+    copypointing: bool = True,
+    visweightscale: float | list[float] | tuple[float, ...] = [],
+    forcesingleephemfield: int | float | str | dict[str, object] = '',
+) -> Any:
+    """Concatenate simulated interferometric MeasurementSets with per-input weights.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging']
+    CASA's ``concat``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #939:
+    ``respectname``, ``timesort``, ``forcesingleephemfield``.
+    """
+    return _call_casa(concat, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat']

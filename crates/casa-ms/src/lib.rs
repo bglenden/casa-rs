@@ -45,6 +45,8 @@ pub mod builder;
 mod casa_return;
 pub mod column_def;
 pub mod columns;
+#[cfg(unix)]
+pub mod concat;
 pub mod derived;
 mod ephemeris;
 pub mod error;

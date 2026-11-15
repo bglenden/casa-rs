@@ -11,8 +11,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
 - Concepts: 599
-- Surfaces: 29 (29 task, 0 session)
-- Surface bindings: 856
+- Surfaces: 30 (30 task, 0 session)
+- Surface bindings: 865
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -45,6 +45,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 11 | Convert between MeasurementSet v2 and MSv4, in either direction. |
 | [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 1 | <code>simanalyze</code> | 32 | Image and analyze a simulated observation: CASA's simanalyze |
 | [Tsdimaging](#surface-tsdimaging)<br><code>tsdimaging</code> | task | 1 | <code>single_dish</code> | 33 | Grid total-power spectra by pointing into a CASA image and weight image. |
+| [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
 
 <a id="surface-msexplore"></a>
 
@@ -1278,5 +1279,27 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>minweight</code> | <code>single_dish.minweight@r1</code> | <code>float</code> | <code>0.1</code>; optional | Imaging | CASA tsdimaging's minweight. |
 | <code>brightnessunit</code> | <code>single_dish.brightnessunit@r1</code> | <code>choice (3 values)</code> | <code>""</code>; optional | Imaging | CASA tsdimaging's brightnessunit. |
 | <code>restfreq</code> | <code>tclean.restfreq@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | Rest frequencies of a cube's velocity axis; empty for the source's. |
+
+<a id="surface-concat"></a>
+
+## Concat (<code>concat</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: MeasurementSet
+- Provider family: `concat`
+- Summary: Concatenate simulated interferometric MeasurementSets with per-input weights.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; optional | MeasurementSet | Input MeasurementSet path or paths. |
+| <code>concatvis</code> | <code>parameter.concatvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | MeasurementSet | Name of visibility file that will contain the |
+| <code>freqtol</code> | <code>parameter.freqtol@r1</code> | <code>variant</code> | <code>""</code>; optional | MeasurementSet | Frequency shift tolerance for considering data as the |
+| <code>dirtol</code> | <code>parameter.dirtol@r1</code> | <code>variant</code> | <code>""</code>; optional | MeasurementSet | Direction shift tolerance for considering data as the |
+| <code>respectname</code> | <code>parameter.respectname@r1</code> | <code>bool</code> | <code>false</code>; optional | MeasurementSet | If true, fields with a different name are not merged even |
+| <code>timesort</code> | <code>parameter.timesort@r1</code> | <code>bool</code> | <code>false</code>; optional | MeasurementSet | If true, sort by TIME in ascending order |
+| <code>copypointing</code> | <code>parameter.copypointing@r1</code> | <code>bool</code> | <code>true</code>; optional | MeasurementSet | Make a proper copy of the POINTING subtable |
+| <code>visweightscale</code> | <code>parameter.visweightscale@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | MeasurementSet | List of the weight scaling factors to be applied to the |
+| <code>forcesingleephemfield</code> | <code>parameter.forcesingleephemfield@r1</code> | <code>variant</code> | <code>""</code>; optional | MeasurementSet | Make sure that there is only one joint ephemeris for every field in this list |
 
 _End of generated reference._
