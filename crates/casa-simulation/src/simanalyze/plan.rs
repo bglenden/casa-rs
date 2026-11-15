@@ -87,45 +87,6 @@ fn analysis_memory(source: u64, output: u64) -> Result<u64, SimobserveError> {
         .ok_or_else(|| failure("analysis memory overflows"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{analysis_memory, planned_sizes, positive_cells};
-
-    #[test]
-    fn analysis_counting_law_scales_with_both_image_grids_and_refuses_overflow() {
-        let base = analysis_memory(0, 0).unwrap();
-        for cells in [1, 65_536, 16_777_216] {
-            assert_eq!(analysis_memory(cells, 0).unwrap() - base, cells * 48);
-            assert_eq!(analysis_memory(0, cells).unwrap() - base, cells * 96);
-            assert_eq!(analysis_memory(cells, cells).unwrap() - base, cells * 144);
-        }
-        assert!(analysis_memory(u64::MAX, 1).is_err());
-        assert!(analysis_memory(1, u64::MAX).is_err());
-    }
-
-    #[test]
-    fn invalid_cells_and_unrepresentable_dimensions_are_refused_before_fft_sizing() {
-        for value in [0., f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert!(positive_cells([value, 1.]).is_err());
-        }
-        assert_eq!(positive_cells([-2e-6, 2e-6]).unwrap(), [2e-6, 2e-6]);
-        let resources =
-            crate::SessionResources::from_controls(&crate::ExecutionControls::default()).unwrap();
-        assert!(
-            planned_sizes(
-                &[i64::MAX, 64],
-                &[64, 64],
-                [2e-6; 2],
-                [2e-6; 2],
-                0.,
-                resources
-            )
-            .is_err()
-        );
-        assert!(planned_sizes(&[0, 0], &[64, 64], [2e-6; 2], [1e-300; 2], 0., resources).is_err());
-    }
-}
-
 pub(super) fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut value = path.as_os_str().to_os_string();
     value.push(suffix);
@@ -401,4 +362,43 @@ fn planned_sizes(
         return Err(failure("image dimensions exceed the run's memory budget"));
     }
     Ok(size.map(casa_imaging_model::optimum_image_size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{analysis_memory, planned_sizes, positive_cells};
+
+    #[test]
+    fn analysis_counting_law_scales_with_both_image_grids_and_refuses_overflow() {
+        let base = analysis_memory(0, 0).unwrap();
+        for cells in [1, 65_536, 16_777_216] {
+            assert_eq!(analysis_memory(cells, 0).unwrap() - base, cells * 48);
+            assert_eq!(analysis_memory(0, cells).unwrap() - base, cells * 96);
+            assert_eq!(analysis_memory(cells, cells).unwrap() - base, cells * 144);
+        }
+        assert!(analysis_memory(u64::MAX, 1).is_err());
+        assert!(analysis_memory(1, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn invalid_cells_and_unrepresentable_dimensions_are_refused_before_fft_sizing() {
+        for value in [0., f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(positive_cells([value, 1.]).is_err());
+        }
+        assert_eq!(positive_cells([-2e-6, 2e-6]).unwrap(), [2e-6, 2e-6]);
+        let resources =
+            crate::SessionResources::from_controls(&crate::ExecutionControls::default()).unwrap();
+        assert!(
+            planned_sizes(
+                &[i64::MAX, 64],
+                &[64, 64],
+                [2e-6; 2],
+                [2e-6; 2],
+                0.,
+                resources
+            )
+            .is_err()
+        );
+        assert!(planned_sizes(&[0, 0], &[64, 64], [2e-6; 2], [1e-300; 2], 0., resources).is_err());
+    }
 }
