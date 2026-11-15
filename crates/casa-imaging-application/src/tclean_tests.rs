@@ -1312,6 +1312,9 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     let briggs = request(json!({"deconvolver":"mem", "weighting":"briggs", "robust":0.5}));
     assert_eq!(briggs.weighting, crate::Weighting::Briggs);
     briggs.validate().expect("Briggs-weighted MEM");
+    let seeded = request(json!({"deconvolver":"mem", "startmodel":"start.im"}));
+    assert!(seeded.has_start_model());
+    seeded.validate().expect("MEM with an explicit start model");
     request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
         .validate()
         .expect("other solvers retain their scope");
@@ -1327,7 +1330,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"savemodel":"modelcolumn"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
-        json!({"startmodel":"start.im"}),
         json!({"mask":"mask.im"}),
     ] {
         let mut values = json!({"deconvolver":"mem", "niter":1});
