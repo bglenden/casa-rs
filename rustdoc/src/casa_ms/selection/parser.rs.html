@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_types::quanta::MvTime;
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::selection::antenna_expr::regex::FullMatch;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::selection::antenna_expr::regex::FieldRegex;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::selection::syntax::{canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">crate</span>::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">crate</span>::subtables::{MsField, get_f64, has_column, optional_string};
@@ -110,8 +110,8 @@
 <a href=#110 id=110 data-nosnippet>110</a>    ///
 <a href=#111 id=111 data-nosnippet>111</a>    /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
 <a href=#112 id=112 data-nosnippet>112</a>    /// no FIELD row, or a nonempty selection resolving to no existing fields.
-<a href=#113 id=113 data-nosnippet>113</a>    /// The shared regex engine refuses lookaround. Escapes outside a
-<a href=#114 id=114 data-nosnippet>114</a>    /// delimited pattern are also refused.
+<a href=#113 id=113 data-nosnippet>113</a>    /// Slash regexes support positive and negative lookahead. Escapes
+<a href=#114 id=114 data-nosnippet>114</a>    /// outside a delimited pattern are refused.
 <a href=#115 id=115 data-nosnippet>115</a>    /// An out-of-range numeric ID tries its decimal text as a name or code.
 <a href=#116 id=116 data-nosnippet>116</a>    /// Only the FIELD rows themselves bound numeric range enumeration.
 <a href=#117 id=117 data-nosnippet>117</a>    /// Name matching trims stored names and
@@ -224,9 +224,9 @@
 <a href=#224 id=224 data-nosnippet>224</a>        }
 <a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>matching = field_ids_by_name_or_code(
 <a href=#226 id=226 data-nosnippet>226</a>            fields,
-<a href=#227 id=227 data-nosnippet>227</a>            |value| value == name,
-<a href=#228 id=228 data-nosnippet>228</a>            |code| code.trim_matches(<span class="string">' '</span>) == name,
-<a href=#229 id=229 data-nosnippet>229</a>        );
+<a href=#227 id=227 data-nosnippet>227</a>            |value| <span class="prelude-val">Ok</span>(value == name),
+<a href=#228 id=228 data-nosnippet>228</a>            |code| <span class="prelude-val">Ok</span>(code.trim_matches(<span class="string">' '</span>) == name),
+<a href=#229 id=229 data-nosnippet>229</a>        )<span class="question-mark">?</span>;
 <a href=#230 id=230 data-nosnippet>230</a>        <span class="kw">if </span>matching.is_empty() {
 <a href=#231 id=231 data-nosnippet>231</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::VersionError(<span class="macro">format!</span>(
 <a href=#232 id=232 data-nosnippet>232</a>                <span class="string">"field selector name {name:?} did not match any FIELD rows"
@@ -404,46 +404,46 @@
 <a href=#404 id=404 data-nosnippet>404</a>    pattern: <span class="kw-2">&amp;</span>str,
 <a href=#405 id=405 data-nosnippet>405</a>    regex: bool,
 <a href=#406 id=406 data-nosnippet>406</a>) -&gt; MsResult&lt;Vec&lt;i32&gt;&gt; {
-<a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">let </span>matcher = <span class="kw">if </span>regex {
-<a href=#408 id=408 data-nosnippet>408</a>        FullMatch::compile(pattern)
-<a href=#409 id=409 data-nosnippet>409</a>    } <span class="kw">else </span>{
-<a href=#410 id=410 data-nosnippet>410</a>        FullMatch::compile_pattern(pattern)
-<a href=#411 id=411 data-nosnippet>411</a>    }
-<a href=#412 id=412 data-nosnippet>412</a>    .map_err(MsError::InvalidInput)<span class="question-mark">?</span>;
-<a href=#413 id=413 data-nosnippet>413</a>    <span class="kw">let </span>ids = field_ids_by_name_or_code(
-<a href=#414 id=414 data-nosnippet>414</a>        fields,
-<a href=#415 id=415 data-nosnippet>415</a>        |name| matcher.matches(name),
-<a href=#416 id=416 data-nosnippet>416</a>        |code| matcher.matches(code),
-<a href=#417 id=417 data-nosnippet>417</a>    );
-<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">if </span>ids.is_empty() {
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::VersionError(<span class="macro">format!</span>(
-<a href=#420 id=420 data-nosnippet>420</a>            <span class="string">"field selector pattern {pattern:?} did not match any field names or codes"
-<a href=#421 id=421 data-nosnippet>421</a>        </span>)));
-<a href=#422 id=422 data-nosnippet>422</a>    }
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="prelude-val">Ok</span>(ids)
-<a href=#424 id=424 data-nosnippet>424</a>}
-<a href=#425 id=425 data-nosnippet>425</a>
-<a href=#426 id=426 data-nosnippet>426</a><span class="kw">fn </span>field_ids_by_name_or_code(
-<a href=#427 id=427 data-nosnippet>427</a>    fields: <span class="kw-2">&amp;</span>[FieldSelectorRow&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#428 id=428 data-nosnippet>428</a>    matches_name: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>str) -&gt; bool,
-<a href=#429 id=429 data-nosnippet>429</a>    matches_code: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>str) -&gt; bool,
-<a href=#430 id=430 data-nosnippet>430</a>) -&gt; Vec&lt;i32&gt; {
-<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">let </span>rows = fields
-<a href=#432 id=432 data-nosnippet>432</a>        .iter()
-<a href=#433 id=433 data-nosnippet>433</a>        .enumerate()
-<a href=#434 id=434 data-nosnippet>434</a>        .filter(|(<span class="kw">_</span>, field)| !field.flagged);
-<a href=#435 id=435 data-nosnippet>435</a>    <span class="kw">let </span><span class="kw-2">mut </span>ids: Vec&lt;<span class="kw">_</span>&gt; = rows
-<a href=#436 id=436 data-nosnippet>436</a>        .clone()
-<a href=#437 id=437 data-nosnippet>437</a>        .filter(|(<span class="kw">_</span>, field)| matches_name(field.name.trim_matches(<span class="string">' '</span>)))
-<a href=#438 id=438 data-nosnippet>438</a>        .map(|(row, <span class="kw">_</span>)| row <span class="kw">as </span>i32)
-<a href=#439 id=439 data-nosnippet>439</a>        .collect();
-<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">if </span>ids.is_empty() {
-<a href=#441 id=441 data-nosnippet>441</a>        ids.extend(
-<a href=#442 id=442 data-nosnippet>442</a>            rows.filter(|(<span class="kw">_</span>, field)| field.code.is_some_and(<span class="kw-2">&amp;</span>matches_code))
-<a href=#443 id=443 data-nosnippet>443</a>                .map(|(row, <span class="kw">_</span>)| row <span class="kw">as </span>i32),
-<a href=#444 id=444 data-nosnippet>444</a>        );
+<a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">let </span>matcher = FieldRegex::compile(pattern, regex).map_err(MsError::InvalidInput)<span class="question-mark">?</span>;
+<a href=#408 id=408 data-nosnippet>408</a>    <span class="kw">let </span>matches = |text: <span class="kw-2">&amp;</span>str| {
+<a href=#409 id=409 data-nosnippet>409</a>        matcher.matches(text).map_err(|error| {
+<a href=#410 id=410 data-nosnippet>410</a>            MsError::InvalidInput(<span class="macro">format!</span>(<span class="string">"matching FIELD regex {pattern:?}: {error}"</span>))
+<a href=#411 id=411 data-nosnippet>411</a>        })
+<a href=#412 id=412 data-nosnippet>412</a>    };
+<a href=#413 id=413 data-nosnippet>413</a>    <span class="kw">let </span>ids = field_ids_by_name_or_code(fields, matches, matches)<span class="question-mark">?</span>;
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="kw">if </span>ids.is_empty() {
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::VersionError(<span class="macro">format!</span>(
+<a href=#416 id=416 data-nosnippet>416</a>            <span class="string">"field selector pattern {pattern:?} did not match any field names or codes"
+<a href=#417 id=417 data-nosnippet>417</a>        </span>)));
+<a href=#418 id=418 data-nosnippet>418</a>    }
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="prelude-val">Ok</span>(ids)
+<a href=#420 id=420 data-nosnippet>420</a>}
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a><span class="kw">fn </span>field_ids_by_name_or_code(
+<a href=#423 id=423 data-nosnippet>423</a>    fields: <span class="kw-2">&amp;</span>[FieldSelectorRow&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#424 id=424 data-nosnippet>424</a>    matches_name: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;bool&gt;,
+<a href=#425 id=425 data-nosnippet>425</a>    matches_code: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;bool&gt;,
+<a href=#426 id=426 data-nosnippet>426</a>) -&gt; MsResult&lt;Vec&lt;i32&gt;&gt; {
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">let </span>rows = fields
+<a href=#428 id=428 data-nosnippet>428</a>        .iter()
+<a href=#429 id=429 data-nosnippet>429</a>        .enumerate()
+<a href=#430 id=430 data-nosnippet>430</a>        .filter(|(<span class="kw">_</span>, field)| !field.flagged);
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">let </span><span class="kw-2">mut </span>ids = Vec::new();
+<a href=#432 id=432 data-nosnippet>432</a>    <span class="kw">for </span>(row, field) <span class="kw">in </span>rows.clone() {
+<a href=#433 id=433 data-nosnippet>433</a>        <span class="kw">if </span>matches_name(field.name.trim_matches(<span class="string">' '</span>))<span class="question-mark">? </span>{
+<a href=#434 id=434 data-nosnippet>434</a>            ids.push(row <span class="kw">as </span>i32);
+<a href=#435 id=435 data-nosnippet>435</a>        }
+<a href=#436 id=436 data-nosnippet>436</a>    }
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">if </span>ids.is_empty() {
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">for </span>(row, field) <span class="kw">in </span>rows {
+<a href=#439 id=439 data-nosnippet>439</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(code) = field.code
+<a href=#440 id=440 data-nosnippet>440</a>                &amp;&amp; matches_code(code)<span class="question-mark">?
+<a href=#441 id=441 data-nosnippet>441</a>            </span>{
+<a href=#442 id=442 data-nosnippet>442</a>                ids.push(row <span class="kw">as </span>i32);
+<a href=#443 id=443 data-nosnippet>443</a>            }
+<a href=#444 id=444 data-nosnippet>444</a>        }
 <a href=#445 id=445 data-nosnippet>445</a>    }
-<a href=#446 id=446 data-nosnippet>446</a>    ids
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="prelude-val">Ok</span>(ids)
 <a href=#447 id=447 data-nosnippet>447</a>}
 <a href=#448 id=448 data-nosnippet>448</a>
 <a href=#449 id=449 data-nosnippet>449</a><span class="kw">fn </span>apply_antenna_selector(
