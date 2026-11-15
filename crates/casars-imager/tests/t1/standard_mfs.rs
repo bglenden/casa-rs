@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Standard gridder, natural weighting, MFS: Hogbom, Clark and multiscale.
+//! Standard-gridder MFS with point, multiscale and maximum-entropy solvers.
 
 use casars_imager::ImagerRunReport;
 use serde_json::{Value, json};
@@ -214,5 +214,42 @@ fn standard_mfs_multiscale_recovers_the_extended_flux() {
         gaussian_model_jy < GAUSSIAN.flux_jy && GAUSSIAN.flux_jy < restored_jy,
         "model {gaussian_model_jy} Jy and restored {restored_jy} Jy do not bracket {} Jy",
         GAUSSIAN.flux_jy
+    );
+}
+
+#[test]
+fn mem_uses_briggs_weighted_normal_images() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let briggs = json!({"weighting":"briggs", "robust":0.5, "niter":0});
+    let (_, dirty) = observation.image("briggs-dirty", briggs.clone());
+    let (_, natural) = observation.image("natural-dirty", json!({"niter":0}));
+    let mut mem = briggs;
+    mem["deconvolver"] = json!("mem");
+    mem["niter"] = json!(2);
+    mem["cyclefactor"] = json!(0.0001);
+    mem["minpsffraction"] = json!(0.0);
+    let (_, cleaned) = observation.image("briggs-mem", mem);
+    let psf = &cleaned.get(".psf").pixels;
+    let difference = |reference: &Products| {
+        psf.iter()
+            .zip(reference.get(".psf").pixels.iter())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0_f32, f32::max)
+    };
+    assert!(difference(&dirty) < 1e-6, "MEM uses the Briggs PSF");
+    assert!(
+        difference(&natural) > 1e-5,
+        "the fixture distinguishes the weights"
+    );
+    let weighted = cleaned.get(".sumwt").channel_values()[0];
+    let expected = dirty.get(".sumwt").channel_values()[0];
+    assert!((weighted / expected - 1.0).abs() < 1e-6);
+    assert!(weighted < natural.get(".sumwt").channel_values()[0]);
+    assert!(
+        cleaned
+            .get(".model")
+            .pixels
+            .iter()
+            .any(|&value| value > 0.0)
     );
 }

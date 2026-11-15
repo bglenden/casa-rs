@@ -62,7 +62,7 @@ impl fmt::Display for Unsupported {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MemScope => formatter.write_str(
-                "MEM currently supports one standard, natural-weighted Stokes I MFS domain (#1060)",
+                "MEM currently supports one standard Stokes I MFS domain with natural or Briggs weighting (#1060)",
             ),
             Self::Capability(capability) => write!(
                 formatter,
@@ -221,7 +221,10 @@ pub fn check(
             .measurement_equation()
             .instrument_response()
             != InstrumentResponse::Scalar
-        || !matches!(problem.weighting().scheme(), WeightingScheme::Natural)
+        || !matches!(
+            problem.weighting().scheme(),
+            WeightingScheme::Natural | WeightingScheme::Briggs { .. }
+        )
         || problem.observation().sources().len() != 1
         || !problem
             .observation_transaction()
