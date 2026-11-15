@@ -625,6 +625,7 @@ impl<'a> Tclean<'a> {
             "ZPN" => Some("ZPN requires a nonzero coefficient"),
             "CYP" => Some("CYP requires a nonzero cylinder radius"),
             "CEA" => Some("CEA requires a positive scale parameter"),
+            "HPX" => Some("HPX requires positive facet parameters"),
             _ => None,
         };
         if let Some(reason) = invalid_parameters {

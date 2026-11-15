@@ -362,6 +362,9 @@ fn casa_values_become_the_request_casa_rs_runs() {
         ("PAR", Projection::Par),
         ("MOL", Projection::Mol),
         ("PCO", Projection::Pco),
+        ("TSC", Projection::Tsc),
+        ("CSC", Projection::Csc),
+        ("QSC", Projection::Qsc),
         ("MER", Projection::Mer),
         ("AIT", Projection::Ait),
     ] {
@@ -593,7 +596,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "restfreq",
             "#980",
         ),
-        (json!({ "projection": "HPX" }), "projection", "#1101"),
     ] {
         let refused = refusal(overrides.clone());
         assert_eq!(refused.parameter, parameter, "{overrides}");
@@ -671,6 +673,7 @@ fn fixed_projection_parameters_that_casa_refuses_are_invalid() {
         ("ZPN", "ZPN requires a nonzero coefficient"),
         ("CYP", "CYP requires a nonzero cylinder radius"),
         ("CEA", "CEA requires a positive scale parameter"),
+        ("HPX", "HPX requires positive facet parameters"),
     ] {
         let error = refusal(json!({ "projection": name }));
         assert_eq!(error.parameter, "projection");

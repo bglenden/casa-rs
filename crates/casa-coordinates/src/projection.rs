@@ -26,12 +26,17 @@
 //! | AIT  | Hammer-Aitoff | `-AIT` |
 //! | ZEA  | Zenithal equal-area | `-ZEA` |
 //! | STG  | Stereographic | `-STG` |
+//! | TSC  | Tangential spherical cube | `-TSC` |
+//! | CSC  | COBE quadrilateralized spherical cube | `-CSC` |
+//! | QSC  | Quadrilateralized spherical cube | `-QSC` |
 //! | NCP  | North Celestial Pole (SIN special case) | `-NCP` |
 
 use std::f64::consts::{FRAC_PI_2, LN_2, PI, SQRT_2};
 use std::fmt;
 
 use crate::error::CoordinateError;
+
+mod cube;
 
 /// Degrees-to-radians conversion factor.
 const DEG_TO_RAD: f64 = PI / 180.0;
@@ -67,6 +72,12 @@ pub enum ProjectionType {
     MOL,
     /// Polyconic projection.
     PCO,
+    /// Tangential spherical cube.
+    TSC,
+    /// COBE quadrilateralized spherical cube.
+    CSC,
+    /// Quadrilateralized spherical cube.
+    QSC,
     /// Mercator projection.
     MER,
     /// Hammer-Aitoff equal-area projection.
@@ -106,6 +117,9 @@ impl ProjectionType {
             "PAR" => Some(Self::PAR),
             "MOL" => Some(Self::MOL),
             "PCO" => Some(Self::PCO),
+            "TSC" => Some(Self::TSC),
+            "CSC" => Some(Self::CSC),
+            "QSC" => Some(Self::QSC),
             "MER" => Some(Self::MER),
             "AIT" => Some(Self::AIT),
             "ZEA" => Some(Self::ZEA),
@@ -129,6 +143,9 @@ impl ProjectionType {
             Self::PAR => "PAR",
             Self::MOL => "MOL",
             Self::PCO => "PCO",
+            Self::TSC => "TSC",
+            Self::CSC => "CSC",
+            Self::QSC => "QSC",
             Self::MER => "MER",
             Self::AIT => "AIT",
             Self::ZEA => "ZEA",
@@ -223,6 +240,9 @@ impl Projection {
             ProjectionType::PAR => project_par(phi, theta),
             ProjectionType::MOL => project_mol(phi, theta),
             ProjectionType::PCO => project_pco(phi, theta),
+            ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
+                cube::project(self.projection_type, phi, theta)
+            }
             ProjectionType::MER => project_mer(phi, theta),
             ProjectionType::AIT => project_ait(phi, theta),
             ProjectionType::ZEA => project_zea(phi, theta),
@@ -251,6 +271,9 @@ impl Projection {
             ProjectionType::PAR => deproject_par(x, y),
             ProjectionType::MOL => deproject_mol(x, y),
             ProjectionType::PCO => deproject_pco(x, y),
+            ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
+                cube::deproject(self.projection_type, x, y)
+            }
             ProjectionType::MER => deproject_mer(x, y),
             ProjectionType::AIT => deproject_ait(x, y),
             ProjectionType::ZEA => deproject_zea(x, y),
