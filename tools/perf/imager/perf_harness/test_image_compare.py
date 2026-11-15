@@ -1387,6 +1387,42 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not derived from operands"):
             validate_comparison_output(output, request)
 
+    def test_direction_wcs_uses_declared_roundoff_and_preserves_axis_topology(
+        self,
+    ) -> None:
+        raw_request = comparison_request()
+        raw_request["require_direction_wcs_parity"] = True
+        default_request = normalize_comparison_request(raw_request)
+        raw_request["metadata_contract"] = {
+            "require_shape_parity": True,
+            "require_mask_parity": True,
+            "coordinates": {
+                "excluded_fields": ["crval"],
+                "relative_tolerance": 1.0e-11,
+                "absolute_tolerance": 1.0e-10,
+            },
+            "products": {},
+        }
+        request = normalize_comparison_request(raw_request)
+        output = comparison_output(request)
+        operands = output["products"][".image.tt0"]["direction_wcs"]
+        output["metadata_contract"] = request["metadata_contract"]
+        operands["right"]["direction"]["crval"][0] += 5.0e-11
+
+        validate_comparison_output(output, request)
+        default_output = comparison_output(default_request)
+        default_output["products"][".image.tt0"]["direction_wcs"] = operands
+        with self.assertRaisesRegex(ValueError, "direction-WCS parity is not derived"):
+            validate_comparison_output(default_output, default_request)
+
+        operands["right"]["direction"]["crval"][0] += 1.0e-6
+        with self.assertRaisesRegex(ValueError, "direction-WCS parity is not derived"):
+            validate_comparison_output(output, request)
+        operands["right"]["direction"] = copy.deepcopy(operands["left"]["direction"])
+        operands["right"]["axis_topology"]["pixelmap0"].reverse()
+        with self.assertRaisesRegex(ValueError, "direction-WCS parity is not derived"):
+            validate_comparison_output(output, request)
+
     def test_metadata_validator_uses_coordinate_roundoff_policy(self) -> None:
         request = normalize_comparison_request(comparison_request())
         output = comparison_output(request)
