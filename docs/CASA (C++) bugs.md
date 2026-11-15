@@ -4146,6 +4146,31 @@ in LSRK within 0.5 microhertz. The products, masks and clean counts agree
 against that reference. A separate explicit BARY start nearly 99 kHz below
 the first channel gives a blank first plane in both standard gridders.
 
+The same cache dependence affects the first plane of an LSRK image of
+TOPO data. In CASA 6.7.6.14, `refim_eptwochan.ms` imaged with the
+standard gridder, natural weighting, two channels, `start=0, width=1`
+and linear interpolation can give first-plane sumwt of either 0 or
+552. Evaluating one TOPO-to-LSRK frequency at 300 s before the earliest
+integration with the stock Measures tool changes the result from 0 to
+552. Both runs report the same first centre, 999988750.3872572 Hz,
+and second-plane sumwt of 321786.
+
+`VisibilityIteratorImpl2::getFrequencies` converts the visibility
+frequencies at each buffer's epoch. `FTMachine::interpolateFrequencyTogrid`
+samples the image's LSRK grid within those row bounds. On the native
+first buffer the lower visibility frequency is 999988750.3872573 Hz.
+The one-point fine grid derived from the image edges puts its first
+sample exactly there. At the next integration even the lowest visibility
+frequency is about 2 Hz higher, so only the first buffer contributes
+to the first plane. The same bound rejects a fine point below the
+first visibility frequency by one representable step.
+
+With CASA's first plane retained and the direction mask supplied on the
+output grid, the CASA and native Högbom runs each keep 156 mask pixels per
+plane. Sumwt and controller totals agree exactly. All seven images agree
+within 1.21e-7 normalized RMS. The original cold-CASA zero plane is
+cache-dependent. [Measurements and regression in #823](https://github.com/bglenden/casa-rs/issues/823).
+
 ## A cube's fine frequency grid lets rounding choose one or two samples per plane
 
 - Date noted: 2026-11-03

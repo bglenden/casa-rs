@@ -4,7 +4,10 @@ use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 
-use super::{FineGrid, PreparedFrequencyConversion, SpectralAxis};
+use super::{
+    FineGrid, NativeRow, PreparedFrequencyConversion, RowContext, SpectralAxis, SpectralKernel,
+    SpectralResampler,
+};
 
 fn reporting_axis() -> (SpectralAxis, PreparedFrequencyConversion) {
     let frame = MeasFrame::new().with_direction(MDirection::from_angles(
@@ -67,5 +70,41 @@ fn width_tie_uses_fewer_samples_without_rounding_a_nonintegral_ratio() {
             let grid = FineGrid::compile(axis, spacing * sign).expect("fine grid");
             assert_eq!(grid.count(), expected, "spacing {spacing}, sign {sign}");
         }
+    }
+}
+
+#[test]
+fn the_first_lsrk_fine_point_must_be_in_the_native_span() {
+    // refim_eptwochan: the first TOPO integration converted to LSRK.
+    // The first point of the fine grid reaches the first visibility
+    // frequency, as in the CASA run that retains the first plane (#823).
+    let axis = SpectralAxis::new(999_988_750.387_257_2, 499_994_375.193_629_15, 2).unwrap();
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let first = 999_988_750.387_257_3_f64;
+    for (edge, expected) in [(first, &[0, 1][..]), (first.next_up(), &[1][..])] {
+        let frequencies = [edge, 1_499_983_125.580_886_1, 1_999_977_500.774_515];
+        let row = NativeRow {
+            uvw_m: [10.0, 10.0, 0.0],
+            phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
+            frequencies_hz: &frequencies,
+            values: &[num_complex::Complex32::new(1.0, 0.0); 3],
+            weights: &[1.0; 3],
+            flags: &[false; 3],
+            row_flag: false,
+            context: RowContext {
+                antennas: [0, 1],
+                antenna_types: [0, 0],
+                time_s: 0.0,
+                field: 0,
+                spectral_window: 0,
+                parallactic_angle_rad: [0.0, 0.0],
+                native_frequency_ratio: 1.0,
+                original_uvw_m: None,
+            },
+        };
+        let mut planes = Vec::new();
+        resampler.for_each_sample(&row, |plane, _, _| planes.push(plane));
+        assert_eq!(planes, expected, "first visibility frequency {edge}");
     }
 }
