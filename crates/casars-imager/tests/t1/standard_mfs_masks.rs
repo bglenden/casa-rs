@@ -47,6 +47,23 @@ fn assert_point_recovered(model: &Array2<f32>, image: &Array2<f32>) {
     }
 }
 
+fn assert_mem_model_support(model: &Array2<f32>, mask: &Array2<f32>) {
+    let mut outside = model
+        .iter()
+        .zip(mask.iter())
+        .filter_map(|(&value, &support)| (support == 0.0).then_some(value));
+    let floor = outside.next().expect("the mask excludes pixels");
+    assert!(
+        floor > 0.0 && floor < 1e-6,
+        "the MEM mask limits the model to the positive floor"
+    );
+    assert!(
+        outside.all(|value| value == floor),
+        "the MEM mask limits the model to the positive floor"
+    );
+    assert!(model.iter().any(|&value| value > floor));
+}
+
 #[test]
 fn mem_uses_the_support_in_a_user_mask_image() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
@@ -67,20 +84,7 @@ fn mem_uses_the_support_in_a_user_mask_image() {
         "honor the supplied mask support"
     );
     let model = &image.get(".model").pixels;
-    let mut outside = model
-        .iter()
-        .zip(mask.iter())
-        .filter_map(|(&value, &support)| (support == 0.0).then_some(value));
-    let floor = outside.next().expect("the mask excludes pixels");
-    assert!(
-        floor > 0.0 && floor < 1e-6,
-        "MEM keeps a positive model floor"
-    );
-    assert!(
-        outside.all(|value| value == floor),
-        "outside the mask only the floor remains"
-    );
-    assert!(model.iter().any(|&value| value > floor));
+    assert_mem_model_support(model, mask);
     for suffix in [".model", ".residual", ".image"] {
         let error = image
             .get(suffix)
@@ -230,7 +234,10 @@ fn usemask_pb_masks_the_published_pb_above_pbmask() {
 #[test]
 fn mem_applies_the_primary_beam_to_the_requested_mask() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
-    let mut controls = json!({"deconvolver":"mem","niter":0,"write_pb":true});
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":0, "write_pb":true,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
     let (_, dirty) = observation.image("mem-pb-dirty", controls.clone());
     let mut positive: Vec<_> = dirty
         .get(".pb")
@@ -270,6 +277,8 @@ fn mem_applies_the_primary_beam_to_the_requested_mask() {
         unrestricted.get(".mask").pixels.iter().all(|&v| v == 1.0),
         "an unnamed user mask leaves MEM support unrestricted"
     );
+    assert_mem_model_support(&pb_only.get(".model").pixels, mask);
+    assert_mem_model_support(&named.get(".model").pixels, &named.get(".mask").pixels);
 }
 
 #[test]
