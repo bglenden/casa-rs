@@ -27,7 +27,7 @@ NAMES = ["SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "AIT", "MER", "
 # The same images centred south of the celestial equator, where a projection
 # whose reference is on its native equator takes the native pole at 180°.
 SOUTH = "J2000 19:59:28.500 -40.44.01.50"
-SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER"]
+SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER", "AZP"]
 # And on the celestial equator, where the native pole of a projection whose
 # reference is on its native equator is the celestial north pole. NCP is
 # undefined there (its slant cot(dec) is infinite).

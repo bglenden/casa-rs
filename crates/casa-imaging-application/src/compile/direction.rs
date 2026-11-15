@@ -954,6 +954,7 @@ mod tests {
                 .collect()
         };
         let north = [
+            ("AZP", Projection::Azp),
             ("SIN", Projection::Sin),
             ("NCP", Projection::Ncp),
             ("TAN", Projection::Tan),
@@ -966,6 +967,7 @@ mod tests {
             ("AIT", Projection::Ait),
         ];
         let south = [
+            ("AZP", Projection::Azp),
             ("SIN", Projection::Sin),
             ("NCP", Projection::Ncp),
             ("TAN", Projection::Tan),

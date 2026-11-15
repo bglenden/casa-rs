@@ -25,6 +25,8 @@ pub enum Projection {
     /// The AIPS north-celestial-pole projection, `NCP`, which CASA writes
     /// as `SIN` with the slant `[0, cot δ₀]` of the reference latitude δ₀.
     Ncp,
+    /// Zenithal perspective, `AZP`, with tclean's zero parameters.
+    Azp,
     /// Gnomonic, `TAN`.
     Tan,
     /// Zenithal equidistant, `ARC`.
@@ -52,6 +54,7 @@ impl Projection {
         Some(match name {
             "SIN" => Self::Sin,
             "NCP" => Self::Ncp,
+            "AZP" => Self::Azp,
             "TAN" => Self::Tan,
             "ARC" => Self::Arc,
             "STG" => Self::Stg,
@@ -71,6 +74,7 @@ impl Projection {
     pub fn coordinate_projection(self, latitude_rad: f64) -> CoordinateProjection {
         let kind = match self {
             Self::Sin | Self::Ncp => ProjectionType::SIN,
+            Self::Azp => ProjectionType::AZP,
             Self::Tan => ProjectionType::TAN,
             Self::Arc => ProjectionType::ARC,
             Self::Stg => ProjectionType::STG,
@@ -102,6 +106,7 @@ impl Projection {
         [
             Self::Sin,
             Self::Ncp,
+            Self::Azp,
             Self::Tan,
             Self::Arc,
             Self::Stg,
@@ -114,8 +119,14 @@ impl Projection {
         .into_iter()
         .find(|candidate| {
             let expected = candidate.coordinate_projection(latitude_rad);
-            expected.projection_type() == projection.projection_type()
-                && expected.parameters().len() == parameters.len()
+            if expected.projection_type() != projection.projection_type() {
+                return false;
+            }
+            // tclean supports only zero AZP parameters, including on input images.
+            if *candidate == Self::Azp {
+                return expected.parameters() == parameters;
+            }
+            expected.parameters().len() == parameters.len()
                 && expected
                     .parameters()
                     .iter()
@@ -164,9 +175,10 @@ mod tests {
     use super::Projection;
     use crate::geometry::{DirectionCoordinateSpec, DirectionFrame, SkyDirection};
 
-    const ALL: [Projection; 10] = [
+    const ALL: [Projection; 11] = [
         Projection::Sin,
         Projection::Ncp,
+        Projection::Azp,
         Projection::Tan,
         Projection::Arc,
         Projection::Stg,
@@ -238,12 +250,27 @@ mod tests {
         assert_eq!(Projection::of_coordinate(&slanted, 0.7), None);
     }
 
+    /// An AZP image declares only the parameter values tclean can image in.
+    #[test]
+    fn azp_coordinate_admission_requires_zero_parameters() {
+        use casa_coordinates::{Projection as CoordinateProjection, ProjectionType};
+        for parameters in [vec![], vec![0.0], vec![0.0, 0.0]] {
+            let azp = CoordinateProjection::with_parameters(ProjectionType::AZP, parameters);
+            assert_eq!(Projection::of_coordinate(&azp, 0.7), Some(Projection::Azp));
+        }
+        for parameters in [vec![1e-10, 0.0], vec![0.0, 1e-10]] {
+            let azp = CoordinateProjection::with_parameters(ProjectionType::AZP, parameters);
+            assert_eq!(Projection::of_coordinate(&azp, 0.7), None);
+        }
+    }
+
     /// tclean names the projections exactly as casacore spells them.
     #[test]
     fn tclean_names_its_projections() {
         assert_eq!(Projection::from_casa_name("TAN"), Some(Projection::Tan));
         assert_eq!(Projection::from_casa_name("NCP"), Some(Projection::Ncp));
-        for other in ["tan", " TAN", "ncp", "AZP"] {
+        assert_eq!(Projection::from_casa_name("AZP"), Some(Projection::Azp));
+        for other in ["tan", " TAN", "ncp", "azp"] {
             assert_eq!(Projection::from_casa_name(other), None, "{other:?}");
         }
     }

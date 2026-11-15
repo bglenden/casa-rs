@@ -382,6 +382,9 @@ impl DirectionCoordinate {
             } else {
                 Projection::new(projection_type)
             };
+        if projection_type == ProjectionType::AZP {
+            projection.require_default_azp()?;
+        }
 
         let crval = get_required_vec_f64(rec, "crval")?;
         let cdelt = get_required_vec_f64(rec, "cdelt")?;
@@ -1222,6 +1225,31 @@ mod tests {
         assert_eq!(restored.projection().parameters(), &[0.25, -0.5]);
         assert!((restored.longpole() - 0.25).abs() < TOL);
         assert!((restored.latpole() - 1.2).abs() < TOL);
+    }
+
+    /// A tclean AZP image reopens with its coordinate intact. A nonzero
+    /// parameter must fail at open before regridding can treat it as no overlap.
+    #[test]
+    fn azp_records_require_zero_parameters() {
+        let record_with = |parameters| {
+            DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::with_parameters(ProjectionType::AZP, parameters),
+                [1.0, 0.5],
+                [-1e-4, 1e-4],
+                [128.0, 64.0],
+            )
+            .to_record()
+        };
+        let restored = DirectionCoordinate::from_record(&record_with(vec![0.0, 0.0])).unwrap();
+        assert_eq!(restored.projection().projection_type(), ProjectionType::AZP);
+        assert_eq!(restored.projection().parameters(), &[0.0, 0.0]);
+        for parameters in [vec![0.5, 0.0], vec![0.0, 1.0]] {
+            assert!(matches!(
+                DirectionCoordinate::from_record(&record_with(parameters)),
+                Err(CoordinateError::ConversionFailed(message)) if message.contains("zero projection parameters")
+            ));
+        }
     }
 
     /// A rotated image CASA 6.7.6 made (`coordsys.setlineartransform` with

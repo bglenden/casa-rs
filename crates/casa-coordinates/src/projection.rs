@@ -12,6 +12,7 @@
 //! | Code | Name | FITS keyword |
 //! |------|------|-------------|
 //! | SIN  | Slant orthographic | `-SIN` |
+//! | AZP  | Zenithal perspective with zero parameters | `-AZP` |
 //! | TAN  | Gnomonic (tangent plane) | `-TAN` |
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
@@ -41,6 +42,8 @@ const RAD_TO_DEG: f64 = 180.0 / PI;
 pub enum ProjectionType {
     /// Slant orthographic projection.
     SIN,
+    /// Zenithal perspective with tclean's zero parameters.
+    AZP,
     /// Gnomonic (tangent-plane) projection.
     TAN,
     /// Zenithal equidistant projection.
@@ -78,6 +81,7 @@ impl ProjectionType {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_uppercase().as_str() {
             "SIN" => Some(Self::SIN),
+            "AZP" => Some(Self::AZP),
             "TAN" => Some(Self::TAN),
             "ARC" => Some(Self::ARC),
             "CAR" => Some(Self::CAR),
@@ -95,6 +99,7 @@ impl ProjectionType {
     pub fn name(self) -> &'static str {
         match self {
             Self::SIN => "SIN",
+            Self::AZP => "AZP",
             Self::TAN => "TAN",
             Self::ARC => "ARC",
             Self::CAR => "CAR",
@@ -178,6 +183,10 @@ impl Projection {
     pub fn project(&self, phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => project_sin(phi, theta, &self.parameters),
+            ProjectionType::AZP => {
+                self.require_default_azp()?;
+                project_tan(phi, theta)
+            }
             ProjectionType::TAN => project_tan(phi, theta),
             ProjectionType::ARC => project_arc(phi, theta),
             ProjectionType::CAR => project_car(phi, theta),
@@ -195,6 +204,10 @@ impl Projection {
     pub fn deproject(&self, x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => deproject_sin(x, y, &self.parameters),
+            ProjectionType::AZP => {
+                self.require_default_azp()?;
+                deproject_tan(x, y)
+            }
             ProjectionType::TAN => deproject_tan(x, y),
             ProjectionType::ARC => deproject_arc(x, y),
             ProjectionType::CAR => deproject_car(x, y),
@@ -205,6 +218,18 @@ impl Projection {
             ProjectionType::STG => deproject_stg(x, y),
             ProjectionType::NCP => deproject_ncp(x, y),
         }
+    }
+
+    /// With μ = γ = 0, the AZP radius is `cos(θ)/sin(θ)` and the
+    /// tilt terms vanish (Calabretta & Greisen 2002, §5.1.1). That is
+    /// the gnomonic map, with the original AZP name in the coordinate.
+    pub(crate) fn require_default_azp(&self) -> Result<(), CoordinateError> {
+        if self.parameters.iter().any(|&value| value != 0.0) {
+            return Err(CoordinateError::ConversionFailed(
+                "AZP requires the zero projection parameters written by tclean".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -603,6 +628,15 @@ mod tests {
         roundtrip(&proj, 0.1, 1.2);
         roundtrip(&proj, 0.0, FRAC_PI_2);
         roundtrip(&proj, -0.3, 1.0);
+    }
+
+    #[test]
+    fn azp_with_nonzero_perspective_or_tilt_refuses_coordinate_conversion() {
+        for parameters in [vec![2.0, 0.0], vec![0.0, 10.0]] {
+            let azp = Projection::with_parameters(ProjectionType::AZP, parameters);
+            assert!(azp.project(0.4, 1.2).is_err());
+            assert!(azp.deproject(0.04, 0.03).is_err());
+        }
     }
 
     #[test]

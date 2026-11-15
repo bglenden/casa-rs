@@ -350,6 +350,7 @@ fn casa_values_become_the_request_casa_rs_runs() {
     for (text, projection) in [
         ("SIN", Projection::Sin),
         ("NCP", Projection::Ncp),
+        ("AZP", Projection::Azp),
         ("TAN", Projection::Tan),
         ("ARC", Projection::Arc),
         ("STG", Projection::Stg),
@@ -587,7 +588,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "restfreq",
             "#980",
         ),
-        (json!({ "projection": "AZP" }), "projection", "#1101"),
         (json!({ "projection": "HPX" }), "projection", "#1101"),
     ] {
         let refused = refusal(overrides.clone());
