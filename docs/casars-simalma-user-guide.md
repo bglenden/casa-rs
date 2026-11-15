@@ -102,6 +102,6 @@ comparison oracle's common-noise transfer.
 The graphics regression compares all 14 simalma figures and seven additional
 multi-array, TP, seed and feather simanalyze figures with actual CASA
 Matplotlib artists: image pixels, UV/ephemeris curves, labels, image/display
-ranges, titles and axes. Native plot arrays share one binary payload across
+ranges, titles, axes, pointing circles and statistical annotations. Native plot arrays share one binary payload across
 child tasks. Complete file/screen/both/none policies and live memory at two
-image sizes are tested. Plotting uses the existing native document typography.
+image sizes and spectral channel counts are tested. Plotting uses the existing native document typography.
