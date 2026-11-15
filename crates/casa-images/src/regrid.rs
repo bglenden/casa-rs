@@ -302,15 +302,30 @@ fn jy_per_pixel_scale(
     (inc_out[0] * inc_out[1] / inc_in[0] / inc_in[1]).abs()
 }
 
-/// Whether two direction coordinates share their tangent plane: the same
-/// reference direction, projection, PC matrix and native poles, so that
-/// their pixels differ only by reference pixel and increment.
-fn same_tangent_plane(a: &DirectionCoordinate, b: &DirectionCoordinate) -> bool {
-    a.reference_value() == b.reference_value()
+/// Whether the spherical rotations describe one tangent plane. A
+/// direction written through a CASA header can change by one representable
+/// step. The resolved pole is the rotation, regardless of the LATPOLE
+/// selector that chose it.
+fn same_tangent_plane(
+    a: &DirectionCoordinate,
+    b: &DirectionCoordinate,
+    rounding_radians: f64,
+) -> bool {
+    let same_rounded_value = |left: f64, right: f64| {
+        left == right
+            || ((left.next_up() == right || right.next_up() == left)
+                && (left - right).abs() <= rounding_radians)
+    };
+    let same_pair = |left: &[f64], right: &[f64]| {
+        left.iter()
+            .zip(right)
+            .all(|(&left, &right)| same_rounded_value(left, right))
+    };
+    same_pair(&a.reference_value(), &b.reference_value())
         && a.projection() == b.projection()
         && a.pc_matrix() == b.pc_matrix()
-        && a.longpole() == b.longpole()
-        && a.latpole() == b.latpole()
+        && same_rounded_value(a.longpole(), b.longpole())
+        && same_pair(&a.native_pole(), &b.native_pole())
 }
 
 /// Whether every output pixel of an `[nx, ny]` plane has a sky position,
@@ -339,36 +354,71 @@ fn corners_cover_the_plane(output: &DirectionCoordinate, [nx, ny]: [usize; 2]) -
             })
 }
 
-/// For each output pixel of the direction plane (first axis fastest), the
-/// input pixel at its world position, or `None` where the conversion fails.
-///
-/// On a shared tangent plane with the identity PC matrix, the intermediate
-/// world coordinates are the same, so the mapping is exactly affine on each
-/// axis: `crpix_in + (p − crpix_out) × cdelt_out / cdelt_in`. That is the
-/// `simanalyze` and `simalma` total-power regrid, which keeps the reference
-/// direction. It is taken where the projection's domain is known to cover the
-/// output ([`corners_cover_the_plane`]), so no pixel without a sky position
-/// is sampled.
+/// The exact pixel mapping between direction coordinates on one tangent plane.
+#[derive(Clone, Copy, Debug)]
+pub struct DirectionAffine {
+    input_reference: [f64; 2],
+    output_reference: [f64; 2],
+    increment_ratio: [f64; 2],
+}
+
+impl DirectionAffine {
+    /// The source pixel at this output pixel.
+    #[must_use]
+    pub fn source_pixel(self, output: [f64; 2]) -> [f64; 2] {
+        std::array::from_fn(|axis| {
+            self.input_reference[axis]
+                + (output[axis] - self.output_reference[axis]) * self.increment_ratio[axis]
+        })
+    }
+}
+
+/// The exact affine map when both direction coordinates share a tangent
+/// plane, use identity PC matrices and the output is inside the projection.
+/// A single rounding step in the stored rotation also preserves the map.
+#[must_use]
+pub fn direction_affine(
+    input: &DirectionCoordinate,
+    output: &DirectionCoordinate,
+    shape: [usize; 2],
+) -> Option<DirectionAffine> {
+    let (input_increment, output_increment) = (input.increment(), output.increment());
+    // Use the aligned image-mask pixel tolerance to bound the angular
+    // difference on very fine grids as well.
+    let rounding_radians = input_increment
+        .iter()
+        .chain(&output_increment)
+        .map(|step| step.abs())
+        .fold(f64::INFINITY, f64::min)
+        * 1e-7;
+    if input.direction_ref() == output.direction_ref()
+        && same_tangent_plane(input, output, rounding_radians)
+        && *input.pc_matrix() == ndarray::Array2::<f64>::eye(2)
+        && corners_cover_the_plane(output, shape)
+    {
+        Some(DirectionAffine {
+            input_reference: input.reference_pixel().try_into().ok()?,
+            output_reference: output.reference_pixel().try_into().ok()?,
+            increment_ratio: std::array::from_fn(|axis| {
+                output_increment[axis] / input_increment[axis]
+            }),
+        })
+    } else {
+        None
+    }
+}
+
+/// For each output pixel (first axis fastest), the input pixel at its
+/// world position, or `None` where the conversion fails.
 fn positions(
     input: &DirectionCoordinate,
     output: &DirectionCoordinate,
     [nx, ny]: [usize; 2],
 ) -> Vec<Option<[f64; 2]>> {
-    if same_tangent_plane(input, output)
-        && *input.pc_matrix() == ndarray::Array2::<f64>::eye(2)
-        && corners_cover_the_plane(output, [nx, ny])
-    {
-        let (in_pix, out_pix) = (input.reference_pixel(), output.reference_pixel());
-        let (in_inc, out_inc) = (input.increment(), output.increment());
-        let ratio = [out_inc[0] / in_inc[0], out_inc[1] / in_inc[1]];
+    if let Some(affine) = direction_affine(input, output, [nx, ny]) {
         return (0..ny)
-            .flat_map(|j| (0..nx).map(move |i| (i, j)))
-            .map(|(i, j)| {
-                Some([
-                    in_pix[0] + (i as f64 - out_pix[0]) * ratio[0],
-                    in_pix[1] + (j as f64 - out_pix[1]) * ratio[1],
-                ])
-            })
+            .flat_map(|j| (0..nx).map(move |i| [i as f64, j as f64]))
+            .map(|output| Some(affine.source_pixel(output)))
             .collect();
     }
     let mut grid = Vec::with_capacity(nx * ny);
@@ -706,39 +756,10 @@ impl Plane<'_> {
         self.good(i, j).then(|| self.at(i, j))
     }
 
-    /// `Interpolate2D::interpLinear`: the position truncated toward zero,
-    /// moved back by one at the far edge.
-    fn linear(&self, [wi, wj]: [f64; 2]) -> Option<f64> {
-        let start = |w: f64, n: usize| -> Option<usize> {
-            // casacore's `uInt(Int(w))`: a negative start wraps and fails.
-            let truncated = w as i64;
-            if truncated < 0 || n < 2 {
-                return None;
-            }
-            let last = n - 1;
-            let mut i = usize::try_from(truncated).ok()?;
-            if i == last {
-                i -= 1;
-            }
-            (i < last).then_some(i)
-        };
-        let i = start(wi, self.shape[0])?;
-        let j = start(wj, self.shape[1])?;
-        if !(self.good(i, j)
-            && self.good(i + 1, j)
-            && self.good(i, j + 1)
-            && self.good(i + 1, j + 1))
-        {
-            return None;
-        }
-        let tt = wi - i as f64;
-        let uu = wj - j as f64;
-        Some(
-            (1.0 - tt) * (1.0 - uu) * self.at(i, j)
-                + tt * (1.0 - uu) * self.at(i + 1, j)
-                + tt * uu * self.at(i + 1, j + 1)
-                + (1.0 - tt) * uu * self.at(i, j + 1),
-        )
+    fn linear(&self, at: [f64; 2]) -> Option<f64> {
+        linear_sample(self.shape, at, |i, j| {
+            self.good(i, j).then(|| self.at(i, j))
+        })
     }
 
     /// `Interpolate2D::interpCubic`: bicubic on the 4 × 4 pixels from
@@ -790,6 +811,40 @@ impl Plane<'_> {
     }
 }
 
+/// Bilinear sampling with casacore's `Interpolate2D::interpLinear` edge
+/// convention. `sample` returns the input value or `None` for an invalid
+/// cell. The output is valid only when all four neighbours are valid.
+pub fn linear_sample(
+    shape: [usize; 2],
+    [wi, wj]: [f64; 2],
+    sample: impl Fn(usize, usize) -> Option<f64>,
+) -> Option<f64> {
+    let start = |w: f64, n: usize| -> Option<usize> {
+        // casacore truncates toward zero and moves the stencil back at
+        // the far edge. A negative start wraps and fails.
+        let truncated = w as i64;
+        if truncated < 0 || n < 2 {
+            return None;
+        }
+        let last = n - 1;
+        let mut i = usize::try_from(truncated).ok()?;
+        if i == last {
+            i -= 1;
+        }
+        (i < last).then_some(i)
+    };
+    let i = start(wi, shape[0])?;
+    let j = start(wj, shape[1])?;
+    let tt = wi - i as f64;
+    let uu = wj - j as f64;
+    Some(
+        (1.0 - tt) * (1.0 - uu) * sample(i, j)?
+            + tt * (1.0 - uu) * sample(i + 1, j)?
+            + tt * uu * sample(i + 1, j + 1)?
+            + (1.0 - tt) * uu * sample(i, j + 1)?,
+    )
+}
+
 /// Numerical Recipes' `bcucof` (3.6), as casacore's `Interpolate2D::bcucof`
 /// tabulates it.
 fn bicubic_coefficients(
@@ -832,6 +887,35 @@ fn bicubic_coefficients(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn affine_regrid_preserves_a_shared_plane_through_one_step_of_header_rounding() {
+        use casa_coordinates::Projection;
+        use casa_types::measures::direction::DirectionRef;
+
+        let declination = 0.710_938_054_184_240_3_f64;
+        let coordinate = |latitude, x, latitude_selector: f64| {
+            DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::new(ProjectionType::SIN),
+                [5.233_697_011_339_746, latitude],
+                [-3.878_509_448_876_288e-5, 3.878_509_448_876_288e-5],
+                [x, 16.0],
+            )
+            .with_longpole(std::f64::consts::PI)
+            .with_latpole(latitude_selector)
+        };
+        let next = declination.next_up();
+        let input = coordinate(next, 16.5, next);
+        let output = coordinate(declination, 16.0, std::f64::consts::FRAC_PI_2);
+        let mapping = direction_affine(&input, &output, [32, 32]).expect("one shared plane");
+        assert_eq!(mapping.source_pixel([9.0, 21.0]), [9.5, 21.0]);
+        let different = coordinate(next.next_up(), 16.5, next.next_up());
+        assert!(direction_affine(&different, &output, [32, 32]).is_none());
+        let fine_input = input.with_increment([-1e-12, 1e-12]);
+        let fine_output = output.with_increment([-1e-12, 1e-12]);
+        assert!(direction_affine(&fine_input, &fine_output, [32, 32]).is_none());
+    }
 
     #[test]
     fn complex_regrid_rotates_both_parts_about_the_integer_centre() {
@@ -903,7 +987,7 @@ mod tests {
             .clone()
             .with_reference_pixel([30.0, 32.5])
             .with_increment([-0.5 * arcsec, 0.5 * arcsec]);
-        assert!(same_tangent_plane(&input, &output));
+        assert!(same_tangent_plane(&input, &output, 0.0));
         let affine = positions(&input, &output, [60, 64]);
         for (k, at) in affine.iter().enumerate() {
             let (i, j) = ((k % 60) as f64, (k / 60) as f64);

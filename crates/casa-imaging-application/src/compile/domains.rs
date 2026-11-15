@@ -44,8 +44,8 @@ pub(super) enum DomainMask {
     Image {
         /// The supplied CASA mask image.
         path: PathBuf,
-        /// Limit MEM to the direction grid whose mask import agrees with CASA (#823).
-        require_matching_grid: bool,
+        /// Limit MEM to the shared tangent grid verified for image-mask import (#823).
+        require_shared_tangent_grid: bool,
     },
     /// Support over the domain's own grid: each plane x-major, plane after
     /// plane (channel-major), shared along an axis of one plane.
@@ -300,7 +300,7 @@ fn request_mask(
         },
         (UseMask::User, Some(path)) => named(DomainMask::Image {
             path: path.clone(),
-            require_matching_grid: request.deconvolver == crate::Deconvolver::Mem,
+            require_shared_tangent_grid: request.deconvolver == crate::Deconvolver::Mem,
         }),
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
@@ -467,7 +467,7 @@ fn mask_plan(
         },
         DomainMask::Image {
             path,
-            require_matching_grid,
+            require_shared_tangent_grid,
         } => {
             let coordinate_of = |kind| {
                 domain
@@ -493,7 +493,7 @@ fn mask_plan(
                     spectral,
                 },
             )?;
-            if require_matching_grid && !image.matches_direction_grid() {
+            if require_shared_tangent_grid && !image.has_shared_tangent_grid() {
                 return Err(PrepareError::MemMaskGrid { path });
             }
             let mut charge = admit(
@@ -504,8 +504,9 @@ fn mask_plan(
                     memory: image.reading_bytes(),
                 },
             )?;
-            charge.retain(image.retained_bytes());
+            let retained = image.retained_bytes();
             let plan = image.read()?;
+            charge.retain(retained);
             resident.join(charge);
             plan
         }

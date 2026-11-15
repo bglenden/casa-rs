@@ -20,18 +20,19 @@
 //! image's and whose channels are the image's, or one continuum channel,
 //! and does not regrid a mask along frequency or Stokes yet (#980).
 //!
-//! Each plane is reprojected onto the domain's direction grid through one
-//! pixel map the planes share ([`casa_imaging_deconvolution::MaskReprojection`]); a plane's
-//! support is its finite, positive pixels valid in the image's default
-//! pixel mask.
+//! The planes share one direction map. Copy an aligned plane directly.
+//! On a shifted grid, sample signed values linearly, treating invalid
+//! input pixels as zero, then take finite positive support as CASA does.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate};
+use casa_images::regrid::{DirectionAffine, direction_affine, linear_sample};
 use casa_images::{AnyPagedImage, ImagePixel, PagedImage};
-use casa_imaging_deconvolution::{MaskPlanes, MaskReprojection, ReconstructionMaskPlan};
+use casa_imaging_deconvolution::{MaskError, MaskPlanes, ReconstructionMaskPlan};
 use casa_imaging_model::DirectionCoordinateSpec;
+use ndarray::{ArrayView2, ArrayViewD, Axis, Ix2};
 
 use super::PrepareError;
 
@@ -92,6 +93,23 @@ enum RealImage {
     Float64(PagedImage<f64>),
 }
 
+/// The sampling mode reused across all planes of an input mask.
+enum MaskSampling {
+    Aligned,
+    Affine(DirectionAffine),
+    Mapped(Box<[[f64; 2]]>),
+}
+
+impl MaskSampling {
+    fn source_pixel(&self, [x, y]: [usize; 2], stride: usize) -> [f64; 2] {
+        match self {
+            Self::Aligned => unreachable!("aligned masks are copied directly"),
+            Self::Affine(map) => map.source_pixel([x as f64, y as f64]),
+            Self::Mapped(map) => map[x * stride + y],
+        }
+    }
+}
+
 /// A real mask image opened onto an image domain, read plane by plane once
 /// its read is admitted ([`Self::reading_bytes`]), as a restart's CLEAN
 /// mask is.
@@ -150,6 +168,12 @@ impl MaskImage {
         })
     }
 
+    /// Change the output coordinate for the allocator-counted read law.
+    pub(crate) fn with_target_direction(mut self, target: DirectionCoordinateSpec) -> Self {
+        self.target = target;
+        self
+    }
+
     /// Whether the saved mask and output have the same direction grid.
     pub(super) fn matches_direction_grid(&self) -> bool {
         if self.axes.direction.map(|axis| self.axes.shape[axis]) != self.target_size
@@ -188,22 +212,65 @@ impl MaskImage {
         })
     }
 
+    fn exact_affine(&self) -> Option<DirectionAffine> {
+        direction_affine(
+            &self.source.coordinate(),
+            &self.target.coordinate(),
+            self.target_size,
+        )
+    }
+
+    /// MEM's measured image-mask shapes have an aligned or affine grid.
+    pub(super) fn has_shared_tangent_grid(&self) -> bool {
+        self.matches_direction_grid() || self.exact_affine().is_some()
+    }
+
+    fn sampling(&self) -> Result<MaskSampling, PrepareError> {
+        if self.matches_direction_grid() {
+            return Ok(MaskSampling::Aligned);
+        }
+        if let Some(affine) = self.exact_affine() {
+            return Ok(MaskSampling::Affine(affine));
+        }
+        let [nx, ny] = self.target_size;
+        let cells = nx.checked_mul(ny).ok_or(MaskError::InvalidShape)?;
+        let mut positions = Vec::with_capacity(cells);
+        let source = self.source.coordinate();
+        let target = self.target.coordinate();
+        for x in 0..nx {
+            for y in 0..ny {
+                let position = target
+                    .pixel_to_world([x as f64, y as f64])
+                    .and_then(|world| source.world_to_pixel(world))
+                    .map_err(|_| MaskError::UnsupportedReprojection)?;
+                if !position.into_iter().all(f64::is_finite) {
+                    return Err(MaskError::UnsupportedReprojection.into());
+                }
+                positions.push(position);
+            }
+        }
+        Ok(MaskSampling::Mapped(positions.into_boxed_slice()))
+    }
+
     /// Target pixels of one plane.
     fn target_plane(&self) -> u64 {
         (self.target_size[0] as u64).saturating_mul(self.target_size[1] as u64)
     }
 
-    /// Heap bytes [`Self::read`] holds at most: one source plane as it is
-    /// read (its pixels, its default pixel mask and its support) and that
-    /// plane reprojected; the pixel map every plane shares; every plane's support as it is gathered and as
-    /// the plan shares it; the bounded tile cache and two decoded/I/O tile
-    /// buffers.
+    /// Heap bytes [`Self::read`] holds at most: one source plane and its
+    /// default pixel mask, the map for a general direction transform,
+    /// the collected and shared support, the tile cache and I/O buffers.
     pub(crate) fn reading_bytes(&self) -> u64 {
+        let map = if self.has_shared_tangent_grid() {
+            0
+        } else {
+            self.target_plane()
+                .saturating_mul(size_of::<[f64; 2]>() as u64)
+        };
         self.axes
             .plane_cells()
-            .saturating_mul(self.pixel_bytes + 2)
-            .saturating_add(self.target_plane())
-            .saturating_add(MaskReprojection::bytes(self.target_size))
+            .saturating_mul(self.pixel_bytes + 1)
+            .saturating_add(map)
             .saturating_add(self.retained_bytes().saturating_mul(2))
             .saturating_add(self.tile_bytes.saturating_mul(2))
             .saturating_add(CACHE_BYTES as u64)
@@ -218,21 +285,22 @@ impl MaskImage {
     /// The plan of the mask on the target grid: each source plane read and
     /// its support reprojected, one plane at a time.
     pub(crate) fn read(self) -> Result<ReconstructionMaskPlan, PrepareError> {
-        let source_shape = self.axes.direction.map(|axis| self.axes.shape[axis]);
         let held = self.held;
         let cells = self.target_size[0] * self.target_size[1];
         let mut support = Vec::with_capacity(cells * held.count());
-        // Every plane shares the direction grids, so one map reprojects
-        // them all.
-        let map = MaskReprojection::new(self.source, source_shape, self.target, self.target_size)?;
+        let sampling = self.sampling()?;
         for channel in 0..held.channels() {
             for stokes in 0..held.polarizations() {
                 let (start, shape) = self.axes.plane(channel, stokes);
-                let plane = match &self.image {
-                    RealImage::Float32(image) => plane_support(image, &start, &shape)?,
-                    RealImage::Float64(image) => plane_support(image, &start, &shape)?,
-                };
-                support.extend_from_slice(&map.apply(&plane)?);
+                let target = (&sampling, self.target_size, &mut support);
+                match &self.image {
+                    RealImage::Float32(image) => {
+                        append_plane_support(image, &start, &shape, self.axes.direction, target)?;
+                    }
+                    RealImage::Float64(image) => {
+                        append_plane_support(image, &start, &shape, self.axes.direction, target)?;
+                    }
+                }
             }
         }
         let support: Arc<[bool]> = support.into();
@@ -338,32 +406,70 @@ fn mask_axes(shape: &[usize], coordinates: &CoordinateSystem) -> Result<MaskAxes
     Ok(axes)
 }
 
-/// The support of the direction plane of `image` at `start` of `shape`
-/// (one pixel along every other axis): its finite, positive pixels valid in
-/// the default pixel mask, x-major. The plane's values, in index order, run
-/// over x with y fastest, whatever axes lie between.
-fn plane_support<T>(
+/// Extract the two direction axes of a slice that is singleton elsewhere.
+fn direction_plane<T>(mut plane: ArrayViewD<'_, T>, axes: [usize; 2]) -> ArrayView2<'_, T> {
+    for axis in (0..plane.ndim()).rev() {
+        if !axes.contains(&axis) {
+            plane = plane.index_axis_move(Axis(axis), 0);
+        }
+    }
+    plane
+        .into_dimensionality::<Ix2>()
+        .expect("two direction axes")
+}
+
+/// Write one plane's support, x-major. In CASA's copyMask the default
+/// validity mask zeros source values before interpolation.
+fn append_plane_support<T>(
     image: &PagedImage<T>,
     start: &[usize],
     shape: &[usize],
-) -> Result<Vec<bool>, PrepareError>
+    direction: [usize; 2],
+    (sampling, target, support): (&MaskSampling, [usize; 2], &mut Vec<bool>),
+) -> Result<(), PrepareError>
 where
     T: ImagePixel + Into<f64> + Copy,
 {
     let values = image.get_slice(start, shape)?;
     let mask = image.get_mask_slice(start, shape, &vec![1; shape.len()])?;
-    let set = |value: &T| {
-        let value: f64 = (*value).into();
-        value.is_finite() && value > 0.0
+    let values = direction_plane(values.view(), direction);
+    let mask = mask
+        .as_ref()
+        .map(|mask| direction_plane(mask.view(), direction));
+    let sample = |x: usize, y: usize| {
+        if mask.as_ref().is_none_or(|mask| mask[[x, y]]) {
+            values[[x, y]].into()
+        } else {
+            0.0
+        }
     };
-    Ok(match mask {
-        Some(mask) => values
-            .iter()
-            .zip(mask.iter())
-            .map(|(value, valid)| *valid && set(value))
-            .collect(),
-        None => values.iter().map(set).collect(),
-    })
+    let positive = |value: f64| value.is_finite() && value > 0.0;
+    let source_shape = [values.nrows(), values.ncols()];
+    if matches!(sampling, MaskSampling::Aligned) {
+        for x in 0..target[0] {
+            for y in 0..target[1] {
+                support.push(positive(sample(x, y)));
+            }
+        }
+    } else {
+        for x in 0..target[0] {
+            for y in 0..target[1] {
+                let at = sampling.source_pixel([x, y], target[1]);
+                let value = linear_sample(source_shape, at, |i, j| Some(sample(i, j)));
+                support.push(value.is_some_and(|value| {
+                    // CASA's mask lattice stores Float before fillMask
+                    // thresholds it. Native Float64 masks keep their precision.
+                    if size_of::<T>() == size_of::<f32>() {
+                        let value = value as f32;
+                        value.is_finite() && value > 0.0
+                    } else {
+                        positive(value)
+                    }
+                }));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The planes tclean gives a mask of `axes` on an image of `target`
