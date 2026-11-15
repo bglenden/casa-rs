@@ -1309,6 +1309,9 @@ fn mvc_reads_output_depth_separately_from_input_selection() {
 fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     let accepted = request(json!({ "deconvolver": "mem", "niter": 1 }));
     accepted.validate().expect("standard Stokes I MFS MEM");
+    let briggs = request(json!({"deconvolver":"mem", "weighting":"briggs", "robust":0.5}));
+    assert_eq!(briggs.weighting, crate::Weighting::Briggs);
+    briggs.validate().expect("Briggs-weighted MEM");
     request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
         .validate()
         .expect("other solvers retain their scope");
