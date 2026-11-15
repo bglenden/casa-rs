@@ -48,6 +48,16 @@ Evidence, review records and the section's Markdown and HTML documentation are
 written atomically under the pack paths the manifest declares. The runner's
 tests run with `scripts/test-perf-tools.sh`.
 
+## VLA adaptive-scale examples
+
+The G55 standard-gridder and W-projection `deconvolver='asp'` commands are
+experimental CASA references. Native `tclean` rejects them before imaging with
+`deconvolver="asp" is not implemented by casa-rs yet (#223)`. The refusal applies
+to the tutorial's `fusedthreshold` and `largestscale` combinations, including
+the requests that save model visibilities.
+[VLA guide, revision 36701](https://casaguides.nrao.edu/index.php?oldid=36701) ·
+[CASA 6.7.6 release notes](https://casadocs.readthedocs.io/en/v6.7.6/notebooks/introduction.html#tclean)
+
 ## Source pages
 
 - CASA Guides: <https://casaguides.nrao.edu/index.php/Main_Page>
