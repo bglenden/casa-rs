@@ -137,11 +137,13 @@ fn read_domain(
             restart::check_grid(&path, &suffix, &template, saved_mosaic_psf)?
         };
         if request.calcpsf
+            && request.specmode == crate::SpecMode::Mfs
             && !request.uses_separate_psf()
             && let Some(coordinates) = psf_coordinates
         {
-            // Without a separate PSF request CASA makes new samples in
-            // the existing image store, keeping its coordinates and beam.
+            // MFS forms new samples in the existing PSF image. A cube
+            // forms a new PSF in the requested geometry and publishes
+            // that geometry with it.
             let bytes = coordinates
                 .to_record()
                 .retained_heap_bytes()

@@ -867,17 +867,17 @@ impl ImagingRequest {
 
     pub(crate) fn supports_separate_psf(&self) -> bool {
         matches!(self.gridder, Gridder::Mosaic { .. })
-            && self.specmode == SpecMode::Mfs
+            && matches!(self.specmode, SpecMode::Mfs | SpecMode::Cube)
             && self.deconvolver != Deconvolver::Mtmfs
             && self.outlierfile.is_none()
     }
 
-    /// A separately formed mosaic PSF uses the single-term MFS route.
+    /// A separately formed mosaic PSF uses a single-term imaging route.
     pub(crate) fn validate_psf_phase_centre(&self) -> Result<(), InvalidRequest> {
         if self.calcpsf && self.uses_separate_psf() && !self.supports_separate_psf() {
             return Err(InvalidRequest {
                 parameters: "psfphasecenter",
-                reason: "a separate PSF centre is supported for a single-term MFS mosaic without outliers (#1062)",
+                reason: "a separate PSF centre is supported for a single-term MFS or cube mosaic without outliers (#1062)",
             });
         }
         Ok(())

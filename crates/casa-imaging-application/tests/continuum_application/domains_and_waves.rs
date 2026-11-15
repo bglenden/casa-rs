@@ -100,6 +100,39 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     }
 }
 
+/// The second view supplies the PSF for every wave, with the original
+/// geometry and weights used for the other products.
+#[test]
+fn alternate_mosaic_cube_psf_is_the_same_in_waves() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_mosaic_measurement_set(root.path());
+    let cube = |name: &str, memory: u64| {
+        let path = root.path().join(name);
+        let imaging = line_cube(
+            &measurement_set,
+            &path,
+            json!({
+                "gridder": "mosaic", "imsize": 128, "weighting": "natural",
+                "write_pb": true, "psfphasecenter": "J2000 1.00006rad 0.5rad",
+            }),
+        );
+        let outcome =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        (path, outcome.planes_per_wave)
+    };
+    let (resident, resident_waves) = cube("resident-alternate", 4 << 30);
+    let (waved, waves) = cube("waved-alternate", 16 << 20);
+    assert_eq!(resident_waves, None);
+    assert!(waves.is_some_and(|planes| planes < 30), "waves: {waves:?}");
+    for suffix in [".psf", ".sumwt", ".pb", ".weight", ".residual"] {
+        let (_, a) = read_product(&waved, suffix);
+        let (_, b) = read_product(&resident, suffix);
+        assert_eq!(a, b, "{suffix} must use the same data in every wave");
+    }
+}
+
 /// A source-defined LSRK grid and the waves that read it use the same
 /// frequency frame, although the published image is TOPO (#1198).
 #[test]

@@ -10,7 +10,7 @@ use casa_types::measures::MeasuresProvider;
 
 use super::NativeError;
 use crate::ApplicationRuntime;
-use crate::imaging::{self, BatchRoute, Batching, StoreBatches};
+use crate::imaging::{self, BatchRoute, Batching, SeparatePsf, StoreBatches};
 
 /// Temporary geometry and admission for a second view of the same rows.
 /// The stores, resolved selection and optional update sessions are shared.
@@ -70,7 +70,7 @@ impl PsfRoute {
         route: &mut BatchRoute,
         runtime: &ApplicationRuntime,
         summary: &mut RunSummary,
-    ) -> Result<Admitted<Vec<f32>>, NativeError> {
+    ) -> Result<SeparatePsf, NativeError> {
         let (mut plans, mut batching) = self.geometry.value;
         swap_view(route, &mut plans, &mut batching);
         let result = run_phase(

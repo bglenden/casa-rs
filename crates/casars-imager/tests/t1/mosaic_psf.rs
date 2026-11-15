@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The separately centred PSF of a single-term MFS mosaic (#1062).
+//! The separately centred PSF of a single-term mosaic (#1062).
 
 use casa_coordinates::{Coordinate, CoordinateModel};
 use casa_images::PagedImage;
@@ -9,8 +9,8 @@ use serde_json::json;
 use super::fixture::{Observation, Product, Setup};
 use super::mosaic::mosaic_run;
 
-fn setup() -> (Observation, serde_json::Value, String) {
-    let (observation, mut controls) = mosaic_run(false);
+fn setup(cube: bool) -> (Observation, serde_json::Value, String) {
+    let (observation, mut controls) = mosaic_run(cube);
     let spacing = 80.0 * observation.geometry().cell_rad()[0];
     let [longitude, latitude] = Setup::pointing([-spacing, 0.0]);
     let alternate = format!("J2000 {longitude}rad {latitude}rad");
@@ -53,7 +53,16 @@ fn assert_same(actual: &Product, reference: &Product, suffix: &str) {
 
 #[test]
 fn alternate_mosaic_psf_changes_only_the_psf_and_its_beam() {
-    let (observation, mut controls, alternate) = setup();
+    check_alternate_psf(false);
+}
+
+#[test]
+fn alternate_mosaic_cube_psf_replaces_each_channel_and_its_beam() {
+    check_alternate_psf(true);
+}
+
+fn check_alternate_psf(cube: bool) {
+    let (observation, mut controls, alternate) = setup(cube);
     let (_, ordinary) = observation.image("ordinary-mosaic", controls.clone());
     let mut shifted_controls = controls.clone();
     shifted_controls["phasecenter"] = json!(alternate);
@@ -64,23 +73,37 @@ fn alternate_mosaic_psf_changes_only_the_psf_and_its_beam() {
     // The shifted chart excludes the last pointing. Its PSF determines
     // the fitted beam, while the original mosaic supplies all other normals.
     let sums = ordinary.get(".sumwt").channel_values();
-    assert!(shifted.get(".sumwt").channel_values()[0] < sums[0]);
+    assert_eq!(sums.len(), if cube { 2 } else { 1 });
+    for (shifted_sum, sum) in shifted.get(".sumwt").channel_values().iter().zip(&sums) {
+        assert!(shifted_sum < sum);
+    }
     assert_eq!(separate.get(".sumwt").channel_values(), sums);
     assert_same(separate.get(".psf"), shifted.get(".psf"), ".psf");
     assert!(nrms(separate.get(".psf"), ordinary.get(".psf")) > 1e-3);
     for suffix in [".residual", ".pb", ".weight"] {
         assert_same(separate.get(suffix), ordinary.get(suffix), suffix);
     }
-    let psf = separate.get(".psf").restoring_beam();
-    assert_eq!(separate.get(".image").restoring_beam(), psf);
-    let expected = shifted.get(".psf").restoring_beam();
-    assert!((psf.major / expected.major - 1.0).abs() < 1e-5);
-    assert!((psf.minor / expected.minor - 1.0).abs() < 1e-5);
+    for channel in 0..sums.len() {
+        let psf = separate.get(".psf").channel_beam(channel);
+        assert_eq!(separate.get(".image").channel_beam(channel), psf);
+        let expected = shifted.get(".psf").channel_beam(channel);
+        assert!((psf.major / expected.major - 1.0).abs() < 1e-5);
+        assert!((psf.minor / expected.minor - 1.0).abs() < 1e-5);
+    }
 }
 
 #[test]
 fn alternate_mosaic_psf_can_be_reused_and_checks_the_saved_pixel_grid() {
-    let (observation, mut controls, alternate) = setup();
+    check_saved_psf(false);
+}
+
+#[test]
+fn alternate_mosaic_cube_psf_can_be_reused_and_checks_the_saved_pixel_grid() {
+    check_saved_psf(true);
+}
+
+fn check_saved_psf(cube: bool) {
+    let (observation, mut controls, alternate) = setup(cube);
     controls["psfphasecenter"] = json!(alternate);
     let (_, seeded) = observation.image("saved-mosaic-psf", controls.clone());
     controls["niter"] = json!(60);
@@ -119,7 +142,7 @@ fn alternate_mosaic_psf_can_be_reused_and_checks_the_saved_pixel_grid() {
 
 #[test]
 fn reforming_an_existing_mosaic_psf_keeps_its_header_until_a_new_centre_is_requested() {
-    let (observation, mut controls, alternate) = setup();
+    let (observation, mut controls, alternate) = setup(false);
     let (_, ordinary) = observation.image("main-centre-mosaic", controls.clone());
     controls["psfphasecenter"] = json!(alternate);
     let (_, saved) = observation.image("reformed-mosaic", controls.clone());
@@ -147,4 +170,28 @@ fn reforming_an_existing_mosaic_psf_keeps_its_header_until_a_new_centre_is_reque
     let beam = replaced.restoring_beam();
     assert!((beam.major / ordinary.get(".psf").restoring_beam().major - 1.0).abs() < 1e-5);
     assert_ne!(beam, previous.restoring_beam());
+}
+
+#[test]
+fn reforming_a_mosaic_cube_psf_uses_the_requested_geometry() {
+    let (observation, mut controls, alternate) = setup(true);
+    let (_, ordinary) = observation.image("main-centre-cube", controls.clone());
+    controls["psfphasecenter"] = json!(alternate);
+    let (_, seeded) = observation.image("reformed-cube", controls.clone());
+    assert!(nrms(seeded.get(".psf"), ordinary.get(".psf")) > 1e-3);
+    controls.as_object_mut().unwrap().remove("psfphasecenter");
+    let (_, reformed) = observation.image("reformed-cube", controls);
+    for suffix in [".psf", ".residual", ".pb", ".weight"] {
+        assert_same(reformed.get(suffix), ordinary.get(suffix), suffix);
+    }
+    for channel in 0..2 {
+        assert_eq!(
+            reformed.get(".psf").channel_beam(channel),
+            ordinary.get(".psf").channel_beam(channel),
+        );
+    }
+    assert_eq!(
+        reformed.get(".sumwt").channel_values(),
+        ordinary.get(".sumwt").channel_values(),
+    );
 }

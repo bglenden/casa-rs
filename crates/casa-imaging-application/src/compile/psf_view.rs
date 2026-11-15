@@ -70,9 +70,8 @@ pub(super) fn prepare(
         phase.frame(),
         [longitude, latitude],
     );
-    // Only a single domain and one spectral plane are admitted. Cover both
-    // compiled and uncompiled metadata during conversion, including the
-    // owned coordinate and scale arrays. The observation manifest is shared.
+    // Cover both compiled and uncompiled single-domain metadata during
+    // conversion. The alternate view shares the observation manifest.
     let variable = (request.restfreq.len() as u64 + request.scales.len() as u64) * 32
         + (main.coordinates.obs_info().telescope.len() as u64
             + main.coordinates.obs_info().observer.len() as u64)
