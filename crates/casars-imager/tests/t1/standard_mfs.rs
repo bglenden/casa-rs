@@ -269,17 +269,10 @@ fn mem_updates_a_saved_model_only_when_it_solves() {
     assert!(old_metadata.get("BETA").is_some());
     let model_path = observation.scratch(&format!("{name}.model"));
     let psf_path = observation.scratch(&format!("{name}.psf"));
-    let mut psf = casa_images::PagedImage::<f32>::open(&psf_path).unwrap();
     // A small sidelobe marker distinguishes reading the saved PSF from
     // forming the same PSF again.
     let marker = 0.0125;
-    psf.put_slice(
-        &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), marker),
-        &[0, 0, 0, 0],
-    )
-    .unwrap();
-    psf.save().unwrap();
-    drop(psf);
+    write_saved_corner(&psf_path, marker);
 
     controls["calcpsf"] = json!(false);
     controls["niter"] = json!(0);
@@ -318,4 +311,58 @@ fn mem_updates_a_saved_model_only_when_it_solves() {
     assert_ne!(new_model.pixels, model.pixels);
     assert!(new_model.image.misc_info().get("ALPHA").is_some());
     assert_eq!(Product::open(&psf_path).pixels[[0, 0]], marker);
+}
+
+fn write_saved_corner(path: &std::path::Path, value: f32) {
+    let mut image = casa_images::PagedImage::<f32>::open(path).unwrap();
+    image
+        .put_slice(
+            &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), value),
+            &[0, 0, 0, 0],
+        )
+        .unwrap();
+    image.save().unwrap();
+}
+
+#[test]
+fn mem_restart_reads_or_reforms_the_requested_normal_images() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let name = "mem-restart-normal-images";
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (_, seed) = observation.image(name, controls.clone());
+    let psf = observation.scratch(&format!("{name}.psf"));
+    let residual = observation.scratch(&format!("{name}.residual"));
+    let psf_marker = 0.0125;
+    let residual_marker = 0.1234;
+    write_saved_corner(&psf, psf_marker);
+    write_saved_corner(&residual, residual_marker);
+    controls["niter"] = json!(0);
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    observation.image(name, controls.clone());
+    assert_eq!(
+        Product::open(&psf).pixels[[0, 0]],
+        psf_marker,
+        "read the saved PSF"
+    );
+    assert_eq!(
+        Product::open(&residual).pixels[[0, 0]],
+        residual_marker,
+        "read the saved residual"
+    );
+
+    controls["calcpsf"] = json!(true);
+    controls["calcres"] = json!(true);
+    let (_, reformed) = observation.image(name, controls);
+    for suffix in [".psf", ".residual"] {
+        let actual = reformed.get(suffix).pixels[[0, 0]];
+        let expect = seed.get(suffix).pixels[[0, 0]];
+        assert!(
+            (actual - expect).abs() < 1e-6,
+            "reform {suffix} from the observations"
+        );
+    }
 }
