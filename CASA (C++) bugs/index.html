@@ -1129,7 +1129,8 @@ CASA behaviours casa-rs does not follow:
 <a href="#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails"><code>tb.removerows</code> and <code>tb.addcols</code> that fail part way</a>,
 <a href="#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row"><code>MSIter</code>'s receptor angles for a window without its own <code>FEED</code> row</a>,
 <a href="#tclean-refuses-a-projection-name-with-spaces-round-it">a projection name with spaces</a>,
-<a href="#ncp-on-the-celestial-equator-places-every-pixel-at-nan">NCP on the celestial equator</a>.
+<a href="#ncp-on-the-celestial-equator-places-every-pixel-at-nan">NCP on the celestial equator</a>,
+<a href="#pco-pixel-to-world-returns-nan-on-the-central-meridian">PCO coordinates on the central meridian</a>.
 Simulator behaviours casa-rs does not follow:
 <a href="#the-simulator-stores-tai-as-utc">TIME as TAI</a>,
 <a href="#the-simulator-charges-shadowing-to-the-antenna-in-front">shadowing the front antenna</a>,
@@ -6715,6 +6716,28 @@ Both native masks are empty and return stop code 7. The ordinary
 fractional, near-integer and partly clipped controls retain CASA's support.</p>
 <p><a href="https://github.com/bglenden/casa-rs/issues/823">Issue #823</a> and
 <a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/LRegions/LCPolygon.cc#L198-L208">casacore's upper crossing bound</a>.</p>
+<h2 id="pco-pixel-to-world-returns-nan-on-the-central-meridian">PCO pixel to world returns NaN on the central meridian<a class="headerlink" href="#pco-pixel-to-world-returns-nan-on-the-central-meridian" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted 2026-11-15</li>
+<li>Status corrected in casa-rs (#1101, #1494)</li>
+<li>Affected code WCSLIB 8.2.2 <code>pcox2s</code> in CASA 6.7.6.14</li>
+</ul>
+<p>Run <code>tclean</code> on <code>refim_twochan.ms</code> with <code>projection="PCO"</code>, a 100 × 100
+image, 8″ cells and phase centre <code>J2000 19:59:28.500 +40.43.37.50</code>. The dirty
+peak is at pixel [50, 53]. CASA's <code>coordsys.toworld</code> returns NaN in both
+sky coordinates there. Pixel [50, 50] and the off-meridian [50.001, 53]
+have finite coordinates. CASA's <code>coordsys.topixel</code> places the known
+sky direction, the reference longitude at the reference declination plus
+24″, at [50, 53]. CASA shows this behaviour when reading either a CASA
+or a casa-rs image with the same PCO record.</p>
+<p>At zero intermediate x, WCSLIB initializes both residuals to zero and
+divides one by their difference in the first weighted interval step.
+The native inverse solves for the same sky with a finite latitude. On
+the central meridian the projected latitude is the native latitude.
+The frozen PCO checks verify both offset signs using CASA's finite
+world-to-pixel direction and compare ordinary pixels in both directions.
+The projection and parameters remain CASA-readable and image products
+agree at the original tolerance. <a href="https://www.atnf.csiro.au/computing/software/wcs/wcslib-releases/wcslib-8.2.2.tar.bz2">WCSLIB 8.2.2 source</a></p>
 
 
 
