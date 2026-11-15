@@ -1072,8 +1072,7 @@ impl ConvolutionFunctionSet for AwCatalog {
         }
     }
 
-    /// `AWProjectWBFT::makeWBSensitivityImage` publishes `abs` of the
-    /// polarization-averaged weight transform.
+    /// Keep the magnitude of the polarization-combined sensitivity.
     fn weight_image_magnitude(&self) -> bool {
         true
     }
