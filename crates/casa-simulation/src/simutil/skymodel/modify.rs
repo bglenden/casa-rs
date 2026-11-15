@@ -167,7 +167,9 @@ pub fn modify_model(
             input.display()
         )));
     }
-    let model = InputImage::read(input)?;
+    let model = InputImage::read(input).map_err(|error| {
+        SkyModelError::Model(format!("Unable to open image {}. {error}", input.display()))
+    })?;
     let scale = brightness_scale(&overrides.inbright, &model.pixels)?;
     let pixels = four_axes(model.pixels)?;
     let shape: [usize; 4] = std::array::from_fn(|axis| pixels.shape()[axis]);
@@ -294,7 +296,11 @@ fn cell_override(incell: &[String]) -> Result<Option<[Quantity; 2]>, SkyModelErr
         let value = if text.is_empty() {
             qa::number(0.0)
         } else {
-            qa::read(text)?
+            qa::read(text).map_err(|_| {
+                SkyModelError::Model(format!(
+                    "Error in QuantumHolder::fromString with input string \"{text}\": Illegal input units or format"
+                ))
+            })?
         };
         Ok(qa::convert(&value, "arcsec")?)
     };

@@ -202,6 +202,20 @@ Python surfaces, retaining the original assertions. Supply `--test-file`,
 passes, failures and skips. `--exercise-skipped` also runs disabled bodies
 and returns failure if any still skip or fail; documented native counterparts
 remain separate from these raw upstream outcomes.
+`--implementation` selects `casa`, `casa-rs` or both for focused reruns;
+`--align-epochs` applies the existing physical TAI/UTC observation control.
+
+The pinned upstream inventory is 103 Python cases: simulator (2), simobserve
+(93), simanalyze (6), and the multi-array/TP and simalma regressions (2).
+Together with the three direct C++ source cases above, this is 106 cases.
+The native `test_simobserve_upstream.py` and `test_simanalyze_upstream.py`
+cover the exposed refusals, disabled-case intent, saved leakage equations
+and combined IF/TP imaging. `upstream_simobserve_statistics.py` runs the
+original noise bodies and independently checks their analytic radiometer
+assertions, retaining seed-specific failures separately. Run it under CASA's
+Python with the same `--test-file`, `--casatestdata` and `--out` arguments.
+The existing `simanalyze_regression.py` and `simalma_regression.py` cover the
+two full workflows; their completed comparisons can be reused.
 
 **simobserve.** `cargo nextest run -p casa-simulation --test simobserve` runs
 the task end to end on a small array without CASA. Its agreement with CASA

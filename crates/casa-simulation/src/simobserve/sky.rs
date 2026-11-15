@@ -204,7 +204,12 @@ fn component_model(run: &Run<'_>) -> Result<SkyInput, SimobserveError> {
                 parameters.comp_nchan
             ))
         })?;
-    let list = ComponentList::read_table(&parameters.complist).map_err(SkyModelError::from)?;
+    let list = ComponentList::read_table(&parameters.complist).map_err(|error| {
+        SkyModelError::Model(format!(
+            "{} is non existant or is not a componentlist table: {error}",
+            parameters.complist
+        ))
+    })?;
     let model = ComponentModel::from_list(&list, &parameters.compwidth, channels)?;
     tracing::info!("scaling model bandwidth by model_nchan");
     let size = [qa::read(&model.size[0])?, qa::read(&model.size[1])?];
