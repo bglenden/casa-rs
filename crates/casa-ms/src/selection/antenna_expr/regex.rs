@@ -28,7 +28,7 @@ impl FullMatch {
     /// The `Err` text is the reason the expression cannot be compiled, as
     /// casacore's `AipsError("Error in regex ...")` (`Regex.cc:55-57`) or an
     /// ECMAScript feature this port does not support.
-    pub(super) fn compile(casacore_regex: &str) -> Result<Self, String> {
+    pub(in crate::selection) fn compile(casacore_regex: &str) -> Result<Self, String> {
         let ecma = to_ecma(casacore_regex.as_bytes());
         let body = ecma_to_rust(&ecma)
             .map_err(|reason| format!("Error in regex {casacore_regex}: {reason}"))?;

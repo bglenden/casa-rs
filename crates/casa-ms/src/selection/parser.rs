@@ -70,7 +70,7 @@ pub struct FieldSelectorRow<'a> {
     pub name: &'a str,
     /// The stored CODE, used as a fallback when no NAME matches.
     pub code: Option<&'a str>,
-    /// Whether the row is flagged: a flagged row matches no name or pattern,
+    /// Whether the row is flagged: it matches no name, pattern or bound,
     /// following `MSFieldIndex`, though a numeric ID still selects it.
     pub flagged: bool,
 }
@@ -103,8 +103,8 @@ impl MeasurementSet {
     /// Resolve a field selector using FIELD metadata, without scanning MAIN.
     ///
     /// Comma-separated IDs, inclusive numeric ranges, exact names, bare `*`
-    /// name patterns and double-quoted patterns form a union as in
-    /// CASA's `MSFieldGram` index list.
+    /// name patterns, double-quoted patterns, slash-delimited regexes and
+    /// strict ID comparisons form a union as in CASA's `MSFieldGram` index list.
     /// The returned IDs are sorted and unique. Empty text returns an empty
     /// list, the selection builder's convention for selecting every field.
     ///
@@ -112,8 +112,8 @@ impl MeasurementSet {
     ///
     /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
     /// no FIELD row, or a nonempty selection resolving to no existing fields.
-    /// Slash-delimited regular expressions, comparisons, and escaped or
-    /// concatenated quoted patterns remain outside this resolver's scope.
+    /// Escaped or concatenated quoted patterns and regex delimiters with
+    /// backslashes or newlines remain outside this resolver's scope.
     /// An out-of-range numeric ID tries its decimal text as a name or code.
     /// Only the FIELD rows themselves bound numeric range enumeration.
     /// Name matching trims stored names and
@@ -172,17 +172,30 @@ fn resolve_field_predicate_rows(
 ) -> MsResult<Vec<i32>> {
     let mut ranges = Vec::new();
     let mut ids = Vec::new();
-    let mut quoted = false;
-    let parts = value.split(|character| {
-        if character == '"' {
-            quoted = !quoted;
+    // MSFieldGram permits a single pair of parentheses around the list.
+    let grouped = value.starts_with('(');
+    let list = if grouped {
+        value
+            .strip_prefix('(')
+            .and_then(|text| text.strip_suffix(')'))
+            .ok_or_else(|| MsError::InvalidInput(format!("unclosed FIELD list {value:?}")))?
+    } else {
+        value
+    };
+    let mut delimiter = None;
+    let parts = list.split(|character| {
+        match delimiter {
+            Some(close) if character == close => delimiter = None,
+            None if matches!(character, '"' | '/') => delimiter = Some(character),
+            _ => {}
         }
-        character == ',' && !quoted
+        character == ',' && delimiter.is_none()
     });
+    let strict_list = grouped || value.contains(['/', '<', '>']);
     for raw_part in parts {
         let part = raw_part.trim();
         if part.is_empty() {
-            if value.contains('"') {
+            if strict_list || value.contains('"') {
                 return Err(MsError::InvalidInput(format!(
                     "empty term in field selector {value:?}"
                 )));
@@ -198,16 +211,37 @@ fn resolve_field_predicate_rows(
                     "escaped or adjacent quoted patterns are not supported in FIELD selection (#54): {part:?}"
                 )));
             }
-            ids.extend(resolve_field_pattern(fields, pattern)?);
+            ids.extend(resolve_field_pattern(fields, pattern, false)?);
             continue;
         }
-        if part.contains(['"', '\'', '/', '<', '>', '?', '[', ']', '{', '}']) {
+        if part.starts_with('/') {
+            let pattern = raw_part
+                .strip_prefix('/')
+                .and_then(|text| text.strip_suffix('/'))
+                .ok_or_else(|| {
+                    MsError::InvalidInput(format!(
+                        "invalid slash-delimited FIELD regex {raw_part:?}"
+                    ))
+                })?;
+            if pattern.contains(['/', '\\', '\n']) {
+                return Err(MsError::InvalidInput(format!(
+                    "escaped or adjacent FIELD regexes are not supported (#54): {part:?}"
+                )));
+            }
+            ids.extend(resolve_field_pattern(fields, pattern, true)?);
+            continue;
+        }
+        if part.starts_with(['<', '>']) {
+            append_field_comparison(fields, raw_part, &mut ids)?;
+            continue;
+        }
+        if part.contains(['"', '\'', '/', '<', '>', '?', '[', ']', '{', '}', '(', ')']) {
             return Err(MsError::InvalidInput(format!(
                 "field expression {part:?} is not implemented yet (#54); use IDs, names or simple * patterns"
             )));
         }
         if part.contains('*') {
-            ids.extend(resolve_field_pattern(fields, part)?);
+            ids.extend(resolve_field_pattern(fields, part, false)?);
             continue;
         }
         let numeric = parse_numeric_range_endpoints(part)
@@ -232,6 +266,47 @@ fn resolve_field_predicate_rows(
     }
     append_numeric_fields(fields, ranges, &mut ids);
     Ok(dedup_i32(ids))
+}
+
+/// MSFieldGram accepts LT INT, GT INT and GT INT AMPERSAND LT INT.
+fn append_field_comparison(
+    fields: &[FieldSelectorRow<'_>],
+    text: &str,
+    ids: &mut Vec<i32>,
+) -> MsResult<()> {
+    let integer = |digits: &str| {
+        let digits = digits.trim_matches([' ', '\t', '\n']);
+        digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+            .then(|| digits.parse::<i32>().ok())
+            .flatten()
+    };
+    let bounds = match text.as_bytes().first() {
+        Some(b'<') => integer(&text[1..]).map(|upper| (-1, Some(upper))),
+        Some(b'>') => {
+            let tail = &text[1..];
+            match tail.split_once("&<") {
+                Some((low, high)) => integer(low).zip(integer(high)).map(|(l, h)| (l, Some(h))),
+                None => integer(tail).map(|lower| (lower, None)),
+            }
+        }
+        _ => None,
+    };
+    let (lower, upper) = bounds.ok_or_else(|| {
+        MsError::InvalidInput(format!("invalid FIELD ID comparison {text:?} (#54)"))
+    })?;
+    let start = ids.len();
+    ids.extend(fields.iter().enumerate().filter_map(|(row, field)| {
+        let row = i32::try_from(row).ok()?;
+        (!field.flagged && row > lower && upper.is_none_or(|upper| row < upper)).then_some(row)
+    }));
+    if ids.len() == start {
+        return Err(MsError::InvalidInput(format!(
+            "FIELD ID comparison {text:?} did not match any unflagged FIELD rows"
+        )));
+    }
+    Ok(())
 }
 
 /// MSFieldIndex keeps an in-range ID. For other numbers, it uses the first
@@ -284,8 +359,17 @@ fn append_numeric_fields(
 
 /// A FIELD pattern matches a complete trimmed NAME or, if none match,
 /// a complete CODE as stored.
-fn resolve_field_pattern(fields: &[FieldSelectorRow<'_>], pattern: &str) -> MsResult<Vec<i32>> {
-    let matcher = FullMatch::compile_pattern(pattern).map_err(MsError::InvalidInput)?;
+fn resolve_field_pattern(
+    fields: &[FieldSelectorRow<'_>],
+    pattern: &str,
+    regex: bool,
+) -> MsResult<Vec<i32>> {
+    let matcher = if regex {
+        FullMatch::compile(pattern)
+    } else {
+        FullMatch::compile_pattern(pattern)
+    }
+    .map_err(MsError::InvalidInput)?;
     let ids = field_ids_by_name_or_code(
         fields,
         |name| matcher.matches(name),

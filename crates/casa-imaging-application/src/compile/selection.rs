@@ -111,8 +111,8 @@ fn resolve_baselines(text: &str, catalogue: &Catalogue) -> Result<BaselineSelect
 
 /// The fields `selector` names among `catalogue`'s, through the shared
 /// FIELD selector ([`casa_ms::resolve_field_selector_rows`]): IDs and
-/// ranges bounded by the fields that exist, exact names and simple `*`
-/// patterns over unflagged fields. An MSv2 catalogue's field `i` is
+/// ranges bounded by the fields that exist, and names, patterns, regexes
+/// and comparisons over unflagged fields. An MSv2 catalogue's field `i` is
 /// `FIELD_ID` `i`; an MSv4's fields are numbered in its catalogue's order
 /// and named as stored (XRADIO appends the MSv2 field number), with no row
 /// flags. Empty text selects every field; a nonempty selector that matches

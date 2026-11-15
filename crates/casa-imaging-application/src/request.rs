@@ -322,8 +322,8 @@ pub struct ImagingRequest {
 pub struct MeasurementSetSelection {
     /// The MeasurementSet.
     pub vis: PathBuf,
-    /// Field selector: IDs/ranges, exact names and simple `*` name
-    /// patterns; `None` selects every field.
+    /// FIELD IDs, ranges and comparisons, names, patterns or regexes.
+    /// `None` selects every field.
     #[serde(deserialize_with = "optional")]
     pub field: Option<String>,
     /// CASA spectral-window selection, for example `0:1~30`.

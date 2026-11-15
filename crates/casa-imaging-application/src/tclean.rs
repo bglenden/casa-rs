@@ -501,12 +501,11 @@ impl<'a> Tclean<'a> {
             selections.push(Map::from_iter([("vis".to_string(), json!(text))]));
         }
         let count = selections.len();
-        // Field, spw, uvrange and intent are trimmed; scan, observation,
-        // antenna and time selectors keep their exact text: CASA's tclean
-        // refuses whitespace-only text and `none`, and its grammars give
-        // padding and case their own meanings.
+        // Field, scan, observation, antenna and time keep their exact
+        // text so their grammars can interpret the padding. The other
+        // selector readers currently receive trimmed text.
         for (name, trim) in [
-            ("field", true),
+            ("field", false),
             ("spw", true),
             ("uvrange", true),
             ("intent", true),
