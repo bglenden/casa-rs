@@ -241,6 +241,33 @@ mod tests {
     use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 
     #[test]
+    fn restart_reference_longitudes_only_match_at_whole_turns() {
+        let grid = |longitude| {
+            let mut coordinates = CoordinateSystem::new();
+            coordinates.add_coordinate(DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::new(ProjectionType::SIN),
+                [longitude, -0.4],
+                [-1e-5, 1e-5],
+                [16.0, 16.0],
+            ));
+            coordinates
+        };
+        let requested = grid(4.7);
+        let full_turn = 4.7 - std::f64::consts::TAU;
+        let equivalent = grid(full_turn);
+        let shifted = grid(full_turn + 1e-3);
+        assert!(same_reference_values(
+            equivalent.coordinate(0),
+            requested.coordinate(0)
+        ));
+        assert!(
+            !same_reference_values(shifted.coordinate(0), requested.coordinate(0)),
+            "a different pointing fails the longitude comparison itself"
+        );
+    }
+
+    #[test]
     fn restart_grid_rejects_pixel_scale_and_projection_changes() {
         let direction = DirectionCoordinate::new(
             DirectionRef::J2000,
