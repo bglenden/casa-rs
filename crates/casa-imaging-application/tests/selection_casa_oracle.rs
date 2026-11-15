@@ -645,6 +645,26 @@ fn field_lexical_boundaries_read_casas_physical_rows() {
 }
 
 #[test]
+fn bare_field_escapes_are_refused_before_selection() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    rewrite_fields(&vis, [("Alpha.1", "", false), ("Alpha2", "", false)]);
+
+    // The stock scanner drops both characters before the field name and
+    // images rows of the resulting selector.
+    for field in [r"\xAlpha.1", r"\qAlpha2"] {
+        let selection = request(&vis, root.path().join("rows"), &json!({ "field": field }));
+        let error = row_pointing(&selection, &imaging::context(selection.resource_policy()))
+            .expect_err("a bare FIELD escape is invalid")
+            .to_string();
+        assert!(
+            error.contains("invalid bare FIELD term"),
+            "{field:?}: {error}"
+        );
+    }
+}
+
+#[test]
 fn imaging_selects_fields_that_share_a_time_and_baseline() {
     let root = tempfile::tempdir().expect("test root");
     let vis = fixture(root.path());

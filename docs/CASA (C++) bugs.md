@@ -47,6 +47,7 @@ CASA behaviours casa-rs does not follow:
 [a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
 [a TOPO cube's cache-dependent endpoint selection](#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history),
 [an overflowing FIELD ID](#an-overflowing-field-id-can-select-field-zero),
+[a bare FIELD escape](#a-bare-field-escape-can-silently-change-the-selection),
 [a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
 [the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
 [multiscale on an off-centre PSF](#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre),
@@ -5848,3 +5849,18 @@ signed 32-bit range. Native tclean rejects an overflowing ID before
 looking it up in FIELD, so it cannot select an unrelated field.
 [Issue #54](https://github.com/bglenden/casa-rs/issues/54) and
 [the casacore FIELD grammar](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.yy).
+
+## A bare FIELD escape can silently change the selection
+
+Outside a quoted pattern or slash regex, the casacore FIELD scanner prints
+the backslash and consumes the next non-newline byte without adding it to
+the selector.
+On the two-field selection fixture with names `Alpha.1` and `Alpha2`,
+stock CASA 6.7.6.14 reads the same 322 rows for `\xAlpha.1` as it does
+for `Alpha.1`. It likewise reads the same 736 rows for `\qAlpha2` as it
+does for `Alpha2`. Stock tclean proceeds to image the first selection.
+
+Native tclean explicitly rejects the invalid bare term before selecting any
+rows. This keeps an unintended prefix from changing the user's selection.
+[Issue #54](https://github.com/bglenden/casa-rs/issues/54) and
+[the casacore FIELD scanner](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.ll#L63-L69).
