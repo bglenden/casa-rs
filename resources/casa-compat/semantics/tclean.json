@@ -528,7 +528,7 @@
     },
     "deconvolver": {
       "status": "Partial",
-      "scope": "hogbom/clark/clarkstokes/multiscale/mtmfs pass; clark cleans polarizations jointly and clarkstokes cleans each independently (#1126). MEM supports standard single-MS Stokes I MFS with natural or Briggs weighting and a full or user-box mask. It accepts an explicit start model. A continuation can reuse or recompute the PSF and residual. A model its solver leaves unchanged keeps its saved metadata (#1060). ASP is refused with #223; experimental Clark variants are refused with #1060. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing.",
+      "scope": "hogbom/clark/clarkstokes/multiscale/mtmfs pass; clark cleans polarizations jointly and clarkstokes cleans each independently (#1126). MEM supports standard single-MS Stokes I MFS with natural or Briggs weighting and a full mask, user region or user image mask. It accepts an explicit start model. A continuation can reuse or recompute the PSF and residual. A model its solver leaves unchanged keeps its saved metadata (#1060). ASP is refused with #223; experimental Clark variants are refused with #1060. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing.",
       "evidence": [
         "signature",
         "reader",
