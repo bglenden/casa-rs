@@ -2,20 +2,73 @@
 
 //! Grid only the separate mosaic PSF with the ordinary measurement operator.
 
-use std::cell::OnceCell;
+use std::{cell::OnceCell, mem};
 
-use casa_imaging_deconvolution::{ImageDomainReconstructionMaskPlans, ReconstructionMaskPlan};
+use casa_imaging_deconvolution::{
+    FinalNormalState, ImageDomainReconstructionMaskPlans, NormalBasis, PassImages,
+    ReconstructionMaskPlan,
+};
 use casa_imaging_model::CompiledProblem;
+use casa_imaging_runtime::pass::PassError;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 
 use super::{BatchRoute, Forms, ImagingError, ImagingInputs, Run};
 use crate::ApplicationRuntime;
 
+pub(crate) enum SeparatePsf {
+    Continuum(Admitted<Vec<f32>>),
+    Cube(Admitted<FinalNormalState>),
+}
+
+impl SeparatePsf {
+    /// Replace only the PSF of the current image window. The other normal
+    /// fields must still come from the image centre's gridding pass.
+    fn apply(&mut self, images: &mut PassImages) -> Result<(), ImagingError> {
+        match self {
+            Self::Continuum(psf) => images.psf = Some(mem::take(&mut psf.value)),
+            Self::Cube(psf) => {
+                let cells = images.shape[0] * images.shape[1];
+                let target = images.psf.as_mut().expect("the initial pass forms a PSF");
+                for (index, output) in target.chunks_exact_mut(cells).enumerate() {
+                    let channel = images.channels.start + index / images.polarizations;
+                    let pol = index % images.polarizations;
+                    let plane = psf.value.read_plane(images.domain, channel, pol)?;
+                    let pixels = plane
+                        .read_psf_real()?
+                        .expect("paged cube holds Float planes");
+                    output.copy_from_slice(&pixels);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Keep the backing for subsequent windows. The last window holds it
+    /// until the main normal state has copied the replacement PSF.
+    pub(super) fn for_window(
+        source: &mut Option<Self>,
+        initial: bool,
+        images: &mut PassImages,
+        output_channels: usize,
+    ) -> Result<Option<Self>, PassError> {
+        let mut separate = initial.then(|| source.take()).flatten();
+        let Some(psf) = &mut separate else {
+            return Ok(None);
+        };
+        psf.apply(images)
+            .map_err(|error| PassError::Images(Box::new(error)))?;
+        if images.channels.end < output_channels {
+            *source = separate.take();
+        }
+        Ok(separate)
+    }
+}
+
 pub(crate) fn form(
     problem: &CompiledProblem,
     source: &BatchRoute,
     runtime: &ApplicationRuntime,
-) -> Result<Admitted<Vec<f32>>, ImagingError> {
+) -> Result<SeparatePsf, ImagingError> {
     let domain = &problem.geometry().domains()[0];
     let teams = OnceCell::new();
     let mut run = Run::open(
@@ -60,7 +113,16 @@ pub(crate) fn form(
         true,
     )?;
     let major = run.psf_pass()?;
-    let normal = major.completion.normal_state();
+    let (normal, model) = major.completion.into_parts();
+    drop(model);
+    if normal.basis() == NormalBasis::ChannelLocal {
+        let resident = normal.resident_bytes()?;
+        run.retained.retain(resident);
+        return Ok(SeparatePsf::Cube(Admitted {
+            value: normal,
+            reservation: run.retained,
+        }));
+    }
     let polarizations = problem.reconstruction().polarization().coordinates().len();
     let [nx, ny] = domain.shape().pixels();
     let samples = nx * ny * polarizations;
@@ -70,7 +132,7 @@ pub(crate) fn form(
         psf.value
             .extend(plane.read_psf()?.iter().map(|value| value.re as f32));
     }
-    Ok(psf)
+    Ok(SeparatePsf::Continuum(psf))
 }
 
 fn admit_samples(

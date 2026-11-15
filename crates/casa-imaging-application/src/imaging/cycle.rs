@@ -52,7 +52,7 @@ mod clean;
 mod continuation;
 mod prediction;
 mod separate_psf;
-pub(crate) use separate_psf::form as form_separate_psf;
+pub(crate) use separate_psf::{SeparatePsf, form as form_separate_psf};
 mod seeding;
 type BeamGrid = Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>;
 use crate::restart::ExistingProducts;
@@ -72,7 +72,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) mask_beams: BeamGrid,
     /// The observation's batches the passes read.
     pub(crate) source: &'a BatchRoute,
-    pub(crate) separate_psf: Option<Admitted<Vec<f32>>>,
+    pub(crate) separate_psf: Option<SeparatePsf>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     /// The main domain's start model, which the initial pass seeds the
     /// model from.
@@ -168,7 +168,7 @@ struct Run<'a> {
     /// The image domains' images from their charts.
     stitch: ChartStitch,
     source: Box<dyn BoundedSource + 'a>,
-    separate_psf: Option<Admitted<Vec<f32>>>,
+    separate_psf: Option<SeparatePsf>,
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
     _weights: Reservation,
@@ -1046,6 +1046,8 @@ impl<'a> Run<'a> {
         besides: u64,
         writes: bool,
     ) -> Result<Admitted<PassPlan>, ImagingError> {
+        let (image_reader, stitched_bytes_per_channel) = self.pass_image_bytes(modes);
+        let besides = besides + image_reader;
         let workers = self.teams.streaming().workers();
         let domains = pass_domains(&self.domains, workers, self.row_work(modes));
         let mut demand = WaveDemand {
@@ -1058,7 +1060,7 @@ impl<'a> Run<'a> {
             block: self.source.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
             chunk_sets: 1,
-            stitched_bytes_per_channel: self.stitch.pass_bytes_per_channel(modes.psf),
+            stitched_bytes_per_channel,
         };
         let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
         let residency = Residency::plan(&demand, free);
@@ -1262,13 +1264,12 @@ impl<'a> Run<'a> {
                     .map_err(|error| PassError::Images(error.into()))?;
                 match images {
                     Some(mut images) => {
-                        // Keep the main view's sensitivity and sums. Only the
-                        // unnormalised PSF samples come from the separate view.
-                        let mut psf_resident = Reservation::none();
-                        if initial && let Some(separate) = self.separate_psf.take() {
-                            images.psf = Some(separate.value);
-                            psf_resident = separate.reservation;
-                        }
+                        let separate = SeparatePsf::for_window(
+                            &mut self.separate_psf,
+                            initial,
+                            &mut images,
+                            self.problem.geometry().spectral().output_channels(),
+                        )?;
                         // A pass of the PSF alone takes the residual it does
                         // not form ([`continuation`]).
                         if !modes.data {
@@ -1286,7 +1287,7 @@ impl<'a> Run<'a> {
                             None => state.append(images),
                         }
                         .map_err(|error| PassError::Images(Box::new(error)));
-                        drop(psf_resident);
+                        drop(separate);
                         appended
                     }
                     None => Ok(()),

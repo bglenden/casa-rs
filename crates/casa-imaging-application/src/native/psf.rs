@@ -10,43 +10,63 @@ use casa_types::measures::MeasuresProvider;
 
 use super::NativeError;
 use crate::ApplicationRuntime;
-use crate::imaging::{self, BatchRoute, Batching, StoreBatches};
+use crate::compile::resolve_partitions;
+use crate::imaging::{self, BatchRoute, Batching, PartitionSelection, SeparatePsf, StoreBatches};
 
 /// Temporary geometry and admission for a second view of the same rows.
 /// The stores, resolved selection and optional update sessions are shared.
 pub(super) struct PsfRoute {
     problem: CompiledProblem,
-    geometry: Admitted<(Vec<GeometryPlan>, Batching)>,
+    geometry: Admitted<(Vec<StoreView>, Batching)>,
+}
+
+struct StoreView {
+    geometry: GeometryPlan,
+    selection: Option<PartitionSelection>,
 }
 
 impl PsfRoute {
     pub(super) fn new(
         problem: CompiledProblem,
         measures: Arc<dyn MeasuresProvider>,
-        route: &BatchRoute,
+        (main, route): (&CompiledProblem, &BatchRoute),
         runtime: &ApplicationRuntime,
     ) -> Result<Self, NativeError> {
+        let shared_selection = std::ptr::eq(
+            problem.observation().sources(),
+            main.observation().sources(),
+        );
         let plans = route
             .stores
             .iter()
-            .map(|store| {
-                GeometryPlan::compile(
+            .enumerate()
+            .map(|(source, store)| {
+                let observation = store.observation();
+                let geometry = GeometryPlan::compile(
                     &problem,
-                    store.observation().catalogue(),
+                    observation.catalogue(),
                     Arc::clone(&measures),
                     None,
                 )
-                .map_err(|error| NativeError::Other(Box::new(error)))
+                .map_err(|error| NativeError::Other(Box::new(error)))?;
+                let selection = (!shared_selection)
+                    .then(|| resolve_partitions(&problem, source, observation))
+                    .transpose()
+                    .map_err(|error| NativeError::Other(Box::new(error)))?;
+                Ok(StoreView {
+                    geometry,
+                    selection,
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, NativeError>>()?;
         let stores = route
             .stores
             .iter()
             .zip(&plans)
             .map(|(store, plan)| StoreBatches {
                 observation: store.observation(),
-                selection: &store.selection,
-                plan,
+                selection: plan.selection.as_ref().unwrap_or(&store.selection),
+                plan: &plan.geometry,
                 pointing_budget: store.pointing_budget,
             })
             .collect::<Vec<_>>();
@@ -70,7 +90,7 @@ impl PsfRoute {
         route: &mut BatchRoute,
         runtime: &ApplicationRuntime,
         summary: &mut RunSummary,
-    ) -> Result<Admitted<Vec<f32>>, NativeError> {
+    ) -> Result<SeparatePsf, NativeError> {
         let (mut plans, mut batching) = self.geometry.value;
         swap_view(route, &mut plans, &mut batching);
         let result = run_phase(
@@ -85,9 +105,12 @@ impl PsfRoute {
     }
 }
 
-fn swap_view(route: &mut BatchRoute, plans: &mut [GeometryPlan], batching: &mut Batching) {
+fn swap_view(route: &mut BatchRoute, plans: &mut [StoreView], batching: &mut Batching) {
     for (store, plan) in route.stores.iter_mut().zip(plans) {
-        std::mem::swap(&mut store.plan, plan);
+        std::mem::swap(&mut store.plan, &mut plan.geometry);
+        if let Some(selection) = &mut plan.selection {
+            std::mem::swap(&mut store.selection, selection);
+        }
     }
     std::mem::swap(&mut route.batching, batching);
 }

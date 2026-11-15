@@ -122,6 +122,16 @@ pub(super) fn thirty_two_channel_multi_row_measurement_set(root: &Path) -> PathB
     )
 }
 
+pub(super) fn thirty_two_channel_mosaic_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "thirty-two-channel-mosaic-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 8, false)
+            .with_two_fields()
+            .with_vla_observation_metadata(),
+    )
+}
+
 /// 16,384 rows of 32 channels: a source whose preferred blocks outgrow a
 /// small memory ceiling.
 pub(super) fn thirty_two_channel_many_row_measurement_set(root: &Path) -> PathBuf {

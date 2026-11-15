@@ -13,7 +13,9 @@ mod setup;
 mod trace;
 mod visibility_write;
 
-pub(crate) use cycle::{Forms, ImagingInputs, MvcCycleSpec, form_separate_psf, plane_bounds, run};
+pub(crate) use cycle::{
+    Forms, ImagingInputs, MvcCycleSpec, SeparatePsf, form_separate_psf, plane_bounds, run,
+};
 pub(crate) use images::prepare_model;
 pub(crate) use measurement::{
     KernelAdmission, domain_operator, image_extent, metal_kernel_set, multi_store_kernel_set,

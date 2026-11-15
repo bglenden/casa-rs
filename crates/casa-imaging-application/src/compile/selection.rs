@@ -534,7 +534,23 @@ pub(super) fn observation_selection(
     beam_factors: &BTreeMap<usize, [f64; 2]>,
     reads: &super::spectral::WindowReads,
 ) -> Result<ObservationSelection, PrepareError> {
-    let spectral_windows = channels
+    let spectral_windows = window_selections(&survey, channels, beam_factors, reads)?;
+    Ok(ObservationSelection::new(
+        survey.samples,
+        survey.row_selection,
+        survey.partitions,
+        spectral_windows,
+    ))
+}
+
+/// The native channels and time-dependent tuning for one imaging view.
+pub(super) fn window_selections(
+    survey: &Survey,
+    channels: &WindowChannels,
+    beam_factors: &BTreeMap<usize, [f64; 2]>,
+    reads: &super::spectral::WindowReads,
+) -> Result<Vec<SpectralWindowSelection>, PrepareError> {
+    channels
         .iter()
         .map(|(spw_id, channels)| {
             let window = survey
@@ -568,13 +584,7 @@ pub(super) fn observation_selection(
             })
             .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })
         })
-        .collect::<Result<Vec<_>, PrepareError>>()?;
-    Ok(ObservationSelection::new(
-        survey.samples,
-        survey.row_selection,
-        survey.partitions,
-        spectral_windows,
-    ))
+        .collect()
 }
 
 /// `selection` reading as `read` says.

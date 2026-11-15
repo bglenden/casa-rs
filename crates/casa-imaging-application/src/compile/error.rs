@@ -345,6 +345,14 @@ pub enum PrepareError {
     /// A separately formed PSF is currently compiled for a fixed mosaic direction.
     #[error("psfphasecenter with a moving mosaic phase centre is not implemented yet (#1062)")]
     MovingMosaicPsf,
+    /// Separate PSF views must have one channel for each main image plane.
+    #[error("psfphasecenter gives {psf} cube channels for {main} main image channels (#1062)")]
+    AlternatePsfChannelCount {
+        /// Channels in the main image.
+        main: usize,
+        /// Channels in the alternate PSF.
+        psf: usize,
+    },
     /// A moving source's fields are only partly attached to ephemerides.
     #[error("moving-source selection mixes FIELD rows with and without attached ephemerides")]
     MixedEphemerisFields,
