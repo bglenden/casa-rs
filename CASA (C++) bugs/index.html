@@ -1112,6 +1112,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones">a tuned cube's frequency selection</a>,
 <a href="#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history">a TOPO cube's cache-dependent endpoint selection</a>,
 <a href="#an-overflowing-field-id-can-select-field-zero">an overflowing FIELD ID</a>,
+<a href="#a-bare-field-escape-can-silently-change-the-selection">a bare FIELD escape</a>,
 <a href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane">a cube's fine frequency grid at a whole ratio</a>,
 <a href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind">the <code>.gridwt</code> a cube leaves</a>,
 <a href="#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre">multiscale on an off-centre PSF</a>,
@@ -6531,6 +6532,18 @@ signed 32-bit range. Native tclean rejects an overflowing ID before
 looking it up in FIELD, so it cannot select an unrelated field.
 <a href="https://github.com/bglenden/casa-rs/issues/54">Issue #54</a> and
 <a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.yy">the casacore FIELD grammar</a>.</p>
+<h2 id="a-bare-field-escape-can-silently-change-the-selection">A bare FIELD escape can silently change the selection<a class="headerlink" href="#a-bare-field-escape-can-silently-change-the-selection" title="Permanent link">&para;</a></h2>
+<p>Outside a quoted pattern or slash regex, the casacore FIELD scanner prints
+the backslash and consumes the next non-newline byte without adding it to
+the selector.
+On the two-field selection fixture with names <code>Alpha.1</code> and <code>Alpha2</code>,
+stock CASA 6.7.6.14 reads the same 322 rows for <code>\xAlpha.1</code> as it does
+for <code>Alpha.1</code>. It likewise reads the same 736 rows for <code>\qAlpha2</code> as it
+does for <code>Alpha2</code>. Stock tclean proceeds to image the first selection.</p>
+<p>Native tclean explicitly rejects the invalid bare term before selecting any
+rows. This keeps an unintended prefix from changing the user's selection.
+<a href="https://github.com/bglenden/casa-rs/issues/54">Issue #54</a> and
+<a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.ll#L63-L69">the casacore FIELD scanner</a>.</p>
 
 
 
