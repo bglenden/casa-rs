@@ -574,7 +574,7 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "computepastep",
             "#1071",
         ),
-        (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#980"),
+        (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#823"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
         // An mfs image's REST axis grids the data's frequencies as they are.
         (json!({ "outframe": "REST" }), "outframe", "#980"),
