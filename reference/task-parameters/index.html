@@ -2846,15 +2846,15 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Syntax-preserving numeric scan selection, one per MeasurementSet or one for all</td>
+<td>Syntax-preserving numeric scan selection, one per MeasurementSet or one for all<br><em>Surface:</em> CASA scan IDs, ascending ranges and strict or inclusive comparisons select SCAN_NUMBERs.</td>
 </tr>
 <tr>
 <td><code>observation</code></td>
 <td><code>ms.selection.observation@r3</code></td>
-<td><code>array&lt;string&gt;</code></td>
+<td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Syntax-preserving numeric observation selection, one per MeasurementSet or one for all</td>
+<td>Observation selection applied to every MeasurementSet</td>
 </tr>
 <tr>
 <td><code>intent</code></td>
