@@ -322,8 +322,8 @@
 <a href=#322 id=322 data-nosnippet>322</a></span><span class="kw">pub struct </span>MeasurementSetSelection {
 <a href=#323 id=323 data-nosnippet>323</a>    <span class="doccomment">/// The MeasurementSet.
 <a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">pub </span>vis: PathBuf,
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="doccomment">/// Field selector: IDs/ranges, exact names and simple `*` name
-<a href=#326 id=326 data-nosnippet>326</a>    /// patterns; `None` selects every field.
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="doccomment">/// FIELD IDs, ranges and comparisons, names, patterns or regexes.
+<a href=#326 id=326 data-nosnippet>326</a>    /// `None` selects every field.
 <a href=#327 id=327 data-nosnippet>327</a>    </span><span class="attr">#[serde(deserialize_with = <span class="string">"optional"</span>)]
 <a href=#328 id=328 data-nosnippet>328</a>    </span><span class="kw">pub </span>field: <span class="prelude-ty">Option</span>&lt;String&gt;,
 <a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// CASA spectral-window selection, for example `0:1~30`.
