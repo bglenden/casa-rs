@@ -104,7 +104,7 @@ pub use refresh::LinearRefresh;
 #[doc(hidden)]
 pub use scales::spheroidal;
 pub use solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
-pub use taylor::{Taylor, TaylorState};
+pub use taylor::{Taylor, TaylorState, invert_taylor_hessian};
 
 /// Why a minor cycle could not run.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

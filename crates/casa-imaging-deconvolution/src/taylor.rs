@@ -233,7 +233,7 @@ impl Solver for Taylor {
                         state.hessian[state.hessian_index(t1, t2, scale, scale)][centre];
                 }
             }
-            state.inverse.push(invert(&normal, terms)?);
+            state.inverse.push(invert_taylor_hessian(&normal, terms)?);
             if scale == 0 {
                 state.principal = normal[0];
             }
@@ -409,10 +409,18 @@ impl Solver for Taylor {
     }
 }
 
-/// The inverse of one scale's Hessian, refused when a diagonal entry is
-/// zero, two rows are nearly dependent, or the solve fails
-/// (`computeHessianPeak`).
-fn invert(normal: &[f64], terms: usize) -> Result<Vec<f64>, Error> {
+/// Invert the row-major Taylor Hessian at a PSF peak. The minor cycle
+/// and restoration both use CASA's `computeHessianPeak` admission
+/// checks before applying the positive-definite inverse.
+///
+/// # Errors
+///
+/// Returns [`Error::SingularHessian`] for malformed dimensions, zero
+/// diagonal entries, nearly dependent rows or a failed Cholesky solve.
+pub fn invert_taylor_hessian(normal: &[f64], terms: usize) -> Result<Vec<f64>, Error> {
+    if terms == 0 || terms.checked_mul(terms) != Some(normal.len()) {
+        return Err(Error::SingularHessian);
+    }
     if (0..terms).any(|term| normal[term * terms + term] == 0.0) {
         return Err(Error::SingularHessian);
     }

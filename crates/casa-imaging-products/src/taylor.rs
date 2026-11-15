@@ -2,12 +2,12 @@
 
 //! Product-local completion of one released MT-MFS normal family.
 
+use casa_imaging_deconvolution::invert_taylor_hessian;
 use casa_imaging_deconvolution::{FinalNormalStateWindow, PlaneShape};
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, TaylorSupportReference,
 };
-use casa_numerics::invert_symmetric_positive_definite;
 
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{PlaneBeam, RestoringBeam, fit_plane_beam, settle_beams};
@@ -293,8 +293,8 @@ fn principal_residuals(
             normal[row * terms + column] = f64::from(psf[row + column][peak]) / psf_scale;
         }
     }
-    let inverse = invert_symmetric_positive_definite(&normal, terms)
-        .ok_or_else(|| ProductsError::BeamFitFailed("singular Taylor normal block".into()))?;
+    let inverse = invert_taylor_hessian(&normal, terms)
+        .map_err(|_| ProductsError::BeamFitFailed("singular Taylor normal block".into()))?;
     let cells = residual[0].len();
     let mut principal = vec![vec![0.0; cells]; terms];
     for cell in 0..cells {
@@ -1105,6 +1105,19 @@ mod tests {
         let (_, restored) = super::principal_residuals(&psf, &residual, Some(shape)).unwrap();
         assert_eq!(restored[0][central], 2.0);
         assert_eq!(restored[1][central], 4.0);
+    }
+
+    #[test]
+    fn restoring_rejects_a_nearly_dependent_taylor_normal_block() {
+        // The second pivot is positive, but CASA's spectral row-spread
+        // check rejects this block before its principal residual solve.
+        let psf = [vec![1.0], vec![0.1], vec![0.010_000_001]];
+        let residual = [vec![1.0], vec![0.0]];
+        let error = super::principal_residuals(&psf, &residual, None).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::ProductsError::BeamFitFailed(reason) if reason == "singular Taylor normal block"
+        ));
     }
 
     #[test]
