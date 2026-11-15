@@ -3,7 +3,7 @@
 //! `MultiTermMatrixCleaner::mtclean`
 //! (`synthesis/MeasurementEquations/MultiTermMatrixCleaner.cc`).
 
-use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
+use casa_numerics::invert_symmetric_positive_definite;
 
 use crate::Error;
 use crate::patch::subtract_window;
@@ -429,15 +429,5 @@ fn invert(normal: &[f64], terms: usize) -> Result<Vec<f64>, Error> {
             return Err(Error::SingularHessian);
         }
     }
-    let mut inverse = vec![0.0; terms * terms];
-    for column in 0..terms {
-        let mut unit = vec![0.0; terms];
-        unit[column] = 1.0;
-        let solution = solve_symmetric_ldlt_casacore_dynamic(normal.to_vec(), &unit)
-            .ok_or(Error::SingularHessian)?;
-        for (row, value) in solution.into_iter().enumerate() {
-            inverse[row * terms + column] = value;
-        }
-    }
-    Ok(inverse)
+    invert_symmetric_positive_definite(normal, terms).ok_or(Error::SingularHessian)
 }

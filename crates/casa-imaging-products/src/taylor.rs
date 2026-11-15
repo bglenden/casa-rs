@@ -7,7 +7,7 @@ use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, TaylorSupportReference,
 };
-use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
+use casa_numerics::invert_symmetric_positive_definite;
 
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{PlaneBeam, RestoringBeam, fit_plane_beam, settle_beams};
@@ -293,16 +293,8 @@ fn principal_residuals(
             normal[row * terms + column] = f64::from(psf[row + column][peak]) / psf_scale;
         }
     }
-    let mut inverse = vec![0.0; terms * terms];
-    for column in 0..terms {
-        let mut unit = vec![0.0; terms];
-        unit[column] = 1.0;
-        let solution = solve_symmetric_ldlt_casacore_dynamic(normal.clone(), &unit)
-            .ok_or_else(|| ProductsError::BeamFitFailed("singular Taylor normal block".into()))?;
-        for row in 0..terms {
-            inverse[row * terms + column] = solution[row];
-        }
-    }
+    let inverse = invert_symmetric_positive_definite(&normal, terms)
+        .ok_or_else(|| ProductsError::BeamFitFailed("singular Taylor normal block".into()))?;
     let cells = residual[0].len();
     let mut principal = vec![vec![0.0; cells]; terms];
     for cell in 0..cells {

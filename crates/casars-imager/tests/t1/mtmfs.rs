@@ -580,3 +580,61 @@ fn a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane() {
     assert!(beams(&iv).single_beam().is_none());
     assert!(beams(&full).single_beam().is_some());
 }
+
+/// Empty cross-hands cannot erase the signed spectral moments of the
+/// observed parallel hands. Requesting Q and U leaves the I and V mosaics
+/// unchanged, including the dirty first term used by the Taylor solve.
+#[test]
+fn mosaic_keeps_signed_taylor_moments_with_empty_cross_hands() {
+    let mut setup = super::mosaic::setup();
+    setup.geometry = Geometry::square(128, 3.0);
+    setup.spectral_windows[0].channel_count = 4;
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let controls = |stokes: &str| {
+        json!({
+            "gridder": "mosaic",
+            "deconvolver": "mtmfs",
+            "nterms": 2,
+            "niter": 10,
+            "reffreq": "55GHz",
+            "phasecenter": "1",
+            "stokes": stokes,
+        })
+    };
+    let (iv_run, iv) = observation.image("mosaic-iv", controls("IV"));
+    let (full_run, full) = observation.image("mosaic-iquv", controls("IQUV"));
+    assert_eq!(
+        iv_run.actual_minor_iterations,
+        full_run.actual_minor_iterations
+    );
+    assert_eq!(iv_run.major_cycles, full_run.major_cycles);
+
+    let sumwt = full.get(".sumwt.tt1").channel_values();
+    assert!(sumwt[0] < 0.0);
+    assert_eq!(sumwt, [sumwt[0]; 4]);
+    let psf = full.get(".psf.tt1").values();
+    let i_psf = stokes_plane(&psf, 0);
+    assert!(abs_peak(&i_psf) > 0.0);
+    for pol in 1..4 {
+        assert_eq!(stokes_plane(&psf, pol), i_psf);
+    }
+    for suffix in [".psf.tt1", ".residual.tt1", ".image.tt0", ".image.tt1"] {
+        let full = full.get(suffix).values();
+        let iv = iv.get(suffix).values();
+        for (full_pol, iv_pol) in [(0, 0), (3, 1)] {
+            let expected = stokes_plane(&iv, iv_pol);
+            let actual = stokes_plane(&full, full_pol);
+            if abs_peak(&expected) == 0.0 {
+                assert_eq!(actual, expected, "{suffix} plane {full_pol}");
+            } else {
+                let error = plane_nrms(&actual, &expected);
+                assert!(error < 1e-6, "{suffix} plane {full_pol} NRMS {error:e}");
+            }
+        }
+        if !suffix.starts_with(".psf") {
+            for pol in [1, 2] {
+                assert_eq!(abs_peak(&stokes_plane(&full, pol)), 0.0);
+            }
+        }
+    }
+}
