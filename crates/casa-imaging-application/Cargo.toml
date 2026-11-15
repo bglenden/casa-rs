@@ -28,7 +28,7 @@ casa-observation = { path = "../casa-observation" }
 casa-types = { path = "../casa-types" }
 ndarray.workspace = true
 num-complex.workspace = true
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
 tempfile = "3"

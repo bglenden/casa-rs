@@ -217,6 +217,89 @@ fn mask_image_and_regions_follow_casa_list_order() {
 }
 
 #[test]
+fn sky_polygon_masks_fractional_vertices_and_clips_to_the_image() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    observation.image(
+        "polygon-geometry",
+        json!({"niter": 0, "restoration": false}),
+    );
+    let psf =
+        casa_images::PagedImage::<f32>::open(observation.scratch("polygon-geometry.psf")).unwrap();
+    let casa_coordinates::CoordinateModel::Direction(direction) = psf.coordinates().coordinate(0)
+    else {
+        panic!("a direction coordinate");
+    };
+    let [point_x, point_y] = component_pixel(POINT);
+    let (x, y) = (point_x as f64, point_y as f64);
+    let cases = [
+        (
+            "off-grid",
+            vec![
+                [x - 0.69, y - 2.34],
+                [x + 4.23, y - 2.34],
+                [x + 4.23, y + 2.27],
+                [x - 0.69, y + 2.27],
+            ],
+        ),
+        ("boundary", vec![[6.0, 6.0], [24.0, 6.0], [6.0, 24.0]]),
+        (
+            "clipped",
+            vec![[-4.1, 10.3], [2.6, 10.3], [2.6, 14.9], [-4.1, 14.9]],
+        ),
+        (
+            "outside",
+            vec![[-0.6, 12.2], [-0.2, 12.5], [-0.2, 20.7], [-0.5, 21.2]],
+        ),
+        (
+            "outside-snap",
+            vec![
+                [-1.6, 12.2],
+                [-0.999_999, 12.5],
+                [-0.999_999, 20.7],
+                [-1.5, 21.2],
+            ],
+        ),
+    ];
+    for (name, vertices) in cases {
+        let angular = vertices
+            .into_iter()
+            .map(|vertex| {
+                let [lon, lat] = direction.pixel_to_world(vertex).unwrap();
+                format!("[{lon:.17}rad,{lat:.17}rad]")
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let region = observation.scratch(&format!("{name}.crtf"));
+        std::fs::write(
+            &region,
+            format!("#CRTFv0\nglobal coord=J2000\npoly [{angular}]\n"),
+        )
+        .unwrap();
+        let (run, products) = observation.image(
+            name,
+            json!({"deconvolver": "hogbom", "niter": 2, "mask": region}),
+        );
+        let mask = &products.get(".mask").pixels;
+        for ((i, j), value) in mask.indexed_iter() {
+            let expected = match name {
+                "off-grid" => {
+                    (point_x..=point_x + 4).contains(&i) && (point_y - 2..=point_y + 2).contains(&j)
+                }
+                "boundary" => i >= 6 && j >= 6 && i + j <= 30,
+                "clipped" => i <= 2 && (11..=14).contains(&j),
+                "outside" | "outside-snap" => false,
+                _ => unreachable!(),
+            };
+            assert_eq!(*value, f32::from(expected), "{name} at [{i}, {j}]");
+        }
+        if name.starts_with("outside") {
+            assert_eq!(run.actual_minor_iterations, 0);
+        }
+        assert_model_inside(&products.get(".model").pixels, mask);
+    }
+}
+
+#[test]
 fn box_mask_confines_the_model_and_leaves_the_masked_out_source() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
     let [px, py] = component_pixel(POINT);

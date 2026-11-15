@@ -39,6 +39,8 @@ pub(super) enum DomainMask {
     FullPlane,
     /// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
     Boxes(Vec<[i64; 4]>),
+    /// A CRTF sky polygon, projected and rasterized on this domain's grid.
+    SkyPolygon(crate::tclean::MaskPolygon),
     /// The positive pixels of a CASA image, reprojected onto the domain and
     /// matched to its planes ([`super::mask_image`]).
     Image {
@@ -311,6 +313,9 @@ fn request_mask(
                     .map(|boxes| boxes.iter().map(|region| region.corners).collect()),
             })
         }
+        (UseMask::User, None) if let Some(polygon) = &request.mask_polygon => {
+            named(DomainMask::SkyPolygon(polygon.clone()))
+        }
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
@@ -484,6 +489,25 @@ fn mask_plan(
                 .map(|[x0, y0, x1, y1]| MaskBox::new([x0, y0], [x1, y1]))
                 .collect::<Result<Vec<_>, _>>()?,
         },
+        DomainMask::SkyPolygon(polygon) => {
+            let (memory, kept) = super::mask_polygon::bytes(&polygon, image_size);
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "clean mask polygon",
+                    memory,
+                },
+            )?;
+            let support = super::mask_polygon::support(&polygon, coordinate, image_size)?;
+            charge.retain(kept);
+            resident.join(charge);
+            ReconstructionMaskPlan::Reprojected {
+                coordinate,
+                planes: MaskPlanes::SHARED,
+                support,
+            }
+        }
         DomainMask::Image {
             path,
             require_shared_tangent_grid,

@@ -30,6 +30,9 @@ use casa_imaging_model::Projection;
 
 use crate::ImagingRequest;
 
+mod sky_polygon;
+pub(crate) use sky_polygon::MaskPolygon;
+
 /// The issue that tracks the projections casa-rs does not image in yet.
 const PROJECTION_ISSUE: u32 = 1101;
 
@@ -130,7 +133,11 @@ impl ImagingRequest {
 fn tclean_parameter(field: &str) -> &str {
     match field {
         "phasecenter_field" => "phasecenter",
-        "mask_box" | "mask_image" | "mask_regions_before_image" | "explicit_empty_mask" => "mask",
+        "mask_box"
+        | "mask_image"
+        | "mask_polygon"
+        | "mask_regions_before_image"
+        | "explicit_empty_mask" => "mask",
         "minor_cycle_length" => "cycleniter",
         other => other,
     }
@@ -1100,14 +1107,22 @@ impl<'a> Tclean<'a> {
         self.set("pbmask", pbmask);
         let entries = self.texts("mask")?;
         // CASA reads `mask` with usemask='user' only.
-        let (boxes, image) = if modes.user_mask {
+        let UserMask {
+            boxes,
+            image,
+            polygon,
+        } = if modes.user_mask {
             user_mask(&entries)?
         } else {
-            (Vec::new(), None)
+            UserMask::default()
         };
         self.set(
             "explicit_empty_mask",
-            modes.user_mask && !entries.is_empty() && boxes.is_empty() && image.is_none(),
+            modes.user_mask
+                && !entries.is_empty()
+                && boxes.is_empty()
+                && image.is_none()
+                && polygon.is_none(),
         );
         self.set(
             "mask_box",
@@ -1124,6 +1139,9 @@ impl<'a> Tclean<'a> {
             }
         } else {
             self.set("mask_image", "none");
+        }
+        if let Some(polygon) = polygon {
+            self.set("mask_polygon", json!(polygon));
         }
         Ok(())
     }
@@ -1186,13 +1204,18 @@ struct MaskImageEntry<'a> {
     before: usize,
 }
 
-/// tclean's user mask: pixel regions, a CASA mask image, or both. The
+#[derive(Default)]
+struct UserMask<'a> {
+    boxes: Vec<String>,
+    image: Option<MaskImageEntry<'a>>,
+    polygon: Option<MaskPolygon>,
+}
+
+/// A user mask from CRTF regions, a saved mask image, or both. The
 /// image's index in the compiled boxes preserves the list order for
 /// signed mask values. Consecutive text fragments are joined because
 /// the CLI can split a region at its commas.
-fn user_mask<'a>(
-    entries: &[&'a str],
-) -> Result<(Vec<String>, Option<MaskImageEntry<'a>>), TcleanRefusal> {
+fn user_mask<'a>(entries: &[&'a str]) -> Result<UserMask<'a>, TcleanRefusal> {
     let multiple_images = || TcleanRefusal::not_yet("mask", "more than one mask image", 980);
     if entries.len() > 1
         && let Some((index, &image)) = entries
@@ -1210,28 +1233,51 @@ fn user_mask<'a>(
         let mut boxes = mask_region_entries(&entries[..index])?;
         let before = boxes.len();
         boxes.extend(mask_region_entries(after)?);
-        return Ok((
+        return Ok(UserMask {
             boxes,
-            Some(MaskImageEntry {
+            image: Some(MaskImageEntry {
                 path: image,
                 before,
             }),
-        ));
+            polygon: None,
+        });
+    }
+    if let [region] = entries
+        && std::path::Path::new(region).is_file()
+    {
+        return region_mask(&read_region_file(region)?);
     }
     let text = entries.join(",");
     if text.contains('[') {
-        return Ok((crtf_pixel_boxes(&text)?, None));
+        return region_mask(&text);
     }
     if let Some(boxes) = pixel_box_list(&text) {
-        return Ok((boxes, None));
+        return Ok(UserMask {
+            boxes,
+            ..UserMask::default()
+        });
     }
     match entries {
-        [] => Ok((Vec::new(), None)),
-        [region] if std::path::Path::new(region).is_file() => {
-            Ok((crtf_pixel_boxes(&read_region_file(region)?)?, None))
-        }
-        [path] => Ok((Vec::new(), Some(MaskImageEntry { path, before: 0 }))),
+        [] => Ok(UserMask::default()),
+        [path] => Ok(UserMask {
+            image: Some(MaskImageEntry { path, before: 0 }),
+            ..UserMask::default()
+        }),
         _ => Err(multiple_images()),
+    }
+}
+
+fn region_mask<'a>(text: &str) -> Result<UserMask<'a>, TcleanRefusal> {
+    if let Some(polygon) = sky_polygon::parse_polygon(text)? {
+        Ok(UserMask {
+            polygon: Some(polygon),
+            ..UserMask::default()
+        })
+    } else {
+        Ok(UserMask {
+            boxes: crtf_pixel_boxes(text)?,
+            ..UserMask::default()
+        })
     }
 }
 

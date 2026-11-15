@@ -52,6 +52,9 @@ pub struct ImagingRequest {
     /// Split the CRTF boxes around the image in tclean's ordered mask list.
     #[serde(default)]
     pub(crate) mask_regions_before_image: Option<usize>,
+    /// A parsed sky polygon, projected only after the image grid is known.
+    #[serde(default)]
+    pub(crate) mask_polygon: Option<crate::tclean::MaskPolygon>,
     /// MVC's internally resolved output cube size, separate from the input
     /// `channel_count` selector. Set after its selected band is surveyed.
     #[serde(skip)]
@@ -799,14 +802,19 @@ impl ImagingRequest {
             self.validate_virtual_model()?;
         }
         let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
-        if self.usemask != UseMask::User && (self.mask_image.is_some() || has_boxes) {
+        if self.usemask != UseMask::User
+            && (self.mask_image.is_some() || has_boxes || self.mask_polygon.is_some())
+        {
             return invalid(
                 "usemask, mask_image, mask_box",
                 "auto-multithresh and primary-beam masks do not take user images or boxes",
             );
         }
+        let polygon_with_other_mask =
+            self.mask_polygon.is_some() && (self.mask_image.is_some() || has_boxes);
         let list_position = self.mask_regions_before_image;
-        if list_position.is_some_and(|before| before > self.mask_box.len())
+        if polygon_with_other_mask
+            || list_position.is_some_and(|before| before > self.mask_box.len())
             || (self.mask_image.is_some()
                 && has_boxes
                 && (list_position.is_none()
@@ -814,7 +822,7 @@ impl ImagingRequest {
         {
             return invalid(
                 "mask_image, mask_box",
-                "a tclean mask list can combine an image with pixel regions covering all planes (#823)",
+                "a sky polygon stands alone; an image mask list can combine an image with pixel regions covering all planes (#823)",
             );
         }
         if !(0.0..1.0).contains(&self.pbmask) {

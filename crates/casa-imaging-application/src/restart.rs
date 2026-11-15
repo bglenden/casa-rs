@@ -201,6 +201,7 @@ fn check_products(
             }
             if prefix == request.imagename
                 && (request.mask_image.is_some()
+                    || request.mask_polygon.is_some()
                     || !request.mask_box.is_empty()
                     || request.explicit_empty_mask)
             {

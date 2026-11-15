@@ -21,6 +21,7 @@ mod frequency_bands;
 mod instrument;
 mod intents;
 mod mask_image;
+pub(crate) mod mask_polygon;
 pub(crate) mod mvc;
 mod mvc_request;
 pub(crate) use mask_image::{MaskImage, open_onto_itself as open_mask_image_onto_itself};

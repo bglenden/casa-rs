@@ -296,6 +296,7 @@ pub(super) fn check_execution_scope(
         || request.fitspw.is_some()
         || request.usemask != crate::UseMask::User
         || request.mask_image.is_some()
+        || request.mask_polygon.is_some()
         || request.pbmask != 0.0
         || request.outframe != FrequencyRef::LSRK
         || !matches!(
