@@ -900,7 +900,6 @@ impl ImagingRequest {
                 || !matches!(self.weighting, Weighting::Natural | Weighting::Briggs)
                 || self.vis.len() != 1
                 || self.outlierfile.is_some()
-                || self.has_start_model()
                 || self.usemask != UseMask::User
                 || self.mask_image.is_some()
                 || self.pbmask != 0.0

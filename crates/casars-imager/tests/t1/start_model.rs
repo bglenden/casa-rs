@@ -127,6 +127,27 @@ fn a_start_model_is_the_first_generation_of_the_model() {
     );
 }
 
+#[test]
+fn mem_predicts_an_explicit_start_model_before_solving() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let [deep, predicted, dirty] = assert_first_generation(&observation, "mem-seed", &controls);
+    assert!(
+        difference(&dirty, &predicted, ".residual") > 1e-4,
+        "the explicit model changes the initial residual"
+    );
+    let mut controls = controls;
+    controls["startmodel"] = json!(observation.scratch("mem-seed-deep.model"));
+    let (_, resumed) = observation.image("mem-from-explicit-model", controls);
+    assert!(
+        difference(&deep, &resumed, ".model") > 1e-4,
+        "MEM adds a new update to the explicit model"
+    );
+}
+
 /// A sixteen-channel cube interpolated linearly onto its LSRK channels, of
 /// a source whose flux falls by 9% across the band: a start model that
 /// differs in every channel.
