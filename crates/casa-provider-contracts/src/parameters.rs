@@ -1440,6 +1440,8 @@ fn validate_reserved_name(
     // Simulation analysis uses zero/empty geometry to inherit the sky model.
     // Its CASA defaults differ from tclean's positive explicit geometry.
     let designated = match (surface, binding.name.as_str()) {
+        ("tsdimaging", "imsize") => Some("single_dish.imsize"),
+        ("tsdimaging", "cell") => Some("single_dish.cell"),
         ("simanalyze", "imsize") => Some("simulation.analysis.imsize"),
         ("simanalyze", "cell") => Some("simulation.analysis.cell"),
         (_, "imsize") => Some(IMSIZE_CONCEPT_ID),

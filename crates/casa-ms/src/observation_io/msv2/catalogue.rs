@@ -80,13 +80,24 @@ fn quantum_units(table: &Table, column: &str) -> Option<Vec<String>> {
     }
 }
 
-/// What visibility column `column`'s `QuantumUnits` declares: janskys
-/// only when it says `Jy`.
+/// The declared visibility unit: CASA reads legacy `UNIT` first, then
+/// `QuantumUnits`, taking the first nonempty scalar/array entry.
 pub(super) fn data_units(table: &Table, column: &str) -> VisibilityUnits {
-    match quantum_units(table, column).as_deref() {
-        None | Some([]) => VisibilityUnits::Undeclared,
-        Some([unit, ..]) if unit == "Jy" => VisibilityUnits::Jansky,
-        Some([unit, ..]) => VisibilityUnits::Declared(unit.clone()),
+    let unit = table.column_keywords(column).and_then(|keywords| {
+        ["UNIT", "QuantumUnits"].into_iter().find_map(|key| {
+            let text = match keywords.get(key)? {
+                Value::Scalar(ScalarValue::String(unit)) => unit.as_str(),
+                Value::Array(ArrayValue::String(units)) => units.iter().next()?.as_str(),
+                _ => return None,
+            }
+            .trim();
+            (!text.is_empty()).then_some(text.to_owned())
+        })
+    });
+    match unit.as_deref() {
+        None => VisibilityUnits::Undeclared,
+        Some("Jy") => VisibilityUnits::Jansky,
+        Some(unit) => VisibilityUnits::Declared(unit.to_owned()),
     }
 }
 

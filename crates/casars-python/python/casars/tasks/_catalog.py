@@ -1144,6 +1144,51 @@ def simanalyze(
     """
     return _call_casa(simanalyze, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze')
+def tsdimaging(
+    infiles: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    outfile: StrPath = '',
+    overwrite: bool = False,
+    field: str | list[str] | tuple[str, ...] = '',
+    spw: str | list[str] | tuple[str, ...] = '',
+    antenna: str | list[str] | tuple[str, ...] = '',
+    scan: str | list[str] | tuple[str, ...] = '',
+    intent: str | list[str] | tuple[str, ...] = 'OBSERVE_TARGET#ON_SOURCE',
+    timerange: str | list[str] | tuple[str, ...] = '',
+    outframe: str = '',
+    mode: str = 'channel',
+    nchan: int = -1,
+    start: int | str = 0,
+    width: int | str = 1,
+    veltype: str = 'radio',
+    specmode: Literal['cont', 'cube', 'cubedata', 'cubesource', 'mfs', 'mvc'] = 'cube',
+    interpolation: Literal['cubic', 'linear', 'nearest', 'none'] = 'linear',
+    pointingcolumn: str = 'direction',
+    convertfirst: str = 'never',
+    projection: str = 'SIN',
+    imsize: int | list[int] | tuple[int, ...] = [],
+    cell: str | list[str] | tuple[str, ...] = '',
+    phasecenter: str = '',
+    stokes: str = 'I',
+    gridfunction: str = 'BOX',
+    convsupport: int = -1,
+    truncate: int | float | str = -1,
+    gwidth: int | float | str = -1,
+    jwidth: int | float | str = -1,
+    clipminmax: bool = False,
+    minweight: float = 0.1,
+    brightnessunit: Literal['', 'K', 'Jy/beam'] = '',
+    restfreq: str | list[str] | tuple[str, ...] = '',
+) -> Any:
+    """Grid total-power spectra by pointing into a CASA image and weight image.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze']
+    CASA's ``tsdimaging``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #938:
+    ``field``, ``scan``, ``timerange``, ``outframe``, ``mode``, ``veltype``,
+    ``specmode``, ``interpolation``, ``pointingcolumn``, ``convertfirst``,
+    ``projection``, ``stokes``, ``clipminmax``.
+    """
+    return _call_casa(tsdimaging, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging']

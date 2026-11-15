@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 28);
+        assert_eq!(catalog.surfaces.len(), 29);
         assert!(
             catalog
                 .surfaces
@@ -146,6 +146,7 @@ mod tests {
         assert!(ids.contains("msexplore"));
         assert!(ids.contains("msconvert"));
         assert!(ids.contains("imstat"));
+        assert!(ids.contains("tsdimaging"));
         assert!(!ids.contains("imexplore"));
         assert!(!ids.contains("tablebrowser"));
         assert!(!ids.contains("casars"));
@@ -197,7 +198,19 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "imsize")
             {
-                if surface.id() == "simanalyze" {
+                if surface.id() == "tsdimaging" {
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        format!("single_dish.{}", binding.name)
+                    );
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::Array(Vec::new()),
+                        }
+                    );
+                    continue;
+                } else if surface.id() == "simanalyze" {
                     assert_eq!(binding.concept.id.as_str(), "simulation.analysis.imsize");
                     assert_eq!(
                         binding.default,
@@ -215,7 +228,19 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "cell")
             {
-                if surface.id() == "simanalyze" {
+                if surface.id() == "tsdimaging" {
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        format!("single_dish.{}", binding.name)
+                    );
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::String(String::new()),
+                        }
+                    );
+                    continue;
+                } else if surface.id() == "simanalyze" {
                     assert_eq!(binding.concept.id.as_str(), "simulation.analysis.cell");
                     assert_eq!(
                         binding.default,
@@ -303,6 +328,7 @@ mod tests {
             ("imregrid", false),
             ("imsubimage", false),
             ("simobserve", true),
+            ("tsdimaging", false),
             ("simanalyze", true),
         ]);
         // casa-rs's own `overwrite` on CASA tasks that have none, and on the
@@ -702,7 +728,8 @@ mod tests {
                 "imager.width",
                 "impv.width",
                 "ms.transform.width",
-                "regridms.width"
+                "regridms.width",
+                "single_dish.width"
             ]
             .into_iter()
             .map(str::to_string)
@@ -719,6 +746,7 @@ mod tests {
                 "impbcor.mode",
                 "impv.mode",
                 "regridms.mode",
+                "single_dish.mode",
             ]
             .into_iter()
             .map(str::to_string)
@@ -794,7 +822,10 @@ mod tests {
                     });
                     assert_eq!(
                         decoded,
-                        matches!(surface.id(), "tclean" | "simobserve" | "simanalyze"),
+                        matches!(
+                            surface.id(),
+                            "tclean" | "simobserve" | "simanalyze" | "tsdimaging"
+                        ),
                         "{} product sources",
                         surface.id()
                     );

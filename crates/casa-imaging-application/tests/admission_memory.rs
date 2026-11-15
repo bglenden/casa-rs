@@ -50,6 +50,8 @@ mod mosaic_cube_restart;
 mod mvc_view;
 #[path = "admission_memory/outliers.rs"]
 mod outliers;
+#[path = "admission_memory/single_dish.rs"]
+mod single_dish;
 #[path = "admission_memory/staging.rs"]
 mod staging;
 use synthetic_observation::{CELL_ARCSEC, observation, observation_as};

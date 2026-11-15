@@ -51,7 +51,7 @@ contract = 41
 
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
-    assert len(catalog["surfaces"]) == 28
+    assert len(catalog["surfaces"]) == 29
     assert {surface["kind"] for surface in catalog["surfaces"]} == {"task"}
 
     imager = parameters.definition("tclean")

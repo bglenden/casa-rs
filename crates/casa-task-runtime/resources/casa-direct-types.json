@@ -574,5 +574,25 @@
     "calcpsf": "cBool",
     "psfcutoff": "cFloat",
     "parallel": "cBool"
+  },
+  "tsdimaging": {
+    "outfile": "cStr",
+    "overwrite": "cBool",
+    "timerange": "cStr",
+    "outframe": "cStr",
+    "mode": "cStr",
+    "nchan": "cInt",
+    "veltype": "cStr",
+    "specmode": "cStr",
+    "interpolation": "cStr",
+    "pointingcolumn": "cStr",
+    "convertfirst": "cStr",
+    "projection": "cStr",
+    "stokes": "cStr",
+    "gridfunction": "cStr",
+    "convsupport": "cInt",
+    "clipminmax": "cBool",
+    "minweight": "cFloat",
+    "brightnessunit": "cStr"
   }
 }

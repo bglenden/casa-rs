@@ -34,6 +34,7 @@ struct Scratch {
     interval: Vec<f64>,
     exposure: Vec<f64>,
     values: Vec<Complex32>,
+    real_values: Vec<f32>,
     flags: Vec<bool>,
     weights: Vec<f32>,
 }
@@ -272,6 +273,7 @@ impl Payload<'_> {
             present,
             row_flags,
             values,
+            real_values,
             flags,
             weights,
             ..
@@ -281,7 +283,28 @@ impl Payload<'_> {
         let keep = self.resolved.correlations.indices();
         let delivered = keep.map_or(self.stored, <[usize]>::len);
         let padded = rows.len() < samples;
-        let cube = |column: &str, destination: SelectedArray2DCellsMut<'_>| {
+        let mut cube = |column: &str, destination: SelectedArray2DCellsMut<'_>| {
+            let destination = if column == "FLOAT_DATA" {
+                let SelectedArray2DCellsMut::RowChannelComplex32(complex) = destination else {
+                    return Err(invalid("FLOAT_DATA must be read as visibility values"));
+                };
+                real_values.clear();
+                main.column_accessor(column)
+                    .map_err(table_error)?
+                    .fill_array_cells_2d_channel_range_typed_uncached(
+                        rows,
+                        self.channels.start,
+                        channels,
+                        SelectedArray2DCellsMut::RowChannelFloat32(real_values),
+                    )
+                    .map_err(table_error)?
+                    .ok_or_else(|| invalid("undefined FLOAT_DATA cells"))?;
+                complex.clear();
+                complex.extend(real_values.iter().map(|&value| Complex32::new(value, 0.)));
+                return Ok(());
+            } else {
+                destination
+            };
             main.column_accessor(column)
                 .map_err(table_error)?
                 .fill_array_cells_2d_channel_range_typed_uncached(
@@ -380,7 +403,7 @@ impl Payload<'_> {
             let weight_channels = if source.per_channel { channels } else { 1 };
             // The present rows' values, made weights before padding is
             // spread, so a padded cell stays NaN.
-            let read = |target: &mut Vec<f32>| {
+            let mut read = |target: &mut Vec<f32>| {
                 if source.per_channel {
                     cube(
                         &source.variable,

@@ -25,6 +25,7 @@
     "simanalyze",
     "simobserve",
     "split",
-    "tclean"
+    "tclean",
+    "tsdimaging"
   ]
 }

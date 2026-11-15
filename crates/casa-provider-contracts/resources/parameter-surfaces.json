@@ -27137,6 +27137,1544 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "tsdimaging",
+      "contract_version": 1,
+      "display_name": "Tsdimaging",
+      "category": "Imaging",
+      "summary": "Grid total-power spectra by pointing into a CASA image and weight image.",
+      "provider_family": "single_dish",
+      "casa_task": "tsdimaging",
+      "execution": {
+        "invocation_name": "tsdimaging",
+        "fixed_args": [],
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "simobserve-run-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "tsdimaging-products",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "decoded_artifacts"
+              },
+              "cardinality": "many",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "infiles",
+          "concept": {
+            "id": "single_dish.infiles",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "input_dataset",
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--infiles"
+              ]
+            },
+            "provider": {
+              "field": "infiles",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "infiles"
+            },
+            "presentation": {
+              "label": "infiles",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "parameter.outfile",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "outfile",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "false_flags": [
+                "--no-overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "overwrite",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 2
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "field",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 2
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "spw",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 3
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ]
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "antenna",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 3
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "scan",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 2
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "OBSERVE_TARGET#ON_SOURCE"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ]
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "intent",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 3
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ]
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "timerange",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "outframe",
+          "concept": {
+            "id": "parameter.outframe",
+            "semantic_revision": 3
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outframe"
+              ]
+            },
+            "provider": {
+              "field": "outframe",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outframe"
+            },
+            "presentation": {
+              "label": "outframe",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "mode",
+          "concept": {
+            "id": "single_dish.mode",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "channel"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--mode"
+              ]
+            },
+            "provider": {
+              "field": "mode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "mode"
+            },
+            "presentation": {
+              "label": "mode",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0016",
+            "reason": "Single-dish mode selects channel, frequency or velocity imaging, rather than calibration or simulation modes."
+          },
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "nchan",
+          "concept": {
+            "id": "regridms.nchan",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nchan"
+              ]
+            },
+            "provider": {
+              "field": "nchan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "nchan"
+            },
+            "presentation": {
+              "label": "nchan",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "start",
+          "concept": {
+            "id": "single_dish.start",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--start"
+              ]
+            },
+            "provider": {
+              "field": "start",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "start",
+              "type_hint": "int | str"
+            },
+            "presentation": {
+              "label": "start",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0016",
+            "reason": "The total-power channel task retains CASA integer defaults and also takes channel/quantity text; the interferometric task defaults to text."
+          }
+        },
+        {
+          "name": "width",
+          "concept": {
+            "id": "single_dish.width",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--width"
+              ]
+            },
+            "provider": {
+              "field": "width",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "width",
+              "type_hint": "int | str"
+            },
+            "presentation": {
+              "label": "width",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0016",
+            "reason": "The total-power channel task retains CASA integer defaults and also takes channel/quantity text; the interferometric task defaults to text."
+          }
+        },
+        {
+          "name": "veltype",
+          "concept": {
+            "id": "parameter.veltype",
+            "semantic_revision": 3
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "radio"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--veltype"
+              ]
+            },
+            "provider": {
+              "field": "veltype",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "veltype"
+            },
+            "presentation": {
+              "label": "veltype",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "specmode",
+          "concept": {
+            "id": "parameter.specmode",
+            "semantic_revision": 4
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "cube"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--specmode"
+              ]
+            },
+            "provider": {
+              "field": "specmode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "specmode"
+            },
+            "presentation": {
+              "label": "specmode",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "interpolation",
+          "concept": {
+            "id": "parameter.interpolation",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "linear"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interpolation"
+              ]
+            },
+            "provider": {
+              "field": "interpolation",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "interpolation"
+            },
+            "presentation": {
+              "label": "interpolation",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "pointingcolumn",
+          "concept": {
+            "id": "single_dish.pointingcolumn",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "direction"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pointingcolumn"
+              ]
+            },
+            "provider": {
+              "field": "pointingcolumn",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pointingcolumn"
+            },
+            "presentation": {
+              "label": "pointingcolumn",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "convertfirst",
+          "concept": {
+            "id": "single_dish.convertfirst",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "never"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--convertfirst"
+              ]
+            },
+            "provider": {
+              "field": "convertfirst",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "convertfirst"
+            },
+            "presentation": {
+              "label": "convertfirst",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "projection",
+          "concept": {
+            "id": "parameter.projection",
+            "semantic_revision": 2
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "SIN"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--projection"
+              ]
+            },
+            "provider": {
+              "field": "projection",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "projection"
+            },
+            "presentation": {
+              "label": "projection",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "imsize",
+          "concept": {
+            "id": "single_dish.imsize",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--imsize"
+              ]
+            },
+            "provider": {
+              "field": "imsize",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imsize"
+            },
+            "presentation": {
+              "label": "imsize",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0016",
+            "reason": "Single-dish default geometry is automatic; tclean requires positive explicit dimensions."
+          }
+        },
+        {
+          "name": "cell",
+          "concept": {
+            "id": "single_dish.cell",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--cell"
+              ]
+            },
+            "provider": {
+              "field": "cell",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cell"
+            },
+            "presentation": {
+              "label": "cell",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0016",
+            "reason": "Single-dish cell defaults to automatic; tclean requires a positive angular cell."
+          }
+        },
+        {
+          "name": "phasecenter",
+          "concept": {
+            "id": "tclean.phasecenter",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--phasecenter"
+              ]
+            },
+            "provider": {
+              "field": "phasecenter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "phasecenter"
+            },
+            "presentation": {
+              "label": "phasecenter",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "stokes",
+          "concept": {
+            "id": "image.selection.stokes",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "I"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--stokes"
+              ]
+            },
+            "provider": {
+              "field": "stokes",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "stokes"
+            },
+            "presentation": {
+              "label": "stokes",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "gridfunction",
+          "concept": {
+            "id": "single_dish.gridfunction",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "BOX"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gridfunction"
+              ]
+            },
+            "provider": {
+              "field": "gridfunction",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gridfunction"
+            },
+            "presentation": {
+              "label": "gridfunction",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "convsupport",
+          "concept": {
+            "id": "single_dish.convsupport",
+            "semantic_revision": 1
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--convsupport"
+              ]
+            },
+            "provider": {
+              "field": "convsupport",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "convsupport"
+            },
+            "presentation": {
+              "label": "convsupport",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "truncate",
+          "concept": {
+            "id": "single_dish.truncate",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--truncate"
+              ]
+            },
+            "provider": {
+              "field": "truncate",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "truncate",
+              "type_hint": "int | float | str"
+            },
+            "presentation": {
+              "label": "truncate",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "gwidth",
+          "concept": {
+            "id": "single_dish.gwidth",
+            "semantic_revision": 1
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gwidth"
+              ]
+            },
+            "provider": {
+              "field": "gwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gwidth",
+              "type_hint": "int | float | str"
+            },
+            "presentation": {
+              "label": "gwidth",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "jwidth",
+          "concept": {
+            "id": "single_dish.jwidth",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--jwidth"
+              ]
+            },
+            "provider": {
+              "field": "jwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "jwidth",
+              "type_hint": "int | float | str"
+            },
+            "presentation": {
+              "label": "jwidth",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "clipminmax",
+          "concept": {
+            "id": "single_dish.clipminmax",
+            "semantic_revision": 1
+          },
+          "order": 29,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--clipminmax"
+              ],
+              "false_flags": [
+                "--no-clipminmax"
+              ]
+            },
+            "provider": {
+              "field": "clipminmax",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "clipminmax"
+            },
+            "presentation": {
+              "label": "clipminmax",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0016",
+            "reason": "Reject extrema while gridding spectra, rather than flagging values by a numeric range."
+          },
+          "unimplemented": {
+            "issue": 938,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "minweight",
+          "concept": {
+            "id": "single_dish.minweight",
+            "semantic_revision": 1
+          },
+          "order": 30,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minweight"
+              ]
+            },
+            "provider": {
+              "field": "minweight",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minweight"
+            },
+            "presentation": {
+              "label": "minweight",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "brightnessunit",
+          "concept": {
+            "id": "single_dish.brightnessunit",
+            "semantic_revision": 1
+          },
+          "order": 31,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--brightnessunit"
+              ]
+            },
+            "provider": {
+              "field": "brightnessunit",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "brightnessunit"
+            },
+            "presentation": {
+              "label": "brightnessunit",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "restfreq",
+          "concept": {
+            "id": "tclean.restfreq",
+            "semantic_revision": 1
+          },
+          "order": 32,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--restfreq"
+              ]
+            },
+            "provider": {
+              "field": "restfreq",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "restfreq"
+            },
+            "presentation": {
+              "label": "restfreq",
+              "group": "Imaging"
+            }
+          },
+          "reviewed_homonym": null
+        }
+      ]
     }
   ]
 }

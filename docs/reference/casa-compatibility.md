@@ -41,6 +41,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 4 | 22 | 0 |
+| tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
 
 ## Tasks
 
@@ -1813,6 +1814,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `b2c468423b839c4decf02c719a9b8977cfe338e6`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psfcutoff-cases.json --backend cpu --precision f64, plus controlled restart probes and T1.5/T2 comparisons`.
 - Receipt: `resources/casa-compat/evidence/tclean-psfcutoff-1140-20261105.json`.
+
+### tsdimaging
+
+- CASA source: `casatasks/tsdimaging.py`, 33 parameters
+- Implementation: `casatasks/private/task_tsdimaging.py`, `tsdimaging` (line 930): 0 return statements, 2 raise statements
+- Called with its defaults in an empty directory, CASA raises `IndexError`: list index out of range
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #938: `field`, `scan`, `timerange`, `outframe`, `mode`, `veltype`, `specmode`, `interpolation`, `pointingcolumn`, `convertfirst`, `projection`, `stokes`, `clipminmax`
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 33, in CASA's order: yes
+- Defaults that differ: none
 
 ## Tools
 
