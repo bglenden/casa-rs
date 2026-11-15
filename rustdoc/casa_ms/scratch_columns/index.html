@@ -43,7 +43,7 @@ for an added column the cached sort keywords, and for <code>MODEL_DATA</code>,
 added or not, every field’s virtual model, as the module states. Every
 path that adds either column to an existing MeasurementSet, or writes
 <code>MODEL_DATA</code>, calls it before it changes the column.</dd><dt><a class="fn" href="fn.prepare_write_holding.html" title="fn casa_ms::scratch_columns::prepare_write_holding">prepare_<wbr>write_<wbr>holding</a></dt><dd><a href="fn.prepare_write.html" title="fn casa_ms::scratch_columns::prepare_write"><code>prepare_write</code></a> for a caller that holds MAIN’s write lock through
-<code>main_lock</code>, a [<code>TableWriteLock</code>] on the MAIN of <code>ms</code> (opened without
+<code>main_lock</code>, a <a href="../../casa_tables/lock/write_lock/struct.TableWriteLock.html" title="struct casa_tables::lock::write_lock::TableWriteLock"><code>TableWriteLock</code></a> on the MAIN of <code>ms</code> (opened without
 locking), as a writer of several mutation sessions in turn holds it:
 MAIN’s metadata is written under it, the write recorded so that the
 caller’s release publishes it, and SOURCE’s lock is tried once, as while

@@ -14,7 +14,7 @@ and written in turn, each under casacore’s write lock on it: SOURCE in
 full as <a href="../ms/struct.MeasurementSet.html#method.save" title="method casa_ms::ms::MeasurementSet::save"><code>MeasurementSet::save</code></a> writes it, MAIN’s metadata alone. A
 table opened with locking is written under its own lock, held already
 or taken and released here; one opened without, under a
-[<code>TableWriteLock</code>] taken and released here, so a caller holds MAIN’s
+<a href="../../casa_tables/lock/write_lock/struct.TableWriteLock.html" title="struct casa_tables::lock::write_lock::TableWriteLock"><code>TableWriteLock</code></a> taken and released here, so a caller holds MAIN’s
 write lock, if at all, through its handle, never through such a guard.
 A lock is waited for as casacore waits, except SOURCE’s while the
 caller holds MAIN’s write lock: one attempt is then made, as a save
@@ -24,7 +24,7 @@ never waits for one table while it holds another, where CASA waits
 best: one that is held open or cannot be deleted is logged and left.</p>
 <h2 id="errors"><a class="doc-anchor" href="#errors">§</a>Errors</h2>
 <p><a href="../error/enum.MsError.html#variant.InvalidInput" title="variant casa_ms::error::MsError::InvalidInput"><code>MsError::InvalidInput</code></a> for <code>DATA</code>, which is no scratch column. A
-[<code>TableError::LockFailed</code>] when SOURCE’s lock is held elsewhere while
+<a href="../../casa_tables/table/enum.TableError.html#variant.LockFailed" title="variant casa_tables::table::TableError::LockFailed"><code>TableError::LockFailed</code></a> when SOURCE’s lock is held elsewhere while
 the caller holds MAIN’s write lock, and any error reading the fields
 or locking and writing SOURCE or MAIN. A table whose write fails is
 reloaded as it is on disk, holding whatever of the write reached it,
