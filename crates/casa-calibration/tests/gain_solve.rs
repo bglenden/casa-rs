@@ -73,11 +73,14 @@ fn shared_solve_setup_reports_invalid_empty_missing_prior_and_refant_errors() {
 
     let mut invalid = phase_gain_request(dir.path().join("invalid.gcal"));
     invalid.selection.field = Some("[".to_string());
+    let selector_error = run_gain_solve(&ms_path, &invalid)
+        .expect_err("invalid selector must fail")
+        .to_string();
+    // CASA's FIELD grammar now names its column in uppercase (#1470).
+    // The assertion checks which selector failed, irrespective of casing.
     assert!(
-        run_gain_solve(&ms_path, &invalid)
-            .expect_err("invalid selector must fail")
-            .to_string()
-            .contains("field")
+        selector_error.to_ascii_lowercase().contains("field"),
+        "{selector_error}"
     );
 
     let mut empty = phase_gain_request(dir.path().join("empty.gcal"));
