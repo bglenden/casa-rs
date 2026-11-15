@@ -120,6 +120,11 @@ fn image_band_frequencies(
     channels: usize,
     table_hz: Option<&[f64]>,
 ) -> [f64; 2] {
+    // A one-entry CASA table maps every pixel to the same frequency.
+    // The iterator's inclusive channel extents still meet that point.
+    if let Some([frequency_hz]) = table_hz {
+        return [*frequency_hz; 2];
+    }
     let far_pixel = channels as f64 + 0.5;
     let far_hz = if let Some(table) = table_hz {
         let left = channels.min(table.len() - 2);
@@ -311,6 +316,17 @@ mod tests {
             image_band_frequencies(140.0, -20.0, 2, Some(&table)),
             [170.0, 103.5]
         );
+    }
+
+    #[test]
+    fn tuning_a_constant_table_selects_the_channels_that_contain_its_frequency() {
+        let ends = image_band_frequencies(120.0, 50.0, 1, Some(&[120.0]));
+        let band = FrequencyBands::new(casa_imaging_model::FrequencyFrame::Lsrk, vec![ends])
+            .expect("a constant frequency is a valid band");
+        assert_eq!(ends, [120.0, 120.0]);
+        assert!(!band.meets(1.0, [90.0, 110.0]));
+        assert!(band.meets(1.0, [110.0, 130.0]));
+        assert!(!band.meets(1.0, [130.0, 150.0]));
     }
 
     #[test]

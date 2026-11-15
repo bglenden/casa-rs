@@ -552,11 +552,7 @@ fn cube_store_reads(
         .iter()
         .find(|window| window.spw_id == first.first_visibility_spw_id)
         .expect("the first visibility is in a surveyed window");
-    let tuned = tunes_selection(request, first_window)
-        && !setup
-            .output_channel_table_hz
-            .as_ref()
-            .is_some_and(|table| table.len() == 1);
+    let tuned = tunes_selection(request, first_window);
     let image_band = tuned
         .then(|| frequency_bands::image_band_lsrk(frame, setup))
         .transpose()?;
@@ -1367,6 +1363,20 @@ mod tests {
     use super::*;
     use crate::request::tests::request;
     use serde_json::json;
+
+    #[test]
+    fn an_optical_cube_refuses_the_unverified_barycentric_grid() {
+        let imaging = request(json!({
+            "specmode": "cube",
+            "veltype": "optical",
+            "width": "20000km/s",
+            "outframe": "BARY",
+        }));
+        assert!(matches!(
+            cube_axis(&imaging),
+            Err(PrepareError::OpticalVelocityGrid)
+        ));
+    }
 
     #[test]
     fn casa_aw_cube_frequency_uses_the_quantum_unit_ratio() {

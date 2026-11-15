@@ -519,6 +519,20 @@ fn awp2_mvc_reads_squint_w_planes_and_continuum_weighting() {
 /// A value casa-rs cannot honour is refused at its parameter, naming the
 /// issue that tracks it.
 #[test]
+fn the_reader_preserves_optical_velocity_and_dimensionless_doppler_values() {
+    let velocity =
+        request(json!({ "specmode": "cube", "veltype": "optical", "width": "20000km/s" }));
+    assert_eq!(
+        velocity.veltype,
+        casa_types::measures::doppler::DopplerRef::Z
+    );
+    assert_eq!(velocity.width.as_deref(), Some("20000km/s"));
+    let doppler = request(json!({ "specmode": "cube", "veltype": "z", "start": "0.01" }));
+    assert_eq!(doppler.veltype, velocity.veltype);
+    assert_eq!(doppler.start.as_deref(), Some("0.01"));
+}
+
+#[test]
 fn values_casa_rs_cannot_honour_are_refused() {
     for (overrides, parameter, issue) in [
         (json!({ "specmode": "mvc" }), "specmode", "#1069"),
@@ -532,17 +546,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "specmode": "cube", "veltype": "ratio" }),
             "veltype",
             "#980",
-        ),
-        (
-            json!({ "specmode": "cube", "veltype": "optical", "width": "20000km/s" }),
-            "veltype",
-            "#1096",
-        ),
-        // A dimensionless start is a Doppler value, a velocity grid too.
-        (
-            json!({ "specmode": "cube", "veltype": "z", "start": "0.01" }),
-            "veltype",
-            "#1096",
         ),
         (
             json!({ "gridder": "wproject", "wprojplanes": -1, "facets": 2 }),
