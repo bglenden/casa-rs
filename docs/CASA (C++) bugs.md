@@ -6010,3 +6010,22 @@ positive pixels on each channel, exact against CASA given the aligned
 
 [Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
 [the casacore pixel-copy implementation](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/Lattices/Lattice.tcc#L290).
+
+## A sky polygon just outside the image can mask its first column
+
+On the natural-weighted 32 × 32 Stokes I MFS `refim_eptwochan.ms` fixture,
+a saved J2000 polygon projects wholly left of the image. Its vertices in
+pixel coordinates are `(-0.6, 2.2), (-0.2, 2.5), (-0.2, 9.7), (-0.5, 10.2)`.
+No pixel centre lies inside. Stock CASA 6.7.6.14 nevertheless fills
+column zero at rows 3 through 10 and performs five Högbom iterations.
+
+`LCPolygon::truncateEnd` converts its fractional upper coordinate to an
+integer toward zero. When the upper crossing lies between −1 and 0, it
+becomes 0 and admits the first column. Native tclean floors that upper
+crossing before clipping. A wholly outside polygon therefore produces
+an empty mask and stops with code 7, as stock CASA does when the polygon
+is farther outside. Ordinary off-grid, partially clipped and
+pixel-boundary polygons retain CASA's exact support.
+
+[Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
+[casacore's upper crossing bound](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/LRegions/LCPolygon.cc#L198-L208).

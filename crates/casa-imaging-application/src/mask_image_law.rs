@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Counting-law access to the mask-image reader compile uses.
+//! Counting-law access to the mask readers compile uses.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use casa_imaging_deconvolution::ReconstructionMaskPlan;
 use casa_imaging_model::DirectionCoordinateSpec;
@@ -52,4 +53,27 @@ impl Input {
     ) -> Result<ReconstructionMaskPlan, crate::PrepareError> {
         self.0.read(regions)
     }
+}
+
+/// Run the same admitted sky-polygon read, returning its support and the
+/// read and retained byte bounds for the allocator's check.
+///
+/// # Errors
+/// A vertex cannot be projected, or the polygon's crossings are invalid.
+pub fn read_polygon(
+    vertices: Vec<[f64; 2]>,
+    direction: DirectionCoordinateSpec,
+    shape: [usize; 2],
+) -> Result<(Arc<[bool]>, u64, u64), crate::PrepareError> {
+    use crate::compile::mask_polygon;
+    let polygon = crate::tclean::MaskPolygon {
+        vertices,
+        j2000: true,
+    };
+    let (read, kept) = mask_polygon::bytes(&polygon, shape);
+    Ok((
+        mask_polygon::support(&polygon, direction, shape)?,
+        read,
+        kept,
+    ))
 }

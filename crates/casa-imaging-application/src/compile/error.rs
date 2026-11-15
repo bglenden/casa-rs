@@ -243,6 +243,16 @@ pub enum PrepareError {
          cubic interpolation, perchanweightdensity=True and no uv taper (#1121)"
     )]
     RestAwCubeDensity,
+    /// A sky polygon vertex could not be projected onto the output image.
+    #[error("mask: cannot project a sky polygon vertex onto the image: {source}")]
+    MaskPolygonProjection {
+        /// The coordinate error.
+        #[source]
+        source: casa_coordinates::CoordinateError,
+    },
+    /// The mask polygon has an invalid shape or unpaired scanline crossings.
+    #[error("mask: the sky polygon does not form a finite closed region")]
+    MaskPolygon,
     /// A CRTF region's spectral range has an end that is not a finite pixel
     /// on the image's spectral axis.
     #[error("mask: the spectral range {range:?} has no finite pixel on the image's axis")]

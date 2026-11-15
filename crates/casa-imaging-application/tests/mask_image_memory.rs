@@ -234,4 +234,28 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
         assert!(plane[(SIDE - 2) * SIDE + 4]);
     }
     assert!(breaches.is_empty(), "{breaches}");
+    let coordinate = target.coordinate();
+    let vertices = [[8.25, 6.25], [94.25, 6.25], [94.25, 32.25], [8.25, 32.25]]
+        .into_iter()
+        .map(|pixel| coordinate.pixel_to_world(pixel).unwrap())
+        .collect::<Vec<_>>();
+    PEAK.store(0, Ordering::Relaxed);
+    let baseline = LIVE.load(Ordering::Relaxed);
+    BASELINE.store(baseline, Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    let (support, read, retained) =
+        casa_imaging_application::mask_image_law::read_polygon(vertices, target, [SIDE; 2])
+            .unwrap();
+    MEASURING.store(false, Ordering::Relaxed);
+    let peak = PEAK.load(Ordering::Relaxed);
+    let held = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
+    assert!(
+        peak <= read,
+        "polygon read peaked at {peak} bytes, admitted {read}"
+    );
+    assert!(
+        held <= retained,
+        "polygon held {held} bytes, kept {retained}"
+    );
+    assert_eq!(support.iter().filter(|inside| **inside).count(), 86 * 26);
 }
