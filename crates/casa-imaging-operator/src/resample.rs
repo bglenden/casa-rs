@@ -17,7 +17,9 @@ mod prediction;
 #[cfg(test)]
 mod reporting_axis_tests;
 mod stencil;
+mod tabular;
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use casa_types::measures::PreparedFrequencyConversion;
@@ -25,6 +27,7 @@ use num_complex::{Complex32, Complex64};
 
 use self::fine_grid::{FineGrid, linear_samples};
 pub use self::prediction::{PlacedRow, PredictionScratch};
+use self::tabular::TabularAxis;
 use crate::accumulator::PlaneRange;
 use crate::convolution::{CellHold, ConvolutionFunctionSet, GridEdge, RowContext};
 use crate::error::OperatorError;
@@ -119,12 +122,13 @@ pub enum SpectralKernel {
 /// centre, signed channel width and channel count. The width matters even
 /// for one channel, because it decides which native channels the channel
 /// accepts.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpectralAxis {
     first_hz: f64,
     increment_hz: f64,
     channels: u32,
     reporting_axis: Option<ReportingAxis>,
+    tabular: Option<TabularAxis>,
     exact_width_from_below: bool,
 }
 
@@ -163,6 +167,7 @@ impl SpectralAxis {
             increment_hz,
             channels,
             reporting_axis: None,
+            tabular: None,
             exact_width_from_below: false,
         })
     }
@@ -188,25 +193,28 @@ impl SpectralAxis {
 
     /// Centre of the first channel in Hz.
     #[must_use]
-    pub const fn first_hz(self) -> f64 {
+    pub const fn first_hz(&self) -> f64 {
         self.first_hz
     }
 
     /// Signed channel width in Hz.
     #[must_use]
-    pub const fn increment_hz(self) -> f64 {
+    pub const fn increment_hz(&self) -> f64 {
         self.increment_hz
     }
 
     /// Number of channels.
     #[must_use]
-    pub const fn channels(self) -> u32 {
+    pub const fn channels(&self) -> u32 {
         self.channels
     }
 
     /// Centre of `channel` in Hz.
     #[must_use]
-    pub fn centre_hz(self, channel: u32) -> f64 {
+    pub fn centre_hz(&self, channel: u32) -> f64 {
+        if let Some(table) = &self.tabular {
+            return table.centre_hz(channel);
+        }
         match self.reporting_axis {
             Some(axis) => axis.to_lsrk.convert_hz(
                 axis.reference_hz + (f64::from(channel) - axis.reference_pixel) * axis.increment_hz,
@@ -215,7 +223,7 @@ impl SpectralAxis {
         }
     }
 
-    fn last_hz(self) -> f64 {
+    fn last_hz(&self) -> f64 {
         self.centre_hz(self.channels - 1)
     }
 
@@ -228,7 +236,7 @@ impl SpectralAxis {
     /// padded below a low first channel reach zero hertz or below (three
     /// 500 MHz channels from 1 GHz, padded by two, start at 0 Hz). Its
     /// centres need only be finite.
-    pub fn padded(self, planes_per_side: u32) -> Result<Self, OperatorError> {
+    pub fn padded(&self, planes_per_side: u32) -> Result<Self, OperatorError> {
         let channels = planes_per_side
             .checked_mul(2)
             .and_then(|padding| padding.checked_add(self.channels))
@@ -241,9 +249,12 @@ impl SpectralAxis {
                 axis.reference_pixel += f64::from(planes_per_side);
                 axis
             }),
-            ..self
+            ..self.clone()
         };
-        if axis.reporting_axis.is_some() {
+        if let Some(table) = &mut axis.tabular {
+            table.shift_reference_pixel(planes_per_side);
+        }
+        if axis.reporting_axis.is_some() || axis.tabular.is_some() {
             // CASA shifts the padded coordinate's reference pixel, then
             // measures the increment again at its first two planes.
             axis.first_hz = axis.centre_hz(0);
@@ -263,13 +274,15 @@ impl SpectralAxis {
     /// lies on the axis. A converted coordinate applies the inverse
     /// Doppler hops before computing the reported pixel.
     #[must_use]
-    pub fn nearest_channel(self, frequency_hz: f64) -> Option<u32> {
+    pub fn nearest_channel(&self, frequency_hz: f64) -> Option<u32> {
         let pixel = match self.reporting_axis {
             Some(axis) => {
                 let world_hz = axis.to_reporting.convert_hz(frequency_hz);
                 (world_hz - axis.reference_hz) / axis.increment_hz + axis.reference_pixel
             }
-            None => (frequency_hz - self.first_hz) / self.increment_hz,
+            None => self
+                .tabular_pixel(frequency_hz)
+                .unwrap_or_else(|| (frequency_hz - self.first_hz) / self.increment_hz),
         };
         let pixel = (pixel + 0.5).floor();
         (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
@@ -280,9 +293,13 @@ impl SpectralAxis {
     /// width inside, or `order.halo()` widths outside, the world frequency
     /// of pixel 0 or of pixel `channels` (one past the last centre, as CASA
     /// takes it); `native_width_hz` is the row's first native spacing.
-    fn in_halo(self, frequency_hz: f64, native_width_hz: f64, order: Order) -> bool {
+    fn in_halo(&self, frequency_hz: f64, native_width_hz: f64, order: Order) -> bool {
         let first = self.first_hz;
-        let beyond = self.first_hz + f64::from(self.channels) * self.increment_hz;
+        let beyond = if self.tabular.is_some() {
+            self.centre_hz(self.channels)
+        } else {
+            self.first_hz + f64::from(self.channels) * self.increment_hz
+        };
         let (low, high) = (first.min(beyond), first.max(beyond));
         let width = native_width_hz.abs();
         let limit = order.halo() * width;
@@ -291,7 +308,7 @@ impl SpectralAxis {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Sampling {
     Direct,
     Nearest(SpectralAxis),
@@ -507,7 +524,7 @@ fn sample_weight(
     npol: usize,
     source: Source,
     placement: &Placement,
-    density_axis: Option<SpectralAxis>,
+    density_axis: Option<&SpectralAxis>,
     (density_wavelength_scale, rest_aw_density): (f64, bool),
 ) -> f32 {
     let channel_weight = |channel: usize| {
@@ -711,7 +728,7 @@ impl WeightSlots<'_> {
 }
 
 /// Turns native rows into placed, weighted samples for one operator.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpectralResampler {
     sampling: Sampling,
     basis: Basis,
@@ -747,15 +764,14 @@ impl SpectralResampler {
     /// of `output`, mapped by `kernel`.
     #[must_use]
     pub fn channel_local(output: SpectralAxis, kernel: SpectralKernel) -> Self {
+        let planes = output.channels;
         Self {
             sampling: match kernel {
                 SpectralKernel::Nearest => Sampling::Nearest(output),
                 SpectralKernel::Linear => Sampling::Interpolated(output, Order::Linear),
                 SpectralKernel::Cubic => Sampling::Interpolated(output, Order::Cubic),
             },
-            basis: Basis::ChannelLocal {
-                planes: output.channels,
-            },
+            basis: Basis::ChannelLocal { planes },
             autocorrelations: false,
             omit_terminal_plane: false,
             density_wavelength_scale: 1.0,
@@ -791,11 +807,15 @@ impl SpectralResampler {
         self
     }
 
-    fn gridding_axis(&self, mut axis: SpectralAxis) -> SpectralAxis {
+    fn gridding_axis<'a>(&self, axis: &'a SpectralAxis) -> Cow<'a, SpectralAxis> {
         if self.omit_terminal_plane && axis.channels > 1 {
-            axis.channels -= 1;
+            Cow::Owned(SpectralAxis {
+                channels: axis.channels - 1,
+                ..axis.clone()
+            })
+        } else {
+            Cow::Borrowed(axis)
         }
-        axis
     }
 
     /// This resampler, predicting autocorrelation rows as well: each is
@@ -806,11 +826,9 @@ impl SpectralResampler {
     /// `usezero` is false, as tclean's does). Gridding never places them
     /// ([`Self::place`]), and without this a prediction gives them zero.
     #[must_use]
-    pub const fn predicting_autocorrelations(self) -> Self {
-        Self {
-            autocorrelations: true,
-            ..self
-        }
+    pub const fn predicting_autocorrelations(mut self) -> Self {
+        self.autocorrelations = true;
+        self
     }
 
     /// Whether predictions degrid autocorrelation rows
@@ -844,7 +862,7 @@ impl SpectralResampler {
     /// so their residual is gridded in one sweep (`Work::ResidualGrid`).
     #[must_use]
     pub const fn forms_native_residuals(&self) -> bool {
-        matches!(self.sampling, Sampling::Interpolated(axis, _) if axis.channels > 1)
+        matches!(&self.sampling, Sampling::Interpolated(axis, _) if axis.channels > 1)
     }
 
     /// Output planes on each side of a wave whose model a residual pass over
@@ -862,15 +880,21 @@ impl SpectralResampler {
     /// a native on its own plane: no halo.
     #[must_use]
     pub fn model_halo(&self, native_spacing_hz: f64) -> u32 {
-        match self.sampling {
+        match &self.sampling {
             Sampling::Interpolated(axis, order) if axis.channels > 1 => {
                 let (prediction, natives) = match order {
                     Order::Linear => (1.0, 1.0),
                     Order::Cubic => (2.0, 3.0),
                 };
-                let planes = (prediction
-                    + 0.5
-                    + natives * native_spacing_hz.abs() / axis.increment_hz.abs())
+                let spacing = axis.increment_hz.abs();
+                let reach = natives * native_spacing_hz.abs();
+                let planes = match &axis.tabular {
+                    Some(table) => {
+                        ((prediction + 0.5) * spacing + reach + table.uniform_drift_hz())
+                            / table.min_spacing_hz()
+                    }
+                    None => prediction + 0.5 + reach / spacing,
+                }
                 .ceil();
                 if planes.is_finite() && planes < f64::from(axis.channels) {
                     planes as u32
@@ -898,7 +922,7 @@ impl SpectralResampler {
 
     /// The output axis padded by `padding` density planes on each side.
     fn density_axis(&self, padding: u32) -> Result<SpectralAxis, OperatorError> {
-        match self.sampling {
+        match &self.sampling {
             Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => axis.padded(padding),
             Sampling::Direct => Err(OperatorError::SpectralAxis {
                 reason: "a per-channel density generation needs a channel-local resampler",
@@ -909,16 +933,17 @@ impl SpectralResampler {
     /// This resampler over the padded density axis.
     fn over_density_axis(&self, padding: u32) -> Result<Self, OperatorError> {
         let axis = self.density_axis(padding)?;
+        let planes = axis.channels;
         Ok(Self {
-            sampling: match self.sampling {
-                Sampling::Interpolated(_, order) => Sampling::Interpolated(axis, order),
+            sampling: match &self.sampling {
+                Sampling::Interpolated(_, order) => Sampling::Interpolated(axis, *order),
                 Sampling::Direct | Sampling::Nearest(_) => Sampling::Nearest(axis),
             },
-            basis: Basis::ChannelLocal {
-                planes: axis.channels,
-            },
+            basis: Basis::ChannelLocal { planes },
             omit_terminal_plane: false,
-            ..*self
+            autocorrelations: self.autocorrelations,
+            density_wavelength_scale: self.density_wavelength_scale,
+            rest_aw_density: self.rest_aw_density,
         })
     }
 
@@ -1080,7 +1105,7 @@ impl SpectralResampler {
                     npol,
                     source,
                     &placement,
-                    density_axis,
+                    density_axis.as_ref(),
                     (self.density_wavelength_scale, self.rest_aw_density),
                 );
                 if let Some((slots, channel)) = slot {
@@ -1113,11 +1138,9 @@ impl SpectralResampler {
     /// channel; interpolation as `linear_samples` bounds it.
     #[must_use]
     pub fn samples_per_row(&self, spectrum: RowSpectrum) -> usize {
-        match self.sampling {
+        match &self.sampling {
             Sampling::Direct | Sampling::Nearest(_) => spectrum.channels,
-            Sampling::Interpolated(axis, _) => {
-                linear_samples(axis.increment_hz, axis.channels as usize, spectrum)
-            }
+            Sampling::Interpolated(axis, _) => axis.samples_per_row(spectrum),
         }
     }
 
@@ -1131,12 +1154,12 @@ impl SpectralResampler {
         shape: &DensityGridShape,
         spectrum: RowSpectrum,
     ) -> usize {
-        match (shape.rule, self.sampling) {
+        match (shape.rule, &self.sampling) {
             (DensityCellRule::Cube, Sampling::Interpolated(axis, _)) => {
-                let increment_hz = axis
-                    .padded(shape.padding)
-                    .map_or(axis.increment_hz, SpectralAxis::increment_hz);
-                linear_samples(increment_hz, shape.planes, spectrum)
+                axis.padded(shape.padding).map_or_else(
+                    |_| linear_samples(axis.increment_hz, shape.planes, spectrum),
+                    |padded| padded.samples_per_row(spectrum),
+                )
             }
             _ => spectrum.channels,
         }
@@ -1260,14 +1283,14 @@ impl SpectralResampler {
     /// Visit every spectral sample of the row as `(plane, frequency, source)`.
     fn for_each_sample(&self, row: &NativeRow<'_>, mut visit: impl FnMut(u32, f64, Source)) {
         let native = row.frequencies_hz;
-        let nearest = |axis: SpectralAxis, visit: &mut dyn FnMut(u32, f64, Source)| {
+        let nearest = |axis: &SpectralAxis, visit: &mut dyn FnMut(u32, f64, Source)| {
             for (channel, frequency_hz) in native.iter().enumerate() {
                 if let Some(plane) = axis.nearest_channel(*frequency_hz) {
                     visit(plane, *frequency_hz, Source::Channel(channel));
                 }
             }
         };
-        match self.sampling {
+        match &self.sampling {
             Sampling::Direct => {
                 for (channel, frequency_hz) in native.iter().enumerate() {
                     visit(0, *frequency_hz, Source::Channel(channel));
@@ -1276,15 +1299,15 @@ impl SpectralResampler {
             Sampling::Nearest(axis) => nearest(axis, &mut visit),
             // CASA bypasses interpolation for a one-channel image or row.
             Sampling::Interpolated(axis, _) if axis.channels == 1 || native.len() == 1 => {
-                nearest(self.gridding_axis(axis), &mut visit);
+                nearest(&self.gridding_axis(axis), &mut visit);
             }
             Sampling::Interpolated(axis, order) => {
-                let Some(grid) = FineGrid::compile(self.gridding_axis(axis), native[1] - native[0])
-                else {
+                let output = self.gridding_axis(axis);
+                let Some(mut grid) = FineGrid::compile(&output, native, *order) else {
                     return;
                 };
                 let count = grid.count();
-                let ascending = grid.increment_hz > 0.0;
+                let ascending = grid.increment_hz.is_sign_positive();
                 let mut next = 0;
                 for left in 0..native.len() - 1 {
                     let left_hz = native[left];
@@ -1314,7 +1337,9 @@ impl SpectralResampler {
                             Order::Linear => Source::Pair { left, right_factor },
                             Order::Cubic => cubic_source(native, left, right_factor, frequency_hz),
                         };
-                        visit(grid.output_channel(next), frequency_hz, source);
+                        if let Some(plane) = grid.output_channel(next, frequency_hz) {
+                            visit(plane, frequency_hz, source);
+                        }
                         next += 1;
                     }
                 }

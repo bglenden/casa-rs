@@ -689,15 +689,6 @@ impl<'a> Tclean<'a> {
             return Ok(());
         }
         let convention = velocity_convention(veltype)?;
-        // An optical-velocity grid is equal in optical velocity, not in
-        // frequency, and CASA tabulates its axis (#1096).
-        if convention == "OPTICAL" && (is_velocity(start) || is_velocity(width)) {
-            return Err(TcleanRefusal::not_yet(
-                "veltype",
-                "'optical' with a velocity start or width, whose channels CASA tabulates",
-                1096,
-            ));
-        }
         self.set("start", start);
         self.set("width", width);
         self.set("outframe", frame);
@@ -1177,22 +1168,6 @@ fn output_frame(text: &str) -> Result<String, TcleanRefusal> {
         "LSRK" | "BARY" | "TOPO" | "REST" => Ok(frame),
         _ => Err(TcleanRefusal::not_yet("outframe", format!("{text:?}"), 980)),
     }
-}
-
-/// Whether a cube's `start` or `width` text makes its axis a velocity
-/// grid (`SynthesisParamsImage::findSpecMode`): a velocity, or a
-/// dimensionless Doppler value, which the axis builder takes as the
-/// velocity it stands for (`CubeAxisValue::parse`). A whole number is a
-/// channel.
-fn is_velocity(text: &str) -> bool {
-    let text = text.trim();
-    if text.parse::<i32>().is_ok() {
-        return false;
-    }
-    let velocity = Unit::new("m/s").expect("built-in velocity unit");
-    Quantity::from_str(text).is_ok_and(|quantity| {
-        quantity.unit().conformant(&velocity) || quantity.unit().conformant(&Unit::dimensionless())
-    })
 }
 
 /// A cube's velocity convention, in casacore's spelling: `z` is optical and

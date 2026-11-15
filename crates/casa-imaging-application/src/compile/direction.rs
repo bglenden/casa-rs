@@ -582,6 +582,7 @@ pub(super) struct ImageSpectralCoordinate {
     pub(super) frequency_reference: FrequencyRef,
     pub(super) reference_frequency_hz: f64,
     pub(super) increment_hz: f64,
+    pub(super) channel_table_hz: Option<Vec<f64>>,
     pub(super) rest_frequency_hz: f64,
     /// The rest frequencies CASA lists after the active one: tclean's
     /// `restfreq` entries after its first (`buildCoordinateSystemCore`'s
@@ -591,6 +592,46 @@ pub(super) struct ImageSpectralCoordinate {
     /// CASA's `buildCoordinateSystemCore` writes a `cubedata` cube's axis
     /// unless it is in the rest frame: the data's frequencies, uncorrected.
     pub(super) undefined_frame: bool,
+}
+
+impl ImageSpectralCoordinate {
+    /// CASA's nominal increment is the mean of the stored table intervals.
+    pub(super) fn tabular_increment_hz(table: &[f64]) -> f64 {
+        let last = table.len() - 1;
+        (table[last] - table[0]) / last.max(1) as f64
+    }
+
+    /// The native and CASA product-header coordinate use the same table.
+    pub(super) fn coordinate(&self) -> SpectralCoordinate {
+        let axis = match &self.channel_table_hz {
+            Some(table) => SpectralCoordinate::from_tabular(
+                self.frequency_reference,
+                (0..table.len()).map(|pixel| pixel as f64).collect(),
+                table.clone(),
+                table[0],
+                ImageSpectralCoordinate::tabular_increment_hz(table),
+                0.0,
+                self.rest_frequency_hz,
+            )
+            .expect("the compiled optical spectral table is nonempty"),
+            None => SpectralCoordinate::new(
+                self.frequency_reference,
+                self.reference_frequency_hz,
+                self.increment_hz,
+                0.0,
+                self.rest_frequency_hz,
+            ),
+        };
+        let mut axis = axis.with_rest_frequencies(
+            std::iter::once(self.rest_frequency_hz)
+                .chain(self.additional_rest_frequencies_hz.iter().copied())
+                .collect(),
+        );
+        if self.undefined_frame {
+            axis = axis.with_undefined_frame();
+        }
+        axis
+    }
 }
 
 /// The coordinate system of one image domain's products.
@@ -612,22 +653,7 @@ pub(super) fn image_coordinates(
     coordinates.add_coordinate(StokesCoordinate::new(
         polarizations.iter().copied().map(stokes_type).collect(),
     ));
-    let mut axis = SpectralCoordinate::new(
-        spectral.frequency_reference,
-        spectral.reference_frequency_hz,
-        spectral.increment_hz,
-        0.0,
-        spectral.rest_frequency_hz,
-    )
-    .with_rest_frequencies(
-        std::iter::once(spectral.rest_frequency_hz)
-            .chain(spectral.additional_rest_frequencies_hz.iter().copied())
-            .collect(),
-    );
-    if spectral.undefined_frame {
-        axis = axis.with_undefined_frame();
-    }
-    coordinates.add_coordinate(axis);
+    coordinates.add_coordinate(spectral.coordinate());
     *coordinates.obs_info_mut() = observation.clone();
     coordinates
 }
@@ -818,6 +844,7 @@ mod tests {
                 reference_frequency_hz: 1.0e9,
                 increment_hz: 1.0,
                 rest_frequency_hz: 1.0e9,
+                channel_table_hz: None,
                 additional_rest_frequencies_hz: Vec::new(),
                 undefined_frame: false,
             },

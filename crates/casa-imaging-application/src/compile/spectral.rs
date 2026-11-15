@@ -140,6 +140,7 @@ struct AxisLaw<'a> {
     output_channels: usize,
     rest_frequency: RestFrequency,
     image: ImageSpectralCoordinate,
+    tabular_centres_hz: Option<Vec<f64>>,
     doppler: DopplerConvention,
     sampling: SpectralSamplingLaw,
     basis: ReconstructionBasis,
@@ -192,11 +193,14 @@ pub(super) fn prepare_axis<'a>(
         output_frequency_reference: law.output_frequency_reference,
         output_frame,
         anchor: spectral_frame_anchor(source_frame, output_frame, request.specmode, frame)?,
-        wcs: SpectralWcs::Linear {
-            channels: law.output_channels,
-            reference_pixel: 0.0,
-            reference_frequency_hz: law.reference_frequency_hz,
-            increment_hz: law.increment_hz,
+        wcs: match law.tabular_centres_hz {
+            Some(centres_hz) => tabular_wcs(centres_hz, law.increment_hz),
+            None => SpectralWcs::Linear {
+                channels: law.output_channels,
+                reference_pixel: 0.0,
+                reference_frequency_hz: law.reference_frequency_hz,
+                increment_hz: law.increment_hz,
+            },
         },
         source_lsrk_grid: law.source_lsrk_grid,
         rest_frequency: law.rest_frequency,
@@ -284,9 +288,11 @@ fn continuum_law<'a>(
             reference_frequency_hz: image_reference_hz,
             increment_hz: image_increment_hz,
             rest_frequency_hz: image_rest_frequency_hz,
+            channel_table_hz: None,
             additional_rest_frequencies_hz: Vec::new(),
             undefined_frame: false,
         },
+        tabular_centres_hz: None,
         doppler: DopplerConvention::NotApplicable,
         sampling: SpectralSamplingLaw::IDENTITY,
         basis: ReconstructionBasis::Constant,
@@ -547,7 +553,9 @@ fn cube_store_reads(
         .find(|window| window.spw_id == first.first_visibility_spw_id)
         .expect("the first visibility is in a surveyed window");
     let tuned = tunes_selection(request, first_window);
-    let image_band = image_band(frame, setup, tuned)?;
+    let image_band = tuned
+        .then(|| frequency_bands::image_band_lsrk(frame, setup))
+        .transpose()?;
     let mut channels = Vec::with_capacity(stores.len());
     let mut bands = Vec::with_capacity(stores.len());
     for (index, store) in stores.iter().enumerate() {
@@ -638,15 +646,21 @@ fn store_reads(
         reaches_axis: false,
     };
     for window in &survey.spectral_windows {
-        let mut channels = setup
-            .source_channel_support(
-                &window.frequencies_hz,
-                &window.channel_widths_hz,
-                survey.time_bounds_mjd_seconds,
-                field,
-                engine,
-            )?
-            .indices;
+        let mut channels = if setup.output_channel_table_hz.is_some() {
+            // Tabular FTMachine sampling anchors its fine grid to the
+            // actual visibility buffer. Keep all iterator-selected centres.
+            (0..window.frequencies_hz.len()).collect()
+        } else {
+            setup
+                .source_channel_support(
+                    &window.frequencies_hz,
+                    &window.channel_widths_hz,
+                    survey.time_bounds_mjd_seconds,
+                    field,
+                    engine,
+                )?
+                .indices
+        };
         let selection = match &bands {
             Some(bands) => bands.epoch_selection((catalogue, engine), survey, window)?,
             None => None,
@@ -765,25 +779,6 @@ fn whole_selection_density(request: &ImagingRequest) -> bool {
         && !(request.perchanweightdensity && request.weighting.per_channel_density())
 }
 
-/// The image's LSRK band a `cube` tunes its selection to
-/// ([`frequency_bands::image_band_lsrk`]), where CASA tunes it.
-fn image_band(
-    frame: &FrameContext<'_>,
-    setup: &CubeSpectralSetup,
-    tuned: bool,
-) -> Result<Option<[f64; 2]>, PrepareError> {
-    if !tuned {
-        return Ok(None);
-    }
-    let channels = setup.output_channel_frequencies_hz.len();
-    let (first_hz, increment_hz) = first_and_increment(setup, channels)?;
-    Ok(Some(frequency_bands::image_band_lsrk(
-        frame,
-        setup.output_freq_ref,
-        (first_hz, increment_hz, channels),
-    )?))
-}
-
 /// The bands a cube's gridding selects one store's windows' channels by at
 /// each time ([`frequency_bands::cube_bands`]): a `cube`'s in `outframe`,
 /// or tuned to the image's band `image_band` where CASA tunes the
@@ -836,9 +831,18 @@ fn cube_law(
         casa_cube_frequency(&mut axis.width, request.width.as_deref());
     }
     let (setup, band_hz) = cube_setup(request, (survey, &band_surveys), frame, axis.clone(), 1.0)?;
+    let output_channels = setup.output_channel_frequencies_hz.len();
+    if output_channels > 1
+        && setup
+            .output_channel_table_hz
+            .as_ref()
+            .is_some_and(|table| table.len() == 1)
+    {
+        return Err(PrepareError::DegenerateOpticalCube);
+    }
     let (selected_source_channels, window_reads) =
         cube_store_reads(request, (stores, reference), frame, &setup)?;
-    let output_channels = setup.output_channel_frequencies_hz.len();
+    let tabular = setup.output_channel_table_hz.is_some();
     let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels)?;
     let source_rest_hz =
         source_rest_frequency(catalogue, frame.field_id, &survey.spectral_windows)?;
@@ -879,10 +883,12 @@ fn cube_law(
             reference_frequency_hz,
             increment_hz,
             rest_frequency_hz: image_rest_frequency_hz,
+            channel_table_hz: setup.output_channel_table_hz,
             additional_rest_frequencies_hz: Vec::new(),
             undefined_frame: request.specmode == SpecMode::Cubedata
                 && setup.output_freq_ref != FrequencyRef::REST,
         },
+        tabular_centres_hz: tabular.then_some(setup.output_channel_frequencies_hz),
         doppler,
         sampling: sampling_law(setup.interpolation),
         basis: ReconstructionBasis::ChannelLocal {
@@ -1135,9 +1141,11 @@ fn source_frame_cube_law(
             reference_frequency_hz,
             increment_hz,
             rest_frequency_hz,
+            channel_table_hz: None,
             additional_rest_frequencies_hz: Vec::new(),
             undefined_frame: false,
         },
+        tabular_centres_hz: None,
         doppler: doppler_convention(request.veltype)?,
         sampling: sampling_law(request.interpolation),
         basis: ReconstructionBasis::ChannelLocal {
@@ -1162,6 +1170,19 @@ fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
         .as_deref()
         .map(|width| CubeAxisValue::parse(width, request.veltype))
         .transpose()?;
+    if request.veltype == DopplerRef::Z
+        && [&start, &width].into_iter().any(|value| {
+            matches!(
+                value,
+                Some(CubeAxisValue::VelocityMs { .. } | CubeAxisValue::Doppler { .. })
+            )
+        })
+        && (request.specmode != SpecMode::Cube
+            || request.outframe != FrequencyRef::LSRK
+            || !matches!(request.gridder, Gridder::Standard { .. }))
+    {
+        return Err(PrepareError::OpticalVelocityGrid);
+    }
     Ok(CubeAxisConfig {
         specmode: if request.specmode == SpecMode::Cubedata {
             CubeSpecMode::Cubedata
@@ -1180,12 +1201,14 @@ fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
 
 /// The first output channel's centre and the channel increment.
 /// A one-channel cube's increment is its width.
-fn first_and_increment(
+pub(super) fn first_and_increment(
     setup: &CubeSpectralSetup,
     output_channels: usize,
 ) -> Result<(f64, f64), PrepareError> {
     let first_hz = setup.output_channel_frequencies_hz[0];
-    let increment_hz = if output_channels > 1 {
+    let increment_hz = if let Some([first, second, ..]) = setup.output_channel_table_hz.as_deref() {
+        second - first
+    } else if output_channels > 1 {
         setup.output_channel_frequencies_hz[1] - first_hz
     } else {
         setup.output_channel_widths_hz[0]
@@ -1194,6 +1217,26 @@ fn first_and_increment(
         return Err(PrepareError::CubeIncrement { increment_hz });
     }
     Ok((first_hz, increment_hz))
+}
+
+/// The compiled axis retains every evaluated plane, including extrapolated
+/// centres. The image header keeps the original table separately.
+fn tabular_wcs(channel_centres_hz: Vec<f64>, first_step: f64) -> SpectralWcs {
+    let last_step = channel_centres_hz
+        .last_chunk::<2>()
+        .map_or(first_step, |[before, last]| last - before);
+    let mut channel_boundaries_hz = Vec::with_capacity(channel_centres_hz.len() + 1);
+    channel_boundaries_hz.push(channel_centres_hz[0] - first_step / 2.0);
+    channel_boundaries_hz.extend(
+        channel_centres_hz
+            .windows(2)
+            .map(|pair| pair[0].midpoint(pair[1])),
+    );
+    channel_boundaries_hz.push(channel_centres_hz[channel_centres_hz.len() - 1] + last_step / 2.0);
+    SpectralWcs::Tabular {
+        channel_centres_hz,
+        channel_boundaries_hz,
+    }
 }
 
 /// The model's Doppler convention of CASA `veltype`.
@@ -1320,6 +1363,20 @@ mod tests {
     use super::*;
     use crate::request::tests::request;
     use serde_json::json;
+
+    #[test]
+    fn an_optical_cube_refuses_the_unverified_barycentric_grid() {
+        let imaging = request(json!({
+            "specmode": "cube",
+            "veltype": "optical",
+            "width": "20000km/s",
+            "outframe": "BARY",
+        }));
+        assert!(matches!(
+            cube_axis(&imaging),
+            Err(PrepareError::OpticalVelocityGrid)
+        ));
+    }
 
     #[test]
     fn casa_aw_cube_frequency_uses_the_quantum_unit_ratio() {

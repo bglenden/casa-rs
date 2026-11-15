@@ -117,7 +117,7 @@ fn the_cpu_block_predictor_predicts_each_row_as_alone() {
         let operator = operator(GridPrecision::F64, base.basis());
         let model = model_of(&operator, 3);
         let rows = prediction_rows(90, 13, &operator, 1);
-        for resampler in [base, base.predicting_autocorrelations()] {
+        for resampler in [base.clone(), base.predicting_autocorrelations()] {
             let domains = [PredictionDomain {
                 operator: &operator,
                 resampler: &resampler,
@@ -301,7 +301,7 @@ fn metal_block_predictions_equal_the_cpus() {
         return;
     }
     for base in [nearest_cube(), offset_linear_cube()] {
-        let resampler = base.predicting_autocorrelations();
+        let resampler = base.clone().predicting_autocorrelations();
         let first = operator(GridPrecision::F32, resampler.basis());
         let second = operator(GridPrecision::F32, resampler.basis());
         let (first_model, second_model) = (model_of(&first, 29), model_of(&second, 31));

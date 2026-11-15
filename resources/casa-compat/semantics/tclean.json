@@ -261,7 +261,7 @@
     },
     "start": {
       "status": "Partial",
-      "scope": "MFS ignores it; cube copies text. With nchan=-1 the axis runs from it to the band's far edge (issue 1066). A velocity start with veltype='optical' is refused: CASA tabulates that axis (issue 1096).",
+      "scope": "MFS ignores it; cube copies text. With nchan=-1 the axis runs from it to the band's far edge (issue 1066). Standard LSRK optical-velocity cubes use the original CASA frequency table (issue 1096).",
       "evidence": [
         "signature",
         "reader",
@@ -273,7 +273,7 @@
     },
     "width": {
       "status": "Partial",
-      "scope": "MFS ignores it; cube copies text. With nchan=-1 the band is filled in whole channels of this width (issue 1066). A velocity width with veltype='optical' is refused (issue 1096).",
+      "scope": "MFS ignores it; cube copies text. With nchan=-1 the band is filled in whole channels of this width (issue 1066). A velocity width gives a tabular frequency axis in a standard LSRK optical cube (issue 1096).",
       "evidence": [
         "signature",
         "reader",
@@ -296,7 +296,7 @@
     },
     "veltype": {
       "status": "Partial",
-      "scope": "MFS ignores it; cube maps radio->RADIO, optical/z->OPTICAL, beta/relativistic/true->BETA; other values refused (issue 980). An optical-velocity grid (a velocity start or width with veltype='optical') is refused until CASA's tabular axis is ported (issue 1096).",
+      "scope": "MFS ignores it; cube maps radio->RADIO, optical/z->OPTICAL, beta/relativistic/true->BETA; other values refused (issue 980). Standard LSRK optical-velocity cubes grid, predict, and publish CASA-readable tabular coordinates. The remaining optical gridder and frame combinations are refused (issue 1096).",
       "evidence": [
         "signature",
         "reader",
@@ -1124,7 +1124,7 @@
       "title": "Cube axes, reference frequencies and moving sources",
       "status": "Partial",
       "scope": "specmode, spw, start, width, nchan, reffreq, restfreq, outframe, veltype, interpolation and perchanweightdensity.",
-      "gap": "nchan=-1 takes CASA's count from the start or the first selected channel to the band's far edge in channel, frequency and radio-velocity grids, and interpolation='cubic' fits casacore's four-point cubic (#1066); an optical-velocity grid, which CASA tabulates, is refused (#1096); a cube over several selected windows lays its axis over their channels merged as CASA's MSTransformRegridder::combineSpwsCore merges them, grids every window's rows onto it, and with nchan=-1 counts a channel grid's planes over the merged band as regridChanBounds does (#980); MFS outframe (LSRK/BARY/TOPO, header only, gridding stays LSRK as in CASA) and restfreq lists (first active, the others listed in the header) are read; MFS REST outframe and blank restfreq entries remain restricted. Moving-source cubesource needs its own representative oracle (#714). Fresh standard MVC uses cube major cycles and Taylor minor cycles. The standard multi-SPW dirty and clean comparisons pass, with remaining cases on #1069. The moving-MFS spectral envelope now uses CASA FIELD-origin direction semantics; six fixed/moving CPU64/CPU32/GPU32 comparisons pass recorded WCS values, and the previous 3.5 Hz increment mismatch is repaired at its unchanged tolerance. This does not complete moving-PB or cubesource acceptance. The ordinary MFS default SOURCE rest-frequency label is now repaired; five fresh mosaic/AW weight families and small restart metadata checks match. DOPPLER-backed SOURCE lookup and multiple SOURCE key groups with stored wildcards are explicitly unfinished, not approved deviations. The MFS header's first visibility field is the least (ARRAY_ID, DATA_DESC_ID, FIELD_ID) of the selected samples, CASA's buffer order: the MSv2 adapter states each partition's array and the survey reads the rows' arrays for a partition holding several (3bdf6fa, after Astra's review found the merge had dropped ARRAY_ID); a T1 run with opposing arrays records CASA's choice. An MSv4 has no arrays. The moving-MFS increment oracle on the catalogue path gives CASA's 125020996.11132812 Hz exactly (8b0fe44).",
+      "gap": "nchan=-1 takes CASA's count from the start or the first selected channel to the band's far edge in channel, frequency and radio-velocity grids, and interpolation='cubic' fits casacore's four-point cubic (#1066); standard LSRK optical-velocity cubes preserve CASA's stored frequency table, extrapolate extra planes by its last interval, and match channel gridding, prediction, and density weights (#1096). The other optical gridder and frame combinations and a constant table on multiple image planes remain scoped out; a cube over several selected windows lays its axis over their channels merged as CASA's MSTransformRegridder::combineSpwsCore merges them, grids every window's rows onto it, and with nchan=-1 counts a channel grid's planes over the merged band as regridChanBounds does (#980); MFS outframe (LSRK/BARY/TOPO, header only, gridding stays LSRK as in CASA) and restfreq lists (first active, the others listed in the header) are read; MFS REST outframe and blank restfreq entries remain restricted. Moving-source cubesource needs its own representative oracle (#714). Fresh standard MVC uses cube major cycles and Taylor minor cycles. The standard multi-SPW dirty and clean comparisons pass, with remaining cases on #1069. The moving-MFS spectral envelope now uses CASA FIELD-origin direction semantics; six fixed/moving CPU64/CPU32/GPU32 comparisons pass recorded WCS values, and the previous 3.5 Hz increment mismatch is repaired at its unchanged tolerance. This does not complete moving-PB or cubesource acceptance. The ordinary MFS default SOURCE rest-frequency label is now repaired; five fresh mosaic/AW weight families and small restart metadata checks match. DOPPLER-backed SOURCE lookup and multiple SOURCE key groups with stored wildcards are explicitly unfinished, not approved deviations. The MFS header's first visibility field is the least (ARRAY_ID, DATA_DESC_ID, FIELD_ID) of the selected samples, CASA's buffer order: the MSv2 adapter states each partition's array and the survey reads the rows' arrays for a partition holding several (3bdf6fa, after Astra's review found the merge had dropped ARRAY_ID); a T1 run with opposing arrays records CASA's choice. An MSv4 has no arrays. The moving-MFS increment oracle on the catalogue path gives CASA's 125020996.11132812 Hz exactly (8b0fe44).",
       "evidence": [
         "reader",
         "representative",

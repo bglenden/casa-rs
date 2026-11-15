@@ -856,18 +856,39 @@ fn cube_density_padding(
     if per_field {
         return Ok(Some(PER_FIELD_CUBE_DENSITY_PADDING));
     }
+    let (last_hz, increment_hz) = match &spectral.wcs {
+        casa_imaging_model::SpectralWcs::Tabular {
+            channel_centres_hz, ..
+        } => {
+            // CASA estimates no swing in a shared spectral frame.
+            if survey.source_frequency_reference == spectral.output_frequency_reference {
+                return Ok(Some(0));
+            }
+            if channel_centres_hz.len() == 1 {
+                // A constant table has no nonzero interval to divide the
+                // swing by. Retain the one guard plane per side that stock
+                // CASA uses for a constant optical cube in another frame.
+                return Ok(Some(1));
+            }
+            (
+                channel_centres_hz[channel_centres_hz.len() - 1],
+                direction::ImageSpectralCoordinate::tabular_increment_hz(channel_centres_hz),
+            )
+        }
+        casa_imaging_model::SpectralWcs::Linear { .. } => (
+            spectral.reference_frequency_hz
+                + (spectral.output_channels - 1) as f64 * spectral.increment_hz,
+            spectral.increment_hz,
+        ),
+    };
     Ok(Some(envelope::cube_density_padding(
         (surveyed.catalogue, surveyed.engine),
         survey,
         &envelope::OutputAxis {
             frequency_reference: spectral.output_frequency_reference,
-            centres_hz: [
-                spectral.reference_frequency_hz,
-                spectral.reference_frequency_hz
-                    + (spectral.output_channels - 1) as f64 * spectral.increment_hz,
-            ],
+            centres_hz: [spectral.reference_frequency_hz, last_hz],
             channels: spectral.output_channels,
-            increment_hz: spectral.increment_hz,
+            increment_hz,
         },
     )?))
 }

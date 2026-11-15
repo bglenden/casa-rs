@@ -266,6 +266,12 @@ pub enum PrepareError {
         /// The derived increment.
         increment_hz: f64,
     },
+    /// An optical-velocity request outside the supported gridding combinations.
+    #[error("optical velocity requires an LSRK cube with standard gridding (#1096)")]
+    OpticalVelocityGrid,
+    /// A constant spectral coordinate cannot pair with these cube controls.
+    #[error("a one-entry optical frequency table requires a single image plane (#1096)")]
+    DegenerateOpticalCube,
     /// The cube asks for a Doppler convention native imaging has no law for.
     #[error("cube Doppler convention {convention} is not supported")]
     UnsupportedDoppler {

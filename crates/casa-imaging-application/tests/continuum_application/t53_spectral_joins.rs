@@ -222,3 +222,55 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
         }
     }
 }
+
+#[test]
+fn optical_cube_publishes_only_the_original_table_and_extrapolates_remaining_planes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_measurement_set(root.path());
+    let prefix = root.path().join("optical-cube");
+    let imaging = request(
+        &measurement_set,
+        &prefix,
+        json!({
+            "niter": 0,
+            "imsize": 16,
+            "specmode": "cube",
+            "outframe": "LSRK",
+            "veltype": "OPTICAL",
+            "restfreq": ["44.015GHz", "44.02GHz"],
+            "start": "-90km/s",
+            "width": "12km/s",
+            "channel_count": 24,
+        }),
+    );
+    execute(&imaging).expect("native tabular optical cube");
+    let psf = PagedImage::<f32>::open(root.path().join("optical-cube.psf")).expect("PSF");
+    let coordinates = psf.coordinates();
+    let axis = (0..coordinates.n_coordinates())
+        .find_map(|index| match coordinates.coordinate(index) {
+            casa_coordinates::CoordinateModel::Spectral(axis) => Some(axis),
+            _ => None,
+        })
+        .expect("published spectral axis");
+    let record = coordinates.to_record();
+    let spectral = record.get("spectral2").expect("spectral coordinate record");
+    let casa_types::Value::Record(spectral) = spectral else {
+        panic!("spectral coordinate record");
+    };
+    let Some(casa_types::Value::Record(table)) = spectral.get("tabular") else {
+        panic!("the published frequency axis retains its CASA table");
+    };
+    let Some(casa_types::Value::Array(casa_types::ArrayValue::Float64(values))) =
+        table.get("worldvalues")
+    else {
+        panic!("the spectral coordinate contains its frequency values");
+    };
+    let count = values.len();
+    assert!((3..24).contains(&count), "stored table length {count}");
+    let values: Vec<_> = values.iter().copied().collect();
+    let tail = values[count - 1] + (24 - count) as f64 * (values[count - 1] - values[count - 2]);
+    assert!((axis.world_frequency_hz(23.0).unwrap() - tail).abs() < 1e-5);
+    assert_ne!(values[1] - values[0], values[count - 1] - values[count - 2]);
+    assert_eq!(axis.rest_frequency(), 44.015e9);
+}

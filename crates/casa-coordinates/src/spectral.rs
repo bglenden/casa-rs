@@ -146,9 +146,9 @@ impl SpectralCoordinate {
         crpix: f64,
         rest_frequency: f64,
     ) -> Result<Self, CoordinateError> {
-        if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
+        if pixel_values.len() != world_values.len() || pixel_values.is_empty() {
             return Err(CoordinateError::InvalidRecord(
-                "tabular spectral coordinates require matching pixel/world tables with at least 2 entries"
+                "tabular spectral coordinates require matching pixel/world tables with at least one entry"
                     .into(),
             ));
         }
@@ -258,14 +258,18 @@ impl SpectralCoordinate {
             / frequency_unit_scale(&table_unit).ok_or_else(|| {
                 CoordinateError::InvalidRecord("invalid tabular spectral unit".into())
             })?;
-        let count = length.max(2);
+        let count = if world_values.len() == 1 {
+            1
+        } else {
+            length.max(2)
+        };
         let values = (0..count)
             .map(|pixel| {
                 interpolate(pixel_values, world_values, (start + pixel) as f64)
                     .map(|world| world * factor)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let increment = (values[count - 1] - values[0]) / (count - 1) as f64;
+        let increment = (values[count - 1] - values[0]) / (count - 1).max(1) as f64;
         let Some(Value::Record(table)) = record.get_mut("tabular") else {
             unreachable!()
         };
@@ -889,12 +893,16 @@ fn parse_conversion(rec: &RecordValue) -> Option<SpectralConversion> {
 
 fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
     let n = xs.len();
-    if n < 2 || ys.len() != n {
+    if n == 0 || ys.len() != n {
         return Err(CoordinateError::ConversionFailed(
-            "tabular interpolation requires matching lookup tables with at least 2 entries".into(),
+            "tabular interpolation requires matching lookup tables with at least one entry".into(),
         ));
     }
 
+    if n == 1 {
+        // Casacore uses a constant nearest-neighbour table in both directions.
+        return Ok(ys[0]);
+    }
     let increasing = xs[n - 1] > xs[0];
     let idx = if increasing {
         match xs.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
@@ -1181,6 +1189,24 @@ mod tests {
         assert!((world[0] - 1.412e9).abs() < 1.0);
         let pixel = coord.to_pixel(&[1.412e9]).unwrap();
         assert!((pixel[0] - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn one_entry_casa_tabular_coordinate_round_trips_as_constant() {
+        let axis = SpectralCoordinate::from_tabular(
+            FrequencyRef::LSRK,
+            vec![0.0],
+            vec![1.25e9],
+            1.25e9,
+            0.0,
+            0.0,
+            1.4e9,
+        )
+        .unwrap();
+        let read = SpectralCoordinate::from_record(&axis.to_record()).unwrap();
+        assert_eq!(read.increment(), [0.0]);
+        assert_eq!(read.to_world(&[-7.0]).unwrap(), [1.25e9]);
+        assert_eq!(read.to_pixel(&[1.4e9]).unwrap(), [0.0]);
     }
 
     #[test]

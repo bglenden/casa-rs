@@ -47,7 +47,7 @@
 use std::collections::BTreeMap;
 
 use casa_imaging_model::FrequencyBands;
-use casa_ms::derived::engine::MsCalEngine;
+use casa_ms::{CubeSpectralSetup, derived::engine::MsCalEngine};
 use casa_observation::Catalogue;
 use casa_types::measures::PreparedFrequencyConversion;
 use casa_types::measures::direction::MDirection;
@@ -56,7 +56,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use super::PrepareError;
 use super::envelope::{epoch_frame, selection_band};
 use super::selection::SourceSpectralWindow;
-use super::spectral::FrameContext;
+use super::spectral::{FrameContext, first_and_increment};
 use super::survey::Survey;
 
 /// The bands of each surveyed window a cube's gridding selects by, all in
@@ -78,15 +78,22 @@ pub(super) enum SelectionFrame {
 }
 
 /// The image's band in LSRK as `SynthesisImager::tuneSelectData` states
-/// it: the axis from pixel −1.5 to pixel `channels + 0.5`, its first
-/// channel centred at `first_hz` and its channels `increment_hz` apart in
-/// frame `output`, converted to LSRK through the image's conversion layer
+/// it: its endpoints at pixels −1.5 and `channels + 0.5` in frame
+/// `output`, converted to LSRK through the image's conversion layer
 /// at its anchor (`setSpectralConversion("LSRK")`).
 pub(super) fn image_band_lsrk(
     frame: &FrameContext<'_>,
-    output: FrequencyRef,
-    (first_hz, increment_hz, channels): (f64, f64, usize),
+    setup: &CubeSpectralSetup,
 ) -> Result<[f64; 2], PrepareError> {
+    let channels = setup.output_channel_frequencies_hz.len();
+    let (first_hz, increment_hz) = first_and_increment(setup, channels)?;
+    let ends = image_band_frequencies(
+        first_hz,
+        increment_hz,
+        channels,
+        setup.output_channel_table_hz.as_deref(),
+    );
+    let output = setup.output_freq_ref;
     let factor = if output == FrequencyRef::LSRK {
         1.0
     } else {
@@ -102,12 +109,30 @@ pub(super) fn image_band_lsrk(
         PreparedFrequencyConversion::new(output, FrequencyRef::LSRK, Some(&anchor), Some(&anchor))?
             .convert_hz(1.0)
     };
-    let ends = [
-        first_hz - 1.5 * increment_hz,
-        first_hz + (channels as f64 + 0.5) * increment_hz,
-    ]
-    .map(|hz| tuned_selection_hz(hz * factor));
+    let ends = ends.map(|hz| tuned_selection_hz(hz * factor));
     Ok([ends[0].min(ends[1]), ends[0].max(ends[1])])
+}
+
+/// World frequencies at the two pixels that bound tuneSelectData.
+fn image_band_frequencies(
+    first_hz: f64,
+    increment_hz: f64,
+    channels: usize,
+    table_hz: Option<&[f64]>,
+) -> [f64; 2] {
+    // A one-entry CASA table maps every pixel to the same frequency.
+    // The iterator's inclusive channel extents still meet that point.
+    if let Some([frequency_hz]) = table_hz {
+        return [*frequency_hz; 2];
+    }
+    let far_pixel = channels as f64 + 0.5;
+    let far_hz = if let Some(table) = table_hz {
+        let left = channels.min(table.len() - 2);
+        table[left] + (far_pixel - left as f64) * (table[left + 1] - table[left])
+    } else {
+        first_hz + far_pixel * increment_hz
+    };
+    [first_hz - 1.5 * increment_hz, far_hz]
 }
 
 /// CASA's tuneSelectData sends each LSRK endpoint through std::to_string
@@ -279,6 +304,30 @@ impl CubeBands {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tuned_band_evaluates_beyond_the_stored_tabular_centres() {
+        let table = [140.0, 120.0, 107.0, 100.0];
+        assert_eq!(
+            image_band_frequencies(140.0, -20.0, 8, Some(&table)),
+            [170.0, 61.5]
+        );
+        assert_eq!(
+            image_band_frequencies(140.0, -20.0, 2, Some(&table)),
+            [170.0, 103.5]
+        );
+    }
+
+    #[test]
+    fn tuning_a_constant_table_selects_the_channels_that_contain_its_frequency() {
+        let ends = image_band_frequencies(120.0, 50.0, 1, Some(&[120.0]));
+        let band = FrequencyBands::new(casa_imaging_model::FrequencyFrame::Lsrk, vec![ends])
+            .expect("a constant frequency is a valid band");
+        assert_eq!(ends, [120.0, 120.0]);
+        assert!(!band.meets(1.0, [90.0, 110.0]));
+        assert!(band.meets(1.0, [110.0, 130.0]));
+        assert!(!band.meets(1.0, [130.0, 150.0]));
+    }
 
     #[test]
     fn a_tuned_band_includes_only_channel_edges_reached_after_casa_rounding() {

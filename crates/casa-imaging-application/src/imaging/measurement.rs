@@ -178,9 +178,9 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
             reference_frequency_hz,
             ..
         } => Ok(*reference_frequency_hz),
-        SpectralWcs::Tabular { .. } => Err(ImagingError::Unsupported {
-            reason: "a tabular spectral axis has no uniform channel width",
-        }),
+        SpectralWcs::Tabular {
+            channel_centres_hz, ..
+        } => Ok(channel_centres_hz[0]),
     }
 }
 
@@ -666,13 +666,6 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
     let Basis::ChannelLocal { planes } = basis else {
         return Ok(SpectralResampler::direct(basis)?);
     };
-    let Some([reference_pixel, reference_frequency_hz, increment_hz]) =
-        problem.geometry().spectral().linear_grid()
-    else {
-        return Err(ImagingError::Unsupported {
-            reason: "a tabular spectral axis has no uniform channel width",
-        });
-    };
     let kernel = match problem.science().spectral().sampling().kernel() {
         SpectralKernel::Nearest | SpectralKernel::Identity => {
             casa_imaging_operator::SpectralKernel::Nearest
@@ -685,9 +678,28 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
             });
         }
     };
-    let first_hz = reference_frequency_hz - reference_pixel * increment_hz;
     let spectral = problem.geometry().spectral();
-    let mut axis = SpectralAxis::new(first_hz, increment_hz, planes)?;
+    let mut axis = match spectral.wcs() {
+        SpectralWcs::Tabular {
+            channel_centres_hz,
+            channel_boundaries_hz,
+        } => {
+            let step = match channel_centres_hz.as_slice() {
+                [_, second, ..] => *second - channel_centres_hz[0],
+                _ => channel_boundaries_hz[1] - channel_boundaries_hz[0],
+            };
+            SpectralAxis::tabular(channel_centres_hz, step)?
+        }
+        SpectralWcs::Linear { .. } => {
+            let [reference_pixel, reference_hz, increment_hz] =
+                spectral.linear_grid().expect("a linear spectral grid");
+            SpectralAxis::new(
+                reference_hz - reference_pixel * increment_hz,
+                increment_hz,
+                planes,
+            )?
+        }
+    };
     if let Some([to_lsrk, to_reporting]) = spectral.reporting_conversions()
         && let SpectralWcs::Linear {
             reference_pixel,

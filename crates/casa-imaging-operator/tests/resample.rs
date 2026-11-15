@@ -969,7 +969,7 @@ fn a_one_step_out_of_band_channel_is_not_extrapolated() {
         let increment = if ascending { 50.0e6 } else { -50.0e6 };
         let axis = SpectralAxis::new(first, increment, 5).expect("axis");
         for kernel in [SpectralKernel::Linear, SpectralKernel::Cubic] {
-            let resampler = SpectralResampler::channel_local(axis, kernel);
+            let resampler = SpectralResampler::channel_local(axis.clone(), kernel);
             let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
             let mut frequencies = (0..5)
                 .map(|channel| first + f64::from(channel) * increment)
@@ -1121,6 +1121,12 @@ fn a_row_places_at_most_its_per_row_bound() {
                 },
                 span_hz: widest.span_hz.max(row.span_hz),
             });
+    let tabular_axis = |hz: [f64; 5], kernel| {
+        SpectralResampler::channel_local(
+            SpectralAxis::tabular(&hz, hz[1] - hz[0]).expect("tabular"),
+            kernel,
+        )
+    };
     let resamplers = [
         (
             "direct",
@@ -1145,6 +1151,13 @@ fn a_row_places_at_most_its_per_row_bound() {
         (
             "linear, much wider outputs",
             SpectralResampler::channel_local(axis(1.05, 0.1, 10), SpectralKernel::Linear),
+        ),
+        (
+            "tabular, widening",
+            tabular_axis(
+                [1.03e9, 1.08e9, 1.18e9, 1.57e9, 1.94e9],
+                SpectralKernel::Linear,
+            ),
         ),
     ];
     for (label, resampler) in &resamplers {
