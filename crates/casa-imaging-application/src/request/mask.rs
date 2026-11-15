@@ -14,21 +14,33 @@ use super::{
 };
 
 impl ImagingRequest {
-    /// Keep lists of two or more image masks within the compared geometry.
+    /// Whether an image is combined with a CRTF region of limited spectral range.
+    pub(crate) fn has_ranged_image_mask(&self) -> bool {
+        self.mask_images.len() == 1 && self.mask_box.iter().any(|region| region.range.is_some())
+    }
+
+    /// Keep image mask combinations within their compared geometries.
     pub(crate) fn validate_mask_image_list(&self) -> Result<(), InvalidRequest> {
+        let standard_hogbom = self.stokes.as_slice() == [PolarizationCoordinate::StokesI]
+            && matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
+            && self.deconvolver == Deconvolver::Hogbom
+            && self.niter > 0
+            && self.outlierfile.is_none();
         if self.mask_images.len() > 1
             && (!self.mask_box.is_empty()
                 || self.mask_polygon.is_some()
                 || self.specmode != SpecMode::Mfs
-                || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
-                || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
-                || self.deconvolver != Deconvolver::Hogbom
-                || self.niter == 0
-                || self.outlierfile.is_some())
+                || !standard_hogbom)
         {
             return Err(InvalidRequest {
                 parameters: "mask_image",
                 reason: "multiple mask images support standard Stokes I MFS Högbom cleaning without region masks or outliers (#823)",
+            });
+        }
+        if self.has_ranged_image_mask() && (!standard_hogbom || self.specmode != SpecMode::Cube) {
+            return Err(InvalidRequest {
+                parameters: "mask_image",
+                reason: "a mask image with a spectral-range region supports standard Stokes I Högbom cubes (#823)",
             });
         }
         Ok(())

@@ -9,6 +9,7 @@ use casa_imaging_model::DirectionCoordinateSpec;
 use casa_imaging_runtime::Reservation;
 
 use crate::RunContext;
+pub use crate::compile::ChannelMaskBox;
 
 /// A mask image opened onto its own direction grid, before any pixels are
 /// read.
@@ -36,14 +37,9 @@ impl Input {
         Self(self.0.with_target_direction(target))
     }
 
-    /// Bytes admitted before the pixels are read.
-    pub fn reading_bytes(&self) -> u64 {
-        self.0.reading_bytes()
-    }
-
-    /// Bytes the plan keeps.
-    pub fn retained_bytes(&self) -> u64 {
-        self.0.retained_bytes()
+    /// Bytes admitted before reading, then bytes the plan keeps.
+    pub fn bytes(&self, regions: [&[ChannelMaskBox]; 2]) -> (u64, u64) {
+        self.0.bytes(regions)
     }
 
     /// Read the mask into its plan with optional pixel boxes before and after it.
@@ -52,7 +48,7 @@ impl Input {
     /// Pixel I/O or reprojection fails.
     pub fn read(
         self,
-        regions: [&[[i64; 4]]; 2],
+        regions: [&[ChannelMaskBox]; 2],
     ) -> Result<ReconstructionMaskPlan, crate::PrepareError> {
         self.0.read(regions)
     }

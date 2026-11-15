@@ -208,10 +208,79 @@ fn mask_image_and_regions_follow_casa_list_order() {
         "mask-range-with-image",
         json!({"niter": 1, "mask": [path, format!("{region}, range=[0pix,0pix]")]}),
     ) else {
-        panic!("a ranged region in a mask list is still unsupported");
+        panic!("an image with a spectral-range region requires a cube");
     };
     assert!(
-        reason.contains("pixel regions covering all planes (#823)"),
+        reason.contains("supports standard Stokes I Högbom cubes (#823)"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn ranged_regions_and_an_image_mask_apply_in_order_on_each_channel() {
+    let observation = Observation::synthesise_band(3, &[("point", POINT)]);
+    let [x, y] = component_pixel(POINT);
+    observation.image(
+        "ranged-image-seed",
+        json!({
+            "deconvolver": "hogbom", "niter": 1,
+            "mask": format!("{},{},{},{}", x - 2, y - 1, x + 1, y + 1),
+        }),
+    );
+    let path = observation.scratch("ranged-image-seed.mask");
+    let mut image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    for (column, value) in [(x + 2, -1.0), (x + 3, -0.5)] {
+        let pixel = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), value);
+        image.put_slice(&pixel, &[column, y, 0, 0]).unwrap();
+    }
+    image.save().unwrap();
+    drop(image);
+
+    let region = format!("box[[{x}pix,{y}pix],[{}pix,{}pix]]", x + 3, y + 2);
+    let bounded = format!("{region},range=[1pix,1pix]");
+    let outside = format!("{region},range=[40pix,41pix]");
+    for (name, masks, image_last, region_channel) in [
+        ("range-after-image", json!([path, bounded]), false, Some(1)),
+        ("range-before-image", json!([bounded, path]), true, Some(1)),
+        ("range-outside-image", json!([path, outside]), false, None),
+    ] {
+        let (_, products) = observation.image(
+            name,
+            json!({"specmode":"cube", "deconvolver":"hogbom", "niter":2, "mask":masks}),
+        );
+        let (mask, model) = (products.get(".mask"), products.get(".model"));
+        assert_eq!(mask.channels(), 3);
+        for channel in 0..mask.channels() {
+            let plane = mask.plane(channel);
+            for ((i, j), value) in plane.indexed_iter() {
+                let image_support = (x - 2..=x + 1).contains(&i) && (y - 1..=y + 1).contains(&j);
+                let region_support = region_channel == Some(channel)
+                    && (x..=x + 3).contains(&i)
+                    && (y..=y + 2).contains(&j);
+                let cancelled = image_last && (i, j) == (x + 2, y);
+                assert_eq!(
+                    *value,
+                    f32::from(image_support || (region_support && !cancelled)),
+                    "{name} channel {channel} at [{i},{j}]"
+                );
+            }
+            assert_model_inside(&model.plane(channel), &plane);
+        }
+    }
+
+    let mut shifted = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let reference = shifted.coordinates().coordinate(0).reference_value();
+    shifted.set_reference_value(0, reference[0] + 1e-5).unwrap();
+    shifted.save().unwrap();
+    drop(shifted);
+    let Err(reason) = observation.try_image(
+        "ranged-mask-with-shifted-image",
+        json!({"specmode":"cube", "deconvolver":"hogbom", "niter":1, "mask":[path,bounded]}),
+    ) else {
+        panic!("the compared ranged image mask aligns with the cube direction grid");
+    };
+    assert!(
+        reason.contains("must be one plane on the output direction grid"),
         "{reason}"
     );
 }

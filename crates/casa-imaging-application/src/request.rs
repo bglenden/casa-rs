@@ -817,14 +817,11 @@ impl ImagingRequest {
         let list_position = self.mask_regions_before_image;
         if polygon_with_other_mask
             || list_position.is_some_and(|before| before > self.mask_box.len())
-            || (has_images
-                && has_boxes
-                && (list_position.is_none()
-                    || self.mask_box.iter().any(|region| region.range.is_some())))
+            || (has_images && has_boxes && list_position.is_none())
         {
             return invalid(
                 "mask_image, mask_box",
-                "a sky region stands alone; an image mask list can combine an image with pixel regions covering all planes (#823)",
+                "a sky region stands alone; combine one image with pixel regions using an ordered mask list (#823)",
             );
         }
         if !(0.0..1.0).contains(&self.pbmask) {

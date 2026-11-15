@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! A clean-mask image compile reads stays inside the charge it admits
-//! before reading ([`Input::reading_bytes`]), and its plan inside what it
-//! keeps admitted ([`Input::retained_bytes`]): the image is read one plane
-//! at a time, not whole, so a cube mask holds one source plane while it is
-//! read, beside the supports. This binary's global allocator counts the
-//! live heap; a global allocator applies to this test binary alone.
+//! Image-mask reads and their retained support fit the admission returned
+//! by [`Input::bytes`]. The reader holds one source plane and the output
+//! support. This test binary counts the live heap with its global allocator.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
@@ -17,7 +14,7 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_application::{
     RunContext,
-    mask_image_law::{Input, read_list},
+    mask_image_law::{ChannelMaskBox, Input, read_list},
 };
 use casa_imaging_deconvolution::{MaskPlanes, ReconstructionMaskPlan};
 use casa_imaging_model::{
@@ -124,14 +121,13 @@ fn measure(
     channels: usize,
     polarizations: usize,
     target: Option<DirectionCoordinateSpec>,
-    regions: [&[[i64; 4]]; 2],
+    regions: [&[ChannelMaskBox]; 2],
 ) -> (ReconstructionMaskPlan, String, u64, u64) {
     let mut input = Input::open(path, channels, polarizations).unwrap();
     if let Some(target) = target {
         input = input.with_target_direction(target);
     }
-    let reading = input.reading_bytes();
-    let retained = input.retained_bytes();
+    let (reading, retained) = input.bytes(regions);
     PEAK.store(0, Ordering::Relaxed);
     let baseline = LIVE.load(Ordering::Relaxed);
     BASELINE.store(baseline, Ordering::Relaxed);
@@ -217,7 +213,10 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
     );
     assert!(matches!(plan, ReconstructionMaskPlan::Reprojected { .. }));
     let left = SIDE as i64 - 2;
-    let boxes = [&[[left, 2, left, 2]][..], &[[left, 4, left, 4]][..]];
+    let boxes = [
+        &[([left, 2, left, 2], 0..=7)][..],
+        &[([left, 4, left, 4], 0..=7)][..],
+    ];
     let (plan, breach, mixed, mixed_peak) = measure(&continuum, 8, 4, Some(target), boxes);
     breaches += &breach;
     assert_eq!(mixed, mapped);
@@ -336,10 +335,54 @@ fn check_mask_list(root: &Path) {
         );
         peak
     };
+    check_ranged_mask(&a);
     let single = measure(std::slice::from_ref(&a), 32);
     let list = measure(&[a.clone(), b, a], 48);
     assert!(
         list <= single + 4096,
         "ordered mask list peaked at {list} bytes, single image {single}"
     );
+}
+
+fn check_ranged_mask(path: &Path) {
+    let input = Input::open(path, 8, 1).unwrap();
+    let shared = input.bytes([&[], &[]]);
+    let all = [([32, 0, 47, 30], 0..=7)];
+    assert_eq!(
+        input.bytes([&[], &all]),
+        shared,
+        "a full range keeps shared support"
+    );
+    let range = [([32, 0, 47, 30], 2..=3)];
+    let regions = [&[][..], &range[..]];
+    let distinct = input.bytes(regions);
+    let expanded_cells = (7 * SIDE * SIDE) as u64;
+    assert_eq!(distinct.1 - shared.1, expanded_cells);
+    assert_eq!(distinct.0 - shared.0, 2 * expanded_cells);
+    drop(input);
+    let (plan, breach, charged, peak) = measure(path, 8, 1, None, regions);
+    assert!(breach.is_empty(), "ranged mask {breach}");
+    assert_eq!(charged, distinct.0);
+    println!(
+        "ranged mask: {peak} bytes peak / {charged} admitted, {} kept",
+        distinct.1
+    );
+    let ReconstructionMaskPlan::Reprojected {
+        planes, support, ..
+    } = plan
+    else {
+        panic!("expected ranged image-mask support");
+    };
+    assert_eq!(planes, MaskPlanes::new(8, 1).unwrap());
+    for (channel, plane) in support.as_chunks::<{ SIDE * SIDE }>().0.iter().enumerate() {
+        let extra = if (2..=3).contains(&channel) {
+            16 * 31
+        } else {
+            0
+        };
+        assert_eq!(
+            plane.iter().filter(|inside| **inside).count(),
+            32 * (SIDE - 1) + extra
+        );
+    }
 }
