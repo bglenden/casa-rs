@@ -230,6 +230,9 @@ pub(crate) fn reuses_direction_dependent_psf(request: &ImagingRequest) -> bool {
                 supports_saved_mosaic_residual(request)
             }
         }
+        (Gridder::Mosaic { .. }, Family::Taylor { .. }) => {
+            request.calcres && !request.pbcor && request.supports_separate_psf()
+        }
         (Gridder::Awproject(_), Family::Taylor { terms }) => {
             request.specmode == crate::SpecMode::Mfs
                 && if request.calcres {
