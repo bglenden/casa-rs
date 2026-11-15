@@ -39,9 +39,14 @@ pub(super) enum DomainMask {
     FullPlane,
     /// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
     Boxes(Vec<[i64; 4]>),
-    /// The non-zero pixels of a CASA image, reprojected onto the domain and
+    /// The positive pixels of a CASA image, reprojected onto the domain and
     /// matched to its planes ([`super::mask_image`]).
-    Image(PathBuf),
+    Image {
+        /// The supplied CASA mask image.
+        path: PathBuf,
+        /// Limit MEM to the direction grid whose mask import agrees with CASA (#823).
+        require_matching_grid: bool,
+    },
     /// Support over the domain's own grid: each plane x-major, plane after
     /// plane (channel-major), shared along an axis of one plane.
     PixelSupport {
@@ -293,7 +298,10 @@ fn request_mask(
             },
             previous: None,
         },
-        (UseMask::User, Some(path)) => named(DomainMask::Image(path.clone())),
+        (UseMask::User, Some(path)) => named(DomainMask::Image {
+            path: path.clone(),
+            require_matching_grid: request.deconvolver == crate::Deconvolver::Mem,
+        }),
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
@@ -457,7 +465,10 @@ fn mask_plan(
                 .map(|[x0, y0, x1, y1]| MaskBox::new([x0, y0], [x1, y1]))
                 .collect::<Result<Vec<_>, _>>()?,
         },
-        DomainMask::Image(path) => {
+        DomainMask::Image {
+            path,
+            require_matching_grid,
+        } => {
             let coordinate_of = |kind| {
                 domain
                     .coordinates
@@ -482,6 +493,9 @@ fn mask_plan(
                     spectral,
                 },
             )?;
+            if require_matching_grid && !image.matches_direction_grid() {
+                return Err(PrepareError::MemMaskGrid { path });
+            }
             let mut charge = admit(
                 &context.host,
                 &context.policy,

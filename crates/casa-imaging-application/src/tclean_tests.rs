@@ -1315,6 +1315,12 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     let seeded = request(json!({"deconvolver":"mem", "startmodel":"start.im"}));
     assert!(seeded.has_start_model());
     seeded.validate().expect("MEM with an explicit start model");
+    let masked = request(json!({"deconvolver":"mem", "mask":"region.mask"}));
+    assert_eq!(
+        masked.mask_image.as_deref(),
+        Some(std::path::Path::new("region.mask"))
+    );
+    masked.validate().expect("MEM with a user mask image");
     request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
         .validate()
         .expect("other solvers retain their scope");
@@ -1330,7 +1336,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"savemodel":"modelcolumn"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
-        json!({"mask":"mask.im"}),
     ] {
         let mut values = json!({"deconvolver":"mem", "niter":1});
         values

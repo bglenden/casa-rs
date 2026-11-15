@@ -901,14 +901,13 @@ impl ImagingRequest {
                 || self.vis.len() != 1
                 || self.outlierfile.is_some()
                 || self.usemask != UseMask::User
-                || self.mask_image.is_some()
                 || self.pbmask != 0.0
                 || self.nsigma != 0.0
                 || self.savemodel != SaveModel::None)
         {
             return Err(InvalidRequest {
                 parameters: "deconvolver",
-                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting and a user box mask; other modes and model-column writes wait for #1060",
+                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting and a user mask; other modes and model-column writes wait for #1060",
             });
         }
         Ok(())

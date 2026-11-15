@@ -572,6 +572,12 @@ pub enum PrepareError {
         /// Its shape.
         shape: Vec<usize>,
     },
+    /// MEM's image mask needs the output direction grid until import matches CASA.
+    #[error("MEM mask image {} must use the output direction grid (#823)", path.display())]
+    MemMaskGrid {
+        /// The supplied mask image.
+        path: PathBuf,
+    },
     /// `projection='NCP'` centred on the celestial equator, where its SIN
     /// slant `cot δ₀` is infinite. CASA writes it unguarded and places every
     /// pixel at NaN; casa-rs refuses it (`docs/CASA (C++) bugs.md`).

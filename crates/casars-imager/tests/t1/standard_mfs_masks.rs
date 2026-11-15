@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Standard gridder, natural weighting, MFS Hogbom under a user box mask and
-//! under CASA `auto-multithresh`.
+//! Masks in standard-gridder MFS CLEAN and MEM.
 
 use ndarray::Array2;
 use serde_json::json;
@@ -46,6 +45,85 @@ fn assert_point_recovered(model: &Array2<f32>, image: &Array2<f32>) {
             POINT.flux_jy
         );
     }
+}
+
+#[test]
+fn mem_uses_the_support_in_a_user_mask_image() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let [px, py] = component_pixel(POINT);
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0,
+        "mask":format!("{},{},{},{}",px-6,py-6,px+6,py+6)
+    });
+    let (_, region) = observation.image("mem-mask-region", controls.clone());
+    let path = observation.scratch("mem-mask-region.mask");
+    controls["mask"] = json!(path);
+    let (_, image) = observation.image("mem-mask-image", controls.clone());
+    let mask = &image.get(".mask").pixels;
+    assert_eq!(
+        *mask,
+        region.get(".mask").pixels,
+        "honor the supplied mask support"
+    );
+    let model = &image.get(".model").pixels;
+    let mut outside = model
+        .iter()
+        .zip(mask.iter())
+        .filter_map(|(&value, &support)| (support == 0.0).then_some(value));
+    let floor = outside.next().expect("the mask excludes pixels");
+    assert!(
+        floor > 0.0 && floor < 1e-6,
+        "MEM keeps a positive model floor"
+    );
+    assert!(
+        outside.all(|value| value == floor),
+        "outside the mask only the floor remains"
+    );
+    assert!(model.iter().any(|&value| value > floor));
+    for suffix in [".model", ".residual", ".image"] {
+        let error = image
+            .get(suffix)
+            .pixels
+            .iter()
+            .zip(region.get(suffix).pixels.iter())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            error < 1e-6,
+            "image mask and region should match for {suffix}"
+        );
+    }
+    let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let [x, y] = [px - 6, py - 6];
+    mask.put_slice(
+        &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), -1.0),
+        &[x, y, 0, 0],
+    )
+    .unwrap();
+    mask.save().unwrap();
+    drop(mask);
+    let (_, signed) = observation.image("mem-mask-signed", controls.clone());
+    let support = &signed.get(".mask").pixels;
+    assert_eq!(support[[x, y]], 0.0, "exclude a negative mask pixel");
+    assert_eq!(
+        support[[x + 1, y]],
+        1.0,
+        "retain the neighboring positive pixel"
+    );
+
+    let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let reference = mask.coordinates().coordinate(0).reference_pixel();
+    mask.set_reference_pixel(0, reference[0] + 0.5).unwrap();
+    mask.save().unwrap();
+    drop(mask);
+    let Err(reason) = observation.try_image("mem-mask-shifted", controls) else {
+        panic!("reject a mask that needs direction regridding");
+    };
+    assert!(
+        reason.contains("must use the output direction grid (#823)"),
+        "{reason}"
+    );
 }
 
 #[test]
