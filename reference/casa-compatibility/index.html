@@ -464,6 +464,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#concat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#exportfits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5095,6 +5106,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#concat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        concat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#exportfits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9456,6 +9478,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">0</td>
 </tr>
 <tr>
+<td>concat</td>
+<td>concat</td>
+<td>yes</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
 <td>exportfits</td>
 <td>exportfits</td>
 <td>yes</td>
@@ -9747,6 +9780,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Accepted only at CASA's default until #979: <code>intent</code>, <code>uvrange</code>, <code>solint</code>, <code>corrdepflags</code>, <code>append</code>, <code>fillgaps</code>, <code>visnorm</code>, <code>maskcenter</code></li>
 <li>casa-rs parameters CASA lacks: <code>output</code>, <code>overwrite</code>, <code>format</code>, <code>array</code></li>
 <li>Shared parameters: 35, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
+</ul>
+<h3 id="concat">concat<a class="headerlink" href="#concat" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/concat.py</code>, 9 parameters</li>
+<li>Implementation: <code>casatasks/private/task_concat.py</code>, <code>concat</code> (line 18): 0 return statements, 14 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>RuntimeError</code>: *** Error 'list index out of range' while checking MS setup consistency</li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #939: <code>respectname</code>, <code>timesort</code>, <code>forcesingleephemfield</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 9, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
 </ul>
 <h3 id="exportfits">exportfits<a class="headerlink" href="#exportfits" title="Permanent link">&para;</a></h3>

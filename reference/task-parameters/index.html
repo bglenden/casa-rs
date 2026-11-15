@@ -720,6 +720,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#concat-concat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concat (concat)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1368,6 +1379,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#concat-concat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concat (concat)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1397,8 +1419,8 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
 <li>Concepts: 599</li>
-<li>Surfaces: 29 (29 task, 0 session)</li>
-<li>Surface bindings: 856</li>
+<li>Surfaces: 30 (30 task, 0 session)</li>
+<li>Surface bindings: 865</li>
 </ul>
 <table>
 <thead>
@@ -1643,6 +1665,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>single_dish</code></td>
 <td style="text-align: right;">33</td>
 <td>Grid total-power spectra by pointing into a CASA image and weight image.</td>
+</tr>
+<tr>
+<td><a href="#surface-concat">Concat</a><br><code>concat</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>concat</code></td>
+<td style="text-align: right;">9</td>
+<td>Concatenate simulated interferometric MeasurementSets with per-input weights.</td>
 </tr>
 </tbody>
 </table>
@@ -9158,6 +9188,101 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>""</code>; optional</td>
 <td>Imaging</td>
 <td>Rest frequencies of a cube's velocity axis; empty for the source's.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-concat"></a></p>
+<h2 id="concat-concat">Concat (<code>concat</code>)<a class="headerlink" href="#concat-concat" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: MeasurementSet</li>
+<li>Provider family: <code>concat</code></li>
+<li>Summary: Concatenate simulated interferometric MeasurementSets with per-input weights.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>MeasurementSet</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>concatvis</code></td>
+<td><code>parameter.concatvis@r1</code></td>
+<td><code>path (measurement_set)</code></td>
+<td><code>""</code>; optional</td>
+<td>MeasurementSet</td>
+<td>Name of visibility file that will contain the</td>
+</tr>
+<tr>
+<td><code>freqtol</code></td>
+<td><code>parameter.freqtol@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>MeasurementSet</td>
+<td>Frequency shift tolerance for considering data as the</td>
+</tr>
+<tr>
+<td><code>dirtol</code></td>
+<td><code>parameter.dirtol@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>MeasurementSet</td>
+<td>Direction shift tolerance for considering data as the</td>
+</tr>
+<tr>
+<td><code>respectname</code></td>
+<td><code>parameter.respectname@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>MeasurementSet</td>
+<td>If true, fields with a different name are not merged even</td>
+</tr>
+<tr>
+<td><code>timesort</code></td>
+<td><code>parameter.timesort@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>MeasurementSet</td>
+<td>If true, sort by TIME in ascending order</td>
+</tr>
+<tr>
+<td><code>copypointing</code></td>
+<td><code>parameter.copypointing@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>MeasurementSet</td>
+<td>Make a proper copy of the POINTING subtable</td>
+</tr>
+<tr>
+<td><code>visweightscale</code></td>
+<td><code>parameter.visweightscale@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>MeasurementSet</td>
+<td>List of the weight scaling factors to be applied to the</td>
+</tr>
+<tr>
+<td><code>forcesingleephemfield</code></td>
+<td><code>parameter.forcesingleephemfield@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>MeasurementSet</td>
+<td>Make sure that there is only one joint ephemeris for every field in this list</td>
 </tr>
 </tbody>
 </table>

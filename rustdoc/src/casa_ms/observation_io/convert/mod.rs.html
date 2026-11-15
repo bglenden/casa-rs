@@ -129,25 +129,26 @@
 <a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">let </span>plan = CreationPlan::new(
 <a href=#130 id=130 data-nosnippet>130</a>        <span class="kw-2">&amp;</span>[CreationInput::new(source)],
 <a href=#131 id=131 data-nosnippet>131</a>        <span class="kw-2">&amp;</span>CreationOptions {
-<a href=#132 id=132 data-nosnippet>132</a>            data_groups: options.data_groups.clone(),
-<a href=#133 id=133 data-nosnippet>133</a>            accept: options.accept.clone(),
-<a href=#134 id=134 data-nosnippet>134</a>            batch_bytes: options.batch_bytes,
-<a href=#135 id=135 data-nosnippet>135</a>            memory_bytes: default_memory_bytes()<span class="question-mark">?</span>,
-<a href=#136 id=136 data-nosnippet>136</a>            padding: options.padding,
-<a href=#137 id=137 data-nosnippet>137</a>            tolerance: casa_observation::MergeTolerance::default(),
-<a href=#138 id=138 data-nosnippet>138</a>            history: Vec::new(),
-<a href=#139 id=139 data-nosnippet>139</a>            creation_date: options.creation_date.clone(),
-<a href=#140 id=140 data-nosnippet>140</a>        },
-<a href=#141 id=141 data-nosnippet>141</a>        Destination::New(destination.to_path_buf()),
-<a href=#142 id=142 data-nosnippet>142</a>    )<span class="question-mark">?</span>;
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>report = plan.write()<span class="question-mark">?</span>;
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="prelude-val">Ok</span>(ConversionReport {
-<a href=#145 id=145 data-nosnippet>145</a>        losses: report.losses,
-<a href=#146 id=146 data-nosnippet>146</a>        partitions: report.partitions,
-<a href=#147 id=147 data-nosnippet>147</a>        batches: report.batches,
-<a href=#148 id=148 data-nosnippet>148</a>        samples: report.samples,
-<a href=#149 id=149 data-nosnippet>149</a>        rows: report.rows,
-<a href=#150 id=150 data-nosnippet>150</a>        ..ConversionReport::default()
-<a href=#151 id=151 data-nosnippet>151</a>    })
-<a href=#152 id=152 data-nosnippet>152</a>}
+<a href=#132 id=132 data-nosnippet>132</a>            copy_pointing: <span class="bool-val">true</span>,
+<a href=#133 id=133 data-nosnippet>133</a>            data_groups: options.data_groups.clone(),
+<a href=#134 id=134 data-nosnippet>134</a>            accept: options.accept.clone(),
+<a href=#135 id=135 data-nosnippet>135</a>            batch_bytes: options.batch_bytes,
+<a href=#136 id=136 data-nosnippet>136</a>            memory_bytes: default_memory_bytes()<span class="question-mark">?</span>,
+<a href=#137 id=137 data-nosnippet>137</a>            padding: options.padding,
+<a href=#138 id=138 data-nosnippet>138</a>            tolerance: casa_observation::MergeTolerance::default(),
+<a href=#139 id=139 data-nosnippet>139</a>            history: Vec::new(),
+<a href=#140 id=140 data-nosnippet>140</a>            creation_date: options.creation_date.clone(),
+<a href=#141 id=141 data-nosnippet>141</a>        },
+<a href=#142 id=142 data-nosnippet>142</a>        Destination::New(destination.to_path_buf()),
+<a href=#143 id=143 data-nosnippet>143</a>    )<span class="question-mark">?</span>;
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span>report = plan.write()<span class="question-mark">?</span>;
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="prelude-val">Ok</span>(ConversionReport {
+<a href=#146 id=146 data-nosnippet>146</a>        losses: report.losses,
+<a href=#147 id=147 data-nosnippet>147</a>        partitions: report.partitions,
+<a href=#148 id=148 data-nosnippet>148</a>        batches: report.batches,
+<a href=#149 id=149 data-nosnippet>149</a>        samples: report.samples,
+<a href=#150 id=150 data-nosnippet>150</a>        rows: report.rows,
+<a href=#151 id=151 data-nosnippet>151</a>        ..ConversionReport::default()
+<a href=#152 id=152 data-nosnippet>152</a>    })
+<a href=#153 id=153 data-nosnippet>153</a>}
 </code></pre></div></section></main></body></html>

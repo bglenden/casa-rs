@@ -4225,6 +4225,32 @@ are all image expressions over <code>&lt;project&gt;/&lt;project&gt;.&lt;configu
 project whose path contains "pa" gets a fidelity labelled deg, and
 difference and fidelity images whose Stokes plane is a position angle. casa-rs
 computes those images directly and keeps the Stokes axis.</p>
+<h2 id="simulated-measurementsets-name-a-processor-that-does-not-exist">Simulated MeasurementSets name a processor that does not exist<a class="headerlink" href="#simulated-measurementsets-name-a-processor-that-does-not-exist" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Observed in CASA 6.7.6-14's public <code>sim_multi_arrays_and_TP</code> m51c 12 m
+  and 7 m inputs and their concat result.</li>
+<li>Evidence: <code>scripts/concat_parity/task_oracle.py</code> and the concat task
+  reference fixtures.</li>
+</ul>
+<p>MAIN has <code>PROCESSOR_ID=0</code> while PROCESSOR has no rows. Zero therefore names
+no valid processor. Native concatenation writes the MS null sentinel -1
+in this case, preserving the absence of a processor without a dangling
+foreign key. The parity comparison explicitly compares that logical absence;
+a populated PROCESSOR table and its references are compared normally.</p>
+<h2 id="concat-does-not-scale-its-first-inputs-sigma-spectrum"><code>concat</code> does not scale its first input's sigma spectrum<a class="headerlink" href="#concat-does-not-scale-its-first-inputs-sigma-spectrum" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Observed in CASA 6.7.6-14.</li>
+<li>Affected code: <code>casatasks/private/task_concat.py</code>, the first MeasurementSet's
+  weight-scaling block. Appended inputs are handled by <code>MSConcat</code>.</li>
+<li>Evidence: <code>scripts/concat_parity/task_oracle.py</code> and the concat reference
+  fixtures, with weight factor 4 on the chronologically first input.</li>
+</ul>
+<p>CASA multiplies its first input's WEIGHT and WEIGHT_SPECTRUM by 4 and divides
+SIGMA by 2, while leaving SIGMA_SPECTRUM unchanged. This makes the spectral
+uncertainties inconsistent with the same sample's weight and sigma. The
+native task divides both sigma representations by the square root of the
+weight factor for every input. The fixtures retain the actual CASA result,
+and the regression checks the corrected cells against that variance law.</p>
 <h2 id="concat-leaves-a-merged-source-rows-time-unchanged"><code>concat</code> leaves a merged SOURCE row's TIME unchanged<a class="headerlink" href="#concat-leaves-a-merged-source-rows-time-unchanged" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-29</li>

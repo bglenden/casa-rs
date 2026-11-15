@@ -162,7 +162,7 @@
 <a href=#162 id=162 data-nosnippet>162</a>    <span class="attr">#[test]
 <a href=#163 id=163 data-nosnippet>163</a>    </span><span class="kw">fn </span>builtin_catalog_covers_every_surface_with_one_task_each() {
 <a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>catalog = builtin_application_catalog().expect(<span class="string">"valid application catalog"</span>);
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert_eq!</span>(catalog.applications.len(), <span class="number">29</span>);
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert_eq!</span>(catalog.applications.len(), <span class="number">30</span>);
 <a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">for </span>application <span class="kw">in </span><span class="kw-2">&amp;</span>catalog.applications {
 <a href=#167 id=167 data-nosnippet>167</a>            <span class="macro">assert_eq!</span>(
 <a href=#168 id=168 data-nosnippet>168</a>                application.surface_bundle().unwrap().surface.id(),
@@ -273,28 +273,29 @@
 <a href=#273 id=273 data-nosnippet>273</a>            suite,
 <a href=#274 id=274 data-nosnippet>274</a>            BTreeSet::from([
 <a href=#275 id=275 data-nosnippet>275</a>                <span class="string">"calibrate"</span>,
-<a href=#276 id=276 data-nosnippet>276</a>                <span class="string">"casars-imager"</span>,
-<a href=#277 id=277 data-nosnippet>277</a>                <span class="string">"importvla"</span>,
-<a href=#278 id=278 data-nosnippet>278</a>                <span class="string">"exportfits"</span>,
-<a href=#279 id=279 data-nosnippet>279</a>                <span class="string">"feather"</span>,
-<a href=#280 id=280 data-nosnippet>280</a>                <span class="string">"flagdata"</span>,
-<a href=#281 id=281 data-nosnippet>281</a>                <span class="string">"flagmanager"</span>,
-<a href=#282 id=282 data-nosnippet>282</a>                <span class="string">"imexplore"</span>,
-<a href=#283 id=283 data-nosnippet>283</a>                <span class="string">"immath"</span>,
-<a href=#284 id=284 data-nosnippet>284</a>                <span class="string">"immoments"</span>,
-<a href=#285 id=285 data-nosnippet>285</a>                <span class="string">"impbcor"</span>,
-<a href=#286 id=286 data-nosnippet>286</a>                <span class="string">"importfits"</span>,
-<a href=#287 id=287 data-nosnippet>287</a>                <span class="string">"impv"</span>,
-<a href=#288 id=288 data-nosnippet>288</a>                <span class="string">"imregrid"</span>,
-<a href=#289 id=289 data-nosnippet>289</a>                <span class="string">"imsubimage"</span>,
-<a href=#290 id=290 data-nosnippet>290</a>                <span class="string">"msconvert"</span>,
-<a href=#291 id=291 data-nosnippet>291</a>                <span class="string">"msexplore"</span>,
-<a href=#292 id=292 data-nosnippet>292</a>                <span class="string">"mstransform"</span>,
-<a href=#293 id=293 data-nosnippet>293</a>                <span class="string">"simobserve"</span>,
-<a href=#294 id=294 data-nosnippet>294</a>                <span class="string">"tsdimaging"</span>,
-<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"simanalyze"</span>,
-<a href=#296 id=296 data-nosnippet>296</a>            ])
-<a href=#297 id=297 data-nosnippet>297</a>        );
-<a href=#298 id=298 data-nosnippet>298</a>    }
-<a href=#299 id=299 data-nosnippet>299</a>}
+<a href=#276 id=276 data-nosnippet>276</a>                <span class="string">"concat"</span>,
+<a href=#277 id=277 data-nosnippet>277</a>                <span class="string">"casars-imager"</span>,
+<a href=#278 id=278 data-nosnippet>278</a>                <span class="string">"importvla"</span>,
+<a href=#279 id=279 data-nosnippet>279</a>                <span class="string">"exportfits"</span>,
+<a href=#280 id=280 data-nosnippet>280</a>                <span class="string">"feather"</span>,
+<a href=#281 id=281 data-nosnippet>281</a>                <span class="string">"flagdata"</span>,
+<a href=#282 id=282 data-nosnippet>282</a>                <span class="string">"flagmanager"</span>,
+<a href=#283 id=283 data-nosnippet>283</a>                <span class="string">"imexplore"</span>,
+<a href=#284 id=284 data-nosnippet>284</a>                <span class="string">"immath"</span>,
+<a href=#285 id=285 data-nosnippet>285</a>                <span class="string">"immoments"</span>,
+<a href=#286 id=286 data-nosnippet>286</a>                <span class="string">"impbcor"</span>,
+<a href=#287 id=287 data-nosnippet>287</a>                <span class="string">"importfits"</span>,
+<a href=#288 id=288 data-nosnippet>288</a>                <span class="string">"impv"</span>,
+<a href=#289 id=289 data-nosnippet>289</a>                <span class="string">"imregrid"</span>,
+<a href=#290 id=290 data-nosnippet>290</a>                <span class="string">"imsubimage"</span>,
+<a href=#291 id=291 data-nosnippet>291</a>                <span class="string">"msconvert"</span>,
+<a href=#292 id=292 data-nosnippet>292</a>                <span class="string">"msexplore"</span>,
+<a href=#293 id=293 data-nosnippet>293</a>                <span class="string">"mstransform"</span>,
+<a href=#294 id=294 data-nosnippet>294</a>                <span class="string">"simobserve"</span>,
+<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"tsdimaging"</span>,
+<a href=#296 id=296 data-nosnippet>296</a>                <span class="string">"simanalyze"</span>,
+<a href=#297 id=297 data-nosnippet>297</a>            ])
+<a href=#298 id=298 data-nosnippet>298</a>        );
+<a href=#299 id=299 data-nosnippet>299</a>    }
+<a href=#300 id=300 data-nosnippet>300</a>}
 </code></pre></div></section></main></body></html>
