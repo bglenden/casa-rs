@@ -30,6 +30,7 @@ use serde_json::Value;
 
 use beam::restoring_beam;
 use execution::{grid_precision, hogbom_iteration_mode, major_cycle_limit, normalization};
+use mask::{mask_boxes, mask_images};
 use uv_taper::uv_taper;
 
 /// One imaging run's parameters, as the catalog resolved them.
@@ -244,9 +245,10 @@ pub struct ImagingRequest {
     /// the channels of its CRTF region's spectral `range` when it has one.
     #[serde(deserialize_with = "mask_boxes")]
     pub mask_box: Vec<UserMaskBox>,
-    /// A CASA image whose non-zero pixels may be cleaned.
-    #[serde(deserialize_with = "optional")]
-    pub mask_image: Option<PathBuf>,
+    /// CASA mask images in list order. Each adds its signed pixels to the
+    /// current binary support before applying the positive threshold.
+    #[serde(rename = "mask_image", deserialize_with = "mask_images")]
+    pub mask_images: Vec<PathBuf>,
     /// CASA's `startmodel`: the images in Jy/pixel that the model starts
     /// from (`SIImageStore::setModelImageOne`), one, or one per Taylor term
     /// (`SIImageStoreMultiTerm::setModelImage`), `None` for an empty entry,
@@ -801,21 +803,21 @@ impl ImagingRequest {
         if self.savemodel == SaveModel::Virtual {
             self.validate_virtual_model()?;
         }
+        self.validate_mask_image_list()?;
         let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
-        if self.usemask != UseMask::User
-            && (self.mask_image.is_some() || has_boxes || self.mask_polygon.is_some())
+        let has_images = !self.mask_images.is_empty();
+        if self.usemask != UseMask::User && (has_images || has_boxes || self.mask_polygon.is_some())
         {
             return invalid(
                 "usemask, mask_image, mask_box",
                 "auto-multithresh and primary-beam masks do not take user images or boxes",
             );
         }
-        let polygon_with_other_mask =
-            self.mask_polygon.is_some() && (self.mask_image.is_some() || has_boxes);
+        let polygon_with_other_mask = self.mask_polygon.is_some() && (has_images || has_boxes);
         let list_position = self.mask_regions_before_image;
         if polygon_with_other_mask
             || list_position.is_some_and(|before| before > self.mask_box.len())
-            || (self.mask_image.is_some()
+            || (has_images
                 && has_boxes
                 && (list_position.is_none()
                     || self.mask_box.iter().any(|region| region.range.is_some())))
@@ -1286,57 +1288,6 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
     }
 }
 
-/// Boxes `x0,y0,x1,y1` separated by `;`, each limited to a spectral range
-/// by an optional `@<low>~<high>`, both ends in `Hz` or both in `pix`.
-fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<UserMaskBox>, D::Error> {
-    let value = Value::deserialize(deserializer)?;
-    let text = value
-        .as_str()
-        .ok_or_else(|| unexpected(&value, "pixel boxes"))?;
-    if unset(text) {
-        return Ok(Vec::new());
-    }
-    text.split(';')
-        .map(|item| {
-            let (corners, range) = match item.split_once('@') {
-                Some((corners, range)) => (corners, Some(spectral_mask_range(range)?)),
-                None => (item, None),
-            };
-            let corners = comma_list::<i64>(corners)?
-                .try_into()
-                .map_err(|_| format!("a mask box has four corners, not {corners:?}"))?;
-            Ok(UserMaskBox { corners, range })
-        })
-        .collect::<Result<_, String>>()
-        .map_err(D::Error::custom)
-}
-
-/// A mask box's `<low>~<high>` range: two finite values, both in `Hz` or
-/// both in `pix`.
-fn spectral_mask_range(text: &str) -> Result<SpectralMaskRange, String> {
-    let (low, high) = text
-        .split_once('~')
-        .ok_or_else(|| format!("a mask box range is <low>~<high>, not {text:?}"))?;
-    let end = |end: &str, unit: &str| {
-        end.trim()
-            .strip_suffix(unit)
-            .and_then(|number| number.trim().parse::<f64>().ok())
-            .filter(|number| number.is_finite())
-    };
-    match (
-        end(low, "Hz"),
-        end(high, "Hz"),
-        end(low, "pix"),
-        end(high, "pix"),
-    ) {
-        (Some(low), Some(high), _, _) => Ok(SpectralMaskRange::Frequency([low, high])),
-        (_, _, Some(low), Some(high)) => Ok(SpectralMaskRange::Pixel([low, high])),
-        _ => Err(format!(
-            "a mask box range has two finite ends, both in Hz or both in pix, not {text:?}"
-        )),
-    }
-}
-
 /// Text of a choice.
 fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     match Value::deserialize(deserializer)? {
@@ -1488,6 +1439,7 @@ fn rest_frequencies_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec
 
 pub(crate) mod execution;
 mod gridder;
+mod mask;
 
 pub use gridder::Gridder;
 

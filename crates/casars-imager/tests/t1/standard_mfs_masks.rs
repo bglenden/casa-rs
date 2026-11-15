@@ -217,6 +217,82 @@ fn mask_image_and_regions_follow_casa_list_order() {
 }
 
 #[test]
+fn aligned_mask_images_apply_the_casa_threshold_in_list_order() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let [x, y] = component_pixel(POINT);
+    for (name, left, right) in [("mask-a", x, x + 3), ("mask-b", x + 2, x + 5)] {
+        observation.image(
+            name,
+            json!({
+                "deconvolver": "hogbom", "niter": 1,
+                "mask": format!("{left},{y},{right},{}", y + 2),
+            }),
+        );
+    }
+    let a = observation.scratch("mask-a.mask");
+    let b = observation.scratch("mask-b.mask");
+    for (path, pixels) in [
+        (&a, &[(x + 2, 2.0)][..]),
+        (&b, &[(x, -1.0), (x + 2, -1.0), (x + 3, -0.5)]),
+    ] {
+        let mut image = casa_images::PagedImage::<f32>::open(path).unwrap();
+        for &(column, value) in pixels {
+            let pixel = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), value);
+            image.put_slice(&pixel, &[column, y, 0, 0]).unwrap();
+        }
+        image.save().unwrap();
+    }
+    for (name, entries, signed_last) in [
+        ("mask-a-then-b", json!([a, b]), true),
+        ("mask-b-then-a", json!([b, a]), false),
+    ] {
+        let (_, products) = observation.image(
+            name,
+            json!({"deconvolver": "hogbom", "niter": 2, "mask": entries}),
+        );
+        let mask = &products.get(".mask").pixels;
+        for ((i, j), value) in mask.indexed_iter() {
+            let union = (x..=x + 5).contains(&i) && (y..=y + 2).contains(&j);
+            // The earlier +2 is already binary by the time -1 is added.
+            let cancelled = signed_last && j == y && (i == x || i == x + 2);
+            assert_eq!(
+                *value,
+                f32::from(union && !cancelled),
+                "{name} at [{i}, {j}]"
+            );
+        }
+        assert_model_inside(&products.get(".model").pixels, mask);
+    }
+
+    let Err(reason) = observation.try_image(
+        "mask-list-cube",
+        json!({"deconvolver":"hogbom", "niter":1, "specmode":"cube", "mask":[a,b]}),
+    ) else {
+        panic!("the compared mask list geometry is Stokes I MFS");
+    };
+    assert!(
+        reason.contains("multiple mask images support standard Stokes I MFS"),
+        "{reason}"
+    );
+
+    let mut shifted = casa_images::PagedImage::<f32>::open(&b).unwrap();
+    let reference = shifted.coordinates().coordinate(0).reference_value();
+    shifted.set_reference_value(0, reference[0] + 1e-5).unwrap();
+    shifted.save().unwrap();
+    drop(shifted);
+    let Err(reason) = observation.try_image(
+        "mask-list-with-shifted-image",
+        json!({"deconvolver":"hogbom", "niter":1, "mask":[a,b]}),
+    ) else {
+        panic!("a shifted image in a mask list is still unsupported");
+    };
+    assert!(
+        reason.contains("must be one plane on the output direction grid (#823)"),
+        "{reason}"
+    );
+}
+
+#[test]
 fn sky_polygon_masks_fractional_vertices_and_clips_to_the_image() {
     let observation = Observation::synthesise(&[("point", POINT)]);
     observation.image(

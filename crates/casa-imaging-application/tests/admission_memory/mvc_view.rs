@@ -93,9 +93,9 @@ fn cube_request_copy_stays_within_its_admission() {
     input.outlierfile = Some(std::path::PathBuf::from(
         "f".repeat((LARGE_FIELD / 4) as usize),
     ));
-    input.mask_image = Some(std::path::PathBuf::from(
+    input.mask_images = vec![std::path::PathBuf::from(
         "m".repeat((LARGE_FIELD / 4) as usize),
-    ));
+    )];
     input.startmodel = vec![None; 1 << 15];
     input.startmodel[0] = Some(std::path::PathBuf::from(
         "a".repeat((LARGE_FIELD / 4) as usize),

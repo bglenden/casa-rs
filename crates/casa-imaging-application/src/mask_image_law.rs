@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Counting-law access to the mask readers compile uses.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_imaging_deconvolution::ReconstructionMaskPlan;
 use casa_imaging_model::DirectionCoordinateSpec;
+use casa_imaging_runtime::Reservation;
+
+use crate::RunContext;
 
 /// A mask image opened onto its own direction grid, before any pixels are
 /// read.
@@ -53,6 +56,19 @@ impl Input {
     ) -> Result<ReconstructionMaskPlan, crate::PrepareError> {
         self.0.read(regions)
     }
+}
+
+/// Read the mask list using compile's aligned Stokes I plan and reservation.
+///
+/// # Errors
+/// A mask cannot be admitted or read, or does not align with the output.
+pub fn read_list(
+    paths: &[PathBuf],
+    direction: DirectionCoordinateSpec,
+    shape: [usize; 2],
+    context: &RunContext,
+) -> Result<(ReconstructionMaskPlan, Reservation), crate::PrepareError> {
+    crate::compile::read_aligned_list(paths, direction, shape, context)
 }
 
 /// Run the same admitted sky-polygon read, returning its support and the

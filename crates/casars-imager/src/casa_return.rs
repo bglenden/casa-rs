@@ -113,7 +113,7 @@ pub fn tclean_record(
             if dirty {
                 dirty::summary_minor(
                     &request.image_names(),
-                    request.mask_image.as_deref(),
+                    request.mask_images.first().map(std::path::PathBuf::as_path),
                     fullsummary,
                 )
             } else {

@@ -247,7 +247,8 @@ fn casa_values_become_the_request_casa_rs_runs() {
     let legacy = request(json!({ "mask": "0,0,4,4;5,5,9,9" }));
     assert_eq!(legacy.mask_box, [[0, 0, 4, 4], [5, 5, 9, 9]]);
     let image = request(json!({ "mask": "clean.mask" }));
-    assert_eq!(image.mask_image, Some(PathBuf::from("clean.mask")));
+    assert_eq!(image.mask_images, [PathBuf::from("clean.mask")]);
+    assert!(request(json!({"mask": "none"})).mask_images.is_empty());
 
     // CASA's cycleniter=-1 is niter, and so is any cycleniter of zero or
     // less, or more than niter (`checkAndFixIterationPars`).
@@ -573,7 +574,7 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "computepastep",
             "#1071",
         ),
-        (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#980"),
+        (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#823"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
         // An mfs image's REST axis grids the data's frequencies as they are.
         (json!({ "outframe": "REST" }), "outframe", "#980"),
@@ -667,7 +668,7 @@ fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints()
     );
     let error = refusal(json!({"mask": ["one.mask", "two.mask"]}));
     assert_eq!(error.parameter, "mask");
-    assert!(error.message.contains("#980"));
+    assert!(error.message.contains("#823"));
 }
 
 #[test]
@@ -1183,7 +1184,8 @@ fn pbmask_is_read_in_every_mask_mode_and_bounded_as_casa_bounds_it() {
 /// x 40 to 60 and y 70 to 90 (read from its tst2.mask).
 #[test]
 fn a_crtf_circle_masks_the_pixels_casa_masks() {
-    let boxes = super::crtf_pixel_boxes("circle[[50pix,80pix],10pix]").expect("a circle");
+    let boxes =
+        super::user_mask::crtf_pixel_boxes("circle[[50pix,80pix],10pix]").expect("a circle");
     let rows = boxes
         .iter()
         .map(|text| {
@@ -1377,10 +1379,7 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     assert!(seeded.has_start_model());
     seeded.validate().expect("MEM with an explicit start model");
     let masked = request(json!({"deconvolver":"mem", "mask":"region.mask"}));
-    assert_eq!(
-        masked.mask_image.as_deref(),
-        Some(std::path::Path::new("region.mask"))
-    );
+    assert_eq!(masked.mask_images, [PathBuf::from("region.mask")]);
     masked.validate().expect("MEM with a user mask image");
     let pb = request(json!({"deconvolver":"mem", "usemask":"pb", "pbmask":0.0}));
     pb.validate().expect("MEM with a primary-beam mask");

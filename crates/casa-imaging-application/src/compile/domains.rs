@@ -44,8 +44,8 @@ pub(super) enum DomainMask {
     /// The positive pixels of a CASA image, reprojected onto the domain and
     /// matched to its planes ([`super::mask_image`]).
     Image {
-        /// The supplied CASA mask image.
-        path: PathBuf,
+        /// The supplied CASA mask images, in list order.
+        paths: Vec<PathBuf>,
         /// Limit MEM to the shared tangent grid verified for image-mask import (#823).
         require_shared_tangent_grid: bool,
         /// Inclusive pixel boxes before and after the image in the mask list.
@@ -283,7 +283,7 @@ fn request_mask(
             mask
         }
     };
-    Ok(match (request.usemask, &request.mask_image) {
+    Ok(match (request.usemask, request.mask_images.as_slice()) {
         (UseMask::Pb, _) => within_beam(DomainMask::FullPlane, request.pbmask),
         (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh {
             controls: AutoMultithreshControls {
@@ -302,24 +302,24 @@ fn request_mask(
             },
             previous: None,
         },
-        (UseMask::User, Some(path)) => {
+        (UseMask::User, paths) if !paths.is_empty() => {
             let (before, after) = request
                 .mask_box
                 .split_at(request.mask_regions_before_image.unwrap_or(0));
             named(DomainMask::Image {
-                path: path.clone(),
+                paths: paths.to_vec(),
                 require_shared_tangent_grid: request.deconvolver == crate::Deconvolver::Mem,
                 regions: [before, after]
                     .map(|boxes| boxes.iter().map(|region| region.corners).collect()),
             })
         }
-        (UseMask::User, None) if let Some(polygon) = &request.mask_polygon => {
+        (UseMask::User, _) if let Some(polygon) = &request.mask_polygon => {
             named(DomainMask::SkyPolygon(polygon.clone()))
         }
-        (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
+        (UseMask::User, _) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
-        (UseMask::User, None) => named(user_boxes(&request.mask_box, spectral, channels)?),
+        (UseMask::User, _) => named(user_boxes(&request.mask_box, spectral, channels)?),
     })
 }
 
@@ -509,7 +509,7 @@ fn mask_plan(
             }
         }
         DomainMask::Image {
-            path,
+            paths,
             require_shared_tangent_grid,
             regions,
         } => {
@@ -527,18 +527,20 @@ fn mask_plan(
                 Some(CoordinateModel::Spectral(spectral)) => Some(&**spectral),
                 _ => None,
             };
-            let image = super::mask_image::MaskImage::open(
-                &path,
-                coordinate,
-                image_size,
-                super::mask_image::TargetPlanes {
-                    channels,
-                    polarizations,
-                    spectral,
-                },
-            )?;
+            let planes = super::mask_image::TargetPlanes {
+                channels,
+                polarizations,
+                spectral,
+            };
+            let [path] = paths.as_slice() else {
+                let (plan, charge) =
+                    super::mask_image::read_aligned_list(&paths, coordinate, image_size, context)?;
+                resident.join(charge);
+                return Ok(plan);
+            };
+            let image = super::mask_image::MaskImage::open(path, coordinate, image_size, planes)?;
             if require_shared_tangent_grid && !image.has_shared_tangent_grid() {
-                return Err(PrepareError::MemMaskGrid { path });
+                return Err(PrepareError::MemMaskGrid { path: path.clone() });
             }
             let mut charge = admit(
                 &context.host,
