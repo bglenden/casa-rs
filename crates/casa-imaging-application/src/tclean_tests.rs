@@ -652,14 +652,16 @@ fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints()
     // Integer-valued decimal CRTF syntax already worked and stays supported.
     let decimal = request(json!({"mask": "box[[-2.0pix,-1.0pix],[3.0pix,4.0pix]]"}));
     assert_eq!(decimal.mask_box, [[-2, -1, 3, 4]]);
-    for mask in [
-        "box[[-2.5pix,0pix],[3pix,4pix]]",
-        "box[[1deg,2deg],[3deg,4deg]]",
-    ] {
-        let error = refusal(json!({"mask": mask}));
-        assert_eq!(error.parameter, "mask");
-        assert!(error.message.contains("#980"));
-    }
+    let error = refusal(json!({"mask": "box[[-2.5pix,0pix],[3pix,4pix]]"}));
+    assert_eq!(error.parameter, "mask");
+    assert!(error.message.contains("#980"));
+
+    let sky = request(json!({"mask": "box[[1deg,2deg],[3deg,4deg]]"}));
+    assert!(sky.mask_box.is_empty());
+    assert_eq!(
+        sky.mask_polygon.expect("sky box geometry").vertices.len(),
+        4
+    );
     let error = refusal(json!({"mask": ["one.mask", "two.mask"]}));
     assert_eq!(error.parameter, "mask");
     assert!(error.message.contains("#980"));
