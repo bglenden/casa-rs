@@ -95,6 +95,7 @@ def main():
             for path in (root/case).iterdir():
                 if path.is_dir() and not path.name.endswith(('.ms','.skymodel')):shutil.rmtree(path)
         p=dict(cases[case]['parameters'],graphics='file')
+        if case=='tp':p['showresidual']=True
         task(**dict(defaults,**p))
         result['simanalyze'][case]=dict(parameters=p,figures=dict(captured))
         save_result(root,result)

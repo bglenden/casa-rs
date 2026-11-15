@@ -116,6 +116,9 @@ fn analysis_figure(
         ("showdifference", plan.file(".diff"), true),
         ("showfidelity", plan.file(".fidelity"), false),
     ] {
+        if flag == "showresidual" && !path.exists() {
+            continue;
+        }
         if p.flag(flag) {
             selected.push(statim(&path, statistics, payload, resources)?);
         }

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Compare native-rendered simulation figures with actual CASA artists."""
 import argparse
+from decimal import Decimal
 import gzip
 import json
 import os
@@ -25,6 +26,18 @@ def panels(records):
     return [p for p in records if p['images'] or p['lines'] or p['circles'] or p['texts']]
 
 
+def annotation_equal(actual,expected,panel):
+    if actual==expected:return True
+    if not actual.startswith(('min=','bmaj=')):return False
+    number=r'[-+]?\d+(?:\.\d*)?(?:[eE][-+]?\d+)?'
+    if re.sub(number,'#',actual)!=re.sub(number,'#',expected):return False
+    a,b=re.findall(number,actual),re.findall(number,expected)
+    scale=max((float(np.max(np.abs(image['pixels']))) for image in panel['images']),default=0.)
+    # CASA prints one decimal scientific notation. Account for rounding at
+    # either endpoint, plus the image comparison's 1e-3 numerical tolerance.
+    return all(abs(float(x)-float(y)) <= .5*(10.**Decimal(x).as_tuple().exponent+10.**Decimal(y).as_tuple().exponent)+1e-3*max(scale,abs(float(y))) for x,y in zip(a,b))
+
+
 def compare(actual,expected):
     failures=[]
     if set(actual)!=set(expected):failures.append(dict(files=dict(actual=sorted(actual),expected=sorted(expected))))
@@ -36,6 +49,16 @@ def compare(actual,expected):
                 if not np.allclose(left[field],right[field],rtol=1e-3,atol=1e-9):failures.append(dict(figure=name,panel=i,field=field,actual=left[field],expected=right[field]))
             for field in ['aspect','frame_on']:
                 if left[field]!=right[field]:failures.append(dict(figure=name,panel=i,field=field,actual=left[field],expected=right[field]))
+            for kind in ['circles','anchored_circles','texts']:
+                if len(left[kind])!=len(right[kind]):failures.append(dict(figure=name,panel=i,kind=kind,count=[len(left[kind]),len(right[kind])]))
+                for n,(x,y) in enumerate(zip(left[kind],right[kind])):
+                    for field in x.keys()|y.keys():
+                        if field=='font_size':continue  # Existing native document typography.
+                        a,b=x[field],y[field]
+                        if field=='face_color' and a[3]==b[3]==0:continue  # Fully transparent fill.
+                        if field=='text':same=annotation_equal(a,b,right)
+                        else:same=np.allclose(a,b,rtol=1e-3,atol=1e-8) if isinstance(a,(list,float,int)) else a==b
+                        if not same:failures.append(dict(figure=name,panel=i,kind=kind,layer=n,field=field,actual=a,expected=b))
             if Path(left['title']).name!=Path(right['title']).name:failures.append(dict(figure=name,panel=i,field='title',actual=left['title'],expected=right['title']))
             for kind in ['images','lines']:
                 if len(left[kind])!=len(right[kind]):failures.append(dict(figure=name,panel=i,kind=kind,count=[len(left[kind]),len(right[kind])]))

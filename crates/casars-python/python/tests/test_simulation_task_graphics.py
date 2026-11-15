@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Actual native task processes and renderer against CASA's recorded figures."""
 import gzip
+from copy import deepcopy
 import importlib.util
 import json
 import os
@@ -68,3 +69,20 @@ def rendered_cases(tmp_path_factory):
 @pytest.mark.parametrize('case',['simalma','multi','tp','seed','feather'])
 def test_complete_simulation_figures_match_casa(rendered_cases,case):
     assert not rendered_cases[case],json.dumps(rendered_cases[case],indent=2)
+
+
+@pytest.mark.parametrize('kind',['circles','anchored_circles','texts'])
+def test_figure_comparison_detects_missing_pointings_beams_and_statistics(kind):
+    with gzip.open(REPO/'crates/casa-simulation/tests/data/simulation_task_graphics_casa.json.gz','rt') as source:
+        figures=json.load(source)['simalma']['figures']
+    name=next(name for name,panels in figures.items() if any(panel[kind] for panel in panels))
+    expected={name:figures[name]};actual=deepcopy(expected)
+    next(panel for panel in actual[name] if panel[kind])[kind].pop()
+    assert helper.compare(actual,expected)
+
+
+def test_statistical_annotations_compare_numbers_and_units():
+    panel={'images':[{'pixels':[[1.25]]}]}
+    assert helper.annotation_equal('min=0.0e+00\nmax=1.2e+00\nJy/beam','min=-5.0e-08\nmax=1.3e+00\nJy/beam',panel)
+    assert not helper.annotation_equal('max=9.9e+01\nJy/beam','max=1.3e+00\nJy/beam',panel)
+    assert not helper.annotation_equal('max=1.3e+00\nJy/pixel','max=1.3e+00\nJy/beam',panel)

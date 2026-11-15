@@ -69,6 +69,16 @@ fn combination(
         format!("{}{suffix}", best.stem)
     };
     let high = plan.directory.join(format!("{stem}.image.flat"));
+    let feather = plan
+        .directory
+        .join(format!("{}.feather.image", plan.project));
+    let cube = PagedImage::<f32>::open(&feather).map_err(failure)?;
+    let cube_bytes = cube
+        .shape()
+        .iter()
+        .try_fold(16u64, |bytes, &axis| bytes.checked_mul(axis as u64))
+        .ok_or_else(|| failure("combination cube memory overflows"))?;
+    drop(cube);
     let info = PagedImage::<f32>::open(&high).map_err(failure)?;
     let cells = info
         .shape()
@@ -77,6 +87,7 @@ fn combination(
         .ok_or_else(|| failure("combination figure dimensions overflow"))?;
     let memory = cells
         .checked_mul(128)
+        .and_then(|bytes| bytes.checked_add(cube_bytes))
         .and_then(|bytes| bytes.checked_add(plan.model.preparation_bytes))
         .and_then(|bytes| bytes.checked_add(128 << 20))
         .ok_or_else(|| failure("combination plot memory overflows"))?;
@@ -102,9 +113,6 @@ fn combination(
     let convolved = analysis::convimage(&private_model, &high)
         .map_err(failure)?
         .convolved;
-    let feather = plan
-        .directory
-        .join(format!("{}.feather.image", plan.project));
     let private_feather = staging.path().join("feather.image");
     copy_image(&feather, &private_feather)?;
     let feather_flat = flat_image(&private_feather, None).map_err(failure)?;

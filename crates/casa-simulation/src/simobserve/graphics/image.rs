@@ -125,7 +125,17 @@ fn prepare_image(
         None,
     ));
     let text = if psf {
-        let values: Vec<f32> = pixels.iter().copied().collect();
+        // The beam fitter consumes one x-major spatial plane. A spectral
+        // cube's ndarray iterator interleaves its channels; passing that
+        // buffer moves the apparent peak and can make the fit fail.
+        let mut values = Vec::with_capacity(width * height);
+        for x in 0..width {
+            position[0] = x;
+            for y in 0..height {
+                position[1] = y;
+                values.push(pixels[IxDyn(&position)]);
+            }
+        }
         let radians = std::f64::consts::PI / (180.0 * 3600.0);
         let beam = casa_imaging_products::fit_restoring_beam(
             &values,
