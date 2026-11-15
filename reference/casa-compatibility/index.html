@@ -10993,7 +10993,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>phasecenter</code> → <code>phasecenter or phasecenter_field</code></td>
 <td>Implemented</td>
-<td>Numeric text is split into phasecenter_field; other text becomes phasecenter direction; empty means unset. <br>Catalog domain: <code>string</code></td>
+<td>Numeric text selects the phase center field. An explicit J2000, B1950 or ICRS literal supplies the main image's frame and two angles. Empty text uses the selected field direction. <br>Catalog domain: <code>string</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
