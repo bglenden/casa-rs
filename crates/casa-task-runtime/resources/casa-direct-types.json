@@ -50,6 +50,13 @@
     "interp": "cStrVec",
     "parang": "cBool"
   },
+  "concat": {
+    "concatvis": "cStr",
+    "respectname": "cBool",
+    "timesort": "cBool",
+    "copypointing": "cBool",
+    "visweightscale": "cFloatVec"
+  },
   "exportfits": {
     "fitsimage": "cStr",
     "velocity": "cBool",

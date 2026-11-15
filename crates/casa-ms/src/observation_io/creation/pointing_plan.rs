@@ -46,6 +46,9 @@ use crate::selected_pointing::catalog_peak_bytes;
 /// carry it, each in the time system of its partition.
 #[derive(Debug, Default)]
 pub(crate) struct PointingPlan {
+    /// An MSv2-to-MSv2 copy preserves every required pointing column and
+    /// row, including those outside MAIN's time span or unused antennas.
+    preserved_bytes: Option<usize>,
     reads: Vec<PointingRequest>,
     /// An MSv2 destination: the most samples the reads gather, and their
     /// coefficients.
@@ -59,6 +62,59 @@ pub(crate) struct PointingPlan {
 }
 
 impl PointingPlan {
+    pub(super) fn preserve_msv2(
+        observation: &crate::observation_io::Msv2Observation,
+    ) -> Result<Self, ObservationError> {
+        let Some(table) = observation.measurement_set().subtable(SubtableId::Pointing) else {
+            return Ok(Self::default());
+        };
+        if table.schema().is_some_and(|schema| {
+            schema.columns().iter().any(|column| {
+                !crate::schema::pointing::REQUIRED_COLUMNS
+                    .iter()
+                    .any(|known| known.name == column.name())
+            })
+        }) {
+            return Err(request_error(
+                "concat preserving optional POINTING columns is outside #939",
+            ));
+        }
+        let frame = if table.row_count() == 0 {
+            None
+        } else {
+            let descriptor =
+                casa_tables::table_measures::TableMeasDesc::reconstruct(table, "DIRECTION")
+                    .ok_or_else(|| request_error("POINTING DIRECTION has no measure descriptor"))?;
+            match descriptor.ref_desc() {
+                casa_tables::table_measures::MeasRefDesc::Fixed { refer } => {
+                    Some(refer.parse().map_err(|_| {
+                        request_error("POINTING direction frame is unsupported (#939)")
+                    })?)
+                }
+                _ => {
+                    return Err(request_error(
+                        "variable POINTING direction frames are outside #939",
+                    ));
+                }
+            }
+        };
+        Ok(Self {
+            preserved_bytes: Some(observation.pointing_loaded_bytes()),
+            gathered: (table.row_count(), 0),
+            frame,
+            ..Self::default()
+        })
+    }
+
+    pub(super) fn preserved(&self) -> bool {
+        self.preserved_bytes.is_some()
+    }
+
+    /// Output records and their serialization, including arbitrary strings.
+    pub(super) fn table_bytes(&self) -> usize {
+        self.gathered.0 * super::msv2_pointing::TABLE_ROW_BYTES
+            + 2 * self.preserved_bytes.unwrap_or(0)
+    }
     /// The one frame of the directions an MSv2 destination's reads carry.
     pub(super) fn frame(&self) -> Option<DirectionRef> {
         self.frame
@@ -85,7 +141,7 @@ impl PointingPlan {
     /// The most an MSv2 destination's gathering holds: the gathered samples
     /// beside its largest read.
     pub(super) fn peak(&self) -> usize {
-        self.peak
+        self.peak + self.preserved_bytes.unwrap_or(0)
     }
 }
 
@@ -277,6 +333,7 @@ fn msv4(
     if destination == Store::Msv4 {
         let gathered = (0, 0);
         let plan = PointingPlan {
+            preserved_bytes: None,
             reads,
             gathered,
             peak: 0,
@@ -296,6 +353,7 @@ fn msv4(
         observation.pointing(read)?;
     }
     let plan = PointingPlan {
+        preserved_bytes: None,
         reads,
         gathered: (samples, 2 * samples),
         peak: budget,
@@ -335,6 +393,7 @@ fn msv2(
     let losses = losses(table, &scan, destination);
     let plan = match destination {
         Store::Msv4 => PointingPlan {
+            preserved_bytes: None,
             reads: partition_reads(&scan, partitions, budget)?,
             gathered: (0, 0),
             peak: 0,
@@ -346,6 +405,7 @@ fn msv2(
             let left = read_budget(samples, coefficients, budget)?;
             let (reads, largest) = antenna_reads(&scan, partitions, left)?;
             PointingPlan {
+                preserved_bytes: None,
                 frame: (!reads.is_empty())
                     .then(|| frames.first().copied())
                     .flatten(),

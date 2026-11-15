@@ -129,6 +129,7 @@ pub fn to_msv2(
     let plan = CreationPlan::new(
         &[CreationInput::new(source)],
         &CreationOptions {
+            copy_pointing: true,
             data_groups: options.data_groups.clone(),
             accept: options.accept.clone(),
             batch_bytes: options.batch_bytes,

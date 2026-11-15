@@ -108,9 +108,99 @@ def main_rows(path):
 def cells(path, name, row_list):
     tb.open(path)
     try:
-        return [tb.getcell(name, row) for row in row_list]
+        # These core cases have one cell shape per column. Read each column
+        # once instead of crossing the Python/C++ boundary per MS row.
+        values = tb.getcol(name)
+        return list(np.moveaxis(values[..., row_list], -1, 0))
     finally:
         tb.close()
+
+
+def subtable_content(ours, theirs, name):
+    """Compare every column and cell; report differences, including metadata.
+
+    HISTORY is deliberately task-specific. Source validity changes caused by
+    CASA's documented merge bug remain visible in this report.
+    """
+    def read(path):
+        tb.open(f"{path}/{name}")
+        try:
+            values = {}
+            for column_name in tb.colnames():
+                values[column_name] = [
+                    tb.getcell(column_name, row) if tb.iscelldefined(column_name, row) else None
+                    for row in range(tb.nrows())
+                ]
+            if name == "FEED":
+                order = sorted(range(tb.nrows()), key=lambda row: tuple(
+                    values[key][row] for key in ["ANTENNA_ID", "FEED_ID", "SPECTRAL_WINDOW_ID", "TIME", "INTERVAL"]))
+                values = {column: [cells[row] for row in order] for column, cells in values.items()}
+            if name == "SOURCE":
+                # SOURCE rows describe an entity and window; their physical
+                # row order is not the SOURCE_ID that FIELD references.
+                order = sorted(range(tb.nrows()), key=lambda row: (
+                    str(values["NAME"][row]), int(values["SPECTRAL_WINDOW_ID"][row]), float(values["TIME"][row])))
+                values = {column: [cells[row] for row in order] for column, cells in values.items()}
+            return values
+        finally:
+            tb.close()
+
+    a, b = read(ours), read(theirs)
+    if name == "OBSERVATION":
+        for columns in [a, b]:
+            for column_name in ["LOG", "SCHEDULE"]:
+                if column_name in columns:
+                    columns[column_name] = [np.array([], dtype=str) if value is None or np.asarray(value).size == 0
+                        or np.all(np.asarray(value) == "") else value for value in columns[column_name]]
+    if name == "SOURCE":
+        for columns in [a, b]:
+            if "POSITION" in columns and all(value is None or np.asarray(value).size == 0 for value in columns["POSITION"]):
+                del columns["POSITION"]
+    differences = {}
+    for column_name in sorted(set(a) | set(b)):
+        if column_name not in a or column_name not in b:
+            differences[column_name] = "column absent"
+            continue
+        left, right = a[column_name], b[column_name]
+        if len(left) != len(right):
+            differences[column_name] = {"rows": [len(left), len(right)]}
+            continue
+        bad, difference, power, maximum = 0, 0.0, 0.0, 0.0
+        for x, y in zip(left, right):
+            if x is None or y is None:
+                bad += int((x is None) != (y is None))
+                continue
+            if isinstance(x, dict) or isinstance(y, dict):
+                # Record values are checked recursively, including arrays.
+                def same(p, q):
+                    if isinstance(p, dict) and isinstance(q, dict):
+                        return p.keys() == q.keys() and all(same(p[k], q[k]) for k in p)
+                    return np.array_equal(p, q, equal_nan=True) if np.asarray(p).dtype.kind in "fc" else np.array_equal(p, q)
+                bad += int(not same(x, y))
+                continue
+            x, y = np.asarray(x), np.asarray(y)
+            if column_name in ["DIRECTION", "DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"] and x.size and y.size:
+                x, y = x.copy(), y.copy()
+                x.flat[0] %= 2 * np.pi
+                y.flat[0] %= 2 * np.pi
+            if x.shape != y.shape:
+                bad += 1
+            elif x.dtype.kind in "fciub" and y.dtype.kind in "fciub":
+                equal_nan = np.isnan(x) & np.isnan(y)
+                delta = np.where(equal_nan, 0.0, np.abs(x.astype(complex) - y.astype(complex)))
+                bad += int(np.any(~np.isfinite(delta)))
+                difference += float(np.nansum(delta ** 2))
+                power += float(np.nansum(np.abs(y.astype(complex)) ** 2))
+                maximum = max(maximum, float(np.max(delta, initial=0.0)))
+            else:
+                bad += int(not np.array_equal(x, y))
+        if bad or maximum:
+            differences[column_name] = {
+                "different_or_undefined_cells": bad,
+                "max_abs": maximum,
+                "nrms": (difference / power) ** 0.5 if power else difference ** 0.5,
+            }
+    return differences
 
 
 def compare(ours, theirs):
@@ -124,20 +214,28 @@ def compare(ours, theirs):
     flags = (cells(ours, "FLAG", ours_first), cells(theirs, "FLAG", theirs_first))
 
     def nrms(name):
-        if column(ours, name) is None or column(theirs, name) is None:
+        a, b = column(ours, name), column(theirs, name)
+        if a is None or b is None:
             return None
-        pair = (cells(ours, name, ours_first), cells(theirs, name, theirs_first))
-        difference = sum(float(np.sum(np.abs(a - b) ** 2)) for a, b in zip(*pair))
-        power = sum(float(np.sum(np.abs(b) ** 2)) for b in pair[1])
+        a, b = a[..., ours_first], b[..., theirs_first]
+        difference = float(np.sum(np.abs(a-b)**2, dtype=np.float64))
+        power = float(np.sum(np.abs(b)**2, dtype=np.float64))
         return (difference / power) ** 0.5 if power > 0 else difference
 
     data_columns = {name: nrms(name) for name in ["DATA", "CORRECTED_DATA", "MODEL_DATA"]}
+    scalar_differences = {}
+    for name in ["ARRAY_ID", "EXPOSURE", "FEED1", "FEED2", "FLAG_ROW", "INTERVAL", "STATE_ID", "TIME_CENTROID"]:
+        a, b = column(ours, name)[ours_first], column(theirs, name)[theirs_first]
+        scalar_differences[name] = float(np.max(np.abs(a.astype(float)-b.astype(float)), initial=0.0))
+    a, b = column(ours, "PROCESSOR_ID")[ours_first], column(theirs, "PROCESSOR_ID")[theirs_first]
+    our_processors, their_processors = rows(ours, "PROCESSOR"), rows(theirs, "PROCESSOR")
+    our_dangling_processors = int(np.count_nonzero(a >= our_processors))
+    a = np.where(a >= our_processors, -1, a)
+    dangling_processor_references = int(np.count_nonzero(b >= their_processors))
+    b = np.where(b >= their_processors, -1, b)
+    scalar_differences["PROCESSOR_ID"] = float(np.max(np.abs(a-b), initial=0.0))
     our_sigma = cells(ours, "SIGMA", ours_first)
-    their_sigma = (
-        [s[:, 0] for s in cells(theirs, "SIGMA_SPECTRUM", theirs_first)]
-        if column(theirs, "SIGMA_SPECTRUM") is not None and len(column(theirs, "SIGMA_SPECTRUM")) > 0
-        else cells(theirs, "SIGMA", theirs_first)
-    )
+    their_sigma = cells(theirs, "SIGMA", theirs_first)
     sigma_relative = max(
         [
             float(np.max(np.abs(a - b) / np.maximum(np.abs(b), 1e-30)))
@@ -202,12 +300,21 @@ def compare(ours, theirs):
         "multiplicity_differs": multiplicity,
         "data_nrms": data_columns["DATA"],
         "data_columns_nrms": data_columns,
+        "uncertainty_columns_nrms": {name: nrms(name) for name in ["WEIGHT", "SIGMA", "WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]},
+        "other_main_columns_max_abs": scalar_differences,
+        "casa_dangling_processor_references": dangling_processor_references,
+        "ours_dangling_processor_references": our_dangling_processors,
         "sigma_max_relative": sigma_relative,
         "flags_differ": sum(int(np.any(a != b)) for a, b in zip(*flags)),
         "weight_max_abs": float(weights),
         "weight_vs_their_spectrum_max_abs": spectrum_weights,
         "uvw_max_abs_m": float(uvw),
         "subtables_ours_theirs": subtables,
+        "subtable_content_differences": {
+            name: subtable_content(ours, theirs, name)
+            for name, counts in subtables.items()
+            if isinstance(counts, list) and name != "HISTORY"
+        },
     }
 
 

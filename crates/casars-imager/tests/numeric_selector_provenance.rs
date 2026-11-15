@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Exact-text selector values (scan, observation, antenna, timerange; one
-//! per MeasurementSet since contract 38) survive each normalized transport
-//! boundary.
+//! Exact-text selector values survive each normalized transport boundary.
+//! Observation uses the scalar CASA grammar; the other selectors retain
+//! their per-MeasurementSet array representation.
 
 use casa_imaging_application::ImagingRequest;
 use casa_provider_contracts::{ParameterValue, TaskRunRequest, builtin_surface_bundle};
@@ -51,7 +51,14 @@ fn assert_request(request: &ImagingRequest, name: &str, expected: &str) {
 }
 
 fn assert_plain(values: &Map<String, Value>, name: &str, expected: &str) {
-    assert_eq!(values[name], json!([expected]));
+    // The current observation concept became scalar with CASA's grammar
+    // in #1468; retaining the former array assertion breaks the baseline.
+    let expected_value = if name == "observation" {
+        json!(expected)
+    } else {
+        json!([expected])
+    };
+    assert_eq!(values[name], expected_value);
     // Deliberately use the plain resolved values: no given() restoration helper.
     assert_request(
         &ImagingRequest::from_tclean(values).unwrap(),
@@ -63,7 +70,11 @@ fn assert_plain(values: &Map<String, Value>, name: &str, expected: &str) {
 fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
     assert_eq!(
         session.values()[name],
-        ParameterValue::Array(vec![ParameterValue::String(expected.into())]),
+        if name == "observation" {
+            ParameterValue::String(expected.into())
+        } else {
+            ParameterValue::Array(vec![ParameterValue::String(expected.into())])
+        },
         "{name}"
     );
     let workspace = std::env::current_dir().unwrap();

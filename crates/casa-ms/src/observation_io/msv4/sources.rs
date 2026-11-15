@@ -230,6 +230,7 @@ impl Stated {
         let lines = row * self.lines..row * self.lines + stated;
         let has_lines = stated > 0;
         Some(SourceRecord {
+            model: None,
             window: SourceWindow::Window(window),
             time: None,
             interval_s: None,

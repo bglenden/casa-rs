@@ -3,6 +3,7 @@
   "tasks": [
     "applycal",
     "bandpass",
+    "concat",
     "exportfits",
     "feather",
     "flagdata",
