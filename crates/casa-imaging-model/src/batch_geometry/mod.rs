@@ -862,6 +862,24 @@ impl GeometryPlan {
                     chart.centre.frame().direction_ref(),
                 )?;
                 if let Some([longitude, latitude]) = shift {
+                    if self.mosaic {
+                        let (field_lon, field_lat) = field.as_angles();
+                        let shifted_field = MDirection::from_angles(
+                            field_lon + longitude,
+                            field_lat + latitude,
+                            DirectionFrame::J2000.direction_ref(),
+                        );
+                        let target = MDirection::from_angles(
+                            target[0],
+                            target[1],
+                            DirectionFrame::J2000.direction_ref(),
+                        );
+                        return Ok(Some(GridFtProjection::mosaic_through_shifted_field(
+                            field,
+                            &shifted_field,
+                            &target,
+                        )));
+                    }
                     target[0] += longitude;
                     target[1] += latitude;
                 }

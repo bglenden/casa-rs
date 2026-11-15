@@ -594,7 +594,7 @@ pub struct SpectralWindowSelection {
     spectral_window_id: u32,
     channel_indices: Vec<u32>,
     coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
-    first_buffer_lsrk_factor: Option<f64>,
+    first_buffer_beam_factor: Option<f64>,
     frequency_bands: Option<FrequencyBands>,
     density_only: bool,
     density_channels: Option<Vec<u32>>,
@@ -615,7 +615,7 @@ impl SpectralWindowSelection {
             spectral_window_id,
             channel_indices,
             coordinate_catalog: None,
-            first_buffer_lsrk_factor: None,
+            first_buffer_beam_factor: None,
             frequency_bands: None,
             density_only: false,
             density_channels: None,
@@ -706,23 +706,23 @@ impl SpectralWindowSelection {
         self.prediction_bands.as_ref()
     }
 
-    /// Bind the factor that takes the window's frequencies to LSRK at the
-    /// first visibility buffer CASA's tclean iterates of it, where
-    /// `FTMachine::matchChannel` converts them and a mosaic evaluates its
-    /// beams (`HetArrayConvFunc::findConvFunction`); `None` unless the
+    /// Bind the frequency conversion factor for a mosaic's first buffer
+    /// of this window. CASA's `FTMachine::matchChannel` converts to LSRK
+    /// for ordinary imaging or the tracked source's REST frame for
+    /// `cubesource`; `None` unless the
     /// factor is finite and positive.
     #[must_use]
-    pub fn with_first_buffer_lsrk_factor(mut self, factor: f64) -> Option<Self> {
+    pub fn with_first_buffer_beam_factor(mut self, factor: f64) -> Option<Self> {
         (factor.is_finite() && factor > 0.0).then(|| {
-            self.first_buffer_lsrk_factor = Some(factor);
+            self.first_buffer_beam_factor = Some(factor);
             self
         })
     }
 
-    /// The factor [`Self::with_first_buffer_lsrk_factor`] bound, if any.
+    /// The factor [`Self::with_first_buffer_beam_factor`] bound, if any.
     #[must_use]
-    pub const fn first_buffer_lsrk_factor(&self) -> Option<f64> {
-        self.first_buffer_lsrk_factor
+    pub const fn first_buffer_beam_factor(&self) -> Option<f64> {
+        self.first_buffer_beam_factor
     }
 
     /// Bind the storage owner's complete physical spectral coordinate catalog.

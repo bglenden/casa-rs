@@ -524,14 +524,14 @@ pub(super) fn selected_channels(
 /// The observation selection: the surveyed partitions and samples, and
 /// `channels` per window with the window's whole frequency axis (CASA's
 /// mosaic kernels select by the complete `CHAN_FREQ` and
-/// `|CHAN_WIDTH[0]|`) and its factor to LSRK at its first visibility
-/// buffer, from `lsrk_factors` ([`super::envelope::first_buffer_lsrk_factors`]),
+/// `|CHAN_WIDTH[0]|`) and its beam frequency factor at its first visibility
+/// buffer, from `beam_factors` ([`super::envelope::first_buffer_beam_factors`]),
 /// and the per-time frequency selection of a window in `bands`
 /// ([`super::frequency_bands`]).
 pub(super) fn observation_selection(
     survey: Survey,
     channels: &WindowChannels,
-    lsrk_factors: &BTreeMap<usize, f64>,
+    beam_factors: &BTreeMap<usize, f64>,
     reads: &super::spectral::WindowReads,
 ) -> Result<ObservationSelection, PrepareError> {
     let spectral_windows = channels
@@ -549,7 +549,7 @@ pub(super) fn observation_selection(
                     SpectralWindowCoordinateCatalog::new(window.frequencies_hz.clone(), *width)
                 })
                 .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })?;
-            let factor = lsrk_factors
+            let factor = beam_factors
                 .get(spw_id)
                 .copied()
                 .expect("every selected window has its first-buffer factor");
@@ -561,7 +561,7 @@ pub(super) fn observation_selection(
                     .collect(),
             )
             .with_coordinate_catalog(catalog)
-            .with_first_buffer_lsrk_factor(factor)
+            .with_first_buffer_beam_factor(factor)
             .map(|selection| match reads.get(spw_id) {
                 Some(read) => read_selection(selection, read),
                 None => selection,
