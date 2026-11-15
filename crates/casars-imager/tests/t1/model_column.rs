@@ -125,6 +125,79 @@ fn fresh_prediction_publishes_the_start_model_without_a_residual() {
 }
 
 #[test]
+fn fresh_empty_prediction_zeroes_only_selected_model_cells() {
+    let observation = Observation::synthesise_band(2, &[("point", POINT)]);
+    observation.image(
+        "seed-column",
+        json!({ "niter": 2, "savemodel": "modelcolumn" }),
+    );
+
+    let path = observation.measurement_set();
+    let mut ms = MeasurementSet::open(path).unwrap();
+    let rows = ms.main_table().row_count();
+    assert!(rows > 0);
+    let ArrayValue::Complex32(mut models) = ms
+        .data_column(VisibilityDataColumn::ModelData)
+        .unwrap()
+        .get(0)
+        .unwrap()
+        .clone()
+    else {
+        panic!("a complex MODEL_DATA cell");
+    };
+    let sentinel = Complex32::new(17.0, -3.0);
+    models.fill(sentinel);
+    for row in 0..rows {
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "MODEL_DATA")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Complex32(models.clone())))
+            .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
+
+    let (_, products) = observation.image(
+        "empty-prediction",
+        json!({
+            "deconvolver": "hogbom",
+            "spw": "0:0",
+            "niter": 0,
+            "calcpsf": true,
+            "calcres": false,
+            "restoration": false,
+            "write_pb": true,
+            "savemodel": "modelcolumn",
+        }),
+    );
+    for suffix in [".psf", ".pb", ".sumwt"] {
+        products.get(suffix);
+    }
+    for suffix in [".model", ".residual", ".image"] {
+        assert!(
+            !observation
+                .scratch(&format!("empty-prediction{suffix}"))
+                .exists()
+        );
+    }
+    let ms = MeasurementSet::open(path).unwrap();
+    let column = ms.data_column(VisibilityDataColumn::ModelData).unwrap();
+    for row in 0..rows {
+        let ArrayValue::Complex32(models) = column.get(row).unwrap() else {
+            panic!("a complex MODEL_DATA cell");
+        };
+        for hand in 0..models.shape()[0] {
+            assert_eq!(
+                models[[hand, 0]],
+                Complex32::default(),
+                "row {row}, hand {hand}"
+            );
+            assert_eq!(models[[hand, 1]], sentinel, "row {row}, hand {hand}");
+        }
+    }
+}
+
+#[test]
 fn mem_writes_the_solved_and_replayed_model_prediction() {
     let observation = Observation::synthesise_band(2, &[("point", POINT)]);
     let controls = json!({

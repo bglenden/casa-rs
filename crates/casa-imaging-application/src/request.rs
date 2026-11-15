@@ -777,12 +777,15 @@ impl ImagingRequest {
                 "a solving run needs minor-cycle iterations",
             );
         }
-        // A continuation predicts the model an earlier run left, as CASA's
-        // `predictModel` does for `niter=0, calcres=False`.
+        // CASA's separate prediction initializes each selected visibility
+        // to zero even when there is no model image to degrid.
+        let predicts_empty_column =
+            self.savemodel == SaveModel::ModelColumn && self.niter == 0 && !self.calcres;
         if self.savemodel != SaveModel::None
             && !self.solves()
             && !self.has_start_model()
             && !self.tclean_restart
+            && !predicts_empty_column
         {
             return invalid(
                 "savemodel, niter",
