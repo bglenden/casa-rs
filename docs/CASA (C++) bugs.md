@@ -5877,3 +5877,19 @@ no valid processor. Native concatenation writes the MS null sentinel -1
 in this case, preserving the absence of a processor without a dangling
 foreign key. The parity comparison explicitly compares that logical absence;
 a populated PROCESSOR table and its references are compared normally.
+
+
+## `concat` does not scale its first input's sigma spectrum
+
+- Observed in CASA 6.7.6-14.
+- Affected code: `casatasks/private/task_concat.py`, the first MeasurementSet's
+  weight-scaling block. Appended inputs are handled by `MSConcat`.
+- Evidence: `scripts/concat_parity/task_oracle.py` and the concat reference
+  fixtures, with weight factor 4 on the chronologically first input.
+
+CASA multiplies its first input's WEIGHT and WEIGHT_SPECTRUM by 4 and divides
+SIGMA by 2, while leaving SIGMA_SPECTRUM unchanged. This makes the spectral
+uncertainties inconsistent with the same sample's weight and sigma. The
+native task divides both sigma representations by the square root of the
+weight factor for every input. The fixtures retain the actual CASA result,
+and the regression checks the corrected cells against that variance law.

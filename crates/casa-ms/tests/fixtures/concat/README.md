@@ -16,6 +16,12 @@ ordering, omitting pointing, and raw flags/uncertainty spectra. HISTORY is
 task-specific and checked separately. Empty string vectors are treated as
 empty metadata.
 
+The simulated inputs also carry SIGMA_SPECTRUM. CASA scales the first input's
+SIGMA but omits its SIGMA_SPECTRUM scaling. The actual CASA references remain
+unaltered; a named correction records the first input's row count and weight
+factor. Tests apply the independent `sigma / sqrt(factor)` variance law to
+those cells. The generator verifies CASA's omission before recording it.
+
 The full, unmodified m51c pair and upstream concat tests 1 and 2 are also
 compared with CASA, including both append directions; those larger inputs
 and outputs are disposable under `target/939-concat`.

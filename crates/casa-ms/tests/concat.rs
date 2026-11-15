@@ -332,6 +332,28 @@ fn compare_ms(path: &Path, expected: &Json) {
     );
 }
 
+fn expected_tables(case: &Json) -> Json {
+    let mut tables = case["tables"].clone();
+    if let Some(correction) = case.get("first_sigma_spectrum_correction") {
+        // Independent variance law: sigma scales by 1/sqrt(weight factor).
+        // The fixture retains CASA's actual, unscaled first-input spectrum;
+        // task_oracle.py verifies that specific CASA bug before recording it.
+        let scale = correction["scale"].as_f64().unwrap().sqrt();
+        let rows = correction["rows"].as_u64().unwrap() as usize;
+        for row in tables["MAIN"]["columns"]["SIGMA_SPECTRUM"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .take(rows)
+        {
+            for value in row["values"].as_array_mut().unwrap() {
+                *value = json!(value.as_f64().unwrap() / scale);
+            }
+        }
+    }
+    tables
+}
+
 fn case_matches_casa(name: &str) {
     let (root, references) = fixtures();
     assert_eq!(references["casa_version"], "6.7.6.14");
@@ -358,7 +380,7 @@ fn case_matches_casa(name: &str) {
     } else {
         concat(&request).unwrap_or_else(|error| panic!("{name}: {error}"));
     }
-    compare_ms(&request.concatvis, &case["tables"]);
+    compare_ms(&request.concatvis, &expected_tables(case));
 }
 
 #[test]
@@ -416,7 +438,10 @@ fn append_preserves_existing_output_and_input_history() {
     );
     append.freqtol = json!("");
     concat(&append).unwrap();
-    compare_ms(&first.concatvis, &references["cases"]["pair"]["tables"]);
+    compare_ms(
+        &first.concatvis,
+        &expected_tables(&references["cases"]["pair"]),
+    );
     assert_eq!([history(&twelve), history(&seven)], before);
 }
 

@@ -74,6 +74,19 @@ def encode(value):
     return value
 
 
+def add_sigma_spectrum(path):
+    tb.open(str(path), nomodify=False)
+    description = tb.getcoldesc("DATA")
+    description["valueType"] = "float"
+    description["dataManagerGroup"] = "ConcatSigmaSpectrum"
+    tb.addcols({"SIGMA_SPECTRUM": description})
+    for row in range(tb.nrows()):
+        sigma = tb.getcell("SIGMA", row)
+        channels = tb.getcell("DATA", row).shape[1]
+        tb.putcell("SIGMA_SPECTRUM", row, np.repeat(sigma[:, None], channels, axis=1))
+    tb.close()
+
+
 def snapshot(path):
     result = {}
     for name in ["MAIN", "ANTENNA", "DATA_DESCRIPTION", "FEED", "FIELD", "FLAG_CMD", "OBSERVATION",
@@ -103,6 +116,8 @@ def main(public, work, fixtures):
         target = inputs / name
         shutil.rmtree(target, ignore_errors=True)
         thin(source, target)
+        if name in ["twelve.ms", "seven.ms"]:
+            add_sigma_spectrum(target)
     late = inputs / "late.ms"
     shutil.rmtree(late, ignore_errors=True)
     shutil.copytree(inputs / "weighted.ms", late)
@@ -139,6 +154,20 @@ def main(public, work, fixtures):
         arguments = {**parameters, "vis": [str(copies / path) for path in parameters["vis"]]}
         concat(concatvis=str(output), **arguments)
         references[name] = {"parameters": parameters, "tables": snapshot(output)}
+        if name in ["pair", "reversed"]:
+            # CASA scales SIGMA but omits SIGMA_SPECTRUM for the first MS.
+            # Keep the actual reference intact and record the analytic
+            # correction the native task must apply to its uncertainties.
+            tb.open(str(inputs / "twelve.ms"))
+            first_rows = tb.nrows()
+            original = tb.getcol("SIGMA_SPECTRUM")
+            tb.close()
+            tb.open(str(output))
+            actual = tb.getcol("SIGMA_SPECTRUM", nrow=first_rows)
+            tb.close()
+            if not np.array_equal(actual, original):
+                raise RuntimeError("CASA's first-input sigma-spectrum behavior changed")
+            references[name]["first_sigma_spectrum_correction"] = {"rows": first_rows, "scale": 4.0}
         print(name, "recorded", flush=True)
     with gzip.open(fixtures / "concat_casa.json.gz", "wt") as stream:
         json.dump({"casa_version": "6.7.6.14", "cases": references}, stream, allow_nan=False)
