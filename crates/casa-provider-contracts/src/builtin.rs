@@ -199,7 +199,17 @@ mod tests {
                 .filter(|binding| binding.name == "imsize")
             {
                 if surface.id() == "tsdimaging" {
-                    assert_eq!(binding.concept.id.as_str(), format!("single_dish.{}", binding.name));
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        format!("single_dish.{}", binding.name)
+                    );
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::Array(Vec::new()),
+                        }
+                    );
+                    continue;
                 } else if surface.id() == "simanalyze" {
                     assert_eq!(binding.concept.id.as_str(), "simulation.analysis.imsize");
                     assert_eq!(
@@ -219,7 +229,17 @@ mod tests {
                 .filter(|binding| binding.name == "cell")
             {
                 if surface.id() == "tsdimaging" {
-                    assert_eq!(binding.concept.id.as_str(), format!("single_dish.{}", binding.name));
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        format!("single_dish.{}", binding.name)
+                    );
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::String(String::new()),
+                        }
+                    );
+                    continue;
                 } else if surface.id() == "simanalyze" {
                     assert_eq!(binding.concept.id.as_str(), "simulation.analysis.cell");
                     assert_eq!(
@@ -802,7 +822,10 @@ mod tests {
                     });
                     assert_eq!(
                         decoded,
-                        matches!(surface.id(), "tclean" | "simobserve" | "simanalyze" | "tsdimaging"),
+                        matches!(
+                            surface.id(),
+                            "tclean" | "simobserve" | "simanalyze" | "tsdimaging"
+                        ),
                         "{} product sources",
                         surface.id()
                     );
