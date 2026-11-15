@@ -30,7 +30,9 @@ mod taylor_moments;
 mod visibility;
 mod writer;
 
-pub use analytic_beam::{ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL, AnalyticPrimaryBeam};
+pub use analytic_beam::{
+    ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL, AnalyticPrimaryBeam, SavedRadialPrimaryBeam,
+};
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;

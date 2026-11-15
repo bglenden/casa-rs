@@ -596,7 +596,30 @@ impl<'a> Tclean<'a> {
             },
         );
         self.projection()?;
-        self.ignore(&["vptable"])
+        let vptable = self.text("vptable")?;
+        if modes.gridder == "mosaic" && !vptable.is_empty() {
+            return Err(TcleanRefusal::not_yet(
+                "vptable",
+                "a supplied beam with mosaic gridding",
+                1307,
+            ));
+        }
+        if modes.mvc && !vptable.is_empty() && matches!(modes.gridder, "standard" | "wproject") {
+            return Err(TcleanRefusal::not_yet(
+                "vptable",
+                "a supplied beam with MVC",
+                1307,
+            ));
+        }
+        self.set(
+            "vptable",
+            if matches!(modes.gridder, "standard" | "wproject") {
+                vptable
+            } else {
+                ""
+            },
+        );
+        Ok(())
     }
 
     /// CASA's `projection` (`SynthesisParamsImage::fromRecord`): `NCP`, which

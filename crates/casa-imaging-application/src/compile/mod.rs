@@ -41,6 +41,7 @@ mod stores;
 mod survey;
 mod time_selection;
 mod virtual_selection;
+mod vptable;
 
 pub(crate) use mvc::{CompiledTaylorView, MvcSavedPsf, MvcStart, TaylorView};
 pub(crate) use opening::OpenedStore;
@@ -256,19 +257,19 @@ pub(crate) fn prepare_with_view_hooks(
         (&observation_info, object_name),
         domains::MaskPreparation::ForRun,
     )?;
-    let primary_beam = primary_beam_model(request, catalogue, &survey.pb_antennas)?;
-    let primary_beam_centres = match primary_beam {
-        None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
-        Some(_) => Some(primary_beam_centres(&domains, &stores, &centre)?),
-    };
     let mut deployment = deployment(
         request,
         context,
         surveyed,
         &domains,
-        primary_beam,
-        primary_beam_centres,
+        &centre,
+        &observation_info.telescope,
     )?;
+    let has_primary_beam = deployment
+        .publication
+        .controls
+        .primary_beam_model()
+        .is_some();
     let instrument = instrument::scientific_instrument_model(
         &request.gridder,
         &stores
@@ -291,7 +292,7 @@ pub(crate) fn prepare_with_view_hooks(
                 observation_info: &observation_info,
                 object_name,
                 instrument,
-                has_primary_beam: primary_beam.is_some(),
+                has_primary_beam,
             });
             if let Some(hooks) = hooks.as_ref() {
                 (hooks.after)();
@@ -303,7 +304,7 @@ pub(crate) fn prepare_with_view_hooks(
         request,
         surveyed,
         instrument,
-        primary_beam.is_some(),
+        has_primary_beam,
         continuum_transform,
     )?;
     specification_inputs.force_model = mvc_parent.is_some_and(|parent| parent.niter != 0);
@@ -1099,9 +1100,19 @@ fn deployment(
     context: &RunContext,
     surveyed: &Surveyed<'_>,
     domains: &[PreparedImageDomain],
-    primary_beam: Option<AnalyticPrimaryBeamModel>,
-    primary_beam_centres: Option<PrimaryBeamCentres>,
+    centre: &Centre,
+    telescope: &str,
 ) -> Result<Deployment, PrepareError> {
+    let saved_radial_primary_beam = vptable::prepare(request, telescope, context)?;
+    let primary_beam = if saved_radial_primary_beam.is_some() {
+        Some(AnalyticPrimaryBeamModel::SavedRadial)
+    } else {
+        primary_beam_model(request, surveyed.catalogue, &surveyed.survey.pb_antennas)?
+    };
+    let primary_beam_centres = match primary_beam {
+        None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
+        Some(_) => Some(primary_beam_centres(domains, surveyed.stores, centre)?),
+    };
     let parent = |path: &Path| {
         path.parent()
             .unwrap_or_else(|| Path::new("."))
@@ -1128,6 +1139,7 @@ fn deployment(
         publication: ApplicationPublication {
             controls,
             primary_beam_centres,
+            saved_radial_primary_beam,
             vla_selection_store: (primary_beam == Some(AnalyticPrimaryBeamModel::CasaVlaBand)
                 && request.specmode == SpecMode::Cube
                 && matches!(

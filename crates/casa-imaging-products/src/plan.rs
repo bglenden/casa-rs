@@ -30,6 +30,8 @@ pub enum AnalyticPrimaryBeamModel {
     CasaAlma12mAiry,
     /// CASA's 6.25 m effective Airy aperture for homogeneous ACA 7 m data.
     CasaAca7mAiry,
+    /// The caller's circular radial voltage pattern, bound once per run.
+    SavedRadial,
     /// CASA mosaic PB formed from the reconstruction-owned sensitivity image.
     MosaicSensitivity,
 }
@@ -324,6 +326,11 @@ impl PlannedContinuumGeneration {
         inputs: &ContinuumProductInputs<'_>,
         controls: &ContinuumProductControls,
     ) -> Result<Self, ProductsError> {
+        if controls.primary_beam_model() == Some(AnalyticPrimaryBeamModel::SavedRadial)
+            && !inputs.has_saved_radial_primary_beam()
+        {
+            return Err(ProductsError::InvalidControls);
+        }
         let mut planned = Self::for_problem(inputs.problem(), controls)?;
         if controls.refits_saved_psf_beams || controls.refills_saved_sums {
             let mut members = planned.members.into_vec();
