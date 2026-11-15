@@ -7957,6 +7957,7 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "surface_note": "CASA scan IDs, ascending ranges and strict or inclusive comparisons select SCAN_NUMBERs.",
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "SELECTOR"},
             "provider": {"field": "scan"},

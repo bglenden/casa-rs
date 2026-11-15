@@ -10709,7 +10709,7 @@
       "semantic_role": "selection",
       "documentation": {
         "summary": "Observation selection applied to every MeasurementSet",
-        "details": "Supply one string. CASA’s tclean requires observation text at execution. IDs, ranges and comparisons select OBSERVATION_IDs. Only exactly empty text is unset.",
+        "details": "Supply one string. CASA's tclean requires observation text at execution. IDs, ranges and comparisons select OBSERVATION_IDs. Only exactly empty text is unset.",
         "examples": [
           "",
           "1",
@@ -10764,8 +10764,8 @@
       "unit_dimension": null,
       "semantic_role": "selection",
       "documentation": {
-        "summary": "Scan-number selection applied per MeasurementSet",
-        "details": "IDs, ranges and comparisons select SCAN_NUMBERs. Use one string per MeasurementSet or the same selector for every MeasurementSet. Only exactly empty text is unset.",
+        "summary": "Syntax-preserving numeric scan selection, one per MeasurementSet or one for all",
+        "details": "Use one string per MeasurementSet or the same selector for every MeasurementSet. Only exactly empty text is unset. The task interprets the selector's preserved text.",
         "examples": [
           "",
           "1",

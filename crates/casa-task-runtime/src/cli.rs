@@ -378,28 +378,19 @@ mod tests {
 
     #[test]
     fn exact_empty_cli_defaults_are_values_but_missing_or_blank_arguments_are_not() {
-        let mut bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
-        // Evidence-only exact-text concept: production declarations stay intact.
-        for concept in &mut bundle.catalog.concepts {
-            if matches!(
-                concept.id.as_str(),
-                "ms.selection.scan" | "ms.selection.observation"
-            ) {
-                concept.normalization = casa_provider_contracts::NormalizationRule::Identity;
-            }
-        }
-        for name in ["scan", "observation"] {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let empty = ParameterValue::String(String::new());
+        for (name, expected) in [
+            ("scan", ParameterValue::Array(vec![empty.clone()])),
+            ("observation", empty),
+        ] {
             let flag = format!("--{name}");
             for arguments in [
                 vec![flag.clone().into(), "".into()],
                 vec![format!("{flag}=").into()],
             ] {
                 let patch = parse_parameter_cli_overrides(&bundle, &arguments).unwrap();
-                // One selector for every MeasurementSet.
-                assert_eq!(
-                    patch.values[name],
-                    ParameterValue::Array(vec![ParameterValue::String(String::new())])
-                );
+                assert_eq!(patch.values[name], expected);
             }
             assert!(parse_parameter_cli_overrides(&bundle, &[flag.clone().into()]).is_err());
             for text in [" ", "  ", "\t"] {
