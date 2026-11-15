@@ -691,7 +691,10 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
         .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CDELT{axis}")))?;
     let crpix = h.get_float(&format!("CRPIX{axis}")).unwrap_or(1.0) - 1.0;
 
-    let rest_freq = h.get_float("RESTFRQ").unwrap_or(0.0);
+    let rest_freq = h
+        .get_float("RESTFRQ")
+        .or_else(|| h.get_float("RESTFREQ"))
+        .unwrap_or(0.0);
 
     let freq_ref = if let Some(specsys) = h.get_string("SPECSYS") {
         match specsys.to_uppercase().as_str() {
@@ -706,6 +709,12 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
             "SOURCE" | "REST" => FrequencyRef::REST,
             _ => FrequencyRef::TOPO,
         }
+    } else if h
+        .get_string(&format!("CTYPE{axis}"))
+        .is_some_and(|ctype| ctype.to_ascii_uppercase().ends_with("-LSR"))
+    {
+        // FITSSpectralUtil::frameFromTag reads the pre-SPECSYS LSR tag.
+        FrequencyRef::LSRK
     } else {
         FrequencyRef::TOPO
     };
@@ -717,6 +726,13 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
         .get_string(&format!("CUNIT{axis}"))
         .unwrap_or(if radio_velocity { "m/s" } else { "Hz" })
         .to_string();
+    // FITS permits the historical uppercase Hz spelling (Unit::addFITS in
+    // casacore), including the ppdisk tutorial's CUNIT4='HZ'.
+    let unit = if unit.eq_ignore_ascii_case("HZ") {
+        "Hz".to_owned()
+    } else {
+        unit
+    };
 
     if radio_velocity {
         let velocity_unit = casa_types::quanta::Unit::new(&unit)
@@ -861,6 +877,29 @@ mod tests {
         *cs.obs_info_mut() = obs;
 
         cs
+    }
+
+    #[test]
+    fn legacy_tutorial_frequency_matches_casacore() {
+        use crate::Coordinate;
+        // Actual CASA 6.7.6.14 ia.open of the Guide's ppdisk672_GHz_50pc.fits:
+        // spectral2 is LSRK/Hz, with these reference, increment and rest values.
+        let mut header = FitsHeader::new();
+        header.set("CTYPE1", FitsValue::String("FREQ-LSR".into()));
+        header.set("CUNIT1", FitsValue::String("HZ".into()));
+        header.set("CRVAL1", FitsValue::Float(672_000_001_103.0));
+        header.set("CDELT1", FitsValue::Float(32_000_000_029.8));
+        header.set("CRPIX1", FitsValue::Float(1.0));
+        header.set("RESTFREQ", FitsValue::Float(1_420_405_758.37));
+        let restored = from_fits_header(&header, &[1]).unwrap();
+        let CoordinateModel::Spectral(spectral) = restored.coordinate(0) else {
+            panic!("not spectral")
+        };
+        assert_eq!(spectral.frequency_ref(), FrequencyRef::LSRK);
+        assert_eq!(spectral.axis_units(), vec!["Hz".to_owned()]);
+        assert_eq!(spectral.reference_value(), vec![672_000_001_103.0]);
+        assert_eq!(spectral.increment(), vec![32_000_000_029.8]);
+        assert_eq!(spectral.rest_frequency(), 1_420_405_758.37);
     }
 
     #[test]

@@ -38,6 +38,7 @@ mod corrupt;
 pub mod predict;
 pub mod readantenna;
 pub mod session;
+pub mod simanalyze;
 pub mod simobserve;
 pub mod simutil;
 mod write;

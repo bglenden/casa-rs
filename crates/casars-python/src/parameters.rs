@@ -406,6 +406,7 @@ fn provider_invocation_with_originals(
     let descriptor = match session.bundle().surface.provider_family() {
         "imager" => Some(casars_imager::imager_protocol_descriptor()),
         "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
+        "simanalyze" => Some(casars_simulation::simanalyze_protocol_descriptor()),
         _ => None,
     };
     Ok(InvocationView {

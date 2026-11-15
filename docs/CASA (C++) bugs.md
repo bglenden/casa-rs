@@ -3322,6 +3322,21 @@ The fidelity is the ratio of two images in Jy/beam. CASA's image expression
 copies its unit from the first image it names, so the fidelity is labelled
 Jy/beam. casa-rs writes it without a unit.
 
+## `simanalyze` deletes previous products before imaging preparation succeeds
+
+- Date noted: 2026-11-15
+- Status: CASA data-loss bug; casa-rs preserves inputs and previous products (#180)
+- Affected code: `casatasks/private/task_simanalyze.py` (CASA 6.7.6.14,
+  deletion of `<imagename>.image` and `<imagename>.model` before `imtclean`)
+
+A rerun with an invalid start model destroys the previous image/model before
+the imager can reject its units or resources. Selecting the previous
+`<imagename>.model` as `modelimage` deletes that selected input too.
+casa-rs refuses input/output collisions before mutation and uses the native
+imager's existing atomic publication. Failed preparation preserves prior
+products. `simanalyze_task_casa.rs` checks the colliding model and a K-unit
+start model, then verifies the previous image and model are unchanged.
+
 ## `statim` scales a Jy/beam image without a beam by the pixel area
 
 - Date noted: 2026-10-28

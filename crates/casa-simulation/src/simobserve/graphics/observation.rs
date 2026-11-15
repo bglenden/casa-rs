@@ -115,10 +115,22 @@ pub(super) fn uv(
     sky: &Sky,
     payload: &mut Payload,
 ) -> Result<PlotDocumentPanel, SimobserveError> {
-    let ms = MeasurementSet::open(run.measurement_set()).map_err(failure)?;
+    uv_panel(
+        &run.measurement_set(),
+        qa::value_in(&sky.model.specrefval, "GHz")?,
+        payload,
+    )
+}
+
+pub(crate) fn uv_panel(
+    path: &std::path::Path,
+    frequency_ghz: f64,
+    payload: &mut Payload,
+) -> Result<PlotDocumentPanel, SimobserveError> {
+    let ms = MeasurementSet::open(path).map_err(failure)?;
     let uvw = UvwColumn::new(ms.main_table());
     let rows = ms.main_table().row_count() as u64;
-    let scale = 300.0 / qa::value_in(&sky.model.specrefval, "GHz")?;
+    let scale = 300.0 / frequency_ghz;
     let start = payload.position();
     let (mut xmax, mut ymax) = (0.0_f64, 0.0_f64);
     for row in 0..ms.main_table().row_count() {

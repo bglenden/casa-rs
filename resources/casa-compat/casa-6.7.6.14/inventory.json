@@ -22,6 +22,7 @@
     "imsubimage",
     "mstransform",
     "plotms",
+    "simanalyze",
     "simobserve",
     "split",
     "tclean"

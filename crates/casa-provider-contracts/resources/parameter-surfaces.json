@@ -25520,6 +25520,1623 @@
           "reviewed_homonym": null
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "simanalyze",
+      "contract_version": 1,
+      "display_name": "SimAnalyze",
+      "category": "Simulation",
+      "summary": "Image and analyze a simulated observation: CASA's simanalyze",
+      "provider_family": "simanalyze",
+      "casa_task": "simanalyze",
+      "execution": {
+        "invocation_name": "simanalyze",
+        "fixed_args": [],
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "simobserve-run-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "simanalyze-products",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "decoded_artifacts"
+              },
+              "cardinality": "many",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "project",
+          "concept": {
+            "id": "simulation.project",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "sim"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--project"
+              ],
+              "false_flags": [],
+              "metavar": "NAME"
+            },
+            "provider": {
+              "field": "project",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "project",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Project",
+              "group": "Project",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "image",
+          "concept": {
+            "id": "simulation.analysis.image",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--image"
+              ],
+              "false_flags": [
+                "--no-image"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "image",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "image",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Image",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "imagename",
+          "concept": {
+            "id": "simulation.analysis.imagename",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--imagename"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "imagename",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imagename",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Imagename",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "CASA simanalyze uses project-relative discovery and automatic zero/empty geometry; direct imager inputs use explicit paths and positive geometry."
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "default"
+            }
+          }
+        },
+        {
+          "name": "skymodel",
+          "concept": {
+            "id": "parameter.skymodel",
+            "semantic_revision": 2
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "input_dataset",
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--skymodel"
+              ],
+              "false_flags": [],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "skymodel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "skymodel",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Sky Model",
+              "group": "Sky model",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "vis",
+          "concept": {
+            "id": "simulation.analysis.vis",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--vis"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "vis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Vis",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "CASA simanalyze uses project-relative discovery and automatic zero/empty geometry; direct imager inputs use explicit paths and positive geometry."
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "default"
+            }
+          }
+        },
+        {
+          "name": "modelimage",
+          "concept": {
+            "id": "simulation.analysis.modelimage",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--modelimage"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "modelimage",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "modelimage",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Modelimage",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        },
+        {
+          "name": "imsize",
+          "concept": {
+            "id": "simulation.analysis.imsize",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--imsize"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "imsize",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imsize",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Imsize",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "CASA simanalyze uses project-relative discovery and automatic zero/empty geometry; direct imager inputs use explicit paths and positive geometry."
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 0
+                },
+                {
+                  "kind": "integer",
+                  "value": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "imdirection",
+          "concept": {
+            "id": "simulation.analysis.imdirection",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--imdirection"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "imdirection",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imdirection",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Imdirection",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        },
+        {
+          "name": "cell",
+          "concept": {
+            "id": "simulation.analysis.cell",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--cell"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "cell",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cell",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Cell",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "CASA simanalyze uses project-relative discovery and automatic zero/empty geometry; direct imager inputs use explicit paths and positive geometry."
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        },
+        {
+          "name": "interactive",
+          "concept": {
+            "id": "parameter.interactive",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interactive"
+              ],
+              "false_flags": [
+                "--no-interactive"
+              ]
+            },
+            "provider": {
+              "field": "interactive"
+            },
+            "python": {
+              "name": "interactive"
+            },
+            "presentation": {
+              "label": "Interactive",
+              "group": "Stages",
+              "advanced": true
+            }
+          },
+          "unimplemented": {
+            "issue": 980
+          },
+          "refinements": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "niter",
+          "concept": {
+            "id": "parameter.niter",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--niter"
+              ],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "niter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "niter"
+            },
+            "presentation": {
+              "label": "Max Iterations",
+              "group": "Stages"
+            }
+          },
+          "refinements": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "threshold",
+          "concept": {
+            "id": "image.deconvolution.threshold",
+            "semantic_revision": 2
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "0.1mJy"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "A bare number is in Jy, as CASA's tclean reads it.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--threshold",
+                "--threshold-jy"
+              ],
+              "metavar": "FLUX"
+            },
+            "provider": {
+              "field": "threshold",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "threshold"
+            },
+            "presentation": {
+              "label": "Threshold",
+              "group": "Stages"
+            }
+          },
+          "refinements": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "weighting",
+          "concept": {
+            "id": "parameter.weighting",
+            "semantic_revision": 2
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "natural"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--weighting"
+              ],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "weighting",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "weighting"
+            },
+            "presentation": {
+              "label": "Weighting",
+              "group": "Stages"
+            }
+          },
+          "refinements": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "mask",
+          "concept": {
+            "id": "tclean.mask",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "A mask image, CRTF pixel boxes (box[[x0pix,y0pix],[x1pix,y1pix]]), or casa-rs's x0,y0,x1,y1 boxes separated by ';'.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--mask",
+                "--mask-box",
+                "--mask-image"
+              ],
+              "metavar": "MASK"
+            },
+            "provider": {
+              "field": "mask"
+            },
+            "python": {
+              "name": "mask"
+            },
+            "presentation": {
+              "label": "Mask",
+              "group": "Stage Parameters",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": null,
+          "refinements": []
+        },
+        {
+          "name": "outertaper",
+          "concept": {
+            "id": "simulation.analysis.outertaper",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--outertaper"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "outertaper",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outertaper",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Outertaper",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          }
+        },
+        {
+          "name": "pbcor",
+          "concept": {
+            "id": "parameter.pbcor",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pbcor"
+              ]
+            },
+            "provider": {
+              "field": "pbcor",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pbcor"
+            },
+            "presentation": {
+              "label": "PB Correct",
+              "group": "Stages",
+              "advanced": true
+            }
+          },
+          "refinements": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "stokes",
+          "concept": {
+            "id": "image.selection.stokes",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "I"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--stokes",
+                "--corr"
+              ],
+              "metavar": "PLANE"
+            },
+            "provider": {
+              "field": "stokes",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "stokes"
+            },
+            "presentation": {
+              "label": "Stokes / Correlation",
+              "group": "Context",
+              "advanced": true
+            }
+          },
+          "refinements": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "featherimage",
+          "concept": {
+            "id": "simulation.analysis.featherimage",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--featherimage"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "featherimage",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "featherimage",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Featherimage",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        },
+        {
+          "name": "analyze",
+          "concept": {
+            "id": "simulation.analysis.analyze",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--analyze"
+              ],
+              "false_flags": [
+                "--no-analyze"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "analyze",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "analyze",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Analyze",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          }
+        },
+        {
+          "name": "showuv",
+          "concept": {
+            "id": "simulation.analysis.showuv",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showuv"
+              ],
+              "false_flags": [
+                "--no-showuv"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showuv",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showuv",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showuv",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "showpsf",
+          "concept": {
+            "id": "simulation.analysis.showpsf",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showpsf"
+              ],
+              "false_flags": [
+                "--no-showpsf"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showpsf",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showpsf",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showpsf",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "showmodel",
+          "concept": {
+            "id": "simulation.analysis.showmodel",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showmodel"
+              ],
+              "false_flags": [
+                "--no-showmodel"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showmodel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showmodel",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showmodel",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "showconvolved",
+          "concept": {
+            "id": "simulation.analysis.showconvolved",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showconvolved"
+              ],
+              "false_flags": [
+                "--no-showconvolved"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showconvolved",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showconvolved",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showconvolved",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          }
+        },
+        {
+          "name": "showclean",
+          "concept": {
+            "id": "simulation.analysis.showclean",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showclean"
+              ],
+              "false_flags": [
+                "--no-showclean"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showclean",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showclean",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showclean",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "showresidual",
+          "concept": {
+            "id": "simulation.analysis.showresidual",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showresidual"
+              ],
+              "false_flags": [
+                "--no-showresidual"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showresidual",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showresidual",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showresidual",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          }
+        },
+        {
+          "name": "showdifference",
+          "concept": {
+            "id": "simulation.analysis.showdifference",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showdifference"
+              ],
+              "false_flags": [
+                "--no-showdifference"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showdifference",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showdifference",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showdifference",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "showfidelity",
+          "concept": {
+            "id": "simulation.analysis.showfidelity",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--showfidelity"
+              ],
+              "false_flags": [
+                "--no-showfidelity"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "showfidelity",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showfidelity",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Showfidelity",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "graphics",
+          "concept": {
+            "id": "parameter.graphics",
+            "semantic_revision": 2
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "both"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--graphics"
+              ],
+              "false_flags": [],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "graphics",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "graphics",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Graphics",
+              "group": "Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "verbose",
+          "concept": {
+            "id": "parameter.verbose",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--verbose"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "verbose",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "verbose",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Verbose",
+              "group": "Output",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 29,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--overwrite"
+              ],
+              "false_flags": [
+                "--no-overwrite"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Overwrite",
+              "group": "Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "dryrun",
+          "concept": {
+            "id": "simulation.analysis.dryrun",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--dryrun"
+              ],
+              "false_flags": [
+                "--no-dryrun"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "dryrun",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "dryrun",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Dryrun",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 30,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          }
+        },
+        {
+          "name": "logfile",
+          "concept": {
+            "id": "simulation.analysis.logfile",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--logfile"
+              ],
+              "false_flags": [],
+              "metavar": "VALUE"
+            },
+            "provider": {
+              "field": "logfile",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "logfile",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Logfile",
+              "group": "Analysis",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "CASA simanalyze uses project-relative discovery and automatic zero/empty geometry; direct imager inputs use explicit paths and positive geometry."
+          },
+          "order": 31,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        }
+      ]
     }
   ]
 }

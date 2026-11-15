@@ -1068,7 +1068,12 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "imsize")
             {
-                assert_eq!(binding.concept.id.as_str(), IMSIZE_CONCEPT_ID);
+                let expected_concept = if surface.id() == "simanalyze" {
+                    "simulation.analysis.imsize"
+                } else {
+                    IMSIZE_CONCEPT_ID
+                };
+                assert_eq!(binding.concept.id.as_str(), expected_concept);
                 let concept = catalog.catalog.concept(&binding.concept).unwrap();
                 // tclean's `imsize=1024` is its one-element list, and both
                 // mean a square image.
@@ -1087,7 +1092,7 @@ mod tests {
             }
         }
         surfaces.sort();
-        assert_eq!(surfaces, ["tclean"]);
+        assert_eq!(surfaces, ["simanalyze", "tclean"]);
     }
 
     #[test]

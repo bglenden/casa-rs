@@ -420,8 +420,8 @@ where
     let mut image =
         PagedImage::<T>::create_with_tile_shape(shape.clone(), tile_shape, coordinates, imagename)?;
     image.put_slice(&array, &vec![0; shape.len()])?;
-    if let Some(units) = header.get_string("BUNIT") {
-        image.set_units(units)?;
+    if header.get_string("BUNIT").is_some() {
+        image.set_units(crate::fits_read::brightness_unit(&header))?;
     }
     if let Some(beams) = image_info.1.as_ref() {
         image.set_image_info_with_beam_records(&image_info.0, beams)?;
@@ -436,7 +436,7 @@ where
         imagename: imagename.display().to_string(),
         shape,
         pixel_type: image_pixel_type::<T>().pixel_type_label(),
-        units: header.get_string("BUNIT").unwrap_or("").to_string(),
+        units: crate::fits_read::brightness_unit(&header),
         object_name: image_info.0.object_name,
         has_restoring_beam: image_info
             .0

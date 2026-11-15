@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 562
-- Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 791
+- Concepts: 582
+- Surfaces: 28 (28 task, 0 session)
+- Surface bindings: 823
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -43,6 +43,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 5 | <code>image_analysis</code> | 9 | Import a FITS primary image into a CASA image |
 | [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 11 | Convert between MeasurementSet v2 and MSv4, in either direction. |
+| [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 1 | <code>simanalyze</code> | 32 | Image and analyze a simulated observation: CASA's simanalyze |
 
 <a id="surface-msexplore"></a>
 
@@ -1185,5 +1186,50 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>codec</code> | <code>msconvert.codec@r1</code> | <code>choice (3 values)</code> | <code>"blosc"</code>; optional | MSv4 Output | MSv4 output: compression of the visibilities, flags and weights. |
 | <code>nthreads</code> | <code>workers.msconvert@r1</code> | <code>integer</code> | <code>0</code>; optional | MSv4 Output | MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+
+<a id="surface-simanalyze"></a>
+
+## SimAnalyze (<code>simanalyze</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Simulation
+- Provider family: `simanalyze`
+- Summary: Image and analyze a simulated observation: CASA's simanalyze
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>project</code> | <code>simulation.project@r1</code> | <code>string</code> | <code>"sim"</code>; optional | Project | Project: its directory and the first part of every file's name. |
+| <code>image</code> | <code>simulation.analysis.image@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze image. |
+| <code>imagename</code> | <code>simulation.analysis.imagename@r1</code> | <code>string</code> | <code>"default"</code>; optional | Analysis | CASA simanalyze imagename. |
+| <code>skymodel</code> | <code>parameter.skymodel@r2</code> | <code>path (image)</code> | <code>""</code>; optional | Sky model | Sky model image: a CASA image or FITS file. |
+| <code>vis</code> | <code>simulation.analysis.vis@r1</code> | <code>string</code> | <code>"default"</code>; optional | Analysis | CASA simanalyze vis. |
+| <code>modelimage</code> | <code>simulation.analysis.modelimage@r1</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze modelimage. |
+| <code>imsize</code> | <code>simulation.analysis.imsize@r1</code> | <code>array&lt;integer&gt;</code> | <code>[0,0]</code>; optional | Analysis | CASA simanalyze imsize. |
+| <code>imdirection</code> | <code>simulation.analysis.imdirection@r1</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze imdirection. |
+| <code>cell</code> | <code>simulation.analysis.cell@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Analysis | CASA simanalyze cell. |
+| <code>interactive</code> | <code>parameter.interactive@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Interactive clean. |
+| <code>niter</code> | <code>parameter.niter@r1</code> | <code>integer</code> | <code>0</code>; optional | Stages | Minor-cycle iteration budget; ignored when Dirty Only is enabled |
+| <code>threshold</code> | <code>image.deconvolution.threshold@r2</code> | <code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code> | <code>"0.1mJy"</code>; optional | Stages | Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> A bare number is in Jy, as CASA's tclean reads it. |
+| <code>weighting</code> | <code>parameter.weighting@r2</code> | <code>choice (7 values)</code> | <code>"natural"</code>; optional | Stages | Visibility weighting policy |
+| <code>mask</code> | <code>tclean.mask@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Stage Parameters | Clean mask of usemask='user': a mask image, CRTF regions, or a list of them; empty to clean everywhere.<br><em>Surface:</em> A mask image, CRTF pixel boxes (box[[x0pix,y0pix],[x1pix,y1pix]]), or casa-rs's x0,y0,x1,y1 boxes separated by ';'. |
+| <code>outertaper</code> | <code>simulation.analysis.outertaper@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Analysis | CASA simanalyze outertaper. |
+| <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"I"</code>; optional | Context | Stokes selector. |
+| <code>featherimage</code> | <code>simulation.analysis.featherimage@r1</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze featherimage. |
+| <code>analyze</code> | <code>simulation.analysis.analyze@r1</code> | <code>bool</code> | <code>false</code>; optional | Analysis | CASA simanalyze analyze. |
+| <code>showuv</code> | <code>simulation.analysis.showuv@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showuv. |
+| <code>showpsf</code> | <code>simulation.analysis.showpsf@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showpsf. |
+| <code>showmodel</code> | <code>simulation.analysis.showmodel@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showmodel. |
+| <code>showconvolved</code> | <code>simulation.analysis.showconvolved@r1</code> | <code>bool</code> | <code>false</code>; optional | Analysis | CASA simanalyze showconvolved. |
+| <code>showclean</code> | <code>simulation.analysis.showclean@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showclean. |
+| <code>showresidual</code> | <code>simulation.analysis.showresidual@r1</code> | <code>bool</code> | <code>false</code>; optional | Analysis | CASA simanalyze showresidual. |
+| <code>showdifference</code> | <code>simulation.analysis.showdifference@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showdifference. |
+| <code>showfidelity</code> | <code>simulation.analysis.showfidelity@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showfidelity. |
+| <code>graphics</code> | <code>parameter.graphics@r2</code> | <code>choice (5 values)</code> | <code>"both"</code>; optional | Output | Graphics output. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Verbose logging. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Replace an existing output file |
+| <code>dryrun</code> | <code>simulation.analysis.dryrun@r1</code> | <code>bool</code> | <code>false</code>; optional | Analysis | CASA simanalyze dryrun. |
+| <code>logfile</code> | <code>simulation.analysis.logfile@r1</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze logfile. |
 
 _End of generated reference._
