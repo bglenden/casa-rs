@@ -114,10 +114,10 @@ fn a_taylor_basis_reconstructs_any_polarization() {
     }
 }
 
-/// A Taylor basis of Stokes planes other than I alone waits for #1112 with
-/// the mosaic and W-projection kernel sets; Stokes I alone runs with them.
+/// Standard and mosaic kernels image polarized Taylor families.
+/// W projection waits for #1112.
 #[test]
-fn a_polarized_taylor_basis_grids_with_the_standard_kernel_set() {
+fn a_polarized_taylor_basis_grids_with_standard_and_mosaic_kernels() {
     let taylor = |polarizations: Vec<PolarizationCoordinate>| ProblemFixture {
         basis: ReconstructionBasis::Taylor { terms: 2 },
         algorithm: ReconstructionAlgorithm::Mtmfs {
@@ -145,12 +145,11 @@ fn a_polarized_taylor_basis_grids_with_the_standard_kernel_set() {
         w.measurement_equation = w
             .measurement_equation
             .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
-        for fixture in [mosaic(polarizations), w] {
-            assert_exactly_unsupported(
-                on_cpu(&fixture.compile()),
-                [Unsupported::PolarizedTaylorKernelSet],
-            );
-        }
+        on_cpu(&mosaic(polarizations).compile()).expect("a polarized mosaic Taylor basis runs");
+        assert_exactly_unsupported(
+            on_cpu(&w.compile()),
+            [Unsupported::PolarizedTaylorKernelSet],
+        );
     }
     on_cpu(&mosaic(vec![PolarizationCoordinate::StokesI]).compile())
         .expect("a Stokes I mosaic Taylor basis runs");

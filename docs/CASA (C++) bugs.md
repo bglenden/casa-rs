@@ -38,6 +38,7 @@ CASA behaviours casa-rs does not follow:
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
 [`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
+[signed Taylor moments with empty mosaic cross-hands](#a-mosaic-drops-negative-taylor-moments-when-cross-hands-are-empty),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [AW baseline pointing groups](#aw-projection-can-use-another-antenna-groups-pointing),
 [a mosaic's single-precision weight image](#a-mosaics-weight-image-is-transformed-in-single-precision),
@@ -6091,3 +6092,30 @@ The frozen PCO checks verify both offset signs using CASA's finite
 world-to-pixel direction and compare ordinary pixels in both directions.
 The projection and parameters remain CASA-readable and image products
 agree at the original tolerance. [WCSLIB 8.2.2 source](https://www.atnf.csiro.au/computing/software/wcs/wcslib-releases/wcslib-8.2.2.tar.bz2)
+
+
+## A mosaic drops negative Taylor moments when cross-hands are empty
+
+In CASA 6.7.6.14, `MosaicFT::getImage` checks `max(weights) == 0.0`
+to decide whether all gridded weights are zero. The imaging weights start
+nonnegative, but `MultiTermFTNew` multiplies by a signed spectral offset
+for odd Taylor terms. Negative parallel-hand sums and zero sums on
+unobserved cross-hands have a maximum of zero. This skips the FFT and
+drops the whole dirty or PSF moment. The signed sum of weights and the
+separate sensitivity image still reach disk.
+
+For `mtmfs_polarized.mosaic_IQUV` (`refim_mawproject.ms`, SPW 1,
+two terms), stock CASA writes a zero `.psf.tt1` and `.residual.tt1`
+despite a negative `.sumwt.tt1`. The same request in IV retains both
+terms and gives a central PSF first moment of about −8.01e−8. The
+narrowband principal spectral coefficient is poorly constrained. The
+same behavior also occurs across SPWs 0, 1 and 2, where the IV run has
+usable frequency coverage and the central PSF first moment is about
+−0.0196. A reference frequency of 1.4 GHz makes the total first moment
+positive on those three SPWs and the stock IQUV run retains it.
+
+casa-rs keeps nonzero signed moments through the normal mosaic path, so
+requesting additional empty Stokes planes cannot erase valid data. Its
+I and V products agree with stock CASA's IV controls, and it leaves Q and
+U data and models zero. The shared PSFs, sensitivities and sum-of-weights
+tables still cover all four Stokes planes. [Imaging issue #1112](https://github.com/bglenden/casa-rs/issues/1112)

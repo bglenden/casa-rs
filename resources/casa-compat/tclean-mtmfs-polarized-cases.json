@@ -1,6 +1,6 @@
 {
   "source": {
-    "purpose": "casa-rs's own tclean cases of polarized MT-MFS families (#1065)",
+    "purpose": "Polarized Taylor imaging with tclean (#1065 and #1112)",
     "casa_version": "6.7.6.14",
     "tool": "tools/casa-compat/tclean_case_matrix.py"
   },
@@ -74,7 +74,68 @@
         "parallel": false,
         "stokes": "IQUV"
       },
-      "note": "test_widefield_mosaicft_mfs's mosaic as MT-MFS in IQUV: each Stokes plane's weight, pb and pb-corrected Taylor family",
+      "note": "RR/LL only, exact narrow mosaic case. CASA 6.7.6.14 drops the odd PSF and residual terms with empty cross-hands (see CASA (C++) bugs.md). Test the retained I and V terms against mosaic_IV on the same data.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_IV": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IV"
+      },
+      "note": "The same narrow mosaic in IV. CASA retains signed odd moments and inverts the tiny positive Taylor pivot.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_full_band_IV": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "0,1,2",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IV"
+      },
+      "note": "A three-window mosaic in IV with negative odd PSF and residual moments and measurable spectral coverage.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_full_band_IQUV_positive": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "0,1,2",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IQUV",
+        "reffreq": "1.4GHz"
+      },
+      "note": "A three-window mosaic in IQUV with a positive odd-moment weight. CASA retains all Taylor moments despite empty cross-hands.",
       "skip_scalars": false
     }
   }

@@ -73,7 +73,7 @@ impl fmt::Display for Unsupported {
             }
             Self::PolarizedTaylorKernelSet => formatter.write_str(
                 "deconvolver='mtmfs' images Stokes planes other than I alone with the standard \
-                 gridder only; the mosaic, W- and AW-projection gridders wait for #1112",
+                 and mosaic gridders; W and AW projection wait for #1112",
             ),
             Self::NoMetalDevice => {
                 formatter.write_str("the Metal backend needs a unified-memory Metal 3 device")
@@ -248,6 +248,7 @@ pub fn check(
     ) && problem.reconstruction().polarization().coordinates()
         != [PolarizationCoordinate::StokesI]
         && !crate::imaging::standard_kernel_set(problem)
+        && !crate::imaging::mosaic_kernel_set(problem)
     {
         unsupported.push(Unsupported::PolarizedTaylorKernelSet);
     }

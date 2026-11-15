@@ -211,6 +211,11 @@ pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
     kernel_set_kind(problem) == KernelSetKind::Standard
 }
 
+/// Whether the problem grids with the analytic mosaic kernel set.
+pub(crate) fn mosaic_kernel_set(problem: &CompiledProblem) -> bool {
+    kernel_set_kind(problem) == KernelSetKind::Mosaic
+}
+
 /// Whether the Metal backend grids the problem's kernel set: the standard
 /// spheroidal set, and the mosaic primary beams (#787). The mosaic's PSF
 /// and prediction cells are its imaging cells, and its weight cells share

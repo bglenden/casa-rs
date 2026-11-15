@@ -18,8 +18,9 @@ pub(crate) use cycle::{
 };
 pub(crate) use images::prepare_model;
 pub(crate) use measurement::{
-    KernelAdmission, domain_operator, image_extent, metal_kernel_set, multi_store_kernel_set,
-    reference_frequency_hz, row_samples, selected_correlations, standard_kernel_set,
+    KernelAdmission, domain_operator, image_extent, metal_kernel_set, mosaic_kernel_set,
+    multi_store_kernel_set, reference_frequency_hz, row_samples, selected_correlations,
+    standard_kernel_set,
 };
 pub(crate) use observation_source::{
     BatchRoute, Batching, ObservationSource, PartitionSelection, RouteStore, SelectedPartition,
