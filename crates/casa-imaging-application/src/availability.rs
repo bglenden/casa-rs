@@ -27,7 +27,7 @@ pub enum Unsupported {
     /// A Taylor basis reconstructs one image domain: the Taylor products
     /// have no outlier fields.
     MultiDomainTaylorBasis,
-    /// Polarized Taylor families with AW kernels wait for #1112.
+    /// The AWP2 route does not have a verified polarized Taylor combination.
     PolarizedTaylorKernelSet,
     /// The Metal backend needs a Metal device, which the host lacks.
     NoMetalDevice,
@@ -69,8 +69,7 @@ impl fmt::Display for Unsupported {
                 formatter.write_str("a Taylor basis reconstructs one image domain, no outliers")
             }
             Self::PolarizedTaylorKernelSet => formatter.write_str(
-                "deconvolver='mtmfs' images Stokes planes other than I alone with standard, \
-                 mosaic and W-projection gridders; AW projection waits for #1112",
+                "deconvolver='mtmfs' with gridder='awp2' currently images Stokes I only (#1071)",
             ),
             Self::NoMetalDevice => {
                 formatter.write_str("the Metal backend needs a unified-memory Metal 3 device")

@@ -215,7 +215,10 @@ pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
 pub(crate) fn polarized_taylor_kernel_set(problem: &CompiledProblem) -> bool {
     matches!(
         kernel_set_kind(problem),
-        KernelSetKind::Standard | KernelSetKind::Mosaic | KernelSetKind::WPlanes
+        KernelSetKind::Standard
+            | KernelSetKind::Mosaic
+            | KernelSetKind::WPlanes
+            | KernelSetKind::Aw
     )
 }
 

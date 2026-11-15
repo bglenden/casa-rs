@@ -965,8 +965,7 @@ fn the_image_correction_is_the_sampling_sinc_and_the_model_is_uncorrected() {
     assert_eq!(correction.model_at(0, 0), 1.0);
 }
 
-/// `AWProjectWBFT::makeWBSensitivityImage` publishes `abs` of the
-/// polarization-averaged weight transform. Samples all below the reference
+/// The AW path publishes `abs` of the polarization-combined weight transform. Samples all below the reference
 /// frequency make the first Taylor weight moment Σ W·s·K negative; it is
 /// published as its magnitude, |s| times moment 0 (#704).
 #[test]
@@ -1032,6 +1031,88 @@ fn an_aw_taylor_weight_moment_publishes_its_magnitude() {
             (f64::from(*first) - expected).abs() <= 1.0e-5 * peak,
             "moment 1 {first}, |s| × moment 0 {expected}"
         );
+    }
+}
+
+/// AW forms a common Taylor sensitivity from both parallel hands. The
+/// Stokes I grid sums their complex transforms on one plane. IQUV keeps
+/// the hands on separate grid planes and takes half their sum before the
+/// magnitude. Different hand weights distinguish this from copying RR.
+#[test]
+fn polarized_aw_taylor_weights_include_both_parallel_hands() {
+    use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+
+    let root = tempfile::tempdir().expect("cache directory");
+    let grid = geometry();
+    let combined = generated(root.path(), true, usize::MAX);
+    let basis = Basis::Taylor {
+        terms: 2,
+        reference_hz: REFERENCE_HZ,
+    };
+    let i_only = MeasurementOperator::new(
+        geometry(),
+        basis,
+        routing(),
+        Box::new(combined),
+        GridPrecision::F64,
+    );
+    let full_stokes = PolarizationRouting::compile(&RR_LL, &[StokesI, StokesQ, StokesU, StokesV])
+        .expect("IQUV routing");
+    let separated =
+        AwCatalog::open_casa(root.path(), indexing(true), &grid, &full_stokes, usize::MAX)
+            .expect("IQUV catalog");
+    let full = MeasurementOperator::new(
+        grid,
+        basis,
+        full_stokes,
+        Box::new(separated),
+        GridPrecision::F64,
+    );
+
+    let mut placed = keyed_placements(&i_only, 24, &mut Rng::new(531));
+    assert!(!placed.is_empty());
+    for placement in &mut placed {
+        placement.spectral = 0.1;
+    }
+    let values = vec![Complex64::default(); placed.len() * 2];
+    let block = buffer(&placed, &values, &[1.0, 4.0].repeat(placed.len()), 2);
+    let sensitivity = |operator: &MeasurementOperator| {
+        let mut acc = operator.accumulator(
+            PlaneRange::single(0),
+            None,
+            ModeSet {
+                data: false,
+                psf: false,
+                weight: true,
+            },
+        );
+        CpuBackend::new()
+            .apply(
+                &block.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Weight,
+                    acc: &mut acc,
+                },
+            )
+            .expect("grid both hands");
+        operator.finish(acc).expect("finish weight transform")
+    };
+    let i_only = sensitivity(&i_only);
+    let full = sensitivity(&full);
+    for term in 0..3 {
+        let expected = i_only.weight(0, term, 0).expect("I-only moment");
+        let peak = common::max_abs(expected.iter().copied());
+        assert!(peak > 0.0);
+        for pol in 0..4 {
+            let actual = full.weight(0, term, pol).expect("IQUV moment");
+            for (&a, &b) in actual.iter().zip(expected) {
+                assert!(
+                    (2.0 * f64::from(a) - f64::from(b)).abs() <= 1.0e-6 * peak,
+                    "moment {term} polarization {pol}: {a} does not reproduce half of {b}",
+                );
+            }
+        }
     }
 }
 

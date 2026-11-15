@@ -223,7 +223,7 @@ fn aw_projection_runs_on_the_cpu_pass() {
         products: fixture.products.clone(),
         ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
     };
-    let polarized_taylor = ProblemFixture {
+    let polarized_taylor = |fixture| ProblemFixture {
         basis: ReconstructionBasis::Taylor { terms: 2 },
         algorithm: ReconstructionAlgorithm::Mtmfs {
             scales_px: vec![0.0],
@@ -233,13 +233,21 @@ fn aw_projection_runs_on_the_cpu_pass() {
             PolarizationCoordinate::StokesI,
             PolarizationCoordinate::StokesV,
         ],
+        ..fixture
+    };
+    let aw_taylor = polarized_taylor(ProblemFixture {
         measurement_equation: fixture.measurement_equation,
         products: fixture.products.clone(),
         ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
-    };
+    });
+    let awp2_taylor = polarized_taylor(ProblemFixture {
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaVlaAwplpg)
+    });
     on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
+    on_cpu(&aw_taylor.compile()).expect("polarized Taylor families run with AW catalogs");
     assert_exactly_unsupported(
-        on_cpu(&polarized_taylor.compile()),
+        on_cpu(&awp2_taylor.compile()),
         [Unsupported::PolarizedTaylorKernelSet],
     );
 
