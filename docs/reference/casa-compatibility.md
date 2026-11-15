@@ -38,6 +38,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 43 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
+| simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
@@ -328,6 +329,17 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 - Implementation: `casaplotms/private/task_plotms.py`, `plotms` (line 36): 0 return statements, 27 raise statements
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
 - casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI
+
+### simalma
+
+- CASA source: `casatasks/simalma.py`, 31 parameters
+- Implementation: `casatasks/private/task_simalma.py`, `simalma` (line 11): 0 return statements, 22 raise statements
+- Called with its defaults in an empty directory, CASA raises `Exception`: At least one of skymodel or complist must be set.
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 31, in CASA's order: yes
+- Defaults that differ: none
 
 ### simanalyze
 

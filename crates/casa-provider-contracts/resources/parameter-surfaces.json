@@ -29113,6 +29113,1626 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "simalma",
+      "contract_version": 1,
+      "display_name": "SimALMA",
+      "category": "Simulation",
+      "summary": "Simulate ALMA and ACA observations and combine their images",
+      "provider_family": "simalma",
+      "casa_task": "simalma",
+      "execution": {
+        "invocation_name": "simalma",
+        "fixed_args": [],
+        "managed_output": {
+          "raw_stderr_available": true,
+          "raw_stdout_available": true,
+          "stdout_format": "json",
+          "decoder": "simobserve-run-v1"
+        },
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "simalma-products",
+              "role": "primary",
+              "resource_kind": "casa_image",
+              "source": {
+                "kind": "decoded_artifacts"
+              },
+              "cardinality": "many",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "project",
+          "concept": {
+            "id": "simulation.project",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "sim"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--project"
+              ],
+              "false_flags": [],
+              "metavar": "PROJECT"
+            },
+            "provider": {
+              "field": "project",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "project",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "project",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "dryrun",
+          "concept": {
+            "id": "simulation.analysis.dryrun",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--dryrun"
+              ],
+              "false_flags": [
+                "--no-dryrun"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "dryrun",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "dryrun",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "dryrun",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "skymodel",
+          "concept": {
+            "id": "parameter.skymodel",
+            "semantic_revision": 2
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "input_dataset",
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--skymodel"
+              ],
+              "false_flags": [],
+              "metavar": "SKYMODEL"
+            },
+            "provider": {
+              "field": "skymodel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "skymodel",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "skymodel",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "inbright",
+          "concept": {
+            "id": "parameter.inbright",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--inbright"
+              ],
+              "false_flags": [],
+              "metavar": "INBRIGHT"
+            },
+            "provider": {
+              "field": "inbright",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "inbright",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "inbright",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "indirection",
+          "concept": {
+            "id": "parameter.indirection",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--indirection"
+              ],
+              "false_flags": [],
+              "metavar": "INDIRECTION"
+            },
+            "provider": {
+              "field": "indirection",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "indirection",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "indirection",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "incell",
+          "concept": {
+            "id": "parameter.incell",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--incell"
+              ],
+              "false_flags": [],
+              "metavar": "INCELL"
+            },
+            "provider": {
+              "field": "incell",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "incell",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "incell",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "incenter",
+          "concept": {
+            "id": "parameter.incenter",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--incenter"
+              ],
+              "false_flags": [],
+              "metavar": "INCENTER"
+            },
+            "provider": {
+              "field": "incenter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "incenter",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "incenter",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "inwidth",
+          "concept": {
+            "id": "parameter.inwidth",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--inwidth"
+              ],
+              "false_flags": [],
+              "metavar": "INWIDTH"
+            },
+            "provider": {
+              "field": "inwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "inwidth",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "inwidth",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "complist",
+          "concept": {
+            "id": "parameter.complist",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--complist"
+              ],
+              "false_flags": [],
+              "metavar": "COMPLIST"
+            },
+            "provider": {
+              "field": "complist",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "complist",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "complist",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "compwidth",
+          "concept": {
+            "id": "parameter.compwidth",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "\"8GHz\""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--compwidth"
+              ],
+              "false_flags": [],
+              "metavar": "COMPWIDTH"
+            },
+            "provider": {
+              "field": "compwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "compwidth",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "compwidth",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "setpointings",
+          "concept": {
+            "id": "parameter.setpointings",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--setpointings"
+              ],
+              "false_flags": [
+                "--no-setpointings"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "setpointings",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "setpointings",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "setpointings",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "ptgfile",
+          "concept": {
+            "id": "parameter.ptgfile",
+            "semantic_revision": 2
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "$project.ptg.txt"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--ptgfile"
+              ],
+              "false_flags": [],
+              "metavar": "PTGFILE"
+            },
+            "provider": {
+              "field": "ptgfile",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "ptgfile",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "ptgfile",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "integration",
+          "concept": {
+            "id": "parameter.integration",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "10s"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--integration"
+              ],
+              "false_flags": [],
+              "metavar": "INTEGRATION"
+            },
+            "provider": {
+              "field": "integration",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "integration",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "integration",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "direction",
+          "concept": {
+            "id": "parameter.direction",
+            "semantic_revision": 2
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--direction"
+              ],
+              "false_flags": [],
+              "metavar": "DIRECTION"
+            },
+            "provider": {
+              "field": "direction",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "direction",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "direction",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "mapsize",
+          "concept": {
+            "id": "parameter.mapsize",
+            "semantic_revision": 2
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": ""
+                },
+                {
+                  "kind": "string",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--mapsize"
+              ],
+              "false_flags": [],
+              "metavar": "MAPSIZE"
+            },
+            "provider": {
+              "field": "mapsize",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "mapsize",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "mapsize",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "antennalist",
+          "concept": {
+            "id": "simulation.alma.antennalist",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": "alma.cycle1.1.cfg"
+                },
+                {
+                  "kind": "string",
+                  "value": "aca.cycle1.cfg"
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--antennalist"
+              ],
+              "false_flags": [],
+              "metavar": "ANTENNALIST"
+            },
+            "provider": {
+              "field": "antennalist",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antennalist",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "antennalist",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "simalma accepts configuration/time/correlator lists and a scalar cell; simobserve uses a single array and simanalyze accepts one or two cells."
+          }
+        },
+        {
+          "name": "correlator",
+          "concept": {
+            "id": "simulation.alma.correlator",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": "BLC"
+                },
+                {
+                  "kind": "string",
+                  "value": "BLC"
+                },
+                {
+                  "kind": "string",
+                  "value": "ACASpec"
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--correlator"
+              ],
+              "false_flags": [],
+              "metavar": "CORRELATOR"
+            },
+            "provider": {
+              "field": "correlator",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "correlator",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "correlator",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "simalma accepts configuration/time/correlator lists and a scalar cell; simobserve uses a single array and simanalyze accepts one or two cells."
+          }
+        },
+        {
+          "name": "hourangle",
+          "concept": {
+            "id": "parameter.hourangle",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "transit"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--hourangle"
+              ],
+              "false_flags": [],
+              "metavar": "HOURANGLE"
+            },
+            "provider": {
+              "field": "hourangle",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "hourangle",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "hourangle",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "totaltime",
+          "concept": {
+            "id": "simulation.alma.totaltime",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": "20min"
+                },
+                {
+                  "kind": "string",
+                  "value": "1h"
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--totaltime"
+              ],
+              "false_flags": [],
+              "metavar": "TOTALTIME"
+            },
+            "provider": {
+              "field": "totaltime",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "totaltime",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "totaltime",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "simalma accepts configuration/time/correlator lists and a scalar cell; simobserve uses a single array and simanalyze accepts one or two cells."
+          }
+        },
+        {
+          "name": "tpnant",
+          "concept": {
+            "id": "simulation.alma.tpnant",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--tpnant"
+              ],
+              "false_flags": [],
+              "metavar": "TPNANT"
+            },
+            "provider": {
+              "field": "tpnant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tpnant",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "tpnant",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "tptime",
+          "concept": {
+            "id": "simulation.alma.tptime",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "0s"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--tptime"
+              ],
+              "false_flags": [],
+              "metavar": "TPTIME"
+            },
+            "provider": {
+              "field": "tptime",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tptime",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "tptime",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "pwv",
+          "concept": {
+            "id": "simulation.alma.pwv",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.5
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--pwv"
+              ],
+              "false_flags": [],
+              "metavar": "PWV"
+            },
+            "provider": {
+              "field": "pwv",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pwv",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "pwv",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "image",
+          "concept": {
+            "id": "simulation.analysis.image",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--image"
+              ],
+              "false_flags": [
+                "--no-image"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "image",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "image",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "image",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        },
+        {
+          "name": "imsize",
+          "concept": {
+            "id": "simulation.analysis.imsize",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--imsize"
+              ],
+              "false_flags": [],
+              "metavar": "IMSIZE"
+            },
+            "provider": {
+              "field": "imsize",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imsize",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "imsize",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": 128
+                },
+                {
+                  "kind": "integer",
+                  "value": 128
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "imdirection",
+          "concept": {
+            "id": "simulation.analysis.imdirection",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--imdirection"
+              ],
+              "false_flags": [],
+              "metavar": "IMDIRECTION"
+            },
+            "provider": {
+              "field": "imdirection",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imdirection",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "imdirection",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null,
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        },
+        {
+          "name": "cell",
+          "concept": {
+            "id": "simulation.alma.cell",
+            "semantic_revision": 1
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--cell"
+              ],
+              "false_flags": [],
+              "metavar": "CELL"
+            },
+            "provider": {
+              "field": "cell",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "cell",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "cell",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "simulation-phase-6",
+            "reason": "simalma accepts configuration/time/correlator lists and a scalar cell; simobserve uses a single array and simanalyze accepts one or two cells."
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          }
+        },
+        {
+          "name": "niter",
+          "concept": {
+            "id": "parameter.niter",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--niter"
+              ],
+              "metavar": "NITER",
+              "false_flags": [],
+              "positional": null
+            },
+            "provider": {
+              "field": "niter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "niter"
+            },
+            "presentation": {
+              "label": "niter",
+              "group": "Simulation"
+            }
+          },
+          "refinements": [],
+          "reviewed_homonym": null,
+          "surface_note": null
+        },
+        {
+          "name": "threshold",
+          "concept": {
+            "id": "image.deconvolution.threshold",
+            "semantic_revision": 2
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "0.1mJy"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--threshold"
+              ],
+              "metavar": "THRESHOLD",
+              "false_flags": [],
+              "positional": null
+            },
+            "provider": {
+              "field": "threshold",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "threshold"
+            },
+            "presentation": {
+              "label": "threshold",
+              "group": "Simulation"
+            }
+          },
+          "refinements": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "graphics",
+          "concept": {
+            "id": "parameter.graphics",
+            "semantic_revision": 2
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "both"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--graphics"
+              ],
+              "false_flags": [],
+              "metavar": "GRAPHICS"
+            },
+            "provider": {
+              "field": "graphics",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "graphics",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "graphics",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "verbose",
+          "concept": {
+            "id": "parameter.verbose",
+            "semantic_revision": 1
+          },
+          "order": 29,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--verbose"
+              ],
+              "false_flags": [
+                "--no-verbose"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "verbose",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "verbose",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "verbose",
+              "group": "Simulation",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 30,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--overwrite"
+              ],
+              "false_flags": [
+                "--no-overwrite"
+              ],
+              "metavar": null
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "overwrite",
+              "group": "Simulation",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        }
+      ]
     }
   ]
 }

@@ -900,6 +900,19 @@ clean matches iteration for iteration (900, model 1.7e-7). The mosaic of
 the same cube differs by 3.3e-3 under Briggs and agrees within 1e-6 under
 natural weighting.
 
+### simalma configuration names and zero-minute TP exposures
+
+CASA 6.7.6.14's `task_simalma.py` records an unknown cycle as integer `-1`
+then compares it with string `'-1'`. A valid ALMA/ACA configuration whose
+name has no cycle number raises `TypeError` on Python 3. Native simalma
+classifies the configuration directly; the independent oracle corrects only
+that comparison. The compact ALMA/ACA integration case exercises these names.
+
+The task formats TP exposure with `%dmin`. A positive `tptime` below one
+minute becomes zero and cannot observe its planned pointings. Native simalma
+refuses that request before replacing a project. Whole-minute truncation for
+valid TP exposures is preserved.
+
 ## CASA omits the final row and column of its cube density grid
 
 `BriggsCubeWeightor::fillImgWeightCol` builds its density with `GridFT`.

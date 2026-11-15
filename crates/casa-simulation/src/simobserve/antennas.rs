@@ -29,7 +29,7 @@ pub(super) struct Array {
 
 /// `project + "." + <configuration>`: the antenna list's file name without
 /// `.cfg`, with `;` made `_` in ALMA resolution strings.
-pub(super) fn stem(project: &str, antennalist: &str) -> Result<String, SimobserveError> {
+pub(crate) fn stem(project: &str, antennalist: &str) -> Result<String, SimobserveError> {
     let name = if upper_prefix(antennalist, 4) == "ALMA" {
         antennalist.replace(';', "_")
     } else if !antennalist.is_empty() {
@@ -52,7 +52,7 @@ fn upper_prefix(text: &str, count: usize) -> String {
 
 /// `ctsys.resolve("alma/simmos")`: the first data root holding it, or the
 /// unresolved name.
-fn repository(data_roots: &[PathBuf]) -> PathBuf {
+pub(crate) fn repository(data_roots: &[PathBuf]) -> PathBuf {
     data_roots
         .iter()
         .map(|root| root.join("alma").join("simmos"))
@@ -112,7 +112,7 @@ pub(super) fn resolve(run: &mut Run<'_>, input: &SkyInput) -> Result<Array, Simo
 /// The configuration an ALMA resolution string names, in `repository`:
 /// Cycle 1's or Cycle 2's (`alma.cycle1;0.5arcsec`), else the full array's
 /// (`alma;0.5arcsec`), at `frequency_ghz`; any other string unchanged.
-fn alma_configuration(
+pub(crate) fn alma_configuration(
     antennalist: &str,
     frequency_ghz: f64,
     repository: &Path,

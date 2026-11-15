@@ -34,6 +34,14 @@ pub struct FitsImage {
     pub pixels: ArrayD<f32>,
 }
 
+/// Read the primary image's axis lengths without allocating its pixels.
+///
+/// # Errors
+/// A missing, unreadable or invalid primary image/header.
+pub fn fits_image_shape(path: impl AsRef<Path>) -> Result<Vec<usize>, ImageError> {
+    Ok(PrimaryHdu::open(path.as_ref())?.shape)
+}
+
 /// Read the primary-HDU image of `fitsimage` into memory, as CASA's
 /// `ia.newimagefromfile` opens a FITS file.
 ///

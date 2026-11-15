@@ -408,6 +408,7 @@ fn provider_invocation_with_originals(
         "single_dish" => Some(casars_imager::single_dish::tsdimaging_task_schema_bundle().protocol),
         "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
         "simanalyze" => Some(casars_simulation::simanalyze_protocol_descriptor()),
+        "simalma" => Some(casars_simulation::simalma_protocol_descriptor()),
         _ => None,
     };
     Ok(InvocationView {

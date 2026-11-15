@@ -1014,6 +1014,41 @@ def concat(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat')
+def simalma(
+    project: str = ...,
+    dryrun: bool = ...,
+    skymodel: StrPath = ...,
+    inbright: str = ...,
+    indirection: str = ...,
+    incell: str = ...,
+    incenter: str = ...,
+    inwidth: str = ...,
+    complist: StrPath = ...,
+    compwidth: str = ...,
+    setpointings: bool = ...,
+    ptgfile: StrPath = ...,
+    integration: str = ...,
+    direction: str | list[str] | tuple[str, ...] = ...,
+    mapsize: str | list[str] | tuple[str, ...] = ...,
+    antennalist: str | list[str] | tuple[str, ...] = ...,
+    correlator: str | list[str] | tuple[str, ...] = ...,
+    hourangle: str = ...,
+    totaltime: str | list[str] | tuple[str, ...] = ...,
+    tpnant: int = ...,
+    tptime: str = ...,
+    pwv: float = ...,
+    image: bool = ...,
+    imsize: int | list[int] | tuple[int, ...] = ...,
+    imdirection: str = ...,
+    cell: str = ...,
+    niter: int = ...,
+    threshold: str = ...,
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = ...,
+    verbose: bool = ...,
+    overwrite: bool = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat']
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']

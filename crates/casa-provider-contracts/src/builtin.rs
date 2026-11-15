@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 30);
+        assert_eq!(catalog.surfaces.len(), 31);
         assert!(
             catalog
                 .surfaces
@@ -210,12 +210,16 @@ mod tests {
                         }
                     );
                     continue;
-                } else if surface.id() == "simanalyze" {
+                } else if matches!(surface.id(), "simanalyze" | "simalma") {
                     assert_eq!(binding.concept.id.as_str(), "simulation.analysis.imsize");
                     assert_eq!(
                         binding.default,
                         crate::DefaultSpec::Literal {
-                            value: ParameterValue::Array(vec![0_i64.into(), 0_i64.into()]),
+                            value: ParameterValue::Array(if surface.id() == "simalma" {
+                                vec![128_i64.into(), 128_i64.into()]
+                            } else {
+                                vec![0_i64.into(), 0_i64.into()]
+                            }),
                         }
                     );
                     continue;
@@ -240,8 +244,15 @@ mod tests {
                         }
                     );
                     continue;
-                } else if surface.id() == "simanalyze" {
-                    assert_eq!(binding.concept.id.as_str(), "simulation.analysis.cell");
+                } else if matches!(surface.id(), "simanalyze" | "simalma") {
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        if surface.id() == "simalma" {
+                            "simulation.alma.cell"
+                        } else {
+                            "simulation.analysis.cell"
+                        }
+                    );
                     assert_eq!(
                         binding.default,
                         crate::DefaultSpec::Literal {
@@ -328,6 +339,7 @@ mod tests {
             ("imregrid", false),
             ("imsubimage", false),
             ("simobserve", true),
+            ("simalma", false),
             ("tsdimaging", false),
             ("simanalyze", true),
         ]);
@@ -824,7 +836,7 @@ mod tests {
                         decoded,
                         matches!(
                             surface.id(),
-                            "tclean" | "simobserve" | "simanalyze" | "tsdimaging"
+                            "tclean" | "simobserve" | "simanalyze" | "simalma" | "tsdimaging"
                         ),
                         "{} product sources",
                         surface.id()

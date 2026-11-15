@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 599
-- Surfaces: 30 (30 task, 0 session)
-- Surface bindings: 865
+- Concepts: 606
+- Surfaces: 31 (31 task, 0 session)
+- Surface bindings: 896
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -46,6 +46,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 2 | <code>simanalyze</code> | 32 | Image and analyze a simulated observation: CASA's simanalyze |
 | [Tsdimaging](#surface-tsdimaging)<br><code>tsdimaging</code> | task | 1 | <code>single_dish</code> | 33 | Grid total-power spectra by pointing into a CASA image and weight image. |
 | [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
+| [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 1 | <code>simalma</code> | 31 | Simulate ALMA and ACA observations and combine their images |
 
 <a id="surface-msexplore"></a>
 
@@ -1301,5 +1302,49 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>copypointing</code> | <code>parameter.copypointing@r1</code> | <code>bool</code> | <code>true</code>; optional | MeasurementSet | Make a proper copy of the POINTING subtable |
 | <code>visweightscale</code> | <code>parameter.visweightscale@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | MeasurementSet | List of the weight scaling factors to be applied to the |
 | <code>forcesingleephemfield</code> | <code>parameter.forcesingleephemfield@r1</code> | <code>variant</code> | <code>""</code>; optional | MeasurementSet | Make sure that there is only one joint ephemeris for every field in this list |
+
+<a id="surface-simalma"></a>
+
+## SimALMA (<code>simalma</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Simulation
+- Provider family: `simalma`
+- Summary: Simulate ALMA and ACA observations and combine their images
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>project</code> | <code>simulation.project@r1</code> | <code>string</code> | <code>"sim"</code>; optional | Simulation | Project: its directory and the first part of every file's name. |
+| <code>dryrun</code> | <code>simulation.analysis.dryrun@r1</code> | <code>bool</code> | <code>true</code>; optional | Simulation | CASA simanalyze dryrun. |
+| <code>skymodel</code> | <code>parameter.skymodel@r2</code> | <code>path (image)</code> | <code>""</code>; optional | Simulation | Sky model image: a CASA image or FITS file. |
+| <code>inbright</code> | <code>parameter.inbright@r1</code> | <code>string</code> | <code>""</code>; optional | Simulation | Input brightness. |
+| <code>indirection</code> | <code>parameter.indirection@r1</code> | <code>string</code> | <code>""</code>; optional | Simulation | Input direction. |
+| <code>incell</code> | <code>parameter.incell@r1</code> | <code>string</code> | <code>""</code>; optional | Simulation | Input cell. |
+| <code>incenter</code> | <code>parameter.incenter@r1</code> | <code>string</code> | <code>""</code>; optional | Simulation | Input center. |
+| <code>inwidth</code> | <code>parameter.inwidth@r1</code> | <code>string</code> | <code>""</code>; optional | Simulation | Input width. |
+| <code>complist</code> | <code>parameter.complist@r1</code> | <code>path (product)</code> | <code>""</code>; optional | Simulation | Component list. |
+| <code>compwidth</code> | <code>parameter.compwidth@r1</code> | <code>string</code> | <code>"\"8GHz\""</code>; optional | Simulation | Component width. |
+| <code>setpointings</code> | <code>parameter.setpointings@r1</code> | <code>bool</code> | <code>true</code>; optional | Simulation | Generate pointings. |
+| <code>ptgfile</code> | <code>parameter.ptgfile@r2</code> | <code>path (any)</code> | <code>"$project.ptg.txt"</code>; optional | Simulation | Pointing file read when pointings are not laid out. |
+| <code>integration</code> | <code>parameter.integration@r1</code> | <code>string</code> | <code>"10s"</code>; optional | Simulation | Integration time. |
+| <code>direction</code> | <code>parameter.direction@r2</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Simulation | Map centre, or the pointings themselves when several are given. |
+| <code>mapsize</code> | <code>parameter.mapsize@r2</code> | <code>array&lt;string&gt;</code> | <code>["",""]</code>; optional | Simulation | Map size along each axis; one value for both. |
+| <code>antennalist</code> | <code>simulation.alma.antennalist@r1</code> | <code>array&lt;string&gt;</code> | <code>["alma.cycle1.1.cfg","aca.cycle1.cfg"]</code>; optional | Simulation | antenna position files of ALMA 12m and 7m arrays |
+| <code>correlator</code> | <code>simulation.alma.correlator@r1</code> | <code>array&lt;string&gt;</code> | <code>["BLC","BLC","ACASpec"]</code>; optional | Simulation | Name of the correlator, used to lookup the efficiency. Allowed options are based on |
+| <code>hourangle</code> | <code>parameter.hourangle@r1</code> | <code>string</code> | <code>"transit"</code>; optional | Simulation | Hour angle. |
+| <code>totaltime</code> | <code>simulation.alma.totaltime@r1</code> | <code>array&lt;string&gt;</code> | <code>["20min","1h"]</code>; optional | Simulation | total time of observation; vector corresponding to antennalist |
+| <code>tpnant</code> | <code>simulation.alma.tpnant@r1</code> | <code>integer</code> | <code>0</code>; optional | Simulation | Number of total power antennas to use (0-4) |
+| <code>tptime</code> | <code>simulation.alma.tptime@r1</code> | <code>string</code> | <code>"0s"</code>; optional | Simulation | total observation time for total power |
+| <code>pwv</code> | <code>simulation.alma.pwv@r1</code> | <code>float</code> | <code>0.5</code>; optional | Simulation | Precipitable Water Vapor in mm. 0 for noise-free simulation |
+| <code>image</code> | <code>simulation.analysis.image@r1</code> | <code>bool</code> | <code>true</code>; optional | Simulation | CASA simanalyze image. |
+| <code>imsize</code> | <code>simulation.analysis.imsize@r1</code> | <code>array&lt;integer&gt;</code> | <code>[128,128]</code>; optional | Simulation | CASA simanalyze imsize. |
+| <code>imdirection</code> | <code>simulation.analysis.imdirection@r1</code> | <code>string</code> | <code>""</code>; optional | Simulation | CASA simanalyze imdirection. |
+| <code>cell</code> | <code>simulation.alma.cell@r1</code> | <code>string</code> | <code>""</code>; optional | Simulation | cell size with units or "" to equal model |
+| <code>niter</code> | <code>parameter.niter@r1</code> | <code>integer</code> | <code>0</code>; optional | Simulation | Minor-cycle iteration budget; ignored when Dirty Only is enabled |
+| <code>threshold</code> | <code>image.deconvolution.threshold@r2</code> | <code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code> | <code>"0.1mJy"</code>; optional | Simulation | Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled |
+| <code>graphics</code> | <code>parameter.graphics@r2</code> | <code>choice (5 values)</code> | <code>"both"</code>; optional | Simulation | Graphics output. |
+| <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Simulation | Verbose logging. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Simulation | Replace an existing output file |
 
 _End of generated reference._

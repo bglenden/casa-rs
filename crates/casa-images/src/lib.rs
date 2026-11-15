@@ -98,7 +98,7 @@ pub use casa_return::{
 };
 pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
-pub use fits_read::{FitsImage, read_fits_image};
+pub use fits_read::{FitsImage, fits_image_shape, read_fits_image};
 pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
     PagedImage, image_pixel_type,

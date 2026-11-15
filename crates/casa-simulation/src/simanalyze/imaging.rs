@@ -15,7 +15,7 @@ use casa_types::ScalarValue;
 use serde_json::json;
 use std::path::PathBuf;
 
-pub(super) fn context(resources: SessionResources) -> RunContext {
+pub(crate) fn context(resources: SessionResources) -> RunContext {
     RunContext {
         host: *resources.host(),
         policy: *resources.policy(),
