@@ -13,6 +13,8 @@
 //! |------|------|-------------|
 //! | SIN  | Slant orthographic | `-SIN` |
 //! | AZP  | Zenithal perspective with zero parameters | `-AZP` |
+//! | SZP  | Slant zenithal perspective with tclean parameters | `-SZP` |
+//! | AIR  | Airy with zero reference latitude parameter | `-AIR` |
 //! | TAN  | Gnomonic (tangent plane) | `-TAN` |
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
@@ -23,7 +25,7 @@
 //! | STG  | Stereographic | `-STG` |
 //! | NCP  | North Celestial Pole (SIN special case) | `-NCP` |
 
-use std::f64::consts::{FRAC_PI_2, PI};
+use std::f64::consts::{FRAC_PI_2, LN_2, PI};
 use std::fmt;
 
 use crate::error::CoordinateError;
@@ -44,6 +46,10 @@ pub enum ProjectionType {
     SIN,
     /// Zenithal perspective with tclean's zero parameters.
     AZP,
+    /// Slant zenithal perspective with tclean's `[0, 0, 90]` parameters.
+    SZP,
+    /// Airy projection with tclean's zero latitude parameter.
+    AIR,
     /// Gnomonic (tangent-plane) projection.
     TAN,
     /// Zenithal equidistant projection.
@@ -82,6 +88,8 @@ impl ProjectionType {
         match name.to_uppercase().as_str() {
             "SIN" => Some(Self::SIN),
             "AZP" => Some(Self::AZP),
+            "SZP" => Some(Self::SZP),
+            "AIR" => Some(Self::AIR),
             "TAN" => Some(Self::TAN),
             "ARC" => Some(Self::ARC),
             "CAR" => Some(Self::CAR),
@@ -100,6 +108,8 @@ impl ProjectionType {
         match self {
             Self::SIN => "SIN",
             Self::AZP => "AZP",
+            Self::SZP => "SZP",
+            Self::AIR => "AIR",
             Self::TAN => "TAN",
             Self::ARC => "ARC",
             Self::CAR => "CAR",
@@ -183,9 +193,13 @@ impl Projection {
     pub fn project(&self, phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => project_sin(phi, theta, &self.parameters),
-            ProjectionType::AZP => {
-                self.require_default_azp()?;
+            ProjectionType::AZP | ProjectionType::SZP => {
+                self.validate_conversion_parameters()?;
                 project_tan(phi, theta)
+            }
+            ProjectionType::AIR => {
+                self.validate_conversion_parameters()?;
+                project_air(phi, theta)
             }
             ProjectionType::TAN => project_tan(phi, theta),
             ProjectionType::ARC => project_arc(phi, theta),
@@ -204,9 +218,13 @@ impl Projection {
     pub fn deproject(&self, x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => deproject_sin(x, y, &self.parameters),
-            ProjectionType::AZP => {
-                self.require_default_azp()?;
+            ProjectionType::AZP | ProjectionType::SZP => {
+                self.validate_conversion_parameters()?;
                 deproject_tan(x, y)
+            }
+            ProjectionType::AIR => {
+                self.validate_conversion_parameters()?;
+                deproject_air(x, y)
             }
             ProjectionType::TAN => deproject_tan(x, y),
             ProjectionType::ARC => deproject_arc(x, y),
@@ -220,16 +238,32 @@ impl Projection {
         }
     }
 
-    /// With μ = γ = 0, the AZP radius is `cos(θ)/sin(θ)` and the
-    /// tilt terms vanish (Calabretta & Greisen 2002, §5.1.1). That is
-    /// the gnomonic map, with the original AZP name in the coordinate.
-    pub(crate) fn require_default_azp(&self) -> Result<(), CoordinateError> {
-        if self.parameters.iter().any(|&value| value != 0.0) {
-            return Err(CoordinateError::ConversionFailed(
-                "AZP requires the zero projection parameters written by tclean".into(),
-            ));
-        }
-        Ok(())
+    /// Confirm that a partially implemented projection uses the parameters
+    /// supported by coordinate conversion. Other projections are unchanged.
+    ///
+    /// AZP and SZP give the gnomonic map at zero distance from the sphere's
+    /// centre (Calabretta & Greisen 2002, §§5.1.1–2). Casacore pads missing
+    /// SZP parameters with `[0, 0, 90]`. AIR requires an explicit zero
+    /// latitude parameter because casacore's missing-parameter default is 90°.
+    pub fn validate_conversion_parameters(&self) -> Result<(), CoordinateError> {
+        let required = match self.projection_type {
+            ProjectionType::AZP if self.parameters.iter().any(|&value| value != 0.0) => {
+                "the zero projection parameters written by tclean"
+            }
+            ProjectionType::SZP if ![0.0, 0.0, 90.0].starts_with(&self.parameters) => {
+                "the [0, 0, 90] projection parameters written by tclean"
+            }
+            ProjectionType::AIR
+                if self.parameters.is_empty() || ![0.0, 0.0].starts_with(&self.parameters) =>
+            {
+                "the zero latitude parameter written by tclean"
+            }
+            _ => return Ok(()),
+        };
+        Err(CoordinateError::ConversionFailed(format!(
+            "{} requires {required}",
+            self.name()
+        )))
     }
 }
 
@@ -361,6 +395,72 @@ fn deproject_tan(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
     let phi = x.atan2(-y);
     let theta = (1.0_f64).atan2(r);
     Ok((phi, theta))
+}
+
+// ---------------------------------------------------------------------------
+// AIR (Airy with θ_b = 0)
+// ---------------------------------------------------------------------------
+
+// WCSLIB uses the small-angle limit below this half-zenith angle.
+const AIR_LINEAR_LIMIT: f64 = 1e-4;
+const AIR_SLOPE: f64 = 1.0 + LN_2;
+
+/// Calabretta & Greisen (2002), Eq. 71, in radians. With t = tan(ξ)
+/// and ξ_b = π/4, the radius is ln(1 + t²)/t + ln(2)t.
+fn project_air(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta <= -FRAC_PI_2 {
+        return Err(CoordinateError::ConversionFailed(
+            "AIR project: the native south pole is outside the projection".into(),
+        ));
+    }
+    let half_zenith = (FRAC_PI_2 - theta) / 2.0;
+    let radius = if half_zenith < AIR_LINEAR_LIMIT {
+        AIR_SLOPE * half_zenith
+    } else {
+        let tangent = half_zenith.tan();
+        (tangent * tangent).ln_1p() / tangent + LN_2 * tangent
+    };
+    Ok((radius * phi.sin(), -radius * phi.cos()))
+}
+
+/// Invert the monotone radius in t. The logarithm bounds t between
+/// radius/(1 + ln(2)) and radius/ln(2), which bracket the Newton steps.
+fn deproject_air(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let radius = x.hypot(y);
+    if radius == 0.0 {
+        return Ok((0.0, FRAC_PI_2));
+    }
+    let phi = x.atan2(-y);
+    let linear = radius / AIR_SLOPE;
+    if linear < AIR_LINEAR_LIMIT {
+        return Ok((phi, FRAC_PI_2 - 2.0 * linear));
+    }
+
+    let (mut low, mut high) = (linear, radius / LN_2);
+    let mut tangent = low;
+    for _ in 0..32 {
+        let squared = tangent * tangent;
+        let logarithmic_factor = squared.ln_1p() / squared;
+        let error = tangent * (LN_2 + logarithmic_factor) - radius;
+        if error.abs() <= 4.0 * f64::EPSILON * radius {
+            return Ok((phi, FRAC_PI_2 - 2.0 * tangent.atan()));
+        }
+        if error < 0.0 {
+            low = tangent;
+        } else {
+            high = tangent;
+        }
+        let derivative = LN_2 + 2.0 / (1.0 + squared) - logarithmic_factor;
+        let next = tangent - error / derivative;
+        tangent = if low < next && next < high {
+            next
+        } else {
+            low.midpoint(high)
+        };
+    }
+    Err(CoordinateError::ConversionFailed(
+        "AIR deproject: no finite inverse radius".into(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -631,12 +731,26 @@ mod tests {
     }
 
     #[test]
-    fn azp_with_nonzero_perspective_or_tilt_refuses_coordinate_conversion() {
-        for parameters in [vec![2.0, 0.0], vec![0.0, 10.0]] {
-            let azp = Projection::with_parameters(ProjectionType::AZP, parameters);
-            assert!(azp.project(0.4, 1.2).is_err());
-            assert!(azp.deproject(0.04, 0.03).is_err());
+    fn zenithal_transforms_refuse_parameters_outside_tclean() {
+        for (kind, parameters) in [
+            (ProjectionType::AZP, vec![2.0, 0.0]),
+            (ProjectionType::AZP, vec![0.0, 10.0]),
+            (ProjectionType::SZP, vec![1.0, 0.0, 90.0]),
+            (ProjectionType::SZP, vec![0.0, 0.0, 45.0]),
+            (ProjectionType::AIR, vec![]),
+            (ProjectionType::AIR, vec![90.0]),
+        ] {
+            let projection = Projection::with_parameters(kind, parameters);
+            assert!(projection.project(0.4, 1.2).is_err(), "{kind:?}");
+            assert!(projection.deproject(0.04, 0.03).is_err(), "{kind:?}");
         }
+    }
+
+    /// WCSLIB's AIR forward transform has no finite projection at the antipode.
+    #[test]
+    fn airy_rejects_the_native_south_pole() {
+        let projection = Projection::with_parameters(ProjectionType::AIR, vec![0.0]);
+        assert!(projection.project(0.0, -FRAC_PI_2).is_err());
     }
 
     #[test]

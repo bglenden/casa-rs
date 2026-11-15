@@ -27,6 +27,10 @@ pub enum Projection {
     Ncp,
     /// Zenithal perspective, `AZP`, with tclean's zero parameters.
     Azp,
+    /// Slant zenithal perspective, `SZP`, with the parameters CASA saves.
+    Szp,
+    /// Airy's projection, `AIR`, with tclean's zero latitude parameter.
+    Air,
     /// Gnomonic, `TAN`.
     Tan,
     /// Zenithal equidistant, `ARC`.
@@ -55,6 +59,8 @@ impl Projection {
             "SIN" => Self::Sin,
             "NCP" => Self::Ncp,
             "AZP" => Self::Azp,
+            "SZP" => Self::Szp,
+            "AIR" => Self::Air,
             "TAN" => Self::Tan,
             "ARC" => Self::Arc,
             "STG" => Self::Stg,
@@ -69,12 +75,15 @@ impl Projection {
 
     /// The projection, with its parameters, that an image of reference
     /// latitude `latitude_rad` records: CASA gives every projection the two
-    /// parameters `[0, 0]`, and `NCP` the `SIN` slant `[0, cot δ₀]`.
+    /// parameters `[0, 0]` before casacore pads `SZP` to `[0, 0, 90]` and
+    /// tclean writes `NCP` with the `SIN` slant `[0, cot δ₀]`.
     #[must_use]
     pub fn coordinate_projection(self, latitude_rad: f64) -> CoordinateProjection {
         let kind = match self {
             Self::Sin | Self::Ncp => ProjectionType::SIN,
             Self::Azp => ProjectionType::AZP,
+            Self::Szp => ProjectionType::SZP,
+            Self::Air => ProjectionType::AIR,
             Self::Tan => ProjectionType::TAN,
             Self::Arc => ProjectionType::ARC,
             Self::Stg => ProjectionType::STG,
@@ -84,12 +93,12 @@ impl Projection {
             Self::Mer => ProjectionType::MER,
             Self::Ait => ProjectionType::AIT,
         };
-        let slant = if self == Self::Ncp {
-            1.0 / latitude_rad.tan()
-        } else {
-            0.0
+        let parameters = match self {
+            Self::Ncp => vec![0.0, 1.0 / latitude_rad.tan()],
+            Self::Szp => vec![0.0, 0.0, 90.0],
+            _ => vec![0.0, 0.0],
         };
-        CoordinateProjection::with_parameters(kind, vec![0.0, slant])
+        CoordinateProjection::with_parameters(kind, parameters)
     }
 
     /// The projection a direction coordinate of reference latitude
@@ -99,6 +108,18 @@ impl Projection {
     /// wrote `SIN` with none before).
     #[must_use]
     pub fn of_coordinate(projection: &CoordinateProjection, latitude_rad: f64) -> Option<Self> {
+        let restricted = match projection.projection_type() {
+            ProjectionType::AZP => Some(Self::Azp),
+            ProjectionType::SZP => Some(Self::Szp),
+            ProjectionType::AIR => Some(Self::Air),
+            _ => None,
+        };
+        if let Some(kind) = restricted {
+            return projection
+                .validate_conversion_parameters()
+                .ok()
+                .map(|()| kind);
+        }
         let mut parameters = projection.parameters().to_vec();
         if parameters.len() < 2 {
             parameters.resize(2, 0.0);
@@ -106,7 +127,6 @@ impl Projection {
         [
             Self::Sin,
             Self::Ncp,
-            Self::Azp,
             Self::Tan,
             Self::Arc,
             Self::Stg,
@@ -121,10 +141,6 @@ impl Projection {
             let expected = candidate.coordinate_projection(latitude_rad);
             if expected.projection_type() != projection.projection_type() {
                 return false;
-            }
-            // tclean supports only zero AZP parameters, including on input images.
-            if *candidate == Self::Azp {
-                return expected.parameters() == parameters;
             }
             expected.parameters().len() == parameters.len()
                 && expected
@@ -175,10 +191,12 @@ mod tests {
     use super::Projection;
     use crate::geometry::{DirectionCoordinateSpec, DirectionFrame, SkyDirection};
 
-    const ALL: [Projection; 11] = [
+    const ALL: [Projection; 13] = [
         Projection::Sin,
         Projection::Ncp,
         Projection::Azp,
+        Projection::Szp,
+        Projection::Air,
         Projection::Tan,
         Projection::Arc,
         Projection::Stg,
@@ -250,17 +268,38 @@ mod tests {
         assert_eq!(Projection::of_coordinate(&slanted, 0.7), None);
     }
 
-    /// An AZP image declares only the parameter values tclean can image in.
+    /// Saved masks must use a projection tclean can actually map.
     #[test]
-    fn azp_coordinate_admission_requires_zero_parameters() {
+    fn restricted_zenithal_images_require_tclean_parameters() {
         use casa_coordinates::{Projection as CoordinateProjection, ProjectionType};
-        for parameters in [vec![], vec![0.0], vec![0.0, 0.0]] {
-            let azp = CoordinateProjection::with_parameters(ProjectionType::AZP, parameters);
-            assert_eq!(Projection::of_coordinate(&azp, 0.7), Some(Projection::Azp));
-        }
-        for parameters in [vec![1e-10, 0.0], vec![0.0, 1e-10]] {
-            let azp = CoordinateProjection::with_parameters(ProjectionType::AZP, parameters);
-            assert_eq!(Projection::of_coordinate(&azp, 0.7), None);
+        for (kind, imaged, accepted, rejected) in [
+            (
+                ProjectionType::AZP,
+                Projection::Azp,
+                vec![vec![], vec![0.0], vec![0.0, 0.0]],
+                vec![vec![1e-10, 0.0], vec![0.0, 1e-10]],
+            ),
+            (
+                ProjectionType::SZP,
+                Projection::Szp,
+                vec![vec![], vec![0.0, 0.0], vec![0.0, 0.0, 90.0]],
+                vec![vec![1e-10, 0.0, 90.0], vec![0.0, 0.0, 45.0]],
+            ),
+            (
+                ProjectionType::AIR,
+                Projection::Air,
+                vec![vec![0.0], vec![0.0, 0.0]],
+                vec![vec![], vec![1e-10, 0.0]],
+            ),
+        ] {
+            for parameters in accepted {
+                let projection = CoordinateProjection::with_parameters(kind, parameters);
+                assert_eq!(Projection::of_coordinate(&projection, 0.7), Some(imaged));
+            }
+            for parameters in rejected {
+                let projection = CoordinateProjection::with_parameters(kind, parameters);
+                assert_eq!(Projection::of_coordinate(&projection, 0.7), None);
+            }
         }
     }
 
@@ -270,7 +309,9 @@ mod tests {
         assert_eq!(Projection::from_casa_name("TAN"), Some(Projection::Tan));
         assert_eq!(Projection::from_casa_name("NCP"), Some(Projection::Ncp));
         assert_eq!(Projection::from_casa_name("AZP"), Some(Projection::Azp));
-        for other in ["tan", " TAN", "ncp", "azp"] {
+        assert_eq!(Projection::from_casa_name("SZP"), Some(Projection::Szp));
+        assert_eq!(Projection::from_casa_name("AIR"), Some(Projection::Air));
+        for other in ["tan", " TAN", "ncp", "azp", "air", "szp"] {
             assert_eq!(Projection::from_casa_name(other), None, "{other:?}");
         }
     }

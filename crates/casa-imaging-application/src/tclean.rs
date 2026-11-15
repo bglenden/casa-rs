@@ -617,6 +617,12 @@ impl<'a> Tclean<'a> {
                 format!("Invalid projection code : {name}, as CASA's tclean refuses it"),
             ));
         }
+        if name == "ZPN" {
+            return Err(TcleanRefusal::new(
+                "projection",
+                "Invalid parameter value: ZPN requires a nonzero coefficient, as CASA's tclean reports",
+            ));
+        }
         if Projection::from_casa_name(name).is_none() {
             return Err(TcleanRefusal::not_yet(
                 "projection",

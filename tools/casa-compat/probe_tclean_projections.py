@@ -22,12 +22,15 @@ import casatasks
 import casatools
 
 PIXELS = [[0.0, 0.0], [99.0, 99.0], [10.0, 80.0], [50.0, 50.0], [75.5, 20.25], [-40.0, 130.0]]
+# Airy uses a linear limit near the reference point and is also defined across
+# the far hemisphere. The off-image pixels test both sides of the formula.
+AIR_PIXELS = PIXELS + [[54.35, 50.0], [54.38, 50.0], [30050.0, 20050.0], [50050.0, 50050.0]]
 NAMES = ["SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "AIT", "MER", "AZP",
-         "tan", "ncp", " TAN", "XYZ"]
+         "SZP", "ZPN", "AIR", "tan", "ncp", " TAN", "XYZ"]
 # The same images centred south of the celestial equator, where a projection
 # whose reference is on its native equator takes the native pole at 180°.
 SOUTH = "J2000 19:59:28.500 -40.44.01.50"
-SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER", "AZP"]
+SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER", "AZP", "SZP", "AIR"]
 # And on the celestial equator, where the native pole of a projection whose
 # reference is on its native equator is the celestial north pole. NCP is
 # undefined there (its slant cot(dec) is infinite).
@@ -48,13 +51,14 @@ def probe(ms, out, name, phasecenter=""):
                          projection=name, niter=0, phasecenter=phasecenter)
     except Exception as error:  # CASA's refusal
         return {"refused": f"{type(error).__name__}: {error}"}
+    pixels = AIR_PIXELS if name == "AIR" else PIXELS
     ia = casatools.image()
     ia.open(f"{image}.image")
     try:
         cs = ia.coordsys()
         try:
             record = {key: plain(value) for key, value in cs.torecord()["direction0"].items()}
-            worlds = [cs.toworld(pixel + [0, 0], "n")["numeric"][:2].tolist() for pixel in PIXELS]
+            worlds = [cs.toworld(pixel + [0, 0], "n")["numeric"][:2].tolist() for pixel in pixels]
         finally:
             cs.done()
     finally:
@@ -67,7 +71,7 @@ def probe(ms, out, name, phasecenter=""):
         "cdelt_rad": record["cdelt"],
         "longpole_deg": record["longpole"],
         "latpole_deg": record["latpole"],
-        "pixels": PIXELS,
+        "pixels": pixels,
         "worlds_rad": worlds,
     }
 
