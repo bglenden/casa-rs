@@ -152,12 +152,7 @@ fn numeric_row_ids(text: Option<&str>, label: &str) -> Result<IdSelection, Prepa
     Ok(IdSelection::Ranges(
         ranges
             .into_iter()
-            .map(|(start, end)| {
-                (
-                    u32::try_from(start).expect("a parsed row ID is nonnegative"),
-                    u32::try_from(end).expect("a parsed row ID is nonnegative"),
-                )
-            })
+            .map(|(start, end)| (i64::from(start), i64::from(end)))
             .collect(),
     ))
 }

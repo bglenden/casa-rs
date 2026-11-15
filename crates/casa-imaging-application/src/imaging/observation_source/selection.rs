@@ -202,8 +202,8 @@ mod tests {
         selection.scans = IdSelection::Only(ids);
         assert_eq!(selection.predicate_bytes(), baseline + bytes);
         let mut ranges = Vec::with_capacity(17);
-        ranges.push((2, i32::MAX as u32));
-        let bytes = ranges.capacity() * size_of::<(u32, u32)>();
+        ranges.push((i64::from(i32::MIN), 2));
+        let bytes = ranges.capacity() * size_of::<(i64, i64)>();
         selection.scans = IdSelection::Ranges(ranges);
         assert_eq!(selection.predicate_bytes(), baseline + bytes);
         selection.scans = IdSelection::All;

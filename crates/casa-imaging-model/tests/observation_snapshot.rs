@@ -523,8 +523,9 @@ fn empty_exact_scan_and_observation_sets_are_not_unconstrained() {
 fn numeric_intervals_canonicalize_and_charge_spare_capacity() {
     let base = selection(31, false);
     let mut ranges = Vec::with_capacity(19);
-    ranges.extend([(u32::MAX, 10), (4, 2), (5, 9), (2, 3)]);
-    let bytes = ranges.capacity() * size_of::<(u32, u32)>();
+    let max = i64::from(u32::MAX);
+    ranges.extend([(max, 10), (4, 2), (5, 9), (2, 3), (-2, -4), (-7, -4)]);
+    let bytes = ranges.capacity() * size_of::<(i64, i64)>();
     let selected = with_rows(
         &base,
         base.rows_filter()
@@ -541,12 +542,12 @@ fn numeric_intervals_canonicalize_and_charge_spare_capacity() {
     ]))
     .unwrap();
     let scans = snapshot.sources()[0].selection().rows_filter().scans();
-    assert_eq!(scans, &IdSelection::Ranges(vec![(2, u32::MAX)]));
+    assert_eq!(scans, &IdSelection::Ranges(vec![(-7, -2), (2, max)]));
     assert_eq!(scans.allocated_bytes(), Some(bytes));
-    for value in [2, 10, i64::from(u32::MAX)] {
+    for value in [-7, -3, -2, 2, 10, max] {
         assert!(scans.holds(value));
     }
-    for value in [-1, 0, 1, i64::from(u32::MAX) + 1] {
+    for value in [-8, -1, 0, 1, max + 1] {
         assert!(!scans.holds(value));
     }
 }

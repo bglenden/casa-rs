@@ -87,7 +87,7 @@
     },
     "scan": {
       "status": "Partial",
-      "scope": "Nonnegative IDs, comma unions, inclusive a~b ranges, and the six comparison forms (<, <=, >, >=, >a&<b and >=a&<=b) filter SCAN_NUMBER with either selectdata value. Each comparison becomes a compact interval. Bare and comparison ranges require ascending bounds. Empty text is unset. Whitespace alone, signs, empty list terms and mixed strict/inclusive bounds are refused. Use one selector per MeasurementSet or the same selector for all. A valid predicate selecting no rows skips a later input. A first input with no rows is refused. A malformed predicate is refused on any input.",
+      "scope": "Nonnegative IDs, comma unions, inclusive a~b ranges, and the six comparison forms (<, <=, >, >=, >a&<b and >=a&<=b) filter SCAN_NUMBER with either selectdata value. Each comparison becomes a compact interval. A nonnegative bound compares against the signed SCAN_NUMBER column, including stored negative values. Bare and comparison ranges require ascending bounds. Empty text is unset. Whitespace alone, signs, empty list terms and mixed strict/inclusive bounds are refused. Use one selector per MeasurementSet or the same selector for all. A valid predicate selecting no rows skips a later input. A first input with no rows is refused. A malformed predicate is refused on any input.",
       "evidence": [
         "signature",
         "reader",
