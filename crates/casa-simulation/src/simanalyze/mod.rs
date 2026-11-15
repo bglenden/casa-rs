@@ -7,12 +7,12 @@ mod imaging;
 mod inputs;
 mod plan;
 mod plots;
+mod preflight;
 mod total_power;
 
 use crate::simobserve::SimobserveError;
 use crate::simutil::analysis::{self, Fidelity};
 use crate::{SessionResources, simutil};
-use casa_imaging_application::ImagingRequest;
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
 use casa_ms::plot_document::PlotFigure;
 use casa_provider_contracts::builtin_surface_bundle;
@@ -214,57 +214,6 @@ fn run(
         }
     }
     Ok(outcome)
-}
-
-// The lower-level imager already publishes fresh products atomically. Do not
-// delete old results before its preparation/admission, or select an input that
-// a successful publication would overwrite.
-fn preflight_inputs(
-    plan: &plan::Plan,
-    imaging: &ImagingRequest,
-    overwrite: bool,
-) -> Result<(), SimobserveError> {
-    if !overwrite {
-        for suffix in [".image", ".model"] {
-            let path = plan.file(suffix);
-            match std::fs::symlink_metadata(&path) {
-                Ok(_) => return Err(failure(format!("{} already exists", path.display()))),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(failure(error)),
-            }
-        }
-    }
-    let inputs = std::iter::once(&plan.model).chain(imaging.startmodel.iter().flatten());
-    for input in inputs {
-        let input = std::fs::canonicalize(input).map_err(failure)?;
-        for suffix in [
-            ".image",
-            ".model",
-            ".psf",
-            ".residual",
-            ".pb",
-            ".image.pbcor",
-            ".sumwt",
-            ".mask",
-            ".image.flat",
-            ".diff",
-            ".fidelity",
-        ] {
-            let output = plan.file(suffix);
-            match std::fs::canonicalize(&output) {
-                Ok(output) if output == input => {
-                    return Err(failure(format!(
-                        "input {} would be overwritten by simulation imaging",
-                        input.display()
-                    )));
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(failure(error)),
-            }
-        }
-    }
-    Ok(())
 }
 
 fn replace(path: &Path, overwrite: bool) -> Result<(), SimobserveError> {

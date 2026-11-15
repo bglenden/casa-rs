@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Sequential native applications used by simanalyze.
-use super::{Parameters, failure, plan::Plan, preflight_inputs, total_power};
+use super::{Parameters, failure, plan::Plan, preflight, total_power};
 use crate::{SessionResources, simobserve::SimobserveError, simutil::analysis};
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_application::{Cancel, ImagingRequest, RunContext};
@@ -29,6 +29,7 @@ pub(super) fn execute(
     plan: &Plan,
     resources: SessionResources,
 ) -> Result<Vec<PathBuf>, SimobserveError> {
+    preflight::check(p, plan)?;
     let mut products = Vec::new();
     let mut parameters = plan.imaging.clone();
     let request = if plan.inputs.synthesis.is_empty() {
@@ -46,7 +47,6 @@ pub(super) fn execute(
             crate::BackendRequest::Metal => casa_imaging_application::BackendRequest::Gpu,
             crate::BackendRequest::Auto => casa_imaging_application::BackendRequest::Auto,
         };
-        preflight_inputs(plan, &request, p.flag("overwrite"))?;
         Some(request)
     };
     if plan.inputs.synthesis.len() > 1 {

@@ -93,9 +93,14 @@ The integrated counting law runs concatenation, total power, seed models
 and feathering at two image sizes and measures live heap against admission.
 
 The full regenerated m51 run compares 36 native CASA images, including
-PSFs and residuals, with exact masks and matching WCS. Its maximum defined-
+PSFs and residuals, with exact masks and matching coordinate references and increments. Its maximum defined-
 pixel NRMS is 9.18e-6; restored images and differences are below 3.5e-7,
 and the TP image is 1.40e-6. DATA NRMS is 8.66e-7 (12 m), 2.52e-7
 (7 m) and 6.34e-8 (TP), all below the required 1e-6. The B1950 model
 uses its observation epoch for TP sampling and keeps its native tangent
 basis during synthesis imaging.
+
+Serial release measurements of the regression's two analysis calls (three
+repeats, no compiler running) have medians of 6.31 s native and 12.85 s
+CASA, about 2.03 times faster. This measures analysis of existing MSs,
+including TP imaging, seed preparation, synthesis and image analysis.

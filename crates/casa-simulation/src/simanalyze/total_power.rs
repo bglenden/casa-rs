@@ -93,6 +93,9 @@ pub(super) fn image(
         suffixed(&temporary, ".weight"),
     ] {
         if target.exists() {
+            if !p.flag("overwrite") {
+                return Err(failure(format!("{} already exists", target.display())));
+            }
             if std::fs::canonicalize(&target).map_err(failure)? == source {
                 return Err(failure(
                     "sky model would be overwritten by total-power imaging",

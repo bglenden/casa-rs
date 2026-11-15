@@ -2,7 +2,7 @@
 //! The feather step following simanalyze's synthesis imaging.
 use super::{
     Parameters, failure,
-    plan::{Plan, locate, suffixed},
+    plan::{Plan, expand_project, locate, suffixed},
 };
 use crate::{
     SessionResources,
@@ -23,9 +23,7 @@ pub(super) fn combine(
     if plan.inputs.synthesis.is_empty() {
         return Ok(());
     }
-    let supplied = p
-        .text("featherimage")
-        .replace("$project", p.text("project"));
+    let supplied = expand_project(&plan.directory, p.text("featherimage"));
     let low = if !supplied.is_empty() {
         let path = locate(&plan.directory, &supplied);
         if !path.exists() {
