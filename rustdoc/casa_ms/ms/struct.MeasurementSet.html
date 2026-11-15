@@ -179,17 +179,17 @@ ANTENNA table (NAME, STATION and POSITION), as
 <h5 id="errors-4"><a class="doc-anchor" href="#errors-4">§</a>Errors</h5>
 <p>An unreadable ANTENNA table, or any refusal of
 <a href="../selection/antenna_expr/fn.resolve_antenna_selector.html" title="fn casa_ms::selection::antenna_expr::resolve_antenna_selector"><code>resolve_antenna_selector</code></a>.</p>
-</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-MeasurementSet-4" class="impl"><a class="src rightside" href="../../src/casa_ms/selection/parser.rs.html#102-128">Source</a><a href="#impl-MeasurementSet-4" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.MeasurementSet.html" title="struct casa_ms::ms::MeasurementSet">MeasurementSet</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.resolve_field_selector" class="method"><a class="src rightside" href="../../src/casa_ms/selection/parser.rs.html#121-127">Source</a><h4 class="code-header">pub fn <a href="#method.resolve_field_selector" class="fn">resolve_field_selector</a>(&amp;self, value: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.str.html">str</a>) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.100.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.i32.html">i32</a>&gt;&gt;</h4></section></summary><div class="docblock"><p>Resolve a field selector using FIELD metadata, without scanning MAIN.</p>
-<p>Comma-separated IDs, inclusive numeric ranges, exact names, bare <code>*</code>
-name patterns, double-quoted patterns, slash-delimited regexes and
+</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-MeasurementSet-4" class="impl"><a class="src rightside" href="../../src/casa_ms/selection/parser.rs.html#100-126">Source</a><a href="#impl-MeasurementSet-4" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.MeasurementSet.html" title="struct casa_ms::ms::MeasurementSet">MeasurementSet</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.resolve_field_selector" class="method"><a class="src rightside" href="../../src/casa_ms/selection/parser.rs.html#119-125">Source</a><h4 class="code-header">pub fn <a href="#method.resolve_field_selector" class="fn">resolve_field_selector</a>(&amp;self, value: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.str.html">str</a>) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.100.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.i32.html">i32</a>&gt;&gt;</h4></section></summary><div class="docblock"><p>Resolve a field selector using FIELD metadata, without scanning MAIN.</p>
+<p>Comma-separated IDs, inclusive numeric ranges, exact names, shell
+patterns, slash-delimited regexes and
 strict ID comparisons form a union as in CASA’s <code>MSFieldGram</code> index list.
 The returned IDs are sorted and unique. Empty text returns an empty
 list, the selection builder’s convention for selecting every field.</p>
 <h5 id="errors-5"><a class="doc-anchor" href="#errors-5">§</a>Errors</h5>
 <p>Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
 no FIELD row, or a nonempty selection resolving to no existing fields.
-Escaped or concatenated quoted patterns and regex delimiters with
-backslashes or newlines remain outside this resolver’s scope.
+The shared regex engine refuses lookaround. Escapes outside a
+delimited pattern are also refused.
 An out-of-range numeric ID tries its decimal text as a name or code.
 Only the FIELD rows themselves bound numeric range enumeration.
 Name matching trims stored names and
