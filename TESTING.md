@@ -178,6 +178,23 @@ needs `pkg-config casacore`: C++ casacore digests the MeasurementSets the
 session writes, and the digests must equal casa-rs's. Its counting law
 (`--test session_memory`) runs alone in a process of its own.
 
+`python/tests/test_simulator_upstream.py` in `crates/casars-python` runs native
+equivalents of CASA 6.7.6.14's simulator-tool cases. PLP prediction retains
+the upstream analytic flux assertion. The upstream-disabled tropospheric
+case checks 0.1 s frozen-screen sampling and existing `CORRECTED_DATA`
+preservation, with a failing 10 s sampling control. Its original phase ratio
+depends on CASA's random stream and the documented screen/wet-delay defects.
+`tools/simulation/upstream_simulator_inputs.py` regenerates its compact
+existing-MS input with CASA; the regular tests require only casa-rs.
+
+`tools/simulation/upstream_simulation_suite.py`, run under CASA's Python,
+executes an original simulation test file against CASA and the public native
+Python surfaces, retaining the original assertions. Supply `--test-file`,
+`--casatestdata` and `--out`; `--only` selects named cases. The report separates
+passes, failures and skips. `--exercise-skipped` also runs disabled bodies
+and returns failure if any still skip or fail; documented native counterparts
+remain separate from these raw upstream outcomes.
+
 **simobserve.** `cargo nextest run -p casa-simulation --test simobserve` runs
 the task end to end on a small array without CASA. Its agreement with CASA
 6.7.6's task is `tools/simulation/simobserve_parity.py`, run under CASA's
