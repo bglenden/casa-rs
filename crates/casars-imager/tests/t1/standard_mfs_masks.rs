@@ -95,6 +95,24 @@ fn mem_uses_the_support_in_a_user_mask_image() {
         );
     }
     let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let [x, y] = [px - 6, py - 6];
+    mask.put_slice(
+        &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), -1.0),
+        &[x, y, 0, 0],
+    )
+    .unwrap();
+    mask.save().unwrap();
+    drop(mask);
+    let (_, signed) = observation.image("mem-mask-signed", controls.clone());
+    let support = &signed.get(".mask").pixels;
+    assert_eq!(support[[x, y]], 0.0, "exclude a negative mask pixel");
+    assert_eq!(
+        support[[x + 1, y]],
+        1.0,
+        "retain the neighboring positive pixel"
+    );
+
+    let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
     let reference = mask.coordinates().coordinate(0).reference_pixel();
     mask.set_reference_pixel(0, reference[0] + 0.5).unwrap();
     mask.save().unwrap();

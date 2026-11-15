@@ -39,7 +39,7 @@ pub(super) enum DomainMask {
     FullPlane,
     /// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
     Boxes(Vec<[i64; 4]>),
-    /// The non-zero pixels of a CASA image, reprojected onto the domain and
+    /// The positive pixels of a CASA image, reprojected onto the domain and
     /// matched to its planes ([`super::mask_image`]).
     Image {
         /// The supplied CASA mask image.

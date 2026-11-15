@@ -22,7 +22,7 @@
 //!
 //! Each plane is reprojected onto the domain's direction grid through one
 //! pixel map the planes share ([`casa_imaging_deconvolution::MaskReprojection`]); a plane's
-//! support is its finite, non-zero pixels valid in the image's default
+//! support is its finite, positive pixels valid in the image's default
 //! pixel mask.
 
 use std::path::Path;
@@ -339,7 +339,7 @@ fn mask_axes(shape: &[usize], coordinates: &CoordinateSystem) -> Result<MaskAxes
 }
 
 /// The support of the direction plane of `image` at `start` of `shape`
-/// (one pixel along every other axis): its finite, non-zero pixels valid in
+/// (one pixel along every other axis): its finite, positive pixels valid in
 /// the default pixel mask, x-major. The plane's values, in index order, run
 /// over x with y fastest, whatever axes lie between.
 fn plane_support<T>(
@@ -354,7 +354,7 @@ where
     let mask = image.get_mask_slice(start, shape, &vec![1; shape.len()])?;
     let set = |value: &T| {
         let value: f64 = (*value).into();
-        value.is_finite() && value != 0.0
+        value.is_finite() && value > 0.0
     };
     Ok(match mask {
         Some(mask) => values
