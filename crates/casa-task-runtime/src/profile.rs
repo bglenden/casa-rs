@@ -1074,6 +1074,33 @@ imsize = 256
     }
 
     #[test]
+    fn stale_tclean_field_files_are_refused_before_none_is_interpreted() {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let stale = parse_profile(
+            r#"[casars]
+format = 1
+surface = "tclean"
+kind = "task"
+contract = 41
+
+[parameters]
+vis = ["first.ms", "second.ms"]
+imagename = "output"
+field = ["none", "0"]
+"#,
+        )
+        .unwrap();
+        let ProfileError::Diagnostics(diagnostics) =
+            resolve_profile(&stale, &bundle).expect_err("the old FIELD file must be recreated")
+        else {
+            panic!("expected a stale saved file");
+        };
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagnosticCode::UnsupportedContract);
+        assert!(diagnostics[0].message.contains("too old"));
+    }
+
+    #[test]
     fn every_supported_toml_value_shape_round_trips_deterministically() {
         let values = [
             ParameterValue::Bool(true),

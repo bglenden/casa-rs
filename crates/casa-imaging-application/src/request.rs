@@ -313,18 +313,16 @@ pub struct ImagingRequest {
 /// (CASA's `SynthesisParamsSelect`, one per MeasurementSet).
 ///
 /// Each selector is resolved against this MeasurementSet's own tables
-/// during compilation. `field`, `spw`, `uvrange` and `intent` are unset
-/// when blank or `none`; `scan`, `observation`, `antenna` and `timerange`
-/// keep their exact text and are unset only when exactly empty, so
-/// whitespace-only text and `none` reach the selector's refusal, as CASA's
-/// tclean refuses them.
+/// during compilation. `spw`, `uvrange` and `intent` are unset when blank
+/// or `none`. FIELD, scan, observation, antenna and time selectors keep
+/// their text and are unset when exactly empty.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct MeasurementSetSelection {
     /// The MeasurementSet.
     pub vis: PathBuf,
     /// FIELD IDs, ranges and comparisons, names, patterns or regexes.
     /// `None` selects every field.
-    #[serde(deserialize_with = "optional")]
+    #[serde(deserialize_with = "exact_selector")]
     pub field: Option<String>,
     /// CASA spectral-window selection, for example `0:1~30`.
     #[serde(deserialize_with = "optional")]

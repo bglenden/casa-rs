@@ -2,7 +2,7 @@
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 41
+contract = 42
 
 [parameters]
 vis = ["representative-continuum.ms"]

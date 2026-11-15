@@ -46,6 +46,7 @@ CASA behaviours casa-rs does not follow:
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
 [a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
 [a TOPO cube's cache-dependent endpoint selection](#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history),
+[an overflowing FIELD ID](#an-overflowing-field-id-can-select-field-zero),
 [a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
 [the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
 [multiscale on an off-centre PSF](#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre),
@@ -5837,3 +5838,13 @@ single-dish task consistently grids autocorrelations, including when the
 antenna parameter is empty. A cross-correlation is not a total-power
 spectrum. This follows the approved core's autocorrelations-only decision;
 interferometric imaging remains the separate tclean operator.
+
+## An overflowing FIELD ID can select field zero
+
+CASA's `MSFieldGram.yy` converts decimal FIELD ID tokens using `atoi`.
+On the two-field selection fixture, stock CASA 6.7.6.14 reads the 322
+rows of FIELD_ID 0 for `field='4294967296'`, which exceeds the column's
+signed 32-bit range. Native tclean rejects an overflowing ID before
+looking it up in FIELD, so it cannot select an unrelated field.
+[Issue #54](https://github.com/bglenden/casa-rs/issues/54) and
+[the casacore FIELD grammar](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.yy).

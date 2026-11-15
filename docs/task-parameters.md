@@ -29,7 +29,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 41
+contract = 42
 
 [parameters]
 vis = "data/target.ms"

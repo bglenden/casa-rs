@@ -818,6 +818,34 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.field",
+      "semantic_revision": 3,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA field selector, one per MeasurementSet or one for all",
+        "details": "Preserves each selector's text for the task's FIELD grammar. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "0",
+          "calibrator",
+          "0~2"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.intent",
       "semantic_revision": 1,
       "casa_name": "intent",

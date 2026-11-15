@@ -7808,7 +7808,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 41,
+      "contract_version": 42,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -7873,8 +7873,8 @@
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 2},
-          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 consumers remain unchanged."},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 3},
+          "reviewed_homonym": {"review_id": "#980", "reason": "tclean passes the exact FIELD text through to its selection grammar. Other tasks keep their field normalization."},
           "order": 2,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -27346,7 +27346,7 @@
               "group": "Imaging"
             }
           },
-          "reviewed_homonym": null,
+          "reviewed_homonym": {"review_id": "#54", "reason": "This task uses the catalogue field normalization for its default and selector text."},
           "unimplemented": {
             "issue": 938,
             "equivalent": []

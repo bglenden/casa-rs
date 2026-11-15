@@ -447,7 +447,7 @@ mod tests {
         assert!(catalog.surface("imager").is_none());
         assert!(builtin_surface_bundle("imager").is_err());
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 41);
+        assert_eq!(surface.contract_version(), 42);
         assert_eq!(surface.bindings().len(), 114);
         for name in ["scan", "observation", "antenna", "timerange"] {
             let binding = surface
