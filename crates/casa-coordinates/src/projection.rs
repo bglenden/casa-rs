@@ -223,7 +223,7 @@ impl Projection {
     /// With μ = γ = 0, the AZP radius is `cos(θ)/sin(θ)` and the
     /// tilt terms vanish (Calabretta & Greisen 2002, §5.1.1). That is
     /// the gnomonic map, with the original AZP name in the coordinate.
-    fn require_default_azp(&self) -> Result<(), CoordinateError> {
+    pub(crate) fn require_default_azp(&self) -> Result<(), CoordinateError> {
         if self.parameters.iter().any(|&value| value != 0.0) {
             return Err(CoordinateError::ConversionFailed(
                 "AZP requires the zero projection parameters written by tclean".into(),
