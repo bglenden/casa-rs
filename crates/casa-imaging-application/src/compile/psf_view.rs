@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The single-term mosaic's separately centred PSF (CASA task_tclean.py).
+//! The mosaic's separately centred PSF family (CASA task_tclean.py).
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem};
 use casa_images::{PagedImage, RegridTemplate};

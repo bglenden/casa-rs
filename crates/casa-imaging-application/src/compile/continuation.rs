@@ -101,12 +101,26 @@ fn read(
 fn check_restart_grid(
     path: &Path,
     suffix: &str,
-    template: &RegridTemplate,
+    (template, taylor_psf): (&RegridTemplate, &mut Option<RegridTemplate>),
     request: &ImagingRequest,
     domain: &PreparedImageDomain,
     context: &RunContext,
     surveyed: Option<&Surveyed<'_>>,
 ) -> Result<Option<CoordinateSystem>, PrepareError> {
+    if suffix.starts_with("psf.tt") && request.supports_separate_psf() {
+        if let Some(grid) = taylor_psf {
+            return restart::check_grid(path, suffix, grid, None);
+        }
+        let coordinates = restart::check_grid(path, suffix, template, Some(domain.direction))?;
+        *taylor_psf = Some(RegridTemplate {
+            coordinates: coordinates
+                .as_ref()
+                .unwrap_or(&template.coordinates)
+                .clone(),
+            shape: template.shape.clone(),
+        });
+        return Ok(coordinates);
+    }
     if suffix == "psf" && request.supports_separate_psf() {
         if request.specmode == crate::SpecMode::Mfs {
             return restart::check_grid(path, suffix, template, Some(domain.direction));
@@ -153,6 +167,7 @@ fn read_domain(
         coordinates: domain.coordinates.clone(),
         shape: vec![nx, ny, polarizations, planes],
     };
+    let mut taylor_psf = None;
     for path in restart::continuation_products(request, &domain.output)? {
         let suffix = restart::suffix(&domain.output, &path);
         if mvc_start.is_some() && suffix != "mask" && !restart::mvc_cube_product(&suffix) {
@@ -163,7 +178,13 @@ fn read_domain(
             None
         } else {
             check_restart_grid(
-                &path, &suffix, &template, request, domain, context, surveyed,
+                &path,
+                &suffix,
+                (&template, &mut taylor_psf),
+                request,
+                domain,
+                context,
+                surveyed,
             )?
         };
         if request.calcpsf

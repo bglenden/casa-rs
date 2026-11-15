@@ -207,7 +207,7 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 
 /// Only mosaic gridders use a separate PSF centre when they form the PSF.
 #[test]
-fn the_psf_phase_centre_is_used_by_single_term_mosaics() {
+fn the_psf_phase_centre_is_used_by_supported_mosaics() {
     let centre = "J2000 0rad 0rad";
     for gridder in ["mosaic", "mosaicft", "ftmosaic"] {
         let mfs = request(json!({"gridder": gridder, "psfphasecenter": centre}));
@@ -216,8 +216,12 @@ fn the_psf_phase_centre_is_used_by_single_term_mosaics() {
             request(json!({"gridder": gridder, "specmode": "cube", "psfphasecenter": centre}));
         assert_eq!(cube.psfphasecenter.as_deref(), Some(centre));
         let taylor =
-            refusal(json!({"gridder": gridder, "deconvolver": "mtmfs", "psfphasecenter": centre}));
-        assert!(taylor.to_string().contains("#1062"), "{taylor}");
+            request(json!({"gridder": gridder, "deconvolver": "mtmfs", "psfphasecenter": centre}));
+        assert_eq!(taylor.psfphasecenter.as_deref(), Some(centre));
+        let one_term = refusal(json!({
+            "gridder": gridder, "deconvolver": "mtmfs", "nterms": 1, "psfphasecenter": centre
+        }));
+        assert!(one_term.to_string().contains("#1062"), "{one_term}");
     }
     assert_eq!(
         request(json!({"gridder": "standard", "psfphasecenter": centre})).psfphasecenter,

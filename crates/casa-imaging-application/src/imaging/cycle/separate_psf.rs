@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Grid only the separate mosaic PSF with the ordinary measurement operator.
+//! Grid only the separate mosaic PSF family with the ordinary measurement operator.
 
 use std::{cell::OnceCell, mem};
 
@@ -123,15 +123,16 @@ pub(crate) fn form(
             reservation: run.retained,
         }));
     }
-    let polarizations = problem.reconstruction().polarization().coordinates().len();
-    let [nx, ny] = domain.shape().pixels();
-    let samples = nx * ny * polarizations;
-    let mut psf = admit_samples(samples, (&runtime.host, &runtime.resource_policy))?;
-    for pol in 0..polarizations {
-        let plane = normal.read_plane(0, 0, pol)?;
-        psf.value
-            .extend(plane.read_psf()?.iter().map(|value| value.re as f32));
-    }
+    let window = normal.read_window(0..1)?;
+    let samples = window
+        .normal_approximation()
+        .complex()
+        .ok_or(casa_imaging_deconvolution::NormalStateError::ProblemMismatch)?;
+    // Continuum keeps one PSF, or every signed Taylor normal moment in
+    // term-major and polarization-minor order.
+    let mut psf = admit_samples(samples.len(), (&runtime.host, &runtime.resource_policy))?;
+    psf.value
+        .extend(samples.iter().map(|value| value.re as f32));
     Ok(SeparatePsf::Continuum(psf))
 }
 
