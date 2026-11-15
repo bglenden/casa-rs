@@ -137,13 +137,14 @@ fn numeric_selector_width_does_not_grow_the_heap() {
     assert_eq!(ms.field().unwrap().row_count(), 1);
     ms.resolve_field_selector("0~1").expect("warm metadata");
     let rows = [FieldSelectorRow {
-        name: "only",
-        code: None,
+        // Both extra numeric labels are selected by the narrow and wide spans.
+        name: "2",
+        code: Some("3"),
         flagged: false,
     }];
     for (narrow, wide) in [
-        ("0~1", "0~2147483647"),
-        ("0~1,0~1,0", "0~2147483647,0~2147483647,0"),
+        ("0~3", "0~2147483647"),
+        ("0~3,0~3,0", "0~2147483647,0~2147483647,0"),
     ] {
         let mut measured = [(0, 0, 0, 0, 0); 2];
         for (index, selector) in [narrow, wide].into_iter().enumerate() {

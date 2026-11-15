@@ -540,10 +540,20 @@ mod tests {
     fn cli_values_are_normalized_through_the_binding_concept() {
         let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
         let field = ensure_parameter_binding(&bundle, "field").unwrap();
-        assert_eq!(
-            validated_cli_value(&bundle, field, " 0, 2 ").unwrap(),
-            ParameterValue::String("0,2".to_string())
-        );
+        for (supplied, expected) in [
+            (" 0, 2 ", "0,2"),
+            (" 0 ~ 2 , 3 ", "0~2,3"),
+            (
+                r#" target  East , "G55  West" "#,
+                r#"target  East,"G55  West""#,
+            ),
+        ] {
+            assert_eq!(
+                validated_cli_value(&bundle, field, supplied).unwrap(),
+                ParameterValue::String(expected.to_string()),
+                "{supplied:?}"
+            );
+        }
         assert!(
             validated_cli_value(&bundle, field, "  ")
                 .unwrap_err()

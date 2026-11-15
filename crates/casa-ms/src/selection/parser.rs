@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal selector parsing and TaQL construction for listobs-style selection.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use casa_types::quanta::MvTime;
 
@@ -68,7 +68,7 @@ pub(crate) fn selection_from_options(
 pub struct FieldSelectorRow<'a> {
     /// The stored name; the selector compares it trimmed.
     pub name: &'a str,
-    /// The stored code. A quoted pattern uses it when no name matches.
+    /// The stored CODE, used as a fallback when no NAME matches.
     pub code: Option<&'a str>,
     /// Whether the row is flagged: a flagged row matches no name or pattern,
     /// following `MSFieldIndex`, though a numeric ID still selects it.
@@ -112,38 +112,34 @@ impl MeasurementSet {
     ///
     /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
     /// no FIELD row, or a nonempty selection resolving to no existing fields.
-    /// Slash-delimited regular expressions, comparisons, escaped or
-    /// concatenated quoted patterns, and bare CODE/numeric-name fallback
-    /// remain outside this resolver's scope.
-    /// Numeric IDs are bounded by the FIELD row count before enumeration.
+    /// Slash-delimited regular expressions, comparisons, and escaped or
+    /// concatenated quoted patterns remain outside this resolver's scope.
+    /// An out-of-range numeric ID tries its decimal text as a name or code.
+    /// Only the FIELD rows themselves bound numeric range enumeration.
     /// Name matching trims stored names and
     /// excludes flagged FIELD rows, following `MSFieldIndex`.
     pub fn resolve_field_selector(&self, value: &str) -> MsResult<Vec<i32>> {
         if value.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let rows = field_selector_rows(self, value.contains('"'))?;
+        let rows = field_selector_rows(self)?;
         resolve_field_selector_rows(&borrow_field_rows(&rows), value)
     }
 }
 
-/// The FIELD table's metadata in row order. Only quoted patterns need CODE.
-fn field_selector_rows(
-    ms: &MeasurementSet,
-    need_codes: bool,
-) -> MsResult<Vec<(String, Option<String>, bool)>> {
+/// The FIELD table's metadata in row order.
+fn field_selector_rows(ms: &MeasurementSet) -> MsResult<Vec<(String, Option<String>, bool)>> {
     let table = ms
         .subtable(SubtableId::Field)
         .ok_or_else(|| MsError::MissingSubtable("FIELD".to_string()))?;
     let field = MsField::new(table);
     (0..field.row_count())
         .map(|row| {
-            let code = if need_codes {
-                optional_string(table, row, "CODE")?
-            } else {
-                None
-            };
-            Ok((field.name(row)?, code, field.flag_row(row)?))
+            Ok((
+                field.name(row)?,
+                optional_string(table, row, "CODE")?,
+                field.flag_row(row)?,
+            ))
         })
         .collect()
 }
@@ -164,7 +160,7 @@ fn resolve_field_predicate(ms: &MeasurementSet, value: &str) -> MsResult<Option<
     if value.trim().is_empty() {
         return Ok(None);
     }
-    let rows = field_selector_rows(ms, value.contains('"'))?;
+    let rows = field_selector_rows(ms)?;
     resolve_field_predicate_rows(&borrow_field_rows(&rows), value).map(Some)
 }
 
@@ -174,21 +170,8 @@ fn resolve_field_predicate_rows(
     fields: &[FieldSelectorRow<'_>],
     value: &str,
 ) -> MsResult<Vec<i32>> {
-    let (mut ids, names) = parse_field_selector(fields, value)?;
-    if !names.is_empty() {
-        let names = names.iter().map(String::as_str).collect::<Vec<_>>();
-        ids.extend(resolve_field_names(fields, &names)?);
-    }
-    Ok(dedup_i32(ids))
-}
-
-fn parse_field_selector(
-    fields: &[FieldSelectorRow<'_>],
-    value: &str,
-) -> MsResult<(Vec<i32>, Vec<String>)> {
     let mut ranges = Vec::new();
     let mut ids = Vec::new();
-    let mut names = Vec::new();
     let mut quoted = false;
     let parts = value.split(|character| {
         if character == '"' {
@@ -215,7 +198,7 @@ fn parse_field_selector(
                     "escaped or adjacent quoted patterns are not supported in FIELD selection (#54): {part:?}"
                 )));
             }
-            ids.extend(resolve_quoted_field_pattern(fields, pattern)?);
+            ids.extend(resolve_field_pattern(fields, pattern)?);
             continue;
         }
         if part.contains(['"', '\'', '/', '<', '>', '?', '[', ']', '{', '}']) {
@@ -224,13 +207,7 @@ fn parse_field_selector(
             )));
         }
         if part.contains('*') {
-            let matched = collect_matching_field_names(fields, part);
-            if matched.is_empty() {
-                return Err(MsError::VersionError(format!(
-                    "field selector {part:?} did not match any field names"
-                )));
-            }
-            names.extend(matched);
+            ids.extend(resolve_field_pattern(fields, part)?);
             continue;
         }
         let numeric = parse_numeric_range_endpoints(part)
@@ -244,51 +221,105 @@ fn parse_field_selector(
             ranges.push((start, end));
             continue;
         }
-        names.push(part.to_string());
-    }
-    if !ranges.is_empty() {
-        let count = fields.len();
-        if count > 0 {
-            let last = i32::try_from(count - 1).unwrap_or(i32::MAX);
-            // Merge before enumeration: neither width nor overlapping terms
-            // can materialize more numeric IDs than the FIELD table contains.
-            for (start, end) in canonical_numeric_ranges(ranges) {
-                ids.extend(start..=end.min(last));
-            }
+        let matching =
+            field_ids_by_name_or_code(fields, |name| name == part, |code| code.trim() == part);
+        if matching.is_empty() {
+            return Err(MsError::VersionError(format!(
+                "field selector name {part:?} did not match any FIELD rows"
+            )));
         }
+        ids.extend(matching);
     }
-    Ok((ids, dedup_strings(names)))
+    append_numeric_fields(fields, ranges, &mut ids);
+    Ok(dedup_i32(ids))
 }
 
-/// CASA's QSTRING looks for unflagged, full NAME matches, then CODE matches.
-fn resolve_quoted_field_pattern(
+/// MSFieldIndex keeps an in-range ID. For other numbers, it uses the first
+/// unflagged decimal NAME, then the first unflagged decimal CODE. Search the
+/// stored labels in the requested intervals, so their numeric width does
+/// not control how much work the fallback does.
+fn append_numeric_fields(
     fields: &[FieldSelectorRow<'_>],
-    pattern: &str,
-) -> MsResult<Vec<i32>> {
-    let matcher = FullMatch::compile_pattern(pattern).map_err(MsError::InvalidInput)?;
-    let mut ids: Vec<i32> = fields
+    ranges: Vec<(i32, i32)>,
+    ids: &mut Vec<i32>,
+) {
+    let Some(last) = fields.len().checked_sub(1) else {
+        return;
+    };
+    let last = i32::try_from(last).unwrap_or(i32::MAX);
+    let ranges = canonical_numeric_ranges(ranges);
+    for &(start, end) in &ranges {
+        ids.extend(start..=end.min(last));
+    }
+    if ranges.last().is_none_or(|&(_, end)| end <= last) {
+        return;
+    }
+
+    let rows = fields
         .iter()
         .enumerate()
-        .filter(|(_, field)| !field.flagged && matcher.matches(field.name.trim()))
+        .filter(|(_, field)| !field.flagged);
+    let names = rows.clone().map(|(row, field)| (row, field.name.trim()));
+    let codes = rows.filter_map(|(row, field)| Some((row, field.code?.trim())));
+    let mut aliases = BTreeMap::new();
+    for (row, text) in names.chain(codes) {
+        if !text.bytes().all(|byte| byte.is_ascii_digit())
+            || (text.len() > 1 && text.starts_with('0'))
+        {
+            continue;
+        }
+        let Ok(number) = text.parse::<i32>() else {
+            continue;
+        };
+        if number <= last {
+            continue;
+        }
+        let index = ranges.partition_point(|&(_, end)| end < number);
+        if ranges.get(index).is_some_and(|&(start, _)| start <= number) {
+            aliases.entry(number).or_insert(row as i32);
+        }
+    }
+    ids.extend(aliases.into_values());
+}
+
+/// A FIELD pattern matches a complete trimmed NAME or, if none match,
+/// a complete CODE as stored.
+fn resolve_field_pattern(fields: &[FieldSelectorRow<'_>], pattern: &str) -> MsResult<Vec<i32>> {
+    let matcher = FullMatch::compile_pattern(pattern).map_err(MsError::InvalidInput)?;
+    let ids = field_ids_by_name_or_code(
+        fields,
+        |name| matcher.matches(name),
+        |code| matcher.matches(code),
+    );
+    if ids.is_empty() {
+        return Err(MsError::VersionError(format!(
+            "field selector pattern {pattern:?} did not match any field names or codes"
+        )));
+    }
+    Ok(ids)
+}
+
+fn field_ids_by_name_or_code(
+    fields: &[FieldSelectorRow<'_>],
+    matches_name: impl Fn(&str) -> bool,
+    matches_code: impl Fn(&str) -> bool,
+) -> Vec<i32> {
+    let rows = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| !field.flagged);
+    let mut ids: Vec<_> = rows
+        .clone()
+        .filter(|(_, field)| matches_name(field.name.trim()))
         .map(|(row, _)| row as i32)
         .collect();
     if ids.is_empty() {
         ids.extend(
-            fields
-                .iter()
-                .enumerate()
-                .filter(|(_, field)| {
-                    !field.flagged && field.code.is_some_and(|code| matcher.matches(code))
-                })
+            rows.filter(|(_, field)| field.code.is_some_and(&matches_code))
                 .map(|(row, _)| row as i32),
         );
     }
-    if ids.is_empty() {
-        return Err(MsError::VersionError(format!(
-            "field selector pattern {pattern:?} did not match any FIELD rows"
-        )));
-    }
-    Ok(ids)
+    ids
 }
 
 fn apply_antenna_selector(
@@ -805,33 +836,6 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
     Ok(if value.len() < 3 { 2000 + year } else { year })
 }
 
-fn resolve_field_names(fields: &[FieldSelectorRow<'_>], names: &[&str]) -> MsResult<Vec<i32>> {
-    let mut ids = Vec::new();
-    for name in names {
-        let start = ids.len();
-        for (row, field) in fields.iter().enumerate() {
-            if !field.flagged && field.name.trim() == *name {
-                ids.push(row as i32);
-            }
-        }
-        if ids.len() == start {
-            return Err(MsError::VersionError(format!(
-                "field selector name {name:?} did not match any FIELD rows"
-            )));
-        }
-    }
-    Ok(dedup_i32(ids))
-}
-
-fn collect_matching_field_names(fields: &[FieldSelectorRow<'_>], pattern: &str) -> Vec<String> {
-    let matches = fields
-        .iter()
-        .filter(|field| !field.flagged && matches_simple_glob(pattern, field.name.trim()))
-        .map(|field| field.name.trim().to_string())
-        .collect();
-    dedup_strings(matches)
-}
-
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
     let modes = (0..state.row_count())
@@ -1131,14 +1135,6 @@ fn resolve_antenna_ref(ms: &MeasurementSet, value: &str) -> MsResult<i32> {
     Err(MsError::VersionError(format!(
         "antenna selector {value:?} did not match any ANTENNA rows"
     )))
-}
-
-fn dedup_strings(values: Vec<String>) -> Vec<String> {
-    values
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 pub(super) fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
