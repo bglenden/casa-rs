@@ -296,3 +296,84 @@ fn bare_field_codes_and_numeric_aliases_read_casas_physical_rows() {
         }
     }
 }
+
+#[test]
+fn field_regexes_and_comparisons_read_casas_physical_rows() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let ordinary = [
+        ("West, field", "phase", false),
+        ("EAST  target", "  Cal, code  ", false),
+    ];
+    let conflict = [ordinary[0], (ordinary[1].0, ordinary[0].0, false)];
+    let flagged = [(ordinary[0].0, ordinary[0].1, true), conflict[1]];
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    let groups = [
+        (
+            ordinary,
+            &[
+                ("/West, field/", Some("field_id")),
+                ("/EAST  (target|cal)/", Some("field_glob")),
+                ("/(West, field|EAST  target)/", Some("all")),
+                ("/  Cal, code  /", Some("field_glob")),
+                ("/Cal, code/", None),
+                ("/West/", None),
+                ("/west, field/", None),
+                ("/West, field/ ", None),
+                ("0, /EAST  target/", None),
+                ("/West, field/,1", Some("all")),
+                ("(/West, field/,>0)", Some("all")),
+                ("(0, 1)", Some("all")),
+                (r#"(0,"EAST  target")"#, Some("all")),
+                (r#"(0, "EAST  target")"#, None),
+                (r#"(<1,"EAST  target" )"#, None),
+                (r#"(/West, field/, "EAST  target")"#, None),
+                ("<1", Some("field_id")),
+                (">0", Some("field_glob")),
+                (">0&<2", Some("field_glob")),
+                (">0 &< 2", Some("field_glob")),
+                (">0&<1", None),
+                ("1,>0&<1", None),
+                (">0& <2", None),
+                (">=0", None),
+                ("<2&>0", None),
+                (" <1 ", None),
+                ("0, >0", None),
+                ("/West, field", None),
+                ("(/West, field/,>0,)", None),
+                ("((0,1))", None),
+                ("<+1", None),
+            ][..],
+        ),
+        (conflict, &[("/West, field/", Some("field_id"))][..]),
+        (
+            flagged,
+            &[
+                ("/West, field/", Some("field_glob")),
+                ("/phase/", None),
+                ("<1", None),
+                ("0,>0", Some("all")),
+                (">0", Some("field_glob")),
+                ("<2", Some("field_glob")),
+            ][..],
+        ),
+    ];
+    for (group, (metadata, cases)) in groups.into_iter().enumerate() {
+        rewrite_fields(&vis, metadata);
+        for &(field, expected) in cases {
+            let selection = request(&vis, root.path().join("rows"), &json!({"field": field}));
+            let result = row_pointing(&selection, &imaging::context(selection.resource_policy()));
+            if let Some(case) = expected {
+                let rows =
+                    result.unwrap_or_else(|error| panic!("group {group}, {field:?}: {error}"));
+                assert_eq!(
+                    rows.into_keys().collect::<Vec<_>>(),
+                    physical_rows(&oracle["cases"][case]),
+                    "group {group}, {field:?}"
+                );
+            } else {
+                assert!(result.is_err(), "CASA refuses group {group}, {field:?}");
+            }
+        }
+    }
+}

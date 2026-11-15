@@ -478,8 +478,7 @@ fn normalize_project_path(value: &str) -> Result<String, NormalizationError> {
 /// Preserve the spaces in a bare NAME or a quoted pattern, and still
 /// trim around FIELD list and range separators.
 fn normalize_field_selector(value: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
+    if value.trim().is_empty() {
         return "none".to_owned();
     }
     let mut quoted = false;
@@ -491,6 +490,11 @@ fn normalize_field_selector(value: &str) -> String {
     });
     let mut normalized = String::with_capacity(value.len());
     for (index, part) in parts.enumerate() {
+        // Spaces next to a regex delimiter or comparison operator can
+        // invalidate a FIELD expression. Leave these lists to the parser.
+        if part.trim_start().starts_with(['/', '<', '>', '(']) {
+            return value.to_owned();
+        }
         if index > 0 {
             normalized.push(',');
         }
