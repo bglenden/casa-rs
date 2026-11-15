@@ -2,7 +2,7 @@
 
 //! Standard-gridder MFS with point, multiscale and maximum-entropy solvers.
 
-use casars_imager::ImagerRunReport;
+use casars_imager::{ImagerCleanStopReason, ImagerRunReport};
 use serde_json::{Value, json};
 
 use super::fixture::{
@@ -365,4 +365,38 @@ fn mem_restart_reads_or_reforms_the_requested_normal_images() {
             "reform {suffix} from the observations"
         );
     }
+}
+
+#[test]
+fn mem_stops_at_the_noise_threshold_before_solving() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let mut controls = json!({
+        "deconvolver":"mem", "nsigma":0.01, "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (run, cleaned) = observation.image("mem-low-nsigma", controls.clone());
+    assert_eq!(run.actual_minor_iterations, 2);
+    assert!(
+        cleaned
+            .get(".model")
+            .pixels
+            .iter()
+            .any(|&value| value > 0.0)
+    );
+
+    controls["nsigma"] = json!(1e6);
+    let (run, stopped) = observation.image("mem-high-nsigma", controls);
+    assert_eq!(
+        run.clean_stop_reason,
+        Some(ImagerCleanStopReason::NsigmaThresholdReached),
+        "MEM observes the noise stop"
+    );
+    assert_eq!((run.actual_minor_iterations, run.major_cycles), (0, 1));
+    assert!(
+        stopped
+            .get(".model")
+            .pixels
+            .iter()
+            .all(|&value| value == 0.0)
+    );
 }
