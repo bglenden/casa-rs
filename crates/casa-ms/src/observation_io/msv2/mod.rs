@@ -36,7 +36,7 @@ use casa_types::measures::{EpochRef, MjdHighPrec};
 
 use super::{OpenOptions, heap};
 use crate::{MeasurementSet, MsError};
-use index::{Grid, Index, ROWS_PER_CHUNK};
+use index::{Grid, Index, PartitionKey, ROWS_PER_CHUNK};
 pub use main_rows::MainRowKeys;
 
 /// The most rows [`Msv2Observation::grid`] reads at once.
@@ -308,7 +308,22 @@ impl Msv2Observation {
             .collect();
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
-        for (key, grid) in index.partitions {
+        let mut grids = index.partitions.into_iter();
+        let mut spectral_weights = false;
+        let mut remaining_in_weight_group = 0;
+        while let Some((key, grid)) = grids.next() {
+            if remaining_in_weight_group == 0 {
+                let later = if options.weight_spectrum_unsplit {
+                    grids.as_slice()
+                } else {
+                    &[]
+                };
+                let (row, siblings) = weight_probe_row(&key, &grid, later);
+                spectral_weights = has_content(main, "WEIGHT_SPECTRUM", row)?;
+                remaining_in_weight_group = siblings;
+            } else {
+                remaining_in_weight_group -= 1;
+            }
             let data_description_id = u32::try_from(key.data_description)
                 .ok()
                 .filter(|row| (*row as usize) < setups.len())
@@ -339,7 +354,6 @@ impl Msv2Observation {
                 setup.spectral_window_id as i32,
             )?;
             let feeds = [feed(key.feeds[0])?, feed(key.feeds[1])?];
-            let spectral_weights = has_content(main, "WEIGHT_SPECTRUM", grid.first_time_row())?;
             // A state or processor a row names that its table does not hold
             // (CASA's simulator writes PROCESSOR_ID 0 without a row) has no
             // entry.
@@ -1221,6 +1235,33 @@ fn weight_source(
             }
         }
     }
+}
+
+/// The unsplit grid's first row by time and then physical row number, and
+/// the number of immediately following grids that share that probe.
+fn weight_probe_row(
+    key: &PartitionKey,
+    grid: &Grid,
+    later: &[(PartitionKey, Grid)],
+) -> (usize, usize) {
+    let mut first = (grid.times_s[0], grid.first_time_row());
+    let mut siblings = 0;
+    for (_, sibling) in later
+        .iter()
+        .take_while(|(other, _)| key.same_unsplit_partition(other))
+    {
+        let candidate = (sibling.times_s[0], sibling.first_time_row());
+        if candidate
+            .0
+            .total_cmp(&first.0)
+            .then(candidate.1.cmp(&first.1))
+            .is_lt()
+        {
+            first = candidate;
+        }
+        siblings += 1;
+    }
+    (first.1, siblings)
 }
 
 /// Whether MAIN's `column` holds content at `row`, as casacore's

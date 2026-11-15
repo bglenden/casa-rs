@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
-use casa_ms::observation_io::{Msv2Observation, Msv4Observation, OpenOptions};
+use casa_ms::observation_io::{Msv2Observation, Msv4Observation, OpenOptions, PartitionScheme};
 use casa_observation::{Catalogue, Observation, ObservationError};
 
 use super::PrepareError;
@@ -59,6 +59,7 @@ impl OpenedStore {
 /// with the charge of what it holds while it is open.
 pub(crate) fn open_observation(
     path: &Path,
+    partition_scheme: PartitionScheme,
     (host, policy): (&HostResources, &ResourcePolicy),
 ) -> Result<Admitted<OpenedStore>, PrepareError> {
     if path.join("zarr.json").is_file() {
@@ -82,6 +83,8 @@ pub(crate) fn open_observation(
             Msv2Observation::open_granted(
                 path,
                 &OpenOptions {
+                    partition_scheme,
+                    weight_spectrum_unsplit: partition_scheme.fields,
                     visibility_frequency_frame: true,
                     ..OpenOptions::default()
                 },

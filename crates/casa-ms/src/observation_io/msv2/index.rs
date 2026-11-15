@@ -160,6 +160,18 @@ pub(super) struct PartitionKey {
     pub(super) scan: Option<i32>,
 }
 
+impl PartitionKey {
+    /// Whether the keys differ only by the optional field and scan splits.
+    /// These groups are contiguous in key order.
+    pub(super) fn same_unsplit_partition(&self, other: &Self) -> bool {
+        self.data_description == other.data_description
+            && self.obs_mode == other.obs_mode
+            && self.observation == other.observation
+            && self.ephemeris == other.ephemeris
+            && self.feeds == other.feeds
+    }
+}
+
 /// A row's [`PartitionKey`] with its `OBS_MODE` as the mode's rank among
 /// the distinct modes: it orders as the key does and costs no allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
