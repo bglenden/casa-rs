@@ -1103,7 +1103,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>,
 <a href="#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite">continuum <code>briggsabs</code> at robust 0 and noise 0</a>,
 <a href="#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask"><code>nsigma</code> with <code>fastnoise=False</code> and no mask</a>,
-<a href="#a-mosaic-drops-negative-taylor-moments-when-cross-hands-are-empty">signed Taylor moments with empty mosaic cross-hands</a>,
+<a href="#mosaic-and-w-projection-drop-negative-taylor-moments-with-empty-cross-hands">signed Taylor moments with empty cross-hands</a>,
 <a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision">single-precision Taylor weights</a>,
 <a href="#aw-projection-can-use-another-antenna-groups-pointing">AW baseline pointing groups</a>,
 <a href="#a-mosaics-weight-image-is-transformed-in-single-precision">a mosaic's single-precision weight image</a>,
@@ -6756,14 +6756,15 @@ The frozen PCO checks verify both offset signs using CASA's finite
 world-to-pixel direction and compare ordinary pixels in both directions.
 The projection and parameters remain CASA-readable and image products
 agree at the original tolerance. <a href="https://www.atnf.csiro.au/computing/software/wcs/wcslib-releases/wcslib-8.2.2.tar.bz2">WCSLIB 8.2.2 source</a></p>
-<h2 id="a-mosaic-drops-negative-taylor-moments-when-cross-hands-are-empty">A mosaic drops negative Taylor moments when cross-hands are empty<a class="headerlink" href="#a-mosaic-drops-negative-taylor-moments-when-cross-hands-are-empty" title="Permanent link">&para;</a></h2>
-<p>In CASA 6.7.6.14, <code>MosaicFT::getImage</code> checks <code>max(weights) == 0.0</code>
+<h2 id="mosaic-and-w-projection-drop-negative-taylor-moments-with-empty-cross-hands">Mosaic and W projection drop negative Taylor moments with empty cross-hands<a class="headerlink" href="#mosaic-and-w-projection-drop-negative-taylor-moments-with-empty-cross-hands" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>MosaicFT::getImage</code> and <code>WProjectFT::getImage</code> check
+<code>max(weights) == 0.0</code>
 to decide whether all gridded weights are zero. The imaging weights start
 nonnegative, but <code>MultiTermFTNew</code> multiplies by a signed spectral offset
 for odd Taylor terms. Negative parallel-hand sums and zero sums on
 unobserved cross-hands have a maximum of zero. This skips the FFT and
-drops the whole dirty or PSF moment. The signed sum of weights and the
-separate sensitivity image still reach disk.</p>
+drops the whole dirty or PSF moment. The signed sum of weights still reaches disk, as does the separate
+sensitivity image in a mosaic.</p>
 <p>For <code>mtmfs_polarized.mosaic_IQUV</code> (<code>refim_mawproject.ms</code>, SPW 1,
 two terms), stock CASA writes a zero <code>.psf.tt1</code> and <code>.residual.tt1</code>
 despite a negative <code>.sumwt.tt1</code>. The same request in IV retains both
@@ -6773,7 +6774,12 @@ same behavior also occurs across SPWs 0, 1 and 2, where the IV run has
 usable frequency coverage and the central PSF first moment is about
 −0.0196. A reference frequency of 1.4 GHz makes the total first moment
 positive on those three SPWs and the stock IQUV run retains it.</p>
-<p>casa-rs keeps nonzero signed moments through the normal mosaic path, so
+<p>The same SPW 1 request with <code>gridder='wproject', wprojplanes=16</code> drops
+the odd PSF and residual moments in IQUV and retains them in IV. The
+native I and V Taylor products and controller agree with that stock IV
+run. With four observed correlations, the W-projection IQUV control on
+<code>refim_point_linRL.ms</code> agrees directly with stock CASA.</p>
+<p>casa-rs keeps nonzero signed moments for both gridders, so
 requesting additional empty Stokes planes cannot erase valid data. Its
 I and V products agree with stock CASA's IV controls, and it leaves Q and
 U data and models zero. The shared PSFs, sensitivities and sum-of-weights
