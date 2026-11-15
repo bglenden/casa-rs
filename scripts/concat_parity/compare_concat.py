@@ -108,7 +108,10 @@ def main_rows(path):
 def cells(path, name, row_list):
     tb.open(path)
     try:
-        return [tb.getcell(name, row) for row in row_list]
+        # These core cases have one cell shape per column. Read each column
+        # once instead of crossing the Python/C++ boundary per MS row.
+        values = tb.getcol(name)
+        return list(np.moveaxis(values[..., row_list], -1, 0))
     finally:
         tb.close()
 
@@ -131,6 +134,12 @@ def subtable_content(ours, theirs, name):
             if name == "FEED":
                 order = sorted(range(tb.nrows()), key=lambda row: tuple(
                     values[key][row] for key in ["ANTENNA_ID", "FEED_ID", "SPECTRAL_WINDOW_ID", "TIME", "INTERVAL"]))
+                values = {column: [cells[row] for row in order] for column, cells in values.items()}
+            if name == "SOURCE":
+                # SOURCE rows describe an entity and window; their physical
+                # row order is not the SOURCE_ID that FIELD references.
+                order = sorted(range(tb.nrows()), key=lambda row: (
+                    str(values["NAME"][row]), int(values["SPECTRAL_WINDOW_ID"][row]), float(values["TIME"][row])))
                 values = {column: [cells[row] for row in order] for column, cells in values.items()}
             return values
         finally:
@@ -205,14 +214,26 @@ def compare(ours, theirs):
     flags = (cells(ours, "FLAG", ours_first), cells(theirs, "FLAG", theirs_first))
 
     def nrms(name):
-        if column(ours, name) is None or column(theirs, name) is None:
+        a, b = column(ours, name), column(theirs, name)
+        if a is None or b is None:
             return None
-        pair = (cells(ours, name, ours_first), cells(theirs, name, theirs_first))
-        difference = sum(float(np.sum(np.abs(a - b) ** 2)) for a, b in zip(*pair))
-        power = sum(float(np.sum(np.abs(b) ** 2)) for b in pair[1])
+        a, b = a[..., ours_first], b[..., theirs_first]
+        difference = float(np.sum(np.abs(a-b)**2, dtype=np.float64))
+        power = float(np.sum(np.abs(b)**2, dtype=np.float64))
         return (difference / power) ** 0.5 if power > 0 else difference
 
     data_columns = {name: nrms(name) for name in ["DATA", "CORRECTED_DATA", "MODEL_DATA"]}
+    scalar_differences = {}
+    for name in ["ARRAY_ID", "EXPOSURE", "FEED1", "FEED2", "FLAG_ROW", "INTERVAL", "STATE_ID", "TIME_CENTROID"]:
+        a, b = column(ours, name)[ours_first], column(theirs, name)[theirs_first]
+        scalar_differences[name] = float(np.max(np.abs(a.astype(float)-b.astype(float)), initial=0.0))
+    a, b = column(ours, "PROCESSOR_ID")[ours_first], column(theirs, "PROCESSOR_ID")[theirs_first]
+    our_processors, their_processors = rows(ours, "PROCESSOR"), rows(theirs, "PROCESSOR")
+    our_dangling_processors = int(np.count_nonzero(a >= our_processors))
+    a = np.where(a >= our_processors, -1, a)
+    dangling_processor_references = int(np.count_nonzero(b >= their_processors))
+    b = np.where(b >= their_processors, -1, b)
+    scalar_differences["PROCESSOR_ID"] = float(np.max(np.abs(a-b), initial=0.0))
     our_sigma = cells(ours, "SIGMA", ours_first)
     their_sigma = cells(theirs, "SIGMA", theirs_first)
     sigma_relative = max(
@@ -280,6 +301,9 @@ def compare(ours, theirs):
         "data_nrms": data_columns["DATA"],
         "data_columns_nrms": data_columns,
         "uncertainty_columns_nrms": {name: nrms(name) for name in ["WEIGHT", "SIGMA", "WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]},
+        "other_main_columns_max_abs": scalar_differences,
+        "casa_dangling_processor_references": dangling_processor_references,
+        "ours_dangling_processor_references": our_dangling_processors,
         "sigma_max_relative": sigma_relative,
         "flags_differ": sum(int(np.any(a != b)) for a, b in zip(*flags)),
         "weight_max_abs": float(weights),

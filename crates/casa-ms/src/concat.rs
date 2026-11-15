@@ -70,7 +70,7 @@ pub fn concat_task_schema_bundle() -> TaskProviderContract {
     )
 }
 
-/// The command-line host; all scientific work is in [`concat`].
+/// The command-line host; all scientific work is in [`concat()`].
 pub fn concat_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new_with_deferred_schema(
