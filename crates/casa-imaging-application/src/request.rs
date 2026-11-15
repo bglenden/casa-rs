@@ -30,6 +30,7 @@ use serde_json::Value;
 
 use beam::restoring_beam;
 use execution::{grid_precision, hogbom_iteration_mode, major_cycle_limit, normalization};
+use mask::{mask_boxes, mask_images};
 use uv_taper::uv_taper;
 
 /// One imaging run's parameters, as the catalog resolved them.
@@ -914,26 +915,6 @@ impl ImagingRequest {
         Ok(())
     }
 
-    /// Keep lists of two or more image masks within the compared geometry.
-    pub(crate) fn validate_mask_image_list(&self) -> Result<(), InvalidRequest> {
-        if self.mask_images.len() > 1
-            && (!self.mask_box.is_empty()
-                || self.mask_polygon.is_some()
-                || self.specmode != SpecMode::Mfs
-                || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
-                || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
-                || self.deconvolver != Deconvolver::Hogbom
-                || self.niter == 0
-                || self.outlierfile.is_some())
-        {
-            return Err(InvalidRequest {
-                parameters: "mask_image",
-                reason: "multiple mask images support standard Stokes I MFS Högbom cleaning without region masks or outliers (#823)",
-            });
-        }
-        Ok(())
-    }
-
     /// Guard the tested MEM subset at both the CASA reader and typed request.
     pub(crate) fn validate_mem_scope(&self) -> Result<(), InvalidRequest> {
         if self.deconvolver == Deconvolver::Mem
@@ -1168,16 +1149,6 @@ fn start_models<'de, D: Deserializer<'de>>(
     }
 }
 
-/// The native single mask path, or the list of paths resolved by tclean.
-fn mask_images<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<PathBuf>, D::Error> {
-    match Value::deserialize(deserializer)? {
-        value @ Value::Array(_) => Vec::<PathBuf>::deserialize(value).map_err(D::Error::custom),
-        value => optional::<_, PathBuf>(value)
-            .map(|path| path.into_iter().collect())
-            .map_err(D::Error::custom),
-    }
-}
-
 /// A selector's exact text, `None` only when it is exactly empty.
 fn exact_selector<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
     match Value::deserialize(deserializer)? {
@@ -1314,57 +1285,6 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
         Ok(values)
     } else {
         Err(D::Error::custom("numbers must be finite"))
-    }
-}
-
-/// Boxes `x0,y0,x1,y1` separated by `;`, each limited to a spectral range
-/// by an optional `@<low>~<high>`, both ends in `Hz` or both in `pix`.
-fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<UserMaskBox>, D::Error> {
-    let value = Value::deserialize(deserializer)?;
-    let text = value
-        .as_str()
-        .ok_or_else(|| unexpected(&value, "pixel boxes"))?;
-    if unset(text) {
-        return Ok(Vec::new());
-    }
-    text.split(';')
-        .map(|item| {
-            let (corners, range) = match item.split_once('@') {
-                Some((corners, range)) => (corners, Some(spectral_mask_range(range)?)),
-                None => (item, None),
-            };
-            let corners = comma_list::<i64>(corners)?
-                .try_into()
-                .map_err(|_| format!("a mask box has four corners, not {corners:?}"))?;
-            Ok(UserMaskBox { corners, range })
-        })
-        .collect::<Result<_, String>>()
-        .map_err(D::Error::custom)
-}
-
-/// A mask box's `<low>~<high>` range: two finite values, both in `Hz` or
-/// both in `pix`.
-fn spectral_mask_range(text: &str) -> Result<SpectralMaskRange, String> {
-    let (low, high) = text
-        .split_once('~')
-        .ok_or_else(|| format!("a mask box range is <low>~<high>, not {text:?}"))?;
-    let end = |end: &str, unit: &str| {
-        end.trim()
-            .strip_suffix(unit)
-            .and_then(|number| number.trim().parse::<f64>().ok())
-            .filter(|number| number.is_finite())
-    };
-    match (
-        end(low, "Hz"),
-        end(high, "Hz"),
-        end(low, "pix"),
-        end(high, "pix"),
-    ) {
-        (Some(low), Some(high), _, _) => Ok(SpectralMaskRange::Frequency([low, high])),
-        (_, _, Some(low), Some(high)) => Ok(SpectralMaskRange::Pixel([low, high])),
-        _ => Err(format!(
-            "a mask box range has two finite ends, both in Hz or both in pix, not {text:?}"
-        )),
     }
 }
 
@@ -1519,6 +1439,7 @@ fn rest_frequencies_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec
 
 pub(crate) mod execution;
 mod gridder;
+mod mask;
 
 pub use gridder::Gridder;
 

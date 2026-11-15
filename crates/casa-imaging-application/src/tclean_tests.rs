@@ -1184,7 +1184,8 @@ fn pbmask_is_read_in_every_mask_mode_and_bounded_as_casa_bounds_it() {
 /// x 40 to 60 and y 70 to 90 (read from its tst2.mask).
 #[test]
 fn a_crtf_circle_masks_the_pixels_casa_masks() {
-    let boxes = super::crtf_pixel_boxes("circle[[50pix,80pix],10pix]").expect("a circle");
+    let boxes =
+        super::user_mask::crtf_pixel_boxes("circle[[50pix,80pix],10pix]").expect("a circle");
     let rows = boxes
         .iter()
         .map(|text| {
