@@ -14,10 +14,8 @@
 
 use std::path::PathBuf;
 
-use casa_ms::{
-    MeasurementSet, SubtableId, SyntheticAntenna, SyntheticObservationRequest,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms,
-};
+use casa_ms::{MeasurementSet, SubtableId};
+use casa_simulation::synthetic::{Antenna, ObservationRequest, SpectralSetup, generate_unflagged};
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, RowRange};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
@@ -52,28 +50,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .ok_or("usage: ms_trial_lines MS")?;
     let antennas = vec![
-        SyntheticAntenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
+        Antenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
+        Antenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
+        Antenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
     ];
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
-        path.with_extension("unused.fits"),
-        &path,
-        antennas,
-    );
+    let mut request =
+        ObservationRequest::vla_ppdisk(path.with_extension("unused.fits"), &path, antennas);
     request.predict_model = false;
     request.phase_center_rad = DIRECTION_RAD;
     request.start_time_mjd_seconds = START_S;
     request.duration_seconds = DURATION_S;
     request.integration_seconds = 10.0;
     request.spectral_windows = vec![
-        SyntheticSpectralSetup {
+        SpectralSetup {
             name: "low".to_string(),
             start_frequency_hz: 672.0e9,
             channel_width_hz: 2.0e6,
             channel_count: 4,
         },
-        SyntheticSpectralSetup {
+        SpectralSetup {
             name: "high".to_string(),
             start_frequency_hz: 676.0e9,
             // Ascending: XRADIO's converter writes a descending window in
@@ -82,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             channel_count: 3,
         },
     ];
-    generate_synthetic_observation_ms(&request)?;
+    generate_unflagged(&request)?;
 
     let mut ms = MeasurementSet::open(&path)?;
     let main = ms.main_table_mut();

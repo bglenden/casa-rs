@@ -6,7 +6,7 @@
 //! flux; the standard gridder, run on the same data as the control,
 //! smears and displaces it (IF-3, #652).
 
-use casa_ms::{SyntheticSpectralSetup, tutorial_vla_a_antennas};
+use casa_simulation::synthetic::{SpectralSetup, tutorial_vla_a_antennas};
 use ndarray::Array2;
 use serde_json::{Value, json};
 
@@ -47,7 +47,7 @@ fn setup() -> Setup {
         telescope: "VLA".to_string(),
         antennas,
         fields: Vec::new(),
-        spectral_windows: vec![SyntheticSpectralSetup {
+        spectral_windows: vec![SpectralSetup {
             name: "t1-150mhz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 1.0e6,

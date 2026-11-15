@@ -24,7 +24,6 @@ casa-numerics = { path = "../casa-numerics" }
 casa-observation = { path = "../casa-observation" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
-casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 libc = "0.2"
@@ -50,6 +49,7 @@ zarrs = { version = "=0.23.14", default-features = false, features = ["filesyste
 zarrs_filesystem = { version = "=0.3.14", optional = true }
 
 [dev-dependencies]
+casa-simulation = { path = "../casa-simulation" }
 casa-observation = { path = "../casa-observation" }
 casa-test-support = { path = "../casa-test-support" }
 flate2 = "1"
@@ -75,12 +75,6 @@ path = "src/bin/flagdata.rs"
 [[bin]]
 name = "flagmanager"
 path = "src/bin/flagmanager.rs"
-
-# The synthetic MeasurementSet generator as a developer tool; not a catalog
-# task, and not installed with the suite.
-[[bin]]
-name = "synthetic-ms"
-path = "src/bin/synthetic-ms.rs"
 
 [[bin]]
 name = "ms-read-probe"
@@ -214,13 +208,7 @@ name = "spectral_frame_parity"
 path = "tests/spectral_frame_parity.rs"
 required-features = ["cpp-interop-tests"]
 
-[[test]]
-name = "simulation_ms"
-path = "tests/simulation_ms.rs"
 
-[[test]]
-name = "synthetic_ms_cli"
-path = "tests/synthetic_ms_cli.rs"
 
 [[test]]
 name = "msv2_opening_memory"

@@ -45,7 +45,7 @@ blanket scientific validation. See [TESTING.md](TESTING.md).
 | Tables and MeasurementSets | CASA-compatible storage managers, typed row/column/cell access, TaQL, MS selection and transformation, flag versions, and plotting/export data. |
 | Images and coordinates | Persistent images, masks, regions, statistics, moments, image arithmetic, regridding, FITS import/export, coordinate systems, units, and measures. |
 | Calibration and flagging | Native gain, bandpass, flux-scale, calibration application/generation, manual/clip/quack/tfcrop/rflag workflows, and diagnostic tasks. |
-| Simulation and import | CASA's `sm` simulator tool and `simobserve`, single-array `simanalyze` ([ALMA disk tutorial](docs/tutorial-parity/ppdisk-alma.md)), component lists, the ATM atmosphere model, VLA archive import, and MSv2/MSv4 conversion, with comparison harnesses against CASA. |
+| Simulation and import | CASA's `sm` simulator tool, `simobserve`, multi-array/TP `simanalyze`, and `simalma`, including observation and image/analysis graphics ([ALMA disk tutorial](docs/tutorial-parity/ppdisk-alma.md)); component lists, the ATM atmosphere model, VLA archive import, and MSv2/MSv4 conversion, with comparison harnesses against CASA. |
 | Imaging | Continuum and spectral cubes; standard, W-projection, mosaic, and AW-projection gridders; Högbom, Clark, multiscale, and MT-MFS deconvolution; masks, restoration, and primary-beam products. Not every combination is available. |
 | Python | In-process NumPy-compatible table/image access, generated task wrappers, shared parameter profiles, and numeric MeasurementSet plot documents. |
 
@@ -158,7 +158,7 @@ implementation, not a wrapper around casacore C++.
 | Persistent data | `casa-tables`, `casa-ms`, `casa-observation`, `casa-lattices`, `casa-images` |
 | Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures-data`, `casa-measures-tools` |
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
-| Calibration, simulation, import | `casa-calibration`, `casa-simulation`, `casa-simulation-synthesis`, `casa-components`, `casa-atmosphere`, `casa-vla` |
+| Calibration, simulation, import | `casa-calibration`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish`, `casa-imaging-application` |
 | Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation` |
 | Python | `crates/casars-python/`, with its PyO3 extension `casars._core` |

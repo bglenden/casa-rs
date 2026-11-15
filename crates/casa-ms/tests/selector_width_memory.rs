@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_ms::{
-    AntennaRow, FieldSelectorRow, MeasurementSet, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms, parse_numeric_row_id_ranges, resolve_antenna_selector,
-    resolve_field_selector_rows, tutorial_vla_a_antennas,
+    AntennaRow, FieldSelectorRow, MeasurementSet, parse_numeric_row_id_ranges,
+    resolve_antenna_selector, resolve_field_selector_rows,
 };
+use casa_simulation::synthetic::{SpectralSetup, generate_unflagged, tutorial_vla_a_antennas};
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -83,7 +83,7 @@ fn measure<T>(work: impl FnOnce() -> T) -> (T, u64, u64) {
 /// A one-field MeasurementSet.
 fn track(root: &Path) -> PathBuf {
     let measurement_set = root.join("selector-width.ms");
-    let mut request = casa_ms::SyntheticObservationRequest::vla_ppdisk(
+    let mut request = casa_simulation::synthetic::ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
         tutorial_vla_a_antennas().into_iter().take(2).collect(),
@@ -92,13 +92,13 @@ fn track(root: &Path) -> PathBuf {
     request.integration_seconds = 1.0;
     request.predict_model = false;
     request.allow_below_elevation_limit = true;
-    request.spectral_windows = vec![SyntheticSpectralSetup {
+    request.spectral_windows = vec![SpectralSetup {
         name: "44e9".to_string(),
         start_frequency_hz: 44.0e9,
         channel_width_hz: 1.0e6,
         channel_count: 1,
     }];
-    generate_synthetic_observation_ms(&request).expect("synthesise the selector MS");
+    generate_unflagged(&request).expect("synthesise the selector MS");
     measurement_set
 }
 

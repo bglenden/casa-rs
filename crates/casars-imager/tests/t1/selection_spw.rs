@@ -6,7 +6,7 @@
 //! The grammar itself is pinned against CASA in `casa-ms`
 //! (`selection::spw_expr`, `tests/spw_selection_oracle.rs`).
 
-use casa_ms::SyntheticSpectralSetup;
+use casa_simulation::synthetic::SpectralSetup;
 use serde_json::json;
 
 use super::fixture::{Component, Observation, Setup};
@@ -26,7 +26,7 @@ const CHANNELS: usize = 10;
 fn two_windows() -> Observation {
     let mut setup = Setup::vla_q_band(CHANNELS);
     let low = setup.spectral_windows[0].clone();
-    setup.spectral_windows.push(SyntheticSpectralSetup {
+    setup.spectral_windows.push(SpectralSetup {
         name: "t1-qband-hi".to_string(),
         start_frequency_hz: low.start_frequency_hz + 2.0e9,
         ..low

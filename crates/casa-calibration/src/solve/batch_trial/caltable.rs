@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_ms::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_ms::observation_io::{
@@ -13,13 +14,12 @@ use casa_ms::observation_io::{
     open, persisted_namespace,
 };
 use casa_ms::selection::MsSelection;
-use casa_ms::{
-    MeasurementSetBuilder, SyntheticAntenna, SyntheticField, SyntheticObservationRequest,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms,
-};
 use casa_observation::{
     AccessRequest, AntennaId, BatchBuffers, BindingTolerance, CorrelationRequest, Grouping,
     Observation, ObservationError, PartitionId, ReadEvent, Roles, TimeSelection, WeightRequest,
+};
+use casa_simulation::synthetic::{
+    Antenna, Field, ObservationRequest, SpectralSetup, generate_unflagged,
 };
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{Complex32, ScalarValue};
@@ -441,17 +441,17 @@ fn keep_for_casa(tables: &[(&Path, &str)]) {
     }
 }
 
-fn synthetic_antennas() -> [SyntheticAntenna; 4] {
+fn synthetic_antennas() -> [Antenna; 4] {
     [
-        SyntheticAntenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA04", "N04", [-1_601_285.4, -5_041_977.5, 3_554_975.9]),
+        Antenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
+        Antenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
+        Antenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
+        Antenna::vla("VLA04", "N04", [-1_601_285.4, -5_041_977.5, 3_554_975.9]),
     ]
 }
 
-fn window(name: &str, start_hz: f64) -> SyntheticSpectralSetup {
-    SyntheticSpectralSetup {
+fn window(name: &str, start_hz: f64) -> SpectralSetup {
+    SpectralSetup {
         name: name.to_string(),
         start_frequency_hz: start_hz,
         channel_width_hz: 2.0e6,
@@ -475,15 +475,12 @@ const FIELDS: [[f64; 2]; 2] = [[1.23, -0.45], [1.25, -0.40]];
 fn simulated(
     root: &Path,
     name: &str,
-    antennas: Vec<SyntheticAntenna>,
-    windows: Vec<SyntheticSpectralSetup>,
+    antennas: Vec<Antenna>,
+    windows: Vec<SpectralSetup>,
     fields: &[[f64; 2]],
 ) -> PathBuf {
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
-        root.join("unused.fits"),
-        root.join(name),
-        antennas,
-    );
+    let mut request =
+        ObservationRequest::vla_ppdisk(root.join("unused.fits"), root.join(name), antennas);
     request.predict_model = false;
     request.phase_center_rad = [1.23, -0.45];
     request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
@@ -492,12 +489,12 @@ fn simulated(
     request.spectral_windows = windows;
     request.fields = fields
         .iter()
-        .map(|centre| SyntheticField {
+        .map(|centre| Field {
             name: format!("dec{:+.2}", centre[1]),
             phase_center_rad: *centre,
         })
         .collect();
-    generate_synthetic_observation_ms(&request).expect("simulate");
+    generate_unflagged(&request).expect("simulate");
     request.output_ms
 }
 

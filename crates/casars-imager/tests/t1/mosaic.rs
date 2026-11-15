@@ -6,8 +6,8 @@
 //! root of the summed beam powers at the pointings, the flat-noise image
 //! carries it, and the PB-corrected image recovers the sky (IF-3, #652).
 
-use casa_ms::SyntheticAntenna;
 use casa_numerics::AnnularApertureVoltageTable;
+use casa_simulation::synthetic::Antenna;
 use ndarray::{Array2, ShapeBuilder};
 use serde_json::json;
 
@@ -60,7 +60,7 @@ const ALMA_TABLE_RADIUS_ARCMIN_GHZ: f64 = 150.0 / 60.0 * 100.0;
 
 /// Ten 12 m dishes on a golden-angle spiral of 20 m to 146 m around the
 /// ALMA site (`Observatories` WGS84 position), in ITRF.
-fn alma_antennas() -> Vec<SyntheticAntenna> {
+fn alma_antennas() -> Vec<Antenna> {
     let longitude = (-67.754_929_f64).to_radians();
     let latitude = (-23.022_886_f64).to_radians();
     let height_m = 5056.8;
@@ -89,7 +89,7 @@ fn alma_antennas() -> Vec<SyntheticAntenna> {
                 centre[1] + e * east[1] + nn * north[1],
                 centre[2] + e * east[2] + nn * north[2],
             ];
-            SyntheticAntenna {
+            Antenna {
                 name: format!("DA{:02}", 41 + index),
                 station: format!("A{index:03}"),
                 position_m,
@@ -110,7 +110,7 @@ pub(super) fn setup() -> Setup {
             Setup::pointing([0.0, 0.0]),
             Setup::pointing([spacing_rad, 0.0]),
         ],
-        spectral_windows: vec![casa_ms::SyntheticSpectralSetup {
+        spectral_windows: vec![casa_simulation::synthetic::SpectralSetup {
             name: "t1-50ghz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 2.0e9,
@@ -165,7 +165,7 @@ fn local_peak(
 pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     let mut setup = setup();
     if cube {
-        setup.spectral_windows = vec![casa_ms::SyntheticSpectralSetup {
+        setup.spectral_windows = vec![casa_simulation::synthetic::SpectralSetup {
             name: "t1-50-75ghz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 25.0e9,

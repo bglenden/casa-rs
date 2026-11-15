@@ -30,7 +30,6 @@ members = [
     "crates/casa-imaging-runtime",
     "crates/casa-imaging-singledish",
     "crates/casa-imaging-metal",
-    "crates/casa-simulation-synthesis",
     "crates/casa-simulation",
     "crates/casa-atmosphere",
     "crates/casa-measures-data",
@@ -76,8 +75,6 @@ opt-level = 2
 [profile.test.package.casa-aipsio]
 opt-level = 2
 [profile.test.package.casa-ms]
-opt-level = 2
-[profile.test.package.casa-simulation-synthesis]
 opt-level = 2
 [profile.test.package.casa-simulation]
 opt-level = 2

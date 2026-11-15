@@ -1443,12 +1443,12 @@ fn predicting_the_final_model_zeroes_channels_beyond_the_cube() {
 
 /// Two adjacent Q-band windows of `channels` 128 MHz channels each, the
 /// second starting where the first ends, and the first window's setup.
-fn adjacent_windows(channels: usize) -> (Observation, casa_ms::SyntheticSpectralSetup) {
+fn adjacent_windows(channels: usize) -> (Observation, casa_simulation::synthetic::SpectralSetup) {
     let mut setup = super::fixture::Setup::vla_q_band(channels);
     let low = setup.spectral_windows[0].clone();
     setup
         .spectral_windows
-        .push(casa_ms::SyntheticSpectralSetup {
+        .push(casa_simulation::synthetic::SpectralSetup {
             name: "t1-qband-next".to_string(),
             start_frequency_hz: low.start_frequency_hz + channels as f64 * low.channel_width_hz,
             ..low.clone()

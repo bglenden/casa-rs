@@ -113,6 +113,13 @@ pub(crate) const COMET: [casa_test_support::ephemeris_table::EphemerisRow; 3] = 
 /// (−1 for none), each id's table holding [`COMET`].
 pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
     let mut ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    let reference_time = ms
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+        .clone();
     let field = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
     field
         .add_column(
@@ -123,6 +130,15 @@ pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
         )
         .expect("EPHEMERIS_ID");
     for (row, id) in ids.iter().enumerate() {
+        if *id >= 0 {
+            field
+                .fill_column_range(
+                    "TIME",
+                    casa_tables::RowRange::new(row, row + 1),
+                    casa_types::Value::Scalar(reference_time.clone()),
+                )
+                .unwrap();
+        }
         field
             .fill_column_range(
                 "EPHEMERIS_ID",

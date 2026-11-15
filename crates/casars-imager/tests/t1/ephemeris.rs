@@ -63,7 +63,22 @@ pub(super) fn moving_track() -> Observation {
 fn following_body(observation: Observation) -> Observation {
     let path = observation.measurement_set();
     let mut ms = MeasurementSet::open(path).expect("the T1 MeasurementSet");
+    let reference_time = ms
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+        .clone();
     let field = ms.subtable_mut(SubtableId::Field).expect("FIELD");
+    // Attach the ephemeris with a reference epoch inside the observed track.
+    field
+        .fill_column_range(
+            "TIME",
+            casa_tables::RowRange::new(0, 1),
+            Value::Scalar(reference_time),
+        )
+        .unwrap();
     field
         .add_column(
             casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", PrimitiveType::Int32),
@@ -487,7 +502,7 @@ fn a_rest_frame_cube_over_two_windows_is_refused() {
     let low = setup.spectral_windows[0].clone();
     setup
         .spectral_windows
-        .push(casa_ms::SyntheticSpectralSetup {
+        .push(casa_simulation::synthetic::SpectralSetup {
             name: "t1-qband-next".to_string(),
             start_frequency_hz: low.start_frequency_hz + 4.0 * low.channel_width_hz,
             ..low

@@ -1373,12 +1373,6 @@ fn resolve_reference_string(
     }
 }
 
-pub(crate) const fn polarization_operator_angle(physical_parallactic_angle_rad: f64) -> f64 {
-    // CASA's visibility polarization operator rotates by the negative of the
-    // physical MSCalEngine parallactic angle (issue519-polarization-oracle.v2).
-    -physical_parallactic_angle_rad
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

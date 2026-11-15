@@ -9,8 +9,8 @@
 //! the summed beam powers at the pointings and the PB-corrected image
 //! recovers the sky.
 
-use casa_ms::SyntheticAntenna;
 use casa_numerics::PrimaryBeam;
+use casa_simulation::synthetic::Antenna;
 use serde_json::json;
 
 use super::fixture::{
@@ -42,7 +42,7 @@ const THRESHOLD: &str = "0.005Jy";
 
 /// Ten 25 m dishes on a golden-angle spiral of 30 m to 300 m around the
 /// VLA (`Observatories` position), in ITRF.
-fn evla_antennas() -> Vec<SyntheticAntenna> {
+fn evla_antennas() -> Vec<Antenna> {
     let longitude = (-107.617_728_f64).to_radians();
     let latitude = 34.078_749_f64.to_radians();
     let height_m = 2114.9;
@@ -66,7 +66,7 @@ fn evla_antennas() -> Vec<SyntheticAntenna> {
             let radius_m = 30.0 + 30.0 * index as f64;
             let angle = index as f64 * 137.507_764_f64.to_radians();
             let (e, nn) = (radius_m * angle.cos(), radius_m * angle.sin());
-            SyntheticAntenna {
+            Antenna {
                 name: format!("ea{:02}", index + 1),
                 station: format!("N{index:02}"),
                 position_m: [0, 1, 2].map(|axis| centre[axis] + e * east[axis] + nn * north[axis]),
@@ -107,7 +107,7 @@ fn an_evla_mosaic_recovers_the_sky_under_the_common_evla_beam() {
             Setup::pointing([0.0, 0.0]),
             Setup::pointing([spacing_rad, 0.0]),
         ],
-        spectral_windows: vec![casa_ms::SyntheticSpectralSetup {
+        spectral_windows: vec![casa_simulation::synthetic::SpectralSetup {
             name: "EVLA_S#A0C0#0".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 128.0e6,

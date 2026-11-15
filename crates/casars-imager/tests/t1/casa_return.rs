@@ -722,12 +722,12 @@ fn an_outlier_files_relative_name_reads_from_the_working_directory() {
 #[test]
 fn clarkstokes_cleans_polarization_planes_separately() {
     use super::fixture::Setup;
-    use casa_ms::{SyntheticPolarizationBasis, SyntheticPolarizationSetup};
+    use casa_simulation::synthetic::{PolarizationBasis, PolarizationSetup};
 
     let observation = Observation::synthesise_polarized(
         Setup::vla_q_band(1),
-        SyntheticPolarizationSetup {
-            basis: SyntheticPolarizationBasis::Linear,
+        PolarizationSetup {
+            basis: PolarizationBasis::Linear,
             correlation_count: 4,
             source_stokes_fractional_quv: [0.0, 0.0, 0.4],
         },

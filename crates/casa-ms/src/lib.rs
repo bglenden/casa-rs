@@ -67,8 +67,6 @@ pub mod scratch_columns;
 mod selected_pointing;
 pub mod selection;
 pub mod shadowing;
-pub mod simulation;
-pub mod simulation_task;
 pub mod spectral_selection;
 mod subtable_overrides;
 mod subtable_rows;
@@ -160,21 +158,6 @@ pub use selection::{
     UvDistanceLimit, msselection_first_logical_row, parse_uv_distance_intervals,
     resolve_antenna_selector, resolve_field_selector_rows, resolve_spw_selector,
     resolve_time_selector, validate_ms_selector_edit,
-};
-pub use simulation::{
-    SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
-    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
-    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
-    SyntheticObservationReport, SyntheticObservationRequest, SyntheticPointingCorruption,
-    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
-    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
-    SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
-};
-pub use simulation_task::{
-    SimobserveFamilyManifest, SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult,
-    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
