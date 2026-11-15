@@ -180,7 +180,7 @@ def tclean(
     uvrange: str | list[str] | tuple[str, ...] = '',
     antenna: str | list[str] | tuple[str, ...] = '',
     scan: str | list[str] | tuple[str, ...] = '',
-    observation: str | list[str] | tuple[str, ...] = '',
+    observation: str = '',
     intent: str | list[str] | tuple[str, ...] = '',
     datacolumn: str = 'corrected',
     imagename: StrPath = '',

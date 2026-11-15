@@ -146,12 +146,9 @@ fn numeric_row_ids(text: Option<&str>, label: &str) -> Result<IdSelection, Prepa
         return Ok(IdSelection::All);
     };
     let ranges = casa_ms::parse_numeric_row_id_ranges(text, label)?;
-    if ranges.is_empty() {
-        return Err(casa_ms::MsError::InvalidInput(format!(
-            "{label} selector must contain nonnegative IDs"
-        ))
-        .into());
-    }
+    // A valid empty comparison reaches the survey as a filter that holds no
+    // row. The survey refuses an empty first input and drops an empty later
+    // one before any observation snapshot is compiled.
     Ok(IdSelection::Ranges(
         ranges
             .into_iter()

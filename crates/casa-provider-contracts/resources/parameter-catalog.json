@@ -10700,15 +10700,7 @@
       "id": "ms.selection.observation",
       "semantic_revision": 3,
       "casa_name": "observation",
-      "value_domain": {
-        "kind": "array",
-        "element": {
-          "kind": "string"
-        },
-        "min_items": 1,
-        "max_items": null,
-        "allow_scalar": true
-      },
+      "value_domain": {"kind": "string"},
       "normalization": {
         "kind": "identity"
       },
@@ -10716,8 +10708,8 @@
       "unit_dimension": null,
       "semantic_role": "selection",
       "documentation": {
-        "summary": "Syntax-preserving numeric observation selection, one per MeasurementSet or one for all",
-        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Selector grammar beyond this numeric subset remains unfinished (#980); unsupported input is not thereby classified as CASA-invalid. Preserve the original string for native grammar validation. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "summary": "Observation selection applied to every MeasurementSet",
+        "details": "Supply one string. CASA's tclean requires observation text at execution. IDs, ranges and comparisons select OBSERVATION_IDs. Only exactly empty text is unset.",
         "examples": [
           "",
           "1",
@@ -10773,7 +10765,7 @@
       "semantic_role": "selection",
       "documentation": {
         "summary": "Syntax-preserving numeric scan selection, one per MeasurementSet or one for all",
-        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Richer CASA-valid expressions such as >1 remain unfinished (#980), rather than CASA-invalid. Preserve the original string for native grammar validation. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "details": "Use one string per MeasurementSet or the same selector for every MeasurementSet. Only exactly empty text is unset. The task interprets the selector's preserved text.",
         "examples": [
           "",
           "1",

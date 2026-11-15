@@ -7957,18 +7957,18 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "surface_note": "CASA scan IDs, ascending ranges and strict or inclusive comparisons select SCAN_NUMBERs.",
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "SELECTOR"},
             "provider": {"field": "scan"},
             "python": {"name": "scan"},
             "presentation": {"label": "Scan", "group": "Context", "advanced": true}
-          },
-          "unimplemented_forms": {"issue": 980, "forms": "selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges"}
+          }
         },
         {
           "name": "observation",
           "concept": {"id": "ms.selection.observation", "semantic_revision": 3},
-          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 3 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 and revision-2 consumers remain unchanged."},
+          "reviewed_homonym": {"review_id": "#980", "reason": "tclean keeps the exact observation string and applies it to every input MeasurementSet."},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -7978,8 +7978,7 @@
             "provider": {"field": "observation"},
             "python": {"name": "observation"},
             "presentation": {"label": "Observation", "group": "Context", "advanced": true}
-          },
-          "unimplemented_forms": {"issue": 980, "forms": "selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges"}
+          }
         },
         {
           "name": "intent",

@@ -356,6 +356,65 @@ fn a_selector_list_must_match_the_measurement_sets() {
     }
 }
 
+#[test]
+fn the_observation_selector_is_one_string_for_all_measurement_sets() {
+    let split = Split::new();
+    let (run, _) = split.whole.image_stores(
+        &split.halves(),
+        "observation-text",
+        json!({ "observation": "<=0" }),
+    );
+    assert!(run.gridded_samples > 0);
+    for observation in [
+        json!(["0"]),
+        json!(["0", "0"]),
+        json!(0),
+        json!(false),
+        json!(0.0),
+    ] {
+        let Err(refusal) = split.whole.try_image_stores(
+            &split.halves(),
+            "invalid-observation-type",
+            json!({ "observation": observation }),
+        ) else {
+            panic!("accepted observation={observation}");
+        };
+        assert!(refusal.contains("observation"), "{refusal}");
+    }
+}
+
+#[test]
+fn an_empty_numeric_predicate_skips_only_a_later_measurement_set() {
+    let split = Split::new();
+    let (only_first, expected) = split.low.image("first-only", json!({ "niter": 0 }));
+    let (actual, products) = split.whole.image_stores(
+        &split.halves(),
+        "empty-later-input",
+        json!({ "niter": 0, "scan": ["", "<0"] }),
+    );
+    assert_eq!(actual.gridded_samples, only_first.gridded_samples);
+    assert_products(
+        &products,
+        &expected,
+        &[".sumwt", ".psf", ".residual", ".model", ".image"],
+        "empty later input",
+    );
+
+    for (scan, message) in [
+        (json!(["<0", ""]), "selection resolved to no samples"),
+        (json!(["", ">=0&<1"]), "invalid scan selector term"),
+    ] {
+        let Err(refusal) = split.whole.try_image_stores(
+            &split.halves(),
+            "refused-numeric-input",
+            json!({ "niter": 0, "scan": scan }),
+        ) else {
+            panic!("accepted scan={scan}");
+        };
+        assert!(refusal.contains(message), "{refusal}");
+    }
+}
+
 /// The T1 mosaic's three pointings without noise, observed in `windows`
 /// windows of one 2 GHz channel each, at 50 GHz and 25 GHz above it.
 fn mosaic_track(windows: &[usize]) -> Observation {
