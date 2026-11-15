@@ -897,14 +897,14 @@
 <a href=#897 id=897 data-nosnippet>897</a>            &amp;&amp; (<span class="self">self</span>.specmode != SpecMode::Mfs
 <a href=#898 id=898 data-nosnippet>898</a>                || <span class="self">self</span>.stokes.as_slice() != [PolarizationCoordinate::StokesI]
 <a href=#899 id=899 data-nosnippet>899</a>                || !<span class="macro">matches!</span>(<span class="self">self</span>.gridder, Gridder::Standard { facets } <span class="kw">if </span>facets.get() == <span class="number">1</span>)
-<a href=#900 id=900 data-nosnippet>900</a>                || !<span class="macro">matches!</span>(<span class="self">self</span>.weighting, Weighting::Natural | Weighting::Briggs)
+<a href=#900 id=900 data-nosnippet>900</a>                || <span class="self">self</span>.weighting == Weighting::Briggsbwtaper
 <a href=#901 id=901 data-nosnippet>901</a>                || <span class="self">self</span>.vis.len() != <span class="number">1
 <a href=#902 id=902 data-nosnippet>902</a>                </span>|| <span class="self">self</span>.outlierfile.is_some()
 <a href=#903 id=903 data-nosnippet>903</a>                || !<span class="macro">matches!</span>(<span class="self">self</span>.savemodel, SaveModel::None | SaveModel::ModelColumn))
 <a href=#904 id=904 data-nosnippet>904</a>        {
 <a href=#905 id=905 data-nosnippet>905</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidRequest {
 <a href=#906 id=906 data-nosnippet>906</a>                parameters: <span class="string">"deconvolver"</span>,
-<a href=#907 id=907 data-nosnippet>907</a>                reason: <span class="string">"MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting; other modes and virtual model writes wait for #1060"</span>,
+<a href=#907 id=907 data-nosnippet>907</a>                reason: <span class="string">"MEM currently supports single-MS, Stokes I MFS with the standard gridder; bandwidth-taper weighting needs a cube, and other modes and virtual model writes wait for #1060"</span>,
 <a href=#908 id=908 data-nosnippet>908</a>            });
 <a href=#909 id=909 data-nosnippet>909</a>        }
 <a href=#910 id=910 data-nosnippet>910</a>        <span class="prelude-val">Ok</span>(())
