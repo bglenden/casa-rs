@@ -1103,6 +1103,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>,
 <a href="#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite">continuum <code>briggsabs</code> at robust 0 and noise 0</a>,
 <a href="#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask"><code>nsigma</code> with <code>fastnoise=False</code> and no mask</a>,
+<a href="#a-mosaic-drops-negative-taylor-moments-when-cross-hands-are-empty">signed Taylor moments with empty mosaic cross-hands</a>,
 <a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision">single-precision Taylor weights</a>,
 <a href="#aw-projection-can-use-another-antenna-groups-pointing">AW baseline pointing groups</a>,
 <a href="#a-mosaics-weight-image-is-transformed-in-single-precision">a mosaic's single-precision weight image</a>,
@@ -4188,6 +4189,23 @@ shadows the public feather callable with a module, causing a feather call
 to raise <code>TypeError: 'module' object is not callable</code>. The independent
 <code>simanalyze_multi_oracle.py</code> recipe restores only those bindings before
 running the unchanged algorithms. Production computation is native Rust.</p>
+<h3 id="disabled-upstream-simulation-test-bodies">Disabled upstream simulation test bodies<a class="headerlink" href="#disabled-upstream-simulation-test-bodies" title="Permanent link">&para;</a></h3>
+<p>CASA 6.7.6.14 disables sixteen <code>test_task_simobserve</code> cases. Exercising them
+exposes undefined <code>comp_nchan</code>/<code>ptgfile</code> variables, the deliberate CAS-5095
+component-list/SD refusal, nine obsolete "Parameter verification failed"
+assertions (the task now raises parameter-error dictionaries), and an
+atmospheric noise comparison tied to an older random draw. Native tests
+exercise the intended leakage equations, the actual SD refusal and invalid
+parameter checks; analytic noise comparisons retain the upstream 10% bound.
+The original assertions and their failures remain in the upstream runner.</p>
+<p>The disabled combined-IF/TP <code>test_task_simanalyze</code> case encounters the
+shadowed feather binding above. Its expected <code>&lt;project&gt;.image0</code> path also
+omits <code>.sd</code>: <code>task_simanalyze</code> writes <code>tpimage = project + '.sd.image'</code> and
+<code>temp_out = tpimage + '0'</code>. The compact native counterpart checks the actual
+IF/TP products and compares the feathered image to the existing independent
+CASA fixture at 1e-3 NRMS. Its original 1458-pixel, 128-channel dimensions
+need over 13 GB for native TP scaling/regridding and are refused when the
+host's resource budget cannot hold them (#1493).</p>
 <h2 id="simanalyze-changes-a-callers-seed-image-unit-in-place"><code>simanalyze</code> changes a caller's seed-image unit in place<a class="headerlink" href="#simanalyze-changes-a-callers-seed-image-unit-in-place" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-15</li>
@@ -6738,6 +6756,28 @@ The frozen PCO checks verify both offset signs using CASA's finite
 world-to-pixel direction and compare ordinary pixels in both directions.
 The projection and parameters remain CASA-readable and image products
 agree at the original tolerance. <a href="https://www.atnf.csiro.au/computing/software/wcs/wcslib-releases/wcslib-8.2.2.tar.bz2">WCSLIB 8.2.2 source</a></p>
+<h2 id="a-mosaic-drops-negative-taylor-moments-when-cross-hands-are-empty">A mosaic drops negative Taylor moments when cross-hands are empty<a class="headerlink" href="#a-mosaic-drops-negative-taylor-moments-when-cross-hands-are-empty" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>MosaicFT::getImage</code> checks <code>max(weights) == 0.0</code>
+to decide whether all gridded weights are zero. The imaging weights start
+nonnegative, but <code>MultiTermFTNew</code> multiplies by a signed spectral offset
+for odd Taylor terms. Negative parallel-hand sums and zero sums on
+unobserved cross-hands have a maximum of zero. This skips the FFT and
+drops the whole dirty or PSF moment. The signed sum of weights and the
+separate sensitivity image still reach disk.</p>
+<p>For <code>mtmfs_polarized.mosaic_IQUV</code> (<code>refim_mawproject.ms</code>, SPW 1,
+two terms), stock CASA writes a zero <code>.psf.tt1</code> and <code>.residual.tt1</code>
+despite a negative <code>.sumwt.tt1</code>. The same request in IV retains both
+terms and gives a central PSF first moment of about −8.01e−8. The
+narrowband principal spectral coefficient is poorly constrained. The
+same behavior also occurs across SPWs 0, 1 and 2, where the IV run has
+usable frequency coverage and the central PSF first moment is about
+−0.0196. A reference frequency of 1.4 GHz makes the total first moment
+positive on those three SPWs and the stock IQUV run retains it.</p>
+<p>casa-rs keeps nonzero signed moments through the normal mosaic path, so
+requesting additional empty Stokes planes cannot erase valid data. Its
+I and V products agree with stock CASA's IV controls, and it leaves Q and
+U data and models zero. The shared PSFs, sensitivities and sum-of-weights
+tables still cover all four Stokes planes. <a href="https://github.com/bglenden/casa-rs/issues/1112">Imaging issue #1112</a></p>
 
 
 

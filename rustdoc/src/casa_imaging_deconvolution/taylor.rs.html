@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! `MultiTermMatrixCleaner::mtclean`
 <a href=#4 id=4 data-nosnippet>4</a>//! (`synthesis/MeasurementEquations/MultiTermMatrixCleaner.cc`).
 <a href=#5 id=5 data-nosnippet>5</a>
-<a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">use </span>casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
+<a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">use </span>casa_numerics::invert_symmetric_positive_definite;
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::Error;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::patch::subtract_window;
@@ -233,7 +233,7 @@
 <a href=#233 id=233 data-nosnippet>233</a>                        state.hessian[state.hessian_index(t1, t2, scale, scale)][centre];
 <a href=#234 id=234 data-nosnippet>234</a>                }
 <a href=#235 id=235 data-nosnippet>235</a>            }
-<a href=#236 id=236 data-nosnippet>236</a>            state.inverse.push(invert(<span class="kw-2">&amp;</span>normal, terms)<span class="question-mark">?</span>);
+<a href=#236 id=236 data-nosnippet>236</a>            state.inverse.push(invert_taylor_hessian(<span class="kw-2">&amp;</span>normal, terms)<span class="question-mark">?</span>);
 <a href=#237 id=237 data-nosnippet>237</a>            <span class="kw">if </span>scale == <span class="number">0 </span>{
 <a href=#238 id=238 data-nosnippet>238</a>                state.principal = normal[<span class="number">0</span>];
 <a href=#239 id=239 data-nosnippet>239</a>            }
@@ -409,36 +409,34 @@
 <a href=#409 id=409 data-nosnippet>409</a>    }
 <a href=#410 id=410 data-nosnippet>410</a>}
 <a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a><span class="doccomment">/// The inverse of one scale's Hessian, refused when a diagonal entry is
-<a href=#413 id=413 data-nosnippet>413</a>/// zero, two rows are nearly dependent, or the solve fails
-<a href=#414 id=414 data-nosnippet>414</a>/// (`computeHessianPeak`).
-<a href=#415 id=415 data-nosnippet>415</a></span><span class="kw">fn </span>invert(normal: <span class="kw-2">&amp;</span>[f64], terms: usize) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, Error&gt; {
-<a href=#416 id=416 data-nosnippet>416</a>    <span class="kw">if </span>(<span class="number">0</span>..terms).any(|term| normal[term * terms + term] == <span class="number">0.0</span>) {
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::SingularHessian);
-<a href=#418 id=418 data-nosnippet>418</a>    }
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..terms.saturating_sub(<span class="number">1</span>) {
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span>ratios = (<span class="number">0</span>..terms)
-<a href=#421 id=421 data-nosnippet>421</a>            .map(|column| normal[row * terms + column] / normal[(row + <span class="number">1</span>) * terms + column])
-<a href=#422 id=422 data-nosnippet>422</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span>spread = ratios
-<a href=#424 id=424 data-nosnippet>424</a>            .windows(<span class="number">2</span>)
-<a href=#425 id=425 data-nosnippet>425</a>            .map(|pair| (pair[<span class="number">0</span>] - pair[<span class="number">1</span>]).abs())
-<a href=#426 id=426 data-nosnippet>426</a>            .sum::&lt;f64&gt;()
-<a href=#427 id=427 data-nosnippet>427</a>            / (terms - <span class="number">1</span>) <span class="kw">as </span>f64;
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">if </span>spread &lt; DEPENDENT_ROWS {
-<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::SingularHessian);
-<a href=#430 id=430 data-nosnippet>430</a>        }
-<a href=#431 id=431 data-nosnippet>431</a>    }
-<a href=#432 id=432 data-nosnippet>432</a>    <span class="kw">let </span><span class="kw-2">mut </span>inverse = <span class="macro">vec!</span>[<span class="number">0.0</span>; terms * terms];
-<a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">for </span>column <span class="kw">in </span><span class="number">0</span>..terms {
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">let </span><span class="kw-2">mut </span>unit = <span class="macro">vec!</span>[<span class="number">0.0</span>; terms];
-<a href=#435 id=435 data-nosnippet>435</a>        unit[column] = <span class="number">1.0</span>;
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>solution = solve_symmetric_ldlt_casacore_dynamic(normal.to_vec(), <span class="kw-2">&amp;</span>unit)
-<a href=#437 id=437 data-nosnippet>437</a>            .ok_or(Error::SingularHessian)<span class="question-mark">?</span>;
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">for </span>(row, value) <span class="kw">in </span>solution.into_iter().enumerate() {
-<a href=#439 id=439 data-nosnippet>439</a>            inverse[row * terms + column] = value;
-<a href=#440 id=440 data-nosnippet>440</a>        }
-<a href=#441 id=441 data-nosnippet>441</a>    }
-<a href=#442 id=442 data-nosnippet>442</a>    <span class="prelude-val">Ok</span>(inverse)
-<a href=#443 id=443 data-nosnippet>443</a>}
+<a href=#412 id=412 data-nosnippet>412</a><span class="doccomment">/// Invert the row-major Taylor Hessian at a PSF peak. The minor cycle
+<a href=#413 id=413 data-nosnippet>413</a>/// and restoration both use CASA's `computeHessianPeak` admission
+<a href=#414 id=414 data-nosnippet>414</a>/// checks before applying the positive-definite inverse.
+<a href=#415 id=415 data-nosnippet>415</a>///
+<a href=#416 id=416 data-nosnippet>416</a>/// # Errors
+<a href=#417 id=417 data-nosnippet>417</a>///
+<a href=#418 id=418 data-nosnippet>418</a>/// Returns [`Error::SingularHessian`] for malformed dimensions, zero
+<a href=#419 id=419 data-nosnippet>419</a>/// diagonal entries, nearly dependent rows or a failed Cholesky solve.
+<a href=#420 id=420 data-nosnippet>420</a></span><span class="kw">pub fn </span>invert_taylor_hessian(normal: <span class="kw-2">&amp;</span>[f64], terms: usize) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, Error&gt; {
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">if </span>terms == <span class="number">0 </span>|| terms.checked_mul(terms) != <span class="prelude-val">Some</span>(normal.len()) {
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::SingularHessian);
+<a href=#423 id=423 data-nosnippet>423</a>    }
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="kw">if </span>(<span class="number">0</span>..terms).any(|term| normal[term * terms + term] == <span class="number">0.0</span>) {
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::SingularHessian);
+<a href=#426 id=426 data-nosnippet>426</a>    }
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..terms.saturating_sub(<span class="number">1</span>) {
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span>ratios = (<span class="number">0</span>..terms)
+<a href=#429 id=429 data-nosnippet>429</a>            .map(|column| normal[row * terms + column] / normal[(row + <span class="number">1</span>) * terms + column])
+<a href=#430 id=430 data-nosnippet>430</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span>spread = ratios
+<a href=#432 id=432 data-nosnippet>432</a>            .windows(<span class="number">2</span>)
+<a href=#433 id=433 data-nosnippet>433</a>            .map(|pair| (pair[<span class="number">0</span>] - pair[<span class="number">1</span>]).abs())
+<a href=#434 id=434 data-nosnippet>434</a>            .sum::&lt;f64&gt;()
+<a href=#435 id=435 data-nosnippet>435</a>            / (terms - <span class="number">1</span>) <span class="kw">as </span>f64;
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">if </span>spread &lt; DEPENDENT_ROWS {
+<a href=#437 id=437 data-nosnippet>437</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::SingularHessian);
+<a href=#438 id=438 data-nosnippet>438</a>        }
+<a href=#439 id=439 data-nosnippet>439</a>    }
+<a href=#440 id=440 data-nosnippet>440</a>    invert_symmetric_positive_definite(normal, terms).ok_or(Error::SingularHessian)
+<a href=#441 id=441 data-nosnippet>441</a>}
 </code></pre></div></section></main></body></html>

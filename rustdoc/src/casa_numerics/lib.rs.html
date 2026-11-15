@@ -104,114 +104,86 @@
 <a href=#104 id=104 data-nosnippet>104</a>    <span class="prelude-val">Some</span>(solution)
 <a href=#105 id=105 data-nosnippet>105</a>}
 <a href=#106 id=106 data-nosnippet>106</a>
-<a href=#107 id=107 data-nosnippet>107</a><span class="doccomment">/// Solve a dynamically sized symmetric system with casacore `LSQFit` ordering.
-<a href=#108 id=108 data-nosnippet>108</a>///
-<a href=#109 id=109 data-nosnippet>109</a>/// `normal` is a row-major square matrix whose upper triangle contains the
-<a href=#110 id=110 data-nosnippet>110</a>/// symmetric system. This is the arbitrary-order counterpart of
-<a href=#111 id=111 data-nosnippet>111</a>/// [`solve_symmetric_ldlt_casacore`] for polynomial reconstruction bases.
-<a href=#112 id=112 data-nosnippet>112</a></span><span class="attr">#[must_use]
-<a href=#113 id=113 data-nosnippet>113</a></span><span class="kw">pub fn </span>solve_symmetric_ldlt_casacore_dynamic(
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="kw-2">mut </span>normal: Vec&lt;f64&gt;,
-<a href=#115 id=115 data-nosnippet>115</a>    known: <span class="kw-2">&amp;</span>[f64],
-<a href=#116 id=116 data-nosnippet>116</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;f64&gt;&gt; {
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="kw">let </span>size = known.len();
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">if </span>size == <span class="number">0 </span>|| normal.len() != size.checked_mul(size)<span class="question-mark">? </span>{
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#120 id=120 data-nosnippet>120</a>    }
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..size {
-<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">let </span>diagonal_index = row * size + row;
-<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span>original_diagonal = normal[diagonal_index];
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">if </span>original_diagonal == <span class="number">0.0 </span>{
-<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#126 id=126 data-nosnippet>126</a>        }
-<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">let </span><span class="kw-2">mut </span>diagonal = original_diagonal;
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">for </span>prior <span class="kw">in </span><span class="number">0</span>..row {
-<a href=#129 id=129 data-nosnippet>129</a>            <span class="kw">let </span>entry = normal[prior * size + row];
-<a href=#130 id=130 data-nosnippet>130</a>            diagonal -= entry * entry / normal[prior * size + prior];
-<a href=#131 id=131 data-nosnippet>131</a>        }
-<a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">if </span>!diagonal.is_finite() || diagonal * diagonal / original_diagonal &lt;= <span class="number">1.0e-12 </span>{
-<a href=#133 id=133 data-nosnippet>133</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#134 id=134 data-nosnippet>134</a>        }
-<a href=#135 id=135 data-nosnippet>135</a>        normal[diagonal_index] = diagonal;
-<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">for </span>column <span class="kw">in </span>row + <span class="number">1</span>..size {
-<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>entry = row * size + column;
-<a href=#138 id=138 data-nosnippet>138</a>            <span class="kw">for </span>prior <span class="kw">in </span><span class="number">0</span>..row {
-<a href=#139 id=139 data-nosnippet>139</a>                normal[entry] -= normal[prior * size + row] * normal[prior * size + column]
-<a href=#140 id=140 data-nosnippet>140</a>                    / normal[prior * size + prior];
-<a href=#141 id=141 data-nosnippet>141</a>            }
-<a href=#142 id=142 data-nosnippet>142</a>        }
-<a href=#143 id=143 data-nosnippet>143</a>    }
-<a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span><span class="kw-2">mut </span>solution = known.to_vec();
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..size {
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">for </span>prior <span class="kw">in </span><span class="number">0</span>..row {
-<a href=#148 id=148 data-nosnippet>148</a>            solution[row] -=
-<a href=#149 id=149 data-nosnippet>149</a>                normal[prior * size + row] * solution[prior] / normal[prior * size + prior];
-<a href=#150 id=150 data-nosnippet>150</a>        }
-<a href=#151 id=151 data-nosnippet>151</a>    }
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">for </span>row <span class="kw">in </span>(<span class="number">0</span>..size).rev() {
-<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">for </span>later <span class="kw">in </span>row + <span class="number">1</span>..size {
-<a href=#154 id=154 data-nosnippet>154</a>            solution[row] -= normal[row * size + later] * solution[later];
-<a href=#155 id=155 data-nosnippet>155</a>        }
-<a href=#156 id=156 data-nosnippet>156</a>        solution[row] /= normal[row * size + row];
-<a href=#157 id=157 data-nosnippet>157</a>    }
-<a href=#158 id=158 data-nosnippet>158</a>    solution
-<a href=#159 id=159 data-nosnippet>159</a>        .iter()
-<a href=#160 id=160 data-nosnippet>160</a>        .all(|value| value.is_finite())
-<a href=#161 id=161 data-nosnippet>161</a>        .then_some(solution)
-<a href=#162 id=162 data-nosnippet>162</a>}
-<a href=#163 id=163 data-nosnippet>163</a>
-<a href=#164 id=164 data-nosnippet>164</a><span class="attr">#[cfg(test)]
-<a href=#165 id=165 data-nosnippet>165</a></span><span class="kw">mod </span>tests {
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">use super</span>::{
-<a href=#167 id=167 data-nosnippet>167</a>        solve_symmetric_ldlt_casacore, solve_symmetric_ldlt_casacore_dynamic,
-<a href=#168 id=168 data-nosnippet>168</a>        solve_weighted_least_squares,
-<a href=#169 id=169 data-nosnippet>169</a>    };
-<a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a>    <span class="attr">#[test]
-<a href=#172 id=172 data-nosnippet>172</a>    </span><span class="kw">fn </span>weighted_linear_fit_recovers_line() {
-<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>rows = <span class="macro">vec!</span>[
-<a href=#174 id=174 data-nosnippet>174</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">0.0</span>], <span class="number">2.0</span>, <span class="number">1.0</span>),
-<a href=#175 id=175 data-nosnippet>175</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">1.0</span>], <span class="number">5.0</span>, <span class="number">1.0</span>),
-<a href=#176 id=176 data-nosnippet>176</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">2.0</span>], <span class="number">8.0</span>, <span class="number">1.0</span>),
-<a href=#177 id=177 data-nosnippet>177</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">3.0</span>], <span class="number">11.0</span>, <span class="number">1.0</span>),
-<a href=#178 id=178 data-nosnippet>178</a>        ];
-<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">let </span>solution = solve_weighted_least_squares(<span class="kw-2">&amp;</span>rows, <span class="number">2</span>).expect(<span class="string">"nonsingular system"</span>);
-<a href=#180 id=180 data-nosnippet>180</a>        <span class="macro">assert!</span>((solution[<span class="number">0</span>] - <span class="number">2.0</span>).abs() &lt; <span class="number">1.0e-10</span>);
-<a href=#181 id=181 data-nosnippet>181</a>        <span class="macro">assert!</span>((solution[<span class="number">1</span>] - <span class="number">3.0</span>).abs() &lt; <span class="number">1.0e-10</span>);
-<a href=#182 id=182 data-nosnippet>182</a>    }
-<a href=#183 id=183 data-nosnippet>183</a>
-<a href=#184 id=184 data-nosnippet>184</a>    <span class="attr">#[test]
-<a href=#185 id=185 data-nosnippet>185</a>    </span><span class="kw">fn </span>invalid_weighted_rows_are_rejected() {
-<a href=#186 id=186 data-nosnippet>186</a>        <span class="macro">assert!</span>(solve_weighted_least_squares(<span class="kw-2">&amp;</span>[], <span class="number">1</span>).is_none());
-<a href=#187 id=187 data-nosnippet>187</a>        <span class="macro">assert!</span>(solve_weighted_least_squares(<span class="kw-2">&amp;</span>[(<span class="macro">vec!</span>[<span class="number">1.0</span>], <span class="number">1.0</span>, <span class="number">0.0</span>)], <span class="number">1</span>).is_none());
-<a href=#188 id=188 data-nosnippet>188</a>        <span class="macro">assert!</span>(solve_weighted_least_squares(<span class="kw-2">&amp;</span>[(<span class="macro">vec!</span>[<span class="number">1.0</span>], f64::NAN, <span class="number">1.0</span>)], <span class="number">1</span>).is_none());
-<a href=#189 id=189 data-nosnippet>189</a>    }
-<a href=#190 id=190 data-nosnippet>190</a>
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="attr">#[test]
-<a href=#192 id=192 data-nosnippet>192</a>    </span><span class="kw">fn </span>casacore_ldlt_solves_symmetric_system() {
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">let </span>normal = [[<span class="number">4.0</span>, <span class="number">1.0</span>], [<span class="number">0.0</span>, <span class="number">3.0</span>]];
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>solution =
-<a href=#195 id=195 data-nosnippet>195</a>            solve_symmetric_ldlt_casacore(normal, [<span class="number">9.0</span>, <span class="number">7.0</span>]).expect(<span class="string">"positive-definite system"</span>);
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="macro">assert!</span>((solution[<span class="number">0</span>] - <span class="number">20.0 </span>/ <span class="number">11.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="macro">assert!</span>((solution[<span class="number">1</span>] - <span class="number">19.0 </span>/ <span class="number">11.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
-<a href=#198 id=198 data-nosnippet>198</a>    }
-<a href=#199 id=199 data-nosnippet>199</a>
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="attr">#[test]
-<a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">fn </span>casacore_ldlt_rejects_singular_system() {
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="macro">assert!</span>(solve_symmetric_ldlt_casacore([[<span class="number">0.0</span>]], [<span class="number">1.0</span>]).is_none());
-<a href=#203 id=203 data-nosnippet>203</a>    }
-<a href=#204 id=204 data-nosnippet>204</a>
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="attr">#[test]
-<a href=#206 id=206 data-nosnippet>206</a>    </span><span class="kw">fn </span>dynamic_casacore_ldlt_matches_fixed_solver() {
-<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span>normal = [[<span class="number">4.0</span>, <span class="number">1.0</span>], [<span class="number">0.0</span>, <span class="number">3.0</span>]];
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>fixed = solve_symmetric_ldlt_casacore(normal, [<span class="number">9.0</span>, <span class="number">7.0</span>]).unwrap();
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>dynamic = solve_symmetric_ldlt_casacore_dynamic(
-<a href=#210 id=210 data-nosnippet>210</a>            <span class="macro">vec!</span>[normal[<span class="number">0</span>][<span class="number">0</span>], normal[<span class="number">0</span>][<span class="number">1</span>], normal[<span class="number">1</span>][<span class="number">0</span>], normal[<span class="number">1</span>][<span class="number">1</span>]],
-<a href=#211 id=211 data-nosnippet>211</a>            <span class="kw-2">&amp;</span>[<span class="number">9.0</span>, <span class="number">7.0</span>],
-<a href=#212 id=212 data-nosnippet>212</a>        )
-<a href=#213 id=213 data-nosnippet>213</a>        .unwrap();
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="macro">assert_eq!</span>(dynamic, fixed);
-<a href=#215 id=215 data-nosnippet>215</a>    }
-<a href=#216 id=216 data-nosnippet>216</a>}
+<a href=#107 id=107 data-nosnippet>107</a><span class="doccomment">/// Invert a symmetric positive-definite matrix, as casacore's
+<a href=#108 id=108 data-nosnippet>108</a>/// `invertSymPosDef` does, by Cholesky factorization.
+<a href=#109 id=109 data-nosnippet>109</a>///
+<a href=#110 id=110 data-nosnippet>110</a>/// `normal` contains the full symmetric matrix in row-major order. The
+<a href=#111 id=111 data-nosnippet>111</a>/// returned inverse is also symmetric and in row-major order. A positive
+<a href=#112 id=112 data-nosnippet>112</a>/// pivot remains valid even when its physical scale is small.
+<a href=#113 id=113 data-nosnippet>113</a></span><span class="attr">#[must_use]
+<a href=#114 id=114 data-nosnippet>114</a></span><span class="kw">pub fn </span>invert_symmetric_positive_definite(normal: <span class="kw-2">&amp;</span>[f64], size: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;f64&gt;&gt; {
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">if </span>size == <span class="number">0 </span>|| normal.len() != size.checked_mul(size)<span class="question-mark">? </span>{
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#117 id=117 data-nosnippet>117</a>    }
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">let </span>inverse = DMatrix::from_row_slice(size, size, normal)
+<a href=#119 id=119 data-nosnippet>119</a>        .cholesky()<span class="question-mark">?
+<a href=#120 id=120 data-nosnippet>120</a>        </span>.inverse();
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span><span class="kw-2">mut </span>entries = Vec::with_capacity(normal.len());
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">for </span>row <span class="kw">in </span>inverse.row_iter() {
+<a href=#123 id=123 data-nosnippet>123</a>        entries.extend(row.iter().copied());
+<a href=#124 id=124 data-nosnippet>124</a>    }
+<a href=#125 id=125 data-nosnippet>125</a>    entries
+<a href=#126 id=126 data-nosnippet>126</a>        .iter()
+<a href=#127 id=127 data-nosnippet>127</a>        .all(|value| value.is_finite())
+<a href=#128 id=128 data-nosnippet>128</a>        .then_some(entries)
+<a href=#129 id=129 data-nosnippet>129</a>}
+<a href=#130 id=130 data-nosnippet>130</a>
+<a href=#131 id=131 data-nosnippet>131</a><span class="attr">#[cfg(test)]
+<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">mod </span>tests {
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">use super</span>::{
+<a href=#134 id=134 data-nosnippet>134</a>        invert_symmetric_positive_definite, solve_symmetric_ldlt_casacore,
+<a href=#135 id=135 data-nosnippet>135</a>        solve_weighted_least_squares,
+<a href=#136 id=136 data-nosnippet>136</a>    };
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="attr">#[test]
+<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">fn </span>weighted_linear_fit_recovers_line() {
+<a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">let </span>rows = <span class="macro">vec!</span>[
+<a href=#141 id=141 data-nosnippet>141</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">0.0</span>], <span class="number">2.0</span>, <span class="number">1.0</span>),
+<a href=#142 id=142 data-nosnippet>142</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">1.0</span>], <span class="number">5.0</span>, <span class="number">1.0</span>),
+<a href=#143 id=143 data-nosnippet>143</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">2.0</span>], <span class="number">8.0</span>, <span class="number">1.0</span>),
+<a href=#144 id=144 data-nosnippet>144</a>            (<span class="macro">vec!</span>[<span class="number">1.0</span>, <span class="number">3.0</span>], <span class="number">11.0</span>, <span class="number">1.0</span>),
+<a href=#145 id=145 data-nosnippet>145</a>        ];
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>solution = solve_weighted_least_squares(<span class="kw-2">&amp;</span>rows, <span class="number">2</span>).expect(<span class="string">"nonsingular system"</span>);
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="macro">assert!</span>((solution[<span class="number">0</span>] - <span class="number">2.0</span>).abs() &lt; <span class="number">1.0e-10</span>);
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="macro">assert!</span>((solution[<span class="number">1</span>] - <span class="number">3.0</span>).abs() &lt; <span class="number">1.0e-10</span>);
+<a href=#149 id=149 data-nosnippet>149</a>    }
+<a href=#150 id=150 data-nosnippet>150</a>
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="attr">#[test]
+<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">fn </span>invalid_weighted_rows_are_rejected() {
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="macro">assert!</span>(solve_weighted_least_squares(<span class="kw-2">&amp;</span>[], <span class="number">1</span>).is_none());
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="macro">assert!</span>(solve_weighted_least_squares(<span class="kw-2">&amp;</span>[(<span class="macro">vec!</span>[<span class="number">1.0</span>], <span class="number">1.0</span>, <span class="number">0.0</span>)], <span class="number">1</span>).is_none());
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="macro">assert!</span>(solve_weighted_least_squares(<span class="kw-2">&amp;</span>[(<span class="macro">vec!</span>[<span class="number">1.0</span>], f64::NAN, <span class="number">1.0</span>)], <span class="number">1</span>).is_none());
+<a href=#156 id=156 data-nosnippet>156</a>    }
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="attr">#[test]
+<a href=#159 id=159 data-nosnippet>159</a>    </span><span class="kw">fn </span>casacore_ldlt_solves_symmetric_system() {
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>normal = [[<span class="number">4.0</span>, <span class="number">1.0</span>], [<span class="number">0.0</span>, <span class="number">3.0</span>]];
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>solution =
+<a href=#162 id=162 data-nosnippet>162</a>            solve_symmetric_ldlt_casacore(normal, [<span class="number">9.0</span>, <span class="number">7.0</span>]).expect(<span class="string">"positive-definite system"</span>);
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">assert!</span>((solution[<span class="number">0</span>] - <span class="number">20.0 </span>/ <span class="number">11.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="macro">assert!</span>((solution[<span class="number">1</span>] - <span class="number">19.0 </span>/ <span class="number">11.0</span>).abs() &lt; <span class="number">1.0e-12</span>);
+<a href=#165 id=165 data-nosnippet>165</a>    }
+<a href=#166 id=166 data-nosnippet>166</a>
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="attr">#[test]
+<a href=#168 id=168 data-nosnippet>168</a>    </span><span class="kw">fn </span>casacore_ldlt_rejects_singular_system() {
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="macro">assert!</span>(solve_symmetric_ldlt_casacore([[<span class="number">0.0</span>]], [<span class="number">1.0</span>]).is_none());
+<a href=#170 id=170 data-nosnippet>170</a>    }
+<a href=#171 id=171 data-nosnippet>171</a>
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="attr">#[test]
+<a href=#173 id=173 data-nosnippet>173</a>    </span><span class="kw">fn </span>cholesky_inverts_a_tiny_positive_taylor_pivot() {
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="comment">// A 2-term mosaic has a second spectral moment of this scale
+<a href=#175 id=175 data-nosnippet>175</a>        // when the selected channel's converted mean is near the reference.
+<a href=#176 id=176 data-nosnippet>176</a>        </span><span class="kw">let </span>tiny = <span class="number">1.78185e-13</span>;
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>inverse = invert_symmetric_positive_definite(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, tiny], <span class="number">2</span>).unwrap();
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="macro">assert_eq!</span>(inverse[..<span class="number">3</span>], [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]);
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="macro">assert!</span>((inverse[<span class="number">3</span>] * tiny - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-12</span>);
+<a href=#180 id=180 data-nosnippet>180</a>    }
+<a href=#181 id=181 data-nosnippet>181</a>
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="attr">#[test]
+<a href=#183 id=183 data-nosnippet>183</a>    </span><span class="kw">fn </span>cholesky_refuses_nonpositive_taylor_pivots() {
+<a href=#184 id=184 data-nosnippet>184</a>        <span class="kw">for </span>normal <span class="kw">in </span>[[<span class="number">1.0</span>, <span class="number">1.0</span>, <span class="number">1.0</span>, <span class="number">1.0</span>], [<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">2.0</span>, <span class="number">1.0</span>]] {
+<a href=#185 id=185 data-nosnippet>185</a>            <span class="macro">assert!</span>(invert_symmetric_positive_definite(<span class="kw-2">&amp;</span>normal, <span class="number">2</span>).is_none());
+<a href=#186 id=186 data-nosnippet>186</a>        }
+<a href=#187 id=187 data-nosnippet>187</a>    }
+<a href=#188 id=188 data-nosnippet>188</a>}
 </code></pre></div></section></main></body></html>
