@@ -645,6 +645,99 @@ fn field_lexical_boundaries_read_casas_physical_rows() {
 }
 
 #[test]
+fn slash_field_lookahead_agrees_with_casa_rows() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    // CASA 6.7.6.14 selected these exact physical rows on the three FIELD
+    // relabellings of the same MS. Only metadata changes between groups.
+    let cases = [
+        (
+            [("Alpha1", "first", false), ("Alpha2", "Code2", false)],
+            &[
+                ("/Alpha(?=1)1/", Some("field_id")),
+                ("/Alpha(?!1)./", Some("field_glob")),
+                ("/Alpha(?=1)2/", None),
+                ("/(?=Alpha.)Alpha(?:1|2)/", Some("all")),
+                ("/Alpha(?=1)1/,Alpha2", Some("all")),
+                ("/Alpha(?=1)(?=.)1/", Some("field_id")),
+                ("/Alpha(?=1)(?!2)1/", Some("field_id")),
+                ("/Alpha(?<=a)1/", None),
+                ("/Alpha(?>1)1/", None),
+            ][..],
+        ),
+        (
+            [("Alpha1 tail", "Cal1", false), ("Alpha2", "Alpha1", false)],
+            &[
+                ("/Alpha(?=1)1/", Some("field_glob")),
+                ("/Alpha(?=1)1.*/", Some("field_id")),
+                ("/Cal(?=1)1/", Some("field_id")),
+            ][..],
+        ),
+        (
+            [("é", "accented", false), ("ABX", "abx", false)],
+            &[
+                ("/(?=..)../", Some("field_id")),
+                ("/((?!...)(?=..))../", Some("field_id")),
+                ("/A(?=BX)BX/", Some("field_glob")),
+            ][..],
+        ),
+        (
+            [("A", "first", false), ("A{q}", "second", false)],
+            &[
+                ("/(?=A)(?:)*A/", Some("field_id")),
+                ("/(?=A)(?:)+A/", Some("field_id")),
+                ("/(?=A)(?:)?A/", Some("field_id")),
+                ("/(?=A)(?:){2}A/", Some("field_id")),
+                ("/(?=A)(?:(?:))*A/", Some("field_id")),
+                ("/(?=A)A{1,2}?/", Some("field_id")),
+                ("/(?=A)A++/", None),
+                ("/(?=A)A{q}/", None),
+            ][..],
+        ),
+    ];
+    for (metadata, selectors) in cases {
+        rewrite_fields(&vis, metadata);
+        for &(field, expected) in selectors {
+            let selection = request(&vis, root.path().join("rows"), &json!({ "field": field }));
+            let actual = row_pointing(&selection, &imaging::context(selection.resource_policy()));
+            if let Some(case) = expected {
+                assert_eq!(
+                    actual
+                        .unwrap_or_else(|error| panic!("{field:?}: {error}"))
+                        .into_keys()
+                        .collect::<Vec<_>>(),
+                    physical_rows(&oracle["cases"][case]),
+                    "{field:?}",
+                );
+            } else {
+                assert!(actual.is_err(), "CASA refuses {field:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn field_lookahead_limit_error_refuses_the_whole_selection() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let expensive = "A".repeat(32);
+    rewrite_fields(&vis, [("AB", "first", false), (&expensive, "AB", false)]);
+    let selection = request(
+        &vis,
+        root.path().join("rows"),
+        &json!({ "field": "/(?:(?=A)A|AA)*B/" }),
+    );
+    let error = row_pointing(&selection, &imaging::context(selection.resource_policy()))
+        .expect_err("a match error must refuse the entire selection")
+        .to_string();
+    assert!(
+        error.contains("matching FIELD regex") && error.contains("backtracking"),
+        "expected the match budget to refuse the selection: {error}"
+    );
+}
+
+#[test]
 fn bare_field_escapes_are_refused_before_selection() {
     let root = tempfile::tempdir().expect("test root");
     let vis = fixture(root.path());
