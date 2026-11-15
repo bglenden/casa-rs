@@ -1336,7 +1336,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"gridder":"wproject", "wprojplanes":4}),
         json!({"facets":2}),
         json!({"weighting":"uniform"}),
-        json!({"usemask":"auto-multithresh"}),
         json!({"nsigma":2.0}),
         json!({"savemodel":"modelcolumn"}),
         json!({"vis":["a.ms","b.ms"]}),
@@ -1351,6 +1350,9 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         assert_eq!(refusal.parameter, "deconvolver", "{values}: {refusal}");
         assert!(refusal.message.contains("#1060"));
     }
+    let automatic = request(json!({"deconvolver":"mem", "usemask":"auto-multithresh"}));
+    assert_eq!(automatic.usemask, crate::UseMask::AutoMultithresh);
+    automatic.validate().expect("MEM with an automatic mask");
     let mut typed = accepted;
     typed
         .stokes

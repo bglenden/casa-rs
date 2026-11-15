@@ -282,6 +282,37 @@ fn mem_applies_the_primary_beam_to_the_requested_mask() {
 }
 
 #[test]
+fn mem_solves_only_with_a_nonempty_automatic_mask() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let mut controls = json!({
+        "deconvolver":"mem", "usemask":"auto-multithresh",
+        "niter":2, "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (run, generated) = observation.image("mem-automatic-mask", controls.clone());
+    let support = &generated.get(".mask").pixels;
+    assert_eq!(
+        support[component_pixel(POINT)],
+        1.0,
+        "MEM sees automatic support"
+    );
+    assert!(
+        support.iter().any(|&value| value == 0.0),
+        "automatic support excludes background"
+    );
+    assert_mem_model_support(&generated.get(".model").pixels, support);
+    assert!(run.actual_minor_iterations > 0);
+
+    controls["noisethreshold"] = json!(1e6);
+    let (run, empty) = observation.image("mem-empty-automatic-mask", controls);
+    assert!(
+        empty.get(".mask").pixels.iter().all(|&value| value == 0.0),
+        "the noise cutoff can leave empty automatic support"
+    );
+    assert!(empty.get(".model").pixels.iter().all(|&value| value == 0.0));
+    assert_eq!(run.actual_minor_iterations, 0);
+}
+
+#[test]
 fn auto_multithresh_masks_both_sources_and_confines_the_model() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
     let (summary, products) = observation.image(
