@@ -117,6 +117,9 @@ impl ImagingRequest {
                 request.mvc_output_channels = Some(count);
             }
         }
+        request.validate_mask_image_list().map_err(|error| {
+            TcleanRefusal::new(tclean_parameter(error.parameters), error.reason)
+        })?;
         request
             .validate_mem_scope()
             .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
@@ -1109,7 +1112,8 @@ impl<'a> Tclean<'a> {
         // CASA reads `mask` with usemask='user' only.
         let UserMask {
             boxes,
-            image,
+            images,
+            before_image,
             polygon,
         } = if modes.user_mask {
             user_mask(&entries)?
@@ -1121,7 +1125,7 @@ impl<'a> Tclean<'a> {
             modes.user_mask
                 && !entries.is_empty()
                 && boxes.is_empty()
-                && image.is_none()
+                && images.is_empty()
                 && polygon.is_none(),
         );
         self.set(
@@ -1132,13 +1136,13 @@ impl<'a> Tclean<'a> {
                 boxes.join(";")
             },
         );
-        if let Some(MaskImageEntry { path, before }) = image {
-            self.set("mask_image", path);
-            if !boxes.is_empty() {
-                self.set("mask_regions_before_image", before);
-            }
-        } else {
-            self.set("mask_image", "none");
+        let paths = match images.as_slice() {
+            [path] => json!(path),
+            paths => json!(paths),
+        };
+        self.set("mask_image", paths);
+        if let Some(before) = before_image {
+            self.set("mask_regions_before_image", before);
         }
         if let Some(polygon) = polygon {
             self.set("mask_polygon", json!(polygon));
@@ -1199,15 +1203,11 @@ fn velocity_convention(text: &str) -> Result<&'static str, TcleanRefusal> {
     }
 }
 
-struct MaskImageEntry<'a> {
-    path: &'a str,
-    before: usize,
-}
-
 #[derive(Default)]
 struct UserMask<'a> {
     boxes: Vec<String>,
-    image: Option<MaskImageEntry<'a>>,
+    images: Vec<&'a str>,
+    before_image: Option<usize>,
     polygon: Option<MaskPolygon>,
 }
 
@@ -1216,7 +1216,23 @@ struct UserMask<'a> {
 /// signed mask values. Consecutive text fragments are joined because
 /// the CLI can split a region at its commas.
 fn user_mask<'a>(entries: &[&'a str]) -> Result<UserMask<'a>, TcleanRefusal> {
-    let multiple_images = || TcleanRefusal::not_yet("mask", "more than one mask image", 980);
+    let multiple_images = || {
+        TcleanRefusal::not_yet(
+            "mask",
+            "more than one mask image mixed with other entries",
+            823,
+        )
+    };
+    if entries.len() > 1
+        && entries
+            .iter()
+            .all(|entry| std::path::Path::new(entry).is_dir())
+    {
+        return Ok(UserMask {
+            images: entries.to_vec(),
+            ..UserMask::default()
+        });
+    }
     if entries.len() > 1
         && let Some((index, &image)) = entries
             .iter()
@@ -1235,10 +1251,8 @@ fn user_mask<'a>(entries: &[&'a str]) -> Result<UserMask<'a>, TcleanRefusal> {
         boxes.extend(mask_region_entries(after)?);
         return Ok(UserMask {
             boxes,
-            image: Some(MaskImageEntry {
-                path: image,
-                before,
-            }),
+            images: vec![image],
+            before_image: Some(before),
             polygon: None,
         });
     }
@@ -1260,7 +1274,7 @@ fn user_mask<'a>(entries: &[&'a str]) -> Result<UserMask<'a>, TcleanRefusal> {
     match entries {
         [] => Ok(UserMask::default()),
         [path] => Ok(UserMask {
-            image: Some(MaskImageEntry { path, before: 0 }),
+            images: vec![path],
             ..UserMask::default()
         }),
         _ => Err(multiple_images()),

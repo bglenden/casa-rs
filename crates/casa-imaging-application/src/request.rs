@@ -244,9 +244,10 @@ pub struct ImagingRequest {
     /// the channels of its CRTF region's spectral `range` when it has one.
     #[serde(deserialize_with = "mask_boxes")]
     pub mask_box: Vec<UserMaskBox>,
-    /// A CASA image whose non-zero pixels may be cleaned.
-    #[serde(deserialize_with = "optional")]
-    pub mask_image: Option<PathBuf>,
+    /// CASA mask images in list order. Each adds its signed pixels to the
+    /// current binary support before applying the positive threshold.
+    #[serde(rename = "mask_image", deserialize_with = "mask_images")]
+    pub mask_images: Vec<PathBuf>,
     /// CASA's `startmodel`: the images in Jy/pixel that the model starts
     /// from (`SIImageStore::setModelImageOne`), one, or one per Taylor term
     /// (`SIImageStoreMultiTerm::setModelImage`), `None` for an empty entry,
@@ -801,21 +802,21 @@ impl ImagingRequest {
         if self.savemodel == SaveModel::Virtual {
             self.validate_virtual_model()?;
         }
+        self.validate_mask_image_list()?;
         let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
-        if self.usemask != UseMask::User
-            && (self.mask_image.is_some() || has_boxes || self.mask_polygon.is_some())
+        let has_images = !self.mask_images.is_empty();
+        if self.usemask != UseMask::User && (has_images || has_boxes || self.mask_polygon.is_some())
         {
             return invalid(
                 "usemask, mask_image, mask_box",
                 "auto-multithresh and primary-beam masks do not take user images or boxes",
             );
         }
-        let polygon_with_other_mask =
-            self.mask_polygon.is_some() && (self.mask_image.is_some() || has_boxes);
+        let polygon_with_other_mask = self.mask_polygon.is_some() && (has_images || has_boxes);
         let list_position = self.mask_regions_before_image;
         if polygon_with_other_mask
             || list_position.is_some_and(|before| before > self.mask_box.len())
-            || (self.mask_image.is_some()
+            || (has_images
                 && has_boxes
                 && (list_position.is_none()
                     || self.mask_box.iter().any(|region| region.range.is_some())))
@@ -908,6 +909,26 @@ impl ImagingRequest {
             return Err(InvalidRequest {
                 parameters: "psfphasecenter",
                 reason: "a separate PSF centre is supported for a fixed MFS mosaic or a single-term cube mosaic without outliers (#1062)",
+            });
+        }
+        Ok(())
+    }
+
+    /// Keep lists of two or more image masks within the compared geometry.
+    pub(crate) fn validate_mask_image_list(&self) -> Result<(), InvalidRequest> {
+        if self.mask_images.len() > 1
+            && (!self.mask_box.is_empty()
+                || self.mask_polygon.is_some()
+                || self.specmode != SpecMode::Mfs
+                || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
+                || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
+                || self.deconvolver != Deconvolver::Hogbom
+                || self.niter == 0
+                || self.outlierfile.is_some())
+        {
+            return Err(InvalidRequest {
+                parameters: "mask_image",
+                reason: "multiple mask images support standard Stokes I MFS Högbom cleaning without region masks or outliers (#823)",
             });
         }
         Ok(())
@@ -1144,6 +1165,16 @@ fn start_models<'de, D: Deserializer<'de>>(
         }
         Value::Array(items) => items.iter().map(entry).collect(),
         value => entry(&value).map(|path| vec![path]),
+    }
+}
+
+/// The native single mask path, or the list of paths resolved by tclean.
+fn mask_images<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<PathBuf>, D::Error> {
+    match Value::deserialize(deserializer)? {
+        value @ Value::Array(_) => Vec::<PathBuf>::deserialize(value).map_err(D::Error::custom),
+        value => optional::<_, PathBuf>(value)
+            .map(|path| path.into_iter().collect())
+            .map_err(D::Error::custom),
     }
 }
 

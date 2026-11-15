@@ -295,7 +295,7 @@ pub(super) fn check_execution_scope(
         || request.outlierfile.is_some()
         || request.fitspw.is_some()
         || request.usemask != crate::UseMask::User
-        || request.mask_image.is_some()
+        || !request.mask_images.is_empty()
         || request.mask_polygon.is_some()
         || request.pbmask != 0.0
         || request.outframe != FrequencyRef::LSRK
@@ -637,7 +637,7 @@ mod tests {
         other.usemask = crate::UseMask::Pb;
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
-        other.mask_image = Some("mask".into());
+        other.mask_images = vec!["mask".into()];
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.pbmask = 0.1;

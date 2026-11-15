@@ -24,7 +24,7 @@
 //! On a shifted grid, sample signed values linearly, treating invalid
 //! input pixels as zero, then take finite positive support as CASA does.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate};
@@ -32,10 +32,12 @@ use casa_images::regrid::{DirectionAffine, direction_affine, linear_sample};
 use casa_images::{AnyPagedImage, ImagePixel, PagedImage};
 use casa_imaging_deconvolution::{MaskError, MaskPlanes, ReconstructionMaskPlan};
 use casa_imaging_model::DirectionCoordinateSpec;
+use casa_imaging_runtime::{Demand, Reservation, admit};
 use ndarray::{ArrayView2, ArrayViewD, Axis, Ix2};
 
 use super::PrepareError;
 use super::domains::paint_mask_box;
+use crate::RunContext;
 
 /// The bound on the tiles a mask image's read caches, as a restart's CLEAN
 /// mask is read.
@@ -288,11 +290,28 @@ impl MaskImage {
     /// before and after the image paint those same held planes.
     pub(crate) fn read(
         self,
-        [before, after]: [&[[i64; 4]]; 2],
+        regions: [&[[i64; 4]]; 2],
     ) -> Result<ReconstructionMaskPlan, PrepareError> {
+        let coordinate = self.target;
+        let planes = self.held;
+        let cells = self.target_size[0] * self.target_size[1] * planes.count();
+        let mut support = vec![false; cells];
+        self.accumulate(&mut support, regions)?;
+        Ok(ReconstructionMaskPlan::Reprojected {
+            coordinate,
+            planes,
+            support: support.into(),
+        })
+    }
+
+    /// Read one supplied image into the current binary support.
+    fn accumulate(
+        self,
+        support: &mut [bool],
+        [before, after]: [&[[i64; 4]]; 2],
+    ) -> Result<(), PrepareError> {
         let held = self.held;
         let cells = self.target_size[0] * self.target_size[1];
-        let mut support = vec![false; cells * held.count()];
         let sampling = self.sampling()?;
         for channel in 0..held.channels() {
             for stokes in 0..held.polarizations() {
@@ -316,13 +335,61 @@ impl MaskImage {
                 }
             }
         }
-        let support: Arc<[bool]> = support.into();
-        Ok(ReconstructionMaskPlan::Reprojected {
-            coordinate: self.target,
-            planes: held,
-            support,
-        })
+        Ok(())
     }
+}
+
+/// Read an ordered list of aligned continuum images into the same Stokes I
+/// plane. Keep no previous input tiles or support planes live across reads.
+pub(crate) fn read_aligned_list(
+    paths: &[PathBuf],
+    coordinate: DirectionCoordinateSpec,
+    size: [usize; 2],
+    context: &RunContext,
+) -> Result<(ReconstructionMaskPlan, Reservation), PrepareError> {
+    let cells = size[0]
+        .checked_mul(size[1])
+        .ok_or(MaskError::InvalidShape)?;
+    let retained = cells as u64 + size_of::<[usize; 2]>() as u64;
+    let charge = admit(
+        &context.host,
+        &context.policy,
+        &Demand {
+            phase: "clean mask support",
+            memory: retained,
+        },
+    )?;
+    let mut support = None::<Arc<[bool]>>;
+    let planes = TargetPlanes {
+        channels: 1,
+        polarizations: 1,
+        spectral: None,
+    };
+    for path in paths {
+        let input = MaskImage::open(path, coordinate, size, planes)?;
+        if input.held != MaskPlanes::SHARED || !input.matches_direction_grid() {
+            return Err(PrepareError::MaskListGrid { path: path.clone() });
+        }
+        let _scratch = admit(
+            &context.host,
+            &context.policy,
+            &Demand {
+                phase: "clean mask image",
+                memory: input.reading_bytes().saturating_sub(cells as u64),
+            },
+        )?;
+        let support = support.get_or_insert_with(|| vec![false; cells].into());
+        input.accumulate(
+            Arc::get_mut(support).expect("list owns its support"),
+            [&[], &[]],
+        )?;
+    }
+    let plan = ReconstructionMaskPlan::Reprojected {
+        coordinate,
+        planes: MaskPlanes::SHARED,
+        support: support.ok_or(MaskError::InvalidShape)?,
+    };
+    Ok((plan, charge))
 }
 
 /// The mask image at `path` opened onto its own direction grid, for an

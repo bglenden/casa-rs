@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Heap demand for the temporary MVC cube request copy (#1069).
 
+use std::path::PathBuf;
+
 use crate::{AwCfSource, Gridder, ImagingRequest, MeasurementSetSelection, UserMaskBox};
 
 /// Bound the owned buffers cloned from the request, plus formatting the two
@@ -67,10 +69,8 @@ pub(super) fn clone_demand(request: &ImagingRequest) -> Result<u64, super::Prepa
     {
         add(text.len())?;
     }
-    for path in [&request.outlierfile, &request.mask_image]
-        .into_iter()
-        .flatten()
-    {
+    add(vector(request.mask_images.len(), size_of::<PathBuf>())?)?;
+    for path in request.outlierfile.iter().chain(&request.mask_images) {
         add(path.as_os_str().len())?;
     }
     for path in request.startmodel.iter().flatten() {

@@ -7,7 +7,7 @@
 //! live heap; a global allocator applies to this test binary alone.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_coordinates::{
@@ -15,11 +15,15 @@ use casa_coordinates::{
     StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
-use casa_imaging_application::mask_image_law::Input;
+use casa_imaging_application::{
+    RunContext,
+    mask_image_law::{Input, read_list},
+};
 use casa_imaging_deconvolution::{MaskPlanes, ReconstructionMaskPlan};
 use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, Projection as ImagingProjection, SkyDirection,
 };
+use casa_imaging_runtime::{HostResources, ReservationWindow, ResourcePolicy};
 use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use ndarray::{ArrayD, Dimension, IxDyn};
 
@@ -271,4 +275,71 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
         "polygon held {held} bytes, kept {retained}"
     );
     assert_eq!(support.iter().filter(|inside| **inside).count(), 86 * 26);
+    check_mask_list(root.path());
+}
+
+fn check_mask_list(root: &Path) {
+    let a = root.join("list-a.mask");
+    let b = root.join("list-b.mask");
+    write_mask(&a, 1, 1, |index| index[0] < 32);
+    write_mask(&b, 1, 1, |index| (16..48).contains(&index[0]));
+    let coordinate = DirectionCoordinateSpec::new(
+        ImagingProjection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+        [SIDE as f64 / 2.0; 2],
+        [-1e-5, 1e-5],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 90.0],
+    );
+    let context = RunContext {
+        host: HostResources::detect().unwrap(),
+        policy: ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 16 << 20,
+        },
+        cancel: Default::default(),
+        summary: None,
+    };
+    let window = ReservationWindow::open();
+    let measure = |paths: &[PathBuf], columns: usize| {
+        window.close();
+        PEAK.store(0, Ordering::Relaxed);
+        let baseline = LIVE.load(Ordering::Relaxed);
+        BASELINE.store(baseline, Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let (plan, charge) = read_list(paths, coordinate, [SIDE; 2], &context).unwrap();
+        MEASURING.store(false, Ordering::Relaxed);
+        let held = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
+        let peak = PEAK.load(Ordering::Relaxed);
+        let admitted = window.close();
+        println!(
+            "{} image masks: {peak} bytes peak / {admitted} admitted, {held} / {} kept",
+            paths.len(),
+            charge.memory()
+        );
+        assert!(peak <= admitted, "list peak {peak}, admitted {admitted}");
+        assert!(
+            held <= charge.memory(),
+            "list held {held}, kept {}",
+            charge.memory()
+        );
+        let ReconstructionMaskPlan::Reprojected {
+            planes, support, ..
+        } = plan
+        else {
+            panic!("expected image-mask support");
+        };
+        assert_eq!(planes, MaskPlanes::SHARED);
+        assert_eq!(
+            support.iter().filter(|inside| **inside).count(),
+            columns * (SIDE - 1)
+        );
+        peak
+    };
+    let single = measure(std::slice::from_ref(&a), 32);
+    let list = measure(&[a.clone(), b, a], 48);
+    assert!(
+        list <= single + 4096,
+        "ordered mask list peaked at {list} bytes, single image {single}"
+    );
 }

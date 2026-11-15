@@ -582,6 +582,12 @@ pub enum PrepareError {
         /// Its shape.
         shape: Vec<usize>,
     },
+    /// Image lists currently accept one aligned continuum plane per input.
+    #[error("mask image {} must be one plane on the output direction grid (#823)", path.display())]
+    MaskListGrid {
+        /// The supplied mask image.
+        path: PathBuf,
+    },
     /// MEM's image mask needs the output tangent plane for direction import.
     #[error("MEM mask image {} must share the output tangent plane (#823)", path.display())]
     MemMaskGrid {

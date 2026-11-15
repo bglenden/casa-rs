@@ -200,7 +200,7 @@ fn check_products(
                 ));
             }
             if prefix == request.imagename
-                && (request.mask_image.is_some()
+                && (!request.mask_images.is_empty()
                     || request.mask_polygon.is_some()
                     || !request.mask_box.is_empty()
                     || request.explicit_empty_mask)
@@ -446,14 +446,15 @@ pub(crate) fn continuation_products(
     prefix: &Path,
 ) -> Result<Vec<PathBuf>, PrepareError> {
     let mut existing = products(prefix)?;
-    if let Some(input) = request
-        .mask_image
-        .as_ref()
-        .and_then(|path| fs::canonicalize(path).ok())
-    {
+    let inputs: Vec<_> = request
+        .mask_images
+        .iter()
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .collect();
+    if !inputs.is_empty() {
         existing.retain(|path| {
             !suffix(prefix, path).starts_with("mask.")
-                || fs::canonicalize(path).map_or(true, |path| path != input)
+                || fs::canonicalize(path).map_or(true, |path| !inputs.contains(&path))
         });
     }
     Ok(existing)
