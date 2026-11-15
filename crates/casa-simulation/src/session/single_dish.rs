@@ -108,7 +108,8 @@ impl Simulator {
             resources.policy(),
             &Demand {
                 phase: "the simulator's total-power pointing pixels",
-                memory: if Self::local_total_power_frame(&model) || transformed.is_some() {
+                memory: if Self::epoch_dependent_total_power_frame(&model) || transformed.is_some()
+                {
                     (self.planned_rows() as u64)
                         .saturating_mul(384)
                         .saturating_add(256 << 10)
@@ -169,11 +170,12 @@ impl Simulator {
         );
         Ok(prediction)
     }
-    fn local_total_power_frame(model: &SkyModel) -> bool {
+    fn epoch_dependent_total_power_frame(model: &SkyModel) -> bool {
         use casa_types::measures::direction::DirectionRef::*;
         !matches!(
             model.tangent_direction().refer(),
-            J2000 | B1950 | B1950Vla | GALACTIC | ICRS | SUPERGAL | ECLIPTIC
+            // FK4 B1950 has an epoch term even for a fixed pointing.
+            J2000 | B1950Vla | GALACTIC | ICRS | SUPERGAL | ECLIPTIC
         )
     }
 
@@ -182,7 +184,7 @@ impl Simulator {
         model: &SkyModel,
         transformed: bool,
     ) -> SimulatorResult<SingleDishPointings> {
-        if !Self::local_total_power_frame(model) && !transformed {
+        if !Self::epoch_dependent_total_power_frame(model) && !transformed {
             return Ok(SingleDishPointings::of_scans(
                 self.scans.iter().map(|scan| scan.pointing_rad),
             ));

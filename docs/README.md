@@ -19,6 +19,7 @@ the Python package is its interface ([ADR-0017](adr/0017-python-first-surface.md
   [compatibility](python/versioning.md) and the
   [API reference](python/api.md)
 - [Calibration tasks user guide](casars-calibrate-user-guide.md)
+- [Simulation imaging and analysis](casars-simanalyze-user-guide.md)
 - [Task parameter profiles](task-parameters.md): sparse TOML profiles, Last
   state, and the task command line
 - [Task parameter reference](reference/task-parameters.md) and

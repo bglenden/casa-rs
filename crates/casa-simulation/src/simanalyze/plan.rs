@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Project discovery and the tclean call made by simutil.imtclean.
-use super::{Parameters, failure};
+use super::{Parameters, failure, inputs};
 use crate::{
     SessionResources,
     simobserve::SimobserveError,
@@ -21,6 +21,8 @@ pub(super) struct Plan {
     pub model: PathBuf,
     pub ms: PathBuf,
     pub imaging: Map<String, Value>,
+    pub inputs: inputs::Inputs,
+    pub concat_weights: Vec<f64>,
 }
 impl Plan {
     pub(super) fn file(&self, suffix: &str) -> PathBuf {
@@ -46,6 +48,7 @@ impl Plan {
             ".image.pbcor",
             ".pb",
             ".sumwt",
+            ".weight",
             ".mask",
             ".image.flat",
             ".diff",
@@ -101,7 +104,13 @@ fn files(directory: &Path) -> Result<Vec<PathBuf>, SimobserveError> {
     files.sort();
     Ok(files)
 }
-fn locate(directory: &Path, input: &str) -> PathBuf {
+pub(super) fn expand_project(directory: &Path, value: &str) -> String {
+    value.replace(
+        "$project",
+        &directory.file_name().unwrap_or_default().to_string_lossy(),
+    )
+}
+pub(super) fn locate(directory: &Path, input: &str) -> PathBuf {
     let in_project = directory.join(input);
     if in_project.exists() {
         in_project
@@ -114,10 +123,7 @@ pub(super) fn prepare(
     p: &Parameters<'_>,
     resources: SessionResources,
 ) -> Result<Plan, SimobserveError> {
-    if !p.text("logfile").is_empty() {
-        return Err(failure("custom simulation log files remain on #841"));
-    }
-    let directory = PathBuf::from(p.text("project"));
+    let directory = std::path::absolute(p.text("project")).map_err(failure)?;
     if !directory.is_dir() {
         return Err(failure(format!(
             "{} directory doesn't exist - the task expects to find results from creating the datasets there, like the skymodel.",
@@ -125,47 +131,33 @@ pub(super) fn prepare(
         )));
     }
     let candidates = files(&directory)?;
-    let inputs = p.strings("vis");
-    let mut sets = if inputs.is_empty() || inputs == ["default"] {
-        candidates
-            .iter()
-            .filter(|path| path.to_string_lossy().ends_with(".ms"))
-            .filter(|path| {
-                let name = path.file_name().unwrap().to_string_lossy();
-                name.contains("noisy") || !directory.join(name.replace(".ms", ".noisy.ms")).exists()
-            })
-            .cloned()
-            .collect::<Vec<_>>()
+    let inputs = inputs::discover(p, &directory, &candidates)?;
+    let concat_weights = if inputs.synthesis.len() > 1 {
+        inputs::concat_weights(&inputs.synthesis)?
+    } else {
+        Vec::new()
+    };
+    let project = directory.file_name().unwrap().to_string_lossy();
+    let ms = if inputs.synthesis.len() > 1 {
+        directory.join(format!("{project}.concat.ms"))
     } else {
         inputs
-            .iter()
-            .flat_map(|v| v.split(','))
-            .map(|s| locate(&directory, s.trim()))
-            .collect()
+            .synthesis
+            .first()
+            .or(inputs.total_power.as_ref())
+            .cloned()
+            .unwrap_or_default()
     };
-    sets.retain(|path| path.exists());
-    if sets.len() != 1 {
-        return Err(failure(if sets.is_empty() {
-            "No MS found to image"
-        } else {
-            "multiple-MS simulation imaging requires concat (#939)"
-        }));
-    }
-    let ms = sets.remove(0);
-    if analysis::is_total_power(&ms).map_err(failure)? {
-        return Err(failure(
-            "total-power simulation imaging requires tsdimaging (#938)",
-        ));
-    }
-    if !p.text("featherimage").is_empty() {
-        return Err(failure("simulation feather integration remains on #841"));
-    }
     let stem = if p.flag("image") {
-        ms.file_name()
-            .unwrap()
-            .to_string_lossy()
-            .trim_end_matches(".ms")
-            .to_owned()
+        if inputs.synthesis.is_empty() {
+            format!("{project}.sd")
+        } else {
+            ms.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .trim_end_matches(".ms")
+                .to_owned()
+        }
     } else if matches!(p.text("imagename"), "" | "default") {
         candidates
             .iter()
@@ -193,25 +185,40 @@ pub(super) fn prepare(
         })
         .cloned()
         .collect();
+    let search = inputs
+        .synthesis
+        .first()
+        .or(inputs.total_power.as_ref())
+        .and_then(|path| path.file_name())
+        .map(|name| {
+            name.to_string_lossy()
+                .trim_end_matches(".ms")
+                .replace(".noisy", "")
+        })
+        .unwrap_or_else(|| stem.clone());
     models.sort_by_key(|path| {
         (
             !path
                 .file_name()
                 .unwrap()
                 .to_string_lossy()
-                .contains(stem.trim_end_matches(".noisy")),
+                .contains(&search),
             path.clone(),
         )
     });
     let model = if !p.text("skymodel").is_empty() {
-        locate(&directory, p.text("skymodel"))
+        locate(&directory, &expand_project(&directory, p.text("skymodel")))
     } else {
         models
             .into_iter()
             .next()
             .ok_or_else(|| failure("Can't find a model image in your project directory"))?
     };
-    let imaging = imaging(p, &ms, &root, &model, &directory, resources)?;
+    let imaging = if p.flag("image") {
+        imaging(p, &inputs, &ms, &root, &model, &directory, resources)?
+    } else {
+        Map::new()
+    };
     Ok(Plan {
         directory,
         stem,
@@ -219,11 +226,14 @@ pub(super) fn prepare(
         model,
         ms,
         imaging,
+        inputs,
+        concat_weights,
     })
 }
 
 fn imaging(
     p: &Parameters<'_>,
+    inputs: &inputs::Inputs,
     ms_path: &Path,
     root: &Path,
     model_path: &Path,
@@ -270,9 +280,26 @@ fn imaging(
         size.push(size[0]);
     }
     let frequency = model.coordinates().coordinate(2).reference_value()[0];
-    let minimum = minimum_size(ms_path, cell[0], frequency, resources)?;
+    let minimum = inputs
+        .synthesis
+        .iter()
+        .map(|path| minimum_size(path, cell[0], frequency, resources))
+        .try_fold(None::<f64>, |value, next| {
+            next.map(|next| Some(value.map_or(next, |old| old.min(next))))
+        })?
+        .unwrap_or(0.);
     let size = planned_sizes(&size, model.shape(), model_cell, cell, minimum, resources)?;
-    let ms = MeasurementSet::open(ms_path).map_err(failure)?;
+    let size = if inputs.synthesis.is_empty() {
+        size
+    } else {
+        size.map(casa_imaging_model::optimum_image_size)
+    };
+    let input = inputs
+        .synthesis
+        .first()
+        .or(inputs.total_power.as_ref())
+        .expect("image input");
+    let ms = MeasurementSet::open(input).map_err(failure)?;
     let source = ms
         .subtable(SubtableId::Source)
         .ok_or_else(|| failure("MS has no SOURCE table"))?;
@@ -280,7 +307,7 @@ fn imaging(
     let fields = (0..source.row_count())
         .filter(|&row| matches!(codes.scalar_cell(row), Ok(ScalarValue::String(v)) if v=="OBJ"))
         .count();
-    let startmodel = p.text("modelimage").replace("$project", p.text("project"));
+    let startmodel = expand_project(directory, p.text("modelimage"));
     let startmodel = locate(directory, &startmodel);
     let nchan = ms
         .spectral_window()
@@ -293,7 +320,7 @@ fn imaging(
         "stokes": p.text("stokes"), "startmodel": if startmodel.exists() && !p.text("modelimage").is_empty() {startmodel.to_string_lossy().into_owned()} else {String::new()},
         "specmode": if nchan==1 {"mfs"} else {"cube"}, "gridder": if fields==1 {"standard"} else {"mosaic"},
         "deconvolver": "clark", "weighting": p.text("weighting"), "niter": p.0["niter"],
-        "threshold": if p.0["niter"].as_i64().unwrap_or(0)>0 {p.text("threshold")} else {""},
+        "threshold": if p.0["niter"].as_i64().unwrap_or(0)>0 {p.text("threshold")} else {"0Jy"},
         "interactive": p.flag("interactive"), "usemask": "user", "mask": p.0["mask"],
         "uvtaper": p.0["outertaper"], "pbcor": p.flag("pbcor"), "pbmask": 0.,
         "restoringbeam": "common", "savemodel": "none", "calcres": true, "calcpsf": true,
@@ -361,7 +388,7 @@ fn planned_sizes(
     if bytes.is_none_or(|bytes| bytes > resources.policy().memory(resources.host())) {
         return Err(failure("image dimensions exceed the run's memory budget"));
     }
-    Ok(size.map(casa_imaging_model::optimum_image_size))
+    Ok(size)
 }
 
 #[cfg(test)]

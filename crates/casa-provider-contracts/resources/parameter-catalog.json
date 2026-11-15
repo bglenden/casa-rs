@@ -11197,13 +11197,13 @@
     },
     {
       "id": "simulation.analysis.vis",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "vis",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "project_path"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -11217,13 +11217,13 @@
     },
     {
       "id": "simulation.analysis.modelimage",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "modelimage",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "project_path"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -11335,13 +11335,13 @@
     },
     {
       "id": "simulation.analysis.featherimage",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "featherimage",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "project_path"
       },
       "base_constraints": [],
       "unit_dimension": null,

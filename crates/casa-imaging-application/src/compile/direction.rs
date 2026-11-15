@@ -89,8 +89,27 @@ pub(super) fn resolve_centre(
                 field_direction,
             )
         }
-        Some(text) if text.split_ascii_whitespace().next() == Some("J2000") => {
-            let direction = parse_phase_center_direction(text)?;
+        Some(text)
+            if matches!(
+                text.split_ascii_whitespace().next(),
+                Some("J2000" | "B1950")
+            ) =>
+        {
+            let requested = parse_phase_center_direction(text)?;
+            stored_phase = MDirection::from_angles(
+                requested.longitude_rad(),
+                requested.latitude_rad(),
+                if requested.frame() == DirectionFrame::B1950 {
+                    DirectionRef::B1950
+                } else {
+                    DirectionRef::J2000
+                },
+            );
+            let frame =
+                engine.spectral_frame_observatory_direction(anchor_time, stored_phase.clone())?;
+            let converted = stored_phase.convert_to(DirectionRef::J2000, &frame)?;
+            let (longitude, latitude) = converted.as_angles();
+            let direction = SkyDirection::new(DirectionFrame::J2000, longitude, latitude);
             (PhaseCentreLaw::Fixed(direction), None, direction)
         }
         Some("TRACKFIELD") => {
@@ -396,7 +415,13 @@ fn image_centre(
             DirectionFrame::Icrs,
         ));
     }
-    let centre = if request.phasecenter.is_none()
+    let fixed_literal = request.phasecenter.as_deref().is_some_and(|text| {
+        matches!(
+            text.split_ascii_whitespace().next(),
+            Some("J2000" | "B1950")
+        )
+    });
+    let centre = if (request.phasecenter.is_none() || fixed_literal)
         && matches!(
             stored_phase.refer(),
             DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
@@ -440,8 +465,9 @@ fn named_ephemeris(
 }
 
 /// The image's observation record: telescope and observer of the selected
-/// observations, which must agree, the first selected time and the image
-/// centre.
+/// observations, the first selected time and the image centre. ALMA/ACA
+/// combinations keep the first selected observation's label, as CASA does;
+/// their heterogeneous dish response is planned separately.
 pub(super) fn observation_info(
     catalogue: &Catalogue,
     survey: &Survey,
@@ -459,13 +485,34 @@ pub(super) fn observation_info(
             None => (String::new(), String::new()),
         });
     }
-    if labels.len() != 1 {
+    let alma_aca = labels
+        .iter()
+        .all(|(telescope, _)| matches!(telescope.as_str(), "ALMA" | "ACA"))
+        && labels
+            .iter()
+            .map(|(_, observer)| observer)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == 1;
+    if labels.len() != 1 && !alma_aca {
         return Err(PrepareError::ObservationLabels {
             observation_ids: survey.observation_ids.clone(),
             labels,
         });
     }
-    let (telescope_name, observer) = labels.pop_first().expect("one label pair");
+    let (telescope_name, observer) = if labels.len() == 1 {
+        labels.pop_first().expect("one label pair")
+    } else {
+        let id = *survey
+            .observation_ids
+            .first()
+            .expect("selected observations") as usize;
+        let observation = &catalogue.observations[id];
+        (
+            observation.telescope.clone(),
+            observation.observers.join(", "),
+        )
+    };
     // ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
     // endpoint rather than mapping an exactly positive pi to negative pi.
     let [pointing_x, pointing_y, _] = centre.image_centre.cosines();
@@ -607,17 +654,21 @@ const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
     }
 }
 
-/// A CASA phase-centre literal `J2000 <lon> <lat>`, with sexagesimal,
+/// A CASA phase-centre literal `J2000/B1950 <lon> <lat>`, with sexagesimal,
 /// degree or radian angles.
 pub(super) fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, PrepareError> {
     let parts = text.split_whitespace().collect::<Vec<_>>();
-    if parts.len() != 3 || !parts[0].eq_ignore_ascii_case("J2000") {
+    if parts.len() != 3 || !matches!(parts[0].to_ascii_uppercase().as_str(), "J2000" | "B1950") {
         return Err(PrepareError::PhaseCentreSyntax {
             text: text.to_string(),
         });
     }
     Ok(SkyDirection::new(
-        DirectionFrame::J2000,
+        if parts[0].eq_ignore_ascii_case("B1950") {
+            DirectionFrame::B1950
+        } else {
+            DirectionFrame::J2000
+        },
         parse_phase_center_angle(parts[1], true)?,
         parse_phase_center_angle(parts[2], false)?,
     ))
@@ -732,8 +783,14 @@ mod tests {
     }
 
     #[test]
-    fn a_phase_centre_other_than_j2000_lon_lat_is_refused() {
-        for text in ["B1950 0rad 0rad", "J2000 0rad"] {
+    fn a_missing_or_unknown_phase_centre_frame_is_refused() {
+        assert_eq!(
+            parse_phase_center_direction("B1950 0rad 0rad")
+                .unwrap()
+                .frame(),
+            DirectionFrame::B1950
+        );
+        for text in ["UNKNOWN 0rad 0rad", "J2000 0rad"] {
             assert!(
                 matches!(
                     parse_phase_center_direction(text),

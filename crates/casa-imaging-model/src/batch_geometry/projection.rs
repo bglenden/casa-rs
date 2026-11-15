@@ -3,6 +3,7 @@
 //! observation direction to the chart's phase centre.
 
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{MeasFrame, MeasureError};
 
 use super::BatchGeometryError;
 use crate::compiled_problem::CompiledProblem;
@@ -16,6 +17,26 @@ pub(super) struct Chart {
     /// Whether the chart is a facet: CASA builds every facet's machine to
     /// reproject onto the observation's tangent plane.
     pub(super) faceted: bool,
+}
+
+/// Preserve a fixed chart's native tangent basis during UVW conversion.
+/// Converting only its centre to J2000 loses the image frame's axis rotation.
+pub(super) fn native_reprojection(
+    field: &MDirection,
+    chart: &Chart,
+    frame: &MeasFrame,
+    mosaic: bool,
+) -> Result<GridFtProjection, MeasureError> {
+    let target = MDirection::from_angles(
+        chart.centre.longitude_rad(),
+        chart.centre.latitude_rad(),
+        chart.centre.frame().direction_ref(),
+    );
+    if mosaic {
+        GridFtProjection::mosaic_between_directions_with_frame(field, &target, frame)
+    } else {
+        GridFtProjection::between_directions_with_frame(field, &target, frame)
+    }
 }
 
 /// The charts of `problem`, domain-major with each faceted domain's facets

@@ -855,6 +855,15 @@ impl GeometryPlan {
         self.charts
             .iter()
             .map(|chart| {
+                if chart.centre.frame() != DirectionFrame::J2000
+                    && shift.is_none()
+                    && !chart.faceted
+                {
+                    let frame = self.frames.observatory_at(context.time_mjd_s, scale);
+                    return projection::native_reprojection(field, chart, &frame, self.mosaic)
+                        .map(Some)
+                        .map_err(Into::into);
+                }
                 let mut target = self.frames.j2000(
                     context.time_mjd_s,
                     scale,

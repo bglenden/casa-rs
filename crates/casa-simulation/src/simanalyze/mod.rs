@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's simulation imaging and analysis, composed from native applications.
-//! The single-observation route serves the ALMA disk tutorial (#180); the
-//! programme's multi-array and total-power routes are tracked by #841.
+//! Project discovery, weighted synthesis concatenation, total-power gridding,
+//! seed models, feathering and image analysis share the native applications.
+mod feather;
+mod imaging;
+mod inputs;
 mod plan;
 mod plots;
+mod preflight;
+mod total_power;
 
 use crate::simobserve::SimobserveError;
 use crate::simutil::analysis::{self, Fidelity};
 use crate::{SessionResources, simutil};
-use casa_imaging_application::{Cancel, ImagingRequest, RunContext};
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
 use casa_ms::plot_document::PlotFigure;
 use casa_provider_contracts::builtin_surface_bundle;
@@ -69,8 +73,8 @@ impl Parameters<'_> {
 /// Image and analyze a simulation project using CASA's task semantics.
 ///
 /// # Errors
-/// Invalid parameters, missing inputs, unsupported multi-array/total-power
-/// routes, resource admission or native imaging/analysis failures.
+/// Invalid parameters, missing inputs, unsupported input metadata or selections,
+/// resource admission or native imaging/analysis failures.
 pub fn simanalyze(request: &SimanalyzeRequest) -> Result<SimanalyzeOutcome, SimobserveError> {
     run(request, None)
 }
@@ -92,6 +96,23 @@ fn run(
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
     let resources = request.resources;
     charge_process_caches(resources.host(), resources.policy()).map_err(failure)?;
+    // Fixed provider/planning metadata plus four live representations of
+    // the caller's values during normalization and tclean request building.
+    let _planning = admit(
+        resources.host(),
+        resources.policy(),
+        &Demand {
+            phase: "simulation analysis planning",
+            memory: (1 << 20)
+                + request
+                    .parameters
+                    .iter()
+                    .map(|(name, value)| 128 + name.len() as u64 + parameter_bytes(value))
+                    .sum::<u64>()
+                    .saturating_mul(4),
+        },
+    )
+    .map_err(failure)?;
     let values = resolve_plain_values(
         builtin_surface_bundle("simanalyze").map_err(failure)?,
         std::env::current_dir().map_err(failure)?,
@@ -99,7 +120,19 @@ fn run(
     )
     .map_err(failure)?;
     let parameters = Parameters(&values);
-    let plan = plan::prepare(&parameters, resources)?;
+    let mut report = if parameters.text("logfile").is_empty() {
+        None
+    } else {
+        use std::io::Write;
+        let mut report = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(parameters.text("logfile"))
+            .map_err(failure)?;
+        writeln!(report, "simanalyze project={}", parameters.text("project")).map_err(failure)?;
+        Some(report)
+    };
+    let mut plan = plan::prepare(&parameters, resources)?;
     let mut outcome = SimanalyzeOutcome {
         directory: plan.directory.clone(),
         stem: plan.stem.clone(),
@@ -116,29 +149,14 @@ fn run(
         return Ok(outcome);
     }
     if parameters.flag("image") {
-        let imaging = resolve_plain_values(
-            builtin_surface_bundle("tclean").map_err(failure)?,
-            std::env::current_dir().map_err(failure)?,
-            &plan.imaging,
-        )
-        .map_err(failure)?;
-        let mut image_request = ImagingRequest::from_tclean(&imaging).map_err(failure)?;
-        image_request.backend = match resources.backend() {
-            crate::BackendRequest::Cpu => casa_imaging_application::BackendRequest::Cpu,
-            crate::BackendRequest::Metal => casa_imaging_application::BackendRequest::Gpu,
-            crate::BackendRequest::Auto => casa_imaging_application::BackendRequest::Auto,
-        };
-        preflight_inputs(&plan, &image_request, parameters.flag("overwrite"))?;
-        casa_imaging_application::execute(
-            &image_request,
-            RunContext {
-                host: *resources.host(),
-                policy: *resources.policy(),
-                cancel: Cancel::new(),
-                summary: None,
-            },
-        )
-        .map_err(failure)?;
+        outcome.products = imaging::execute(&parameters, &plan, resources)?;
+        outcome.products.extend(plan.products()?);
+        let originals = [plan.file(".image.flat"), plan.file(".residual.flat")];
+        feather::combine(&parameters, &mut plan, resources)?;
+        outcome
+            .products
+            .extend(originals.into_iter().filter(|path| path.exists()));
+        outcome.stem = plan.stem.clone();
     }
     if !plan.file(".image").exists() {
         return Err(failure("you must image before analyzing."));
@@ -183,59 +201,19 @@ fn run(
         }
     }
     replace(&plan.file(".residual.flat"), true)?;
-    outcome.products = plan.products()?;
+    outcome.products.extend(plan.products()?);
+    outcome.products.sort();
+    outcome.products.dedup();
+    if let Some(report) = &mut report {
+        use std::io::Write;
+        for path in &outcome.products {
+            writeln!(report, "{}", path.display()).map_err(failure)?;
+        }
+        if let Some(statistics) = &outcome.fidelity {
+            writeln!(report, "fidelity {statistics:?}").map_err(failure)?;
+        }
+    }
     Ok(outcome)
-}
-
-// The lower-level imager already publishes fresh products atomically. Do not
-// delete old results before its preparation/admission, or select an input that
-// a successful publication would overwrite.
-fn preflight_inputs(
-    plan: &plan::Plan,
-    imaging: &ImagingRequest,
-    overwrite: bool,
-) -> Result<(), SimobserveError> {
-    if !overwrite {
-        for suffix in [".image", ".model"] {
-            let path = plan.file(suffix);
-            match std::fs::symlink_metadata(&path) {
-                Ok(_) => return Err(failure(format!("{} already exists", path.display()))),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(failure(error)),
-            }
-        }
-    }
-    let inputs = std::iter::once(&plan.model).chain(imaging.startmodel.iter().flatten());
-    for input in inputs {
-        let input = std::fs::canonicalize(input).map_err(failure)?;
-        for suffix in [
-            ".image",
-            ".model",
-            ".psf",
-            ".residual",
-            ".pb",
-            ".image.pbcor",
-            ".sumwt",
-            ".mask",
-            ".image.flat",
-            ".diff",
-            ".fidelity",
-        ] {
-            let output = plan.file(suffix);
-            match std::fs::canonicalize(&output) {
-                Ok(output) if output == input => {
-                    return Err(failure(format!(
-                        "input {} would be overwritten by simulation imaging",
-                        input.display()
-                    )));
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(failure(error)),
-            }
-        }
-    }
-    Ok(())
 }
 
 fn replace(path: &Path, overwrite: bool) -> Result<(), SimobserveError> {
@@ -251,5 +229,18 @@ fn replace(path: &Path, overwrite: bool) -> Result<(), SimobserveError> {
         std::fs::remove_dir_all(path).map_err(failure)
     } else {
         std::fs::remove_file(path).map_err(failure)
+    }
+}
+
+// Value payload plus container slots, without serializing another copy.
+fn parameter_bytes(value: &Value) -> u64 {
+    match value {
+        Value::String(value) => value.len() as u64,
+        Value::Array(values) => values.iter().map(|value| 32 + parameter_bytes(value)).sum(),
+        Value::Object(values) => values
+            .iter()
+            .map(|(name, value)| 128 + name.len() as u64 + parameter_bytes(value))
+            .sum(),
+        _ => 32,
     }
 }

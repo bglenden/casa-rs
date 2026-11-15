@@ -98,8 +98,21 @@ pub fn concat_front_end()
 /// Invalid arguments, unsupported behavior (named with #939), unrepresentable
 /// inputs, insufficient resources, or a storage/locking/publication failure.
 pub fn concat(request: &ConcatRequest) -> Result<ConcatReport, ObservationError> {
+    concat_with_memory(request, default_memory_bytes()?)
+}
+
+/// As [`concat()`], within the composing application's memory limit in bytes.
+///
+/// This lets simulation tasks keep concatenation inside their admitted run
+/// policy instead of selecting the standalone task's default limit.
+///
+/// # Errors
+/// The validation, admission and publication errors of [`concat()`].
+pub fn concat_with_memory(
+    request: &ConcatRequest,
+    memory_bytes: usize,
+) -> Result<ConcatReport, ObservationError> {
     validate(request)?;
-    let memory_bytes = default_memory_bytes()?;
     let inputs = ordered_inputs(request, memory_bytes)?;
     let history = HistoryRow {
         time_s: SystemTime::now()

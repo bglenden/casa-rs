@@ -188,6 +188,12 @@ pub fn modify_model(
             }
         },
     };
+    // Reserve the existing Stokes axis before supplying an absent spectral
+    // coordinate. In a direction+Stokes image (the m51 regression model),
+    // the unclaimed third axis is Stokes, not a new spectral axis.
+    if let Some((_, stokes_axes)) = pixel_axes(coordinates, CoordinateType::Stokes) {
+        axes.assign(2, stokes_axes[0]);
+    }
     let spectral = spectral_axis(coordinates, &shape, &mut axes, overrides)?;
     let (stokes, stokes_types) = stokes_axis(coordinates, &shape, &mut axes)?;
     let model_shape = [
@@ -583,4 +589,53 @@ pub(super) fn check_increments(increments: &[f64]) -> Result<(), SkyModelError> 
 fn unit(name: &str) -> casa_types::quanta::Unit {
     casa_types::quanta::casacore::casacore_unit(name)
         .unwrap_or_else(|_| casa_types::quanta::Unit::dimensionless())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_direction_stokes_model_gains_a_distinct_spectral_axis() {
+        let scratch = tempfile::tempdir().unwrap();
+        let input = scratch.path().join("three-axes.image");
+        let output = scratch.path().join("four-axes.image");
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            casa_types::measures::direction::DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1., -0.5],
+            [-1e-6, 1e-6],
+            [1., 1.5],
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        let pixels = ArrayD::from_shape_fn(IxDyn(&[2, 3, 1]), |at| (at[0] + 10 * at[1]) as f32);
+        write_image(&input, &pixels, coordinates, "Jy/pixel").unwrap();
+        modify_model(
+            &input,
+            &output,
+            &ModelOverrides {
+                incenter: "230GHz".into(),
+                inwidth: "1GHz".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = casa_images::PagedImage::<f32>::open(output).unwrap();
+        assert_eq!(result.shape(), [2, 3, 1, 1]);
+        let values = result.get().unwrap();
+        for x in 0..2 {
+            for y in 0..3 {
+                assert_eq!(values[IxDyn(&[x, y, 0, 0])], (x + 10 * y) as f32);
+            }
+        }
+        assert_eq!(
+            result.coordinates().coordinate(2).reference_value(),
+            [230e9]
+        );
+        assert_eq!(
+            casa_images::PagedImage::<f32>::open(input).unwrap().shape(),
+            [2, 3, 1]
+        );
+    }
 }
