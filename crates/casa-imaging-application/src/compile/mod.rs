@@ -343,12 +343,8 @@ pub(crate) fn prepare_with_view_hooks(
     let (masks, mut mask_resident) =
         domains::mask_plans(&domains, spectral.output_channels, context)?;
     mask_resident.join(continuation.mask_resident);
-    let (snapshot, stores, survey_charge) = snapshot_input(
-        stores,
-        &channels,
-        &spectral.window_reads,
-        (request, &centre),
-    )?;
+    let (snapshot, stores, survey_charge) =
+        snapshot_input(stores, &channels, &spectral, request, &centre)?;
     Ok(Prepared {
         specification,
         geometry,
@@ -696,8 +692,9 @@ fn density_field_keys(stores: &[stores::SurveyedStore]) -> Option<DensityFieldKe
 fn snapshot_input(
     stores: Vec<stores::SurveyedStore>,
     channels: &[WindowChannels],
-    bands: &[spectral::WindowReads],
-    (request, centre): (&ImagingRequest, &Centre),
+    spectral: &PreparedSpectralAxis<'_>,
+    request: &ImagingRequest,
+    centre: &Centre,
 ) -> Result<
     (
         ObservationSnapshotInput,
@@ -716,7 +713,7 @@ fn snapshot_input(
     let mut sources = Vec::with_capacity(stores.len());
     let mut opened = Vec::with_capacity(stores.len());
     let mut charge = casa_imaging_runtime::Reservation::none();
-    for ((store, channels), bands) in stores.into_iter().zip(channels).zip(bands) {
+    for ((store, channels), bands) in stores.into_iter().zip(channels).zip(&spectral.window_reads) {
         let visibility = store.columns.visibility;
         let weights = partitions::stored_weights(
             &store.opened.value,
