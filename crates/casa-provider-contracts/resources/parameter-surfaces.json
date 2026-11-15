@@ -25523,7 +25523,7 @@
     {
       "kind": "task",
       "id": "simanalyze",
-      "contract_version": 1,
+      "contract_version": 2,
       "display_name": "SimAnalyze",
       "category": "Simulation",
       "summary": "Image and analyze a simulated observation: CASA's simanalyze",
@@ -25761,7 +25761,7 @@
           "name": "vis",
           "concept": {
             "id": "simulation.analysis.vis",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "required_when": {
             "kind": "never"
@@ -25813,7 +25813,7 @@
           "name": "modelimage",
           "concept": {
             "id": "simulation.analysis.modelimage",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "required_when": {
             "kind": "never"
@@ -26379,7 +26379,7 @@
           "name": "featherimage",
           "concept": {
             "id": "simulation.analysis.featherimage",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "required_when": {
             "kind": "never"

@@ -328,9 +328,9 @@ pub enum PrepareError {
         /// The selected fields.
         selected: BTreeSet<i32>,
     },
-    /// `phasecenter` is not `J2000 lon lat`.
+    /// `phasecenter` is not a supported fixed-frame longitude/latitude literal.
     #[error(
-        "phasecenter {text:?} must be 'J2000 lon lat', for example 'J2000 19:59:28.500 +40.44.01.50'"
+        "phasecenter {text:?} must be 'J2000 lon lat' or 'B1950 lon lat', for example 'J2000 19:59:28.500 +40.44.01.50'"
     )]
     PhaseCentreSyntax {
         /// The given text.

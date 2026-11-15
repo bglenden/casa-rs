@@ -43,7 +43,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 5 | <code>image_analysis</code> | 9 | Import a FITS primary image into a CASA image |
 | [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 11 | Convert between MeasurementSet v2 and MSv4, in either direction. |
-| [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 1 | <code>simanalyze</code> | 32 | Image and analyze a simulated observation: CASA's simanalyze |
+| [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 2 | <code>simanalyze</code> | 32 | Image and analyze a simulated observation: CASA's simanalyze |
 | [Tsdimaging](#surface-tsdimaging)<br><code>tsdimaging</code> | task | 1 | <code>single_dish</code> | 33 | Grid total-power spectra by pointing into a CASA image and weight image. |
 | [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
 
@@ -1194,7 +1194,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimAnalyze (<code>simanalyze</code>)
 
 - Kind: `task`
-- Contract version: `1`
+- Contract version: `2`
 - Category: Simulation
 - Provider family: `simanalyze`
 - Summary: Image and analyze a simulated observation: CASA's simanalyze
@@ -1205,8 +1205,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>image</code> | <code>simulation.analysis.image@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze image. |
 | <code>imagename</code> | <code>simulation.analysis.imagename@r1</code> | <code>string</code> | <code>"default"</code>; optional | Analysis | CASA simanalyze imagename. |
 | <code>skymodel</code> | <code>parameter.skymodel@r2</code> | <code>path (image)</code> | <code>""</code>; optional | Sky model | Sky model image: a CASA image or FITS file. |
-| <code>vis</code> | <code>simulation.analysis.vis@r1</code> | <code>string</code> | <code>"default"</code>; optional | Analysis | CASA simanalyze vis. |
-| <code>modelimage</code> | <code>simulation.analysis.modelimage@r1</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze modelimage. |
+| <code>vis</code> | <code>simulation.analysis.vis@r2</code> | <code>string</code> | <code>"default"</code>; optional | Analysis | CASA simanalyze vis. |
+| <code>modelimage</code> | <code>simulation.analysis.modelimage@r2</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze modelimage. |
 | <code>imsize</code> | <code>simulation.analysis.imsize@r1</code> | <code>array&lt;integer&gt;</code> | <code>[0,0]</code>; optional | Analysis | CASA simanalyze imsize. |
 | <code>imdirection</code> | <code>simulation.analysis.imdirection@r1</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze imdirection. |
 | <code>cell</code> | <code>simulation.analysis.cell@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Analysis | CASA simanalyze cell. |
@@ -1218,7 +1218,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>outertaper</code> | <code>simulation.analysis.outertaper@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Analysis | CASA simanalyze outertaper. |
 | <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"I"</code>; optional | Context | Stokes selector. |
-| <code>featherimage</code> | <code>simulation.analysis.featherimage@r1</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze featherimage. |
+| <code>featherimage</code> | <code>simulation.analysis.featherimage@r2</code> | <code>string</code> | <code>""</code>; optional | Analysis | CASA simanalyze featherimage. |
 | <code>analyze</code> | <code>simulation.analysis.analyze@r1</code> | <code>bool</code> | <code>false</code>; optional | Analysis | CASA simanalyze analyze. |
 | <code>showuv</code> | <code>simulation.analysis.showuv@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showuv. |
 | <code>showpsf</code> | <code>simulation.analysis.showpsf@r1</code> | <code>bool</code> | <code>true</code>; optional | Analysis | CASA simanalyze showpsf. |

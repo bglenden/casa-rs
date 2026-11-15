@@ -475,6 +475,28 @@ where
     let scale = jy_per_pixel_scale(input.units(), input_direction, output_direction);
     let in_plane = [input_shape[in_axis], input_shape[in_axis + 1]];
     let out_plane = [template.shape[out_axis], template.shape[out_axis + 1]];
+    // ImageRegrid::regrid skips interpolation when shape and coordinates
+    // agree. Sampling an identical masked grid erodes valid edge pixels
+    // unnecessarily, which also changes feather's Fourier coefficients.
+    if !along_frequency
+        && input_shape == template.shape
+        && plan.spectral.is_none()
+        && same_axes(
+            &CoordinateModel::Direction(input_direction.clone()),
+            &CoordinateModel::Direction(output_direction.clone()),
+            &in_plane,
+        )
+    {
+        return Ok(Regridded {
+            data: input.get()?,
+            mask: input
+                .default_mask()?
+                .unwrap_or_else(|| ArrayD::from_elem(IxDyn(&input_shape).f(), true)),
+            coordinates: plan.coordinates,
+            template_coordinates: plan.template_coordinates,
+            scale,
+        });
+    }
     let grid = positions(input_direction, output_direction, out_plane);
     let data = input.get()?;
     let mask = input.default_mask()?;

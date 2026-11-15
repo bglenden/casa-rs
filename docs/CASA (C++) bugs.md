@@ -3297,6 +3297,46 @@ the image is empty, and `tsdimaging` only warns that no weight is positive.
 casa-rs refuses that kernel, asking for a support of at least 1 or CASA's
 default of 3 (`casa_imaging_singledish::GridFunction::from_casa`).
 
+## `simanalyze` retains missing or shadowed Python task bindings
+
+- Date noted: 2026-11-15
+- Status: corrected by native Rust composition (#841 Phase 6g)
+- Affected code: CASA 6.7.6.14 `task_simanalyze.get_concatweights` and its
+  `from .simutil import *` import
+
+A multi-MS call reaches the obsolete `gentools(['tb', 'msmd'])` without
+defining that factory and raises `NameError`. The simutil star import also
+shadows the public feather callable with a module, causing a feather call
+to raise `TypeError: 'module' object is not callable`. The independent
+`simanalyze_multi_oracle.py` recipe restores only those bindings before
+running the unchanged algorithms. Production computation is native Rust.
+
+## `simanalyze` changes a caller's seed-image unit in place
+
+- Date noted: 2026-11-15
+- Status: caller data preserved (#841 Phase 6g, accepted Phase 6 decision)
+- Affected code: CASA 6.7.6.14 `task_simanalyze`, before `simutil.imtclean`
+
+CASA opens `modelimage` and sets its brightness unit to Jy/pixel before
+calling tclean. A total-power or previously restored synthesis image loses
+its Jy/beam label, including when it was supplied by the caller. Native
+simanalyze preserves CASA's numerical seed convention in a private copy
+and leaves the supplied image's pixels, mask and unit unchanged. The TP
+seed case compares the synthesis results and verifies the source label.
+
+## Repeated `simanalyze` concatenation can duplicate observations
+
+- Date noted: 2026-11-15
+- Status: new native simulation concatenations replace prior results (#841 Phase 6g)
+- Affected code: CASA 6.7.6.14 `task_simanalyze`, multiple interferometric MS branch
+
+The task invokes concat on `<project>.concat.ms` without clearing an earlier
+result; concat appends when that output exists. Default discovery can also
+select that old combined MS alongside its original inputs. Native simanalyze
+excludes the previous combination when the originals are present and stages
+a fresh combination before replacing its own output. Input observations
+remain read-only.
+
 ## `simanalyze` writes the fidelity's floor to six decimal places
 
 - Date noted: 2026-10-27
