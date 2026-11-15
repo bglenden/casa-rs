@@ -94,6 +94,8 @@ mod total_power;
 #[path = "session_memory/single_dish_model.rs"]
 mod single_dish_model;
 
+#[path = "session_memory/simalma.rs"]
+mod simalma;
 #[path = "session_memory/simanalyze.rs"]
 mod simanalyze;
 

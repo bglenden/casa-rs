@@ -1208,6 +1208,45 @@ def concat(
     """
     return _call_casa(concat, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat')
+def simalma(
+    project: str = 'sim',
+    dryrun: bool = True,
+    skymodel: StrPath = '',
+    inbright: str = '',
+    indirection: str = '',
+    incell: str = '',
+    incenter: str = '',
+    inwidth: str = '',
+    complist: StrPath = '',
+    compwidth: str = '"8GHz"',
+    setpointings: bool = True,
+    ptgfile: StrPath = '$project.ptg.txt',
+    integration: str = '10s',
+    direction: str | list[str] | tuple[str, ...] = [],
+    mapsize: str | list[str] | tuple[str, ...] = ['', ''],
+    antennalist: str | list[str] | tuple[str, ...] = ['alma.cycle1.1.cfg', 'aca.cycle1.cfg'],
+    correlator: str | list[str] | tuple[str, ...] = ['BLC', 'BLC', 'ACASpec'],
+    hourangle: str = 'transit',
+    totaltime: str | list[str] | tuple[str, ...] = ['20min', '1h'],
+    tpnant: int = 0,
+    tptime: str = '0s',
+    pwv: float = 0.5,
+    image: bool = True,
+    imsize: int | list[int] | tuple[int, ...] = [128, 128],
+    imdirection: str = '',
+    cell: str = '',
+    niter: int = 0,
+    threshold: str = '0.1mJy',
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = 'both',
+    verbose: bool = False,
+    overwrite: bool = False,
+) -> Any:
+    """Simulate ALMA and ACA observations and combine their images
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat']
+    CASA's ``simalma``: its parameters, defaults and return value.
+    """
+    return _call_casa(simalma, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']

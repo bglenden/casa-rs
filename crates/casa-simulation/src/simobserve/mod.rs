@@ -74,7 +74,7 @@
 //! over a large model can need more memory than the session's budget,
 //! which refuses it before it starts.
 
-mod antennas;
+pub(crate) mod antennas;
 pub(crate) mod graphics;
 mod noise;
 mod observe;

@@ -365,6 +365,19 @@
         "measurement_set"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "simalma",
+      "launch": {
+        "executable": "simalma",
+        "cargo_package": "casars-simulation",
+        "override_env": "CASARS_SIMALMA_BIN"
+      },
+      "dataset_kinds": [
+        "image",
+        "measurement_set"
+      ],
+      "include_in_suite": true
     }
   ]
 }

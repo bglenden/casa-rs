@@ -3,7 +3,7 @@
 //! Project discovery, weighted synthesis concatenation, total-power gridding,
 //! seed models, feathering and image analysis share the native applications.
 mod feather;
-mod imaging;
+pub(crate) mod imaging;
 mod inputs;
 mod plan;
 mod plots;
@@ -233,7 +233,7 @@ fn replace(path: &Path, overwrite: bool) -> Result<(), SimobserveError> {
 }
 
 // Value payload plus container slots, without serializing another copy.
-fn parameter_bytes(value: &Value) -> u64 {
+pub(crate) fn parameter_bytes(value: &Value) -> u64 {
     match value {
         Value::String(value) => value.len() as u64,
         Value::Array(values) => values.iter().map(|value| 32 + parameter_bytes(value)).sum(),

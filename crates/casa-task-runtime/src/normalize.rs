@@ -1112,7 +1112,7 @@ mod tests {
             {
                 let expected_concept = if surface.id() == "tsdimaging" {
                     "single_dish.imsize"
-                } else if surface.id() == "simanalyze" {
+                } else if matches!(surface.id(), "simanalyze" | "simalma") {
                     "simulation.analysis.imsize"
                 } else {
                     IMSIZE_CONCEPT_ID
@@ -1136,7 +1136,7 @@ mod tests {
             }
         }
         surfaces.sort();
-        assert_eq!(surfaces, ["simanalyze", "tclean", "tsdimaging"]);
+        assert_eq!(surfaces, ["simalma", "simanalyze", "tclean", "tsdimaging"]);
     }
 
     #[test]

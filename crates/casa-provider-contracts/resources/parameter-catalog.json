@@ -11916,6 +11916,174 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.antennalist",
+      "semantic_revision": 1,
+      "casa_name": "antennalist",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "antenna position files of ALMA 12m and 7m arrays",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.correlator",
+      "semantic_revision": 1,
+      "casa_name": "correlator",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Name of the correlator, used to lookup the efficiency. Allowed options are based on",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.totaltime",
+      "semantic_revision": 1,
+      "casa_name": "totaltime",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "total time of observation; vector corresponding to antennalist",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.tpnant",
+      "semantic_revision": 1,
+      "casa_name": "tpnant",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of total power antennas to use (0-4)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.tptime",
+      "semantic_revision": 1,
+      "casa_name": "tptime",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "total observation time for total power",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.pwv",
+      "semantic_revision": 1,
+      "casa_name": "pwv",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Precipitable Water Vapor in mm. 0 for noise-free simulation",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.cell",
+      "semantic_revision": 1,
+      "casa_name": "cell",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "cell size with units or \"\" to equal model",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }
