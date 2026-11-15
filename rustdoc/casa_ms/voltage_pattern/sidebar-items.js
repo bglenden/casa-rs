@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["radial_pattern"],"struct":["VoltagePatternError","VoltagePatternTable"]};
