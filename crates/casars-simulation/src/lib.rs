@@ -14,7 +14,11 @@
 //! configurations, and the measures data. A run's reply carries its
 //! [`SimobserveRunTaskResult`]; simobserve returns None, as CASA's does.
 
+mod analysis;
 mod task_contract;
+pub use analysis::{
+    simanalyze_front_end, simanalyze_protocol_descriptor, simanalyze_task_schema_bundle,
+};
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;

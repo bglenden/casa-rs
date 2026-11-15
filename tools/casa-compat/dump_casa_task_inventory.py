@@ -71,6 +71,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("imsubimage", "casatasks"),
     ("mstransform", "casatasks"),
     ("plotms", "casaplotms"),
+    ("simanalyze", "casatasks"),
     ("simobserve", "casatasks"),
     ("split", "casatasks"),
     ("tclean", "casatasks"),

@@ -27,7 +27,7 @@ pub struct FitsImage {
     pub header: FitsHeader,
     /// The restoring beam, image type and object name.
     pub image_info: ImageInfo,
-    /// `BUNIT`, or empty.
+    /// `BUNIT` with casacore's FITS unit aliases, or empty.
     pub units: String,
     /// The pixels in Fortran order, as single precision: casacore's
     /// `FITSImage` reads every `BITPIX` as `Float`.
@@ -56,12 +56,45 @@ pub fn read_fits_image(fitsimage: impl AsRef<Path>) -> Result<FitsImage, ImageEr
     }
     Ok(FitsImage {
         image_info,
-        units: primary.header.get_string("BUNIT").unwrap_or("").to_string(),
+        units: brightness_unit(&primary.header),
         shape: primary.shape,
         coordinates: primary.coordinates,
         header: primary.header,
         pixels,
     })
+}
+
+/// casacore `UnitMap::fromFITS`: translate alphabetic tokens, preserving
+/// separators, powers and the case of non-FITS names (notably SI prefixes).
+pub(crate) fn brightness_unit(header: &FitsHeader) -> String {
+    let input = header.get_string("BUNIT").unwrap_or("");
+    let mut output = String::new();
+    let mut remaining = input;
+    while !remaining.is_empty() {
+        let alphabetic = remaining.as_bytes()[0].is_ascii_alphabetic();
+        let end = remaining
+            .find(|c: char| c.is_ascii_alphabetic() != alphabetic)
+            .unwrap_or(remaining.len());
+        let token = &remaining[..end];
+        output.push_str(match token {
+            "BEAM" => "beam",
+            "DAYS" => "d",
+            "DEGREES" | "DEG" => "deg",
+            "HZ" => "Hz",
+            "JY" => "Jy",
+            "KELVINS" | "KELVIN" => "K",
+            "KM" => "km",
+            "METERS" | "M" => "m",
+            "PASCAL" => "Pa",
+            "PIXEL" => "pixel",
+            "SECONDS" | "SEC" | "S" => "s",
+            "VOLTS" => "V",
+            "YEARS" | "YEAR" => "a",
+            _ => token,
+        });
+        remaining = &remaining[end..];
+    }
+    output
 }
 
 /// An open FITS file's primary HDU, with its shape, header and coordinates
@@ -194,7 +227,7 @@ fn read_primary_fits_header(
         }
     }
     for key in [
-        "EQUINOX", "RESTFRQ", "BMAJ", "BMIN", "BPA", "LONPOLE", "LATPOLE", "CROTA2",
+        "EQUINOX", "RESTFRQ", "RESTFREQ", "BMAJ", "BMIN", "BPA", "LONPOLE", "LATPOLE", "CROTA2",
     ] {
         if let Some(value) = read_optional_key::<f64>(fits, hdu, key)? {
             header.set(key, FitsValue::Float(value));

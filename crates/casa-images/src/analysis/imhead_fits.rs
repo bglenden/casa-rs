@@ -122,7 +122,7 @@ pub(super) fn summary(path: &Path) -> Result<ImageHeaderSummary, ImageError> {
         pixel_type: "Float32".into(),
         shape: primary.shape.clone(),
         tile_shape: tile_shape(&primary.shape),
-        units: primary.header.get_string("BUNIT").unwrap_or("").to_string(),
+        units: crate::fits_read::brightness_unit(&primary.header),
         object_name: if primary.header.get_string("OBJECT") == Some("") {
             " ".into()
         } else {

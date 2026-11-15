@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 27);
+        assert_eq!(catalog.surfaces.len(), 28);
         assert!(
             catalog
                 .surfaces
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn imsize_and_cell_have_one_invariant_domain() {
+    fn explicit_and_simulation_geometry_keep_distinct_domains() {
         let catalog = builtin_surface_catalog().unwrap();
         let imsize = catalog
             .catalog
@@ -197,6 +197,13 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "imsize")
             {
+                if surface.id() == "simanalyze" {
+                    assert_eq!(binding.concept.id.as_str(), "simulation.analysis.imsize");
+                    assert_eq!(binding.default, crate::DefaultSpec::Literal {
+                        value: ParameterValue::Array(vec![0_i64.into(), 0_i64.into()]),
+                    });
+                    continue;
+                }
                 assert_eq!(binding.concept, imsize.reference());
                 imsize_bindings += 1;
             }
@@ -205,6 +212,13 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "cell")
             {
+                if surface.id() == "simanalyze" {
+                    assert_eq!(binding.concept.id.as_str(), "simulation.analysis.cell");
+                    assert_eq!(binding.default, crate::DefaultSpec::Literal {
+                        value: ParameterValue::String(String::new()),
+                    });
+                    continue;
+                }
                 assert_eq!(binding.concept, cell.reference());
                 cell_bindings += 1;
             }
@@ -283,6 +297,7 @@ mod tests {
             ("imregrid", false),
             ("imsubimage", false),
             ("simobserve", true),
+            ("simanalyze", true),
         ]);
         // casa-rs's own `overwrite` on CASA tasks that have none, and on the
         // casa-rs tasks; CASA's tasks never replace an output unasked.
@@ -655,14 +670,14 @@ mod tests {
         };
         assert_eq!(
             concept_ids("vis"),
-            ["data.input.vis", "data.output.vis"]
+            ["data.input.vis", "data.output.vis", "simulation.analysis.vis"]
                 .into_iter()
                 .map(str::to_string)
                 .collect()
         );
         assert_eq!(
             concept_ids("imagename"),
-            ["image.input.imagename", "image.output.imagename"]
+            ["image.input.imagename", "image.output.imagename", "simulation.analysis.imagename"]
                 .into_iter()
                 .map(str::to_string)
                 .collect()
@@ -765,7 +780,7 @@ mod tests {
                     });
                     assert_eq!(
                         decoded,
-                        matches!(surface.id(), "tclean" | "simobserve"),
+                        matches!(surface.id(), "tclean" | "simobserve" | "simanalyze"),
                         "{} product sources",
                         surface.id()
                     );
