@@ -675,11 +675,24 @@ fn slash_field_lookahead_agrees_with_casa_rows() {
             ][..],
         ),
         (
-            [("é", "e2", false), ("ABX", "abx", false)],
+            [("é", "accented", false), ("ABX", "abx", false)],
             &[
                 ("/(?=..)../", Some("field_id")),
                 ("/((?!...)(?=..))../", Some("field_id")),
                 ("/A(?=BX)BX/", Some("field_glob")),
+            ][..],
+        ),
+        (
+            [("A", "first", false), ("A{q}", "second", false)],
+            &[
+                ("/(?=A)(?:)*A/", Some("field_id")),
+                ("/(?=A)(?:)+A/", Some("field_id")),
+                ("/(?=A)(?:)?A/", Some("field_id")),
+                ("/(?=A)(?:){2}A/", Some("field_id")),
+                ("/(?=A)(?:(?:))*A/", Some("field_id")),
+                ("/(?=A)A{1,2}?/", Some("field_id")),
+                ("/(?=A)A++/", None),
+                ("/(?=A)A{q}/", None),
             ][..],
         ),
     ];
@@ -702,6 +715,26 @@ fn slash_field_lookahead_agrees_with_casa_rows() {
             }
         }
     }
+}
+
+#[test]
+fn field_lookahead_limit_error_refuses_the_whole_selection() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let expensive = "A".repeat(32);
+    rewrite_fields(&vis, [("AB", "first", false), (&expensive, "AB", false)]);
+    let selection = request(
+        &vis,
+        root.path().join("rows"),
+        &json!({ "field": "/(?:(?=A)A|AA)*B/" }),
+    );
+    let error = row_pointing(&selection, &imaging::context(selection.resource_policy()))
+        .expect_err("a match error must refuse the entire selection")
+        .to_string();
+    assert!(
+        error.contains("matching FIELD regex") && error.contains("backtracking"),
+        "expected the match budget to refuse the selection: {error}"
+    );
 }
 
 #[test]

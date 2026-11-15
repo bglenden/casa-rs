@@ -73,6 +73,8 @@ impl FieldRegex {
         if !has_lookahead {
             return FullMatch::compile_body(pattern, &body).map(Self::Regular);
         }
+        let body = prepare_lookahead(&body)
+            .map_err(|reason| format!("Error in regex {pattern}: {reason}"))?;
         fancy_regex::RegexBuilder::new(&format!(r"\A(?:{body})\z"))
             .bytes_mode(fancy_regex::BytesMode::Ascii)
             .unicode_mode(false)
@@ -89,6 +91,68 @@ impl FieldRegex {
             Self::Lookahead(matcher) => matcher.is_match(text.as_bytes()),
         }
     }
+}
+
+/// Keep ECMAScript's repetition syntax on the advanced matcher path.
+/// Translation has rendered every literal as a byte escape, so a bare
+/// group prefix or quantifier here is always syntax.
+fn prepare_lookahead(body: &str) -> Result<String, &'static str> {
+    let mut prepared = String::with_capacity(body.len());
+    let mut rest = body;
+    while !rest.is_empty() {
+        if let Some(tail) = rest.strip_prefix(')')
+            && prepared.ends_with("(?:")
+        {
+            // An empty noncapturing group remains empty when repeated.
+            // Erasing it also reduces groups containing only empty groups.
+            let length = repetition_len(tail)?.unwrap_or(0);
+            prepared.truncate(prepared.len() - 3);
+            rest = &tail[length..];
+            continue;
+        }
+        let length = if rest.starts_with("(?") {
+            3
+        } else {
+            repetition_len(rest)?.unwrap_or(1)
+        };
+        prepared.push_str(&rest[..length]);
+        rest = &rest[length..];
+    }
+    Ok(prepared)
+}
+
+/// The leading ECMAScript quantifier, including its optional lazy suffix.
+fn repetition_len(pattern: &str) -> Result<Option<usize>, &'static str> {
+    let end = match pattern.as_bytes().first() {
+        Some(b'*' | b'+' | b'?') => 1,
+        Some(b'{') => {
+            let (bounds, _) = pattern[1..]
+                .split_once('}')
+                .ok_or("unterminated repetition")?;
+            if let Some((lo, hi)) = bounds.split_once(',') {
+                let lower = repetition_bound(lo)?;
+                if !hi.is_empty() && repetition_bound(hi)? < lower {
+                    return Err("repetition upper bound precedes its lower bound");
+                }
+            } else {
+                repetition_bound(bounds)?;
+            }
+            bounds.len() + 2
+        }
+        _ => return Ok(None),
+    };
+    let end = end + usize::from(pattern.as_bytes().get(end) == Some(&b'?'));
+    if matches!(pattern.as_bytes().get(end), Some(b'*' | b'+' | b'?' | b'{')) {
+        return Err("adjacent quantifiers are invalid in an ECMAScript regex");
+    }
+    Ok(Some(end))
+}
+
+fn repetition_bound(text: &str) -> Result<u32, &'static str> {
+    if !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("invalid repetition bound");
+    }
+    text.parse().map_err(|_| "invalid repetition bound")
 }
 
 fn translate(text: &str, allow_lookahead: bool) -> Result<(String, bool), String> {
@@ -430,6 +494,16 @@ fn push_byte(out: &mut String, byte: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn field_lookahead_refuses_non_ecmascript_quantifiers() {
+        for repeat in [
+            "++", "*+", "?+", "{1,2}+", "{q}", "{", "{1,", "{1,2,3}", "{1,a}", "{,2}", "{2,1}",
+        ] {
+            let pattern = format!("(?=A)A{repeat}");
+            assert!(FieldRegex::compile(&pattern, true).is_err(), "{pattern}");
+        }
+    }
 
     #[test]
     fn field_lookahead_refuses_an_oversized_vm_program() {
