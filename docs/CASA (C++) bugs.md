@@ -3344,6 +3344,26 @@ to raise `TypeError: 'module' object is not callable`. The independent
 `simanalyze_multi_oracle.py` recipe restores only those bindings before
 running the unchanged algorithms. Production computation is native Rust.
 
+### Disabled upstream simulation test bodies
+
+CASA 6.7.6.14 disables sixteen `test_task_simobserve` cases. Exercising them
+exposes undefined `comp_nchan`/`ptgfile` variables, the deliberate CAS-5095
+component-list/SD refusal, nine obsolete "Parameter verification failed"
+assertions (the task now raises parameter-error dictionaries), and an
+atmospheric noise comparison tied to an older random draw. Native tests
+exercise the intended leakage equations, the actual SD refusal and invalid
+parameter checks; analytic noise comparisons retain the upstream 10% bound.
+The original assertions and their failures remain in the upstream runner.
+
+The disabled combined-IF/TP `test_task_simanalyze` case encounters the
+shadowed feather binding above. Its expected `<project>.image0` path also
+omits `.sd`: `task_simanalyze` writes `tpimage = project + '.sd.image'` and
+`temp_out = tpimage + '0'`. The compact native counterpart checks the actual
+IF/TP products and compares the feathered image to the existing independent
+CASA fixture at 1e-3 NRMS. Its original 1458-pixel, 128-channel dimensions
+need over 13 GB for native TP scaling/regridding and are refused when the
+host's resource budget cannot hold them (#1493).
+
 ## `simanalyze` changes a caller's seed-image unit in place
 
 - Date noted: 2026-11-15
