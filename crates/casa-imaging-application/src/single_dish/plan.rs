@@ -8,7 +8,27 @@ use casa_coordinates::{
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_imaging_singledish::{FlagMerge, GridFunction, GridShape, KernelTable, TotalPowerGrid};
 use casa_numerics::PrimaryBeam;
-use casa_observation::{Observation, PartitionId};
+use casa_observation::{Catalogue, Observation, PartitionId, WindowId};
+
+pub(super) fn selected_partitions(
+    catalogue: &Catalogue,
+    intent: &str,
+    windows: &[WindowId],
+) -> Result<Vec<PartitionId>, TotalPowerError> {
+    let mut partitions = if intent.is_empty() {
+        catalogue.partition_ids()
+    } else {
+        catalogue.partitions_with_intent(intent).map_err(failure)?
+    };
+    partitions
+        .retain(|id| windows.is_empty() || windows.contains(&catalogue.partition(*id).window));
+    if partitions.is_empty() {
+        return Err(failure(
+            "No match found for the requested intent and spectral windows",
+        ));
+    }
+    Ok(partitions)
+}
 
 pub(super) struct Plan {
     pub partitions: Vec<PartitionId>,
@@ -22,16 +42,7 @@ impl Plan {
         request: &TotalPowerRequest,
     ) -> Result<Self, TotalPowerError> {
         let catalogue = observation.catalogue();
-        let mut partitions: Vec<_> = if request.intent.is_empty() {
-            catalogue.partition_ids()
-        } else {
-            catalogue
-                .partitions_with_intent(&request.intent)
-                .map_err(failure)?
-        };
-        partitions.retain(|id| {
-            request.windows.is_empty() || request.windows.contains(&catalogue.partition(*id).window)
-        });
+        let partitions = selected_partitions(catalogue, &request.intent, &request.windows)?;
         let first = *partitions
             .first()
             .ok_or_else(|| failure("No match found for the requested intent"))?;
@@ -118,7 +129,12 @@ impl Plan {
             frequencies[0],
             step,
             0.,
-            rest_frequency(catalogue, first, request.rest_frequency_hz)?,
+            rest_frequency(
+                catalogue,
+                first,
+                request.rest_frequency_hz,
+                !request.windows.is_empty(),
+            )?,
         ));
         Ok(Self {
             partitions,

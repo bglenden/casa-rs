@@ -92,11 +92,8 @@ impl TotalPowerParameters<'_> {
             [(size[0] / 2) as f64, (size[1] / 2) as f64],
         );
         let windows = self.windows(catalogue)?;
-        let entry = catalogue
-            .partitions
-            .iter()
-            .find(|p| windows.is_empty() || windows.contains(&p.window))
-            .ok_or_else(|| failure("no selected spectral window"))?;
+        let selected = super::plan::selected_partitions(catalogue, self.text("intent")?, &windows)?;
+        let entry = catalogue.partition(selected[0]);
         let start = if self.0["start"] == "" {
             0
         } else {
@@ -161,14 +158,11 @@ impl TotalPowerParameters<'_> {
             },
         )
         .map_err(failure)?;
-        let brightness_unit = match self.text("brightnessunit")? {
-            "" => match entry.data_groups.first().map(|g| &g.units) {
-                Some(casa_observation::VisibilityUnits::Declared(unit)) if unit == "K" => {
-                    "K".into()
-                }
-                _ => "Jy/beam".into(),
-            },
-            value => value.into(),
+        let brightness_unit = match self.text("brightnessunit")?.to_ascii_lowercase().as_str() {
+            "" => default_brightness_unit(entry),
+            "k" => "K".into(),
+            "jy/beam" => "Jy/beam".into(),
+            _ => return Err(failure("brightnessunit must be K or Jy/beam")),
         };
         Ok((
             TotalPowerRequest {
@@ -272,6 +266,24 @@ impl TotalPowerParameters<'_> {
                     })
             })
             .collect()
+    }
+}
+
+fn default_brightness_unit(entry: &casa_observation::PartitionEntry) -> String {
+    use casa_observation::VisibilityUnits;
+    // CASA takes the first declared unit in this order, even when the
+    // preferred data column has no unit of its own.
+    let unit = ["corrected", "float", "base"].into_iter().find_map(|name| {
+        match &entry.data_group(name)?.1.units {
+            VisibilityUnits::Undeclared => None,
+            VisibilityUnits::Jansky => Some("Jy"),
+            VisibilityUnits::Declared(unit) => Some(unit.as_str()),
+        }
+    });
+    if unit.is_some_and(|unit| unit.trim().eq_ignore_ascii_case("K")) {
+        "K".into()
+    } else {
+        "Jy/beam".into()
     }
 }
 

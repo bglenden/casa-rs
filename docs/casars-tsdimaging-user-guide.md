@@ -33,6 +33,11 @@ stored natural weights and the CASA two-hand combination. Four correlation
 products are refused. All five kernels are available: BOX, SF, GAUSS,
 GJINC and the telescope PB.
 
+Default channels come from the selected intent/window. The default brightness
+label uses the first declared unit in corrected, float, then observed data,
+reading legacy UNIT before QuantumUnits. Explicit brightness labels are `K`
+or `Jy/beam`.
+
 POINTING directions are converted at each integration's epoch and antenna
 position into the image frame. Empty POINTING falls back to FIELD; no
 restoring beam is invented when raster sampling is unavailable. Image and

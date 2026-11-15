@@ -734,6 +734,7 @@ dependencies = [
 name = "casars-imager"
 version = "0.27.0"
 dependencies = [
+ "base64",
  "casa-coordinates",
  "casa-images",
  "casa-imaging-application",
@@ -747,6 +748,7 @@ dependencies = [
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
+ "flate2",
  "libc",
  "ndarray",
  "schemars",

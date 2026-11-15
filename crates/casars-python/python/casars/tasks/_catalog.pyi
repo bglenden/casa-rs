@@ -996,7 +996,7 @@ def tsdimaging(
     jwidth: int | float | str = ...,
     clipminmax: bool = ...,
     minweight: float = ...,
-    brightnessunit: str = ...,
+    brightnessunit: Literal['', 'K', 'Jy/beam'] = ...,
     restfreq: str | list[str] | tuple[str, ...] = ...,
 ) -> Any:
     ...

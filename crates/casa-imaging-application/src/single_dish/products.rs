@@ -50,6 +50,37 @@ pub fn image_observation(
     products: &TotalPowerProducts,
     context: &RunContext,
 ) -> Result<PublishedTotalPower, TotalPowerError> {
+    let prepared = prepare(products, context)?;
+    let result = grid_observation(observation, request, context)?;
+    publish_prepared(observation, request, products, context, result, prepared)
+}
+
+/// Publish an admitted grid using the task's normal beam, mask and safety checks.
+/// This also supports callers that retain a grid before choosing its output.
+///
+/// # Errors
+/// Invalid publication settings, resource admission, beam estimation or image I/O.
+pub fn publish_total_power(
+    observation: &dyn Observation,
+    request: &TotalPowerRequest,
+    products: &TotalPowerProducts,
+    context: &RunContext,
+    result: TotalPowerOutcome,
+) -> Result<PublishedTotalPower, TotalPowerError> {
+    let prepared = prepare(products, context)?;
+    publish_prepared(observation, request, products, context, result, prepared)
+}
+
+struct PreparedPublication {
+    metadata: Reservation,
+    image: PathBuf,
+    weight: PathBuf,
+}
+
+fn prepare(
+    products: &TotalPowerProducts,
+    context: &RunContext,
+) -> Result<PreparedPublication, TotalPowerError> {
     let metadata = admit(
         &context.host,
         &context.policy,
@@ -79,14 +110,38 @@ pub fn image_observation(
             PagedImage::<f32>::open(path).map_err(failure)?;
         }
     }
-    let result = grid_observation(observation, request, context)?;
+    Ok(PreparedPublication {
+        metadata,
+        image,
+        weight,
+    })
+}
+
+fn publish_prepared(
+    observation: &dyn Observation,
+    request: &TotalPowerRequest,
+    products: &TotalPowerProducts,
+    context: &RunContext,
+    result: TotalPowerOutcome,
+    prepared: PreparedPublication,
+) -> Result<PublishedTotalPower, TotalPowerError> {
+    let PreparedPublication {
+        metadata,
+        image,
+        weight,
+    } = prepared;
     let cells = result.arrays.value.image.len() as u64;
     let _scratch = admit(
         &context.host,
         &context.policy,
         &Demand {
             phase: "total-power masks, beam and publication",
-            memory: cells.saturating_mul(5).saturating_add(16 << 20),
+            memory: cells
+                .saturating_mul(5)
+                .saturating_add(16 << 20)
+                .saturating_add(casa_imaging_singledish::raster_sampling_working_bytes(
+                    result.sampling.len(),
+                )),
         },
     )
     .map_err(failure)?;

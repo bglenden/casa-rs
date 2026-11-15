@@ -7,6 +7,7 @@ pub(super) fn rest_frequency(
     catalogue: &casa_observation::Catalogue,
     partition: PartitionId,
     override_hz: Option<f64>,
+    explicit_window: bool,
 ) -> Result<f64, TotalPowerError> {
     let entry = catalogue.partition(partition);
     let source = entry
@@ -15,11 +16,14 @@ pub(super) fn rest_frequency(
         .and_then(|field| catalogue.fields[field.0 as usize].source)
         .and_then(|source| catalogue.sources.get(source.0 as usize));
     let line = source.and_then(|source| {
+        // CASA filters SOURCE by an explicit spw selector. An intent-derived
+        // grid window does not change the default line-frequency query.
         source
             .records
             .iter()
             .filter(|record| {
-                matches!(record.window, casa_observation::SourceWindow::All)
+                !explicit_window
+                    || matches!(record.window, casa_observation::SourceWindow::All)
                     || record.window == casa_observation::SourceWindow::Window(entry.window)
             })
             .find_map(|record| {

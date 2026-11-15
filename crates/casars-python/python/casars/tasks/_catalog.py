@@ -1176,7 +1176,7 @@ def tsdimaging(
     jwidth: int | float | str = -1,
     clipminmax: bool = False,
     minweight: float = 0.1,
-    brightnessunit: str = '',
+    brightnessunit: Literal['', 'K', 'Jy/beam'] = '',
     restfreq: str | list[str] | tuple[str, ...] = '',
 ) -> Any:
     """Grid total-power spectra by pointing into a CASA image and weight image.

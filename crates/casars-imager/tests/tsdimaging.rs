@@ -142,3 +142,132 @@ fn a_valid_moving_field_refuses_explicitly_before_any_output() {
     assert!(!out.with_extension("image").exists());
     assert!(!out.with_extension("weight").exists());
 }
+
+fn compare_pixels(image: &casa_images::PagedImage<f32>, reference: &Value) {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let bytes = STANDARD
+        .decode(reference["pixels"].as_str().unwrap())
+        .unwrap();
+    let expected: Vec<_> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|v| f32::from_le_bytes(*v))
+        .collect();
+    let actual = image.get().unwrap();
+    assert_eq!(actual.len(), expected.len());
+    let (mut error, mut power) = (0., 0.);
+    for (&a, &b) in actual
+        .as_slice_memory_order()
+        .unwrap()
+        .iter()
+        .zip(&expected)
+    {
+        error += (f64::from(a) - f64::from(b)).powi(2);
+        power += f64::from(b).powi(2);
+    }
+    assert!((error / power).sqrt() <= 1e-3);
+    let expected_mask = STANDARD
+        .decode(reference["mask"].as_str().unwrap())
+        .unwrap();
+    let mask = image.get_mask().unwrap().map_or_else(
+        || vec![1; actual.len()],
+        |m| {
+            m.as_slice_memory_order()
+                .unwrap()
+                .iter()
+                .map(|v| u8::from(*v))
+                .collect()
+        },
+    );
+    assert_eq!(mask, expected_mask);
+    assert_eq!(image.units(), reference["unit"].as_str().unwrap());
+}
+
+fn compare_coordinates(image: &casa_images::PagedImage<f32>, reference: &Value) {
+    use casa_coordinates::CoordinateModel;
+    let coordinates = image.coordinates();
+    let flatten = |read: fn(&CoordinateModel) -> Vec<f64>| {
+        (0..coordinates.n_coordinates())
+            .flat_map(|i| read(coordinates.coordinate(i)))
+            .collect::<Vec<_>>()
+    };
+    for (key, values) in [
+        ("referencevalue", flatten(|c| c.reference_value())),
+        ("increment", flatten(|c| c.increment())),
+        ("referencepixel", flatten(|c| c.reference_pixel())),
+    ] {
+        let expected = reference[key].as_array().unwrap();
+        assert_eq!(values.len(), expected.len());
+        for (actual, expected) in values.into_iter().zip(expected) {
+            let expected = expected.as_f64().unwrap();
+            assert!(
+                (actual - expected).abs() <= 1e-15 + 1e-10 * expected.abs(),
+                "{key}: {actual} vs {expected}"
+            );
+        }
+    }
+    let CoordinateModel::Direction(direction) = coordinates.coordinate(0) else {
+        panic!("direction")
+    };
+    let CoordinateModel::Spectral(spectral) = coordinates.coordinate(2) else {
+        panic!("spectral")
+    };
+    assert_eq!(direction.direction_ref().to_string(), reference["frame"][0]);
+    assert_eq!(spectral.frequency_ref().to_string(), reference["frame"][2]);
+    let rest = reference["rest_frequency_hz"].as_f64().unwrap();
+    assert!(
+        (spectral.rest_frequency() - rest).abs() <= rest * 1e-10,
+        "rest frequency: {} vs {rest}",
+        spectral.rest_frequency()
+    );
+}
+
+#[test]
+fn selected_channels_and_declared_unit_precedence_match_actual_casa() {
+    let root = tempfile::tempdir().unwrap();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../casa-imaging-application/tests/data");
+    assert!(
+        std::process::Command::new("tar")
+            .arg("-xzf")
+            .arg(data.join("tsdimaging_selection_inputs.tar.gz"))
+            .arg("-C")
+            .arg(root.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    let oracle: Value = serde_json::from_reader(flate2::read::GzDecoder::new(
+        std::fs::File::open(data.join("tsdimaging_selection_casa.json.gz")).unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(oracle["casa_version"], "6.7.6.14");
+    for case in oracle["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let mut values = case["parameters"].clone();
+        values["infiles"] = json!(root.path().join(format!("{name}.ms")));
+        let output = root.path().join(name);
+        values["outfile"] = json!(output);
+        let (success, reply) = invoke(root.path(), values);
+        if case.get("error").is_some() {
+            assert!(!success, "{name}: {reply}");
+            assert_eq!(reply["kind"], "validation");
+            continue;
+        }
+        assert!(success, "{name}: {reply}");
+        let image = casa_images::PagedImage::<f32>::open(output.with_extension("image")).unwrap();
+        let weight = casa_images::PagedImage::<f32>::open(output.with_extension("weight")).unwrap();
+        assert_eq!(
+            image.shape().to_vec(),
+            case["image"]["shape"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_u64().unwrap() as usize)
+                .collect::<Vec<_>>()
+        );
+        compare_pixels(&image, &case["image"]);
+        compare_pixels(&weight, &case["weight"]);
+        compare_coordinates(&image, &case["wcs"]);
+    }
+}

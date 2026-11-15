@@ -11831,7 +11831,12 @@
       "semantic_revision": 1,
       "casa_name": "brightnessunit",
       "value_domain": {
-        "kind": "string"
+        "kind": "choice",
+        "values": [
+          "",
+          "K",
+          "Jy/beam"
+        ]
       },
       "normalization": {
         "kind": "identity"

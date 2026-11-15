@@ -7,7 +7,9 @@ mod pointing;
 mod products;
 mod stream;
 pub use parameters::TotalPowerParameters;
-pub use products::{PublishedTotalPower, TotalPowerProducts, image_observation};
+pub use products::{
+    PublishedTotalPower, TotalPowerProducts, image_observation, publish_total_power,
+};
 
 use crate::RunContext;
 use casa_coordinates::{CoordinateSystem, DirectionCoordinate};
@@ -92,6 +94,15 @@ pub fn image_from_parameters(
     )
     .map_err(failure)?;
     let observation = opened.value.observation();
+    let _selection = admit(
+        &context.host,
+        &context.policy,
+        &Demand {
+            phase: "total-power parameter selection",
+            memory: (8 * observation.catalogue().partitions.len()) as u64,
+        },
+    )
+    .map_err(failure)?;
     let (request, products) = parameters.request(observation.catalogue())?;
     image_observation(observation, &request, &products, context)
 }

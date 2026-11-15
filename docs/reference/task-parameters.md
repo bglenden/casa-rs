@@ -1276,7 +1276,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>jwidth</code> | <code>single_dish.jwidth@r1</code> | <code>variant</code> | <code>-1</code>; optional | Imaging | CASA tsdimaging's jwidth. |
 | <code>clipminmax</code> | <code>single_dish.clipminmax@r1</code> | <code>bool</code> | <code>false</code>; optional | Imaging | CASA tsdimaging's clipminmax. |
 | <code>minweight</code> | <code>single_dish.minweight@r1</code> | <code>float</code> | <code>0.1</code>; optional | Imaging | CASA tsdimaging's minweight. |
-| <code>brightnessunit</code> | <code>single_dish.brightnessunit@r1</code> | <code>string</code> | <code>""</code>; optional | Imaging | CASA tsdimaging's brightnessunit. |
+| <code>brightnessunit</code> | <code>single_dish.brightnessunit@r1</code> | <code>choice (3 values)</code> | <code>""</code>; optional | Imaging | CASA tsdimaging's brightnessunit. |
 | <code>restfreq</code> | <code>tclean.restfreq@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | Rest frequencies of a cube's velocity axis; empty for the source's. |
 
 _End of generated reference._

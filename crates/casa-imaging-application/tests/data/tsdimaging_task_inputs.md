@@ -17,3 +17,12 @@ The public-data acceptance runs use CASA's `measurementset/other/sdimaging.ms`
 `tools/singledish/tsdimaging_task_parity.py` regenerates their CASA 6.7.6.14
 products and has CASA read both native products for pixel, mask, unit and WCS
 comparisons. Those larger datasets remain external test data.
+
+`tsdimaging_selection_inputs.tar.gz` and `tsdimaging_selection_casa.json.gz`
+come from `tools/singledish/tsdimaging_selection_oracle.py`. They cover an
+off-source, one-channel window preceding a selected three-channel target
+window; corrected/float brightness-unit precedence; legacy UNIT before
+QuantumUnits; fallback past an undeclared unit; and CASA's refusal of a
+lowercase explicit brightness unit. The public-task tests compare persisted
+pixels, masks, units, every WCS axis and the rest frequency with these CASA
+6.7.6.14 records.
