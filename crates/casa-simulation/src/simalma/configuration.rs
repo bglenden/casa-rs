@@ -126,8 +126,11 @@ pub(super) fn select(
         if tp_antennas == 0 {
             tp_antennas = 1;
             tp_minutes = arrays[i].minutes;
-        } else if tp_minutes <= 0. {
-            tp_minutes = arrays[i].minutes;
+        } else {
+            tp_configuration = "aca.tp.cfg".into();
+            if tp_minutes <= 0. {
+                tp_minutes = arrays[i].minutes;
+            }
         }
         arrays.remove(i);
     }

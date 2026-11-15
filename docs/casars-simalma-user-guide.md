@@ -74,8 +74,8 @@ The deterministic full recipe has 54 image products and five MS products;
 its worst image NRMS is 6.18e-6. Clean DATA is below 1e-6 NRMS.
 
 The original noisy recipe has 52 image products and nine MS products.
-CASA and casa-rs use different random streams. Independent noise RMS and
-SIGMA comparisons check the noise generation; the oracle then supplies the
+CASA and casa-rs use different random streams. Independent noise RMS comparisons check generation, and SIGMA is checked
+as MS metadata. The oracle then supplies the
 same native noise samples to CASA's DATA and CORRECTED_DATA for imaging.
 The resulting independent CASA image calculations match within 1.70e-5
 NRMS. This common stochastic input is explicit; it is not a reference
@@ -88,3 +88,10 @@ CASA's known position-angle expression bug. Exact masks and all defined
 pixels are checked; undefined masked non-finite samples are serialized as
 JSON nulls. The integrated counting law covers the whole task at two image
 sizes, including TP concatenation, gridding and weighted feathering.
+
+Three serial release runs of the complete noisy upstream recipe, with no
+compiler running, have medians of 19.95 s native and
+31.91 s CASA (1.60 times faster). This includes all
+observations, per-antenna TP, imaging, analysis and weighted feathering. The
+timing runs use each implementation's own noise stream and exclude the
+comparison oracle's common-noise transfer.

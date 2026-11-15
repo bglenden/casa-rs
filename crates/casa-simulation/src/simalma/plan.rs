@@ -64,7 +64,7 @@ pub(super) fn prepare(p: &Parameters, request: &SimalmaRequest) -> Result<Plan, 
     if directory.exists() && !p.flag("overwrite") {
         return Err(failure("project directory already exists"));
     }
-    for key in ["skymodel", "complist", "ptgfile"] {
+    for key in ["skymodel", "complist"] {
         if let Ok(input) = std::fs::canonicalize(p.text(key)) {
             let output = std::fs::canonicalize(&directory).unwrap_or(directory.clone());
             if input.starts_with(output) {
@@ -83,6 +83,7 @@ pub(super) fn prepare(p: &Parameters, request: &SimalmaRequest) -> Result<Plan, 
         tp_minutes,
         tp_configuration,
     } = super::configuration::select(p, request, &directory, &project, &model, primary_beam)?;
+    protect_pointings(p, &directory, &arrays)?;
     if model.cell[0] == 0. {
         let cell = arrays
             .iter()
@@ -236,4 +237,33 @@ pub(super) fn publish_directory(p: &Parameters, plan: &Plan) -> Result<(), Simob
         }
     }
     std::fs::create_dir_all(&plan.directory).map_err(failure)
+}
+
+// Match simobserve's stem substitution and outside/project search order
+// before overwriting the directory that may hold the selected input.
+fn protect_pointings(
+    p: &Parameters,
+    directory: &Path,
+    arrays: &[Array],
+) -> Result<(), SimobserveError> {
+    if p.flag("setpointings") {
+        return Ok(());
+    }
+    let project = std::fs::canonicalize(directory).unwrap_or(directory.to_path_buf());
+    for array in arrays {
+        let name = p.text("ptgfile").replace("$project", &array.stem);
+        let path = if Path::new(&name).exists() {
+            std::path::absolute(name).map_err(failure)?
+        } else {
+            directory.join(name)
+        };
+        let input = std::fs::canonicalize(&path).map_err(failure)?;
+        if path.starts_with(directory) || input.starts_with(&project) {
+            return Err(failure(format!(
+                "pointing input {} would be deleted with the existing project",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }

@@ -147,10 +147,11 @@ pub(super) fn observation(
     observation.obsmode = "sd".into();
     observation.antennalist = String::new();
     observation.sdantlist = plan.tp_configuration.clone();
-    observation.correlator = p
-        .strings("correlator")
-        .get(plan.arrays.len())
-        .cloned()
-        .unwrap_or_default();
+    let correlators = p.strings("correlator");
+    observation.correlator = if correlators.len() > plan.arrays.len() {
+        correlators.last().cloned().unwrap_or_default()
+    } else {
+        String::new()
+    };
     Ok((observation, reservation))
 }
