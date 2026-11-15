@@ -152,6 +152,8 @@ pub(crate) struct ApplicationPublication {
     pub(crate) primary_beam_centres: Option<casa_imaging_products::PrimaryBeamCentres>,
     /// Store whose observatory anchors the cube's LSRK beam selection.
     pub(crate) vla_selection_store: Option<usize>,
+    /// An existing MEM model can stay on disk when the minor cycle leaves it unchanged.
+    pub(crate) saved_mem_model: bool,
     pub(crate) writer: casa_imaging_products::CasaImageWriter,
 }
 
