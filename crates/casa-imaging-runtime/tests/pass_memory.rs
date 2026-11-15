@@ -832,23 +832,35 @@ fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
 /// exceeded.
 #[test]
 fn the_density_pass_holds_at_most_its_charge_with_every_fields_cube() {
-    use casa_imaging_operator::{DensityCellRule, DensityFieldKeys, DensityGridShape};
-    use casa_imaging_runtime::pass::{density_pass_bytes, run_density_pass};
     if !alone("the_density_pass_holds_at_most_its_charge_with_every_fields_cube") {
         return;
     }
     const CHANNELS: u32 = 8;
     const PADDING: u32 = 2;
-    let resampler = SpectralResampler::channel_local(
-        SpectralAxis::new(1.0e9, 4.0e4, CHANNELS).expect("axis"),
-        SpectralKernel::Linear,
-    );
+    let linear = SpectralAxis::new(1.0e9, 4.0e4, CHANNELS).expect("uniform axis");
+    let tabular = SpectralAxis::tabular(
+        &[
+            1.0e9, 1.00004e9, 1.00007e9, 1.00009e9, 1.0001e9, 1.00011e9, 1.00012e9, 1.00013e9,
+        ],
+        4.0e4,
+    )
+    .expect("tabular axis");
+    for axis in [linear, tabular] {
+        density_pass_with_every_fields_cube(axis, PADDING);
+    }
+}
+
+fn density_pass_with_every_fields_cube(axis: SpectralAxis, padding: u32) {
+    use casa_imaging_operator::{DensityCellRule, DensityFieldKeys, DensityGridShape};
+    use casa_imaging_runtime::pass::{density_pass_bytes, run_density_pass};
+    let channels = axis.channels();
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
     let operator = operator_of(64, GridPrecision::F64, resampler.basis());
     let shape = |fields| DensityGridShape {
         width: 64,
         height: 64,
-        planes: (CHANNELS + 2 * PADDING) as usize,
-        padding: PADDING,
+        planes: (channels + 2 * padding) as usize,
+        padding,
         box_half_width: 0,
         increment_rad: [-1.0e-5, 1.0e-5],
         rule: DensityCellRule::Cube,
@@ -885,6 +897,7 @@ fn the_density_pass_holds_at_most_its_charge_with_every_fields_cube() {
         let grid = result.expect("density pass");
         assert!(grid.cells().iter().any(|cell| *cell > 0.0));
         let held = PEAK.load(Ordering::Relaxed) - baseline;
+        eprintln!("{workers} workers: full density heap {held} of {admitted} admitted bytes");
         assert!(
             held <= admitted && held > one_field,
             "{workers} workers: the density pass held {held} bytes against {admitted} \

@@ -213,10 +213,10 @@ fn neighbouring_channels_that_read_the_same_taps_share_one_sample() {
     let nearest = SpectralResampler::channel_local(planes, SpectralKernel::Nearest);
     // `Some(true)`: few samples; `Some(false)`: one per channel.
     for (resampler, phase_shift_m, frequencies, shares) in [
-        (constant, 0.0, &ascending, Some(true)),
-        (constant, 0.0, &descending, Some(true)),
-        (constant, 0.0, &shuffled, None),
-        (nearest, 0.0, &ascending, Some(true)),
+        (constant.clone(), 0.0, &ascending, Some(true)),
+        (constant.clone(), 0.0, &descending, Some(true)),
+        (constant.clone(), 0.0, &shuffled, None),
+        (nearest.clone(), 0.0, &ascending, Some(true)),
         (nearest, 0.0, &descending, Some(true)),
         (constant, 0.013, &ascending, Some(false)),
         (taylor, 0.0, &ascending, Some(false)),
@@ -455,7 +455,7 @@ fn wide_output_channels_reproduce_a_flat_spectrum_and_unmapped_channels_predict_
     // Output channels three native channels wide: CASA's fine grid repeats
     // each output value three times.
     let axis = SpectralAxis::new(1.0e9, 3.0e6, 4).expect("axis");
-    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let resampler = SpectralResampler::channel_local(axis.clone(), SpectralKernel::Linear);
     let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
     let model = point_model(&operator, &[2.0; 4]);
     // Native channels from below the first output channel to above the
@@ -546,7 +546,7 @@ fn an_autocorrelation_predicts_the_zero_spacing_only_when_asked() {
     let axis = SpectralAxis::new(1.0e9, 1.0e6, 4).expect("axis");
     let resamplers = [
         SpectralResampler::direct(Basis::Constant).expect("direct"),
-        SpectralResampler::channel_local(axis, SpectralKernel::Nearest),
+        SpectralResampler::channel_local(axis.clone(), SpectralKernel::Nearest),
         SpectralResampler::channel_local(axis, SpectralKernel::Linear),
     ];
     // Natives at output channel centres, which a linear mapping predicts
@@ -588,7 +588,7 @@ fn an_autocorrelation_predicts_the_zero_spacing_only_when_asked() {
                 .expect("extended model");
             let auto = row_on([0.0; 3], [3, 3], &frequencies, cells);
             let zero_length = row_on([0.0; 3], [2, 3], &frequencies, cells);
-            let predicting = resampler.predicting_autocorrelations();
+            let predicting = resampler.clone().predicting_autocorrelations();
             assert!(predicting.predicts_autocorrelations());
             assert!(!resampler.predicts_autocorrelations(), "off by default");
             for (label, model, flux) in [("point", &point, 1.7), ("extended", &extended, sum)] {
@@ -739,7 +739,7 @@ fn a_batch_predicts_each_row_as_alone_within_what_it_charges() {
     ];
     let resamplers = resamplers
         .into_iter()
-        .flat_map(|resampler| [resampler, resampler.predicting_autocorrelations()]);
+        .flat_map(|resampler| [resampler.clone(), resampler.predicting_autocorrelations()]);
     let widest = 257;
     let rows_per_batch = 3;
     for resampler in &resamplers.collect::<Vec<_>>() {

@@ -241,6 +241,8 @@ pub struct CubeSpectralSetup {
     pub output_frame_field_id: usize,
     /// Output cube channel frequencies in `output_freq_ref`.
     pub output_channel_frequencies_hz: Vec<f64>,
+    /// CASA's stored frequency table, which may be shorter than the cube.
+    pub output_channel_table_hz: Option<Vec<f64>>,
     /// Output cube channel widths in `output_freq_ref`.
     pub output_channel_widths_hz: Vec<f64>,
 }
@@ -655,20 +657,30 @@ fn casa_regrid_request(
 /// regridder made. For a non-linear convention
 /// ([`casa_tabular_convention`]) CASA makes a tabular coordinate over
 /// `chanFreq`, whose header records `chanFreq[0]` and the table's mean step
-/// `(chanFreq[n−1] − chanFreq[0])/(n − 1)`. The native imager grids on a
-/// linear axis, so it takes that header: the planes agree with CASA's where
-/// the table is uniform in frequency, but an optical-velocity table is not,
-/// and CASA's planes between its ends and beyond them (extrapolated along
-/// the last step) differ.
+/// `(chanFreq[n−1] − chanFreq[0])/(n − 1)`. The optical-velocity grid
+/// retains each centre and extrapolates additional planes by the last
+/// table interval. The other conventions use a uniform frequency grid.
 fn casa_regridded_image_axis_hz(
     channels: &regrid::CasaChannelFrequencies,
-    nchan: Option<usize>,
+    request: &regrid::RegridRequest,
     veltype: DopplerRef,
 ) -> Vec<f64> {
     let centres_hz = &channels.centres_hz;
-    let nchan = nchan.unwrap_or(centres_hz.len());
+    let nchan = request.nchan.unwrap_or(centres_hz.len());
     let first_hz = centres_hz[0];
     let last = centres_hz.len() - 1;
+    if request.quantity == regrid::RegridQuantity::OpticalVelocity && last > 0 {
+        let step = centres_hz[last] - centres_hz[last - 1];
+        return (0..nchan)
+            .map(|pixel| {
+                if pixel <= last {
+                    centres_hz[pixel]
+                } else {
+                    centres_hz[last] + (pixel - last) as f64 * step
+                }
+            })
+            .collect();
+    }
     let increment_hz = if last == 0 {
         channels.steps_hz[0]
     } else if casa_tabular_convention(veltype) {
@@ -862,13 +874,12 @@ impl CubeSpectralSetup {
                 )?,
             ),
         };
-        let channels = regrid::casa_channel_frequencies(
-            &casa_regrid_request(axis_config, nchan)?,
-            &source_frequencies_hz,
-            &source_widths_hz,
-        )?;
+        let request = casa_regrid_request(axis_config, nchan)?;
+        let channels =
+            regrid::casa_channel_frequencies(&request, &source_frequencies_hz, &source_widths_hz)?;
+        let tabulated_optical = request.quantity == regrid::RegridQuantity::OpticalVelocity;
         let output_channel_frequencies_hz =
-            casa_regridded_image_axis_hz(&channels, nchan, axis_config.veltype);
+            casa_regridded_image_axis_hz(&channels, &request, axis_config.veltype);
         Ok(Self {
             source_freq_ref,
             output_freq_ref,
@@ -884,6 +895,7 @@ impl CubeSpectralSetup {
                 channel_widths_from_centers(&output_channel_frequencies_hz)?
             },
             output_channel_frequencies_hz,
+            output_channel_table_hz: tabulated_optical.then_some(channels.centres_hz),
         })
     }
 
@@ -1011,6 +1023,7 @@ impl CubeSpectralSetup {
             output_frame_field_id: field_id,
             output_channel_widths_hz,
             output_channel_frequencies_hz,
+            output_channel_table_hz: None,
         })
     }
 
@@ -3116,6 +3129,29 @@ mod tests {
     }
 
     #[test]
+    fn an_optical_image_uses_the_last_table_step_past_the_stored_entries() {
+        let table = regrid::CasaChannelFrequencies {
+            centres_hz: vec![140.0, 120.0, 107.0, 100.0],
+            steps_hz: vec![-20.0, -20.0, -13.0, -7.0],
+        };
+        let coordinates = |nchan| {
+            let request = regrid::RegridRequest {
+                quantity: regrid::RegridQuantity::OpticalVelocity,
+                start: None,
+                width: None,
+                nchan,
+                rest_frequency_hz: 120.0,
+            };
+            casa_regridded_image_axis_hz(&table, &request, DopplerRef::Z)
+        };
+        assert_eq!(coordinates(None), [140.0, 120.0, 107.0, 100.0]);
+        assert_eq!(
+            coordinates(Some(8)),
+            [140.0, 120.0, 107.0, 100.0, 93.0, 86.0, 79.0, 72.0]
+        );
+    }
+
+    #[test]
     fn for_casa_cube_axis_with_unset_start_begins_at_the_selected_band() {
         // test_cube_23: spw='0:4~13', start=''; CASA's cube starts at 1.2 GHz.
         let engine = test_engine();
@@ -3240,6 +3276,7 @@ mod tests {
             output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
             output_frame_field_id: 0,
             output_channel_frequencies_hz: vec![1.0e9],
+            output_channel_table_hz: None,
             output_channel_widths_hz: vec![5.0e7],
         };
         let engine = test_engine();
@@ -3263,6 +3300,7 @@ mod tests {
             output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
             output_frame_field_id: 0,
             output_channel_frequencies_hz: vec![1.05e9],
+            output_channel_table_hz: None,
             output_channel_widths_hz: vec![5.0e7],
         };
         let engine = test_engine();
@@ -3296,6 +3334,7 @@ mod tests {
             output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
             output_frame_field_id: 0,
             output_channel_frequencies_hz: vec![2.0e9],
+            output_channel_table_hz: None,
             output_channel_widths_hz: vec![1.0e6],
         };
 

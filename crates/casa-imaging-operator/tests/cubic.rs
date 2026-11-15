@@ -260,7 +260,7 @@ fn wide_topo_prediction_uses_the_same_width_tie_as_gridding() {
 #[test]
 fn cubic_prediction_reproduces_a_cubic_spectrum_and_extrapolates_in_its_halo() {
     let axis = SpectralAxis::new(1.0e9, 1.0e6, 12).expect("axis");
-    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Cubic);
+    let resampler = SpectralResampler::channel_local(axis.clone(), SpectralKernel::Cubic);
     let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
     let fluxes = (0..12)
         .map(|plane| spectrum(f64::from(plane)) as f32)

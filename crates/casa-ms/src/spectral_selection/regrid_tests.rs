@@ -50,7 +50,7 @@ fn channels(request: &RegridRequest, frequencies_hz: &[f64]) -> CasaChannelFrequ
 
 /// The image axis tclean writes for `request` with `veltype`.
 fn image_axis(request: &RegridRequest, frequencies_hz: &[f64], veltype: DopplerRef) -> Vec<f64> {
-    casa_regridded_image_axis_hz(&channels(request, frequencies_hz), request.nchan, veltype)
+    casa_regridded_image_axis_hz(&channels(request, frequencies_hz), request, veltype)
 }
 
 /// CASA's linear axis: `crval + k·cdelt`.
@@ -196,10 +196,21 @@ fn optical_velocity_grid_is_truncated_to_the_data() {
         1_048_827_218.620_406_3,
     ];
     assert_eq!(channels(&grid, &ascending_hz()).centres_hz, table);
-    // The tabular coordinate's header: the first entry and the mean step,
-    // CASA's reference value and increment.
+    // CASA stores four samples and extrapolates the remaining centres
+    // along the last interval of its tabular coordinate.
     let axis = image_axis(&grid, &ascending_hz(), DopplerRef::Z);
-    assert_eq!(axis, linear(table[0], -68_138_944.732_383_53, 8));
+    assert_eq!(&axis[..4], &table);
+    for (actual, expected) in axis[4..].iter().zip([
+        988_530_159.646_275_8,
+        928_233_100.672_145_1,
+        867_936_041.698_014_7,
+        807_638_982.723_884_1,
+    ]) {
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "{actual} versus {expected}"
+        );
+    }
 }
 
 #[test]
@@ -270,7 +281,7 @@ fn assert_derived(
         nchan: None,
         ..request(quantity, start, width, 1)
     };
-    let axis = casa_regridded_image_axis_hz(&channels(&grid, &ascending_hz()), None, veltype);
+    let axis = image_axis(&grid, &ascending_hz(), veltype);
     assert_eq!(axis.len(), planes, "{quantity:?} {start:?} {width:?}");
     assert!((axis[0] - first_hz).abs() < 1e-3, "{axis:?}");
     assert!((axis[1] - axis[0] - increment_hz).abs() < 1e-3, "{axis:?}");

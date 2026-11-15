@@ -5,8 +5,8 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::{
-    FineGrid, NativeRow, PreparedFrequencyConversion, RowContext, SpectralAxis, SpectralKernel,
-    SpectralResampler,
+    FineGrid, NativeRow, Order, PreparedFrequencyConversion, RowContext, SpectralAxis,
+    SpectralKernel, SpectralResampler,
 };
 
 fn reporting_axis() -> (SpectralAxis, PreparedFrequencyConversion) {
@@ -32,7 +32,8 @@ fn reporting_axis() -> (SpectralAxis, PreparedFrequencyConversion) {
 #[test]
 fn direct_sampling_converts_each_reported_centre() {
     let (axis, to_lsrk) = reporting_axis();
-    let grid = FineGrid::compile(axis, axis.increment_hz()).expect("equal width");
+    let native = [0.0, axis.increment_hz()];
+    let mut grid = FineGrid::compile(&axis, &native, Order::Linear).expect("equal width");
     let expected = to_lsrk.convert_hz(1_525_000_000.0);
     assert_eq!(grid.frequency_hz(3), expected);
 }
@@ -67,7 +68,8 @@ fn width_tie_uses_fewer_samples_without_rounding_a_nonintegral_ratio() {
         (native_step.next_down(), 4),
     ] {
         for sign in [1.0, -1.0] {
-            let grid = FineGrid::compile(axis, spacing * sign).expect("fine grid");
+            let grid =
+                FineGrid::compile(&axis, &[0.0, spacing * sign], Order::Linear).expect("fine grid");
             assert_eq!(grid.count(), expected, "spacing {spacing}, sign {sign}");
         }
     }

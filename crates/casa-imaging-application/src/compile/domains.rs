@@ -8,7 +8,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo};
 use casa_imaging_deconvolution::{
     AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes,
     NoiseEstimate, ReconstructionMask, ReconstructionMaskPlan,
@@ -462,6 +462,18 @@ fn range_channels(
     channels: usize,
 ) -> Result<Option<(usize, usize)>, PrepareError> {
     let ends = match range {
+        SpectralMaskRange::Frequency(hz) if spectral.channel_table_hz.is_some() => {
+            if !hz.iter().all(|frequency| frequency.is_finite()) {
+                return Err(PrepareError::MaskRange { range });
+            }
+            let axis = spectral.coordinate();
+            let pixel = |frequency| {
+                axis.to_pixel(&[frequency])
+                    .map(|value| value[0])
+                    .map_err(|_| PrepareError::MaskRange { range })
+            };
+            [pixel(hz[0])?, pixel(hz[1])?]
+        }
         SpectralMaskRange::Frequency(hz) => hz
             .map(|frequency| (frequency - spectral.reference_frequency_hz) / spectral.increment_hz),
         SpectralMaskRange::Pixel(pixels) => pixels,
@@ -859,6 +871,7 @@ mod tests {
             reference_frequency_hz: 999_988_750.387_257_2,
             increment_hz: 1_049_988_187.906_619_9 - 999_988_750.387_257_2,
             rest_frequency_hz: 0.0,
+            channel_table_hz: None,
             additional_rest_frequencies_hz: Vec::new(),
             undefined_frame: false,
         }
@@ -905,6 +918,18 @@ mod tests {
                 "{range:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_frequency_mask_range_inverts_the_tabular_axis() {
+        let axis = ImageSpectralCoordinate {
+            reference_frequency_hz: 140.0,
+            increment_hz: -20.0,
+            channel_table_hz: Some(vec![140.0, 120.0, 107.0, 100.0]),
+            ..refim_point_axis()
+        };
+        let range = SpectralMaskRange::Frequency([101.0, 102.0]);
+        assert_eq!(range_channels(range, &axis, 4).unwrap(), Some((3, 3)));
     }
 
     /// A ranged box over every channel, or a one-channel image's only

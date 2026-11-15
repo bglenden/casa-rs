@@ -257,7 +257,7 @@ impl Gathered {
 /// in the halo the maximum is −2 and CASA's unsigned loop flags nothing, so
 /// every channel is degridded. `None` when nothing maps.
 fn degridded_channels(
-    (axis, order): (SpectralAxis, Order),
+    (axis, order): (&SpectralAxis, Order),
     native: &[f64],
 ) -> Option<std::ops::RangeInclusive<u32>> {
     let native_width_hz = native[1] - native[0];
@@ -308,7 +308,7 @@ impl SpectralResampler {
     /// one per output channel.
     #[must_use]
     pub fn prediction_samples_per_row(&self, channels: usize) -> usize {
-        match self.sampling {
+        match &self.sampling {
             Sampling::Direct | Sampling::Nearest(_) => channels,
             Sampling::Interpolated(axis, _) => channels.max(axis.channels as usize),
         }
@@ -350,7 +350,7 @@ impl SpectralResampler {
         resamplers
             .into_iter()
             .fold((0, channels), |(samples, slots), resampler| {
-                let linear = match resampler.sampling {
+                let linear = match &resampler.sampling {
                     Sampling::Interpolated(axis, _) => axis.channels as usize,
                     Sampling::Direct | Sampling::Nearest(_) => 0,
                 };
@@ -407,12 +407,12 @@ impl SpectralResampler {
     /// The axis and order by which `row`'s prediction interpolates
     /// degridded output channels to its native channels, when it does (see
     /// [`Self::predict_row`]).
-    fn interpolated_prediction(&self, row: &NativeRow<'_>) -> Option<(SpectralAxis, Order)> {
-        match self.sampling {
+    fn interpolated_prediction(&self, row: &NativeRow<'_>) -> Option<(&SpectralAxis, Order)> {
+        match &self.sampling {
             Sampling::Interpolated(axis, order)
                 if axis.channels > 1 && row.frequencies_hz.len() > 1 =>
             {
-                Some((axis, order))
+                Some((axis, *order))
             }
             Sampling::Direct | Sampling::Nearest(_) | Sampling::Interpolated(..) => None,
         }
@@ -522,7 +522,7 @@ impl SpectralResampler {
         match self.interpolated_prediction(row) {
             None => {
                 for (channel, frequency_hz) in native.iter().enumerate() {
-                    let plane = match self.sampling {
+                    let plane = match &self.sampling {
                         Sampling::Direct => Some(0),
                         Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
                             axis.nearest_channel(*frequency_hz)
@@ -570,7 +570,7 @@ impl SpectralResampler {
         let channels = native.len();
         let prepared = model.layout().planes();
         let mut locate = |channel: usize| {
-            let plane = match self.sampling {
+            let plane = match &self.sampling {
                 Sampling::Direct => Some(0),
                 Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
                     axis.nearest_channel(native[channel])
@@ -724,7 +724,7 @@ impl SpectralResampler {
         };
         let points = axis.channels as usize * per_channel;
         let point = |index: usize| {
-            if width <= 1.0 && axis.reporting_axis.is_some() {
+            if width <= 1.0 && (axis.reporting_axis.is_some() || axis.tabular.is_some()) {
                 axis.centre_hz(index as u32)
             } else {
                 fine_start + index as f64 * fine_increment
@@ -738,7 +738,12 @@ impl SpectralResampler {
                 term(channel, &[]);
                 continue;
             }
-            let position = (frequency_hz - fine_start) / fine_increment;
+            let position = if width <= 1.0 {
+                axis.tabular_pixel(*frequency_hz)
+            } else {
+                None
+            }
+            .unwrap_or_else(|| (frequency_hz - fine_start) / fine_increment);
             let slot = |point: usize| slots[point / per_channel];
             match order {
                 Order::Linear => {
@@ -802,5 +807,51 @@ impl SpectralResampler {
         );
         scratch.terms.truncate(first);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RowContext, SpectralKernel};
+
+    #[test]
+    fn tabular_model_prediction_refines_a_uniform_inverse_only_for_wider_image_planes() {
+        let axis = SpectralAxis::tabular(&[140.0, 120.0, 107.0, 100.0], -20.0).unwrap();
+        let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+        for (frequencies, factor) in [
+            ([100.0, 110.0, 120.0], 0.5),
+            ([92.0, 119.0, 146.0], 1.0 / 13.0),
+        ] {
+            let mut scratch = PredictionScratch::with_capacity(1, 4, 4, 3);
+            scratch.sources.extend((0..4).map(|slot| Source {
+                slot,
+                count: 1,
+                placement: slot,
+            }));
+            let row = NativeRow {
+                uvw_m: [1.0, 0.0, 0.0],
+                phase_shift_m: 0.0,
+                pointing_offset_rad: [0.0; 2],
+                frequencies_hz: &frequencies,
+                values: &[Complex32::default(); 3],
+                weights: &[1.0; 3],
+                flags: &[false; 3],
+                row_flag: false,
+                context: RowContext {
+                    antennas: [0, 1],
+                    antenna_types: [0, 0],
+                    time_s: 0.0,
+                    field: 0,
+                    spectral_window: 0,
+                    parallactic_angle_rad: [0.0; 2],
+                    native_frequency_ratio: 1.0,
+                    original_uvw_m: None,
+                },
+            };
+            resampler.native_terms(&row, 1, PlacedRow { start: 0, end: 4 }, &mut scratch, 0);
+            assert_eq!(&scratch.terms()[1].points[..2], [1, 2]);
+            assert!((scratch.terms()[1].factors[1] - factor).abs() < 2e-7);
+        }
     }
 }
