@@ -1898,6 +1898,16 @@ pixel of their other channels or of the 12 m, 7 m and two-field cubes
 (`.1`, `.2`, `.5`); their products agree to 4e-5 normalized RMS. Such
 pixels cannot measure parity.
 
+The seven-pointing B10 Högbom control with `mosweight=True` (#818)
+has one affected pixel, at zero-based `(603, 1020)` with `pblimit=0.2`.
+The unblanked beams reconstructed from the two weight images are
+0.2000000128 in casa-rs and 0.1999999561 in CASA. The same pixel crosses
+the cut in the PB, restored image, PB-corrected image and residual masks.
+A diagnostic cut at either 0.1999998 or 0.2000002 gives identical support
+everywhere on the original arrays. The production cut remains at 0.2.
+All nine products agree within 1.05e−6 normalized RMS on the common
+support, with exact sum weights and matching WCS and beams.
+
 ## `sm.predict` phases a moved `observemany` pointing on its field
 
 - Date noted: 2026-10-23
