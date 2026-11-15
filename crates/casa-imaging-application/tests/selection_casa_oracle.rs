@@ -473,3 +473,56 @@ fn scan_and_observation_bounds_read_casas_physical_rows() {
         }
     }
 }
+
+#[test]
+fn scan_upper_bounds_hold_rows_with_negative_physical_numbers() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let mut ms = MeasurementSet::open(&vis).expect("open fixture");
+    for row in 0..ms.row_count() {
+        let ScalarValue::Int32(field) = *ms
+            .main_table()
+            .cell_accessor(row, "FIELD_ID")
+            .unwrap()
+            .scalar()
+            .unwrap()
+        else {
+            panic!("FIELD_ID is an integer");
+        };
+        let scan = if field == 0 { -1 } else { 3 };
+        ms.main_table_mut()
+            .row_accessor_mut()
+            .set_cell(
+                row,
+                "SCAN_NUMBER",
+                TableValue::Scalar(ScalarValue::Int32(scan)),
+            )
+            .unwrap();
+    }
+    ms.save().expect("stage signed physical scan numbers");
+    drop(ms);
+
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    for (scan, expected) in [
+        ("<0", Some("field_id")),
+        ("<=0", Some("field_id")),
+        ("<1", Some("field_id")),
+        (">0", Some("field_glob")),
+        ("<=0,3", Some("all")),
+        ("-1", None),
+        (">=-1", None),
+    ] {
+        let selection = request(&vis, root.path().join("rows"), &json!({"scan": scan}));
+        let rows = row_pointing(&selection, &imaging::context(selection.resource_policy()));
+        if let Some(case) = expected {
+            let rows = rows.unwrap_or_else(|error| panic!("scan {scan:?}: {error}"));
+            assert_eq!(
+                rows.into_keys().collect::<Vec<_>>(),
+                physical_rows(&oracle["cases"][case]),
+                "scan {scan:?}"
+            );
+        } else {
+            assert!(rows.is_err(), "CASA refuses scan {scan:?}");
+        }
+    }
+}

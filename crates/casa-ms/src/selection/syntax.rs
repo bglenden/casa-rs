@@ -175,11 +175,14 @@ fn row_id_interval(term: &str) -> Option<(i64, i64)> {
         return (start < end).then_some((start, end));
     }
 
+    // CASA compares the signed MAIN column. Only the input literal is
+    // required to be nonnegative.
+    let min = i64::from(i32::MIN);
     let max = i64::from(i32::MAX);
     match term.as_bytes() {
-        [b'<', b'=', ..] => Some((0, number(&term[2..])?)),
+        [b'<', b'=', ..] => Some((min, number(&term[2..])?)),
         [b'>', b'=', ..] => Some((number(&term[2..])?, max)),
-        [b'<', ..] => Some((0, number(&term[1..])? - 1)),
+        [b'<', ..] => Some((min, number(&term[1..])? - 1)),
         [b'>', ..] => Some((number(&term[1..])? + 1, max)),
         _ => {
             let id = number(term)?;

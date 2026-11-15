@@ -13,16 +13,17 @@ mod uv;
 use uv::canonicalize_uv_selection;
 pub use uv::{SelectionBound, UvDistanceRange, UvDistanceUnit, UvSelection};
 
-/// A resolved non-negative MeasurementSet identifier selection.
+/// A resolved MeasurementSet identifier selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdSelection {
     /// Select every identifier present in the source generation.
     All,
-    /// Select exactly these identifiers.
+    /// Select exactly these nonnegative identifiers.
     Only(Vec<u32>),
     /// Inclusive identifier intervals, stored in space proportional to their count.
+    /// Signed endpoints preserve comparisons on physical MAIN scan numbers.
     /// Compilation normalizes endpoints and merges overlapping or adjacent intervals.
-    Ranges(Vec<(u32, u32)>),
+    Ranges(Vec<(i64, i64)>),
 }
 
 impl IdSelection {
@@ -47,12 +48,11 @@ impl IdSelection {
         match self {
             Self::All => Some(0),
             Self::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
-            Self::Ranges(ranges) => ranges.capacity().checked_mul(size_of::<(u32, u32)>()),
+            Self::Ranges(ranges) => ranges.capacity().checked_mul(size_of::<(i64, i64)>()),
         }
     }
 
-    /// Whether the selection holds identifier `value`; a negative one is
-    /// never selected by a list or interval. Lists must be sorted and intervals
+    /// Whether the selection holds identifier `value`. Lists must be sorted and intervals
     /// canonical (sorted and disjoint), as guaranteed after compilation.
     #[must_use]
     pub fn holds(&self, value: i64) -> bool {
@@ -61,10 +61,10 @@ impl IdSelection {
             Self::Only(ids) => {
                 u32::try_from(value).is_ok_and(|value| ids.binary_search(&value).is_ok())
             }
-            Self::Ranges(ranges) => u32::try_from(value).is_ok_and(|value| {
+            Self::Ranges(ranges) => {
                 let index = ranges.partition_point(|&(start, _)| start <= value);
                 index > 0 && value <= ranges[index - 1].1
-            }),
+            }
         }
     }
 

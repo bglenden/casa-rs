@@ -390,7 +390,7 @@ fn an_empty_numeric_predicate_skips_only_a_later_measurement_set() {
     let (actual, products) = split.whole.image_stores(
         &split.halves(),
         "empty-later-input",
-        json!({ "niter": 0, "scan": ["", "<0"] }),
+        json!({ "niter": 0, "scan": ["", ">0&<1"] }),
     );
     assert_eq!(actual.gridded_samples, only_first.gridded_samples);
     assert_products(
@@ -401,7 +401,7 @@ fn an_empty_numeric_predicate_skips_only_a_later_measurement_set() {
     );
 
     for (scan, message) in [
-        (json!(["<0", ""]), "selection resolved to no samples"),
+        (json!([">0&<1", ""]), "selection resolved to no samples"),
         (json!(["", ">=0&<1"]), "invalid scan selector term"),
     ] {
         let Err(refusal) = split.whole.try_image_stores(
