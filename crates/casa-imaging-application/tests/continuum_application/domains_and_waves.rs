@@ -133,6 +133,76 @@ fn alternate_mosaic_cube_psf_is_the_same_in_waves() {
     }
 }
 
+/// Channel indices in a converted cube refer to a frequency grid built
+/// at the PSF's own direction, including when the PSF is read on restart.
+#[test]
+fn alternate_mosaic_cube_psf_uses_its_own_frequency_grid() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_mosaic_measurement_set(root.path());
+    let alternate = "J2000 1.00006rad 0.5rad";
+    let run = |label: &str, extra: serde_json::Value| {
+        let path = root.path().join(label);
+        let mut values = json!({"imsize": 128, "gridder": "mosaic", "weighting": "natural", "outframe": "LSRK", "write_pb": true});
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let imaging = line_cube(&measurement_set, &path, values)
+            .with_tclean_restart()
+            .expect("select tclean continuation behavior");
+        casa_imaging_application::execute(&imaging, context_with(memory_policy(4 << 30)))
+            .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+        PagedImage::<f32>::open(path.with_extension("psf")).unwrap()
+    };
+    let ordinary = run("ordinary-frequency", json!({}));
+    let shifted = run("alternate-frequency", json!({"phasecenter": alternate}));
+    let separate = run("separate-frequency", json!({"psfphasecenter": alternate}));
+    let frequencies = |image: &PagedImage<f32>| {
+        let spectral = image.coordinates().coordinate(2);
+        (spectral.reference_value()[0], spectral.increment()[0])
+    };
+    let expected = frequencies(&shifted);
+    assert!((frequencies(&ordinary).0 - expected.0).abs() > 1.0);
+    assert_eq!(
+        frequencies(&separate),
+        expected,
+        "alternate PSF spectral grid"
+    );
+    let pixels = separate.get().unwrap();
+    assert_eq!(
+        pixels,
+        shifted.get().unwrap(),
+        "alternate PSF plane samples"
+    );
+    let (_, main_sums) = read_product(&root.path().join("separate-frequency"), ".sumwt");
+    assert!(
+        main_sums[[0, 0, 0, 29]] > 0.0,
+        "last plane still has main data"
+    );
+    assert!(
+        pixels
+            .index_axis(ndarray::Axis(3), 29)
+            .iter()
+            .all(|&value| value == 0.0)
+    );
+    drop(separate);
+    let reused = run("separate-frequency", json!({"calcpsf": false}));
+    assert_eq!(frequencies(&reused), expected);
+    assert_eq!(reused.get().unwrap(), pixels);
+
+    let reverse = run(
+        "reverse-frequency",
+        json!({"phasecenter": alternate, "psfphasecenter": "J2000 1rad 0.5rad"}),
+    );
+    assert_eq!(frequencies(&reverse), frequencies(&ordinary));
+    assert_eq!(
+        reverse.get().unwrap(),
+        ordinary.get().unwrap(),
+        "read the alternate native channels"
+    );
+}
+
 /// A source-defined LSRK grid and the waves that read it use the same
 /// frequency frame, although the published image is TOPO (#1198).
 #[test]

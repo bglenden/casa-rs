@@ -497,10 +497,9 @@ fn compile_run(
             let view = view.compile(&problem, model_lifecycle)?;
             // Its writer coordinates remain live through publication.
             resident.join(view.reservation);
-            Ok(view.value)
+            Ok::<_, ApplicationDispatchError>(view.value)
         })
-        .transpose()
-        .map_err(ApplicationDispatchError::Compile)?;
+        .transpose()?;
     let backend = availability::resolve_backend(
         &problem,
         request.backend,

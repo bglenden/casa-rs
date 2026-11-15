@@ -314,7 +314,7 @@ pub(crate) fn prepare_with_view_hooks(
         &mut domains,
         (spectral.output_channels, reconstruction_planes),
         mvc_taylor.as_ref().and_then(|view| view.start.as_ref()),
-        context,
+        (context, surveyed),
         &mut deployment.publication.writer,
     )?;
     let geometry = geometry(request, &domains, &centre, &spectral);
@@ -322,7 +322,7 @@ pub(crate) fn prepare_with_view_hooks(
         request,
         &domains[0],
         &centre,
-        &spectral,
+        surveyed,
         context,
         &specification,
         &mut deployment.publication.writer,

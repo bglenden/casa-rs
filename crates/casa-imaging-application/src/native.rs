@@ -372,7 +372,7 @@ pub(crate) fn prepare(
     let psf_view = input
         .psf_view
         .zip(measures)
-        .map(|(view, measures)| psf::PsfRoute::new(view, measures, &route, &runtime))
+        .map(|(view, measures)| psf::PsfRoute::new(view, measures, (problem, &route), &runtime))
         .transpose()?;
     Ok(NativeRun {
         mvc_taylor,

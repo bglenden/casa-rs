@@ -242,7 +242,15 @@ fn fit_beams(
             let psf = psf_real_plane(&plane)?;
             let peak = psf_peak(psf.iter().copied())?;
             if !psf_normalizes(peak) {
-                return Ok(if planned.reuses_single_psf && peak > 0.0 {
+                // The alternate PSF can be blank where the main cube still
+                // has data. CASA's makeImageBeamSet supplies the largest
+                // fitted beam for that channel without blanking the residual.
+                let sum = plane.sum_weight();
+                let supported = plane.validity()
+                    == casa_imaging_deconvolution::SpectralChannelValidity::Valid
+                    && sum.is_finite()
+                    && sum > 0.0;
+                return Ok(if supported || (planned.reuses_single_psf && peak > 0.0) {
                     PlaneBeam::Refused
                 } else {
                     PlaneBeam::Blank
