@@ -140,19 +140,10 @@ fn same_grid(a: &CoordinateSystem, b: &CoordinateSystem) -> bool {
     a.n_coordinates() == b.n_coordinates()
         && (0..a.n_coordinates()).all(|i| {
             let (a, b) = (a.coordinate(i), b.coordinate(i));
-            let reference_tolerance = if matches!(a, CoordinateModel::Spectral(_)) {
-                1e-13
-            } else {
-                1e-6
-            };
             a.coordinate_type() == b.coordinate_type()
                 && a.axis_names() == b.axis_names()
                 && a.axis_units() == b.axis_units()
-                && near_values(
-                    &a.reference_value(),
-                    &b.reference_value(),
-                    reference_tolerance,
-                )
+                && same_reference_values(a, b)
                 && near_values(&a.reference_pixel(), &b.reference_pixel(), 1e-6)
                 && near_values(&a.increment(), &b.increment(), 1e-6)
                 && match (a, b) {
@@ -182,6 +173,27 @@ fn same_grid(a: &CoordinateSystem, b: &CoordinateSystem) -> bool {
                     _ => false,
                 }
         })
+}
+
+fn same_reference_values(a: &CoordinateModel, b: &CoordinateModel) -> bool {
+    let tolerance = if matches!(a, CoordinateModel::Spectral(_)) {
+        1e-13
+    } else {
+        1e-6
+    };
+    let (left, right) = (a.reference_value(), b.reference_value());
+    if near_values(&left, &right, tolerance) {
+        return true;
+    }
+    // A saved direction can use another turn of the same longitude.
+    // Require roundoff-level equality after the turn and keep the usual
+    // reference checks for other axes and for differences within a turn.
+    matches!(
+        (a, b),
+        (CoordinateModel::Direction(_), CoordinateModel::Direction(_))
+    ) && (left[0] - right[0]).abs() > std::f64::consts::PI
+        && same_angle(left[0], right[0])
+        && near(left[1], right[1], tolerance)
 }
 
 /// CASA stores the default SIN slant parameters explicitly; native headers
@@ -227,6 +239,33 @@ mod tests {
         Coordinate, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     };
     use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+
+    #[test]
+    fn restart_reference_longitudes_only_match_at_whole_turns() {
+        let grid = |longitude| {
+            let mut coordinates = CoordinateSystem::new();
+            coordinates.add_coordinate(DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::new(ProjectionType::SIN),
+                [longitude, -0.4],
+                [-1e-5, 1e-5],
+                [16.0, 16.0],
+            ));
+            coordinates
+        };
+        let requested = grid(4.7);
+        let full_turn = 4.7 - std::f64::consts::TAU;
+        let equivalent = grid(full_turn);
+        let shifted = grid(full_turn + 1e-3);
+        assert!(same_reference_values(
+            equivalent.coordinate(0),
+            requested.coordinate(0)
+        ));
+        assert!(
+            !same_reference_values(shifted.coordinate(0), requested.coordinate(0)),
+            "a different pointing fails the longitude comparison itself"
+        );
+    }
 
     #[test]
     fn restart_grid_rejects_pixel_scale_and_projection_changes() {

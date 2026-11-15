@@ -1,9 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Execution and cycle choices read from the canonical imaging parameters.
 
-use super::{GridPrecision, HogbomIterationAccounting, ProductNormalization, choice, unexpected};
+use super::{
+    Deconvolver, GridPrecision, Gridder, HogbomIterationAccounting, ImagingRequest,
+    PolarizationCoordinate, ProductNormalization, SpecMode, choice, unexpected,
+};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
+
+/// Compared geometry for fresh model seeds on more than one image domain.
+pub(crate) const OUTLIER_START_MODELS_SCOPE: &str = "fresh outlier start models support restored standard Stokes I Högbom MFS with one outlier (#1105)";
+
+pub(crate) fn supports_outlier_start_models(request: &ImagingRequest) -> bool {
+    matches!(request.gridder, Gridder::Standard { facets } if facets.get() == 1)
+        && request.specmode == SpecMode::Mfs
+        && request.deconvolver == Deconvolver::Hogbom
+        && request.stokes == [PolarizationCoordinate::StokesI]
+        && request.weighting == crate::Weighting::Natural
+        && request.calcpsf
+        && request.calcres
+        && request.restoration
+}
 
 /// Keep the legacy imager's unpadded diagnostic out of unverified execution
 /// modes, particularly virtual-model publication whose demand uses 1.2.

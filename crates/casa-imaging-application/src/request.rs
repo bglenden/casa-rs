@@ -760,11 +760,13 @@ impl ImagingRequest {
                 },
             );
         }
-        if self.has_start_model() && self.outlierfile.is_some() {
+        if self.has_start_model()
+            && self.outlierfile.is_some()
+            && !execution::supports_outlier_start_models(self)
+        {
             return invalid(
                 "startmodel, outlierfile",
-                "a start model with outlier fields is not supported yet (#1105): an outlier \
-                 would own the main field's overlap with no start model of its own",
+                execution::OUTLIER_START_MODELS_SCOPE,
             );
         }
         // CASA's `mtmfs` takes one Taylor term or more; every other

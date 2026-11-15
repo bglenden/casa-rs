@@ -184,7 +184,7 @@ fn contradictory_parameters_are_refused_before_any_data_is_read() {
             "startmodel",
         ),
         (
-            json!({ "startmodel": "a.model", "outlierfile": "outliers.txt" }),
+            json!({ "startmodel": "a.model", "outlierfile": "outliers.txt", "restoration": false }),
             "startmodel, outlierfile",
         ),
     ] {
