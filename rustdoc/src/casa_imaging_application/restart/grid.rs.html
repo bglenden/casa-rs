@@ -40,7 +40,7 @@
 <a href=#40 id=40 data-nosnippet>40</a>            </span><span class="kw">if </span>suffix.starts_with(<span class="string">"sumwt"</span>) {
 <a href=#41 id=41 data-nosnippet>41</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
 <a href=#42 id=42 data-nosnippet>42</a>            } <span class="kw">else </span>{
-<a href=#43 id=43 data-nosnippet>43</a>                check_header(image, template, mosaic_psf.filter(|<span class="kw">_</span>| suffix == <span class="string">"psf"</span>))
+<a href=#43 id=43 data-nosnippet>43</a>                check_header(image, template, mosaic_psf)
 <a href=#44 id=44 data-nosnippet>44</a>                    .map(|alternate| alternate.then(|| image.coordinates().clone()))
 <a href=#45 id=45 data-nosnippet>45</a>            }
 <a href=#46 id=46 data-nosnippet>46</a>        }
@@ -77,7 +77,7 @@
 <a href=#77 id=77 data-nosnippet>77</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
 <a href=#78 id=78 data-nosnippet>78</a>}
 <a href=#79 id=79 data-nosnippet>79</a>
-<a href=#80 id=80 data-nosnippet>80</a><span class="doccomment">/// A single-term mosaic can have a PSF formed about a fixed J2000
+<a href=#80 id=80 data-nosnippet>80</a><span class="doccomment">/// A mosaic can have a PSF formed about a fixed J2000
 <a href=#81 id=81 data-nosnippet>81</a>/// direction of its own. Rebuild the expected direction at that reference
 <a href=#82 id=82 data-nosnippet>82</a>/// and still check the actual projection, axes, poles and pixel geometry.
 <a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">fn </span>use_saved_psf_reference(
