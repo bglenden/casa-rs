@@ -572,8 +572,8 @@
 <a href=#572 id=572 data-nosnippet>572</a>        <span class="doccomment">/// Its shape.
 <a href=#573 id=573 data-nosnippet>573</a>        </span>shape: Vec&lt;usize&gt;,
 <a href=#574 id=574 data-nosnippet>574</a>    },
-<a href=#575 id=575 data-nosnippet>575</a>    <span class="doccomment">/// MEM's image mask needs the output direction grid until import matches CASA.
-<a href=#576 id=576 data-nosnippet>576</a>    </span><span class="attr">#[error(<span class="string">"MEM mask image {} must use the output direction grid (#823)"</span>, path.display())]
+<a href=#575 id=575 data-nosnippet>575</a>    <span class="doccomment">/// MEM's image mask needs the output tangent plane for direction import.
+<a href=#576 id=576 data-nosnippet>576</a>    </span><span class="attr">#[error(<span class="string">"MEM mask image {} must share the output tangent plane (#823)"</span>, path.display())]
 <a href=#577 id=577 data-nosnippet>577</a>    </span>MemMaskGrid {
 <a href=#578 id=578 data-nosnippet>578</a>        <span class="doccomment">/// The supplied mask image.
 <a href=#579 id=579 data-nosnippet>579</a>        </span>path: PathBuf,

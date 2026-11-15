@@ -1113,6 +1113,8 @@ CASA behaviours casa-rs does not follow:
 <a href="#a-topo-cube-can-gain-or-lose-an-endpoint-with-casas-aberration-cache-history">a TOPO cube's cache-dependent endpoint selection</a>,
 <a href="#an-overflowing-field-id-can-select-field-zero">an overflowing FIELD ID</a>,
 <a href="#a-bare-field-escape-can-silently-change-the-selection">a bare FIELD escape</a>,
+<a href="#roundoff-in-direction-regridding-can-enlarge-a-clean-mask">direction regridding of a CLEAN mask</a>,
+<a href="#expanding-a-clean-mask-can-drop-its-direction-and-validity">expanding a CLEAN mask</a>,
 <a href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane">a cube's fine frequency grid at a whole ratio</a>,
 <a href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind">the <code>.gridwt</code> a cube leaves</a>,
 <a href="#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre">multiscale on an off-centre PSF</a>,
@@ -6570,6 +6572,46 @@ does for <code>Alpha2</code>. Stock tclean proceeds to image the first selection
 rows. This keeps an unintended prefix from changing the user's selection.
 <a href="https://github.com/bglenden/casa-rs/issues/54">Issue #54</a> and
 <a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.ll#L63-L69">the casacore FIELD scanner</a>.</p>
+<h2 id="roundoff-in-direction-regridding-can-enlarge-a-clean-mask">Roundoff in direction regridding can enlarge a CLEAN mask<a class="headerlink" href="#roundoff-in-direction-regridding-can-enlarge-a-clean-mask" title="Permanent link">&para;</a></h2>
+<p>On <code>refim_eptwochan.ms</code>, use a standard natural-weighted 32 × 32 Stokes I
+MFS image with 8 arcsec cells and the binary mask
+<code>box[[10pix,10pix],[21pix,21pix]]</code>. Shift only the saved mask's first
+reference pixel from 16 to 16.5. The direction map is exactly
+<code>(x, y) → (x + 0.5, y)</code>. Linear interpolation then gives 156 positive
+pixels, at <code>x=9..21</code> and <code>y=10..21</code>.</p>
+<p>Stock CASA 6.7.6.14 produces 172 positive pixels. Its default
+decimation-10 direction mapping and linear interpolation give 16 samples
+from 6.39e-14 to 2.03e-12 just outside that rectangle, on analytically
+zero rows. <code>SDMaskHandler::fillMask</code> includes every positive sample.
+Calling CASA's same linear image regrid with decimation 1 changes the
+extra support and leaves 166 positives.</p>
+<p>Native tclean uses the exact affine direction map for a shared tangent
+plane. It samples signed mask values before taking positive support.
+Both native solvers match CASA when CASA reads the analytically aligned
+156-pixel support. The direct CASA result with the rounding-only pixels
+leaves the Högbom products other than the mask unchanged within rounding.
+It changes the two-iteration MEM model by 0.315 normalized RMS and the
+restored image by 0.00389. The added pixels have zero analytical support and their locations follow
+roundoff in the coordinate grid.</p>
+<p><a href="https://github.com/bglenden/casa-rs/issues/823">Issue #823</a> and
+<a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/images/Images/ImageRegrid.tcc#L1392">the casacore coordinate-grid interpolation</a>.</p>
+<h2 id="expanding-a-clean-mask-can-drop-its-direction-and-validity">Expanding a CLEAN mask can drop its direction and validity<a class="headerlink" href="#expanding-a-clean-mask-can-drop-its-direction-and-validity" title="Permanent link">&para;</a></h2>
+<p>For a continuum mask used on a cube, CASA's
+<code>SDMaskHandler::expandMask</code> creates a temporary image with the output
+direction coordinates, then copies the input mask's raw pixels into it.
+Casacore's <code>Lattice::copyDataTo</code> leaves the input coordinates and default
+pixel mask behind.</p>
+<p>In the natural-weighted two-channel <code>refim_eptwochan.ms</code> cube, stock CASA
+6.7.6.14 expands the half-pixel shifted continuum mask to 144 pixels per
+channel. These are exactly the unshifted rectangle. When an aligned
+input contains one default-invalid positive pixel, CASA keeps that pixel
+on both channels.</p>
+<p>Native tclean uses the saved direction grid and default validity before
+expanding support. Its shifted result contains the 156 analytically
+positive pixels on each channel, exact against CASA given the aligned
+156-pixel support. It excludes the default-invalid pixel on both channels.</p>
+<p><a href="https://github.com/bglenden/casa-rs/issues/823">Issue #823</a> and
+<a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/Lattices/Lattice.tcc#L290">the casacore pixel-copy implementation</a>.</p>
 
 
 
