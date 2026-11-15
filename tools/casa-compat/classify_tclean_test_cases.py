@@ -78,7 +78,7 @@ CASACORE_PROJECTIONS = {
     "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC", "CSC", "QSC",
     "HPX",
 }
-CASA_RS_PROJECTIONS = {"SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "MER", "AIT"}
+CASA_RS_PROJECTIONS = {"SIN", "NCP", "AZP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "MER", "AIT"}
 PROJECTION_ISSUE = 1101
 
 
