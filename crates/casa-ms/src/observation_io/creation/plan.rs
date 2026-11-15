@@ -51,11 +51,12 @@ use crate::{MeasurementSet, OptionalMainColumn};
 /// (its flags already exclude it). With
 /// [`PaddingRows::Omitted`], which partitions combined from several inputs
 /// need, padding becomes no row. `WEIGHT` is the input's times its
-/// [`CreationInput::weight_scale`], and `SIGMA` is derived from it: a
-/// loss ([`Loss::SigmaDerived`], which the caller must accept as
-/// [`LossKind::Sigma`](super::LossKind::Sigma)) unless the input's stored
-/// `SIGMA` is already `1/√WEIGHT` to within one unit in the last place
-/// (an MSv4, or an MSv2 with `WEIGHT_SPECTRUM`, always takes it). Names
+/// [`CreationInput::weight_scale`]. An MSv2's stored `SIGMA` is divided by
+/// the scale's square root, and its weight and sigma spectra are preserved
+/// with the same respective scaling. When the input supplies no sigma
+/// (MSv4), it is derived from weights and declared as
+/// [`Loss::SigmaDerived`]. MSv2 row flags and element flags remain separate.
+/// Names
 /// are the inputs': an
 /// MSv4 converted from an MSv2 holds XRADIO's suffixed names
 /// (`NAME_FIELDID`, `NAME_STATION`, ...), so a round trip renames.
@@ -183,10 +184,19 @@ impl CreationPlan {
             found.extend(ledger.during("an input's loss scans", scans, |_| {
                 losses::inventory(path, catalogue, &groups, losses::Store::Msv2)
             })?);
-            let scan = pointing_plan::planning_bytes(path, observation, options.batch_bytes)?;
-            let (plan, lost) = ledger.during("an input's pointing scan", scan, |_| {
-                pointing_plan::plan(path, observation, losses::Store::Msv2, options.batch_bytes)
-            })?;
+            let (plan, lost) = if options.copy_pointing && input.msv2().is_some() {
+                (
+                    PointingPlan::preserve_msv2(input.msv2().expect("MSv2"))?,
+                    Vec::new(),
+                )
+            } else if options.copy_pointing {
+                let scan = pointing_plan::planning_bytes(path, observation, options.batch_bytes)?;
+                ledger.during("an input's pointing scan", scan, |_| {
+                    pointing_plan::plan(path, observation, losses::Store::Msv2, options.batch_bytes)
+                })?
+            } else {
+                (PointingPlan::default(), Vec::new())
+            };
             found.extend(lost);
             pointing.push(plan);
         }
@@ -268,11 +278,25 @@ impl CreationPlan {
         found.sort();
         found.dedup();
         losses::refuse_unaccepted(&found, &options.accept)?;
-        let columns: Vec<(OptionalMainColumn, Option<String>)> = names
+        let mut columns: Vec<(OptionalMainColumn, Option<String>)> = names
             .into_iter()
             .zip(&combined.units)
             .map(|(name, units)| (name, unit(units)))
             .collect();
+        for column in [
+            OptionalMainColumn::WeightSpectrum,
+            OptionalMainColumn::SigmaSpectrum,
+        ] {
+            if inputs.iter().filter_map(Input::msv2).any(|input| {
+                input
+                    .measurement_set()
+                    .main_table()
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(column.name()))
+            }) {
+                columns.push((column, None));
+            }
+        }
         let output = written(&combined, &layout, read_back);
         ledger.trim("the written catalogue", promised, catalogue_bytes(&output))?;
         let occupancy = grids.occupancy(
@@ -420,6 +444,7 @@ impl CreationPlan {
             &self.occupancy.spans,
             &self.combined.intents,
         )?;
+        super::msv2_feed::preserve(&mut ms, &self.inputs, &self.combined, &layout)?;
         msv2_ephemeris::mark_fields(&mut ms, catalogue)?;
         let pointed: Vec<Pointed<'_>> = self
             .inputs
@@ -428,23 +453,45 @@ impl CreationPlan {
             .zip(&self.combined.rows)
             .map(|((input, plan), map)| Pointed {
                 observation: input.observation(),
+                msv2: input.msv2(),
                 plan,
                 antennas: &map.antennas,
             })
             .collect();
         msv2_pointing::write(&mut ms, &pointed)?;
+        // CASA starts from the first input's SOURCE, including its virtual
+        // model pointers. The retained records are carried by SourceRecord.
+        if let Some(source) = self
+            .inputs
+            .first()
+            .and_then(Input::msv2)
+            .and_then(|input| input.measurement_set().subtable(crate::SubtableId::Source))
+            && let Some(output) = ms.subtable_mut(crate::SubtableId::Source)
+        {
+            for field in source.keywords().fields().iter().filter(|field| {
+                field.name.starts_with("definedmodel_field_") || field.name.starts_with("model_")
+            }) {
+                output
+                    .keywords_mut()
+                    .upsert(field.name.clone(), field.value.clone());
+            }
+        }
         super::msv2_identity::history(&mut ms, &self.history)?;
-        let names = optional.iter().map(|column| column.name()).collect();
+        let (spectra, data): (Vec<_>, Vec<_>) = optional
+            .iter()
+            .map(|column| column.name())
+            .partition(|name| name.ends_with("_SPECTRUM"));
         let mut main = MainRows::start(
             (staging, self.main.clone()),
             catalogue,
-            names,
+            (data, spectra),
             &self.occupancy,
             layout,
             self.padding,
         )?;
         let mut report = CreationReport::default();
         let mut row_states = RowStates::default();
+        let mut stored = super::stored_weights::StoredWeights::default();
         for (input, map) in self.inputs.iter().zip(&self.combined.rows) {
             let observation = input.observation();
             let mut ids = observation.catalogue().partition_ids();
@@ -466,7 +513,13 @@ impl CreationPlan {
                         let states = per_row
                             .map(|msv2| row_states.of(msv2, id, &batches[0]))
                             .transpose()?;
-                        main.push(map, batches, states)
+                        let original = if let Some(source) = input.msv2() {
+                            stored.read(source, &batches[0])?;
+                            Some(&stored)
+                        } else {
+                            None
+                        };
+                        main.push(map, batches, states, original)
                     },
                 )?;
                 report.partitions += 1;

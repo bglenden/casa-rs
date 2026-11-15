@@ -57,6 +57,7 @@ fn main() -> Result<(), Error> {
     let mut inputs = Vec::new();
     let (mut sort, mut replace) = (false, false);
     let mut options = CreationOptions {
+        copy_pointing: true,
         data_groups: None,
         accept: Vec::new(),
         batch_bytes: 256 << 20,

@@ -35,6 +35,7 @@ pub(crate) mod lockstep;
 pub(crate) mod losses;
 mod memory;
 mod msv2_ephemeris;
+mod msv2_feed;
 mod msv2_identity;
 mod msv2_pointing;
 mod msv2_rows;
@@ -47,6 +48,7 @@ mod pointing_scan;
 mod preservation;
 mod replace;
 mod scans;
+mod stored_weights;
 mod writing;
 
 use std::fmt;
@@ -246,6 +248,9 @@ impl CreationInput {
 /// How a plan reads its inputs and writes the MeasurementSet.
 #[derive(Clone, Debug)]
 pub struct CreationOptions {
+    /// Carry the inputs' pointing into the result. CASA's `concat` with
+    /// `copypointing=False` deliberately writes an empty POINTING table.
+    pub copy_pointing: bool,
     /// The data groups to write, the first carrying every role; `None`
     /// writes every group of the inputs, `base` first.
     pub data_groups: Option<Vec<String>>,

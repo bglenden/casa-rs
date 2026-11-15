@@ -28674,6 +28674,445 @@
           "reviewed_homonym": null
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "concat",
+      "contract_version": 1,
+      "display_name": "Concat",
+      "category": "MeasurementSet",
+      "summary": "Concatenate simulated interferometric MeasurementSets with per-input weights.",
+      "provider_family": "concat",
+      "casa_task": "concat",
+      "execution": {
+        "invocation_name": "concat",
+        "fixed_args": [],
+        "managed_output": null,
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "concatvis",
+              "role": "primary",
+              "resource_kind": "measurement_set",
+              "source": {
+                "kind": "parameter",
+                "parameter": "concatvis"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "input_dataset",
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "vis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "vis",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "concatvis",
+          "concept": {
+            "id": "parameter.concatvis",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "output_product",
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--concatvis"
+              ]
+            },
+            "provider": {
+              "field": "concatvis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "concatvis"
+            },
+            "presentation": {
+              "label": "concatvis",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "freqtol",
+          "concept": {
+            "id": "parameter.freqtol",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--freqtol"
+              ]
+            },
+            "provider": {
+              "field": "freqtol",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "freqtol",
+              "type_hint": "int | float | str | dict[str, object]"
+            },
+            "presentation": {
+              "label": "freqtol",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "dirtol",
+          "concept": {
+            "id": "parameter.dirtol",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dirtol"
+              ]
+            },
+            "provider": {
+              "field": "dirtol",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "dirtol",
+              "type_hint": "int | float | str | dict[str, object]"
+            },
+            "presentation": {
+              "label": "dirtol",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "respectname",
+          "concept": {
+            "id": "parameter.respectname",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--respectname"
+              ]
+            },
+            "provider": {
+              "field": "respectname",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "respectname"
+            },
+            "presentation": {
+              "label": "respectname",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 939,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "timesort",
+          "concept": {
+            "id": "parameter.timesort",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timesort"
+              ]
+            },
+            "provider": {
+              "field": "timesort",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timesort"
+            },
+            "presentation": {
+              "label": "timesort",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 939,
+            "equivalent": []
+          }
+        },
+        {
+          "name": "copypointing",
+          "concept": {
+            "id": "parameter.copypointing",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--copypointing"
+              ],
+              "false_flags": [
+                "--no-copypointing"
+              ]
+            },
+            "provider": {
+              "field": "copypointing",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "copypointing"
+            },
+            "presentation": {
+              "label": "copypointing",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "visweightscale",
+          "concept": {
+            "id": "parameter.visweightscale",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--visweightscale"
+              ]
+            },
+            "provider": {
+              "field": "visweightscale",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "visweightscale"
+            },
+            "presentation": {
+              "label": "visweightscale",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "forcesingleephemfield",
+          "concept": {
+            "id": "parameter.forcesingleephemfield",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--forcesingleephemfield"
+              ]
+            },
+            "provider": {
+              "field": "forcesingleephemfield",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "forcesingleephemfield",
+              "type_hint": "int | float | str | dict[str, object]"
+            },
+            "presentation": {
+              "label": "forcesingleephemfield",
+              "group": "MeasurementSet"
+            }
+          },
+          "reviewed_homonym": null,
+          "unimplemented": {
+            "issue": 939,
+            "equivalent": []
+          }
+        }
+      ]
     }
   ]
 }

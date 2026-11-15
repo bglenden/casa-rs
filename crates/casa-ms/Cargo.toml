@@ -60,6 +60,10 @@ name = "msexplore"
 path = "src/bin/msexplore.rs"
 
 [[bin]]
+name = "concat"
+path = "src/bin/concat.rs"
+
+[[bin]]
 name = "mstransform"
 path = "src/bin/mstransform.rs"
 
@@ -104,6 +108,10 @@ required-features = ["msv4"]
 name = "observation_io"
 path = "tests/observation_io.rs"
 required-features = ["msv4"]
+
+[[test]]
+name = "concat"
+path = "tests/concat.rs"
 
 [[test]]
 name = "ms_create_roundtrip"

@@ -16,7 +16,6 @@ use super::inputs::Input;
 use super::lockstep::Sizing;
 use super::memory::{Ledger, MemoryCharges, history_table_bytes, subtables_bytes};
 use super::msv2_ephemeris;
-use super::msv2_pointing::TABLE_ROW_BYTES;
 use super::msv2_rows::{self, Occupancy};
 use super::pointing_plan::PointingPlan;
 use crate::observation_io::update::storage;
@@ -120,7 +119,7 @@ pub(super) fn admit(
         + history_table_bytes(history)
         + pointing
             .iter()
-            .map(|plan| plan.gathered().0 * TABLE_ROW_BYTES)
+            .map(PointingPlan::table_bytes)
             .sum::<usize>();
     let reads = pointing.iter().map(PointingPlan::peak).max().unwrap_or(0);
     // The ephemeris tables are written once MAIN's writers are done.

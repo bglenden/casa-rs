@@ -112,11 +112,7 @@ fn widen(kept: &mut SourceRecord, removed: &SourceRecord) {
         let interval = record.interval_s?;
         let value = time.value();
         let centre = value.day() * 86_400.0 + value.frac() * 86_400.0;
-        Some((
-            centre - interval / 2.0,
-            centre + interval / 2.0,
-            time.refer(),
-        ))
+        Some((centre, interval, time.refer()))
     };
     let (Some(a), Some(b)) = (span(kept), span(removed)) else {
         return;
@@ -124,8 +120,16 @@ fn widen(kept: &mut SourceRecord, removed: &SourceRecord) {
     if a.2 != b.2 {
         return;
     }
-    let (low, high) = (a.0.min(b.0), a.1.max(b.1));
-    kept.time = Some(MEpoch::from_mjd_seconds((low + high) / 2.0, a.2));
+    // Work relative to the retained centre. SOURCE commonly uses f64::MAX
+    // as an effectively unlimited interval; absolute endpoints erase its
+    // finite centre when added and subtracted.
+    let offset = b.0 - a.0;
+    let low = (-a.1 / 2.0).min(offset - b.1 / 2.0);
+    let high = (a.1 / 2.0).max(offset + b.1 / 2.0);
+    kept.time = Some(MEpoch::from_mjd_seconds(
+        a.0 + (low / 2.0 + high / 2.0),
+        a.2,
+    ));
     kept.interval_s = Some(high - low);
 }
 

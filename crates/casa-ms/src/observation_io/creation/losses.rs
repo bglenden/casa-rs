@@ -28,12 +28,9 @@
 use std::path::Path;
 
 use casa_observation::{Catalogue, FieldEphemeris, ObservationError};
-use casa_tables::{
-    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCellsMut,
-};
+use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::Value;
 
-use super::msv2_rows::sigma as derived_sigma;
 use super::{Loss, LossKind};
 use crate::observation_io::update::{request_error, storage};
 use crate::schema::SubtableId;
@@ -105,6 +102,15 @@ pub(crate) fn inventory(
     destination: Store,
 ) -> Result<Vec<Loss>, ObservationError> {
     let mut losses = Vec::new();
+    if destination == Store::Msv4
+        && catalogue
+            .sources
+            .iter()
+            .flat_map(|source| &source.records)
+            .any(|record| record.model.is_some())
+    {
+        losses.push(Loss::Column("SOURCE SOURCE_MODEL".into()));
+    }
     for entry in &catalogue.partitions {
         for group in &entry.data_groups {
             let loss = Loss::DataGroup(group.name.clone());
@@ -138,9 +144,7 @@ pub(super) fn scan_bytes(catalogue: &Catalogue) -> usize {
     };
     let cell = widest(|entry| entry.frequencies_hz.len() * entry.correlations.len());
     let categories = CATEGORY_CHUNK * (3 * cell + size_of::<Option<casa_types::ArrayValue>>());
-    let correlations = widest(|entry| entry.correlations.len());
-    let sigmas = SIGMA_CHUNK * (size_of::<usize>() + 2 * correlations * size_of::<f32>());
-    keys.max(categories).max(sigmas)
+    keys.max(categories)
 }
 
 /// The antennas of `catalogue` that no partition's baselines name, as a
@@ -276,16 +280,9 @@ fn msv2(
             what: "converting single-dish data (FLOAT_DATA without DATA)",
         });
     }
-    let spectral = columns.iter().any(|name| name == "WEIGHT_SPECTRUM");
     for column in &columns {
         match column.as_str() {
-            "SIGMA" if destination == Store::Msv2 => {
-                // An MSv2 destination derives SIGMA from the weights it
-                // writes: from WEIGHT_SPECTRUM where it is held.
-                if spectral || !sigma_follows_weight(main)? {
-                    losses.extend([Loss::Sigma, Loss::SigmaDerived]);
-                }
-            }
+            "SIGMA" | "SIGMA_SPECTRUM" if destination == Store::Msv2 => {}
             "SIGMA" | "SIGMA_SPECTRUM" => losses.push(Loss::Sigma),
             "FLAG_CATEGORY" => {
                 if flag_categories_held(main)? {
@@ -299,7 +296,7 @@ fn msv2(
     if destination == Store::Msv2 && !columns.iter().any(|name| name == "SIGMA") {
         losses.push(Loss::SigmaDerived);
     }
-    if spectral {
+    if destination == Store::Msv4 && columns.iter().any(|name| name == "WEIGHT_SPECTRUM") {
         losses.push(Loss::Column(
             "WEIGHT (the row summary beside WEIGHT_SPECTRUM)".to_string(),
         ));
@@ -319,95 +316,6 @@ fn msv2(
     subtables(&ms, destination, losses)?;
     if destination == Store::Msv2 {
         super::preservation::inventory(&ms, losses);
-        unnamed_feeds(&ms, catalogue, losses)?;
-    }
-    Ok(())
-}
-
-/// Rows of `WEIGHT` and `SIGMA` compared at a time.
-const SIGMA_CHUNK: usize = 1 << 16;
-
-/// Whether every stored `SIGMA` is what an MSv2 destination derives from
-/// `WEIGHT` (`1/√WEIGHT`, and -1 where the weight is not positive) to
-/// within one unit in the last place, so that deriving it loses nothing.
-/// A MAIN whose cells cannot be read together (cells of several shapes) is
-/// taken as not following.
-fn sigma_follows_weight(main: &casa_tables::Table) -> Result<bool, ObservationError> {
-    let rows = main.row_count();
-    let weight = main.column_accessor("WEIGHT").map_err(storage)?;
-    let sigma = main.column_accessor("SIGMA").map_err(storage)?;
-    let (mut weights, mut sigmas) = (Vec::new(), Vec::new());
-    for start in (0..rows).step_by(SIGMA_CHUNK) {
-        let chunk: Vec<usize> = (start..rows.min(start + SIGMA_CHUNK)).collect();
-        weights.clear();
-        sigmas.clear();
-        let read = weight
-            .fill_array_cells_1d_typed_uncached(
-                &chunk,
-                SelectedArray1DCellsMut::Float32(&mut weights),
-            )
-            .and_then(|_| {
-                sigma.fill_array_cells_1d_typed_uncached(
-                    &chunk,
-                    SelectedArray1DCellsMut::Float32(&mut sigmas),
-                )
-            });
-        if read.is_err() || weights.len() != sigmas.len() {
-            return Ok(false);
-        }
-        if weights
-            .iter()
-            .zip(&sigmas)
-            .any(|(weight, sigma)| !within_one_ulp(*sigma, derived_sigma(*weight)))
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-/// Whether `a` and `b` are equal or adjacent `f32`s.
-fn within_one_ulp(a: f32, b: f32) -> bool {
-    a == b
-        || (a.is_finite()
-            && b.is_finite()
-            && a.is_sign_positive() == b.is_sign_positive()
-            && a.to_bits().abs_diff(b.to_bits()) <= 1)
-}
-
-/// The `FEED` rows of antennas no partition's baselines name, a table loss:
-/// an MSv2 destination writes the feeds its partitions' receptors need.
-fn unnamed_feeds(
-    ms: &crate::MeasurementSet,
-    catalogue: &Catalogue,
-    losses: &mut Vec<Loss>,
-) -> Result<(), ObservationError> {
-    let mut named = vec![false; catalogue.antennas.len()];
-    for baseline in catalogue
-        .partitions
-        .iter()
-        .flat_map(|entry| &entry.baselines)
-    {
-        for antenna in [baseline.antenna1, baseline.antenna2] {
-            if let Some(named) = named.get_mut(antenna.0 as usize) {
-                *named = true;
-            }
-        }
-    }
-    let feeds = ms.feed().map_err(storage)?;
-    let mut unnamed = 0;
-    for row in 0..feeds.row_count() {
-        let antenna = feeds.i32(row, "ANTENNA_ID").map_err(storage)?;
-        let used = usize::try_from(antenna)
-            .ok()
-            .and_then(|antenna| named.get(antenna).copied())
-            .unwrap_or(false);
-        unnamed += usize::from(!used);
-    }
-    if unnamed > 0 {
-        losses.push(Loss::Table(format!(
-            "FEED rows of antennas no baseline names ({unnamed})"
-        )));
     }
     Ok(())
 }
@@ -561,7 +469,7 @@ fn main_keys(
             break;
         }
     }
-    if flagged {
+    if flagged && destination == Store::Msv4 {
         losses.push(Loss::RowFlags);
     }
     if array {

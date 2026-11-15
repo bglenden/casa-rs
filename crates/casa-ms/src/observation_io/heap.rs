@@ -164,6 +164,7 @@ fn window_bytes(window: &WindowEntry) -> usize {
 
 fn record_bytes(record: &SourceRecord) -> usize {
     let SourceRecord {
+        model,
         window: _,
         time: _,
         interval_s: _,
@@ -178,7 +179,11 @@ fn record_bytes(record: &SourceRecord) -> usize {
         rest_frequencies,
         systemic_velocities,
     } = record;
-    optional(code)
+    model.as_ref().map_or(0, |record| {
+        size_of::<casa_types::RecordValue>()
+            + 2 * size_of::<usize>()
+            + record.retained_heap_bytes().unwrap_or(usize::MAX)
+    }) + optional(code)
         + transitions.as_ref().map_or(0, strings)
         + rest_frequencies.as_ref().map_or(0, plain)
         + systemic_velocities.as_ref().map_or(0, plain)

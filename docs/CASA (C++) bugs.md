@@ -5864,3 +5864,16 @@ Native tclean explicitly rejects the invalid bare term before selecting any
 rows. This keeps an unintended prefix from changing the user's selection.
 [Issue #54](https://github.com/bglenden/casa-rs/issues/54) and
 [the casacore FIELD scanner](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.ll#L63-L69).
+
+## Simulated MeasurementSets name a processor that does not exist
+
+- Observed in CASA 6.7.6-14's public `sim_multi_arrays_and_TP` m51c 12 m
+  and 7 m inputs and their concat result.
+- Evidence: `scripts/concat_parity/task_oracle.py` and the concat task
+  reference fixtures.
+
+MAIN has `PROCESSOR_ID=0` while PROCESSOR has no rows. Zero therefore names
+no valid processor. Native concatenation writes the MS null sentinel -1
+in this case, preserving the absence of a processor without a dangling
+foreign key. The parity comparison explicitly compares that logical absence;
+a populated PROCESSOR table and its references are compared normally.

@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn builtin_catalog_covers_every_surface_with_one_task_each() {
         let catalog = builtin_application_catalog().expect("valid application catalog");
-        assert_eq!(catalog.applications.len(), 29);
+        assert_eq!(catalog.applications.len(), 30);
         for application in &catalog.applications {
             assert_eq!(
                 application.surface_bundle().unwrap().surface.id(),
@@ -273,6 +273,7 @@ mod tests {
             suite,
             BTreeSet::from([
                 "calibrate",
+                "concat",
                 "casars-imager",
                 "importvla",
                 "exportfits",

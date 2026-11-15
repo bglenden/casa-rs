@@ -299,6 +299,19 @@ fn source_record(
                 .collect()
         });
     Ok(SourceRecord {
+        model: if table
+            .schema()
+            .is_some_and(|schema| schema.contains_column("SOURCE_MODEL"))
+            && table
+                .is_cell_defined(row, "SOURCE_MODEL")
+                .map_err(storage)?
+        {
+            Some(std::sync::Arc::new(
+                table.record_cell(row, "SOURCE_MODEL").map_err(storage)?,
+            ))
+        } else {
+            None
+        },
         window,
         time: optional_f64(table, row, "TIME")
             .map_err(storage)?

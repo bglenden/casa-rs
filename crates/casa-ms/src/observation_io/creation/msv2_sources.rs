@@ -112,6 +112,16 @@ pub(super) fn write(
     }
     let table = subtable_mut(ms, SubtableId::Source).map_err(storage)?;
     let columns = Columns::add(table, catalogue)?;
+    if catalogue
+        .sources
+        .iter()
+        .flat_map(|source| &source.records)
+        .any(|record| record.model.is_some())
+    {
+        table
+            .add_column(ColumnSchema::record("SOURCE_MODEL"), None)
+            .map_err(storage)?;
+    }
     let mut dropped = 0;
     for (id, source) in catalogue.sources.iter().enumerate() {
         for record in &source.records {
@@ -132,6 +142,12 @@ pub(super) fn write(
                 &required((id as i32, &source.name, window), record, time_range, notes)?,
             );
             columns.optional(&mut row, record, notes)?;
+            if let Some(model) = &record.model {
+                row.push(RecordField::new(
+                    "SOURCE_MODEL",
+                    casa_types::Value::Record((**model).clone()),
+                ));
+            }
             table.add_row(row).map_err(storage)?;
         }
     }

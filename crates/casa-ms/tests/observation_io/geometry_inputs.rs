@@ -493,7 +493,10 @@ fn pointing_the_destination_cannot_hold_is_reported_before_writing() {
         "no pointing written"
     );
     let (copy, lost) = losses(&v2, false);
-    assert_eq!(lost, ["POINTING NAME, TARGET, TRACKING"]);
+    assert!(
+        lost.is_empty(),
+        "MSv2 copies now preserve all required POINTING columns: {lost:?}"
+    );
     assert_eq!(pointing_frame(&copy), "GALACTIC");
     assert_eq!(pointing_rows(&copy).len(), pointing_rows(&v2).len());
 

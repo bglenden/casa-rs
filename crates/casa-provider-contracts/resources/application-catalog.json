@@ -353,6 +353,18 @@
         "measurement_set"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "concat",
+      "launch": {
+        "executable": "concat",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_CONCAT_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
     }
   ]
 }
