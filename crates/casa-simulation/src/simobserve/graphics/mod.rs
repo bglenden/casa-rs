@@ -81,3 +81,7 @@ fn figure(
 pub(super) fn open(path: &std::path::Path) -> Result<Payload, SimobserveError> {
     Payload::open(path)
 }
+
+pub(super) fn open_append(path: &std::path::Path) -> Result<Payload, SimobserveError> {
+    Payload::append(path)
+}

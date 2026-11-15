@@ -2,6 +2,7 @@
 //! ALMA/ACA observation, imaging and primary-beam-weighted combination.
 mod combine;
 mod configuration;
+mod graphics;
 mod imaging;
 mod plan;
 mod pointings;
@@ -14,7 +15,7 @@ use casa_imaging_runtime::{Demand, admit, charge_process_caches};
 use casa_provider_contracts::builtin_surface_bundle;
 use casa_task_runtime::resolve_plain_values;
 use serde_json::{Map, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// CASA-named task parameters and the simulator's explicit environment.
 pub struct SimalmaRequest {
@@ -59,6 +60,26 @@ impl Parameters {
 /// Invalid input/configuration/time, an existing protected project or input,
 /// resource refusal, or a native observation/imaging failure.
 pub fn simalma(request: &SimalmaRequest) -> Result<SimobserveOutcome, SimobserveError> {
+    run(request, None)
+}
+
+/// Simulate and prepare figures in the caller's existing payload file.
+/// The task truncates it once and appends all child-task arrays. Rendering
+/// belongs to the Python host, and no plotting transport is a CASA parameter.
+///
+/// # Errors
+/// Simulation errors, or a payload/plot preparation failure.
+pub fn simalma_with_plots(
+    request: &SimalmaRequest,
+    payload: &Path,
+) -> Result<SimobserveOutcome, SimobserveError> {
+    run(request, Some(payload))
+}
+
+fn run(
+    request: &SimalmaRequest,
+    payload: Option<&Path>,
+) -> Result<SimobserveOutcome, SimobserveError> {
     let resources = request.options.resources;
     charge_process_caches(resources.host(), resources.policy()).map_err(failure)?;
     let _planning = admit(
@@ -109,8 +130,15 @@ pub fn simalma(request: &SimalmaRequest) -> Result<SimobserveOutcome, Simobserve
         }
         return Ok(outcome);
     }
-    if p.text("graphics") != "none" {
-        outcome.warnings.push("simalma graphics remain in simulation Phase 6i (#841); numerical products are complete independently of graphics".into());
+    let payload = payload.filter(|_| matches!(p.text("graphics"), "file" | "screen" | "both"));
+    if p.text("graphics") != "none" && payload.is_none() {
+        outcome
+            .warnings
+            .push("simalma PNG rendering needs the Python host".into());
+    }
+    if let Some(path) = payload {
+        crate::simobserve::graphics::payload::Payload::open(path)?.finish()?;
+        plan.observation.graphics = graphics::mode(&p).to_owned();
     }
     plan::publish_directory(&p, &plan)?;
     for array in &plan.arrays {
@@ -127,11 +155,15 @@ pub fn simalma(request: &SimalmaRequest) -> Result<SimobserveOutcome, Simobserve
         observation.antennalist = array.configuration.clone();
         observation.totaltime = format!("{:.6}min", array.minutes);
         observation.correlator = array.correlator.clone();
-        let result = simobserve(&crate::simobserve::SimobserveRequest {
-            parameters: observation,
-            data_roots: request.data_roots.clone(),
-            options: request.options.clone(),
-        })?;
+        let result = observe(
+            &crate::simobserve::SimobserveRequest {
+                parameters: observation,
+                data_roots: request.data_roots.clone(),
+                options: request.options.clone(),
+            },
+            payload,
+        )?;
+        outcome.plots.extend(result.plots);
         outcome.products.extend(result.products);
         outcome.warnings.extend(result.warnings);
     }
@@ -151,11 +183,15 @@ pub fn simalma(request: &SimalmaRequest) -> Result<SimobserveOutcome, Simobserve
             // Independent streams per dish. Random sample identity is not a
             // CASA contract; the native simulator owns its seeded stream.
             observation.seed = i64::from(crate::DEFAULT_SEED) + antenna as i64;
-            let result = simobserve(&crate::simobserve::SimobserveRequest {
-                parameters: observation.clone(),
-                data_roots: request.data_roots.clone(),
-                options: request.options.clone(),
-            })?;
+            let result = observe(
+                &crate::simobserve::SimobserveRequest {
+                    parameters: observation.clone(),
+                    data_roots: request.data_roots.clone(),
+                    options: request.options.clone(),
+                },
+                payload,
+            )?;
+            outcome.plots.extend(result.plots);
             for mut path in result.products {
                 if plan.tp_antennas > 1 && path.to_string_lossy().ends_with(".ms") {
                     let mut target = path.as_os_str().to_os_string();
@@ -181,9 +217,10 @@ pub fn simalma(request: &SimalmaRequest) -> Result<SimobserveOutcome, Simobserve
         }
     }
     if p.flag("image") {
-        outcome
-            .products
-            .extend(imaging::execute(&p, &plan, resources)?);
+        imaging::execute(&p, &plan, resources, payload, &mut outcome)?;
+    }
+    if let Some(path) = payload {
+        graphics::finish(&p, &plan, path, resources, &mut outcome)?;
     }
     outcome.products.sort();
     outcome.products.dedup();
@@ -199,4 +236,14 @@ pub fn simalma(request: &SimalmaRequest) -> Result<SimobserveOutcome, Simobserve
     )
     .map_err(failure)?;
     Ok(outcome)
+}
+
+fn observe(
+    request: &crate::simobserve::SimobserveRequest,
+    payload: Option<&Path>,
+) -> Result<SimobserveOutcome, SimobserveError> {
+    match payload {
+        Some(path) => crate::simobserve::simobserve_append_plots(request, path),
+        None => simobserve(request),
+    }
 }

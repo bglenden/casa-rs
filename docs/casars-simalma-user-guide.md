@@ -61,9 +61,12 @@ beam before feathering; the result is divided by that beam. The project
 contains the array and concatenated images, differences and fidelities,
 TP image, `.sd.image.pbscaled`, `.feather.image0` and `.feather.image`.
 
-Use `graphics="none"` until the remaining simulation graphics land.
-Numerical products are independent of graphics. CASA's `.last` files are
-not written.
+`graphics="file"`, `"screen"` and `"both"` prepare complete observation,
+image/analysis and combination figures through the Python renderer;
+`"none"` omits them. A 12 m/7 m/two-TP-antenna run writes 14 PNGs.
+The final TP antenna supplies the shared TP figure names, as in CASA.
+Numerical products are preserved while making the summary figure. CASA's
+`.last` files are not written.
 
 ## Independent evidence
 
@@ -95,3 +98,10 @@ compiler running, have medians of 19.95 s native and
 observations, per-antenna TP, imaging, analysis and weighted feathering. The
 timing runs use each implementation's own noise stream and exclude the
 comparison oracle's common-noise transfer.
+
+The graphics regression compares all 14 simalma figures and seven additional
+multi-array, TP, seed and feather simanalyze figures with actual CASA
+Matplotlib artists: image pixels, UV/ephemeris curves, labels, image/display
+ranges, titles and axes. Native plot arrays share one binary payload across
+child tasks. Complete file/screen/both/none policies and live memory at two
+image sizes are tested. Plotting uses the existing native document typography.

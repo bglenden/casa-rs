@@ -4,7 +4,7 @@ use crate::{SimobserveRunReport, SimobserveRunTaskResult, SimobserveTaskParamete
 use casa_provider_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
 };
-use casa_simulation::simalma::{SimalmaRequest, simalma};
+use casa_simulation::simalma::{SimalmaRequest, simalma, simalma_with_plots};
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use std::time::Instant;
@@ -48,7 +48,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             .map_err(|error| TaskFailure::execution(error.to_string()))?,
         data_roots: crate::data_roots().map_err(TaskFailure::execution)?,
     };
-    let outcome = simalma(&request).map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let outcome = match std::env::var_os("CASARS_PLOT_PAYLOAD") {
+        Some(path) => simalma_with_plots(&request, std::path::Path::new(&path)),
+        None => simalma(&request),
+    }
+    .map_err(|error| TaskFailure::execution(error.to_string()))?;
     let mut artifacts: Vec<_> = outcome
         .products
         .iter()

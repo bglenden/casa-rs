@@ -19,13 +19,17 @@ pub(super) fn execute(
     p: &Parameters,
     plan: &Plan,
     resources: SessionResources,
-) -> Result<Vec<PathBuf>, SimobserveError> {
+    payload: Option<&Path>,
+    outcome: &mut crate::simobserve::SimobserveOutcome,
+) -> Result<(), SimobserveError> {
     let mut products = Vec::new();
     if !plan.tp_vis.is_empty() {
-        products.extend(total_power(p, plan, resources)?);
+        products.extend(total_power(p, plan, resources, payload, outcome)?);
     }
     for array in &plan.arrays {
-        products.extend(synthesis(p, plan, &plan.vis(array), resources)?);
+        let result = synthesis(p, plan, &plan.vis(array), resources, payload)?;
+        products.extend(result.products);
+        outcome.plots.extend(result.plots);
     }
     let high = if plan.arrays.len() > 1 {
         let path = plan.directory.join(format!("{}.concat.ms", plan.project));
@@ -39,7 +43,9 @@ pub(super) fn execute(
             resources,
         )?;
         products.push(path.clone());
-        products.extend(synthesis(p, plan, &path, resources)?);
+        let result = synthesis(p, plan, &path, resources, payload)?;
+        products.extend(result.products);
+        outcome.plots.extend(result.plots);
         plan.directory
             .join(format!("{}.concat.image", plan.project))
     } else {
@@ -48,7 +54,8 @@ pub(super) fn execute(
     if !plan.tp_vis.is_empty() {
         products.extend(super::combine::execute(plan, &high, resources)?);
     }
-    Ok(products)
+    outcome.products.extend(products);
+    Ok(())
 }
 
 fn synthesis(
@@ -56,7 +63,8 @@ fn synthesis(
     plan: &Plan,
     vis: &Path,
     resources: SessionResources,
-) -> Result<Vec<PathBuf>, SimobserveError> {
+    payload: Option<&Path>,
+) -> Result<crate::simanalyze::SimanalyzeOutcome, SimobserveError> {
     let cell = if p.text("cell").is_empty() {
         format!("{}arcsec", plan.model.cell[0])
     } else {
@@ -73,14 +81,19 @@ fn synthesis(
     } else {
         json!((plan.model.size[0] / plan.model.cell[0]) as usize)
     };
-    let outcome=simanalyze(&SimanalyzeRequest {resources,parameters:json!({"project":plan.directory,"vis":vis,"image":true,"modelimage":"","cell":cell,"imsize":imsize,"imdirection":if p.text("imdirection").is_empty(){plan.model.direction.as_str()}else{p.text("imdirection")},"niter":p.0["niter"],"threshold":p.text("threshold"),"weighting":"briggs","mask":[],"outertaper":[],"stokes":"I","analyze":true,"graphics":"none","verbose":p.flag("verbose"),"overwrite":true}).as_object().unwrap().clone()})?;
-    Ok(outcome.products)
+    let request=SimanalyzeRequest {resources,parameters:json!({"project":plan.directory,"vis":vis,"image":true,"modelimage":"","cell":cell,"imsize":imsize,"imdirection":if p.text("imdirection").is_empty(){plan.model.direction.as_str()}else{p.text("imdirection")},"niter":p.0["niter"],"threshold":p.text("threshold"),"weighting":"briggs","mask":[],"outertaper":[],"stokes":"I","analyze":true,"graphics":if payload.is_some(){super::graphics::mode(p)}else{"none"},"verbose":p.flag("verbose"),"overwrite":true}).as_object().unwrap().clone()};
+    match payload {
+        Some(path) => crate::simanalyze::simanalyze_append_plots(&request, path),
+        None => simanalyze(&request),
+    }
 }
 
 fn total_power(
     p: &Parameters,
     plan: &Plan,
     resources: SessionResources,
+    payload: Option<&Path>,
+    outcome: &mut crate::simobserve::SimobserveOutcome,
 ) -> Result<Vec<PathBuf>, SimobserveError> {
     let primary_beam =
         casa_imaging_singledish::primary_beam_fwhm_arcsec(plan.model.frequency, 12., 0.75, 10.);
@@ -138,7 +151,20 @@ fn total_power(
     std::fs::rename(&result.image, &raw).map_err(failure)?;
     drop(_memory);
     let skymodel = plan.directory.join(format!("{}.skymodel", plan.tp_stem));
-    let analyzed=simanalyze(&SimanalyzeRequest {resources,parameters:json!({"project":plan.directory,"image":false,"imagename":output,"skymodel":skymodel,"analyze":true,"showuv":false,"showpsf":false,"showconvolved":true,"graphics":"none","overwrite":true}).as_object().unwrap().clone()})?;
+    let request=SimanalyzeRequest {resources,parameters:json!({"project":plan.directory,"image":false,"imagename":output,"skymodel":skymodel,"analyze":true,"showuv":false,"showpsf":false,"showconvolved":true,"graphics":if payload.is_some(){super::graphics::mode(p)}else{"none"},"overwrite":true}).as_object().unwrap().clone()};
+    let mut analyzed = match payload {
+        Some(path) => crate::simanalyze::simanalyze_append_plots(&request, path)?,
+        None => simanalyze(&request)?,
+    };
+    for plot in &mut analyzed.plots {
+        if plot.output_file.is_some() {
+            plot.output_file = Some(
+                plan.directory
+                    .join(format!("{}.analysis.png", plan.project)),
+            );
+        }
+    }
+    outcome.plots.extend(analyzed.plots);
     let mut products = vec![raw, result.weight, output];
     products.extend(analyzed.products);
     Ok(products)

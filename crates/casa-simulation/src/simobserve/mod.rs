@@ -188,7 +188,7 @@ impl SimobserveError {
 /// What CASA raises, with its message, and what the sky-model helpers, the
 /// antenna-list reader and the simulator sessions refuse.
 pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, None)
+    run(request, None, false)
 }
 
 /// Simulate and prepare complete figure data in a caller-owned payload file.
@@ -204,12 +204,20 @@ pub fn simobserve_with_plots(
     request: &SimobserveRequest,
     payload: &Path,
 ) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, Some(payload))
+    run(request, Some(payload), false)
+}
+
+pub(crate) fn simobserve_append_plots(
+    request: &SimobserveRequest,
+    payload: &Path,
+) -> Result<SimobserveOutcome, SimobserveError> {
+    run(request, Some(payload), true)
 }
 
 fn run(
     request: &SimobserveRequest,
     payload: Option<&Path>,
+    append: bool,
 ) -> Result<SimobserveOutcome, SimobserveError> {
     let payload = payload
         .filter(|_| {
@@ -218,7 +226,13 @@ fn run(
                 "file" | "screen" | "both"
             )
         })
-        .map(graphics::open)
+        .map(|path| {
+            if append {
+                graphics::open_append(path)
+            } else {
+                graphics::open(path)
+            }
+        })
         .transpose()?;
     let mut run = Run::start(request, payload.is_some())?;
     let input = sky::prepare(&mut run)?;

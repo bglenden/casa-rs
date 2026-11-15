@@ -238,7 +238,7 @@ def _require_plotting() -> None:
 
 
 def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
-    if task in {"simobserve", "simanalyze"} and resolved.get("graphics") in {"file", "screen", "both"}:
+    if task in {"simobserve", "simanalyze", "simalma"} and resolved.get("graphics") in {"file", "screen", "both"}:
         # Import the renderer before the task creates scientific products.
         _require_plotting()
 
@@ -254,7 +254,7 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     executable = _task_executable(task)
     command = (executable, *invocation.args)
     environment = dict(os.environ)
-    if task in {"simobserve", "simanalyze"}:
+    if task in {"simobserve", "simanalyze", "simalma"}:
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:
         environment["CASARS_PLOT_PAYLOAD"] = str(payload)

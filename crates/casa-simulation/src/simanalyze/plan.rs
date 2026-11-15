@@ -190,11 +190,7 @@ pub(super) fn prepare(
         .first()
         .or(inputs.total_power.as_ref())
         .and_then(|path| path.file_name())
-        .map(|name| {
-            name.to_string_lossy()
-                .trim_end_matches(".ms")
-                .replace(".noisy", "")
-        })
+        .map(|name| name.to_string_lossy().trim_end_matches(".ms").to_owned())
         .unwrap_or_else(|| stem.clone());
     models.sort_by_key(|path| {
         (
