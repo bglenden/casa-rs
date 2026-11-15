@@ -420,8 +420,8 @@
 <a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">let </span><span class="kw-2">mut </span>image =
 <a href=#421 id=421 data-nosnippet>421</a>        PagedImage::&lt;T&gt;::create_with_tile_shape(shape.clone(), tile_shape, coordinates, imagename)<span class="question-mark">?</span>;
 <a href=#422 id=422 data-nosnippet>422</a>    image.put_slice(<span class="kw-2">&amp;</span>array, <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0</span>; shape.len()])<span class="question-mark">?</span>;
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(units) = header.get_string(<span class="string">"BUNIT"</span>) {
-<a href=#424 id=424 data-nosnippet>424</a>        image.set_units(units)<span class="question-mark">?</span>;
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">if </span>header.get_string(<span class="string">"BUNIT"</span>).is_some() {
+<a href=#424 id=424 data-nosnippet>424</a>        image.set_units(<span class="kw">crate</span>::fits_read::brightness_unit(<span class="kw-2">&amp;</span>header))<span class="question-mark">?</span>;
 <a href=#425 id=425 data-nosnippet>425</a>    }
 <a href=#426 id=426 data-nosnippet>426</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beams) = image_info.<span class="number">1</span>.as_ref() {
 <a href=#427 id=427 data-nosnippet>427</a>        image.set_image_info_with_beam_records(<span class="kw-2">&amp;</span>image_info.<span class="number">0</span>, beams)<span class="question-mark">?</span>;
@@ -436,7 +436,7 @@
 <a href=#436 id=436 data-nosnippet>436</a>        imagename: imagename.display().to_string(),
 <a href=#437 id=437 data-nosnippet>437</a>        shape,
 <a href=#438 id=438 data-nosnippet>438</a>        pixel_type: image_pixel_type::&lt;T&gt;().pixel_type_label(),
-<a href=#439 id=439 data-nosnippet>439</a>        units: header.get_string(<span class="string">"BUNIT"</span>).unwrap_or(<span class="string">""</span>).to_string(),
+<a href=#439 id=439 data-nosnippet>439</a>        units: <span class="kw">crate</span>::fits_read::brightness_unit(<span class="kw-2">&amp;</span>header),
 <a href=#440 id=440 data-nosnippet>440</a>        object_name: image_info.<span class="number">0</span>.object_name,
 <a href=#441 id=441 data-nosnippet>441</a>        has_restoring_beam: image_info
 <a href=#442 id=442 data-nosnippet>442</a>            .<span class="number">0

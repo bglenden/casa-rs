@@ -308,7 +308,7 @@
 <a href=#308 id=308 data-nosnippet>308</a>    stdout: <span class="kw-2">&amp;</span>str,
 <a href=#309 id=309 data-nosnippet>309</a>    payload_bytes: u64,
 <a href=#310 id=310 data-nosnippet>310</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;casa_ms::plot_document::PlotFigure&gt;, String&gt; {
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">if </span>surface_id != <span class="string">"simobserve" </span>|| returncode != <span class="number">0 </span>{
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">if </span>!<span class="macro">matches!</span>(surface_id, <span class="string">"simobserve" </span>| <span class="string">"simanalyze"</span>) || returncode != <span class="number">0 </span>{
 <a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
 <a href=#313 id=313 data-nosnippet>313</a>    }
 <a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">let </span>TaskOutcome::Succeeded {

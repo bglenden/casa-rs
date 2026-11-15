@@ -1,0 +1,63 @@
+{
+ "host": "Linux-6.18.57-x86_64-with-glibc2.41",
+ "configuration": "Same host and input files; serial task runs without compilation; release native binaries; graphics=file; each engine uses its default CPU worker policy.",
+ "units": "seconds",
+ "repeats": 3,
+ "runs": {
+  "casa": [
+   {
+    "import_s": 0.023362464999081567,
+    "observe_s": 2.3849462720027077,
+    "analyze_s": 7.77365779599495,
+    "total_s": 10.18196653299674
+   },
+   {
+    "import_s": 0.017353743001876865,
+    "observe_s": 2.5053528700009338,
+    "analyze_s": 8.38250767700083,
+    "total_s": 10.905214290003642
+   },
+   {
+    "import_s": 0.018764180000289343,
+    "observe_s": 2.3040363639956922,
+    "analyze_s": 7.5685009860026184,
+    "total_s": 9.8913015299986
+   }
+  ],
+  "native": [
+   {
+    "import_s": 0.013218916996265762,
+    "observe_s": 3.421943427005317,
+    "analyze_s": 3.3433314499998232,
+    "total_s": 6.778493794001406
+   },
+   {
+    "import_s": 0.009432469996681903,
+    "observe_s": 3.134045218997926,
+    "analyze_s": 3.165136365998478,
+    "total_s": 6.308614054993086
+   },
+   {
+    "import_s": 0.01968004400259815,
+    "observe_s": 3.226860349997878,
+    "analyze_s": 3.3400556220003637,
+    "total_s": 6.58659601600084
+   }
+  ]
+ },
+ "median": {
+  "casa": {
+   "import_s": 0.018764180000289343,
+   "observe_s": 2.3849462720027077,
+   "analyze_s": 7.77365779599495,
+   "total_s": 10.18196653299674
+  },
+  "native": {
+   "import_s": 0.013218916996265762,
+   "observe_s": 3.226860349997878,
+   "analyze_s": 3.3400556220003637,
+   "total_s": 6.58659601600084
+  }
+ },
+ "total_casa_over_native": 1.5458617028069817
+}

@@ -1461,6 +1461,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.simanalyze" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simanalyze
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.simobserve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2421,6 +2432,17 @@
     <span class="md-ellipsis">
       
         run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.simanalyze" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simanalyze
       
     </span>
   </a>
@@ -7401,6 +7423,112 @@ and then raised here.</p>
     <span class="k">if</span> <span class="n">values</span><span class="p">:</span>
         <span class="n">resolved</span><span class="o">.</span><span class="n">set_many</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">_execute</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">resolved</span><span class="p">,</span> <span class="n">resolved_workspace</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.simanalyze" class="doc doc-heading">
+            <code class=" language-python"><span class="n">simanalyze</span><span class="p">(</span><span class="n">project</span><span class="o">=</span><span class="s1">'sim'</span><span class="p">,</span> <span class="n">image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">imagename</span><span class="o">=</span><span class="s1">'default'</span><span class="p">,</span> <span class="n">skymodel</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">vis</span><span class="o">=</span><span class="s1">'default'</span><span class="p">,</span> <span class="n">modelimage</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">imsize</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">imdirection</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">interactive</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">niter</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="s1">'0.1mJy'</span><span class="p">,</span> <span class="n">weighting</span><span class="o">=</span><span class="s1">'natural'</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="p">[],</span> <span class="n">outertaper</span><span class="o">=</span><span class="p">[],</span> <span class="n">pbcor</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">stokes</span><span class="o">=</span><span class="s1">'I'</span><span class="p">,</span> <span class="n">featherimage</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">analyze</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">showuv</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">showpsf</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">showmodel</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">showconvolved</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">showclean</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">showresidual</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">showdifference</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">showfidelity</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">graphics</span><span class="o">=</span><span class="s1">'both'</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dryrun</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">logfile</span><span class="o">=</span><span class="s1">''</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.simanalyze" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Image and analyze a simulated observation: CASA's simanalyze</p>
+<p>CASA's <code>simanalyze</code>: its parameters, defaults and return value.
+Accepted only at CASA's default, where CASA reads them, until #980:
+<code>interactive</code>.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1105</span>
+<span class="normal">1106</span>
+<span class="normal">1107</span>
+<span class="normal">1108</span>
+<span class="normal">1109</span>
+<span class="normal">1110</span>
+<span class="normal">1111</span>
+<span class="normal">1112</span>
+<span class="normal">1113</span>
+<span class="normal">1114</span>
+<span class="normal">1115</span>
+<span class="normal">1116</span>
+<span class="normal">1117</span>
+<span class="normal">1118</span>
+<span class="normal">1119</span>
+<span class="normal">1120</span>
+<span class="normal">1121</span>
+<span class="normal">1122</span>
+<span class="normal">1123</span>
+<span class="normal">1124</span>
+<span class="normal">1125</span>
+<span class="normal">1126</span>
+<span class="normal">1127</span>
+<span class="normal">1128</span>
+<span class="normal">1129</span>
+<span class="normal">1130</span>
+<span class="normal">1131</span>
+<span class="normal">1132</span>
+<span class="normal">1133</span>
+<span class="normal">1134</span>
+<span class="normal">1135</span>
+<span class="normal">1136</span>
+<span class="normal">1137</span>
+<span class="normal">1138</span>
+<span class="normal">1139</span>
+<span class="normal">1140</span>
+<span class="normal">1141</span>
+<span class="normal">1142</span>
+<span class="normal">1143</span>
+<span class="normal">1144</span>
+<span class="normal">1145</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simanalyze</span><span class="p">(</span>
+    <span class="n">project</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'sim'</span><span class="p">,</span>
+    <span class="n">image</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">imagename</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'default'</span><span class="p">,</span>
+    <span class="n">skymodel</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'default'</span><span class="p">,</span>
+    <span class="n">modelimage</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">imsize</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+    <span class="n">imdirection</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">interactive</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">niter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'0.1mJy'</span><span class="p">,</span>
+    <span class="n">weighting</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'briggs'</span><span class="p">,</span> <span class="s1">'briggsabs'</span><span class="p">,</span> <span class="s1">'briggsbwtaper'</span><span class="p">,</span> <span class="s1">'natural'</span><span class="p">,</span> <span class="s1">'radial'</span><span class="p">,</span> <span class="s1">'superuniform'</span><span class="p">,</span> <span class="s1">'uniform'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'natural'</span><span class="p">,</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">outertaper</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">pbcor</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">stokes</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'I'</span><span class="p">,</span>
+    <span class="n">featherimage</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">analyze</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">showuv</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">showpsf</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">showmodel</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">showconvolved</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">showclean</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">showresidual</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">showdifference</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">showfidelity</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">graphics</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">''</span><span class="p">,</span> <span class="s1">'both'</span><span class="p">,</span> <span class="s1">'file'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">,</span> <span class="s1">'screen'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'both'</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">dryrun</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">logfile</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Image and analyze a simulated observation: CASA's simanalyze</span>
+
+<span class="sd">    CASA's ``simanalyze``: its parameters, defaults and return value.</span>
+<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #980:</span>
+<span class="sd">    ``interactive``.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">simanalyze</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

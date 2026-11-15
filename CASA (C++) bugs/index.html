@@ -4172,6 +4172,20 @@ uses the floor itself (<code>casa_simulation::simutil::analysis::fidelity</code>
 <p>The fidelity is the ratio of two images in Jy/beam. CASA's image expression
 copies its unit from the first image it names, so the fidelity is labelled
 Jy/beam. casa-rs writes it without a unit.</p>
+<h2 id="simanalyze-deletes-previous-products-before-imaging-preparation-succeeds"><code>simanalyze</code> deletes previous products before imaging preparation succeeds<a class="headerlink" href="#simanalyze-deletes-previous-products-before-imaging-preparation-succeeds" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-15</li>
+<li>Status: CASA data-loss bug; casa-rs preserves inputs and previous products (#180)</li>
+<li>Affected code: <code>casatasks/private/task_simanalyze.py</code> (CASA 6.7.6.14,
+  deletion of <code>&lt;imagename&gt;.image</code> and <code>&lt;imagename&gt;.model</code> before <code>imtclean</code>)</li>
+</ul>
+<p>A rerun with an invalid start model destroys the previous image/model before
+the imager can reject its units or resources. Selecting the previous
+<code>&lt;imagename&gt;.model</code> as <code>modelimage</code> deletes that selected input too.
+casa-rs refuses input/output collisions before mutation and uses the native
+imager's existing atomic publication. Failed preparation preserves prior
+products. <code>simanalyze_task_casa.rs</code> checks the colliding model and a K-unit
+start model, then verifies the previous image and model are unchanged.</p>
 <h2 id="statim-scales-a-jybeam-image-without-a-beam-by-the-pixel-area"><code>statim</code> scales a Jy/beam image without a beam by the pixel area<a class="headerlink" href="#statim-scales-a-jybeam-image-without-a-beam-by-the-pixel-area" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-28</li>

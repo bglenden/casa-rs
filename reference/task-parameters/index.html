@@ -698,6 +698,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#simanalyze-simanalyze" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SimAnalyze (simanalyze)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1324,6 +1335,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#simanalyze-simanalyze" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SimAnalyze (simanalyze)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1352,9 +1374,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 562</li>
-<li>Surfaces: 27 (27 task, 0 session)</li>
-<li>Surface bindings: 791</li>
+<li>Concepts: 582</li>
+<li>Surfaces: 28 (28 task, 0 session)</li>
+<li>Surface bindings: 823</li>
 </ul>
 <table>
 <thead>
@@ -1583,6 +1605,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>msconvert</code></td>
 <td style="text-align: right;">11</td>
 <td>Convert between MeasurementSet v2 and MSv4, in either direction.</td>
+</tr>
+<tr>
+<td><a href="#surface-simanalyze">SimAnalyze</a><br><code>simanalyze</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>simanalyze</code></td>
+<td style="text-align: right;">32</td>
+<td>Image and analyze a simulated observation: CASA's simanalyze</td>
 </tr>
 </tbody>
 </table>
@@ -8532,6 +8562,285 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Output</td>
 <td>Replace an existing output file</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-simanalyze"></a></p>
+<h2 id="simanalyze-simanalyze">SimAnalyze (<code>simanalyze</code>)<a class="headerlink" href="#simanalyze-simanalyze" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Simulation</li>
+<li>Provider family: <code>simanalyze</code></li>
+<li>Summary: Image and analyze a simulated observation: CASA's simanalyze</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>project</code></td>
+<td><code>simulation.project@r1</code></td>
+<td><code>string</code></td>
+<td><code>"sim"</code>; optional</td>
+<td>Project</td>
+<td>Project: its directory and the first part of every file's name.</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td><code>simulation.analysis.image@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze image.</td>
+</tr>
+<tr>
+<td><code>imagename</code></td>
+<td><code>simulation.analysis.imagename@r1</code></td>
+<td><code>string</code></td>
+<td><code>"default"</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze imagename.</td>
+</tr>
+<tr>
+<td><code>skymodel</code></td>
+<td><code>parameter.skymodel@r2</code></td>
+<td><code>path (image)</code></td>
+<td><code>""</code>; optional</td>
+<td>Sky model</td>
+<td>Sky model image: a CASA image or FITS file.</td>
+</tr>
+<tr>
+<td><code>vis</code></td>
+<td><code>simulation.analysis.vis@r1</code></td>
+<td><code>string</code></td>
+<td><code>"default"</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze vis.</td>
+</tr>
+<tr>
+<td><code>modelimage</code></td>
+<td><code>simulation.analysis.modelimage@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze modelimage.</td>
+</tr>
+<tr>
+<td><code>imsize</code></td>
+<td><code>simulation.analysis.imsize@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[0,0]</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze imsize.</td>
+</tr>
+<tr>
+<td><code>imdirection</code></td>
+<td><code>simulation.analysis.imdirection@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze imdirection.</td>
+</tr>
+<tr>
+<td><code>cell</code></td>
+<td><code>simulation.analysis.cell@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze cell.</td>
+</tr>
+<tr>
+<td><code>interactive</code></td>
+<td><code>parameter.interactive@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Stages</td>
+<td>Interactive clean.</td>
+</tr>
+<tr>
+<td><code>niter</code></td>
+<td><code>parameter.niter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Stages</td>
+<td>Minor-cycle iteration budget; ignored when Dirty Only is enabled</td>
+</tr>
+<tr>
+<td><code>threshold</code></td>
+<td><code>image.deconvolution.threshold@r2</code></td>
+<td><code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code></td>
+<td><code>"0.1mJy"</code>; optional</td>
+<td>Stages</td>
+<td>Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled<br><em>Surface:</em> A bare number is in Jy, as CASA's tclean reads it.</td>
+</tr>
+<tr>
+<td><code>weighting</code></td>
+<td><code>parameter.weighting@r2</code></td>
+<td><code>choice (7 values)</code></td>
+<td><code>"natural"</code>; optional</td>
+<td>Stages</td>
+<td>Visibility weighting policy</td>
+</tr>
+<tr>
+<td><code>mask</code></td>
+<td><code>tclean.mask@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Clean mask of usemask='user': a mask image, CRTF regions, or a list of them; empty to clean everywhere.<br><em>Surface:</em> A mask image, CRTF pixel boxes (box[[x0pix,y0pix],[x1pix,y1pix]]), or casa-rs's x0,y0,x1,y1 boxes separated by ';'.</td>
+</tr>
+<tr>
+<td><code>outertaper</code></td>
+<td><code>simulation.analysis.outertaper@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze outertaper.</td>
+</tr>
+<tr>
+<td><code>pbcor</code></td>
+<td><code>parameter.pbcor@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Stages</td>
+<td>Write mosaic primary-beam-corrected image products</td>
+</tr>
+<tr>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
+<td><code>string</code></td>
+<td><code>"I"</code>; optional</td>
+<td>Context</td>
+<td>Stokes selector.</td>
+</tr>
+<tr>
+<td><code>featherimage</code></td>
+<td><code>simulation.analysis.featherimage@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze featherimage.</td>
+</tr>
+<tr>
+<td><code>analyze</code></td>
+<td><code>simulation.analysis.analyze@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze analyze.</td>
+</tr>
+<tr>
+<td><code>showuv</code></td>
+<td><code>simulation.analysis.showuv@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showuv.</td>
+</tr>
+<tr>
+<td><code>showpsf</code></td>
+<td><code>simulation.analysis.showpsf@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showpsf.</td>
+</tr>
+<tr>
+<td><code>showmodel</code></td>
+<td><code>simulation.analysis.showmodel@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showmodel.</td>
+</tr>
+<tr>
+<td><code>showconvolved</code></td>
+<td><code>simulation.analysis.showconvolved@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showconvolved.</td>
+</tr>
+<tr>
+<td><code>showclean</code></td>
+<td><code>simulation.analysis.showclean@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showclean.</td>
+</tr>
+<tr>
+<td><code>showresidual</code></td>
+<td><code>simulation.analysis.showresidual@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showresidual.</td>
+</tr>
+<tr>
+<td><code>showdifference</code></td>
+<td><code>simulation.analysis.showdifference@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showdifference.</td>
+</tr>
+<tr>
+<td><code>showfidelity</code></td>
+<td><code>simulation.analysis.showfidelity@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze showfidelity.</td>
+</tr>
+<tr>
+<td><code>graphics</code></td>
+<td><code>parameter.graphics@r2</code></td>
+<td><code>choice (5 values)</code></td>
+<td><code>"both"</code>; optional</td>
+<td>Output</td>
+<td>Graphics output.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>parameter.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Verbose logging.</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Output</td>
+<td>Replace an existing output file</td>
+</tr>
+<tr>
+<td><code>dryrun</code></td>
+<td><code>simulation.analysis.dryrun@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze dryrun.</td>
+</tr>
+<tr>
+<td><code>logfile</code></td>
+<td><code>simulation.analysis.logfile@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Analysis</td>
+<td>CASA simanalyze logfile.</td>
 </tr>
 </tbody>
 </table>

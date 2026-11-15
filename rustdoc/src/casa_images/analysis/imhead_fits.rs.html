@@ -122,7 +122,7 @@
 <a href=#122 id=122 data-nosnippet>122</a>        pixel_type: <span class="string">"Float32"</span>.into(),
 <a href=#123 id=123 data-nosnippet>123</a>        shape: primary.shape.clone(),
 <a href=#124 id=124 data-nosnippet>124</a>        tile_shape: tile_shape(<span class="kw-2">&amp;</span>primary.shape),
-<a href=#125 id=125 data-nosnippet>125</a>        units: primary.header.get_string(<span class="string">"BUNIT"</span>).unwrap_or(<span class="string">""</span>).to_string(),
+<a href=#125 id=125 data-nosnippet>125</a>        units: <span class="kw">crate</span>::fits_read::brightness_unit(<span class="kw-2">&amp;</span>primary.header),
 <a href=#126 id=126 data-nosnippet>126</a>        object_name: <span class="kw">if </span>primary.header.get_string(<span class="string">"OBJECT"</span>) == <span class="prelude-val">Some</span>(<span class="string">""</span>) {
 <a href=#127 id=127 data-nosnippet>127</a>            <span class="string">" "</span>.into()
 <a href=#128 id=128 data-nosnippet>128</a>        } <span class="kw">else </span>{
