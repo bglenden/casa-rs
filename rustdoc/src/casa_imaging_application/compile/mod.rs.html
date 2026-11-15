@@ -856,440 +856,461 @@
 <a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">if </span>per_field {
 <a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(PER_FIELD_CUBE_DENSITY_PADDING));
 <a href=#858 id=858 data-nosnippet>858</a>    }
-<a href=#859 id=859 data-nosnippet>859</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(envelope::cube_density_padding(
-<a href=#860 id=860 data-nosnippet>860</a>        (surveyed.catalogue, surveyed.engine),
-<a href=#861 id=861 data-nosnippet>861</a>        survey,
-<a href=#862 id=862 data-nosnippet>862</a>        <span class="kw-2">&amp;</span>envelope::OutputAxis {
-<a href=#863 id=863 data-nosnippet>863</a>            frequency_reference: spectral.output_frequency_reference,
-<a href=#864 id=864 data-nosnippet>864</a>            centres_hz: [
-<a href=#865 id=865 data-nosnippet>865</a>                spectral.reference_frequency_hz,
-<a href=#866 id=866 data-nosnippet>866</a>                spectral.reference_frequency_hz
-<a href=#867 id=867 data-nosnippet>867</a>                    + (spectral.output_channels - <span class="number">1</span>) <span class="kw">as </span>f64 * spectral.increment_hz,
-<a href=#868 id=868 data-nosnippet>868</a>            ],
-<a href=#869 id=869 data-nosnippet>869</a>            channels: spectral.output_channels,
-<a href=#870 id=870 data-nosnippet>870</a>            increment_hz: spectral.increment_hz,
-<a href=#871 id=871 data-nosnippet>871</a>        },
-<a href=#872 id=872 data-nosnippet>872</a>    )<span class="question-mark">?</span>))
-<a href=#873 id=873 data-nosnippet>873</a>}
-<a href=#874 id=874 data-nosnippet>874</a>
-<a href=#875 id=875 data-nosnippet>875</a><span class="doccomment">/// The native run's runtime, product publication and AW catalog, still to
-<a href=#876 id=876 data-nosnippet>876</a>/// be deployed: no directory exists and no AW cell is generated until
-<a href=#877 id=877 data-nosnippet>877</a>/// [`Deployment::deploy`].
-<a href=#878 id=878 data-nosnippet>878</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Deployment {
-<a href=#879 id=879 data-nosnippet>879</a>    runtime: PendingRuntime,
-<a href=#880 id=880 data-nosnippet>880</a>    publication: ApplicationPublication,
-<a href=#881 id=881 data-nosnippet>881</a>    <span class="doccomment">/// Every domain's output directory.
-<a href=#882 id=882 data-nosnippet>882</a>    </span>output_directories: Vec&lt;PathBuf&gt;,
-<a href=#883 id=883 data-nosnippet>883</a>    aw: <span class="prelude-ty">Option</span>&lt;AwPlan&gt;,
-<a href=#884 id=884 data-nosnippet>884</a>    awp2: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::Awp2Deployment&gt;,
-<a href=#885 id=885 data-nosnippet>885</a>}
-<a href=#886 id=886 data-nosnippet>886</a>
-<a href=#887 id=887 data-nosnippet>887</a><span class="doccomment">/// The run's runtime but for its device, which the compiled problem resolves
-<a href=#888 id=888 data-nosnippet>888</a>/// ([`Deployment::deploy`]); its spill directory is made canonical on
-<a href=#889 id=889 data-nosnippet>889</a>/// deployment.
-<a href=#890 id=890 data-nosnippet>890</a></span><span class="kw">struct </span>PendingRuntime {
-<a href=#891 id=891 data-nosnippet>891</a>    host: <span class="kw">crate</span>::HostResources,
-<a href=#892 id=892 data-nosnippet>892</a>    resource_policy: <span class="kw">crate</span>::ResourcePolicy,
-<a href=#893 id=893 data-nosnippet>893</a>    grid_precision: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::GridPrecision&gt;,
-<a href=#894 id=894 data-nosnippet>894</a>    ft_padding: <span class="prelude-ty">Option</span>&lt;casa_imaging_operator::PaddingFactor&gt;,
-<a href=#895 id=895 data-nosnippet>895</a>    cancel: <span class="kw">crate</span>::Cancel,
-<a href=#896 id=896 data-nosnippet>896</a>    spill_directory: PathBuf,
-<a href=#897 id=897 data-nosnippet>897</a>    diagnostics: <span class="kw">crate</span>::Diagnostics,
-<a href=#898 id=898 data-nosnippet>898</a>}
-<a href=#899 id=899 data-nosnippet>899</a>
-<a href=#900 id=900 data-nosnippet>900</a><span class="doccomment">/// The AW catalog a run opens and, for a native cache, the cells to bring
-<a href=#901 id=901 data-nosnippet>901</a>/// to the request's policy.
-<a href=#902 id=902 data-nosnippet>902</a></span><span class="kw">struct </span>AwPlan {
-<a href=#903 id=903 data-nosnippet>903</a>    root: PathBuf,
-<a href=#904 id=904 data-nosnippet>904</a>    native: <span class="prelude-ty">Option</span>&lt;(NativeAwCachePolicy, NativeAwRequestInput)&gt;,
-<a href=#905 id=905 data-nosnippet>905</a>    indexing: AwIndexing,
-<a href=#906 id=906 data-nosnippet>906</a>    resident_bytes: usize,
-<a href=#907 id=907 data-nosnippet>907</a>    <span class="doccomment">/// Whether the run raises the bound into the memory its workers leave
-<a href=#908 id=908 data-nosnippet>908</a>    /// (`cf_resident_mb = auto`).
-<a href=#909 id=909 data-nosnippet>909</a>    </span>automatic: bool,
-<a href=#910 id=910 data-nosnippet>910</a>}
-<a href=#911 id=911 data-nosnippet>911</a>
-<a href=#912 id=912 data-nosnippet>912</a><span class="doccomment">/// The cell cache's bound for `cf_resident_mb = auto` before the run raises
-<a href=#913 id=913 data-nosnippet>913</a>/// it into the memory its workers leave (#449).
-<a href=#914 id=914 data-nosnippet>914</a></span><span class="kw">const </span>AUTOMATIC_CELL_CACHE_FLOOR: usize = <span class="number">256 </span>&lt;&lt; <span class="number">20</span>;
-<a href=#915 id=915 data-nosnippet>915</a>
-<a href=#916 id=916 data-nosnippet>916</a><span class="kw">impl </span>Deployment {
-<a href=#917 id=917 data-nosnippet>917</a>    <span class="doccomment">/// Create every domain's output directory, settle the spill directory
-<a href=#918 id=918 data-nosnippet>918</a>    /// beside the main image, bring a native AW cache to the request's
-<a href=#919 id=919 data-nosnippet>919</a>    /// policy and grid on `backend`, the device the request resolved to on
-<a href=#920 id=920 data-nosnippet>920</a>    /// the compiled problem ([`crate::availability::resolve_backend`]).
-<a href=#921 id=921 data-nosnippet>921</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>deploy(<span class="self">self</span>, backend: BackendChoice) -&gt; <span class="prelude-ty">Result</span>&lt;ApplicationNative, PrepareError&gt; {
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">for </span>directory <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.output_directories {
-<a href=#923 id=923 data-nosnippet>923</a>            std::fs::create_dir_all(directory).map_err(|source| PrepareError::OutputDirectory {
-<a href=#924 id=924 data-nosnippet>924</a>                path: directory.clone(),
-<a href=#925 id=925 data-nosnippet>925</a>                source,
-<a href=#926 id=926 data-nosnippet>926</a>            })<span class="question-mark">?</span>;
-<a href=#927 id=927 data-nosnippet>927</a>        }
-<a href=#928 id=928 data-nosnippet>928</a>        <span class="kw">let </span>PendingRuntime {
-<a href=#929 id=929 data-nosnippet>929</a>            host,
-<a href=#930 id=930 data-nosnippet>930</a>            resource_policy,
-<a href=#931 id=931 data-nosnippet>931</a>            grid_precision,
-<a href=#932 id=932 data-nosnippet>932</a>            ft_padding,
-<a href=#933 id=933 data-nosnippet>933</a>            cancel,
-<a href=#934 id=934 data-nosnippet>934</a>            spill_directory,
-<a href=#935 id=935 data-nosnippet>935</a>            diagnostics,
-<a href=#936 id=936 data-nosnippet>936</a>        } = <span class="self">self</span>.runtime;
-<a href=#937 id=937 data-nosnippet>937</a>        <span class="kw">let </span>spill_directory =
-<a href=#938 id=938 data-nosnippet>938</a>            spill_directory
-<a href=#939 id=939 data-nosnippet>939</a>                .canonicalize()
-<a href=#940 id=940 data-nosnippet>940</a>                .map_err(|source| PrepareError::OutputDirectory {
-<a href=#941 id=941 data-nosnippet>941</a>                    path: spill_directory.clone(),
-<a href=#942 id=942 data-nosnippet>942</a>                    source,
-<a href=#943 id=943 data-nosnippet>943</a>                })<span class="question-mark">?</span>;
-<a href=#944 id=944 data-nosnippet>944</a>        <span class="prelude-val">Ok</span>(ApplicationNative {
-<a href=#945 id=945 data-nosnippet>945</a>            runtime: ApplicationRuntime {
-<a href=#946 id=946 data-nosnippet>946</a>                host,
-<a href=#947 id=947 data-nosnippet>947</a>                resource_policy,
-<a href=#948 id=948 data-nosnippet>948</a>                backend,
-<a href=#949 id=949 data-nosnippet>949</a>                grid_precision,
-<a href=#950 id=950 data-nosnippet>950</a>                ft_padding,
-<a href=#951 id=951 data-nosnippet>951</a>                cancel,
-<a href=#952 id=952 data-nosnippet>952</a>                spill_directory,
-<a href=#953 id=953 data-nosnippet>953</a>                diagnostics,
-<a href=#954 id=954 data-nosnippet>954</a>            },
-<a href=#955 id=955 data-nosnippet>955</a>            publication: <span class="self">self</span>.publication,
-<a href=#956 id=956 data-nosnippet>956</a>            awp2: <span class="self">self</span>.awp2,
-<a href=#957 id=957 data-nosnippet>957</a>            aw_catalog: <span class="self">self
-<a href=#958 id=958 data-nosnippet>958</a>                </span>.aw
-<a href=#959 id=959 data-nosnippet>959</a>                .map(|aw| aw.deploy((<span class="kw-2">&amp;</span>host, <span class="kw-2">&amp;</span>resource_policy)))
-<a href=#960 id=960 data-nosnippet>960</a>                .transpose()<span class="question-mark">?</span>,
-<a href=#961 id=961 data-nosnippet>961</a>        })
-<a href=#962 id=962 data-nosnippet>962</a>    }
-<a href=#963 id=963 data-nosnippet>963</a>}
-<a href=#964 id=964 data-nosnippet>964</a>
-<a href=#965 id=965 data-nosnippet>965</a><span class="kw">impl </span>AwPlan {
-<a href=#966 id=966 data-nosnippet>966</a>    <span class="doccomment">/// Under every policy the directory is compared with the request: its
-<a href=#967 id=967 data-nosnippet>967</a>    /// request manifest, the cells the request names, and any it does not
-<a href=#968 id=968 data-nosnippet>968</a>    /// (#735: a cell's conjugate beam and its lookup depend on the whole
-<a href=#969 id=969 data-nosnippet>969</a>    /// frequency list). Reuse needs a directory generated for this request,
-<a href=#970 id=970 data-nosnippet>970</a>    /// complete and holding nothing else. Generation fills in the absent
-<a href=#971 id=971 data-nosnippet>971</a>    /// cells of such a directory, and clears and regenerates any other.
-<a href=#972 id=972 data-nosnippet>972</a>    /// Regeneration clears the cache first. The loader then checks each
-<a href=#973 id=973 data-nosnippet>973</a>    /// cell's sky increment against the image.
-<a href=#974 id=974 data-nosnippet>974</a>    ///
-<a href=#975 id=975 data-nosnippet>975</a>    /// The run reads a native cache under its shared [`NativeCacheLock`],
-<a href=#976 id=976 data-nosnippet>976</a>    /// held in the deployment for as long as the run lives, since cells load
-<a href=#977 id=977 data-nosnippet>977</a>    /// lazily. It writes one only under the exclusive lock, which it cannot
-<a href=#978 id=978 data-nosnippet>978</a>    /// take while another run reads the cache. After writing, it takes the
-<a href=#979 id=979 data-nosnippet>979</a>    /// shared lock again and checks the directory once more before it keeps
-<a href=#980 id=980 data-nosnippet>980</a>    /// it (#739 review). Generation is admitted on `admission`'s host and
-<a href=#981 id=981 data-nosnippet>981</a>    /// policy before it starts and released when it ends (#738).
-<a href=#982 id=982 data-nosnippet>982</a>    </span><span class="kw">fn </span>deploy(
-<a href=#983 id=983 data-nosnippet>983</a>        <span class="self">self</span>,
-<a href=#984 id=984 data-nosnippet>984</a>        admission: (<span class="kw-2">&amp;</span><span class="kw">crate</span>::HostResources, <span class="kw-2">&amp;</span><span class="kw">crate</span>::ResourcePolicy),
-<a href=#985 id=985 data-nosnippet>985</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;AwCatalogDeployment, PrepareError&gt; {
-<a href=#986 id=986 data-nosnippet>986</a>        <span class="kw">let </span>(lock, generation_workers) = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.native {
-<a href=#987 id=987 data-nosnippet>987</a>            <span class="prelude-val">Some</span>((policy, input)) =&gt; {
-<a href=#988 id=988 data-nosnippet>988</a>                <span class="kw">let </span>(lock, workers) = <span class="self">self</span>.bring_native(<span class="kw-2">*</span>policy, input, admission)<span class="question-mark">?</span>;
-<a href=#989 id=989 data-nosnippet>989</a>                (<span class="prelude-val">Some</span>(Arc::new(lock)), workers)
-<a href=#990 id=990 data-nosnippet>990</a>            }
-<a href=#991 id=991 data-nosnippet>991</a>            <span class="prelude-val">None </span>=&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
-<a href=#992 id=992 data-nosnippet>992</a>        };
-<a href=#993 id=993 data-nosnippet>993</a>        <span class="prelude-val">Ok</span>(AwCatalogDeployment {
-<a href=#994 id=994 data-nosnippet>994</a>            root: <span class="self">self</span>.root,
-<a href=#995 id=995 data-nosnippet>995</a>            indexing: <span class="self">self</span>.indexing,
-<a href=#996 id=996 data-nosnippet>996</a>            resident_bytes: <span class="self">self</span>.resident_bytes,
-<a href=#997 id=997 data-nosnippet>997</a>            automatic: <span class="self">self</span>.automatic,
-<a href=#998 id=998 data-nosnippet>998</a>            _lock: lock,
-<a href=#999 id=999 data-nosnippet>999</a>            generation_workers,
-<a href=#1000 id=1000 data-nosnippet>1000</a>        })
-<a href=#1001 id=1001 data-nosnippet>1001</a>    }
-<a href=#1002 id=1002 data-nosnippet>1002</a>
-<a href=#1003 id=1003 data-nosnippet>1003</a>    <span class="doccomment">/// Bring the native cache to `policy` for `input` and return the shared
-<a href=#1004 id=1004 data-nosnippet>1004</a>    /// lock the run keeps while it reads it ([`Self::deploy`]), and the
-<a href=#1005 id=1005 data-nosnippet>1005</a>    /// workers that generated cells, if any did.
-<a href=#1006 id=1006 data-nosnippet>1006</a>    </span><span class="kw">fn </span>bring_native(
-<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1008 id=1008 data-nosnippet>1008</a>        policy: NativeAwCachePolicy,
-<a href=#1009 id=1009 data-nosnippet>1009</a>        input: <span class="kw-2">&amp;</span>NativeAwRequestInput,
-<a href=#1010 id=1010 data-nosnippet>1010</a>        (host, resources): (<span class="kw-2">&amp;</span><span class="kw">crate</span>::HostResources, <span class="kw-2">&amp;</span><span class="kw">crate</span>::ResourcePolicy),
-<a href=#1011 id=1011 data-nosnippet>1011</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(NativeCacheLock, <span class="prelude-ty">Option</span>&lt;usize&gt;), PrepareError&gt; {
-<a href=#1012 id=1012 data-nosnippet>1012</a>        <span class="kw">let </span>root = <span class="kw-2">&amp;</span><span class="self">self</span>.root;
-<a href=#1013 id=1013 data-nosnippet>1013</a>        <span class="kw">let </span>shared = NativeCacheLock::shared(root)<span class="question-mark">?</span>;
-<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span>state = AwCatalog::native_cache_state(root, input)<span class="question-mark">?</span>;
-<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="kw">let </span>fill = <span class="kw">match </span>policy {
-<a href=#1016 id=1016 data-nosnippet>1016</a>            NativeAwCachePolicy::ReuseOnly <span class="kw">if </span>state.reusable() =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>((shared, <span class="prelude-val">None</span>)),
-<a href=#1017 id=1017 data-nosnippet>1017</a>            NativeAwCachePolicy::ReuseOnly =&gt; {
-<a href=#1018 id=1018 data-nosnippet>1018</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwCacheNotReusable { state });
-<a href=#1019 id=1019 data-nosnippet>1019</a>            }
-<a href=#1020 id=1020 data-nosnippet>1020</a>            NativeAwCachePolicy::GenerateMissing <span class="kw">if </span>state.reusable() =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>((shared, <span class="prelude-val">None</span>)),
-<a href=#1021 id=1021 data-nosnippet>1021</a>            NativeAwCachePolicy::GenerateMissing <span class="kw">if </span>state.fillable() =&gt; <span class="bool-val">true</span>,
-<a href=#1022 id=1022 data-nosnippet>1022</a>            NativeAwCachePolicy::GenerateMissing =&gt; {
-<a href=#1023 id=1023 data-nosnippet>1023</a>                <span class="macro">tracing::warn!</span>(
-<a href=#1024 id=1024 data-nosnippet>1024</a>                    <span class="string">"native AW cache {} does not belong to this request ({state}); \
-<a href=#1025 id=1025 data-nosnippet>1025</a>                     regenerating it"</span>,
-<a href=#1026 id=1026 data-nosnippet>1026</a>                    root.display()
-<a href=#1027 id=1027 data-nosnippet>1027</a>                );
-<a href=#1028 id=1028 data-nosnippet>1028</a>                <span class="bool-val">false
-<a href=#1029 id=1029 data-nosnippet>1029</a>            </span>}
-<a href=#1030 id=1030 data-nosnippet>1030</a>            NativeAwCachePolicy::Regenerate =&gt; <span class="bool-val">false</span>,
-<a href=#1031 id=1031 data-nosnippet>1031</a>        };
-<a href=#1032 id=1032 data-nosnippet>1032</a>        drop(shared);
-<a href=#1033 id=1033 data-nosnippet>1033</a>        <span class="kw">let </span>exclusive = NativeCacheLock::exclusive(root)<span class="question-mark">?</span>;
-<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="comment">// The most workers, up to the policy's and one per cell to generate,
-<a href=#1035 id=1035 data-nosnippet>1035</a>        // whose workspaces fit what the policy leaves free (#708); one when
-<a href=#1036 id=1036 data-nosnippet>1036</a>        // none does, which admission then refuses. Generation gives each of
-<a href=#1037 id=1037 data-nosnippet>1037</a>        // them a unit (#747 review).
-<a href=#1038 id=1038 data-nosnippet>1038</a>        </span><span class="kw">let </span>cells = <span class="kw">if </span>fill {
-<a href=#1039 id=1039 data-nosnippet>1039</a>            state.expected - state.present
-<a href=#1040 id=1040 data-nosnippet>1040</a>        } <span class="kw">else </span>{
-<a href=#1041 id=1041 data-nosnippet>1041</a>            state.expected
-<a href=#1042 id=1042 data-nosnippet>1042</a>        };
-<a href=#1043 id=1043 data-nosnippet>1043</a>        <span class="kw">let </span>free = casa_imaging_runtime::free_memory(host, resources);
-<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw">let </span>workers = (<span class="number">1</span>..=resources.workers(host).min(cells))
-<a href=#1045 id=1045 data-nosnippet>1045</a>            .rev()
-<a href=#1046 id=1046 data-nosnippet>1046</a>            .find(|<span class="kw-2">&amp;</span>workers| AwCatalog::generation_bytes(input, workers) &lt;= free)
-<a href=#1047 id=1047 data-nosnippet>1047</a>            .unwrap_or(<span class="number">1</span>);
-<a href=#1048 id=1048 data-nosnippet>1048</a>        <span class="kw">let </span>generating = casa_imaging_runtime::admit(
-<a href=#1049 id=1049 data-nosnippet>1049</a>            host,
-<a href=#1050 id=1050 data-nosnippet>1050</a>            resources,
-<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="kw-2">&amp;</span>casa_imaging_runtime::Demand {
-<a href=#1052 id=1052 data-nosnippet>1052</a>                phase: <span class="string">"native AW generation"</span>,
-<a href=#1053 id=1053 data-nosnippet>1053</a>                memory: AwCatalog::generation_bytes(input, workers),
-<a href=#1054 id=1054 data-nosnippet>1054</a>            },
-<a href=#1055 id=1055 data-nosnippet>1055</a>        )<span class="question-mark">?</span>;
-<a href=#1056 id=1056 data-nosnippet>1056</a>        <span class="macro">tracing::info!</span>(
-<a href=#1057 id=1057 data-nosnippet>1057</a>            <span class="string">"generating {cells} native AW cells into {} on {workers} workers"</span>,
-<a href=#1058 id=1058 data-nosnippet>1058</a>            root.display()
-<a href=#1059 id=1059 data-nosnippet>1059</a>        );
-<a href=#1060 id=1060 data-nosnippet>1060</a>        AwCatalog::generate_native(root, input, fill, workers)<span class="question-mark">?</span>;
-<a href=#1061 id=1061 data-nosnippet>1061</a>        drop(generating);
-<a href=#1062 id=1062 data-nosnippet>1062</a>        drop(exclusive);
-<a href=#1063 id=1063 data-nosnippet>1063</a>        <span class="kw">let </span>shared = NativeCacheLock::shared(root)<span class="question-mark">?</span>;
-<a href=#1064 id=1064 data-nosnippet>1064</a>        <span class="kw">let </span>state = AwCatalog::native_cache_state(root, input)<span class="question-mark">?</span>;
-<a href=#1065 id=1065 data-nosnippet>1065</a>        <span class="kw">if </span>!state.reusable() {
-<a href=#1066 id=1066 data-nosnippet>1066</a>            <span class="comment">// Another run replaced the cache between our write and our read.
-<a href=#1067 id=1067 data-nosnippet>1067</a>            </span><span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwCacheNotReusable { state });
-<a href=#1068 id=1068 data-nosnippet>1068</a>        }
-<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="prelude-val">Ok</span>((shared, <span class="prelude-val">Some</span>(workers)))
-<a href=#1070 id=1070 data-nosnippet>1070</a>    }
-<a href=#1071 id=1071 data-nosnippet>1071</a>}
-<a href=#1072 id=1072 data-nosnippet>1072</a>
-<a href=#1073 id=1073 data-nosnippet>1073</a><span class="doccomment">/// The native run's deployment: the runtime with the paged cube state
-<a href=#1074 id=1074 data-nosnippet>1074</a>/// beside the main image, the product controls and image writer, and the AW
-<a href=#1075 id=1075 data-nosnippet>1075</a>/// plan.
-<a href=#1076 id=1076 data-nosnippet>1076</a></span><span class="kw">fn </span>deployment(
-<a href=#1077 id=1077 data-nosnippet>1077</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#1078 id=1078 data-nosnippet>1078</a>    context: <span class="kw-2">&amp;</span>RunContext,
-<a href=#1079 id=1079 data-nosnippet>1079</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1080 id=1080 data-nosnippet>1080</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
-<a href=#1081 id=1081 data-nosnippet>1081</a>    primary_beam: <span class="prelude-ty">Option</span>&lt;AnalyticPrimaryBeamModel&gt;,
-<a href=#1082 id=1082 data-nosnippet>1082</a>    primary_beam_centres: <span class="prelude-ty">Option</span>&lt;PrimaryBeamCentres&gt;,
-<a href=#1083 id=1083 data-nosnippet>1083</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Deployment, PrepareError&gt; {
-<a href=#1084 id=1084 data-nosnippet>1084</a>    <span class="kw">let </span>parent = |path: <span class="kw-2">&amp;</span>Path| {
-<a href=#1085 id=1085 data-nosnippet>1085</a>        path.parent()
-<a href=#1086 id=1086 data-nosnippet>1086</a>            .unwrap_or_else(|| Path::new(<span class="string">"."</span>))
-<a href=#1087 id=1087 data-nosnippet>1087</a>            .to_path_buf()
-<a href=#1088 id=1088 data-nosnippet>1088</a>    };
-<a href=#1089 id=1089 data-nosnippet>1089</a>    <span class="kw">let </span><span class="kw-2">mut </span>controls = ContinuumProductControls::new(request.psfcutoff <span class="kw">as </span>f32).map_err(|<span class="kw">_</span>| {
-<a href=#1090 id=1090 data-nosnippet>1090</a>        PrepareError::PsfCutoff {
-<a href=#1091 id=1091 data-nosnippet>1091</a>            psfcutoff: request.psfcutoff,
-<a href=#1092 id=1092 data-nosnippet>1092</a>        }
-<a href=#1093 id=1093 data-nosnippet>1093</a>    })<span class="question-mark">?</span>;
-<a href=#1094 id=1094 data-nosnippet>1094</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(model) = primary_beam {
-<a href=#1095 id=1095 data-nosnippet>1095</a>        controls = controls.with_primary_beam_model(model);
-<a href=#1096 id=1096 data-nosnippet>1096</a>    }
-<a href=#1097 id=1097 data-nosnippet>1097</a>    <span class="prelude-val">Ok</span>(Deployment {
-<a href=#1098 id=1098 data-nosnippet>1098</a>        runtime: PendingRuntime {
-<a href=#1099 id=1099 data-nosnippet>1099</a>            host: context.host,
-<a href=#1100 id=1100 data-nosnippet>1100</a>            resource_policy: context.policy,
-<a href=#1101 id=1101 data-nosnippet>1101</a>            grid_precision: request.gridprecision,
-<a href=#1102 id=1102 data-nosnippet>1102</a>            ft_padding: request.ft_padding,
-<a href=#1103 id=1103 data-nosnippet>1103</a>            cancel: context.cancel.clone(),
-<a href=#1104 id=1104 data-nosnippet>1104</a>            spill_directory: parent(<span class="kw-2">&amp;</span>request.imagename),
-<a href=#1105 id=1105 data-nosnippet>1105</a>            diagnostics: request.diagnostics,
-<a href=#1106 id=1106 data-nosnippet>1106</a>        },
-<a href=#1107 id=1107 data-nosnippet>1107</a>        publication: ApplicationPublication {
-<a href=#1108 id=1108 data-nosnippet>1108</a>            controls,
-<a href=#1109 id=1109 data-nosnippet>1109</a>            primary_beam_centres,
-<a href=#1110 id=1110 data-nosnippet>1110</a>            vla_selection_store: (primary_beam == <span class="prelude-val">Some</span>(AnalyticPrimaryBeamModel::CasaVlaBand)
-<a href=#1111 id=1111 data-nosnippet>1111</a>                &amp;&amp; request.specmode == SpecMode::Cube
-<a href=#1112 id=1112 data-nosnippet>1112</a>                &amp;&amp; <span class="macro">matches!</span>(
-<a href=#1113 id=1113 data-nosnippet>1113</a>                    surveyed.spectral.output_frequency_reference,
-<a href=#1114 id=1114 data-nosnippet>1114</a>                    FrequencyRef::BARY | FrequencyRef::TOPO
-<a href=#1115 id=1115 data-nosnippet>1115</a>                ))
-<a href=#1116 id=1116 data-nosnippet>1116</a>            .then_some(surveyed.reference),
-<a href=#1117 id=1117 data-nosnippet>1117</a>            saved_mem_model: request.deconvolver == Deconvolver::Mem &amp;&amp; request.continued_model,
-<a href=#1118 id=1118 data-nosnippet>1118</a>            writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
-<a href=#1119 id=1119 data-nosnippet>1119</a>        },
-<a href=#1120 id=1120 data-nosnippet>1120</a>        output_directories: domains
-<a href=#1121 id=1121 data-nosnippet>1121</a>            .iter()
-<a href=#1122 id=1122 data-nosnippet>1122</a>            .map(|domain| parent(<span class="kw-2">&amp;</span>domain.output))
-<a href=#1123 id=1123 data-nosnippet>1123</a>            .collect(),
-<a href=#1124 id=1124 data-nosnippet>1124</a>        awp2: awp2::plan(request, surveyed, <span class="kw-2">&amp;</span>domains[<span class="number">0</span>], context)<span class="question-mark">?</span>,
-<a href=#1125 id=1125 data-nosnippet>1125</a>        aw: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
-<a href=#1126 id=1126 data-nosnippet>1126</a>            Gridder::Awproject(aw) =&gt; <span class="prelude-val">Some</span>(aw_plan(request, aw, surveyed, context)<span class="question-mark">?</span>),
-<a href=#1127 id=1127 data-nosnippet>1127</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#1128 id=1128 data-nosnippet>1128</a>        },
-<a href=#1129 id=1129 data-nosnippet>1129</a>    })
-<a href=#1130 id=1130 data-nosnippet>1130</a>}
-<a href=#1131 id=1131 data-nosnippet>1131</a>
-<a href=#1132 id=1132 data-nosnippet>1132</a><span class="doccomment">/// The AW catalog to open: a CASA cache read as it is, or a native cache
-<a href=#1133 id=1133 data-nosnippet>1133</a>/// in CASA's format with the input its cells are generated from.
-<a href=#1134 id=1134 data-nosnippet>1134</a></span><span class="kw">fn </span>aw_plan(
-<a href=#1135 id=1135 data-nosnippet>1135</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#1136 id=1136 data-nosnippet>1136</a>    aw: <span class="kw-2">&amp;</span>AwProjection,
-<a href=#1137 id=1137 data-nosnippet>1137</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1138 id=1138 data-nosnippet>1138</a>    context: <span class="kw-2">&amp;</span>RunContext,
-<a href=#1139 id=1139 data-nosnippet>1139</a>) -&gt; <span class="prelude-ty">Result</span>&lt;AwPlan, PrepareError&gt; {
-<a href=#1140 id=1140 data-nosnippet>1140</a>    <span class="kw">let </span>(root, native) = <span class="kw">match </span><span class="kw-2">&amp;</span>aw.cf_source {
-<a href=#1141 id=1141 data-nosnippet>1141</a>        AwCfSource::CasaImport { cfcache } =&gt; (cfcache.clone(), <span class="prelude-val">None</span>),
-<a href=#1142 id=1142 data-nosnippet>1142</a>        AwCfSource::NativeEvla {
-<a href=#1143 id=1143 data-nosnippet>1143</a>            native_cf_cache,
-<a href=#1144 id=1144 data-nosnippet>1144</a>            native_cf_policy,
-<a href=#1145 id=1145 data-nosnippet>1145</a>            ..
-<a href=#1146 id=1146 data-nosnippet>1146</a>        } =&gt; {
-<a href=#1147 id=1147 data-nosnippet>1147</a>            <span class="kw">let </span>first_cross = surveyed
-<a href=#1148 id=1148 data-nosnippet>1148</a>                .survey
-<a href=#1149 id=1149 data-nosnippet>1149</a>                .first_cross
-<a href=#1150 id=1150 data-nosnippet>1150</a>                .ok_or(PrepareError::NoCrossCorrelationRow)<span class="question-mark">?</span>;
-<a href=#1151 id=1151 data-nosnippet>1151</a>            <span class="kw">let </span>input = native_aw::resolve(request, aw, surveyed, first_cross, context)<span class="question-mark">?</span>;
-<a href=#1152 id=1152 data-nosnippet>1152</a>            input.validate()<span class="question-mark">?</span>;
-<a href=#1153 id=1153 data-nosnippet>1153</a>            (native_cf_cache.clone(), <span class="prelude-val">Some</span>((<span class="kw-2">*</span>native_cf_policy, input)))
-<a href=#1154 id=1154 data-nosnippet>1154</a>        }
-<a href=#1155 id=1155 data-nosnippet>1155</a>    };
-<a href=#1156 id=1156 data-nosnippet>1156</a>    <span class="kw">let </span>feed_zero_angles_rad = <span class="kw">if </span>native.is_none() || aw.computepastep != <span class="number">360.0 </span>{
-<a href=#1157 id=1157 data-nosnippet>1157</a>        <span class="kw">let </span><span class="kw-2">mut </span>feed_zero_angles = <span class="macro">vec!</span>[<span class="number">0.0</span>; surveyed.catalogue.windows.len()];
-<a href=#1158 id=1158 data-nosnippet>1158</a>        <span class="kw">for </span>window <span class="kw">in </span><span class="kw-2">&amp;</span>surveyed.survey.spectral_windows {
-<a href=#1159 id=1159 data-nosnippet>1159</a>            <span class="kw">let </span>spw = u32::try_from(window.spw_id).expect(<span class="string">"a surveyed window fits u32"</span>);
-<a href=#1160 id=1160 data-nosnippet>1160</a>            feed_zero_angles[window.spw_id] =
-<a href=#1161 id=1161 data-nosnippet>1161</a>                native_aw::receptor_zero_angle(surveyed.catalogue, surveyed.msv2, spw)<span class="question-mark">? </span><span class="kw">as </span>f32;
-<a href=#1162 id=1162 data-nosnippet>1162</a>        }
-<a href=#1163 id=1163 data-nosnippet>1163</a>        <span class="prelude-val">Some</span>(feed_zero_angles.into())
-<a href=#1164 id=1164 data-nosnippet>1164</a>    } <span class="kw">else </span>{
-<a href=#1165 id=1165 data-nosnippet>1165</a>        <span class="prelude-val">None
-<a href=#1166 id=1166 data-nosnippet>1166</a>    </span>};
-<a href=#1167 id=1167 data-nosnippet>1167</a>    <span class="kw">let </span>rotation = aw_rotation(
-<a href=#1168 id=1168 data-nosnippet>1168</a>        request,
-<a href=#1169 id=1169 data-nosnippet>1169</a>        aw,
-<a href=#1170 id=1170 data-nosnippet>1170</a>        surveyed,
-<a href=#1171 id=1171 data-nosnippet>1171</a>        feed_zero_angles_rad.as_deref(),
-<a href=#1172 id=1172 data-nosnippet>1172</a>        context,
-<a href=#1173 id=1173 data-nosnippet>1173</a>    )<span class="question-mark">?</span>;
-<a href=#1174 id=1174 data-nosnippet>1174</a>    <span class="prelude-val">Ok</span>(AwPlan {
-<a href=#1175 id=1175 data-nosnippet>1175</a>        root,
-<a href=#1176 id=1176 data-nosnippet>1176</a>        native,
-<a href=#1177 id=1177 data-nosnippet>1177</a>        indexing: AwIndexing {
-<a href=#1178 id=1178 data-nosnippet>1178</a>            conjugate_beams: aw.conjbeams,
-<a href=#1179 id=1179 data-nosnippet>1179</a>            image_reference_hz: surveyed.spectral.reference_frequency_hz,
-<a href=#1180 id=1180 data-nosnippet>1180</a>            pa_tolerance_rad: aw.pa_tolerance_rad(),
-<a href=#1181 id=1181 data-nosnippet>1181</a>            feed_zero_angles_rad,
-<a href=#1182 id=1182 data-nosnippet>1182</a>            rotation,
-<a href=#1183 id=1183 data-nosnippet>1183</a>        },
-<a href=#1184 id=1184 data-nosnippet>1184</a>        resident_bytes: <span class="kw">match </span>aw.cf_resident_mb {
-<a href=#1185 id=1185 data-nosnippet>1185</a>            <span class="prelude-val">Some</span>(megabytes) =&gt; megabytes
-<a href=#1186 id=1186 data-nosnippet>1186</a>                .checked_mul(<span class="number">1 </span>&lt;&lt; <span class="number">20</span>)
-<a href=#1187 id=1187 data-nosnippet>1187</a>                .ok_or(PrepareError::CfResidentSize { megabytes })<span class="question-mark">?</span>,
-<a href=#1188 id=1188 data-nosnippet>1188</a>            <span class="prelude-val">None </span>=&gt; AUTOMATIC_CELL_CACHE_FLOOR,
-<a href=#1189 id=1189 data-nosnippet>1189</a>        },
-<a href=#1190 id=1190 data-nosnippet>1190</a>        automatic: aw.cf_resident_mb.is_none(),
-<a href=#1191 id=1191 data-nosnippet>1191</a>    })
-<a href=#1192 id=1192 data-nosnippet>1192</a>}
-<a href=#1193 id=1193 data-nosnippet>1193</a>
-<a href=#1194 id=1194 data-nosnippet>1194</a><span class="kw">fn </span>aw_rotation(
-<a href=#1195 id=1195 data-nosnippet>1195</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#1196 id=1196 data-nosnippet>1196</a>    aw: <span class="kw-2">&amp;</span>AwProjection,
-<a href=#1197 id=1197 data-nosnippet>1197</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1198 id=1198 data-nosnippet>1198</a>    feed: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[f32]&gt;,
-<a href=#1199 id=1199 data-nosnippet>1199</a>    context: <span class="kw-2">&amp;</span>RunContext,
-<a href=#1200 id=1200 data-nosnippet>1200</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;casa_imaging_operator::AwPaRotation&gt;, PrepareError&gt; {
-<a href=#1201 id=1201 data-nosnippet>1201</a>    <span class="kw">if </span>aw.rotatepastep == <span class="number">360.0 </span>{
-<a href=#1202 id=1202 data-nosnippet>1202</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#1203 id=1203 data-nosnippet>1203</a>    }
-<a href=#1204 id=1204 data-nosnippet>1204</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(feed) = feed <span class="kw">else </span>{
-<a href=#1205 id=1205 data-nosnippet>1205</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
-<a href=#1206 id=1206 data-nosnippet>1206</a>    };
-<a href=#1207 id=1207 data-nosnippet>1207</a>    <span class="kw">let </span>evla = surveyed.survey.observation_ids.iter().all(|<span class="kw-2">&amp;</span>id| {
-<a href=#1208 id=1208 data-nosnippet>1208</a>        surveyed
-<a href=#1209 id=1209 data-nosnippet>1209</a>            .catalogue
-<a href=#1210 id=1210 data-nosnippet>1210</a>            .observations
-<a href=#1211 id=1211 data-nosnippet>1211</a>            .get(id <span class="kw">as </span>usize)
-<a href=#1212 id=1212 data-nosnippet>1212</a>            .is_some_and(|observation| <span class="macro">matches!</span>(observation.telescope.trim(), <span class="string">"EVLA" </span>| <span class="string">"VLA"</span>))
-<a href=#1213 id=1213 data-nosnippet>1213</a>    });
-<a href=#1214 id=1214 data-nosnippet>1214</a>    <span class="kw">let </span>windows = <span class="kw-2">&amp;</span>surveyed.survey.spectral_windows;
-<a href=#1215 id=1215 data-nosnippet>1215</a>    <span class="kw">let </span>multi_term = request.deconvolver == Deconvolver::Mtmfs &amp;&amp; aw.wbawp;
-<a href=#1216 id=1216 data-nosnippet>1216</a>    <span class="kw">let </span>first = windows.first().ok_or(PrepareError::AwRotationScope)<span class="question-mark">?</span>.spw_id;
-<a href=#1217 id=1217 data-nosnippet>1217</a>    <span class="kw">let </span>feed_angle = feed[first];
-<a href=#1218 id=1218 data-nosnippet>1218</a>    <span class="kw">if </span>(!multi_term &amp;&amp; windows.len() != <span class="number">1</span>)
-<a href=#1219 id=1219 data-nosnippet>1219</a>        || !evla
-<a href=#1220 id=1220 data-nosnippet>1220</a>        || !aw.aterm
-<a href=#1221 id=1221 data-nosnippet>1221</a>        || aw.computepastep != <span class="number">360.0
-<a href=#1222 id=1222 data-nosnippet>1222</a>        </span>|| surveyed.survey.fields.len() != <span class="number">1
-<a href=#1223 id=1223 data-nosnippet>1223</a>        </span>|| request.specmode != SpecMode::Mfs
-<a href=#1224 id=1224 data-nosnippet>1224</a>        || (request.solves() &amp;&amp; !multi_term &amp;&amp; request.deconvolver != Deconvolver::Hogbom)
-<a href=#1225 id=1225 data-nosnippet>1225</a>        || request.predicts_final_model()
-<a href=#1226 id=1226 data-nosnippet>1226</a>        || request.tclean_restart
-<a href=#1227 id=1227 data-nosnippet>1227</a>        || request.has_start_model()
-<a href=#1228 id=1228 data-nosnippet>1228</a>        || request.savemodel != <span class="kw">crate</span>::SaveModel::None
-<a href=#1229 id=1229 data-nosnippet>1229</a>        || !request.calcpsf
-<a href=#1230 id=1230 data-nosnippet>1230</a>        || !request.calcres
-<a href=#1231 id=1231 data-nosnippet>1231</a>    {
-<a href=#1232 id=1232 data-nosnippet>1232</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
-<a href=#1233 id=1233 data-nosnippet>1233</a>    }
-<a href=#1234 id=1234 data-nosnippet>1234</a>    <span class="kw">if </span>multi_term &amp;&amp; !one_rotation_traversal_per_window(surveyed) {
-<a href=#1235 id=1235 data-nosnippet>1235</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
-<a href=#1236 id=1236 data-nosnippet>1236</a>    }
-<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">let </span>epochs = surveyed.survey.window_epochs(first);
-<a href=#1238 id=1238 data-nosnippet>1238</a>    <span class="comment">// CASA walks each spectral window's buffers separately. A time-only
-<a href=#1239 id=1239 data-nosnippet>1239</a>    // rotation key is shared by windows with the same usable timeline.
-<a href=#1240 id=1240 data-nosnippet>1240</a>    </span><span class="kw">if </span>windows.iter().skip(<span class="number">1</span>).any(|window| {
-<a href=#1241 id=1241 data-nosnippet>1241</a>        feed[window.spw_id] != feed_angle
-<a href=#1242 id=1242 data-nosnippet>1242</a>            || rotation_times(epochs)
-<a href=#1243 id=1243 data-nosnippet>1243</a>                .ne(rotation_times(surveyed.survey.window_epochs(window.spw_id)))
-<a href=#1244 id=1244 data-nosnippet>1244</a>    }) {
-<a href=#1245 id=1245 data-nosnippet>1245</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
-<a href=#1246 id=1246 data-nosnippet>1246</a>    }
-<a href=#1247 id=1247 data-nosnippet>1247</a>    <span class="comment">// The vector and the Arc slice can coexist while converting it.
-<a href=#1248 id=1248 data-nosnippet>1248</a>    </span><span class="kw">let </span>_admission = casa_imaging_runtime::admit(
-<a href=#1249 id=1249 data-nosnippet>1249</a>        <span class="kw-2">&amp;</span>context.host,
-<a href=#1250 id=1250 data-nosnippet>1250</a>        <span class="kw-2">&amp;</span>context.policy,
-<a href=#1251 id=1251 data-nosnippet>1251</a>        <span class="kw-2">&amp;</span>casa_imaging_runtime::Demand {
-<a href=#1252 id=1252 data-nosnippet>1252</a>            phase: <span class="string">"AW rotation epochs"</span>,
-<a href=#1253 id=1253 data-nosnippet>1253</a>            memory: (<span class="number">2 </span>* epochs.len() * size_of::&lt;(f64, f32)&gt;() + <span class="number">2 </span>* size_of::&lt;usize&gt;()) <span class="kw">as </span>u64,
-<a href=#1254 id=1254 data-nosnippet>1254</a>        },
-<a href=#1255 id=1255 data-nosnippet>1255</a>    )<span class="question-mark">?</span>;
-<a href=#1256 id=1256 data-nosnippet>1256</a>    <span class="kw">let </span><span class="kw-2">mut </span>samples = Vec::with_capacity(epochs.len());
-<a href=#1257 id=1257 data-nosnippet>1257</a>    <span class="kw">for </span>(time, field) <span class="kw">in </span>rotation_times(epochs) {
-<a href=#1258 id=1258 data-nosnippet>1258</a>        <span class="kw">let </span>pa = native_aw::feed_pa(surveyed, time, field, feed_angle)<span class="question-mark">?</span>;
-<a href=#1259 id=1259 data-nosnippet>1259</a>        samples.push((time, pa));
-<a href=#1260 id=1260 data-nosnippet>1260</a>    }
-<a href=#1261 id=1261 data-nosnippet>1261</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(casa_imaging_operator::AwPaRotation {
-<a href=#1262 id=1262 data-nosnippet>1262</a>        step_rad: f64::from(aw.rotatepastep <span class="kw">as </span>f32).to_radians(),
-<a href=#1263 id=1263 data-nosnippet>1263</a>        require_repeatable_schedule: multi_term,
-<a href=#1264 id=1264 data-nosnippet>1264</a>        samples: samples.into(),
-<a href=#1265 id=1265 data-nosnippet>1265</a>    }))
-<a href=#1266 id=1266 data-nosnippet>1266</a>}
-<a href=#1267 id=1267 data-nosnippet>1267</a>
-<a href=#1268 id=1268 data-nosnippet>1268</a><span class="comment">// CASA walks ARRAY_ID then DATA_DESC_ID before TIME. The survey merges
-<a href=#1269 id=1269 data-nosnippet>1269</a>// partition epochs by time, so require one chronological traversal per
-<a href=#1270 id=1270 data-nosnippet>1270</a>// window for the Taylor passes that share the rotation schedule.
-<a href=#1271 id=1271 data-nosnippet>1271</a></span><span class="kw">fn </span>one_rotation_traversal_per_window(surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;) -&gt; bool {
-<a href=#1272 id=1272 data-nosnippet>1272</a>    <span class="kw">let </span>selected = <span class="kw-2">&amp;</span>surveyed.survey.partitions;
-<a href=#1273 id=1273 data-nosnippet>1273</a>    <span class="kw">if </span>surveyed.stores.len() != <span class="number">1 </span>|| selected.len() != surveyed.survey.spectral_windows.len() {
-<a href=#1274 id=1274 data-nosnippet>1274</a>        <span class="kw">return </span><span class="bool-val">false</span>;
-<a href=#1275 id=1275 data-nosnippet>1275</a>    }
-<a href=#1276 id=1276 data-nosnippet>1276</a>    surveyed.msv2.is_none_or(|ms| {
-<a href=#1277 id=1277 data-nosnippet>1277</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(array) = selected
-<a href=#1278 id=1278 data-nosnippet>1278</a>            .first()
-<a href=#1279 id=1279 data-nosnippet>1279</a>            .and_then(|first| ms.array_id(first.partition()))
-<a href=#1280 id=1280 data-nosnippet>1280</a>        <span class="kw">else </span>{
-<a href=#1281 id=1281 data-nosnippet>1281</a>            <span class="kw">return </span><span class="bool-val">false</span>;
-<a href=#1282 id=1282 data-nosnippet>1282</a>        };
-<a href=#1283 id=1283 data-nosnippet>1283</a>        selected
-<a href=#1284 id=1284 data-nosnippet>1284</a>            .iter()
-<a href=#1285 id=1285 data-nosnippet>1285</a>            .all(|part| ms.array_id(part.partition()) == <span class="prelude-val">Some</span>(array))
-<a href=#1286 id=1286 data-nosnippet>1286</a>    })
+<a href=#859 id=859 data-nosnippet>859</a>    <span class="kw">let </span>(last_hz, increment_hz) = <span class="kw">match </span><span class="kw-2">&amp;</span>spectral.wcs {
+<a href=#860 id=860 data-nosnippet>860</a>        casa_imaging_model::SpectralWcs::Tabular {
+<a href=#861 id=861 data-nosnippet>861</a>            channel_centres_hz, ..
+<a href=#862 id=862 data-nosnippet>862</a>        } =&gt; {
+<a href=#863 id=863 data-nosnippet>863</a>            <span class="comment">// CASA estimates no swing in a shared spectral frame.
+<a href=#864 id=864 data-nosnippet>864</a>            </span><span class="kw">if </span>survey.source_frequency_reference == spectral.output_frequency_reference {
+<a href=#865 id=865 data-nosnippet>865</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="number">0</span>));
+<a href=#866 id=866 data-nosnippet>866</a>            }
+<a href=#867 id=867 data-nosnippet>867</a>            <span class="kw">if </span>channel_centres_hz.len() == <span class="number">1 </span>{
+<a href=#868 id=868 data-nosnippet>868</a>                <span class="comment">// A constant table has no nonzero interval to divide the
+<a href=#869 id=869 data-nosnippet>869</a>                // swing by. Retain the one guard plane per side that stock
+<a href=#870 id=870 data-nosnippet>870</a>                // CASA uses for a constant optical cube in another frame.
+<a href=#871 id=871 data-nosnippet>871</a>                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="number">1</span>));
+<a href=#872 id=872 data-nosnippet>872</a>            }
+<a href=#873 id=873 data-nosnippet>873</a>            (
+<a href=#874 id=874 data-nosnippet>874</a>                channel_centres_hz[channel_centres_hz.len() - <span class="number">1</span>],
+<a href=#875 id=875 data-nosnippet>875</a>                direction::ImageSpectralCoordinate::tabular_increment_hz(channel_centres_hz),
+<a href=#876 id=876 data-nosnippet>876</a>            )
+<a href=#877 id=877 data-nosnippet>877</a>        }
+<a href=#878 id=878 data-nosnippet>878</a>        casa_imaging_model::SpectralWcs::Linear { .. } =&gt; (
+<a href=#879 id=879 data-nosnippet>879</a>            spectral.reference_frequency_hz
+<a href=#880 id=880 data-nosnippet>880</a>                + (spectral.output_channels - <span class="number">1</span>) <span class="kw">as </span>f64 * spectral.increment_hz,
+<a href=#881 id=881 data-nosnippet>881</a>            spectral.increment_hz,
+<a href=#882 id=882 data-nosnippet>882</a>        ),
+<a href=#883 id=883 data-nosnippet>883</a>    };
+<a href=#884 id=884 data-nosnippet>884</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(envelope::cube_density_padding(
+<a href=#885 id=885 data-nosnippet>885</a>        (surveyed.catalogue, surveyed.engine),
+<a href=#886 id=886 data-nosnippet>886</a>        survey,
+<a href=#887 id=887 data-nosnippet>887</a>        <span class="kw-2">&amp;</span>envelope::OutputAxis {
+<a href=#888 id=888 data-nosnippet>888</a>            frequency_reference: spectral.output_frequency_reference,
+<a href=#889 id=889 data-nosnippet>889</a>            centres_hz: [spectral.reference_frequency_hz, last_hz],
+<a href=#890 id=890 data-nosnippet>890</a>            channels: spectral.output_channels,
+<a href=#891 id=891 data-nosnippet>891</a>            increment_hz,
+<a href=#892 id=892 data-nosnippet>892</a>        },
+<a href=#893 id=893 data-nosnippet>893</a>    )<span class="question-mark">?</span>))
+<a href=#894 id=894 data-nosnippet>894</a>}
+<a href=#895 id=895 data-nosnippet>895</a>
+<a href=#896 id=896 data-nosnippet>896</a><span class="doccomment">/// The native run's runtime, product publication and AW catalog, still to
+<a href=#897 id=897 data-nosnippet>897</a>/// be deployed: no directory exists and no AW cell is generated until
+<a href=#898 id=898 data-nosnippet>898</a>/// [`Deployment::deploy`].
+<a href=#899 id=899 data-nosnippet>899</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Deployment {
+<a href=#900 id=900 data-nosnippet>900</a>    runtime: PendingRuntime,
+<a href=#901 id=901 data-nosnippet>901</a>    publication: ApplicationPublication,
+<a href=#902 id=902 data-nosnippet>902</a>    <span class="doccomment">/// Every domain's output directory.
+<a href=#903 id=903 data-nosnippet>903</a>    </span>output_directories: Vec&lt;PathBuf&gt;,
+<a href=#904 id=904 data-nosnippet>904</a>    aw: <span class="prelude-ty">Option</span>&lt;AwPlan&gt;,
+<a href=#905 id=905 data-nosnippet>905</a>    awp2: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::Awp2Deployment&gt;,
+<a href=#906 id=906 data-nosnippet>906</a>}
+<a href=#907 id=907 data-nosnippet>907</a>
+<a href=#908 id=908 data-nosnippet>908</a><span class="doccomment">/// The run's runtime but for its device, which the compiled problem resolves
+<a href=#909 id=909 data-nosnippet>909</a>/// ([`Deployment::deploy`]); its spill directory is made canonical on
+<a href=#910 id=910 data-nosnippet>910</a>/// deployment.
+<a href=#911 id=911 data-nosnippet>911</a></span><span class="kw">struct </span>PendingRuntime {
+<a href=#912 id=912 data-nosnippet>912</a>    host: <span class="kw">crate</span>::HostResources,
+<a href=#913 id=913 data-nosnippet>913</a>    resource_policy: <span class="kw">crate</span>::ResourcePolicy,
+<a href=#914 id=914 data-nosnippet>914</a>    grid_precision: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::GridPrecision&gt;,
+<a href=#915 id=915 data-nosnippet>915</a>    ft_padding: <span class="prelude-ty">Option</span>&lt;casa_imaging_operator::PaddingFactor&gt;,
+<a href=#916 id=916 data-nosnippet>916</a>    cancel: <span class="kw">crate</span>::Cancel,
+<a href=#917 id=917 data-nosnippet>917</a>    spill_directory: PathBuf,
+<a href=#918 id=918 data-nosnippet>918</a>    diagnostics: <span class="kw">crate</span>::Diagnostics,
+<a href=#919 id=919 data-nosnippet>919</a>}
+<a href=#920 id=920 data-nosnippet>920</a>
+<a href=#921 id=921 data-nosnippet>921</a><span class="doccomment">/// The AW catalog a run opens and, for a native cache, the cells to bring
+<a href=#922 id=922 data-nosnippet>922</a>/// to the request's policy.
+<a href=#923 id=923 data-nosnippet>923</a></span><span class="kw">struct </span>AwPlan {
+<a href=#924 id=924 data-nosnippet>924</a>    root: PathBuf,
+<a href=#925 id=925 data-nosnippet>925</a>    native: <span class="prelude-ty">Option</span>&lt;(NativeAwCachePolicy, NativeAwRequestInput)&gt;,
+<a href=#926 id=926 data-nosnippet>926</a>    indexing: AwIndexing,
+<a href=#927 id=927 data-nosnippet>927</a>    resident_bytes: usize,
+<a href=#928 id=928 data-nosnippet>928</a>    <span class="doccomment">/// Whether the run raises the bound into the memory its workers leave
+<a href=#929 id=929 data-nosnippet>929</a>    /// (`cf_resident_mb = auto`).
+<a href=#930 id=930 data-nosnippet>930</a>    </span>automatic: bool,
+<a href=#931 id=931 data-nosnippet>931</a>}
+<a href=#932 id=932 data-nosnippet>932</a>
+<a href=#933 id=933 data-nosnippet>933</a><span class="doccomment">/// The cell cache's bound for `cf_resident_mb = auto` before the run raises
+<a href=#934 id=934 data-nosnippet>934</a>/// it into the memory its workers leave (#449).
+<a href=#935 id=935 data-nosnippet>935</a></span><span class="kw">const </span>AUTOMATIC_CELL_CACHE_FLOOR: usize = <span class="number">256 </span>&lt;&lt; <span class="number">20</span>;
+<a href=#936 id=936 data-nosnippet>936</a>
+<a href=#937 id=937 data-nosnippet>937</a><span class="kw">impl </span>Deployment {
+<a href=#938 id=938 data-nosnippet>938</a>    <span class="doccomment">/// Create every domain's output directory, settle the spill directory
+<a href=#939 id=939 data-nosnippet>939</a>    /// beside the main image, bring a native AW cache to the request's
+<a href=#940 id=940 data-nosnippet>940</a>    /// policy and grid on `backend`, the device the request resolved to on
+<a href=#941 id=941 data-nosnippet>941</a>    /// the compiled problem ([`crate::availability::resolve_backend`]).
+<a href=#942 id=942 data-nosnippet>942</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>deploy(<span class="self">self</span>, backend: BackendChoice) -&gt; <span class="prelude-ty">Result</span>&lt;ApplicationNative, PrepareError&gt; {
+<a href=#943 id=943 data-nosnippet>943</a>        <span class="kw">for </span>directory <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.output_directories {
+<a href=#944 id=944 data-nosnippet>944</a>            std::fs::create_dir_all(directory).map_err(|source| PrepareError::OutputDirectory {
+<a href=#945 id=945 data-nosnippet>945</a>                path: directory.clone(),
+<a href=#946 id=946 data-nosnippet>946</a>                source,
+<a href=#947 id=947 data-nosnippet>947</a>            })<span class="question-mark">?</span>;
+<a href=#948 id=948 data-nosnippet>948</a>        }
+<a href=#949 id=949 data-nosnippet>949</a>        <span class="kw">let </span>PendingRuntime {
+<a href=#950 id=950 data-nosnippet>950</a>            host,
+<a href=#951 id=951 data-nosnippet>951</a>            resource_policy,
+<a href=#952 id=952 data-nosnippet>952</a>            grid_precision,
+<a href=#953 id=953 data-nosnippet>953</a>            ft_padding,
+<a href=#954 id=954 data-nosnippet>954</a>            cancel,
+<a href=#955 id=955 data-nosnippet>955</a>            spill_directory,
+<a href=#956 id=956 data-nosnippet>956</a>            diagnostics,
+<a href=#957 id=957 data-nosnippet>957</a>        } = <span class="self">self</span>.runtime;
+<a href=#958 id=958 data-nosnippet>958</a>        <span class="kw">let </span>spill_directory =
+<a href=#959 id=959 data-nosnippet>959</a>            spill_directory
+<a href=#960 id=960 data-nosnippet>960</a>                .canonicalize()
+<a href=#961 id=961 data-nosnippet>961</a>                .map_err(|source| PrepareError::OutputDirectory {
+<a href=#962 id=962 data-nosnippet>962</a>                    path: spill_directory.clone(),
+<a href=#963 id=963 data-nosnippet>963</a>                    source,
+<a href=#964 id=964 data-nosnippet>964</a>                })<span class="question-mark">?</span>;
+<a href=#965 id=965 data-nosnippet>965</a>        <span class="prelude-val">Ok</span>(ApplicationNative {
+<a href=#966 id=966 data-nosnippet>966</a>            runtime: ApplicationRuntime {
+<a href=#967 id=967 data-nosnippet>967</a>                host,
+<a href=#968 id=968 data-nosnippet>968</a>                resource_policy,
+<a href=#969 id=969 data-nosnippet>969</a>                backend,
+<a href=#970 id=970 data-nosnippet>970</a>                grid_precision,
+<a href=#971 id=971 data-nosnippet>971</a>                ft_padding,
+<a href=#972 id=972 data-nosnippet>972</a>                cancel,
+<a href=#973 id=973 data-nosnippet>973</a>                spill_directory,
+<a href=#974 id=974 data-nosnippet>974</a>                diagnostics,
+<a href=#975 id=975 data-nosnippet>975</a>            },
+<a href=#976 id=976 data-nosnippet>976</a>            publication: <span class="self">self</span>.publication,
+<a href=#977 id=977 data-nosnippet>977</a>            awp2: <span class="self">self</span>.awp2,
+<a href=#978 id=978 data-nosnippet>978</a>            aw_catalog: <span class="self">self
+<a href=#979 id=979 data-nosnippet>979</a>                </span>.aw
+<a href=#980 id=980 data-nosnippet>980</a>                .map(|aw| aw.deploy((<span class="kw-2">&amp;</span>host, <span class="kw-2">&amp;</span>resource_policy)))
+<a href=#981 id=981 data-nosnippet>981</a>                .transpose()<span class="question-mark">?</span>,
+<a href=#982 id=982 data-nosnippet>982</a>        })
+<a href=#983 id=983 data-nosnippet>983</a>    }
+<a href=#984 id=984 data-nosnippet>984</a>}
+<a href=#985 id=985 data-nosnippet>985</a>
+<a href=#986 id=986 data-nosnippet>986</a><span class="kw">impl </span>AwPlan {
+<a href=#987 id=987 data-nosnippet>987</a>    <span class="doccomment">/// Under every policy the directory is compared with the request: its
+<a href=#988 id=988 data-nosnippet>988</a>    /// request manifest, the cells the request names, and any it does not
+<a href=#989 id=989 data-nosnippet>989</a>    /// (#735: a cell's conjugate beam and its lookup depend on the whole
+<a href=#990 id=990 data-nosnippet>990</a>    /// frequency list). Reuse needs a directory generated for this request,
+<a href=#991 id=991 data-nosnippet>991</a>    /// complete and holding nothing else. Generation fills in the absent
+<a href=#992 id=992 data-nosnippet>992</a>    /// cells of such a directory, and clears and regenerates any other.
+<a href=#993 id=993 data-nosnippet>993</a>    /// Regeneration clears the cache first. The loader then checks each
+<a href=#994 id=994 data-nosnippet>994</a>    /// cell's sky increment against the image.
+<a href=#995 id=995 data-nosnippet>995</a>    ///
+<a href=#996 id=996 data-nosnippet>996</a>    /// The run reads a native cache under its shared [`NativeCacheLock`],
+<a href=#997 id=997 data-nosnippet>997</a>    /// held in the deployment for as long as the run lives, since cells load
+<a href=#998 id=998 data-nosnippet>998</a>    /// lazily. It writes one only under the exclusive lock, which it cannot
+<a href=#999 id=999 data-nosnippet>999</a>    /// take while another run reads the cache. After writing, it takes the
+<a href=#1000 id=1000 data-nosnippet>1000</a>    /// shared lock again and checks the directory once more before it keeps
+<a href=#1001 id=1001 data-nosnippet>1001</a>    /// it (#739 review). Generation is admitted on `admission`'s host and
+<a href=#1002 id=1002 data-nosnippet>1002</a>    /// policy before it starts and released when it ends (#738).
+<a href=#1003 id=1003 data-nosnippet>1003</a>    </span><span class="kw">fn </span>deploy(
+<a href=#1004 id=1004 data-nosnippet>1004</a>        <span class="self">self</span>,
+<a href=#1005 id=1005 data-nosnippet>1005</a>        admission: (<span class="kw-2">&amp;</span><span class="kw">crate</span>::HostResources, <span class="kw-2">&amp;</span><span class="kw">crate</span>::ResourcePolicy),
+<a href=#1006 id=1006 data-nosnippet>1006</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;AwCatalogDeployment, PrepareError&gt; {
+<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw">let </span>(lock, generation_workers) = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.native {
+<a href=#1008 id=1008 data-nosnippet>1008</a>            <span class="prelude-val">Some</span>((policy, input)) =&gt; {
+<a href=#1009 id=1009 data-nosnippet>1009</a>                <span class="kw">let </span>(lock, workers) = <span class="self">self</span>.bring_native(<span class="kw-2">*</span>policy, input, admission)<span class="question-mark">?</span>;
+<a href=#1010 id=1010 data-nosnippet>1010</a>                (<span class="prelude-val">Some</span>(Arc::new(lock)), workers)
+<a href=#1011 id=1011 data-nosnippet>1011</a>            }
+<a href=#1012 id=1012 data-nosnippet>1012</a>            <span class="prelude-val">None </span>=&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#1013 id=1013 data-nosnippet>1013</a>        };
+<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="prelude-val">Ok</span>(AwCatalogDeployment {
+<a href=#1015 id=1015 data-nosnippet>1015</a>            root: <span class="self">self</span>.root,
+<a href=#1016 id=1016 data-nosnippet>1016</a>            indexing: <span class="self">self</span>.indexing,
+<a href=#1017 id=1017 data-nosnippet>1017</a>            resident_bytes: <span class="self">self</span>.resident_bytes,
+<a href=#1018 id=1018 data-nosnippet>1018</a>            automatic: <span class="self">self</span>.automatic,
+<a href=#1019 id=1019 data-nosnippet>1019</a>            _lock: lock,
+<a href=#1020 id=1020 data-nosnippet>1020</a>            generation_workers,
+<a href=#1021 id=1021 data-nosnippet>1021</a>        })
+<a href=#1022 id=1022 data-nosnippet>1022</a>    }
+<a href=#1023 id=1023 data-nosnippet>1023</a>
+<a href=#1024 id=1024 data-nosnippet>1024</a>    <span class="doccomment">/// Bring the native cache to `policy` for `input` and return the shared
+<a href=#1025 id=1025 data-nosnippet>1025</a>    /// lock the run keeps while it reads it ([`Self::deploy`]), and the
+<a href=#1026 id=1026 data-nosnippet>1026</a>    /// workers that generated cells, if any did.
+<a href=#1027 id=1027 data-nosnippet>1027</a>    </span><span class="kw">fn </span>bring_native(
+<a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1029 id=1029 data-nosnippet>1029</a>        policy: NativeAwCachePolicy,
+<a href=#1030 id=1030 data-nosnippet>1030</a>        input: <span class="kw-2">&amp;</span>NativeAwRequestInput,
+<a href=#1031 id=1031 data-nosnippet>1031</a>        (host, resources): (<span class="kw-2">&amp;</span><span class="kw">crate</span>::HostResources, <span class="kw-2">&amp;</span><span class="kw">crate</span>::ResourcePolicy),
+<a href=#1032 id=1032 data-nosnippet>1032</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(NativeCacheLock, <span class="prelude-ty">Option</span>&lt;usize&gt;), PrepareError&gt; {
+<a href=#1033 id=1033 data-nosnippet>1033</a>        <span class="kw">let </span>root = <span class="kw-2">&amp;</span><span class="self">self</span>.root;
+<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="kw">let </span>shared = NativeCacheLock::shared(root)<span class="question-mark">?</span>;
+<a href=#1035 id=1035 data-nosnippet>1035</a>        <span class="kw">let </span>state = AwCatalog::native_cache_state(root, input)<span class="question-mark">?</span>;
+<a href=#1036 id=1036 data-nosnippet>1036</a>        <span class="kw">let </span>fill = <span class="kw">match </span>policy {
+<a href=#1037 id=1037 data-nosnippet>1037</a>            NativeAwCachePolicy::ReuseOnly <span class="kw">if </span>state.reusable() =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>((shared, <span class="prelude-val">None</span>)),
+<a href=#1038 id=1038 data-nosnippet>1038</a>            NativeAwCachePolicy::ReuseOnly =&gt; {
+<a href=#1039 id=1039 data-nosnippet>1039</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwCacheNotReusable { state });
+<a href=#1040 id=1040 data-nosnippet>1040</a>            }
+<a href=#1041 id=1041 data-nosnippet>1041</a>            NativeAwCachePolicy::GenerateMissing <span class="kw">if </span>state.reusable() =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>((shared, <span class="prelude-val">None</span>)),
+<a href=#1042 id=1042 data-nosnippet>1042</a>            NativeAwCachePolicy::GenerateMissing <span class="kw">if </span>state.fillable() =&gt; <span class="bool-val">true</span>,
+<a href=#1043 id=1043 data-nosnippet>1043</a>            NativeAwCachePolicy::GenerateMissing =&gt; {
+<a href=#1044 id=1044 data-nosnippet>1044</a>                <span class="macro">tracing::warn!</span>(
+<a href=#1045 id=1045 data-nosnippet>1045</a>                    <span class="string">"native AW cache {} does not belong to this request ({state}); \
+<a href=#1046 id=1046 data-nosnippet>1046</a>                     regenerating it"</span>,
+<a href=#1047 id=1047 data-nosnippet>1047</a>                    root.display()
+<a href=#1048 id=1048 data-nosnippet>1048</a>                );
+<a href=#1049 id=1049 data-nosnippet>1049</a>                <span class="bool-val">false
+<a href=#1050 id=1050 data-nosnippet>1050</a>            </span>}
+<a href=#1051 id=1051 data-nosnippet>1051</a>            NativeAwCachePolicy::Regenerate =&gt; <span class="bool-val">false</span>,
+<a href=#1052 id=1052 data-nosnippet>1052</a>        };
+<a href=#1053 id=1053 data-nosnippet>1053</a>        drop(shared);
+<a href=#1054 id=1054 data-nosnippet>1054</a>        <span class="kw">let </span>exclusive = NativeCacheLock::exclusive(root)<span class="question-mark">?</span>;
+<a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="comment">// The most workers, up to the policy's and one per cell to generate,
+<a href=#1056 id=1056 data-nosnippet>1056</a>        // whose workspaces fit what the policy leaves free (#708); one when
+<a href=#1057 id=1057 data-nosnippet>1057</a>        // none does, which admission then refuses. Generation gives each of
+<a href=#1058 id=1058 data-nosnippet>1058</a>        // them a unit (#747 review).
+<a href=#1059 id=1059 data-nosnippet>1059</a>        </span><span class="kw">let </span>cells = <span class="kw">if </span>fill {
+<a href=#1060 id=1060 data-nosnippet>1060</a>            state.expected - state.present
+<a href=#1061 id=1061 data-nosnippet>1061</a>        } <span class="kw">else </span>{
+<a href=#1062 id=1062 data-nosnippet>1062</a>            state.expected
+<a href=#1063 id=1063 data-nosnippet>1063</a>        };
+<a href=#1064 id=1064 data-nosnippet>1064</a>        <span class="kw">let </span>free = casa_imaging_runtime::free_memory(host, resources);
+<a href=#1065 id=1065 data-nosnippet>1065</a>        <span class="kw">let </span>workers = (<span class="number">1</span>..=resources.workers(host).min(cells))
+<a href=#1066 id=1066 data-nosnippet>1066</a>            .rev()
+<a href=#1067 id=1067 data-nosnippet>1067</a>            .find(|<span class="kw-2">&amp;</span>workers| AwCatalog::generation_bytes(input, workers) &lt;= free)
+<a href=#1068 id=1068 data-nosnippet>1068</a>            .unwrap_or(<span class="number">1</span>);
+<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">let </span>generating = casa_imaging_runtime::admit(
+<a href=#1070 id=1070 data-nosnippet>1070</a>            host,
+<a href=#1071 id=1071 data-nosnippet>1071</a>            resources,
+<a href=#1072 id=1072 data-nosnippet>1072</a>            <span class="kw-2">&amp;</span>casa_imaging_runtime::Demand {
+<a href=#1073 id=1073 data-nosnippet>1073</a>                phase: <span class="string">"native AW generation"</span>,
+<a href=#1074 id=1074 data-nosnippet>1074</a>                memory: AwCatalog::generation_bytes(input, workers),
+<a href=#1075 id=1075 data-nosnippet>1075</a>            },
+<a href=#1076 id=1076 data-nosnippet>1076</a>        )<span class="question-mark">?</span>;
+<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="macro">tracing::info!</span>(
+<a href=#1078 id=1078 data-nosnippet>1078</a>            <span class="string">"generating {cells} native AW cells into {} on {workers} workers"</span>,
+<a href=#1079 id=1079 data-nosnippet>1079</a>            root.display()
+<a href=#1080 id=1080 data-nosnippet>1080</a>        );
+<a href=#1081 id=1081 data-nosnippet>1081</a>        AwCatalog::generate_native(root, input, fill, workers)<span class="question-mark">?</span>;
+<a href=#1082 id=1082 data-nosnippet>1082</a>        drop(generating);
+<a href=#1083 id=1083 data-nosnippet>1083</a>        drop(exclusive);
+<a href=#1084 id=1084 data-nosnippet>1084</a>        <span class="kw">let </span>shared = NativeCacheLock::shared(root)<span class="question-mark">?</span>;
+<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="kw">let </span>state = AwCatalog::native_cache_state(root, input)<span class="question-mark">?</span>;
+<a href=#1086 id=1086 data-nosnippet>1086</a>        <span class="kw">if </span>!state.reusable() {
+<a href=#1087 id=1087 data-nosnippet>1087</a>            <span class="comment">// Another run replaced the cache between our write and our read.
+<a href=#1088 id=1088 data-nosnippet>1088</a>            </span><span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwCacheNotReusable { state });
+<a href=#1089 id=1089 data-nosnippet>1089</a>        }
+<a href=#1090 id=1090 data-nosnippet>1090</a>        <span class="prelude-val">Ok</span>((shared, <span class="prelude-val">Some</span>(workers)))
+<a href=#1091 id=1091 data-nosnippet>1091</a>    }
+<a href=#1092 id=1092 data-nosnippet>1092</a>}
+<a href=#1093 id=1093 data-nosnippet>1093</a>
+<a href=#1094 id=1094 data-nosnippet>1094</a><span class="doccomment">/// The native run's deployment: the runtime with the paged cube state
+<a href=#1095 id=1095 data-nosnippet>1095</a>/// beside the main image, the product controls and image writer, and the AW
+<a href=#1096 id=1096 data-nosnippet>1096</a>/// plan.
+<a href=#1097 id=1097 data-nosnippet>1097</a></span><span class="kw">fn </span>deployment(
+<a href=#1098 id=1098 data-nosnippet>1098</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#1099 id=1099 data-nosnippet>1099</a>    context: <span class="kw-2">&amp;</span>RunContext,
+<a href=#1100 id=1100 data-nosnippet>1100</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1101 id=1101 data-nosnippet>1101</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
+<a href=#1102 id=1102 data-nosnippet>1102</a>    primary_beam: <span class="prelude-ty">Option</span>&lt;AnalyticPrimaryBeamModel&gt;,
+<a href=#1103 id=1103 data-nosnippet>1103</a>    primary_beam_centres: <span class="prelude-ty">Option</span>&lt;PrimaryBeamCentres&gt;,
+<a href=#1104 id=1104 data-nosnippet>1104</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Deployment, PrepareError&gt; {
+<a href=#1105 id=1105 data-nosnippet>1105</a>    <span class="kw">let </span>parent = |path: <span class="kw-2">&amp;</span>Path| {
+<a href=#1106 id=1106 data-nosnippet>1106</a>        path.parent()
+<a href=#1107 id=1107 data-nosnippet>1107</a>            .unwrap_or_else(|| Path::new(<span class="string">"."</span>))
+<a href=#1108 id=1108 data-nosnippet>1108</a>            .to_path_buf()
+<a href=#1109 id=1109 data-nosnippet>1109</a>    };
+<a href=#1110 id=1110 data-nosnippet>1110</a>    <span class="kw">let </span><span class="kw-2">mut </span>controls = ContinuumProductControls::new(request.psfcutoff <span class="kw">as </span>f32).map_err(|<span class="kw">_</span>| {
+<a href=#1111 id=1111 data-nosnippet>1111</a>        PrepareError::PsfCutoff {
+<a href=#1112 id=1112 data-nosnippet>1112</a>            psfcutoff: request.psfcutoff,
+<a href=#1113 id=1113 data-nosnippet>1113</a>        }
+<a href=#1114 id=1114 data-nosnippet>1114</a>    })<span class="question-mark">?</span>;
+<a href=#1115 id=1115 data-nosnippet>1115</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(model) = primary_beam {
+<a href=#1116 id=1116 data-nosnippet>1116</a>        controls = controls.with_primary_beam_model(model);
+<a href=#1117 id=1117 data-nosnippet>1117</a>    }
+<a href=#1118 id=1118 data-nosnippet>1118</a>    <span class="prelude-val">Ok</span>(Deployment {
+<a href=#1119 id=1119 data-nosnippet>1119</a>        runtime: PendingRuntime {
+<a href=#1120 id=1120 data-nosnippet>1120</a>            host: context.host,
+<a href=#1121 id=1121 data-nosnippet>1121</a>            resource_policy: context.policy,
+<a href=#1122 id=1122 data-nosnippet>1122</a>            grid_precision: request.gridprecision,
+<a href=#1123 id=1123 data-nosnippet>1123</a>            ft_padding: request.ft_padding,
+<a href=#1124 id=1124 data-nosnippet>1124</a>            cancel: context.cancel.clone(),
+<a href=#1125 id=1125 data-nosnippet>1125</a>            spill_directory: parent(<span class="kw-2">&amp;</span>request.imagename),
+<a href=#1126 id=1126 data-nosnippet>1126</a>            diagnostics: request.diagnostics,
+<a href=#1127 id=1127 data-nosnippet>1127</a>        },
+<a href=#1128 id=1128 data-nosnippet>1128</a>        publication: ApplicationPublication {
+<a href=#1129 id=1129 data-nosnippet>1129</a>            controls,
+<a href=#1130 id=1130 data-nosnippet>1130</a>            primary_beam_centres,
+<a href=#1131 id=1131 data-nosnippet>1131</a>            vla_selection_store: (primary_beam == <span class="prelude-val">Some</span>(AnalyticPrimaryBeamModel::CasaVlaBand)
+<a href=#1132 id=1132 data-nosnippet>1132</a>                &amp;&amp; request.specmode == SpecMode::Cube
+<a href=#1133 id=1133 data-nosnippet>1133</a>                &amp;&amp; <span class="macro">matches!</span>(
+<a href=#1134 id=1134 data-nosnippet>1134</a>                    surveyed.spectral.output_frequency_reference,
+<a href=#1135 id=1135 data-nosnippet>1135</a>                    FrequencyRef::BARY | FrequencyRef::TOPO
+<a href=#1136 id=1136 data-nosnippet>1136</a>                ))
+<a href=#1137 id=1137 data-nosnippet>1137</a>            .then_some(surveyed.reference),
+<a href=#1138 id=1138 data-nosnippet>1138</a>            saved_mem_model: request.deconvolver == Deconvolver::Mem &amp;&amp; request.continued_model,
+<a href=#1139 id=1139 data-nosnippet>1139</a>            writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
+<a href=#1140 id=1140 data-nosnippet>1140</a>        },
+<a href=#1141 id=1141 data-nosnippet>1141</a>        output_directories: domains
+<a href=#1142 id=1142 data-nosnippet>1142</a>            .iter()
+<a href=#1143 id=1143 data-nosnippet>1143</a>            .map(|domain| parent(<span class="kw-2">&amp;</span>domain.output))
+<a href=#1144 id=1144 data-nosnippet>1144</a>            .collect(),
+<a href=#1145 id=1145 data-nosnippet>1145</a>        awp2: awp2::plan(request, surveyed, <span class="kw-2">&amp;</span>domains[<span class="number">0</span>], context)<span class="question-mark">?</span>,
+<a href=#1146 id=1146 data-nosnippet>1146</a>        aw: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
+<a href=#1147 id=1147 data-nosnippet>1147</a>            Gridder::Awproject(aw) =&gt; <span class="prelude-val">Some</span>(aw_plan(request, aw, surveyed, context)<span class="question-mark">?</span>),
+<a href=#1148 id=1148 data-nosnippet>1148</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#1149 id=1149 data-nosnippet>1149</a>        },
+<a href=#1150 id=1150 data-nosnippet>1150</a>    })
+<a href=#1151 id=1151 data-nosnippet>1151</a>}
+<a href=#1152 id=1152 data-nosnippet>1152</a>
+<a href=#1153 id=1153 data-nosnippet>1153</a><span class="doccomment">/// The AW catalog to open: a CASA cache read as it is, or a native cache
+<a href=#1154 id=1154 data-nosnippet>1154</a>/// in CASA's format with the input its cells are generated from.
+<a href=#1155 id=1155 data-nosnippet>1155</a></span><span class="kw">fn </span>aw_plan(
+<a href=#1156 id=1156 data-nosnippet>1156</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#1157 id=1157 data-nosnippet>1157</a>    aw: <span class="kw-2">&amp;</span>AwProjection,
+<a href=#1158 id=1158 data-nosnippet>1158</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1159 id=1159 data-nosnippet>1159</a>    context: <span class="kw-2">&amp;</span>RunContext,
+<a href=#1160 id=1160 data-nosnippet>1160</a>) -&gt; <span class="prelude-ty">Result</span>&lt;AwPlan, PrepareError&gt; {
+<a href=#1161 id=1161 data-nosnippet>1161</a>    <span class="kw">let </span>(root, native) = <span class="kw">match </span><span class="kw-2">&amp;</span>aw.cf_source {
+<a href=#1162 id=1162 data-nosnippet>1162</a>        AwCfSource::CasaImport { cfcache } =&gt; (cfcache.clone(), <span class="prelude-val">None</span>),
+<a href=#1163 id=1163 data-nosnippet>1163</a>        AwCfSource::NativeEvla {
+<a href=#1164 id=1164 data-nosnippet>1164</a>            native_cf_cache,
+<a href=#1165 id=1165 data-nosnippet>1165</a>            native_cf_policy,
+<a href=#1166 id=1166 data-nosnippet>1166</a>            ..
+<a href=#1167 id=1167 data-nosnippet>1167</a>        } =&gt; {
+<a href=#1168 id=1168 data-nosnippet>1168</a>            <span class="kw">let </span>first_cross = surveyed
+<a href=#1169 id=1169 data-nosnippet>1169</a>                .survey
+<a href=#1170 id=1170 data-nosnippet>1170</a>                .first_cross
+<a href=#1171 id=1171 data-nosnippet>1171</a>                .ok_or(PrepareError::NoCrossCorrelationRow)<span class="question-mark">?</span>;
+<a href=#1172 id=1172 data-nosnippet>1172</a>            <span class="kw">let </span>input = native_aw::resolve(request, aw, surveyed, first_cross, context)<span class="question-mark">?</span>;
+<a href=#1173 id=1173 data-nosnippet>1173</a>            input.validate()<span class="question-mark">?</span>;
+<a href=#1174 id=1174 data-nosnippet>1174</a>            (native_cf_cache.clone(), <span class="prelude-val">Some</span>((<span class="kw-2">*</span>native_cf_policy, input)))
+<a href=#1175 id=1175 data-nosnippet>1175</a>        }
+<a href=#1176 id=1176 data-nosnippet>1176</a>    };
+<a href=#1177 id=1177 data-nosnippet>1177</a>    <span class="kw">let </span>feed_zero_angles_rad = <span class="kw">if </span>native.is_none() || aw.computepastep != <span class="number">360.0 </span>{
+<a href=#1178 id=1178 data-nosnippet>1178</a>        <span class="kw">let </span><span class="kw-2">mut </span>feed_zero_angles = <span class="macro">vec!</span>[<span class="number">0.0</span>; surveyed.catalogue.windows.len()];
+<a href=#1179 id=1179 data-nosnippet>1179</a>        <span class="kw">for </span>window <span class="kw">in </span><span class="kw-2">&amp;</span>surveyed.survey.spectral_windows {
+<a href=#1180 id=1180 data-nosnippet>1180</a>            <span class="kw">let </span>spw = u32::try_from(window.spw_id).expect(<span class="string">"a surveyed window fits u32"</span>);
+<a href=#1181 id=1181 data-nosnippet>1181</a>            feed_zero_angles[window.spw_id] =
+<a href=#1182 id=1182 data-nosnippet>1182</a>                native_aw::receptor_zero_angle(surveyed.catalogue, surveyed.msv2, spw)<span class="question-mark">? </span><span class="kw">as </span>f32;
+<a href=#1183 id=1183 data-nosnippet>1183</a>        }
+<a href=#1184 id=1184 data-nosnippet>1184</a>        <span class="prelude-val">Some</span>(feed_zero_angles.into())
+<a href=#1185 id=1185 data-nosnippet>1185</a>    } <span class="kw">else </span>{
+<a href=#1186 id=1186 data-nosnippet>1186</a>        <span class="prelude-val">None
+<a href=#1187 id=1187 data-nosnippet>1187</a>    </span>};
+<a href=#1188 id=1188 data-nosnippet>1188</a>    <span class="kw">let </span>rotation = aw_rotation(
+<a href=#1189 id=1189 data-nosnippet>1189</a>        request,
+<a href=#1190 id=1190 data-nosnippet>1190</a>        aw,
+<a href=#1191 id=1191 data-nosnippet>1191</a>        surveyed,
+<a href=#1192 id=1192 data-nosnippet>1192</a>        feed_zero_angles_rad.as_deref(),
+<a href=#1193 id=1193 data-nosnippet>1193</a>        context,
+<a href=#1194 id=1194 data-nosnippet>1194</a>    )<span class="question-mark">?</span>;
+<a href=#1195 id=1195 data-nosnippet>1195</a>    <span class="prelude-val">Ok</span>(AwPlan {
+<a href=#1196 id=1196 data-nosnippet>1196</a>        root,
+<a href=#1197 id=1197 data-nosnippet>1197</a>        native,
+<a href=#1198 id=1198 data-nosnippet>1198</a>        indexing: AwIndexing {
+<a href=#1199 id=1199 data-nosnippet>1199</a>            conjugate_beams: aw.conjbeams,
+<a href=#1200 id=1200 data-nosnippet>1200</a>            image_reference_hz: surveyed.spectral.reference_frequency_hz,
+<a href=#1201 id=1201 data-nosnippet>1201</a>            pa_tolerance_rad: aw.pa_tolerance_rad(),
+<a href=#1202 id=1202 data-nosnippet>1202</a>            feed_zero_angles_rad,
+<a href=#1203 id=1203 data-nosnippet>1203</a>            rotation,
+<a href=#1204 id=1204 data-nosnippet>1204</a>        },
+<a href=#1205 id=1205 data-nosnippet>1205</a>        resident_bytes: <span class="kw">match </span>aw.cf_resident_mb {
+<a href=#1206 id=1206 data-nosnippet>1206</a>            <span class="prelude-val">Some</span>(megabytes) =&gt; megabytes
+<a href=#1207 id=1207 data-nosnippet>1207</a>                .checked_mul(<span class="number">1 </span>&lt;&lt; <span class="number">20</span>)
+<a href=#1208 id=1208 data-nosnippet>1208</a>                .ok_or(PrepareError::CfResidentSize { megabytes })<span class="question-mark">?</span>,
+<a href=#1209 id=1209 data-nosnippet>1209</a>            <span class="prelude-val">None </span>=&gt; AUTOMATIC_CELL_CACHE_FLOOR,
+<a href=#1210 id=1210 data-nosnippet>1210</a>        },
+<a href=#1211 id=1211 data-nosnippet>1211</a>        automatic: aw.cf_resident_mb.is_none(),
+<a href=#1212 id=1212 data-nosnippet>1212</a>    })
+<a href=#1213 id=1213 data-nosnippet>1213</a>}
+<a href=#1214 id=1214 data-nosnippet>1214</a>
+<a href=#1215 id=1215 data-nosnippet>1215</a><span class="kw">fn </span>aw_rotation(
+<a href=#1216 id=1216 data-nosnippet>1216</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#1217 id=1217 data-nosnippet>1217</a>    aw: <span class="kw-2">&amp;</span>AwProjection,
+<a href=#1218 id=1218 data-nosnippet>1218</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1219 id=1219 data-nosnippet>1219</a>    feed: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[f32]&gt;,
+<a href=#1220 id=1220 data-nosnippet>1220</a>    context: <span class="kw-2">&amp;</span>RunContext,
+<a href=#1221 id=1221 data-nosnippet>1221</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;casa_imaging_operator::AwPaRotation&gt;, PrepareError&gt; {
+<a href=#1222 id=1222 data-nosnippet>1222</a>    <span class="kw">if </span>aw.rotatepastep == <span class="number">360.0 </span>{
+<a href=#1223 id=1223 data-nosnippet>1223</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#1224 id=1224 data-nosnippet>1224</a>    }
+<a href=#1225 id=1225 data-nosnippet>1225</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(feed) = feed <span class="kw">else </span>{
+<a href=#1226 id=1226 data-nosnippet>1226</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
+<a href=#1227 id=1227 data-nosnippet>1227</a>    };
+<a href=#1228 id=1228 data-nosnippet>1228</a>    <span class="kw">let </span>evla = surveyed.survey.observation_ids.iter().all(|<span class="kw-2">&amp;</span>id| {
+<a href=#1229 id=1229 data-nosnippet>1229</a>        surveyed
+<a href=#1230 id=1230 data-nosnippet>1230</a>            .catalogue
+<a href=#1231 id=1231 data-nosnippet>1231</a>            .observations
+<a href=#1232 id=1232 data-nosnippet>1232</a>            .get(id <span class="kw">as </span>usize)
+<a href=#1233 id=1233 data-nosnippet>1233</a>            .is_some_and(|observation| <span class="macro">matches!</span>(observation.telescope.trim(), <span class="string">"EVLA" </span>| <span class="string">"VLA"</span>))
+<a href=#1234 id=1234 data-nosnippet>1234</a>    });
+<a href=#1235 id=1235 data-nosnippet>1235</a>    <span class="kw">let </span>windows = <span class="kw-2">&amp;</span>surveyed.survey.spectral_windows;
+<a href=#1236 id=1236 data-nosnippet>1236</a>    <span class="kw">let </span>multi_term = request.deconvolver == Deconvolver::Mtmfs &amp;&amp; aw.wbawp;
+<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">let </span>first = windows.first().ok_or(PrepareError::AwRotationScope)<span class="question-mark">?</span>.spw_id;
+<a href=#1238 id=1238 data-nosnippet>1238</a>    <span class="kw">let </span>feed_angle = feed[first];
+<a href=#1239 id=1239 data-nosnippet>1239</a>    <span class="kw">if </span>(!multi_term &amp;&amp; windows.len() != <span class="number">1</span>)
+<a href=#1240 id=1240 data-nosnippet>1240</a>        || !evla
+<a href=#1241 id=1241 data-nosnippet>1241</a>        || !aw.aterm
+<a href=#1242 id=1242 data-nosnippet>1242</a>        || aw.computepastep != <span class="number">360.0
+<a href=#1243 id=1243 data-nosnippet>1243</a>        </span>|| surveyed.survey.fields.len() != <span class="number">1
+<a href=#1244 id=1244 data-nosnippet>1244</a>        </span>|| request.specmode != SpecMode::Mfs
+<a href=#1245 id=1245 data-nosnippet>1245</a>        || (request.solves() &amp;&amp; !multi_term &amp;&amp; request.deconvolver != Deconvolver::Hogbom)
+<a href=#1246 id=1246 data-nosnippet>1246</a>        || request.predicts_final_model()
+<a href=#1247 id=1247 data-nosnippet>1247</a>        || request.tclean_restart
+<a href=#1248 id=1248 data-nosnippet>1248</a>        || request.has_start_model()
+<a href=#1249 id=1249 data-nosnippet>1249</a>        || request.savemodel != <span class="kw">crate</span>::SaveModel::None
+<a href=#1250 id=1250 data-nosnippet>1250</a>        || !request.calcpsf
+<a href=#1251 id=1251 data-nosnippet>1251</a>        || !request.calcres
+<a href=#1252 id=1252 data-nosnippet>1252</a>    {
+<a href=#1253 id=1253 data-nosnippet>1253</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
+<a href=#1254 id=1254 data-nosnippet>1254</a>    }
+<a href=#1255 id=1255 data-nosnippet>1255</a>    <span class="kw">if </span>multi_term &amp;&amp; !one_rotation_traversal_per_window(surveyed) {
+<a href=#1256 id=1256 data-nosnippet>1256</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
+<a href=#1257 id=1257 data-nosnippet>1257</a>    }
+<a href=#1258 id=1258 data-nosnippet>1258</a>    <span class="kw">let </span>epochs = surveyed.survey.window_epochs(first);
+<a href=#1259 id=1259 data-nosnippet>1259</a>    <span class="comment">// CASA walks each spectral window's buffers separately. A time-only
+<a href=#1260 id=1260 data-nosnippet>1260</a>    // rotation key is shared by windows with the same usable timeline.
+<a href=#1261 id=1261 data-nosnippet>1261</a>    </span><span class="kw">if </span>windows.iter().skip(<span class="number">1</span>).any(|window| {
+<a href=#1262 id=1262 data-nosnippet>1262</a>        feed[window.spw_id] != feed_angle
+<a href=#1263 id=1263 data-nosnippet>1263</a>            || rotation_times(epochs)
+<a href=#1264 id=1264 data-nosnippet>1264</a>                .ne(rotation_times(surveyed.survey.window_epochs(window.spw_id)))
+<a href=#1265 id=1265 data-nosnippet>1265</a>    }) {
+<a href=#1266 id=1266 data-nosnippet>1266</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwRotationScope);
+<a href=#1267 id=1267 data-nosnippet>1267</a>    }
+<a href=#1268 id=1268 data-nosnippet>1268</a>    <span class="comment">// The vector and the Arc slice can coexist while converting it.
+<a href=#1269 id=1269 data-nosnippet>1269</a>    </span><span class="kw">let </span>_admission = casa_imaging_runtime::admit(
+<a href=#1270 id=1270 data-nosnippet>1270</a>        <span class="kw-2">&amp;</span>context.host,
+<a href=#1271 id=1271 data-nosnippet>1271</a>        <span class="kw-2">&amp;</span>context.policy,
+<a href=#1272 id=1272 data-nosnippet>1272</a>        <span class="kw-2">&amp;</span>casa_imaging_runtime::Demand {
+<a href=#1273 id=1273 data-nosnippet>1273</a>            phase: <span class="string">"AW rotation epochs"</span>,
+<a href=#1274 id=1274 data-nosnippet>1274</a>            memory: (<span class="number">2 </span>* epochs.len() * size_of::&lt;(f64, f32)&gt;() + <span class="number">2 </span>* size_of::&lt;usize&gt;()) <span class="kw">as </span>u64,
+<a href=#1275 id=1275 data-nosnippet>1275</a>        },
+<a href=#1276 id=1276 data-nosnippet>1276</a>    )<span class="question-mark">?</span>;
+<a href=#1277 id=1277 data-nosnippet>1277</a>    <span class="kw">let </span><span class="kw-2">mut </span>samples = Vec::with_capacity(epochs.len());
+<a href=#1278 id=1278 data-nosnippet>1278</a>    <span class="kw">for </span>(time, field) <span class="kw">in </span>rotation_times(epochs) {
+<a href=#1279 id=1279 data-nosnippet>1279</a>        <span class="kw">let </span>pa = native_aw::feed_pa(surveyed, time, field, feed_angle)<span class="question-mark">?</span>;
+<a href=#1280 id=1280 data-nosnippet>1280</a>        samples.push((time, pa));
+<a href=#1281 id=1281 data-nosnippet>1281</a>    }
+<a href=#1282 id=1282 data-nosnippet>1282</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(casa_imaging_operator::AwPaRotation {
+<a href=#1283 id=1283 data-nosnippet>1283</a>        step_rad: f64::from(aw.rotatepastep <span class="kw">as </span>f32).to_radians(),
+<a href=#1284 id=1284 data-nosnippet>1284</a>        require_repeatable_schedule: multi_term,
+<a href=#1285 id=1285 data-nosnippet>1285</a>        samples: samples.into(),
+<a href=#1286 id=1286 data-nosnippet>1286</a>    }))
 <a href=#1287 id=1287 data-nosnippet>1287</a>}
 <a href=#1288 id=1288 data-nosnippet>1288</a>
-<a href=#1289 id=1289 data-nosnippet>1289</a><span class="kw">fn </span>rotation_times(epochs: <span class="kw-2">&amp;</span>[survey::Epoch]) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (f64, i32)&gt; + <span class="lifetime">'_ </span>{
-<a href=#1290 id=1290 data-nosnippet>1290</a>    epochs
-<a href=#1291 id=1291 data-nosnippet>1291</a>        .iter()
-<a href=#1292 id=1292 data-nosnippet>1292</a>        .filter(|epoch| epoch.has_unflagged_cross)
-<a href=#1293 id=1293 data-nosnippet>1293</a>        .map(|epoch| (epoch.time_mjd_seconds, epoch.field_id))
-<a href=#1294 id=1294 data-nosnippet>1294</a>}
+<a href=#1289 id=1289 data-nosnippet>1289</a><span class="comment">// CASA walks ARRAY_ID then DATA_DESC_ID before TIME. The survey merges
+<a href=#1290 id=1290 data-nosnippet>1290</a>// partition epochs by time, so require one chronological traversal per
+<a href=#1291 id=1291 data-nosnippet>1291</a>// window for the Taylor passes that share the rotation schedule.
+<a href=#1292 id=1292 data-nosnippet>1292</a></span><span class="kw">fn </span>one_rotation_traversal_per_window(surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;) -&gt; bool {
+<a href=#1293 id=1293 data-nosnippet>1293</a>    <span class="kw">let </span>selected = <span class="kw-2">&amp;</span>surveyed.survey.partitions;
+<a href=#1294 id=1294 data-nosnippet>1294</a>    <span class="kw">if </span>surveyed.stores.len() != <span class="number">1 </span>|| selected.len() != surveyed.survey.spectral_windows.len() {
+<a href=#1295 id=1295 data-nosnippet>1295</a>        <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#1296 id=1296 data-nosnippet>1296</a>    }
+<a href=#1297 id=1297 data-nosnippet>1297</a>    surveyed.msv2.is_none_or(|ms| {
+<a href=#1298 id=1298 data-nosnippet>1298</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(array) = selected
+<a href=#1299 id=1299 data-nosnippet>1299</a>            .first()
+<a href=#1300 id=1300 data-nosnippet>1300</a>            .and_then(|first| ms.array_id(first.partition()))
+<a href=#1301 id=1301 data-nosnippet>1301</a>        <span class="kw">else </span>{
+<a href=#1302 id=1302 data-nosnippet>1302</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#1303 id=1303 data-nosnippet>1303</a>        };
+<a href=#1304 id=1304 data-nosnippet>1304</a>        selected
+<a href=#1305 id=1305 data-nosnippet>1305</a>            .iter()
+<a href=#1306 id=1306 data-nosnippet>1306</a>            .all(|part| ms.array_id(part.partition()) == <span class="prelude-val">Some</span>(array))
+<a href=#1307 id=1307 data-nosnippet>1307</a>    })
+<a href=#1308 id=1308 data-nosnippet>1308</a>}
+<a href=#1309 id=1309 data-nosnippet>1309</a>
+<a href=#1310 id=1310 data-nosnippet>1310</a><span class="kw">fn </span>rotation_times(epochs: <span class="kw-2">&amp;</span>[survey::Epoch]) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (f64, i32)&gt; + <span class="lifetime">'_ </span>{
+<a href=#1311 id=1311 data-nosnippet>1311</a>    epochs
+<a href=#1312 id=1312 data-nosnippet>1312</a>        .iter()
+<a href=#1313 id=1313 data-nosnippet>1313</a>        .filter(|epoch| epoch.has_unflagged_cross)
+<a href=#1314 id=1314 data-nosnippet>1314</a>        .map(|epoch| (epoch.time_mjd_seconds, epoch.field_id))
+<a href=#1315 id=1315 data-nosnippet>1315</a>}
 </code></pre></div></section></main></body></html>
