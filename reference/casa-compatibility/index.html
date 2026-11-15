@@ -11119,7 +11119,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'hogbom'</code></td>
 <td><code>'hogbom'</code>; <code>deconvolver</code> → <code>deconvolver</code></td>
 <td>Partial</td>
-<td>hogbom/clark/clarkstokes/multiscale/mtmfs pass; clark cleans polarizations jointly and clarkstokes cleans each independently (#1126). MEM supports standard single-MS Stokes I MFS with natural, Briggs, uniform, superuniform, radial or Briggs absolute weighting and a full mask, user region, user image mask on the output direction grid (#823), or primary-beam mask. The PB cutoff also constrains a named user mask. A fresh MEM run may use an automatic mask, including the PB cutoff. MEM observes the nsigma noise threshold and can save its model as a virtual model or predict it into selected MODEL_DATA cells. It accepts an explicit start model. A continuation can reuse or recompute the PSF and residual. A model its solver leaves unchanged keeps its saved metadata (#1060). ASP is refused with #223; experimental Clark variants are refused with #1060. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>asp</code>, <code>clark</code>, <code>clark_exp</code>, <code>clarkstokes</code>, <code>clarkstokes_exp</code>, <code>hogbom</code>, <code>mem</code>, <code>mtmfs</code>, <code>multiscale</code></td>
+<td>hogbom/clark/clarkstokes/multiscale/mtmfs pass; clark cleans polarizations jointly and clarkstokes cleans each independently (#1126). MEM supports standard single-MS Stokes I MFS with natural, Briggs, uniform, superuniform, radial or Briggs absolute weighting and a full mask, user region, user image mask on the output direction grid (#823), or primary-beam mask. The PB cutoff also constrains a named user mask. A fresh MEM run may use an automatic mask, including the PB cutoff. MEM observes the nsigma noise threshold and can save its model as a virtual model or predict it into selected MODEL_DATA cells. It accepts an explicit start model. A continuation can reuse or recompute the PSF and residual. A model its solver leaves unchanged keeps its saved metadata (#1060). The experimental G55 ASP examples are CASA reference cases. Native tclean refuses deconvolver='asp' before imaging (#223). Experimental Clark variants are refused with #1060. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>asp</code>, <code>clark</code>, <code>clark_exp</code>, <code>clarkstokes</code>, <code>clarkstokes_exp</code>, <code>hogbom</code>, <code>mem</code>, <code>mtmfs</code>, <code>multiscale</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103</a>, <a href="#tclean-evidence-mtmfs-polarized-review-20261103">mtmfs-polarized-review-20261103</a>, <a href="#tclean-evidence-blank-mask-beam-20261105">blank-mask-beam-20261105</a>, <a href="#tclean-evidence-common-beam-platform-20261105">common-beam-platform-20261105</a></td>
 </tr>
 <tr>
@@ -11151,7 +11151,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>0.0</code></td>
 <td><code>0.0</code>; <code>fusedthreshold</code> → <code>fusedthreshold</code></td>
 <td>Partial</td>
-<td>Ignored outside ASP, as CASA ignores it. ASP is refused (#223); no ASP implementation is claimed. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code></td>
+<td>Ignored outside ASP, as CASA ignores it. Native tclean refuses the experimental ASP requests before either control can be used (#223). <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -11159,7 +11159,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>-1</code></td>
 <td><code>-1</code>; <code>largestscale</code> → <code>largestscale</code></td>
 <td>Partial</td>
-<td>Ignored outside ASP, as CASA ignores it. ASP is refused (#223); no ASP implementation is claimed. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>integer</code></td>
+<td>Ignored outside ASP, as CASA ignores it. Native tclean refuses the experimental ASP requests before either control can be used (#223). <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>integer</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>

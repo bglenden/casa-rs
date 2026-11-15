@@ -678,6 +678,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vla-adaptive-scale-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VLA adaptive-scale examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#source-pages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -746,6 +757,14 @@ python3<span class="w"> </span>scripts/tutorial_parity/runner.py<span class="w">
 <p>Evidence, review records and the section's Markdown and HTML documentation are
 written atomically under the pack paths the manifest declares. The runner's
 tests run with <code>scripts/test-perf-tools.sh</code>.</p>
+<h2 id="vla-adaptive-scale-examples">VLA adaptive-scale examples<a class="headerlink" href="#vla-adaptive-scale-examples" title="Permanent link">&para;</a></h2>
+<p>The G55 standard-gridder and W-projection <code>deconvolver='asp'</code> commands are
+experimental CASA references. Native <code>tclean</code> rejects them before imaging with
+<code>deconvolver="asp" is not implemented by casa-rs yet (#223)</code>. The refusal applies
+to the tutorial's <code>fusedthreshold</code> and <code>largestscale</code> combinations, including
+the requests that save model visibilities.
+<a href="https://casaguides.nrao.edu/index.php?oldid=36701">VLA guide, revision 36701</a> ·
+<a href="https://casadocs.readthedocs.io/en/v6.7.6/notebooks/introduction.html#tclean">CASA 6.7.6 release notes</a></p>
 <h2 id="source-pages">Source pages<a class="headerlink" href="#source-pages" title="Permanent link">&para;</a></h2>
 <ul>
 <li>CASA Guides: <a href="https://casaguides.nrao.edu/index.php/Main_Page">https://casaguides.nrao.edu/index.php/Main_Page</a></li>
