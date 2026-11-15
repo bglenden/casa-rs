@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 562
-- Surfaces: 27 (27 task, 0 session)
-- Surface bindings: 791
+- Concepts: 578
+- Surfaces: 28 (28 task, 0 session)
+- Surface bindings: 824
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -43,6 +43,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 5 | <code>image_analysis</code> | 9 | Import a FITS primary image into a CASA image |
 | [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 11 | Convert between MeasurementSet v2 and MSv4, in either direction. |
+| [Tsdimaging](#surface-tsdimaging)<br><code>tsdimaging</code> | task | 1 | <code>single_dish</code> | 33 | Grid total-power spectra by pointing into a CASA image and weight image. |
 
 <a id="surface-msexplore"></a>
 
@@ -1185,5 +1186,51 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>codec</code> | <code>msconvert.codec@r1</code> | <code>choice (3 values)</code> | <code>"blosc"</code>; optional | MSv4 Output | MSv4 output: compression of the visibilities, flags and weights. |
 | <code>nthreads</code> | <code>workers.msconvert@r1</code> | <code>integer</code> | <code>0</code>; optional | MSv4 Output | MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+
+<a id="surface-tsdimaging"></a>
+
+## Tsdimaging (<code>tsdimaging</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Imaging
+- Provider family: `single_dish`
+- Summary: Grid total-power spectra by pointing into a CASA image and weight image.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>infiles</code> | <code>single_dish.infiles@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; optional | Imaging | CASA tsdimaging's infiles. |
+| <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; optional | Imaging | Output image. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Imaging | Replace an existing output file |
+| <code>field</code> | <code>ms.selection.field@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | CASA field selector, one per MeasurementSet or one for all |
+| <code>spw</code> | <code>ms.selection.spw@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | Comma-separated SPECTRAL_WINDOW_ID integers, one per MeasurementSet or one for all |
+| <code>antenna</code> | <code>ms.selection.antenna@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | CASA antenna (baseline) selection, exact text, one per MeasurementSet or one for all |
+| <code>scan</code> | <code>ms.selection.scan@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | Syntax-preserving numeric scan selection, one per MeasurementSet or one for all |
+| <code>intent</code> | <code>ms.selection.intent@r2</code> | <code>array&lt;string&gt;</code> | <code>"OBSERVE_TARGET#ON_SOURCE"</code>; optional | Imaging | Intent selector, one per MeasurementSet or one for all |
+| <code>timerange</code> | <code>ms.selection.timerange@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | CASA time selection, exact text, one per MeasurementSet or one for all |
+| <code>outframe</code> | <code>parameter.outframe@r3</code> | <code>string</code> | <code>""</code>; optional | Imaging | Spectral frame of a cube's output axis |
+| <code>mode</code> | <code>single_dish.mode@r1</code> | <code>string</code> | <code>"channel"</code>; optional | Imaging | CASA tsdimaging's mode. |
+| <code>nchan</code> | <code>regridms.nchan@r1</code> | <code>integer</code> | <code>-1</code>; optional | Imaging | Number of channels of the regridded spectral axis; -1 for all. |
+| <code>start</code> | <code>single_dish.start@r1</code> | <code>variant</code> | <code>0</code>; optional | Imaging | Native channel start or a spectral quantity. |
+| <code>width</code> | <code>single_dish.width@r1</code> | <code>variant</code> | <code>1</code>; optional | Imaging | Native channel width or a spectral quantity. |
+| <code>veltype</code> | <code>parameter.veltype@r3</code> | <code>string</code> | <code>"radio"</code>; optional | Imaging | Velocity convention of a cube's velocity start and axis |
+| <code>specmode</code> | <code>parameter.specmode@r4</code> | <code>choice (6 values)</code> | <code>"cube"</code>; optional | Imaging | MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame |
+| <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (4 values)</code> | <code>"linear"</code>; optional | Imaging | Spectral interpolation mode for cube gridding |
+| <code>pointingcolumn</code> | <code>single_dish.pointingcolumn@r1</code> | <code>string</code> | <code>"direction"</code>; optional | Imaging | CASA tsdimaging's pointingcolumn. |
+| <code>convertfirst</code> | <code>single_dish.convertfirst@r1</code> | <code>string</code> | <code>"never"</code>; optional | Imaging | CASA tsdimaging's convertfirst. |
+| <code>projection</code> | <code>parameter.projection@r2</code> | <code>string</code> | <code>"SIN"</code>; optional | Imaging | Spherical projection of the image's direction axes. |
+| <code>imsize</code> | <code>single_dish.imsize@r1</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | Imaging | CASA tsdimaging's imsize. |
+| <code>cell</code> | <code>single_dish.cell@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | CASA tsdimaging's cell. |
+| <code>phasecenter</code> | <code>tclean.phasecenter@r1</code> | <code>string</code> | <code>""</code>; optional | Imaging | Image centre: a direction, 'TRACKFIELD', an ephemeris, or a field id; empty for the first selected field. |
+| <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"I"</code>; optional | Imaging | Stokes selector. |
+| <code>gridfunction</code> | <code>single_dish.gridfunction@r1</code> | <code>string</code> | <code>"BOX"</code>; optional | Imaging | CASA tsdimaging's gridfunction. |
+| <code>convsupport</code> | <code>single_dish.convsupport@r1</code> | <code>integer</code> | <code>-1</code>; optional | Imaging | CASA tsdimaging's convsupport. |
+| <code>truncate</code> | <code>single_dish.truncate@r1</code> | <code>variant</code> | <code>-1</code>; optional | Imaging | CASA tsdimaging's truncate. |
+| <code>gwidth</code> | <code>single_dish.gwidth@r1</code> | <code>variant</code> | <code>-1</code>; optional | Imaging | CASA tsdimaging's gwidth. |
+| <code>jwidth</code> | <code>single_dish.jwidth@r1</code> | <code>variant</code> | <code>-1</code>; optional | Imaging | CASA tsdimaging's jwidth. |
+| <code>clipminmax</code> | <code>single_dish.clipminmax@r1</code> | <code>bool</code> | <code>false</code>; optional | Imaging | CASA tsdimaging's clipminmax. |
+| <code>minweight</code> | <code>single_dish.minweight@r1</code> | <code>float</code> | <code>0.1</code>; optional | Imaging | CASA tsdimaging's minweight. |
+| <code>brightnessunit</code> | <code>single_dish.brightnessunit@r1</code> | <code>string</code> | <code>""</code>; optional | Imaging | CASA tsdimaging's brightnessunit. |
+| <code>restfreq</code> | <code>tclean.restfreq@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Imaging | Rest frequencies of a cube's velocity axis; empty for the source's. |
 
 _End of generated reference._

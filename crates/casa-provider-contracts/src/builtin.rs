@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 27);
+        assert_eq!(catalog.surfaces.len(), 28);
         assert!(
             catalog
                 .surfaces
@@ -146,6 +146,7 @@ mod tests {
         assert!(ids.contains("msexplore"));
         assert!(ids.contains("msconvert"));
         assert!(ids.contains("imstat"));
+        assert!(ids.contains("tsdimaging"));
         assert!(!ids.contains("imexplore"));
         assert!(!ids.contains("tablebrowser"));
         assert!(!ids.contains("casars"));
@@ -197,7 +198,11 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "imsize")
             {
-                assert_eq!(binding.concept, imsize.reference());
+                if surface.id() == "tsdimaging" {
+                    assert_eq!(binding.concept.id.as_str(), "single_dish.imsize");
+                } else {
+                    assert_eq!(binding.concept, imsize.reference());
+                }
                 imsize_bindings += 1;
             }
             for binding in surface
@@ -205,12 +210,16 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "cell")
             {
-                assert_eq!(binding.concept, cell.reference());
+                if surface.id() == "tsdimaging" {
+                    assert_eq!(binding.concept.id.as_str(), "single_dish.cell");
+                } else {
+                    assert_eq!(binding.concept, cell.reference());
+                }
                 cell_bindings += 1;
             }
         }
-        assert_eq!(imsize_bindings, 1);
-        assert_eq!(cell_bindings, 1);
+        assert_eq!(imsize_bindings, 2);
+        assert_eq!(cell_bindings, 2);
     }
 
     #[test]
@@ -283,6 +292,7 @@ mod tests {
             ("imregrid", false),
             ("imsubimage", false),
             ("simobserve", true),
+            ("tsdimaging", false),
         ]);
         // casa-rs's own `overwrite` on CASA tasks that have none, and on the
         // casa-rs tasks; CASA's tasks never replace an output unasked.
@@ -673,7 +683,8 @@ mod tests {
                 "imager.width",
                 "impv.width",
                 "ms.transform.width",
-                "regridms.width"
+                "regridms.width",
+                "single_dish.width"
             ]
             .into_iter()
             .map(str::to_string)
@@ -690,6 +701,7 @@ mod tests {
                 "impbcor.mode",
                 "impv.mode",
                 "regridms.mode",
+                "single_dish.mode",
             ]
             .into_iter()
             .map(str::to_string)
@@ -765,7 +777,7 @@ mod tests {
                     });
                     assert_eq!(
                         decoded,
-                        matches!(surface.id(), "tclean" | "simobserve"),
+                        matches!(surface.id(), "tclean" | "simobserve" | "tsdimaging"),
                         "{} product sources",
                         surface.id()
                     );

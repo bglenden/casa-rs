@@ -5758,3 +5758,33 @@ numeric-zero controls. The positive-duration regression checks the full
 curve and transit against the independent CASA control, and the bar's
 width against the analytic 40 seconds. This corrects the default call and
 the intended quantity input without changing the elevation calculation.
+
+## `tsdimaging` crashes after gridding an empty POINTING table
+
+- Date noted: 2026-11-15
+- Status: corrected in the native task (#938 part 2)
+- Affected code: CASA 6.7.6.14 `task_tsdimaging.set_beam_size`
+
+With the POINTING rows removed from the total-power oracle's MS, CASA grids
+from the FIELD direction and writes both image products. Its subsequent
+raster-sampling step raises `ValueError: not enough values to unpack
+(expected 2, got 0)`, leaving the image without the normal weight mask.
+The native task completes the FIELD fallback, writes the weight-median mask,
+and leaves the restoring beam unset when there is no measurable raster.
+`tsdimaging_pointing_oracle.py` retains the raw exception and raw image, then
+calls CASA's unchanged `do_weight_mask` as a completion control. Native image
+and weight agree with that control to 2.1e-7 normalized RMS.
+
+## `tsdimaging`'s empty antenna selector can include cross-correlations
+
+- Date noted: 2026-11-15
+- Status: the accepted simulation core selects autocorrelations (#938)
+- Affected code: CASA 6.7.6.14 `task_tsdimaging` data selection
+
+CASA forwards an empty antenna selection to the imager without the `&&&`
+autocorrelation restriction; a nonempty antenna receives that restriction.
+Later beam estimation explicitly selects autocorrelations. The native
+single-dish task consistently grids autocorrelations, including when the
+antenna parameter is empty. A cross-correlation is not a total-power
+spectrum. This follows the approved core's autocorrelations-only decision;
+interferometric imaging remains the separate tclean operator.

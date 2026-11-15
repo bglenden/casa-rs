@@ -405,6 +405,7 @@ fn provider_invocation_with_originals(
         .map_err(|error| parameter_error("project provider invocation", error))?;
     let descriptor = match session.bundle().surface.provider_family() {
         "imager" => Some(casars_imager::imager_protocol_descriptor()),
+        "single_dish" => Some(casars_imager::single_dish::tsdimaging_task_schema_bundle().protocol),
         "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
         _ => None,
     };

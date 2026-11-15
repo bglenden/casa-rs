@@ -328,6 +328,18 @@
         "measurement_set"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "tsdimaging",
+      "launch": {
+        "executable": "tsdimaging",
+        "cargo_package": "casars-imager",
+        "override_env": "CASARS_TSDIMAGING_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
     }
   ]
 }

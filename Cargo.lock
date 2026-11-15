@@ -305,6 +305,7 @@ dependencies = [
 name = "casa-imaging-application"
 version = "0.27.0"
 dependencies = [
+ "base64",
  "casa-coordinates",
  "casa-images",
  "casa-imaging-deconvolution",
@@ -313,7 +314,9 @@ dependencies = [
  "casa-imaging-operator",
  "casa-imaging-products",
  "casa-imaging-runtime",
+ "casa-imaging-singledish",
  "casa-ms",
+ "casa-numerics",
  "casa-observation",
  "casa-provider-contracts",
  "casa-tables",

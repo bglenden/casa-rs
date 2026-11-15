@@ -25,7 +25,7 @@ pub(crate) mod mvc;
 mod mvc_request;
 pub(crate) use mask_image::{MaskImage, open_onto_itself as open_mask_image_onto_itself};
 mod native_aw;
-mod opening;
+pub(crate) mod opening;
 mod outliers;
 mod partitions;
 pub(crate) mod psf_view;

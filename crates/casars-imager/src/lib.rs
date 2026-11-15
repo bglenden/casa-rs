@@ -16,6 +16,7 @@
 mod casa_return;
 mod history;
 pub mod interrupt;
+pub mod single_dish;
 mod task_contract;
 
 use std::{path::PathBuf, time::Instant};

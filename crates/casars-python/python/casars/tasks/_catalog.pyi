@@ -928,6 +928,43 @@ def msconvert(
 ) -> TaskCompletion:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert')
+def tsdimaging(
+    infiles: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    outfile: StrPath = ...,
+    overwrite: bool = ...,
+    field: str | list[str] | tuple[str, ...] = ...,
+    spw: str | list[str] | tuple[str, ...] = ...,
+    antenna: str | list[str] | tuple[str, ...] = ...,
+    scan: str | list[str] | tuple[str, ...] = ...,
+    intent: str | list[str] | tuple[str, ...] = ...,
+    timerange: str | list[str] | tuple[str, ...] = ...,
+    outframe: str = ...,
+    mode: str = ...,
+    nchan: int = ...,
+    start: ParameterData = ...,
+    width: ParameterData = ...,
+    veltype: str = ...,
+    specmode: Literal['cont', 'cube', 'cubedata', 'cubesource', 'mfs', 'mvc'] = ...,
+    interpolation: Literal['cubic', 'linear', 'nearest', 'none'] = ...,
+    pointingcolumn: str = ...,
+    convertfirst: str = ...,
+    projection: str = ...,
+    imsize: int | list[int] | tuple[int, ...] = ...,
+    cell: str | list[str] | tuple[str, ...] = ...,
+    phasecenter: str = ...,
+    stokes: str = ...,
+    gridfunction: str = ...,
+    convsupport: int = ...,
+    truncate: ParameterData = ...,
+    gwidth: ParameterData = ...,
+    jwidth: ParameterData = ...,
+    clipminmax: bool = ...,
+    minweight: float = ...,
+    brightnessunit: str = ...,
+    restfreq: str | list[str] | tuple[str, ...] = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert']
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'tsdimaging')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'tsdimaging']

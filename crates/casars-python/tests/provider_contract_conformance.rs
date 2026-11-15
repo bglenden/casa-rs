@@ -31,6 +31,10 @@ fn every_builtin_provider_validates_through_the_shared_envelope() {
         casa_images::analysis::image_analysis_task_schema_bundle(),
     );
     assert_task_provider("imager", casars_imager::imager_task_schema_bundle());
+    assert_task_provider(
+        "tsdimaging",
+        casars_imager::single_dish::tsdimaging_task_schema_bundle(),
+    );
 }
 
 fn assert_task_provider<E>(

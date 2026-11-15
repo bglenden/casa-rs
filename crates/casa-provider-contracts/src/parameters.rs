@@ -1437,11 +1437,13 @@ fn validate_reserved_name(
     surface: &str,
     errors: &mut Vec<ContractValidationError>,
 ) {
-    let designated = match binding.name.as_str() {
-        "imsize" => Some(IMSIZE_CONCEPT_ID),
-        "cell" => Some(CELL_CONCEPT_ID),
-        "field" => Some(FIELD_CONCEPT_ID),
-        "spw" => Some(SPW_CONCEPT_ID),
+    let designated = match (surface, binding.name.as_str()) {
+        ("tsdimaging", "imsize") => Some("single_dish.imsize"),
+        ("tsdimaging", "cell") => Some("single_dish.cell"),
+        (_, "imsize") => Some(IMSIZE_CONCEPT_ID),
+        (_, "cell") => Some(CELL_CONCEPT_ID),
+        (_, "field") => Some(FIELD_CONCEPT_ID),
+        (_, "spw") => Some(SPW_CONCEPT_ID),
         _ => None,
     };
     if let Some(designated) = designated

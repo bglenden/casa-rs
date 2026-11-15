@@ -26,6 +26,7 @@ mod restart;
 pub mod restart_mask_law;
 #[doc(hidden)]
 pub mod restart_products_law;
+pub mod single_dish;
 #[doc(hidden)]
 pub mod source_law;
 #[doc(hidden)]

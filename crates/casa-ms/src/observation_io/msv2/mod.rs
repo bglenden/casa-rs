@@ -854,6 +854,7 @@ impl Msv2Observation {
         );
         let per_channel = weights.per_channel;
         let channels = request.channels.len();
+        let group = &entry.data_groups[resolved.data_group];
         let (delivered, stored) = (
             resolved.correlations.products(entry).len(),
             entry.correlations.len(),
@@ -875,6 +876,11 @@ impl Msv2Observation {
         let scratch_bytes_per_sample = 2 * size_of::<usize>()
             + usize::from(roles.flags)
             + 8 * scalars
+            + if roles.values && group.visibilities == "FLOAT_DATA" {
+                channels * stored * size_of::<f32>()
+            } else {
+                0
+            }
             + if resolved.correlations.indices().is_some() {
                 gathered.sample_bytes(channels, stored, per_channel, 0)
             } else {
@@ -917,7 +923,6 @@ impl Msv2Observation {
             baselines * (bytes_per_sample + scratch_bytes_per_sample) + bytes_per_time,
             times,
         )?;
-        let group = &entry.data_groups[resolved.data_group];
         let tile = self
             .tile_shapes
             .iter()
@@ -1265,12 +1270,22 @@ fn visibility_columns(
             .is_some_and(|schema| schema.contains_column(column))
     };
     [
-        ("base", "DATA"),
+        (
+            "base",
+            if !has("DATA") && has("FLOAT_DATA") {
+                "FLOAT_DATA"
+            } else {
+                "DATA"
+            },
+        ),
+        ("float", "FLOAT_DATA"),
         ("corrected", "CORRECTED_DATA"),
         ("model", "MODEL_DATA"),
     ]
     .into_iter()
-    .filter(move |(name, column)| *name == "base" || has(column))
+    .filter(move |(name, column)| {
+        *name == "base" || (has(column) && (*name != "float" || has("DATA")))
+    })
 }
 
 /// The data groups of a partition ([`visibility_columns`]), whose weights
