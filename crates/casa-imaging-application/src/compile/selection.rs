@@ -531,7 +531,7 @@ pub(super) fn selected_channels(
 pub(super) fn observation_selection(
     survey: Survey,
     channels: &WindowChannels,
-    beam_factors: &BTreeMap<usize, f64>,
+    beam_factors: &BTreeMap<usize, [f64; 2]>,
     reads: &super::spectral::WindowReads,
 ) -> Result<ObservationSelection, PrepareError> {
     let spectral_windows = channels
@@ -549,10 +549,10 @@ pub(super) fn observation_selection(
                     SpectralWindowCoordinateCatalog::new(window.frequencies_hz.clone(), *width)
                 })
                 .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })?;
-            let factor = beam_factors
+            let factors = beam_factors
                 .get(spw_id)
                 .copied()
-                .expect("every selected window has its first-buffer factor");
+                .expect("every selected window has its first-buffer factors");
             SpectralWindowSelection::new(
                 u32::try_from(*spw_id).expect("SPW ids are nonnegative stored i32 values"),
                 channels
@@ -561,7 +561,7 @@ pub(super) fn observation_selection(
                     .collect(),
             )
             .with_coordinate_catalog(catalog)
-            .with_first_buffer_beam_factor(factor)
+            .with_first_buffer_beam_factors(factors)
             .map(|selection| match reads.get(spw_id) {
                 Some(read) => read_selection(selection, read),
                 None => selection,

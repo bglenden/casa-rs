@@ -203,12 +203,23 @@ pub struct MosaicWindow {
     pub window_frequencies_hz: Vec<f64>,
     /// Width of the window's first channel in Hz (`CHAN_WIDTH[0]`).
     pub channel_width_hz: f64,
-    /// Frequencies of the selected channels in data order, in Hz, in the
-    /// frame [`ConvolutionFunctionSet::key`] receives them in, as the
-    /// machine saw them first: CASA evaluates a window's beams at the
-    /// frequencies of its first visibility buffer (tclean's in LSRK,
-    /// `interpVisFreq_p`).
+    /// The frequencies that select beam cells, in the frame
+    /// [`ConvolutionFunctionSet::key`] receives. For tclean these are the
+    /// first buffer's gridding frequencies (`interpVisFreq_p`).
     pub selected_frequencies_hz: Vec<f64>,
+    /// The observed band before forming interpolated grid frequencies.
+    /// Required when the cell count can be limited by the raw buffer.
+    pub buffer_band: Option<MosaicBufferBand>,
+}
+
+/// The observed band of a REST mosaic's first buffer, before
+/// interpolation. CASA uses it to limit the beam cells.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MosaicBufferBand {
+    /// The number of native selected channels in the visibility buffer.
+    pub channels: usize,
+    /// The lowest selected channel in TOPO, in Hz.
+    pub lowest_topocentric_hz: f64,
 }
 
 /// The mosaic primary-beam kernel set: dense complex cells per dish-class

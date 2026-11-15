@@ -3,7 +3,7 @@
 //! built at and the rule that keys a sample's frequency to one of them
 //! (`SimplePBConvFunc::findUsefulChannels`).
 
-use super::{MosaicRules, MosaicWindow};
+use super::{MosaicBufferBand, MosaicRules, MosaicWindow};
 use crate::error::OperatorError;
 
 /// The frequency cells of one window and the rule that maps a frequency
@@ -126,10 +126,14 @@ impl FrequencyCells {
             cells -= 1;
             bottom += tol;
         }
-        if cells > selected.len() {
-            cells = selected.len();
+        let native = window.buffer_band.unwrap_or(MosaicBufferBand {
+            channels: selected.len(),
+            lowest_topocentric_hz: min_freq,
+        });
+        if cells > native.channels {
+            cells = native.channels;
             tol = window.channel_width_hz.abs();
-            bottom = min_freq;
+            bottom = native.lowest_topocentric_hz;
         }
         let frequencies_hz = if cells + 1 >= selected.len() {
             return Ok(Self::identity(window, first));
@@ -227,7 +231,27 @@ mod tests {
             window_frequencies_hz: vec![window_top - 10.0 * width, window_top],
             channel_width_hz: width,
             selected_frequencies_hz: selected,
+            buffer_band: None,
         }
+    }
+
+    #[test]
+    fn mosaic_beam_count_is_limited_by_native_buffer_not_interpolated_grid() {
+        // Four observed channels at 1 GHz intervals. CASA's six
+        // interpolation frequencies exceed the native beam-cell count,
+        // so it also switches the origin to the native TOPO minimum.
+        let frequencies = vec![99.5e9, 100.5e9, 101.5e9, 102.5e9, 103.5e9, 104.5e9];
+        let mut window = window(frequencies, 103.0e9, 1.0e9);
+        window.buffer_band = Some(MosaicBufferBand {
+            channels: 4,
+            lowest_topocentric_hz: 99.98e9,
+        });
+        let cells = FrequencyCells::tclean(&window, 0).expect("cells");
+        assert_eq!(
+            cells.frequencies_hz,
+            [99.98e9, 100.98e9, 101.98e9, 102.98e9]
+        );
+        assert_eq!(cells.tolerance_hz, Some(1.0e9));
     }
 
     #[test]

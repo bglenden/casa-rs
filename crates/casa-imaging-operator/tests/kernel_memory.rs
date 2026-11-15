@@ -270,6 +270,7 @@ fn mosaic_stages_hold_at_most_what_they_state() {
         window_frequencies_hz: vec![top - 2.0e9, top],
         channel_width_hz: 1.0e6,
         selected_frequencies_hz: selected,
+        buffer_band: None,
     };
     let eight = (0..8)
         .map(|channel| 98.0e9 + 0.25e9 * f64::from(channel))
@@ -348,6 +349,7 @@ fn clipped_spreads_hold_at_most_their_charge() {
         window_frequencies_hz: vec![0.98e11, 1.0e11],
         channel_width_hz: 1.0e6,
         selected_frequencies_hz: vec![1.0e11],
+        buffer_band: None,
     };
     for precision in [GridPrecision::F32, GridPrecision::F64] {
         let set = MosaicPb::new(

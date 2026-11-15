@@ -283,7 +283,7 @@ pub(super) fn first_buffer_beam_factors(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
     tracking: Option<&PhaseCentreEphemeris>,
-) -> Result<BTreeMap<usize, f64>, PrepareError> {
+) -> Result<BTreeMap<usize, [f64; 2]>, PrepareError> {
     let mut factors = BTreeMap::new();
     for window in &survey.spectral_windows {
         let source = window.frequency_reference;
@@ -296,23 +296,37 @@ pub(super) fn first_buffer_beam_factors(
                     .cmp(&b.field_id)
                     .then(a.time_mjd_seconds.total_cmp(&b.time_mjd_seconds))
             });
-        let output = tracking.map_or(FrequencyRef::LSRK, |_| FrequencyRef::REST);
-        let factor = match first {
-            Some(epoch) if source != FrequencyRef::REST && source != output => {
-                let mut frame = epoch_frame((catalogue, engine), epoch)?;
-                if let Some(ephemeris) = tracking {
-                    frame = frame.with_radial_velocity(engine.ephemeris_radial_velocity(
+        let scales = match (first, tracking) {
+            (Some(epoch), Some(ephemeris)) => {
+                let frame = epoch_frame((catalogue, engine), epoch)?.with_radial_velocity(
+                    engine.ephemeris_radial_velocity(
                         epoch.time_mjd_seconds,
                         epoch.field_id as usize,
                         ephemeris,
-                    )?);
-                }
-                PreparedFrequencyConversion::new(source, output, Some(&frame), Some(&frame))?
-                    .convert_hz(1.0)
+                    )?,
+                );
+                let factor = |output| {
+                    PreparedFrequencyConversion::new(source, output, Some(&frame), Some(&frame))
+                        .map(|conversion| conversion.convert_hz(1.0))
+                };
+                [factor(FrequencyRef::REST)?, factor(FrequencyRef::TOPO)?]
             }
-            _ => 1.0,
+            (Some(epoch), None) if !matches!(source, FrequencyRef::REST | FrequencyRef::LSRK) => {
+                let frame = epoch_frame((catalogue, engine), epoch)?;
+                [
+                    PreparedFrequencyConversion::new(
+                        source,
+                        FrequencyRef::LSRK,
+                        Some(&frame),
+                        Some(&frame),
+                    )?
+                    .convert_hz(1.0),
+                    1.0,
+                ]
+            }
+            _ => [1.0; 2],
         };
-        factors.insert(window.spw_id, factor);
+        factors.insert(window.spw_id, scales);
     }
     Ok(factors)
 }

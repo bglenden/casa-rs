@@ -507,6 +507,7 @@ mod tests {
             window_frequencies_hz: vec![0.98e11, 1.0e11],
             channel_width_hz: 1.0e6,
             selected_frequencies_hz: vec![1.0e11],
+            buffer_band: None,
         };
         let dishes = [PrimaryBeam::from(AiryDish::casa_alma(12.0, &geometry))];
         let cf = MosaicPb::new(

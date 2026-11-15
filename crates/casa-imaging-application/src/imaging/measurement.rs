@@ -9,8 +9,9 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Awp2Sampling, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet,
     DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent,
-    MeasurementOperator, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting,
-    PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    MeasurementOperator, MosaicBufferBand, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor,
+    PolarizationRouting, PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -597,11 +598,12 @@ fn mosaic_windows(
                 .ok_or(ImagingError::Unsupported {
                     reason: "the mosaic set needs every window's channel frequencies",
                 })?;
-            let factor = window
-                .first_buffer_beam_factor()
-                .ok_or(ImagingError::Unsupported {
-                    reason: "the mosaic set needs every window's LSRK factor",
-                })?;
+            let [factor, topo] =
+                window
+                    .first_buffer_beam_factors()
+                    .ok_or(ImagingError::Unsupported {
+                        reason: "the mosaic set needs every window's LSRK factor",
+                    })?;
             let selected = window
                 .channel_indices()
                 .iter()
@@ -614,15 +616,25 @@ fn mosaic_windows(
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let selected = match rest_resampler {
-                Some(resampler) => resampler.mosaic_buffer_frequencies(selected),
-                None => selected,
+            let (selected, buffer_band) = if let Some(resampler) = rest_resampler {
+                let native_band = MosaicBufferBand {
+                    channels: selected.len(),
+                    lowest_topocentric_hz: selected.iter().copied().fold(f64::INFINITY, f64::min)
+                        * (topo / factor),
+                };
+                (
+                    resampler.mosaic_buffer_frequencies(selected),
+                    Some(native_band),
+                )
+            } else {
+                (selected, None)
             };
             windows.push(MosaicWindow {
                 spectral_window: keys.window(store, window.spectral_window_id()),
                 window_frequencies_hz: catalog.channel_frequencies_hz().to_vec(),
                 channel_width_hz: catalog.first_channel_width_hz(),
                 selected_frequencies_hz: selected,
+                buffer_band,
             });
         }
     }
