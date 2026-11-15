@@ -337,15 +337,11 @@ fn apply_rule(
             capabilities,
         } => {
             let value = map_strings(value, |value| {
-                let trimmed = value.trim();
-                // The FIELD grammar treats interior whitespace as part of a name.
-                Ok(
-                    if *grammar == SelectorGrammar::Field && !trimmed.is_empty() {
-                        trimmed.to_owned()
-                    } else {
-                        normalize_selector(value)
-                    },
-                )
+                Ok(if *grammar == SelectorGrammar::Field {
+                    normalize_field_selector(value)
+                } else {
+                    normalize_selector(value)
+                })
             })?;
             validate_selector_capabilities(*grammar, &value, capabilities)
                 .map_err(NormalizationError::Constraint)?;
@@ -477,6 +473,38 @@ fn normalize_project_path(value: &str) -> Result<String, NormalizationError> {
             }
             other => other,
         })
+}
+
+/// Preserve the spaces in a bare NAME or a quoted pattern, and still
+/// trim around FIELD list and range separators.
+fn normalize_field_selector(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return "none".to_owned();
+    }
+    let mut quoted = false;
+    let parts = value.split(|character| {
+        if character == '"' {
+            quoted = !quoted;
+        }
+        character == ',' && !quoted
+    });
+    let mut normalized = String::with_capacity(value.len());
+    for (index, part) in parts.enumerate() {
+        if index > 0 {
+            normalized.push(',');
+        }
+        let part = part.trim();
+        match part.split_once('~') {
+            Some((start, end)) if !part.contains('"') => {
+                normalized.push_str(start.trim_end());
+                normalized.push('~');
+                normalized.push_str(end.trim_start());
+            }
+            _ => normalized.push_str(part),
+        }
+    }
+    normalized
 }
 
 fn normalize_selector(value: &str) -> String {
