@@ -113,6 +113,12 @@ pub enum PrepareError {
     /// The supplied CASA VPManager table did not provide a supported beam.
     #[error("tclean vptable: {0}")]
     VoltagePattern(#[from] casa_ms::voltage_pattern::VoltagePatternError),
+    /// A saved COMMONPB entry follows a different beam law from an absent table.
+    #[error("tclean vptable: saved built-in beam for {telescope} is unsupported (#1307)")]
+    SavedCommonBeam {
+        /// Telescope whose saved default selects COMMONPB.
+        telescope: String,
+    },
     /// `pblimit` is outside the primary-beam validity contract.
     #[error(transparent)]
     PrimaryBeamValidity(#[from] casa_imaging_model::ProductValidityPolicyError),

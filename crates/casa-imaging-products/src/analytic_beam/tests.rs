@@ -208,3 +208,41 @@ fn vla_invalid_frequencies_fail_closed() {
         assert!(super::vla_band_voltage_table(unsupported_hz).is_err());
     }
 }
+
+use super::{PrimaryBeam, SavedRadialPrimaryBeam, add_radial_power};
+
+fn saved_gaussian_edge(cell_arcsec: f64, maximum_arcsec: f64) -> [f32; 12] {
+    let maximum_arcmin_ghz = maximum_arcsec / 60.0 * 1.4;
+    let beam = SavedRadialPrimaryBeam::new(PrimaryBeam::Gaussian {
+        half_width_arcmin_ghz: maximum_arcmin_ghz,
+        maximum_radius_arcmin_ghz: maximum_arcmin_ghz,
+        is_voltage: false,
+    });
+    let frequency_hz = 1.4e9;
+    let pattern = beam.0.at_frequency(frequency_hz);
+    let mut pixels = [0.0; 12];
+    add_radial_power(
+        &mut pixels,
+        [12, 1],
+        [0.0, 0.0],
+        [(cell_arcsec / 3600.0).to_radians(); 2],
+        frequency_hz,
+        beam.0.maximum_radius_arcmin_ghz(),
+        |radius| pattern.power(radius),
+    );
+    pixels
+}
+
+#[test]
+fn saved_radial_support_is_cut_before_the_lookup_radius_rounds() {
+    let pixels = saved_gaussian_edge(60.0, 600.0);
+    assert!(pixels[9] > 0.5);
+    assert_eq!(pixels[10], 0.0);
+}
+
+#[test]
+fn an_admitted_edge_uses_the_last_sample_if_the_lookup_radius_rounds_up() {
+    let pixels = saved_gaussian_edge(8.0, 80.0);
+    assert!((pixels[10] - 0.5).abs() < 1e-6, "{}", pixels[10]);
+    assert_eq!(pixels[11], 0.0);
+}

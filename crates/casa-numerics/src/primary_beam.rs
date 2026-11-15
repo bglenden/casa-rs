@@ -298,7 +298,17 @@ impl BeamPattern {
     /// `increment_x_rad` at `frequency_hz`, rounded down.
     #[must_use]
     pub fn support_pixels(&self, increment_x_rad: f64, frequency_hz: f64) -> usize {
-        let maximum_arcmin_ghz = match &self.0 {
+        support_pixels(
+            self.maximum_radius_arcmin_ghz(),
+            increment_x_rad,
+            frequency_hz,
+        )
+    }
+
+    /// The outer support radius at one GHz, as stored by PBMath1D.
+    #[must_use]
+    pub fn maximum_radius_arcmin_ghz(&self) -> f64 {
+        match &self.0 {
             Lookup::Frequency(curve) => curve.maximum_radius,
             Lookup::WideInverse(profile) => profile.maximum_radius(),
             Lookup::Tabulated(table) => table.maximum_radius,
@@ -306,8 +316,7 @@ impl BeamPattern {
             Lookup::Airy(table) => table.maximum_radius(),
             Lookup::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
             Lookup::Gaussian(table) => table.maximum_radius(),
-        };
-        support_pixels(maximum_arcmin_ghz, increment_x_rad, frequency_hz)
+        }
     }
 }
 

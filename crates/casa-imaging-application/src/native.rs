@@ -502,23 +502,22 @@ pub(crate) fn run(
         .vla_selection_store
         .map(|store| vla_selection_frequency(problem, &route, store));
     let teams = OnceCell::new();
-    let primary_beam = match publication.controls.primary_beam_model() {
-        Some(model) => AnalyticPrimaryBeam::new(
-            problem,
-            model,
-            publication.primary_beam_centres.as_ref(),
-            publication
-                .saved_radial_primary_beam
-                .as_ref()
-                .map(|beam| &beam.value),
-        )?
-        .map(|beam| {
-            vla_selection_hz.map_or(beam, |frequency| {
-                beam.with_vla_selection_frequency(frequency)
-            })
-        }),
-        None => None,
-    };
+    let centres = publication.primary_beam_centres.as_ref();
+    let primary_beam = match (
+        publication.controls.primary_beam_model(),
+        publication.saved_radial_primary_beam.as_ref(),
+    ) {
+        (Some(casa_imaging_products::AnalyticPrimaryBeamModel::SavedRadial), Some(saved)) => Some(
+            AnalyticPrimaryBeam::from_saved(problem, centres, &saved.value)?,
+        ),
+        (Some(model), _) => AnalyticPrimaryBeam::new(problem, model, centres)?,
+        (None, _) => None,
+    }
+    .map(|beam| {
+        vla_selection_hz.map_or(beam, |frequency| {
+            beam.with_vla_selection_frequency(frequency)
+        })
+    });
     let separate_psf = psf_view
         .map(|view| view.form(&mut route, &runtime, summary))
         .transpose()?;

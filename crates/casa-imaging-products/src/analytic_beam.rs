@@ -94,6 +94,34 @@ impl<'a> AnalyticPrimaryBeam<'a> {
         problem: &'a CompiledProblem,
         model: AnalyticPrimaryBeamModel,
         centres: Option<&'a PrimaryBeamCentres>,
+    ) -> Result<Option<Self>, ProductsError> {
+        Self::checked(problem, model, centres, None)
+    }
+
+    /// Bind the run's admitted saved radial beam on the image domains.
+    ///
+    /// # Errors
+    /// An output channel does not have a positive finite frequency.
+    /// # Panics
+    /// If the supplied pointing map lacks a domain of the problem.
+    pub fn from_saved(
+        problem: &'a CompiledProblem,
+        centres: Option<&'a PrimaryBeamCentres>,
+        saved: &'a SavedRadialPrimaryBeam,
+    ) -> Result<Self, ProductsError> {
+        Self::checked(
+            problem,
+            AnalyticPrimaryBeamModel::SavedRadial,
+            centres,
+            Some(saved),
+        )?
+        .ok_or(ProductsError::InvalidControls)
+    }
+
+    fn checked(
+        problem: &'a CompiledProblem,
+        model: AnalyticPrimaryBeamModel,
+        centres: Option<&'a PrimaryBeamCentres>,
         saved: Option<&'a SavedRadialPrimaryBeam>,
     ) -> Result<Option<Self>, ProductsError> {
         if model == AnalyticPrimaryBeamModel::SavedRadial && saved.is_none() {
@@ -235,9 +263,15 @@ impl<'a> AnalyticPrimaryBeam<'a> {
             BeamLaw::Saved(beam) => {
                 let pattern = beam.0.at_frequency(frequency_hz);
                 summed_beams(shape, &centres, |plane, centre| {
-                    add_radial_power(plane, shape, centre, increment_rad, frequency_hz, |r| {
-                        pattern.power(r)
-                    });
+                    add_radial_power(
+                        plane,
+                        shape,
+                        centre,
+                        increment_rad,
+                        frequency_hz,
+                        beam.0.maximum_radius_arcmin_ghz(),
+                        |radius| pattern.power(radius),
+                    );
                 })
             }
         })
@@ -404,6 +438,7 @@ fn add_evla_common_power(
         centre,
         increment_rad,
         frequency_hz,
+        f64::INFINITY,
         |radius| pattern.power(radius),
     );
 }
@@ -456,6 +491,7 @@ fn add_annular_aperture_power(
         centre,
         increment_rad,
         frequency_hz,
+        f64::INFINITY,
         |radius| {
             let voltage = table.evaluate(radius);
             voltage * voltage
@@ -470,16 +506,26 @@ fn add_radial_power(
     centre: [f64; 2],
     increment_rad: [f64; 2],
     frequency_hz: f64,
+    maximum_arcmin_ghz: f64,
     power: impl Fn(f64) -> f32,
 ) {
     let increment_deg = increment_rad.map(f64::to_degrees);
     let frequency_factor = 60.0 * frequency_hz / 1.0e9;
+    let maximum_degrees_squared = (maximum_arcmin_ghz / frequency_factor).powi(2);
     for x in 0..shape[0] {
         let rx2 = ((x as f64 - centre[0]) * increment_deg[0]).powi(2) as f32;
         for y in 0..shape[1] {
             let ry2 = ((y as f64 - centre[1]) * increment_deg[1]).powi(2) as f32;
-            let radius = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
-            values[x * shape[1] + y] += power(f64::from(radius));
+            let radius_squared = rx2 + ry2;
+            // PBMath1D::applyXLine clips the Float squared offset before
+            // rounding the frequency-scaled lookup radius to Float.
+            if f64::from(radius_squared) > maximum_degrees_squared {
+                continue;
+            }
+            let radius = (f64::from(radius_squared.sqrt()) * frequency_factor) as f32;
+            // The squared-distance check has already admitted this
+            // pixel. A rounded-up final radius still names the last sample.
+            values[x * shape[1] + y] += power(f64::from(radius).min(maximum_arcmin_ghz));
         }
     }
 }

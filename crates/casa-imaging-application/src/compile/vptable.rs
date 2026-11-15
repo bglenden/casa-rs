@@ -30,9 +30,11 @@ pub(super) fn prepare(
         "the voltage-pattern defaults",
         table.defaults_reading_bytes()?,
     )?;
-    let Some(record) = table.default_record(telescope)? else {
-        return Ok(None);
-    };
+    let record = table
+        .default_record(telescope)?
+        .ok_or_else(|| PrepareError::SavedCommonBeam {
+            telescope: telescope.to_owned(),
+        })?;
     let definition = radial_pattern(&record)?;
     let reservation = reserve("the saved radial primary beam", BeamPattern::BYTES)?;
     Ok(Some(Admitted {
@@ -51,8 +53,7 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn the_supplied_voltage_samples_remain_admitted_after_table_reading() {
+    fn supplied_beam_inputs() -> (ImagingRequest, RunContext) {
         let table = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../casa-simulation/tests/data/sm_squint/custom_gaussian.vp");
         let request = crate::request::tests::request(json!({ "vptable": table, "write_pb": true }));
@@ -65,8 +66,23 @@ mod tests {
             cancel: Cancel::default(),
             summary: None,
         };
+        (request, context)
+    }
+
+    #[test]
+    fn the_supplied_voltage_samples_remain_admitted_after_table_reading() {
+        let (request, context) = supplied_beam_inputs();
         let prepared = prepare(&request, "VLA", &context).unwrap().unwrap();
         // One table of 10,000 Float samples, with the lookup metadata.
         assert_eq!(prepared.reservation.memory(), 10_000 * 4 + 32);
+    }
+
+    #[test]
+    fn a_saved_common_beam_is_not_the_no_table_default() {
+        let (request, context) = supplied_beam_inputs();
+        let result = prepare(&request, "ALMA", &context);
+        assert!(
+            matches!(result, Err(PrepareError::SavedCommonBeam { telescope }) if telescope == "ALMA")
+        );
     }
 }
