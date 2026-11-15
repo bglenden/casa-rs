@@ -953,6 +953,18 @@ mod tests {
                 .map(|value| value.as_f64().expect("a number"))
                 .collect()
         };
+        let native_equator = [
+            ("CAR", Projection::Car),
+            ("SFL", Projection::Sfl),
+            ("PAR", Projection::Par),
+            ("MOL", Projection::Mol),
+            ("PCO", Projection::Pco),
+            ("TSC", Projection::Tsc),
+            ("CSC", Projection::Csc),
+            ("QSC", Projection::Qsc),
+            ("MER", Projection::Mer),
+            ("AIT", Projection::Ait),
+        ];
         let north = [
             ("AZP", Projection::Azp),
             ("SZP", Projection::Szp),
@@ -963,13 +975,6 @@ mod tests {
             ("ARC", Projection::Arc),
             ("STG", Projection::Stg),
             ("ZEA", Projection::Zea),
-            ("CAR", Projection::Car),
-            ("SFL", Projection::Sfl),
-            ("PAR", Projection::Par),
-            ("MOL", Projection::Mol),
-            ("PCO", Projection::Pco),
-            ("MER", Projection::Mer),
-            ("AIT", Projection::Ait),
         ];
         let south = [
             ("AZP", Projection::Azp),
@@ -978,38 +983,21 @@ mod tests {
             ("SIN", Projection::Sin),
             ("NCP", Projection::Ncp),
             ("TAN", Projection::Tan),
-            ("CAR", Projection::Car),
-            ("SFL", Projection::Sfl),
-            ("PAR", Projection::Par),
-            ("MOL", Projection::Mol),
-            ("PCO", Projection::Pco),
-            ("AIT", Projection::Ait),
-            ("MER", Projection::Mer),
         ];
-        let equator = [
-            ("SIN", Projection::Sin),
-            ("TAN", Projection::Tan),
-            ("CAR", Projection::Car),
-            ("SFL", Projection::Sfl),
-            ("PAR", Projection::Par),
-            ("MOL", Projection::Mol),
-            ("PCO", Projection::Pco),
-            ("AIT", Projection::Ait),
-            ("MER", Projection::Mer),
-        ];
-        let cases = north
-            .into_iter()
-            .map(|case| (&casa["projections"], case))
-            .chain(
-                south
-                    .into_iter()
-                    .map(|case| (&casa["south"]["projections"], case)),
-            )
-            .chain(
-                equator
-                    .into_iter()
-                    .map(|case| (&casa["equator"]["projections"], case)),
-            );
+        let equator = [("SIN", Projection::Sin), ("TAN", Projection::Tan)];
+        let cases = [
+            (&casa["projections"], north.as_slice()),
+            (&casa["south"]["projections"], south.as_slice()),
+            (&casa["equator"]["projections"], equator.as_slice()),
+        ]
+        .into_iter()
+        .flat_map(|(images, additional)| {
+            additional
+                .iter()
+                .copied()
+                .chain(native_equator)
+                .map(move |kind| (images, kind))
+        });
         for (images, (name, projection)) in cases {
             let entry = &images[name];
             let reference = numbers(&entry["crval_rad"]);
@@ -1033,7 +1021,10 @@ mod tests {
             );
             let pixels = entry["pixels"].as_array().expect("pixels");
             let worlds = entry["worlds_rad"].as_array().expect("worlds");
-            for (pixel, world) in pixels.iter().zip(worlds) {
+            let back_pixels = entry["pixels_from_world"].as_array().unwrap_or(pixels);
+            assert_eq!(pixels.len(), worlds.len());
+            assert_eq!(pixels.len(), back_pixels.len());
+            for ((pixel, world), back_pixel) in pixels.iter().zip(worlds).zip(back_pixels) {
                 let pixel = numbers(pixel);
                 let world = numbers(world);
                 let ours = coordinate
@@ -1049,9 +1040,10 @@ mod tests {
                 let back = coordinate
                     .world_to_pixel([world[0], world[1]])
                     .expect("a pixel");
+                let expected = numbers(back_pixel);
                 assert!(
-                    (back[0] - pixel[0]).abs() < 1e-7 && (back[1] - pixel[1]).abs() < 1e-7,
-                    "{name} {world:?}: {back:?}, CASA's {pixel:?}"
+                    (back[0] - expected[0]).abs() < 1e-7 && (back[1] - expected[1]).abs() < 1e-7,
+                    "{name} {world:?}: {back:?}, CASA's {expected:?}"
                 );
             }
         }

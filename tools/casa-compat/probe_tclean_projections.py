@@ -15,6 +15,7 @@ projections-casa-6.7.6.14.json.
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -27,17 +28,22 @@ PIXELS = [[0.0, 0.0], [99.0, 99.0], [10.0, 80.0], [50.0, 50.0], [75.5, 20.25], [
 AIR_PIXELS = PIXELS + [[54.35, 50.0], [54.38, 50.0], [30050.0, 20050.0], [50050.0, 50050.0]]
 PSEUDOCYLINDRICAL_PIXELS = PIXELS + [[30050.0, 25050.0], [-16950.0, -25950.0]]
 PCO_PIXELS = PIXELS + [[18050.0, 50.02], [18050.0, 50.06], [18050.0, 25050.0], [25832.0, 41000.0]]
+CUBE_NAMES = {"TSC", "CSC", "QSC"}
+CUBE_FACE_SAMPLES = [
+    (0.35, 0.55), (2.52, 0.17), (4.31, -0.45), (6.42, 0.39),
+    (0.39, 2.59), (0.59, -2.61), (-2.21, -0.58),
+]
 NAMES = ["SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "AIT", "MER", "AZP",
-         "SZP", "ZPN", "AIR", "CYP", "CEA", "PAR", "MOL", "COP", "COE", "COD", "COO", "BON", "PCO", "tan", "ncp", " TAN", "XYZ"]
+         "SZP", "ZPN", "AIR", "CYP", "CEA", "PAR", "MOL", "COP", "COE", "COD", "COO", "BON", "PCO", "TSC", "CSC", "QSC", "HPX", "tan", "ncp", " TAN", "XYZ"]
 # The same images centred south of the celestial equator, where a projection
 # whose reference is on its native equator takes the native pole at 180°.
 SOUTH = "J2000 19:59:28.500 -40.44.01.50"
-SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER", "AZP", "SZP", "AIR", "PAR", "MOL", "PCO"]
+SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER", "AZP", "SZP", "AIR", "PAR", "MOL", "PCO", "TSC", "CSC", "QSC"]
 # And on the celestial equator, where the native pole of a projection whose
 # reference is on its native equator is the celestial north pole. NCP is
 # undefined there (its slant cot(dec) is infinite).
 EQUATOR = "J2000 19:59:28.500 +00.00.00.00"
-EQUATOR_NAMES = ["SIN", "TAN", "CAR", "SFL", "AIT", "MER", "PAR", "MOL", "PCO"]
+EQUATOR_NAMES = ["SIN", "TAN", "CAR", "SFL", "AIT", "MER", "PAR", "MOL", "PCO", "TSC", "CSC", "QSC"]
 
 
 def plain(value):
@@ -59,13 +65,28 @@ def probe(ms, out, name, phasecenter=""):
         "MOL": PSEUDOCYLINDRICAL_PIXELS,
         "PCO": PCO_PIXELS,
     }.get(name, PIXELS)
+    inverse = {}
     ia = casatools.image()
     ia.open(f"{image}.image")
     try:
         cs = ia.coordsys()
         try:
             record = {key: plain(value) for key, value in cs.torecord()["direction0"].items()}
-            worlds = [cs.toworld(pixel + [0, 0], "n")["numeric"][:2].tolist() for pixel in pixels]
+            if name in CUBE_NAMES:
+                x_scale, y_scale = [math.pi / (4 * cell) for cell in record["cdelt"]]
+                cx, cy = record["crpix"]
+                pixels = pixels + [
+                    [cx + x * x_scale, cy + y * y_scale] for x, y in CUBE_FACE_SAMPLES
+                ]
+                records = [cs.toworld(pixel + [0, 0], "n")["numeric"] for pixel in pixels]
+                worlds = [world[:2].tolist() for world in records]
+                # WCSLIB canonicalizes aliases in the unfolded cube. The
+                # two single-precision CSC polynomials are approximations.
+                inverse["pixels_from_world"] = [
+                    cs.topixel(world)["numeric"][:2].tolist() for world in records
+                ]
+            else:
+                worlds = [cs.toworld(pixel + [0, 0], "n")["numeric"][:2].tolist() for pixel in pixels]
             if name == "PCO":
                 # WCSLIB pcox2s returns NaN at x=0 with a nonzero offset.
                 # Check the finite central-meridian worlds in the other direction.
@@ -92,6 +113,7 @@ def probe(ms, out, name, phasecenter=""):
         "latpole_deg": record["latpole"],
         "pixels": pixels,
         "worlds_rad": worlds,
+        **inverse,
     }
 
 
