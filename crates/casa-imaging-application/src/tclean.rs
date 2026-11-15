@@ -1333,14 +1333,6 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
             980,
         )
     };
-    let pixel = |corner: &str| {
-        corner
-            .trim()
-            .strip_suffix("pix")
-            .and_then(|number| number.trim().parse::<f64>().ok())
-            .filter(|number| number.fract() == 0.0)
-            .ok_or_else(refused)
-    };
     let mut boxes = Vec::new();
     for line in text
         .lines()
@@ -1378,19 +1370,26 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
                 let (inside, after) = body.split_once("]]").ok_or_else(refused)?;
                 let corners = inside
                     .split(',')
-                    .map(|corner| pixel(corner.trim_matches(['[', ']', ' '])))
+                    .map(|corner| pixels(corner.trim_matches(['[', ']', ' '])).ok_or_else(refused))
                     .collect::<Result<Vec<_>, _>>()?;
                 let [xa, ya, xb, yb] = corners.as_slice() else {
                     return Err(refused());
                 };
-                let corners = format!(
-                    "{},{},{},{}",
-                    xa.min(*xb),
-                    ya.min(*yb),
-                    xa.max(*xb),
-                    ya.max(*yb)
-                );
-                (vec![corners], after)
+                let region = if corners.iter().all(|value| value.fract() == 0.0) {
+                    vec![format!(
+                        "{},{},{},{}",
+                        xa.min(*xb),
+                        ya.min(*yb),
+                        xa.max(*xb),
+                        ya.max(*yb)
+                    )]
+                } else {
+                    crate::compile::mask_polygon::fractional_pixel_box([*xa, *ya, *xb, *yb])
+                        .into_iter()
+                        .map(|[x0, y0, x1, y1]| format!("{x0},{y0},{x1},{y1}"))
+                        .collect()
+                };
+                (region, after)
             };
             // The region's keywords run to the next region. casacore keeps
             // the last `range` a region gives.

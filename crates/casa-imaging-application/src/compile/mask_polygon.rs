@@ -157,6 +157,42 @@ fn raster(vertices: &[[f32; 2]], [nx, ny]: [usize; 2]) -> Result<Arc<[bool]>, Pr
     Ok(mask.into())
 }
 
+/// The pixel centres inside an axis-aligned fractional CRTF box.
+/// LCPolygon computes its horizontal crossings relative to its clipped
+/// bounding-box origin. Keep that origin when applying the Float edge rule.
+pub(crate) fn fractional_pixel_box([xa, ya, xb, yb]: [f64; 4]) -> Vec<[i64; 4]> {
+    let [xa, ya, xb, yb] = [xa, ya, xb, yb].map(|value| value as f32);
+    if ![xa, ya, xb, yb].into_iter().all(f32::is_finite) {
+        return Vec::new();
+    }
+    let (left, right) = (xa.min(xb), xa.max(xb));
+    let origin = start(left);
+    let x0 = origin.saturating_add(start(left - origin as f32));
+    // A thin box can end just below its rounded origin. CASA truncates
+    // that relative crossing to zero. The absolute bound still clips
+    // intervals lying wholly outside the image.
+    let relative_right = (right - origin as f32).max(0.0);
+    let x1 = end(right).min(origin.saturating_add(end(relative_right)));
+    let (y0, y1) = (start(ya.min(yb)), end(ya.max(yb)));
+    if x1 < x0 || y1 < y0 {
+        return Vec::new();
+    }
+    if near(ya, yb) {
+        // All edges are horizontal at LCPolygon's tolerance. Only an
+        // edge whose truncated ordinate still coincides with the row paints.
+        let mut rows = [ya, yb]
+            .into_iter()
+            .filter_map(|edge| {
+                let row = edge as i64;
+                ((y0..=y1).contains(&row) && near(row as f32, edge)).then_some([x0, row, x1, row])
+            })
+            .collect::<Vec<_>>();
+        rows.dedup();
+        return rows;
+    }
+    vec![[x0, y0, x1, y1]]
+}
+
 fn near(a: f32, b: f32) -> bool {
     // LCPolygon::_isNear uses nearAbs at zero, near elsewhere.
     let scale = if a == 0.0 || b == 0.0 {
