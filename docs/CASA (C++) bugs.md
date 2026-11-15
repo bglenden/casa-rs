@@ -49,6 +49,7 @@ CASA behaviours casa-rs does not follow:
 [an overflowing FIELD ID](#an-overflowing-field-id-can-select-field-zero),
 [a bare FIELD escape](#a-bare-field-escape-can-silently-change-the-selection),
 [direction regridding of a CLEAN mask](#roundoff-in-direction-regridding-can-enlarge-a-clean-mask),
+[expanding a CLEAN mask](#expanding-a-clean-mask-can-drop-its-direction-and-validity),
 [a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
 [the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
 [multiscale on an off-centre PSF](#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre),
@@ -5922,3 +5923,25 @@ roundoff in the coordinate grid.
 
 [Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
 [the casacore coordinate-grid interpolation](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/images/Images/ImageRegrid.tcc#L1392).
+
+## Expanding a CLEAN mask can drop its direction and validity
+
+For a continuum mask used on a cube, CASA's
+`SDMaskHandler::expandMask` creates a temporary image with the output
+direction coordinates, then copies the input mask's raw pixels into it.
+Casacore's `Lattice::copyDataTo` leaves the input coordinates and default
+pixel mask behind.
+
+In the natural-weighted two-channel `refim_eptwochan.ms` cube, stock CASA
+6.7.6.14 expands the half-pixel shifted continuum mask to 144 pixels per
+channel. These are exactly the unshifted rectangle. When an aligned
+input contains one default-invalid positive pixel, CASA keeps that pixel
+on both channels.
+
+Native tclean uses the saved direction grid and default validity before
+expanding support. Its shifted result contains the 156 analytically
+positive pixels on each channel, exact against CASA given the aligned
+156-pixel support. It excludes the default-invalid pixel on both channels.
+
+[Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
+[the casacore pixel-copy implementation](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/Lattices/Lattice.tcc#L290).
