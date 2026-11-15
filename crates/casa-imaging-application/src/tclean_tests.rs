@@ -1324,7 +1324,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"usemask":"auto-multithresh"}),
         json!({"pbmask":0.2}),
         json!({"nsigma":2.0}),
-        json!({"calcres":false}),
         json!({"savemodel":"modelcolumn"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
@@ -1346,11 +1345,12 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         .push(casa_imaging_model::PolarizationCoordinate::StokesQ);
     assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
     typed.stokes.pop();
-    typed.tclean_restart = true;
-    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
-    let mut continuing = request(json!({"deconvolver":"mem", "calcpsf":false, "calcres":true}));
-    continuing.tclean_restart = true;
-    continuing
-        .validate()
-        .expect("MEM refreshes the residual with a saved PSF");
+    for calcpsf in [true, false] {
+        for calcres in [true, false] {
+            let mut continuing =
+                request(json!({"deconvolver":"mem", "calcpsf":calcpsf, "calcres":calcres}));
+            continuing.tclean_restart = true;
+            continuing.validate().expect("standard MEM continuation");
+        }
+    }
 }

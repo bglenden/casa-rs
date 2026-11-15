@@ -901,8 +901,6 @@ impl ImagingRequest {
                 || self.vis.len() != 1
                 || self.outlierfile.is_some()
                 || self.has_start_model()
-                || (self.tclean_restart && self.calcpsf)
-                || !self.calcres
                 || self.usemask != UseMask::User
                 || self.mask_image.is_some()
                 || self.pbmask != 0.0
@@ -911,7 +909,7 @@ impl ImagingRequest {
         {
             return Err(InvalidRequest {
                 parameters: "deconvolver",
-                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting and a user box mask; continuation requires a saved PSF and a fresh residual; other modes and model-column writes wait for #1060",
+                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting and a user box mask; other modes and model-column writes wait for #1060",
             });
         }
         Ok(())
