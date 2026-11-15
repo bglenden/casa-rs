@@ -793,22 +793,13 @@
         "max_items": null,
         "allow_scalar": true
       },
-      "normalization": {
-        "kind": "casa_selector",
-        "grammar": "field",
-        "capabilities": [
-          "ids",
-          "names",
-          "ranges",
-          "wildcards"
-        ]
-      },
+      "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
       "documentation": {
         "summary": "CASA field selector, one per MeasurementSet or one for all",
-        "details": "Accepts field IDs, names, ranges, and wildcards subject to surface and provider capabilities. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "details": "Preserves each selector's text for the task's FIELD grammar. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
         "examples": [
           "0",
           "calibrator",

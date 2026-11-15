@@ -8,8 +8,8 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use casa_provider_contracts::{
-    DefaultSpec, ParameterRole, ParameterType, ParameterValue, SurfaceContractBundle,
-    SurfaceParameterBinding,
+    ContextRole, DefaultSpec, NormalizationRule, ParameterRole, ParameterType, ParameterValue,
+    SurfaceContractBundle, SurfaceParameterBinding,
 };
 
 use crate::{ResolutionPatch, normalize_value, parse_parameter_text, validate_value};
@@ -236,8 +236,13 @@ fn validated_cli_value(
         && (matches!(concept.value_domain, ParameterType::String) || one_selector)
         && matches!(&binding.default,
             DefaultSpec::Literal { value: ParameterValue::String(value) } if value.is_empty());
+    // FIELD spaces are a token that can match an empty NAME or CODE.
+    let exact_field_text = one_selector
+        && binding.context_role == Some(ContextRole::FieldSelection)
+        && matches!(concept.normalization, NormalizationRule::Identity);
     if text.trim().is_empty()
         && !exact_empty_default
+        && !exact_field_text
         && !matches!(concept.value_domain, ParameterType::Variant)
     {
         return Err(format!("parameter {:?} has no typed value", binding.name));
@@ -434,6 +439,11 @@ mod tests {
         .unwrap();
         assert_eq!(patch.values["spw"], texts(&["0,2"]));
         assert_eq!(patch.values["scan"], texts(&["1,3~5"]));
+        for field in ["   ", "none", r#"0, "Alpha2""#] {
+            let patch =
+                parse_parameter_cli_overrides(&bundle, &["--field".into(), field.into()]).unwrap();
+            assert_eq!(patch.values["field"], texts(&[field]));
+        }
         let patch =
             parse_parameter_cli_overrides(&bundle, &["--spw".into(), r#"["0", "1:2~5"]"#.into()])
                 .unwrap();

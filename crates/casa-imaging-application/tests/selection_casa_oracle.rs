@@ -526,3 +526,120 @@ fn scan_upper_bounds_hold_rows_with_negative_physical_numbers() {
         }
     }
 }
+
+#[test]
+fn field_lexical_boundaries_read_casas_physical_rows() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    let groups = [
+        (
+            [("Alpha1", "first", false), ("Alpha2", "Alpha?", false)],
+            &[
+                ("Alpha?", Some("all")),
+                ("Alpha??", None),
+                ("Alpha[12]", None),
+                (r#""Alpha[12]""#, Some("all")),
+                ("Alpha{1,2}", None),
+                (r#""Alpha{1,2}""#, Some("all")),
+                ("Alpha{1}*", Some("field_id")),
+                (r#""Alpha1""Alpha2""#, None),
+                ("Alpha1\t", None),
+                ("Alpha1\tAlpha2", None),
+                (r#""Alpha1" "#, None),
+                (r#" "Alpha1""#, None),
+                (r#"0, "Alpha2""#, None),
+                (r#"0,"Alpha2""#, Some("all")),
+                (r#""Alpha\1""#, Some("field_id")),
+                ("\"Alpha\n1\"", Some("field_id")),
+                (r"/Alpha\1/", Some("field_id")),
+                ("/Alpha\n1/", Some("field_id")),
+                (r"/Alpha\./", Some("all")),
+                ("none", None),
+                ("   ", None),
+            ][..],
+        ),
+        (
+            [("none", "+1", false), ("-1", "second", false)],
+            &[
+                ("none", Some("field_id")),
+                ("None", None),
+                ("-1", Some("field_glob")),
+                ("+1", Some("field_id")),
+                (" -1, +1 ", Some("all")),
+                ("+1,0", Some("field_id")),
+                ("( none)", Some("field_id")),
+            ][..],
+        ),
+        (
+            [("Alpha.1", "CODE$", false), ("Alpha2", "Code'", false)],
+            &[
+                ("Alpha.*", None),
+                ("Alpha.1", Some("field_id")),
+                ("Alpha.?", None),
+                ("Code'", Some("field_glob")),
+                ("Alpha.1, Code'", Some("all")),
+            ][..],
+        ),
+        (
+            [("Alpha.1", "", false), ("Alpha2", "science", false)],
+            &[
+                ("", Some("all")),
+                ("   ", Some("field_id")),
+                ("0, ", Some("field_id")),
+                ("0,", None),
+                ("0,,1", None),
+                ("\t", None),
+                ("\n", None),
+                (r#""""#, Some("field_id")),
+                ("//", Some("field_id")),
+            ][..],
+        ),
+        (
+            [
+                (" \tAlpha1\t ", "ref", false),
+                ("Alpha2", " \tphase\t ", false),
+            ],
+            &[
+                ("Alpha1", None),
+                ("\"\tAlpha1\t\"", Some("field_id")),
+                ("\tAlpha1\t", Some("field_id")),
+                ("phase", None),
+                ("\" \tphase\t \"", Some("field_glob")),
+            ][..],
+        ),
+    ];
+    for (group, (metadata, cases)) in groups.into_iter().enumerate() {
+        rewrite_fields(&vis, metadata);
+        for &(field, expected) in cases {
+            let selection = request(&vis, root.path().join("rows"), &json!({"field": field}));
+            let result = row_pointing(&selection, &imaging::context(selection.resource_policy()));
+            if let Some(case) = expected {
+                let rows =
+                    result.unwrap_or_else(|error| panic!("group {group}, {field:?}: {error}"));
+                assert_eq!(
+                    rows.into_keys().collect::<Vec<_>>(),
+                    physical_rows(&oracle["cases"][case]),
+                    "group {group}, {field:?}"
+                );
+            } else {
+                assert!(result.is_err(), "CASA refuses group {group}, {field:?}");
+            }
+        }
+    }
+
+    // Stock CASA on this host wraps this singleton ID to zero. A request
+    // for an unrepresentable ID should never select another field.
+    let selection = request(
+        &vis,
+        root.path().join("overflow"),
+        &json!({"field": "4294967296"}),
+    );
+    let error = row_pointing(&selection, &imaging::context(selection.resource_policy()))
+        .expect_err("an overflowing FIELD ID is invalid")
+        .to_string();
+    assert!(
+        error.contains("does not fit in a signed 32-bit integer"),
+        "{error}"
+    );
+}
