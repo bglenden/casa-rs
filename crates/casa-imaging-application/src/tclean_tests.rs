@@ -652,9 +652,12 @@ fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints()
     // Integer-valued decimal CRTF syntax already worked and stays supported.
     let decimal = request(json!({"mask": "box[[-2.0pix,-1.0pix],[3.0pix,4.0pix]]"}));
     assert_eq!(decimal.mask_box, [[-2, -1, 3, 4]]);
-    let error = refusal(json!({"mask": "box[[-2.5pix,0pix],[3pix,4pix]]"}));
-    assert_eq!(error.parameter, "mask");
-    assert!(error.message.contains("#980"));
+    let fraction = request(json!({"mask": "box[[-2.5pix,0pix],[3pix,4pix]]"}));
+    assert_eq!(fraction.mask_box, [[0, 0, 3, 4]]);
+    assert_eq!(
+        refusal(json!({"mask": "box[[NaNpix,0pix],[3pix,4pix]]"})).parameter,
+        "mask"
+    );
 
     let sky = request(json!({"mask": "box[[1deg,2deg],[3deg,4deg]]"}));
     assert!(sky.mask_box.is_empty());
@@ -665,6 +668,47 @@ fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints()
     let error = refusal(json!({"mask": ["one.mask", "two.mask"]}));
     assert_eq!(error.parameter, "mask");
     assert!(error.message.contains("#980"));
+}
+
+#[test]
+fn fractional_crtf_box_support_preserves_casa_edges_and_the_spectral_range() {
+    let mask = request(json!({"mask": "box[[10.00005pix,12.21pix],[21.99998pix,19.78pix]]"}));
+    assert_eq!(
+        mask.mask_box,
+        [[11, 13, 22, 19]],
+        "relative crossing origin"
+    );
+    let mask = request(json!({"mask": "box[[10.21pix,12.00005pix],[21.78pix,20.99998pix]]"}));
+    assert_eq!(
+        mask.mask_box,
+        [[11, 12, 21, 21]],
+        "closed scanline at the boundary"
+    );
+    let mask =
+        request(json!({"mask": "box[[23.23pix,17.27pix],[8.31pix,9.66pix]], range=[1pix,2pix]"}));
+    assert_eq!(mask.mask_box[0].corners, [9, 10, 23, 17]);
+    assert_eq!(
+        mask.mask_box[0].range,
+        Some(crate::SpectralMaskRange::Pixel([1.0, 2.0]))
+    );
+    let thin = request(json!({"mask": "box[[10.21pix,12.00005pix],[21.78pix,12.00009pix]]"}));
+    assert_eq!(
+        thin.mask_box,
+        [[11, 12, 21, 12]],
+        "horizontal edge on a row"
+    );
+    for region in [
+        "box[[-0.6pix,5.2pix],[-0.2pix,10.7pix]]",
+        "box[[-1.6pix,5.2pix],[-0.999999pix,10.7pix]]",
+        "box[[8.21pix,12.21pix],[8.65pix,12.65pix]]",
+        "box[[10.21pix,11.99995pix],[21.78pix,11.99999pix]]",
+    ] {
+        let empty = request(json!({"mask": region}));
+        assert!(
+            empty.mask_box.is_empty() && empty.explicit_empty_mask,
+            "{region}"
+        );
+    }
 }
 
 #[test]

@@ -6028,5 +6028,11 @@ an empty mask and stops with code 7, as stock CASA does when the polygon
 is farther outside. Ordinary off-grid, partially clipped and
 pixel-boundary polygons retain CASA's exact support.
 
+The same clipping defect affects fractional CRTF pixel boxes. For
+`box[[-0.6pix,5.2pix],[-0.2pix,10.7pix]]` and one whose upper x bound
+is −0.999999, stock CASA paints column zero at rows 6 through 10.
+Both native masks are empty and return stop code 7. The ordinary
+fractional, near-integer and partly clipped controls retain CASA's support.
+
 [Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
 [casacore's upper crossing bound](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/LRegions/LCPolygon.cc#L198-L208).
