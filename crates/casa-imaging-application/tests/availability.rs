@@ -577,6 +577,17 @@ fn mem_compiled_scope_cannot_bypass_the_task_guard() {
         .compile(),
     )
     .expect("Briggs-weighted Stokes I MEM is available");
+    for weighting in [
+        WeightingScheme::Uniform,
+        WeightingScheme::Radial,
+        WeightingScheme::BriggsAbsolute {
+            robust: 0.5,
+            noise_jy: 1.0,
+        },
+    ] {
+        on_cpu(&ProblemFixture { weighting, ..mem() }.compile())
+            .unwrap_or_else(|error| panic!("MEM with {weighting:?}: {error}"));
+    }
     on_cpu(
         &ProblemFixture {
             model_column_write: ModelColumnWrite::SelectedSamples,
@@ -618,7 +629,7 @@ fn mem_compiled_scope_cannot_bypass_the_task_guard() {
             ..mem()
         },
         ProblemFixture {
-            weighting: WeightingScheme::Uniform,
+            weighting: WeightingScheme::BriggsBandwidthTaper { robust: 0.5 },
             ..mem()
         },
         ProblemFixture {

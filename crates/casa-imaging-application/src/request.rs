@@ -897,14 +897,14 @@ impl ImagingRequest {
             && (self.specmode != SpecMode::Mfs
                 || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
                 || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
-                || !matches!(self.weighting, Weighting::Natural | Weighting::Briggs)
+                || self.weighting == Weighting::Briggsbwtaper
                 || self.vis.len() != 1
                 || self.outlierfile.is_some()
                 || !matches!(self.savemodel, SaveModel::None | SaveModel::ModelColumn))
         {
             return Err(InvalidRequest {
                 parameters: "deconvolver",
-                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting; other modes and virtual model writes wait for #1060",
+                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder; bandwidth-taper weighting needs a cube, and other modes and virtual model writes wait for #1060",
             });
         }
         Ok(())

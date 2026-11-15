@@ -218,40 +218,50 @@ fn standard_mfs_multiscale_recovers_the_extended_flux() {
 }
 
 #[test]
-fn mem_uses_briggs_weighted_normal_images() {
+fn mem_uses_the_selected_continuum_weights() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
-    let briggs = json!({"weighting":"briggs", "robust":0.5, "niter":0});
-    let (_, dirty) = observation.image("briggs-dirty", briggs.clone());
     let (_, natural) = observation.image("natural-dirty", json!({"niter":0}));
-    let mut mem = briggs;
-    mem["deconvolver"] = json!("mem");
-    mem["niter"] = json!(2);
-    mem["cyclefactor"] = json!(0.0001);
-    mem["minpsffraction"] = json!(0.0);
-    let (_, cleaned) = observation.image("briggs-mem", mem);
-    let psf = &cleaned.get(".psf").pixels;
-    let difference = |reference: &Products| {
-        psf.iter()
-            .zip(reference.get(".psf").pixels.iter())
-            .map(|(actual, expected)| (actual - expected).abs())
-            .fold(0.0_f32, f32::max)
-    };
-    assert!(difference(&dirty) < 1e-6, "MEM uses the Briggs PSF");
-    assert!(
-        difference(&natural) > 1e-5,
-        "the fixture distinguishes the weights"
-    );
-    let weighted = cleaned.get(".sumwt").channel_values()[0];
-    let expected = dirty.get(".sumwt").channel_values()[0];
-    assert!((weighted / expected - 1.0).abs() < 1e-6);
-    assert!(weighted < natural.get(".sumwt").channel_values()[0]);
-    assert!(
-        cleaned
-            .get(".model")
-            .pixels
-            .iter()
-            .any(|&value| value > 0.0)
-    );
+    for weighting in ["briggs", "uniform", "superuniform", "radial", "briggsabs"] {
+        let mut controls = json!({"weighting":weighting, "niter":0});
+        if weighting == "superuniform" {
+            controls["npixels"] = json!(2);
+        }
+        if weighting == "briggsabs" {
+            controls["noise"] = json!("1Jy");
+        }
+        let (_, dirty) = observation.image(&format!("{weighting}-dirty"), controls.clone());
+        controls["deconvolver"] = json!("mem");
+        controls["niter"] = json!(2);
+        controls["cyclefactor"] = json!(0.0001);
+        controls["minpsffraction"] = json!(0.0);
+        let (_, cleaned) = observation.image(&format!("{weighting}-mem"), controls);
+        let psf = &cleaned.get(".psf").pixels;
+        let difference = |reference: &Products| {
+            psf.iter()
+                .zip(reference.get(".psf").pixels.iter())
+                .map(|(actual, expected)| (actual - expected).abs())
+                .fold(0.0_f32, f32::max)
+        };
+        assert!(difference(&dirty) < 1e-6, "MEM uses the {weighting} PSF");
+        assert!(
+            difference(&natural) > 1e-5,
+            "the fixture distinguishes {weighting} from natural weights"
+        );
+        let weighted = cleaned.get(".sumwt").channel_values()[0];
+        let expected = dirty.get(".sumwt").channel_values()[0];
+        assert!(
+            (weighted / expected - 1.0).abs() < 1e-6,
+            "MEM uses the {weighting} sum of weights"
+        );
+        assert!(
+            cleaned
+                .get(".model")
+                .pixels
+                .iter()
+                .any(|&value| value > 0.0),
+            "MEM solves with {weighting}"
+        );
+    }
 }
 
 #[test]
