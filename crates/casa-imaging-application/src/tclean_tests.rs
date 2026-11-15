@@ -1336,7 +1336,7 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"gridder":"wproject", "wprojplanes":4}),
         json!({"facets":2}),
         json!({"weighting":"uniform"}),
-        json!({"savemodel":"modelcolumn"}),
+        json!({"savemodel":"virtual"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
     ] {
@@ -1355,6 +1355,11 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     let noise_limited = request(json!({"deconvolver":"mem", "nsigma":3.0}));
     assert_eq!(noise_limited.nsigma, 3.0);
     noise_limited.validate().expect("MEM with a noise cutoff");
+    let writing = request(json!({"deconvolver":"mem", "niter":1, "savemodel":"modelcolumn"}));
+    assert_eq!(writing.savemodel, crate::SaveModel::ModelColumn);
+    writing
+        .validate()
+        .expect("MEM can write predicted visibilities");
     let mut typed = accepted;
     typed
         .stokes
