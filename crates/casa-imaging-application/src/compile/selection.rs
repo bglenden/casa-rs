@@ -123,6 +123,7 @@ fn resolve_fields(selector: &str, catalogue: &Catalogue) -> Result<IdSelection, 
         .iter()
         .map(|field| casa_ms::FieldSelectorRow {
             name: &field.name,
+            code: field.code.as_deref(),
             flagged: field.flagged.unwrap_or(false),
         })
         .collect::<Vec<_>>();

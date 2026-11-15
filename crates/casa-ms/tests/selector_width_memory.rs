@@ -138,6 +138,7 @@ fn numeric_selector_width_does_not_grow_the_heap() {
     ms.resolve_field_selector("0~1").expect("warm metadata");
     let rows = [FieldSelectorRow {
         name: "only",
+        code: None,
         flagged: false,
     }];
     for (narrow, wide) in [
