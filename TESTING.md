@@ -178,6 +178,14 @@ needs `pkg-config casacore`: C++ casacore digests the MeasurementSets the
 session writes, and the digests must equal casa-rs's. Its counting law
 (`--test session_memory`) runs alone in a process of its own.
 
+The C++ `tNewMSSimulator.cc` scenarios run natively in
+`cargo test -p casa-simulation --test upstream_cpp`: independent constructor
+lifetimes and antenna initialization for array sizes two through ten.
+`casa-numerics`'s `simulated_bandpass` tests reproduce
+`tSimButterworthBandpass.cc`'s parameter/mode/response assertions and check
+asymmetric closed-form amplitudes. Its mode record becomes a typed order
+pair in Rust. These tests need no C++ SDK at runtime.
+
 `python/tests/test_simulator_upstream.py` in `crates/casars-python` runs native
 equivalents of CASA 6.7.6.14's simulator-tool cases. PLP prediction retains
 the upstream analytic flux assertion. The upstream-disabled tropospheric

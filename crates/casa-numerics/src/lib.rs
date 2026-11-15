@@ -8,6 +8,7 @@ mod annular_aperture;
 pub mod cell_noise;
 mod elliptical_gaussian;
 mod primary_beam;
+mod simulated_bandpass;
 mod vla_beams;
 
 pub use annular_aperture::AnnularApertureVoltageTable;
@@ -16,6 +17,7 @@ pub use elliptical_gaussian::{
     gaussian_covariance, normalize_position_angle,
 };
 pub use primary_beam::{BeamPattern, DefaultRadial, FrequencyPattern, PrimaryBeam};
+pub use simulated_bandpass::SimulatedBandpass;
 pub use vla_beams::{EvlaBand, EvlaPowerPattern, VlaBand};
 
 use nalgebra::{DMatrix, DVector};
