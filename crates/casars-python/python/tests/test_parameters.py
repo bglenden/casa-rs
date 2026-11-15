@@ -34,11 +34,12 @@ def test_malformed_numpy_scalar_profile_is_rejected_before_number_as_text(
     tmp_path: Path, name: str,
 ) -> None:
     payload = {"kind": "numpy_scalar", "value": {"dtype": "int8", "value": {"kind": "integer", "value": 1000}}}
+    current = parameters.definition("tclean")["contract_version"]
     profile = f'''[casars]
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 41
+contract = {current}
 
 [parameters]
 

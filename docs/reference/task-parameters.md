@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 598
+- Concepts: 599
 - Surfaces: 29 (29 task, 0 session)
 - Surface bindings: 856
 
@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 41 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
+| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 42 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 40 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -221,7 +221,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Tclean (<code>tclean</code>)
 
 - Kind: `task`
-- Contract version: `41`
+- Contract version: `42`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
@@ -230,7 +230,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Context | Input MeasurementSet path or paths. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Context | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Selections apply with either selectdata value, as CASA's tclean does; unsupported selectors are still refused. |
-| <code>field</code> | <code>ms.selection.field@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | CASA field selector, one per MeasurementSet or one for all |
+| <code>field</code> | <code>ms.selection.field@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | CASA field selector, one per MeasurementSet or one for all |
 | <code>spw</code> | <code>ms.selection.spw@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | Comma-separated SPECTRAL_WINDOW_ID integers, one per MeasurementSet or one for all |
 | <code>timerange</code> | <code>ms.selection.timerange@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | CASA time selection, exact text, one per MeasurementSet or one for all |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | UV range selector, one per MeasurementSet or one for all<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |

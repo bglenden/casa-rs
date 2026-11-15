@@ -79,6 +79,7 @@ fn public_task_publishes_both_images_and_selects_the_requested_antenna() {
     let original = casa_images::PagedImage::<f32>::open(root.path().join("all.image")).unwrap();
     full["outfile"] = json!(root.path().join("selected"));
     full["antenna"] = json!("T701&&&");
+    full["field"] = json!("none");
     let (success, reply) = invoke(root.path(), full);
     assert!(success, "{reply}");
     let selected =
