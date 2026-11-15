@@ -19,13 +19,15 @@
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
 //! | SFL  | Sanson-Flamsteed (sinusoidal) | `-SFL` |
+//! | PAR  | Parabolic | `-PAR` |
+//! | MOL  | Mollweide equal-area | `-MOL` |
 //! | MER  | Mercator | `-MER` |
 //! | AIT  | Hammer-Aitoff | `-AIT` |
 //! | ZEA  | Zenithal equal-area | `-ZEA` |
 //! | STG  | Stereographic | `-STG` |
 //! | NCP  | North Celestial Pole (SIN special case) | `-NCP` |
 
-use std::f64::consts::{FRAC_PI_2, LN_2, PI};
+use std::f64::consts::{FRAC_PI_2, LN_2, PI, SQRT_2};
 use std::fmt;
 
 use crate::error::CoordinateError;
@@ -58,6 +60,10 @@ pub enum ProjectionType {
     CAR,
     /// Sanson-Flamsteed (sinusoidal) projection.
     SFL,
+    /// Parabolic projection.
+    PAR,
+    /// Mollweide equal-area projection.
+    MOL,
     /// Mercator projection.
     MER,
     /// Hammer-Aitoff equal-area projection.
@@ -94,6 +100,8 @@ impl ProjectionType {
             "ARC" => Some(Self::ARC),
             "CAR" => Some(Self::CAR),
             "SFL" => Some(Self::SFL),
+            "PAR" => Some(Self::PAR),
+            "MOL" => Some(Self::MOL),
             "MER" => Some(Self::MER),
             "AIT" => Some(Self::AIT),
             "ZEA" => Some(Self::ZEA),
@@ -114,6 +122,8 @@ impl ProjectionType {
             Self::ARC => "ARC",
             Self::CAR => "CAR",
             Self::SFL => "SFL",
+            Self::PAR => "PAR",
+            Self::MOL => "MOL",
             Self::MER => "MER",
             Self::AIT => "AIT",
             Self::ZEA => "ZEA",
@@ -205,6 +215,8 @@ impl Projection {
             ProjectionType::ARC => project_arc(phi, theta),
             ProjectionType::CAR => project_car(phi, theta),
             ProjectionType::SFL => project_sfl(phi, theta),
+            ProjectionType::PAR => project_par(phi, theta),
+            ProjectionType::MOL => project_mol(phi, theta),
             ProjectionType::MER => project_mer(phi, theta),
             ProjectionType::AIT => project_ait(phi, theta),
             ProjectionType::ZEA => project_zea(phi, theta),
@@ -230,6 +242,8 @@ impl Projection {
             ProjectionType::ARC => deproject_arc(x, y),
             ProjectionType::CAR => deproject_car(x, y),
             ProjectionType::SFL => deproject_sfl(x, y),
+            ProjectionType::PAR => deproject_par(x, y),
+            ProjectionType::MOL => deproject_mol(x, y),
             ProjectionType::MER => deproject_mer(x, y),
             ProjectionType::AIT => deproject_ait(x, y),
             ProjectionType::ZEA => deproject_zea(x, y),
@@ -511,6 +525,99 @@ fn deproject_sfl(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
 }
 
 // ---------------------------------------------------------------------------
+// PAR (parabolic)
+// ---------------------------------------------------------------------------
+
+/// Calabretta & Greisen (2002), Eqs. 94–95, in radians.
+fn project_par(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta.abs() == FRAC_PI_2 {
+        return Ok((0.0, FRAC_PI_2.copysign(theta)));
+    }
+    let sine = (theta / 3.0).sin();
+    Ok((phi * (1.0 - 4.0 * sine * sine), PI * sine))
+}
+
+fn deproject_par(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let sine = y / PI;
+    if sine.abs() <= 0.5 {
+        if sine.abs() == 0.5 {
+            if x.abs() < 1e-13 * DEG_TO_RAD {
+                return Ok((0.0, FRAC_PI_2.copysign(y)));
+            }
+        } else {
+            let phi = x / (1.0 - 4.0 * sine * sine);
+            if phi.abs() <= PI + 1e-12 * DEG_TO_RAD {
+                return Ok((phi.clamp(-PI, PI), 3.0 * sine.asin()));
+            }
+        }
+    }
+    Err(CoordinateError::ConversionFailed(
+        "PAR deproject: point outside projection boundary".into(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// MOL (Mollweide equal-area)
+// ---------------------------------------------------------------------------
+
+/// Calabretta & Greisen (2002), Eqs. 97–100, in radians. Solve the
+/// monotone auxiliary-angle equation with bracketed Newton steps.
+fn project_mol(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta.abs() == FRAC_PI_2 {
+        return Ok((0.0, SQRT_2.copysign(theta)));
+    }
+    let target = PI * theta.sin().abs();
+    let (mut low, mut high) = (0.0, PI);
+    let mut angle = target / 2.0;
+    for _ in 0..64 {
+        let residual = (angle - target) + angle.sin();
+        if residual.abs() <= 4.0 * f64::EPSILON {
+            let (sine, cosine) = (angle.copysign(theta) / 2.0).sin_cos();
+            return Ok((2.0 * SQRT_2 / PI * phi * cosine, SQRT_2 * sine));
+        }
+        if residual < 0.0 {
+            low = angle;
+        } else {
+            high = angle;
+        }
+        let next = angle - residual / (1.0 + angle.cos());
+        angle = if low < next && next < high {
+            next
+        } else {
+            low.midpoint(high)
+        };
+    }
+    Err(CoordinateError::ConversionFailed(
+        "MOL project: auxiliary angle did not converge".into(),
+    ))
+}
+
+fn deproject_mol(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let width_squared = 2.0 - y * y;
+    // WCSLIB's pole tolerance is applied in the intermediate plane.
+    if width_squared >= -1e-12 {
+        let sine = (y / SQRT_2).clamp(-1.0, 1.0);
+        if width_squared <= 1e-12 {
+            if x.abs() < 1e-12 * DEG_TO_RAD {
+                return Ok((0.0, (2.0 * sine.asin() / PI).asin()));
+            }
+        } else {
+            let width = width_squared.sqrt();
+            let phi = (PI / 2.0) * x / width;
+            if phi.abs() <= PI + 1e-11 * DEG_TO_RAD {
+                let theta = ((2.0 * sine.asin() + y * width) / PI)
+                    .clamp(-1.0, 1.0)
+                    .asin();
+                return Ok((phi.clamp(-PI, PI), theta));
+            }
+        }
+    }
+    Err(CoordinateError::ConversionFailed(
+        "MOL deproject: point outside projection boundary".into(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // MER (Mercator)
 // ---------------------------------------------------------------------------
 
@@ -751,6 +858,38 @@ mod tests {
     fn airy_rejects_the_native_south_pole() {
         let projection = Projection::with_parameters(ProjectionType::AIR, vec![0.0]);
         assert!(projection.project(0.0, -FRAC_PI_2).is_err());
+    }
+
+    /// As in WCSLIB, the pseudocylindrical boundaries collapse to one
+    /// representable point at either pole and have a finite equator.
+    #[test]
+    fn pseudocylindrical_boundaries_refuse_outside_pixels() {
+        for (kind, pole, equator_edge) in [
+            (ProjectionType::PAR, FRAC_PI_2, PI),
+            (ProjectionType::MOL, SQRT_2, 2.0 * SQRT_2),
+        ] {
+            let projection = Projection::new(kind);
+            for sign in [-1.0, 1.0] {
+                let pole = pole * sign;
+                assert_eq!(
+                    projection.project(0.7, FRAC_PI_2 * sign).unwrap(),
+                    (0.0, pole)
+                );
+                let (phi, theta) = projection.deproject(0.0, pole).unwrap();
+                assert_eq!(phi, 0.0);
+                assert!((theta - FRAC_PI_2 * sign).abs() < 1e-12);
+                assert!(projection.deproject(0.001, pole).is_err(), "{kind:?}");
+                assert!(
+                    projection.deproject(0.0, pole + 0.001 * sign).is_err(),
+                    "{kind:?}"
+                );
+            }
+            assert!(projection.deproject(equator_edge, 0.0).is_ok(), "{kind:?}");
+            assert!(
+                projection.deproject(equator_edge + 0.01, 0.0).is_err(),
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]

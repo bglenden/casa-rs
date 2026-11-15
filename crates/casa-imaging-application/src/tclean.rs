@@ -617,10 +617,17 @@ impl<'a> Tclean<'a> {
                 format!("Invalid projection code : {name}, as CASA's tclean refuses it"),
             ));
         }
-        if name == "ZPN" {
+        // tclean always supplies two zeros to casacore's Projection.
+        let invalid_parameters = match name {
+            "ZPN" => Some("ZPN requires a nonzero coefficient"),
+            "CYP" => Some("CYP requires a nonzero cylinder radius"),
+            "CEA" => Some("CEA requires a positive scale parameter"),
+            _ => None,
+        };
+        if let Some(reason) = invalid_parameters {
             return Err(TcleanRefusal::new(
                 "projection",
-                "Invalid parameter value: ZPN requires a nonzero coefficient, as CASA's tclean reports",
+                format!("Invalid parameter value: {reason}, as CASA's tclean reports"),
             ));
         }
         if Projection::from_casa_name(name).is_none() {

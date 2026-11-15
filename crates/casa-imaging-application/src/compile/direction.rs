@@ -965,6 +965,8 @@ mod tests {
             ("ZEA", Projection::Zea),
             ("CAR", Projection::Car),
             ("SFL", Projection::Sfl),
+            ("PAR", Projection::Par),
+            ("MOL", Projection::Mol),
             ("MER", Projection::Mer),
             ("AIT", Projection::Ait),
         ];
@@ -977,6 +979,8 @@ mod tests {
             ("TAN", Projection::Tan),
             ("CAR", Projection::Car),
             ("SFL", Projection::Sfl),
+            ("PAR", Projection::Par),
+            ("MOL", Projection::Mol),
             ("AIT", Projection::Ait),
             ("MER", Projection::Mer),
         ];
@@ -985,6 +989,8 @@ mod tests {
             ("TAN", Projection::Tan),
             ("CAR", Projection::Car),
             ("SFL", Projection::Sfl),
+            ("PAR", Projection::Par),
+            ("MOL", Projection::Mol),
             ("AIT", Projection::Ait),
             ("MER", Projection::Mer),
         ];

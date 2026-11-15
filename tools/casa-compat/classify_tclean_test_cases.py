@@ -79,7 +79,8 @@ CASACORE_PROJECTIONS = {
     "HPX",
 }
 CASA_RS_PROJECTIONS = {
-    "SIN", "NCP", "AZP", "SZP", "AIR", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "MER", "AIT",
+    "SIN", "NCP", "AZP", "SZP", "AIR", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "PAR", "MOL",
+    "MER", "AIT",
 }
 PROJECTION_ISSUE = 1101
 
@@ -411,8 +412,8 @@ class Refusals:
         if isinstance(projection, str):
             if projection != "NCP" and projection not in CASACORE_PROJECTIONS:
                 self.add("projection: not a casacore projection", PARITY)
-            elif projection == "ZPN":
-                self.add("projection: CASA rejects zero ZPN coefficients", PARITY)
+            elif projection in {"ZPN", "CYP", "CEA"}:
+                self.add(f"projection: CASA rejects fixed zero parameters for {projection}", PARITY)
             elif projection not in CASA_RS_PROJECTIONS:
                 self.add(f"projection={projection!r}", NOT_YET, PROJECTION_ISSUE)
 
