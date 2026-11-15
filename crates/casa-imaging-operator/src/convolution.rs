@@ -799,9 +799,10 @@ pub trait ConvolutionFunctionSet: Send + Sync {
 
     /// Whether the weight (sensitivity) image is the magnitude of the
     /// polarization-combined complex transform rather than its real part.
-    /// `AWProjectWBFT::makeWBSensitivityImage` averages the polarization
-    /// planes and keeps `abs` of the average, so an odd Taylor moment,
-    /// Σ W·s·K, which can be negative, publishes its magnitude.
+    /// AW sensitivity keeps the magnitude of the polarization combination.
+    /// This preserves an odd Taylor moment Σ W·s·K even when its signed
+    /// value is negative. CASA's `makeWBSensitivityImage` loses the computed
+    /// polarization average for a multi-correlation grid (see CASA bugs).
     fn weight_image_magnitude(&self) -> bool {
         false
     }

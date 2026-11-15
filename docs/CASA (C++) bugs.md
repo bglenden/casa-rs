@@ -38,6 +38,7 @@ CASA behaviours casa-rs does not follow:
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
 [`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
+[polarized AW sensitivity from one correlation](#polarized-aw-projection-publishes-the-first-correlation-sensitivity),
 [signed Taylor moments with empty cross-hands](#mosaic-and-w-projection-drop-negative-taylor-moments-with-empty-cross-hands),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [AW baseline pointing groups](#aw-projection-can-use-another-antenna-groups-pointing),
@@ -6146,3 +6147,31 @@ requesting additional empty Stokes planes cannot erase valid data. Its
 I and V products agree with stock CASA's IV controls, and it leaves Q and
 U data and models zero. The shared PSFs, sensitivities and sum-of-weights
 tables still cover all four Stokes planes. [Imaging issue #1112](https://github.com/bglenden/casa-rs/issues/1112)
+
+
+## Polarized AW projection publishes the first correlation sensitivity
+
+CASA 6.7.6.14 computes the mean of the complex weight transforms across
+polarizations in `AWProjectWBFT::makeWBSensitivityImage`. The accumulator
+is a separate matrix. It never replaces the first plane of the input
+lattice, so the subsequent loop takes the magnitude of the original
+first plane and copies it into every output polarization.
+
+With `refim_mawproject.ms` (RR and LL), `gridder='awproject'`,
+`wbawp=True`, `conjbeams=True`, `psterm=False`, both PA steps at 360,
+`imsize=512`, `cell='10arcsec'`, two Taylor terms, `reffreq='1.4GHz'`,
+`stokes='IQUV'` and `pblimit=0.1`, this changes the common weight image
+by about 4.4% NRMS and changes the valid PB support. The request uses the
+phase centre and field selection of `test_widefield_wbaproj_mtmfs`. A native probe that
+takes only the first correlation reproduces the stock products and
+controller with the same cache. The same first-correlation behavior is
+also verified on the four-correlation `refim_point_linRL.ms` fixture.
+
+The native AW path combines the parallel-hand transforms for the common
+IQUV sensitivity. Its Stokes I images, normalized weights and masks
+agree with a separate stock Stokes I run, which combines both parallel
+hands on one grid plane. The first-correlation rule for the published
+Taylor sum of weights follows CASA. It makes the IQUV sum of weights
+half the Stokes I sum for the equal-weight RR and LL case. Compare the shape
+of higher weight terms after dividing by their published sums.
+[Imaging issue #1112](https://github.com/bglenden/casa-rs/issues/1112)
