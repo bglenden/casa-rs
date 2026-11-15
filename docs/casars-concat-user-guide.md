@@ -62,7 +62,7 @@ agree exactly. Upstream concat tests 1 and 2 retain 95,256 and 71,442 rows;
 DATA and weight spectra have normalized RMS 0, with sigma differences below
 1.2e-7 relative. Subtable values agree within direction/time rounding.
 
-The initial three-run serial release median for m51c was 2.19 s native and
-0.166 s CASA. This is a performance limitation: the existing bounded writer
+The final three-run serial release median for m51c was 2.14 s native and
+0.142 s CASA. This is a performance limitation: the existing bounded writer
 rewrites all inputs, while CASA copies the first MS and appends. Improving
 that creation/append path remains a non-blocking performance idea.
