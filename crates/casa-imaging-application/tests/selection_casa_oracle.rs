@@ -643,3 +643,46 @@ fn field_lexical_boundaries_read_casas_physical_rows() {
         "{error}"
     );
 }
+
+#[test]
+fn imaging_selects_fields_that_share_a_time_and_baseline() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    let first_field = physical_rows(&oracle["cases"]["field_id"]);
+    let mut second_field = physical_rows(&oracle["cases"]["field_glob"]);
+
+    // Observe the same integration and baseline on a second field. Their
+    // other partition keys, including DATA_DESC_ID and STATE_ID, agree.
+    let mut ms = MeasurementSet::open(&vis).expect("open fixture");
+    let original = usize::try_from(first_field[0]).unwrap();
+    let duplicated = ms.main_table().rows().unwrap()[original].clone();
+    let new_row = ms.row_count();
+    ms.main_table_mut().add_row(duplicated).unwrap();
+    ms.main_table_mut()
+        .row_accessor_mut()
+        .set_cell(
+            new_row,
+            "FIELD_ID",
+            TableValue::Scalar(ScalarValue::Int32(1)),
+        )
+        .unwrap();
+    ms.save().expect("stage simultaneous fields");
+    drop(ms);
+    second_field.push(u64::try_from(new_row).unwrap());
+
+    for (field, expected) in [
+        ("0", first_field),
+        ("1", second_field),
+        ("0,1", (0..=u64::try_from(new_row).unwrap()).collect()),
+    ] {
+        let request = request(&vis, root.path().join("rows"), &json!({"field": field}));
+        let actual = row_pointing(&request, &imaging::context(request.resource_policy()))
+            .unwrap_or_else(|error| panic!("FIELD {field}: {error}"));
+        assert_eq!(
+            actual.into_keys().collect::<Vec<_>>(),
+            expected,
+            "FIELD {field}"
+        );
+    }
+}

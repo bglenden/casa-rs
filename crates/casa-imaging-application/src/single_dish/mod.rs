@@ -90,6 +90,7 @@ pub fn image_from_parameters(
     .map_err(failure)?;
     let opened = crate::compile::opening::open_observation(
         &parameters.input()?,
+        Default::default(),
         (&context.host, &context.policy),
     )
     .map_err(failure)?;

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use casa_imaging_runtime::{Admitted, Reservation};
 use casa_ms::CubeAxisValue;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::observation_io::Msv2Observation;
+use casa_ms::observation_io::{Msv2Observation, PartitionScheme};
 use casa_observation::Catalogue;
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
@@ -90,11 +90,22 @@ pub(super) fn survey_stores(
     context: &RunContext,
     measures: &Arc<dyn MeasuresProvider>,
 ) -> Result<Vec<SurveyedStore>, PrepareError> {
+    // CASA's visibility iterator groups each FIELD_ID before it orders by
+    // TIME. A grid for one field can hold its row even when another field
+    // used the same baseline at the same time.
+    let partition_scheme = PartitionScheme {
+        fields: true,
+        ..PartitionScheme::default()
+    };
     let opened = request
         .vis
         .iter()
         .map(|selection| {
-            let opened = open_observation(&selection.vis, (&context.host, &context.policy))?;
+            let opened = open_observation(
+                &selection.vis,
+                partition_scheme,
+                (&context.host, &context.policy),
+            )?;
             Ok((selection.clone(), opened))
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
