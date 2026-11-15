@@ -900,7 +900,6 @@ impl ImagingRequest {
                 || !matches!(self.weighting, Weighting::Natural | Weighting::Briggs)
                 || self.vis.len() != 1
                 || self.outlierfile.is_some()
-                || self.nsigma != 0.0
                 || self.savemodel != SaveModel::None)
         {
             return Err(InvalidRequest {

@@ -1336,7 +1336,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"gridder":"wproject", "wprojplanes":4}),
         json!({"facets":2}),
         json!({"weighting":"uniform"}),
-        json!({"nsigma":2.0}),
         json!({"savemodel":"modelcolumn"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
@@ -1353,6 +1352,9 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     let automatic = request(json!({"deconvolver":"mem", "usemask":"auto-multithresh"}));
     assert_eq!(automatic.usemask, crate::UseMask::AutoMultithresh);
     automatic.validate().expect("MEM with an automatic mask");
+    let noise_limited = request(json!({"deconvolver":"mem", "nsigma":3.0}));
+    assert_eq!(noise_limited.nsigma, 3.0);
+    noise_limited.validate().expect("MEM with a noise cutoff");
     let mut typed = accepted;
     typed
         .stokes
