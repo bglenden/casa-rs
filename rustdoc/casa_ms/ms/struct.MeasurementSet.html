@@ -188,10 +188,10 @@ list, the selection builder’s convention for selecting every field.</p>
 <h5 id="errors-5"><a class="doc-anchor" href="#errors-5">§</a>Errors</h5>
 <p>Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
 no FIELD row, or a nonempty selection resolving to no existing fields.
-Slash-delimited regular expressions, comparisons, escaped or
-concatenated quoted patterns, and bare CODE/numeric-name fallback
-remain outside this resolver’s scope.
-Numeric IDs are bounded by the FIELD row count before enumeration.
+Slash-delimited regular expressions, comparisons, and escaped or
+concatenated quoted patterns remain outside this resolver’s scope.
+An out-of-range numeric ID tries its decimal text as a name or code.
+Only the FIELD rows themselves bound numeric range enumeration.
 Name matching trims stored names and
 excludes flagged FIELD rows, following <code>MSFieldIndex</code>.</p>
 </div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-MeasurementSet-5" class="impl"><a class="src rightside" href="../../src/casa_ms/selection/spw_expr.rs.html#424-475">Source</a><a href="#impl-MeasurementSet-5" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.MeasurementSet.html" title="struct casa_ms::ms::MeasurementSet">MeasurementSet</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.resolve_spw_selector" class="method"><a class="src rightside" href="../../src/casa_ms/selection/spw_expr.rs.html#436-474">Source</a><h4 class="code-header">pub fn <a href="#method.resolve_spw_selector" class="fn">resolve_spw_selector</a>(&amp;self, text: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.str.html">str</a>) -&gt; <a class="type" href="../error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="struct" href="../selection/spw_expr/struct.SpwSelection.html" title="struct casa_ms::selection::spw_expr::SpwSelection">SpwSelection</a>&gt;</h4></section></summary><div class="docblock"><p>Resolve CASA spectral-window selection <code>text</code> against this

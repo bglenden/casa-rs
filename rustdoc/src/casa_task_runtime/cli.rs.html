@@ -540,23 +540,33 @@
 <a href=#540 id=540 data-nosnippet>540</a>    </span><span class="kw">fn </span>cli_values_are_normalized_through_the_binding_concept() {
 <a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
 <a href=#542 id=542 data-nosnippet>542</a>        <span class="kw">let </span>field = ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"field"</span>).unwrap();
-<a href=#543 id=543 data-nosnippet>543</a>        <span class="macro">assert_eq!</span>(
-<a href=#544 id=544 data-nosnippet>544</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">" 0, 2 "</span>).unwrap(),
-<a href=#545 id=545 data-nosnippet>545</a>            ParameterValue::String(<span class="string">"0,2"</span>.to_string())
-<a href=#546 id=546 data-nosnippet>546</a>        );
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="macro">assert!</span>(
-<a href=#548 id=548 data-nosnippet>548</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">"  "</span>)
-<a href=#549 id=549 data-nosnippet>549</a>                .unwrap_err()
-<a href=#550 id=550 data-nosnippet>550</a>                .contains(<span class="string">"no typed value"</span>)
-<a href=#551 id=551 data-nosnippet>551</a>        );
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="macro">assert!</span>(ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"not_a_parameter"</span>).is_err());
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="comment">// A value the concept refuses names its parameter.
-<a href=#554 id=554 data-nosnippet>554</a>        </span><span class="kw">let </span>imager = casa_provider_contracts::builtin_surface_bundle(<span class="string">"tclean"</span>).unwrap();
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>imsize = ensure_parameter_binding(<span class="kw-2">&amp;</span>imager, <span class="string">"imsize"</span>).unwrap();
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>refused = validated_cli_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="string">"abc"</span>).unwrap_err();
-<a href=#557 id=557 data-nosnippet>557</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>refused = checked_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="kw-2">&amp;</span>ParameterValue::Bool(<span class="bool-val">true</span>)).unwrap_err();
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
-<a href=#560 id=560 data-nosnippet>560</a>    }
-<a href=#561 id=561 data-nosnippet>561</a>}
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">for </span>(supplied, expected) <span class="kw">in </span>[
+<a href=#544 id=544 data-nosnippet>544</a>            (<span class="string">" 0, 2 "</span>, <span class="string">"0,2"</span>),
+<a href=#545 id=545 data-nosnippet>545</a>            (<span class="string">" 0 ~ 2 , 3 "</span>, <span class="string">"0~2,3"</span>),
+<a href=#546 id=546 data-nosnippet>546</a>            (
+<a href=#547 id=547 data-nosnippet>547</a>                <span class="string">r#" target  East , "G55  West" "#</span>,
+<a href=#548 id=548 data-nosnippet>548</a>                <span class="string">r#"target  East,"G55  West""#</span>,
+<a href=#549 id=549 data-nosnippet>549</a>            ),
+<a href=#550 id=550 data-nosnippet>550</a>        ] {
+<a href=#551 id=551 data-nosnippet>551</a>            <span class="macro">assert_eq!</span>(
+<a href=#552 id=552 data-nosnippet>552</a>                validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, supplied).unwrap(),
+<a href=#553 id=553 data-nosnippet>553</a>                ParameterValue::String(expected.to_string()),
+<a href=#554 id=554 data-nosnippet>554</a>                <span class="string">"{supplied:?}"
+<a href=#555 id=555 data-nosnippet>555</a>            </span>);
+<a href=#556 id=556 data-nosnippet>556</a>        }
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="macro">assert!</span>(
+<a href=#558 id=558 data-nosnippet>558</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">"  "</span>)
+<a href=#559 id=559 data-nosnippet>559</a>                .unwrap_err()
+<a href=#560 id=560 data-nosnippet>560</a>                .contains(<span class="string">"no typed value"</span>)
+<a href=#561 id=561 data-nosnippet>561</a>        );
+<a href=#562 id=562 data-nosnippet>562</a>        <span class="macro">assert!</span>(ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"not_a_parameter"</span>).is_err());
+<a href=#563 id=563 data-nosnippet>563</a>        <span class="comment">// A value the concept refuses names its parameter.
+<a href=#564 id=564 data-nosnippet>564</a>        </span><span class="kw">let </span>imager = casa_provider_contracts::builtin_surface_bundle(<span class="string">"tclean"</span>).unwrap();
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">let </span>imsize = ensure_parameter_binding(<span class="kw-2">&amp;</span>imager, <span class="string">"imsize"</span>).unwrap();
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>refused = validated_cli_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="string">"abc"</span>).unwrap_err();
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
+<a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">let </span>refused = checked_value(<span class="kw-2">&amp;</span>imager, imsize, <span class="kw-2">&amp;</span>ParameterValue::Bool(<span class="bool-val">true</span>)).unwrap_err();
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="macro">assert!</span>(refused.starts_with(<span class="string">"parameter \"imsize\": "</span>), <span class="string">"{refused}"</span>);
+<a href=#570 id=570 data-nosnippet>570</a>    }
+<a href=#571 id=571 data-nosnippet>571</a>}
 </code></pre></div></section></main></body></html>
