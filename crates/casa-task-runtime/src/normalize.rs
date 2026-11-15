@@ -337,10 +337,11 @@ fn apply_rule(
             capabilities,
         } => {
             let value = map_strings(value, |value| {
-                // The FIELD grammar matches whitespace inside double quotes literally.
+                let trimmed = value.trim();
+                // The FIELD grammar treats interior whitespace as part of a name.
                 Ok(
-                    if *grammar == SelectorGrammar::Field && value.contains('"') {
-                        value.trim().to_owned()
+                    if *grammar == SelectorGrammar::Field && !trimmed.is_empty() {
+                        trimmed.to_owned()
                     } else {
                         normalize_selector(value)
                     },

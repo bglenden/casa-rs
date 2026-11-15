@@ -139,22 +139,11 @@ fn every_selector_reads_casas_main_rows() {
 fn quoted_fields_read_casas_physical_rows() {
     let root = tempfile::tempdir().expect("test root");
     let vis = fixture(root.path());
-    let mut ms = MeasurementSet::open(&vis).expect("open the fixture");
-    let fields = ms.subtable_mut(SubtableId::Field).expect("FIELD");
-    for (column, row, value) in [
-        ("NAME", 0, "G55 East, ridge"),
-        ("NAME", 1, "G55  West"),
-        ("CODE", 0, "phase calibrator, G55"),
-        ("CODE", 1, "G55 East, ridge"),
-    ] {
-        fields
-            .cell_accessor_mut(row, column)
-            .unwrap()
-            .set(TableValue::Scalar(ScalarValue::String(value.to_owned())))
-            .unwrap();
-    }
-    ms.save().expect("write private FIELD metadata");
-    drop(ms);
+    let mut metadata = [
+        ("G55 East, ridge", "phase calibrator, G55", false),
+        ("G55  West", "G55 East, ridge", false),
+    ];
+    rewrite_fields(&vis, metadata);
     let ms = MeasurementSet::open(&vis).expect("reopen the fixture");
 
     // Stock CASA selects the same physical rows as these existing oracle
@@ -176,7 +165,7 @@ fn quoted_fields_read_casas_physical_rows() {
     }
 
     for (field, reason) in [
-        (r#""G55 West""#, "did not match any FIELD rows"),
+        (r#""G55 West""#, "did not match any field names or codes"),
         (r#""G55 East, ridge"#, "unterminated quoted field selector"),
         (r#""G55 East, ridge","#, "empty term in field selector"),
     ] {
@@ -189,15 +178,8 @@ fn quoted_fields_read_casas_physical_rows() {
 
     // With the matching NAME flagged, CASA instead finds field 1 by CODE.
     drop(ms);
-    let mut ms = MeasurementSet::open(&vis).expect("reopen for the flagged case");
-    ms.subtable_mut(SubtableId::Field)
-        .unwrap()
-        .cell_accessor_mut(0, "FLAG_ROW")
-        .unwrap()
-        .set(TableValue::Scalar(ScalarValue::Bool(true)))
-        .unwrap();
-    ms.save().unwrap();
-    drop(ms);
+    metadata[0].2 = true;
+    rewrite_fields(&vis, metadata);
     let fallback = request(
         &vis,
         root.path().join("fallback"),
@@ -222,4 +204,95 @@ fn quoted_fields_read_casas_physical_rows() {
         .is_err(),
         "a flagged code is refused"
     );
+}
+
+fn rewrite_fields(vis: &Path, metadata: [(&str, &str, bool); 2]) {
+    let mut ms = MeasurementSet::open(vis).expect("open the fixture");
+    let fields = ms.subtable_mut(SubtableId::Field).expect("FIELD");
+    for (row, (name, code, flagged)) in metadata.into_iter().enumerate() {
+        for (column, value) in [
+            ("NAME", ScalarValue::String(name.to_owned())),
+            ("CODE", ScalarValue::String(code.to_owned())),
+            ("FLAG_ROW", ScalarValue::Bool(flagged)),
+        ] {
+            fields
+                .cell_accessor_mut(row, column)
+                .unwrap()
+                .set(TableValue::Scalar(value))
+                .unwrap();
+        }
+    }
+    ms.save().expect("write private FIELD metadata");
+}
+
+#[test]
+fn bare_field_codes_and_numeric_aliases_read_casas_physical_rows() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let ordinary = [
+        ("target  East", "  phase  ", false),
+        ("phase", "  scan CAL  ", false),
+    ];
+    let flagged_name = [ordinary[0], ("phase", "  scan CAL  ", true)];
+    let numeric = [("42", "unused", false), ("0", "37", false)];
+    let numeric_conflict = [numeric[0], ("0", "42", false)];
+    let numeric_padded = [("0042", "unused", false), numeric[1]];
+    let numeric_duplicate = [numeric[0], ("42", "37", false)];
+    let numeric_flagged = [("42", "unused", true), numeric_duplicate[1]];
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    let groups = [
+        (
+            ordinary,
+            &[
+                ("target  East", Some("field_id")),
+                ("target East", None),
+                ("phase", Some("field_glob")),
+                ("scan CAL", Some("field_glob")),
+                ("*scan*", Some("field_glob")),
+                ("scan*", None),
+            ][..],
+        ),
+        (
+            flagged_name,
+            &[("phase", Some("field_id")), ("scan CAL", None)][..],
+        ),
+        (
+            numeric,
+            &[
+                ("0", Some("field_id")),
+                (r#""0""#, Some("field_glob")),
+                ("42", Some("field_id")),
+                ("0042", Some("field_id")),
+                ("37", Some("field_glob")),
+                ("41~43", Some("field_id")),
+                ("1,42", Some("all")),
+                ("0,42", Some("field_id")),
+            ][..],
+        ),
+        (numeric_conflict, &[("42", Some("field_id"))][..]),
+        (numeric_padded, &[("42", None)][..]),
+        (numeric_duplicate, &[("42", Some("field_id"))][..]),
+        (
+            numeric_flagged,
+            &[("42", Some("field_glob")), ("0", Some("field_id"))][..],
+        ),
+    ];
+    for (group, (metadata, cases)) in groups.into_iter().enumerate() {
+        rewrite_fields(&vis, metadata);
+        for &(field, expected) in cases {
+            let selection = request(&vis, root.path().join("rows"), &json!({"field": field}));
+            let result = row_pointing(&selection, &imaging::context(selection.resource_policy()));
+            if let Some(case) = expected {
+                let rows =
+                    result.unwrap_or_else(|error| panic!("group {group}, {field:?}: {error}"));
+                assert_eq!(
+                    rows.into_keys().collect::<Vec<_>>(),
+                    physical_rows(&oracle["cases"][case]),
+                    "group {group}, {field:?}"
+                );
+            } else {
+                assert!(result.is_err(), "CASA refuses group {group}, {field:?}");
+            }
+        }
+    }
 }
