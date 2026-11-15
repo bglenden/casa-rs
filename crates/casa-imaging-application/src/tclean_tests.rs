@@ -1344,7 +1344,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"specmode":"cube", "nchan":2}),
         json!({"gridder":"wproject", "wprojplanes":4}),
         json!({"facets":2}),
-        json!({"savemodel":"virtual"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
     ] {
@@ -1368,6 +1367,9 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     writing
         .validate()
         .expect("MEM can write predicted visibilities");
+    request(json!({"deconvolver":"mem", "niter":1, "savemodel":"virtual"}))
+        .validate()
+        .expect("MEM can save a virtual model");
     let mut typed = accepted;
     typed
         .stokes
