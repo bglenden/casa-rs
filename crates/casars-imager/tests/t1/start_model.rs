@@ -573,6 +573,21 @@ fn separate_outlier_start_models_resolve_flux_on_each_field() {
     );
     assert_models("separate-fields", [0.5, 3.0, 0.375]);
 
+    let set_saved_longitude = |value| {
+        let path = observation.scratch("separate-fields-outlier.model");
+        let mut image = PagedImage::<f32>::open(path).unwrap();
+        image.set_reference_value(0, value).unwrap();
+        image.save().unwrap();
+    };
+    set_saved_longitude(signed_longitude);
+    run("separate-fields", "", None).expect("an equivalent longitude turn must allow restart");
+    assert_models("separate-fields", [0.5, 3.0, 0.375]);
+    set_saved_longitude(signed_longitude + 1e-3);
+    let Err(reason) = run("separate-fields", "", None) else {
+        panic!("a genuinely different longitude must refuse restart");
+    };
+    assert!(reason.contains("coordinate system mismatch"), "{reason}");
+
     let multi = observation.scratch("outliers-many.txt");
     let definition: String = ["outlier-z", "outlier-a"]
         .into_iter()
