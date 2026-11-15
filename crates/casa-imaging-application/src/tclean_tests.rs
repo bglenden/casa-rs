@@ -351,6 +351,8 @@ fn casa_values_become_the_request_casa_rs_runs() {
         ("SIN", Projection::Sin),
         ("NCP", Projection::Ncp),
         ("AZP", Projection::Azp),
+        ("SZP", Projection::Szp),
+        ("AIR", Projection::Air),
         ("TAN", Projection::Tan),
         ("ARC", Projection::Arc),
         ("STG", Projection::Stg),
@@ -645,6 +647,13 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "{overrides}"
         );
     }
+}
+
+#[test]
+fn zpn_requires_a_nonzero_coefficient_in_casa() {
+    let error = refusal(json!({ "projection": "ZPN" }));
+    assert_eq!(error.parameter, "projection");
+    assert!(error.message.contains("ZPN requires a nonzero coefficient"));
 }
 
 #[test]
