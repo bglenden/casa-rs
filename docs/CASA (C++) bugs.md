@@ -831,7 +831,24 @@ seven-pointing case). An EVLA mosaic cube (`refim_oneshiftpoint.mosaic.ms`,
 three one-channel windows) differs from CASA under uniform weighting even
 for one field at its own centre, with or without `mosweight` (PSF NRMS
 3.6e-3, ten `.pb` mask pixels), where the standard gridder agrees to 1e-7;
-this mechanism does not explain it, and it stays open in #789.
+this mechanism does not explain it. The terminal density cell described
+under #789 has a separate cause.
+
+The exact external-table Venus cube in #818 uses `briggsbwtaper` and
+`mosweight=True`. CASA adds two guard planes at each end of the REST
+density axis. The matched probe across seven fields compared 21,000
+weights. With CASA's GridFT accumulation and stored-UVW lookup (using
+the stored frequency for the Float coordinates and bandwidth distance),
+the weights agree within 3.73e−8 absolute and 8.60e−8 normalized RMS.
+GridFT accumulation alone still differs by 1.35e−2 in field 5. Replaying
+the complete captured CASA weights independently matches the weighted
+cube's seven products within 1.26e−6 per plane, with exact masks and sum
+weights and matching WCS, controller counts and beams. The native
+single-frame weights give residual NRMS 2.10e−2 and 83 cutoff crossings
+against the raw CASA weights. Applying the same rotated coordinates to
+both binning and lookup preserves a sample's contribution to its own
+cell. This is the same two-frame exception as the fixed-source ALMA
+mosaics, now verified on the moving-source bandwidth-taper path.
 
 `simanalyze`'s own cube images meet it with one pointing too (2026-11-03,
 the simulation round trip, #980). `simobserve` centres a pointing on the
@@ -1880,6 +1897,16 @@ baselines (`.3`) and of all its antennas (`.4`) differ from CASA in 2 and 1
 pixel of their other channels or of the 12 m, 7 m and two-field cubes
 (`.1`, `.2`, `.5`); their products agree to 4e-5 normalized RMS. Such
 pixels cannot measure parity.
+
+The seven-pointing B10 Högbom control with `mosweight=True` (#818)
+has one affected pixel, at zero-based `(603, 1020)` with `pblimit=0.2`.
+The unblanked beams reconstructed from the two weight images are
+0.2000000128 in casa-rs and 0.1999999561 in CASA. The same pixel crosses
+the cut in the PB, restored image, PB-corrected image and residual masks.
+A diagnostic cut at either 0.1999998 or 0.2000002 gives identical support
+everywhere on the original arrays. The production cut remains at 0.2.
+All nine products agree within 1.05e−6 normalized RMS on the common
+support, with exact sum weights and matching WCS and beams.
 
 ## `sm.predict` phases a moved `observemany` pointing on its field
 

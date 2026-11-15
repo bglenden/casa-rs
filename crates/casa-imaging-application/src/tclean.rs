@@ -423,17 +423,19 @@ impl<'a> Tclean<'a> {
                  refuses it with specmode='mfs', and so does casa-rs",
             ));
         }
-        // A source-frame cube's per-channel density pads its axis by the
-        // swing CASA estimates in the source's frame
-        // (`BriggsCubeWeightor::estimateSwingChanPad` with the ephemeris).
+        // A shared cube density normally needs the source-frame frequency
+        // swing. The per-field mosaic keeps CASA's fixed guard planes.
         let per_channel_density = !matches!(weighting, "natural" | "radial" | "superuniform")
             && self
                 .values
                 .get("perchanweightdensity")
                 .and_then(Value::as_bool)
                 != Some(false);
+        let rest_mosaic_bandwidth_taper =
+            gridder_name == "mosaic" && weighting == "briggsbwtaper" && self.flag("mosweight")?;
         if specmode == "cubesource"
             && per_channel_density
+            && !rest_mosaic_bandwidth_taper
             && !(gridder == "awproject"
                 && matches!(weighting, "briggs" | "uniform")
                 && self.text("interpolation")? == "cubic")

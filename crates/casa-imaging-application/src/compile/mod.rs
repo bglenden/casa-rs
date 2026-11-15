@@ -813,6 +813,21 @@ fn cube_density_padding(
 ) -> Result<Option<usize>, PrepareError> {
     let (survey, spectral) = (surveyed.survey, surveyed.spectral);
     if request.specmode == SpecMode::Cubesource && request.weighting.per_channel_density() {
+        if matches!(
+            request.gridder,
+            Gridder::Mosaic {
+                mosweight: true,
+                ..
+            }
+        ) && request.weighting == Weighting::Briggsbwtaper
+            && request.perchanweightdensity
+            && per_field
+        {
+            // `BriggsCubeWeightor::initImgWeightCol` keeps its four guard
+            // planes for a single MS under multiField even with an ephemeris.
+            stores::one_store(surveyed.stores, "a cube's per-channel density weighting")?;
+            return Ok(Some(PER_FIELD_CUBE_DENSITY_PADDING));
+        }
         let rest_aw = matches!(request.gridder, Gridder::Awproject(_))
             && matches!(request.weighting, Weighting::Briggs | Weighting::Uniform);
         if rest_aw {
