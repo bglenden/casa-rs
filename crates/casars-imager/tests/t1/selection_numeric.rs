@@ -105,6 +105,9 @@ fn scan_and_observation_image_as_the_equivalent_field_selection() {
         (2, "2", "0", "1"),
         (3, "1~2,2", "1", "2,3"),
         (4, "2~2147483647", "0~2147483647", "1,3"),
+        (5, ">1", ">=1", "3"),
+        (6, ">=1 & <=2", "<1", "0,1"),
+        (7, "1,>1 & <3", "<=0", "0,1"),
     ] {
         let reference_name = format!("numeric-reference-{index}");
         let (reference, products) = observation.image(
@@ -133,15 +136,13 @@ fn scan_and_observation_image_as_the_equivalent_field_selection() {
     }
 }
 
-/// CASA's tclean refuses each of these but two: scan `>1` is CASA grammar
-/// casa-rs has yet to implement (#980), and scan 99 selects no rows, which
-/// casa-rs refuses rather than imaging nothing.
+/// Malformed selectors and scan predicates that select no rows leave no images.
 #[test]
 fn refused_selectors_write_no_images() {
     let observation = numeric_fixture();
     for (index, scan, obs) in [
         (0, "99", ""),
-        (1, ">1", ""),
+        (1, ">2", ""),
         (2, "1~1", ""),
         (3, "2~1", ""),
         (4, "", "0~0"),

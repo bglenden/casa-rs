@@ -102,81 +102,90 @@ pub fn parse_numeric_id_selector(value: &str, label: &str) -> MsResult<Vec<i32>>
         .collect())
 }
 
-/// Raw numeric terms preserve the distinction between a literal and a range,
-/// including endpoint order, until each selector applies its range semantics.
-enum NumericIdTerm {
-    Id(i32),
-    Range(i32, i32),
-}
-
-/// Legacy APIs permit empty list terms and Rust's explicit positive sign;
-/// the scan/observation grammar preserves CASA's stricter lexical rules.
-#[derive(Clone, Copy)]
-enum NumericIdSyntax {
-    Legacy,
-    Row,
-}
-
-fn parse_numeric_id_terms(
-    value: &str,
-    label: &str,
-    syntax: NumericIdSyntax,
-) -> MsResult<Vec<NumericIdTerm>> {
-    value
+/// Legacy numeric selectors normalize range direction before expansion.
+fn parse_numeric_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
+    let ranges = value
         .split(',')
         .map(str::trim)
-        .filter(|part| matches!(syntax, NumericIdSyntax::Row) || !part.is_empty())
+        .filter(|part| !part.is_empty())
         .map(|part| {
-            if matches!(syntax, NumericIdSyntax::Row) && (part.is_empty() || part.contains('+')) {
-                return Err(MsError::InvalidInput(format!(
-                    "{label} selector {part:?} is not a supported numeric id or range"
-                )));
-            }
             if let Some((start, end)) = parse_numeric_range_endpoints(part) {
-                return Ok(NumericIdTerm::Range(start, end));
+                return Ok((start.min(end), start.max(end)));
             }
-            part.parse::<i32>().map(NumericIdTerm::Id).map_err(|_| {
+            part.parse::<i32>().map(|id| (id, id)).map_err(|_| {
                 MsError::VersionError(format!(
                     "{label} selector {part:?} is not a supported numeric id or range"
                 ))
             })
         })
-        .collect()
-}
-
-/// Legacy numeric selectors normalize range direction before expansion.
-fn parse_numeric_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
-    let ranges = parse_numeric_id_terms(value, label, NumericIdSyntax::Legacy)?
-        .into_iter()
-        .map(|term| match term {
-            NumericIdTerm::Id(id) => (id, id),
-            NumericIdTerm::Range(start, end) => (start.min(end), start.max(end)),
-        })
-        .collect();
+        .collect::<MsResult<Vec<_>>>()?;
     Ok(canonical_numeric_ranges(ranges))
 }
 
-/// Parse the numeric scan/observation subset into compact inclusive intervals.
-/// CASA's MSScanParse and MSObservationParse reject negative, equal and reversed
-/// range bounds; a single nonnegative literal remains valid. Storage is bounded
-/// by the expression's term count, independently of interval width.
+/// Parse CASA's numeric scan/observation list into compact inclusive intervals.
+/// A term may be a nonnegative ID, an ascending range, a comparison, or a pair
+/// of strict or inclusive bounds. Terms combine by union. Valid bounds that
+/// can match no ID contribute no interval. Storage is bounded by term count.
 ///
 /// # Errors
 ///
-/// An empty term, an explicit `+` sign, a term that is not a number or
-/// `a~b` range, a negative ID, or range bounds that are equal or reversed.
+/// A malformed term, an ID outside the nonnegative signed 32-bit range, or
+/// equal or reversed bounds in a paired comparison or a range.
 pub fn parse_numeric_row_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
-    let ranges = parse_numeric_id_terms(value, label, NumericIdSyntax::Row)?
-        .into_iter()
-        .map(|term| match term {
-            NumericIdTerm::Id(id) if id >= 0 => Ok((id, id)),
-            NumericIdTerm::Range(start, end) if start >= 0 && end > start => Ok((start, end)),
-            _ => Err(MsError::InvalidInput(format!(
-                "{label} selector requires nonnegative IDs and strictly increasing range bounds"
-            ))),
-        })
-        .collect::<MsResult<Vec<_>>>()?;
+    let mut ranges = Vec::new();
+    for term in value.split(',') {
+        let (start, end) = row_id_interval(trim_row_id_space(term)).ok_or_else(|| {
+            MsError::InvalidInput(format!("invalid {label} selector term {term:?}"))
+        })?;
+        if start <= end {
+            // A nonempty interval has both endpoints in the physical ID
+            // range. The wider intermediate represents strict empty bounds.
+            ranges.push((start as i32, end as i32));
+        }
+    }
     Ok(canonical_numeric_ranges(ranges))
+}
+
+fn trim_row_id_space(text: &str) -> &str {
+    text.trim_matches([' ', '\t', '\n'])
+}
+
+/// Expand the six comparison productions in MSScanGram and MSObservationGram
+/// to intervals without constructing their auxiliary list of individual IDs.
+fn row_id_interval(term: &str) -> Option<(i64, i64)> {
+    let number = |text: &str| {
+        let digits = trim_row_id_space(text);
+        if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse::<i32>().ok().map(i64::from)
+    };
+    if let Some((lower, upper)) = term.split_once('&') {
+        let upper = trim_row_id_space(upper);
+        let (lower, upper, exclude) = if let Some(lower) = lower.strip_prefix(">=") {
+            (lower, upper.strip_prefix("<=")?, 0)
+        } else {
+            (lower.strip_prefix('>')?, upper.strip_prefix('<')?, 1)
+        };
+        let (lower, upper) = (number(lower)?, number(upper)?);
+        return (lower < upper).then_some((lower + exclude, upper - exclude));
+    }
+    if let Some((start, end)) = term.split_once('~') {
+        let (start, end) = (number(start)?, number(end)?);
+        return (start < end).then_some((start, end));
+    }
+
+    let max = i64::from(i32::MAX);
+    match term.as_bytes() {
+        [b'<', b'=', ..] => Some((0, number(&term[2..])?)),
+        [b'>', b'=', ..] => Some((number(&term[2..])?, max)),
+        [b'<', ..] => Some((0, number(&term[1..])? - 1)),
+        [b'>', ..] => Some((number(&term[1..])? + 1, max)),
+        _ => {
+            let id = number(term)?;
+            Some((id, id))
+        }
+    }
 }
 
 pub(super) fn canonical_numeric_ranges(mut values: Vec<(i32, i32)>) -> Vec<(i32, i32)> {

@@ -377,3 +377,99 @@ fn field_regexes_and_comparisons_read_casas_physical_rows() {
         }
     }
 }
+
+#[test]
+fn scan_and_observation_bounds_read_casas_physical_rows() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let mut ms = MeasurementSet::open(&vis).expect("open fixture");
+    let observation = ms
+        .subtable_mut(SubtableId::Observation)
+        .expect("OBSERVATION");
+    let row = observation.rows().unwrap()[0].clone();
+    observation.add_row(row).unwrap();
+    for row in 0..ms.row_count() {
+        let ScalarValue::Int32(field) = *ms
+            .main_table()
+            .cell_accessor(row, "FIELD_ID")
+            .unwrap()
+            .scalar()
+            .unwrap()
+        else {
+            panic!("FIELD_ID is an integer");
+        };
+        let main = ms.main_table_mut();
+        for (column, value) in [("SCAN_NUMBER", 2 * field + 1), ("OBSERVATION_ID", field)] {
+            main.row_accessor_mut()
+                .set_cell(row, column, TableValue::Scalar(ScalarValue::Int32(value)))
+                .unwrap();
+        }
+    }
+    ms.save().expect("stage physical scan and observation IDs");
+    drop(ms);
+
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    for (parameter, cases) in [
+        (
+            "scan",
+            &[
+                (">1", Some("field_glob")),
+                (">=3", Some("field_glob")),
+                ("<3", Some("field_id")),
+                ("<=1", Some("field_id")),
+                (">1&<4", Some("field_glob")),
+                (">=1&<=3", Some("all")),
+                (">=1&<=2", Some("field_id")),
+                (">1 & <3", None),
+                ("0,>2", Some("field_glob")),
+                ("1,>2", Some("all")),
+                (">1 & <=3", None),
+                ("<4&>1", None),
+                (">=3&<=3", None),
+                (">3&<2", None),
+                ("<0", None),
+                (">+1", None),
+                (" >1 ", Some("field_glob")),
+                (">\t1", Some("field_glob")),
+                (">1\r", None),
+                ("(>1)", None),
+            ][..],
+        ),
+        (
+            "observation",
+            &[
+                (">0", Some("field_glob")),
+                (">=1", Some("field_glob")),
+                ("<1", Some("field_id")),
+                ("<=0", Some("field_id")),
+                (">0 & <2", Some("field_glob")),
+                (">=0 & <=1", Some("all")),
+                (">0&<1,0", Some("field_id")),
+                (">=0&<2", None),
+                (">=1&<=1", None),
+                ("<0", None),
+                (">+0", None),
+                ("(>=0)", None),
+            ][..],
+        ),
+    ] {
+        for &(selector, expected) in cases {
+            let selection = request(
+                &vis,
+                root.path().join("rows"),
+                &json!({parameter: selector}),
+            );
+            let rows = row_pointing(&selection, &imaging::context(selection.resource_policy()));
+            if let Some(case) = expected {
+                let rows = rows.unwrap_or_else(|error| panic!("{parameter} {selector:?}: {error}"));
+                assert_eq!(
+                    rows.into_keys().collect::<Vec<_>>(),
+                    physical_rows(&oracle["cases"][case]),
+                    "{parameter} {selector:?}"
+                );
+            } else {
+                assert!(rows.is_err(), "CASA refuses {parameter} {selector:?}");
+            }
+        }
+    }
+}
