@@ -11137,7 +11137,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>vptable</code> → <code>vptable</code></td>
 <td>Partial</td>
-<td>Standard and W projection use circular Gaussian or Airy records from a CASA VPManager table for the primary beam, mask support and PB correction. Saved COMMONPB entries, joint mosaic weights and MVC with a supplied table remain scoped refusals (#1307). AW gridders use their aperture or cache beams. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>string</code></td>
+<td>Standard and W projection use circular Gaussian or Airy records from a CASA VPManager table for the primary beam, mask support and PB correction. Joint mosaic gridding and sensitivity also use these records for one EVLA MeasurementSet (#1307). Saved COMMONPB entries, other supplied joint-mosaic tables and MVC with a supplied table are refused. AW gridders use their aperture or cache beams. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>string</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
