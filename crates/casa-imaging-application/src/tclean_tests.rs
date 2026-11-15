@@ -697,6 +697,12 @@ fn fractional_crtf_box_support_preserves_casa_edges_and_the_spectral_range() {
         [[11, 12, 21, 12]],
         "horizontal edge on a row"
     );
+    let thin = request(json!({"mask": "box[[9.99995pix,5.2pix],[9.99998pix,10.7pix]]"}));
+    assert_eq!(
+        thin.mask_box,
+        [[10, 6, 10, 10]],
+        "thin interior box at a rounded column"
+    );
     for region in [
         "box[[-0.6pix,5.2pix],[-0.2pix,10.7pix]]",
         "box[[-1.6pix,5.2pix],[-0.999999pix,10.7pix]]",

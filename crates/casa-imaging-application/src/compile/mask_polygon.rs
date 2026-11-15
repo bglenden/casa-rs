@@ -168,7 +168,11 @@ pub(crate) fn fractional_pixel_box([xa, ya, xb, yb]: [f64; 4]) -> Vec<[i64; 4]> 
     let (left, right) = (xa.min(xb), xa.max(xb));
     let origin = start(left);
     let x0 = origin.saturating_add(start(left - origin as f32));
-    let x1 = end(right).min(origin.saturating_add(end(right - origin as f32)));
+    // A thin box can end just below its rounded origin. CASA truncates
+    // that relative crossing to zero. The absolute bound still clips
+    // intervals lying wholly outside the image.
+    let relative_right = (right - origin as f32).max(0.0);
+    let x1 = end(right).min(origin.saturating_add(end(relative_right)));
     let (y0, y1) = (start(ya.min(yb)), end(ya.max(yb)));
     if x1 < x0 || y1 < y0 {
         return Vec::new();
