@@ -1114,6 +1114,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane">a cube's fine frequency grid at a whole ratio</a>,
 <a href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind">the <code>.gridwt</code> a cube leaves</a>,
 <a href="#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre">multiscale on an off-centre PSF</a>,
+<a href="#a-mosaic-cube-restart-grids-at-the-saved-alternate-psf-direction">a cube restart grids at the saved alternate PSF direction</a>,
 <a href="#a-cubes-beam-for-a-plane-without-one-depends-on-how-memory-splits-the-cube">a cube's beam for a plane without one</a>,
 <a href="#tbgetcol-refuses-a-column-of-int64"><code>tb.getcol</code> of an <code>int64</code> column</a>,
 <a href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0"><code>tb.putkeyword</code> of an int beyond 32 bits</a>,
@@ -1775,6 +1776,26 @@ projection cannot place, such as one 90° or more from the image centre under
 SIN, is centred on whatever pixel the failed call left. casa-rs adds no beam
 for a pointing 90° or more from an image domain's centre and refuses any
 other projection failure.</p>
+<h2 id="a-mosaic-cube-restart-grids-at-the-saved-alternate-psf-direction">A mosaic cube restart grids at the saved alternate PSF direction<a class="headerlink" href="#a-mosaic-cube-restart-grids-at-the-saved-alternate-psf-direction" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 takes the saved PSF coordinates when it creates a temporary
+channel subimage for <code>calcpsf=True</code> in a cube restart. <code>CubeMajorCycleAlgorithm::subImageStore</code>
+constructs a <code>SimpleSIImageStore</code> from that subimage, and the constructor
+takes its coordinates from the PSF when one is present. The gridded
+sensitivity and PB then correspond to the saved PSF direction, though
+CASA writes them into the main image's coordinate system.</p>
+<p>On the three-channel natural <code>refim_alma_mosaic.ms</code> cube in #1062, change
+only whether <code>tclean</code> starts fresh or resumes a saved cube whose PSF is
+centred 7.5 arcsec away. When recomputing the PSF, CASA's residual, PB and
+weight image differ from the fresh run by 0.318, 0.167 and 0.337 NRMS.
+Replacing only the direction coordinate in a copy of the saved PSF makes
+all three products and the recomputed PSF agree exactly with the fresh
+run. Reusing the PSF with <code>calcpsf=False</code> preserves the saved PSF and its
+coordinates and does not trigger the defect.</p>
+<p>casa-rs recomputes the cube's PSF at the requested centre and records
+that direction in its WCS. The main products use the main image's
+geometry. The regression
+<code>reforming_a_mosaic_cube_psf_uses_the_requested_geometry</code> checks the
+PSF, beams, PB, weight, residual and sums on a cube restart.</p>
 <h2 id="the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">The cube Briggs weightor grids and looks up its density in different uvw frames<a class="headerlink" href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-15</li>
@@ -1831,6 +1852,14 @@ for one field at its own centre, with or without <code>mosweight</code> (PSF NRM
 3.6e-3, ten <code>.pb</code> mask pixels), where the standard gridder agrees to 1e-7;
 this mechanism does not explain it. The terminal density cell described
 under #789 has a separate cause.</p>
+<p>The EVLA <code>refim_mawproject.ms</code> alternate-PSF cube in #1062 also
+exercises per-channel Briggs density. The raw PSF NRMS is 0.01356,
+whether it uses the requested image centre or a separate PSF centre.
+Disabling per-channel density brings both PSFs below 1e-7. With
+per-channel density on, replaying the 13,608 CASA row weights for each
+centre independently brings both sets of eight image products within
+2.14e-6 NRMS, with exact masks and sums of weights. The native density
+grid and lookup still use the same frame.</p>
 <p>The exact external-table Venus cube in #818 uses <code>briggsbwtaper</code> and
 <code>mosweight=True</code>. CASA adds two guard planes at each end of the REST
 density axis. The matched probe across seven fields compared 21,000

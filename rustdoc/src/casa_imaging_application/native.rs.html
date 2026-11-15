@@ -372,7 +372,7 @@
 <a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">let </span>psf_view = input
 <a href=#373 id=373 data-nosnippet>373</a>        .psf_view
 <a href=#374 id=374 data-nosnippet>374</a>        .zip(measures)
-<a href=#375 id=375 data-nosnippet>375</a>        .map(|(view, measures)| psf::PsfRoute::new(view, measures, <span class="kw-2">&amp;</span>route, <span class="kw-2">&amp;</span>runtime))
+<a href=#375 id=375 data-nosnippet>375</a>        .map(|(view, measures)| psf::PsfRoute::new(view, measures, (problem, <span class="kw-2">&amp;</span>route), <span class="kw-2">&amp;</span>runtime))
 <a href=#376 id=376 data-nosnippet>376</a>        .transpose()<span class="question-mark">?</span>;
 <a href=#377 id=377 data-nosnippet>377</a>    <span class="prelude-val">Ok</span>(NativeRun {
 <a href=#378 id=378 data-nosnippet>378</a>        mvc_taylor,

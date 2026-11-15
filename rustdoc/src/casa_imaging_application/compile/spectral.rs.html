@@ -84,7 +84,7 @@
 <a href=#84 id=84 data-nosnippet>84</a>
 <a href=#85 id=85 data-nosnippet>85</a><span class="doccomment">/// How a window reads, where a pass doesn't simply read every selected
 <a href=#86 id=86 data-nosnippet>86</a>/// channel at every time.
-<a href=#87 id=87 data-nosnippet>87</a></span><span class="attr">#[derive(Clone, Debug, Default)]
+<a href=#87 id=87 data-nosnippet>87</a></span><span class="attr">#[derive(Clone, Debug, Default, PartialEq)]
 <a href=#88 id=88 data-nosnippet>88</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>WindowRead {
 <a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Its per-time frequency selection, for a time that reads only some of
 <a href=#90 id=90 data-nosnippet>90</a>    /// its channels ([`frequency_bands`]).
@@ -102,7 +102,7 @@
 <a href=#102 id=102 data-nosnippet>102</a>}
 <a href=#103 id=103 data-nosnippet>103</a>
 <a href=#104 id=104 data-nosnippet>104</a><span class="doccomment">/// What a density over the whole selection counts of a window.
-<a href=#105 id=105 data-nosnippet>105</a></span><span class="attr">#[derive(Clone, Debug)]
+<a href=#105 id=105 data-nosnippet>105</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
 <a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>WindowDensity {
 <a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// The channels some time reads, ascending.
 <a href=#108 id=108 data-nosnippet>108</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) channels: Vec&lt;usize&gt;,

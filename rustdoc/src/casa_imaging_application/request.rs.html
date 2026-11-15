@@ -867,17 +867,17 @@
 <a href=#867 id=867 data-nosnippet>867</a>
 <a href=#868 id=868 data-nosnippet>868</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>supports_separate_psf(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#869 id=869 data-nosnippet>869</a>        <span class="macro">matches!</span>(<span class="self">self</span>.gridder, Gridder::Mosaic { .. })
-<a href=#870 id=870 data-nosnippet>870</a>            &amp;&amp; <span class="self">self</span>.specmode == SpecMode::Mfs
+<a href=#870 id=870 data-nosnippet>870</a>            &amp;&amp; <span class="macro">matches!</span>(<span class="self">self</span>.specmode, SpecMode::Mfs | SpecMode::Cube)
 <a href=#871 id=871 data-nosnippet>871</a>            &amp;&amp; <span class="self">self</span>.deconvolver != Deconvolver::Mtmfs
 <a href=#872 id=872 data-nosnippet>872</a>            &amp;&amp; <span class="self">self</span>.outlierfile.is_none()
 <a href=#873 id=873 data-nosnippet>873</a>    }
 <a href=#874 id=874 data-nosnippet>874</a>
-<a href=#875 id=875 data-nosnippet>875</a>    <span class="doccomment">/// A separately formed mosaic PSF uses the single-term MFS route.
+<a href=#875 id=875 data-nosnippet>875</a>    <span class="doccomment">/// A separately formed mosaic PSF uses a single-term imaging route.
 <a href=#876 id=876 data-nosnippet>876</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>validate_psf_phase_centre(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), InvalidRequest&gt; {
 <a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">if </span><span class="self">self</span>.calcpsf &amp;&amp; <span class="self">self</span>.uses_separate_psf() &amp;&amp; !<span class="self">self</span>.supports_separate_psf() {
 <a href=#878 id=878 data-nosnippet>878</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidRequest {
 <a href=#879 id=879 data-nosnippet>879</a>                parameters: <span class="string">"psfphasecenter"</span>,
-<a href=#880 id=880 data-nosnippet>880</a>                reason: <span class="string">"a separate PSF centre is supported for a single-term MFS mosaic without outliers (#1062)"</span>,
+<a href=#880 id=880 data-nosnippet>880</a>                reason: <span class="string">"a separate PSF centre is supported for a single-term MFS or cube mosaic without outliers (#1062)"</span>,
 <a href=#881 id=881 data-nosnippet>881</a>            });
 <a href=#882 id=882 data-nosnippet>882</a>        }
 <a href=#883 id=883 data-nosnippet>883</a>        <span class="prelude-val">Ok</span>(())
