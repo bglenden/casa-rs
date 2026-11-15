@@ -694,17 +694,24 @@ the same way.
 ## With no weight on the first correlation, every Taylor plane is zero
 
 - Date noted: 2026-11-03
-- Status: CASA loses data; casa-rs refuses the run until #1109
+- Status: CASA writes blank products; casa-rs refuses with a diagnostic (#1109)
 - Affected code: `synthesis/ImagerObjects/SIImageStore.cc`
   (`divideImageByWeightVal`)
 
-Because every Stokes plane takes the first gridded correlation's sum, a
-Taylor run whose first correlation has no weight at all (RR fully flagged
-with LL present, say) has a zero `.sumwt.ttN` on every plane.
-`divideImageByWeightVal` sets a plane whose sum is at most 1e-7 to zero, so
-CASA writes every plane of every term as zeros and the other hand's data is
-lost. casa-rs refuses such a run when it forms the Taylor products, naming
-#1109, rather than write images that read as an empty sky.
+When usable data reach the grids but the first grid plane has no weight,
+the Taylor sum-weight rule gives zero to every Stokes plane.
+`divideImageByWeightVal` blanks a plane whose sum is at most 1e-7.
+casa-rs refuses a Taylor product whose principal sum is nonpositive.
+
+A first correlation explicitly flagged throughout is an earlier case.
+`FTMachine::setSpectralFlag` applies the documented ordinary Stokes rule:
+a flag on any selected correlation flags the whole channel.
+Flagging RR in `refim_point_linRL.ms` leaves RL, LR and LL unflagged,
+but CASA 6.7.6.14 writes a blank PSF and then aborts on invalid array bounds.
+casa-rs reports that RR is fully flagged before publishing images.
+A MeasurementSet containing just RL and LR images QU successfully on
+the same data. The complete-correlation control still agrees with CASA.
+[Imaging issue #1109](https://github.com/bglenden/casa-rs/issues/1109)
 
 ## `restoringbeam='common'` restores every Taylor Stokes plane with the first plane's beam
 

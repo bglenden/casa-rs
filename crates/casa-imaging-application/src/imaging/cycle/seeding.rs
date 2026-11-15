@@ -18,11 +18,13 @@
 //! gives that run's products (the T1 laws; CASA 6.7.6 does the same on a
 //! 14-pointing mosaic).
 
-use casa_imaging_deconvolution::{FinalNormalState, MajorCycle, ModelGeneration};
+use casa_imaging_deconvolution::{FinalNormalState, MajorCycle, MajorCycleError, ModelGeneration};
 use casa_imaging_model::{CompiledProblem, ProductNormalization, ReconstructionBasis};
-use casa_imaging_operator::ModeSet;
+use casa_imaging_operator::{Basis, ModeSet, PlaneRange};
 use casa_imaging_products::{MinorCycleImageResponse, MosaicSensitivity};
-use casa_imaging_runtime::{Admitted, Reservation};
+use casa_imaging_runtime::pass::{NativeBlock, SampleContent};
+use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
+use casa_types::Correlation;
 
 use super::{Major, Run};
 use crate::compile::StartModel;
@@ -92,6 +94,74 @@ pub(super) fn model_bytes(
 }
 
 impl Run<'_> {
+    pub(super) fn explain_empty_taylor_pass(&mut self, error: ImagingError) -> ImagingError {
+        if !matches!(
+            error,
+            ImagingError::MajorCycle(MajorCycleError::IncompleteCoverage)
+        ) {
+            return error;
+        }
+        self.first_flagged_taylor_correlation()
+            .map_or(error, |correlation| {
+                ImagingError::FirstTaylorCorrelationFlagged { correlation }
+            })
+    }
+
+    /// Read only flags and weights after an empty initial Taylor pass.
+    /// `FTMachine::setSpectralFlag` deliberately propagates any selected
+    /// correlation flag to the whole channel for ordinary Stokes imaging.
+    /// Report the specific pattern only when the first correlation has
+    /// no unflagged sample and another one has unflagged positive weight.
+    fn first_flagged_taylor_correlation(&mut self) -> Option<Correlation> {
+        let operator = &self.domains.first()?.operator;
+        if !matches!(operator.basis(), Basis::Taylor { .. }) {
+            return None;
+        }
+        let correlations = operator.polarization().correlations();
+        let [first, _, ..] = correlations else {
+            return None;
+        };
+        let first = *first;
+        let count = correlations.len();
+        let shape = self.source.maximum_block();
+        let _charge = admit(
+            &self.host,
+            &self.policy,
+            &Demand {
+                phase: "Taylor flag diagnosis",
+                memory: shape.bytes(),
+            },
+        )
+        .ok()?;
+        let mut block = NativeBlock::with_capacity(shape);
+        self.source
+            .begin(PlaneRange::new(0, 1), false, SampleContent::FlagsAndWeights)
+            .ok()?;
+        let mut other_has_weight = false;
+        while !self.cancel.is_cancelled() && self.source.fill(&mut block).ok()? {
+            for index in 0..block.len() {
+                let row = block.row(0, index);
+                if row.row_flag || row.context.antennas[0] == row.context.antennas[1] {
+                    continue;
+                }
+                for (flags, weights) in row
+                    .flags
+                    .chunks_exact(count)
+                    .zip(row.weights.chunks_exact(count))
+                {
+                    if !flags[0] {
+                        return None;
+                    }
+                    other_has_weight |= flags[1..]
+                        .iter()
+                        .zip(&weights[1..])
+                        .any(|(&flag, &weight)| !flag && weight.is_finite() && weight > 0.0);
+                }
+            }
+        }
+        (other_has_weight && !self.cancel.is_cancelled()).then_some(first)
+    }
+
     /// The initial major cycle: data and PSF, from the start model when there
     /// is one (its residual) and from an empty model otherwise; it writes
     /// visibilities when it is also final. A run that reads its PSF or
