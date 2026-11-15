@@ -203,6 +203,11 @@ fn resolve_field_predicate_rows(
             continue;
         }
         if let Some(open) = part.strip_prefix('"') {
+            if strict_list && raw_part != part {
+                return Err(MsError::InvalidInput(format!(
+                    "padding around a quoted term in FIELD expression {raw_part:?}"
+                )));
+            }
             let pattern = open.strip_suffix('"').ok_or_else(|| {
                 MsError::InvalidInput(format!("unterminated quoted field selector {part:?}"))
             })?;
