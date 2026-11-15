@@ -32,6 +32,9 @@ use casa_imaging_runtime::{Demand, Reservation, admit};
 
 use crate::{Gridder, ImagingRequest, SpectralMaskRange, UseMask, UserMaskBox};
 
+/// A pixel box limited to an inclusive span of output channels.
+pub type ChannelMaskBox = ([i64; 4], RangeInclusive<usize>);
+
 /// The pixels a domain's minor cycle may update.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum DomainMask {
@@ -48,8 +51,10 @@ pub(super) enum DomainMask {
         paths: Vec<PathBuf>,
         /// Limit MEM to the shared tangent grid verified for image-mask import (#823).
         require_shared_tangent_grid: bool,
-        /// Inclusive pixel boxes before and after the image in the mask list.
-        regions: [Vec<[i64; 4]>; 2],
+        /// Ranged regions are compared with an aligned continuum image.
+        require_aligned_continuum: bool,
+        /// Pixel boxes before and after the image, on their output channels.
+        regions: [Vec<ChannelMaskBox>; 2],
     },
     /// Support over the domain's own grid: each plane x-major, plane after
     /// plane (channel-major), shared along an axis of one plane.
@@ -66,7 +71,7 @@ pub(super) enum DomainMask {
     },
     /// Inclusive pixel boxes `[x0, y0, x1, y1]`, each on its channels: a
     /// CRTF region limited to a spectral range over part of a cube.
-    ChannelBoxes(Vec<([i64; 4], RangeInclusive<usize>)>),
+    ChannelBoxes(Vec<ChannelMaskBox>),
     /// A static mask kept, in every plane, where that plane's `.pb`
     /// exceeds `level` (`SDMaskHandler::makePBMask`): `usemask='pb'`'s
     /// every pixel, or a named user mask under a `pbmask` above zero.
@@ -309,8 +314,11 @@ fn request_mask(
             named(DomainMask::Image {
                 paths: paths.to_vec(),
                 require_shared_tangent_grid: request.deconvolver == crate::Deconvolver::Mem,
-                regions: [before, after]
-                    .map(|boxes| boxes.iter().map(|region| region.corners).collect()),
+                require_aligned_continuum: request.has_ranged_image_mask(),
+                regions: [
+                    mask_box_channels(before, spectral, channels)?,
+                    mask_box_channels(after, spectral, channels)?,
+                ],
             })
         }
         (UseMask::User, _) if let Some(polygon) = &request.mask_polygon => {
@@ -334,6 +342,20 @@ fn user_boxes(
     spectral: &ImageSpectralCoordinate,
     channels: usize,
 ) -> Result<DomainMask, PrepareError> {
+    let kept = mask_box_channels(boxes, spectral, channels)?;
+    let every = 0..=channels.saturating_sub(1);
+    Ok(if kept.iter().all(|(_, span)| *span == every) {
+        DomainMask::Boxes(kept.into_iter().map(|(corners, _)| corners).collect())
+    } else {
+        DomainMask::ChannelBoxes(kept)
+    })
+}
+
+fn mask_box_channels(
+    boxes: &[UserMaskBox],
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<Vec<ChannelMaskBox>, PrepareError> {
     let every = 0..=channels.saturating_sub(1);
     let mut kept = Vec::with_capacity(boxes.len());
     for user in boxes {
@@ -353,31 +375,40 @@ fn user_boxes(
         };
         kept.push((user.corners, span));
     }
-    Ok(if kept.iter().all(|(_, span)| *span == every) {
-        DomainMask::Boxes(kept.into_iter().map(|(corners, _)| corners).collect())
-    } else {
-        DomainMask::ChannelBoxes(kept)
-    })
+    Ok(kept)
 }
 
 /// The support of `boxes`, each on its channels, over an image of
 /// `[nx, ny]` pixels and `channels` channels: plane after plane, each
 /// x-major (pixel `(x, y)` at `x · ny + y`). A box's corners are inclusive
 /// and clipped to the image, as a [`MaskBox`]'s are.
-fn channel_box_support(
-    boxes: &[([i64; 4], RangeInclusive<usize>)],
-    [nx, ny]: [usize; 2],
-    channels: usize,
-) -> Arc<[bool]> {
-    let plane = nx * ny;
-    let mut support = vec![false; plane * channels];
+fn channel_box_support(boxes: &[ChannelMaskBox], size: [usize; 2], channels: usize) -> Arc<[bool]> {
+    let mut support = vec![false; size[0] * size[1] * channels];
+    let planes = MaskPlanes::new(channels, 1).expect("an image has at least one channel");
+    paint_channel_boxes(&mut support, size, planes, boxes);
+    support.into()
+}
+
+/// Paint boxes on their specified channels and all stored Stokes planes.
+pub(super) fn paint_channel_boxes(
+    support: &mut [bool],
+    size: [usize; 2],
+    planes: MaskPlanes,
+    boxes: &[ChannelMaskBox],
+) {
+    let cells = size[0] * size[1];
+    let polarizations = planes.polarizations();
     for (corners, span) in boxes {
-        for channel in span.clone().take_while(|channel| *channel < channels) {
-            let channel_support = &mut support[channel * plane..(channel + 1) * plane];
-            paint_mask_box(channel_support, [nx, ny], *corners);
+        for channel in span
+            .clone()
+            .take_while(|channel| *channel < planes.channels())
+        {
+            for stokes in 0..polarizations {
+                let offset = (channel * polarizations + stokes) * cells;
+                paint_mask_box(&mut support[offset..offset + cells], size, *corners);
+            }
         }
     }
-    support.into()
 }
 
 /// Paint an inclusive pixel box, clipped to the target plane.
@@ -446,7 +477,7 @@ pub(super) const fn noise_estimate(request: &ImagingRequest) -> NoiseEstimate {
 /// Each domain's mask plan, bound to its direction coordinate, for images
 /// of `channels` channels, and what the plans keep of the mask images
 /// read for them: each image's read is admitted under `context` before it
-/// is read ([`super::mask_image::MaskImage::reading_bytes`]), and the
+/// is read ([`super::mask_image::MaskImage::bytes`]), and the
 /// support its plan shares stays charged.
 pub(super) fn mask_plans(
     domains: &[PreparedImageDomain],
@@ -511,6 +542,7 @@ fn mask_plan(
         DomainMask::Image {
             paths,
             require_shared_tangent_grid,
+            require_aligned_continuum,
             regions,
         } => {
             let coordinate_of = |kind| {
@@ -542,16 +574,20 @@ fn mask_plan(
             if require_shared_tangent_grid && !image.has_shared_tangent_grid() {
                 return Err(PrepareError::MemMaskGrid { path: path.clone() });
             }
+            if require_aligned_continuum && !image.is_aligned_continuum() {
+                return Err(PrepareError::MaskListGrid { path: path.clone() });
+            }
+            let regions = regions.each_ref().map(Vec::as_slice);
+            let (memory, retained) = image.bytes(regions);
             let mut charge = admit(
                 &context.host,
                 &context.policy,
                 &Demand {
                     phase: "clean mask image",
-                    memory: image.reading_bytes(),
+                    memory,
                 },
             )?;
-            let retained = image.retained_bytes();
-            let plan = image.read(regions.each_ref().map(Vec::as_slice))?;
+            let plan = image.read(regions)?;
             charge.retain(retained);
             resident.join(charge);
             plan
