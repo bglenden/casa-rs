@@ -114,7 +114,7 @@ impl MaskSampling {
 }
 
 /// A real mask image opened onto an image domain, read plane by plane once
-/// its read is admitted ([`Self::reading_bytes`]), as a restart's CLEAN
+/// its read is admitted ([`Self::bytes`]), as a restart's CLEAN
 /// mask is.
 pub(crate) struct MaskImage {
     image: RealImage,
