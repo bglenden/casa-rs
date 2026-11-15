@@ -49,6 +49,7 @@ CASA behaviours casa-rs does not follow:
 [a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
 [the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
 [multiscale on an off-centre PSF](#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre),
+[a cube restart grids at the saved alternate PSF direction](#a-mosaic-cube-restart-grids-at-the-saved-alternate-psf-direction),
 [a cube's beam for a plane without one](#a-cubes-beam-for-a-plane-without-one-depends-on-how-memory-splits-the-cube),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
@@ -775,6 +776,30 @@ SIN, is centred on whatever pixel the failed call left. casa-rs adds no beam
 for a pointing 90° or more from an image domain's centre and refuses any
 other projection failure.
 
+## A mosaic cube restart grids at the saved alternate PSF direction
+
+CASA 6.7.6.14 takes the saved PSF coordinates when it creates a temporary
+channel subimage for `calcpsf=True` in a cube restart. `CubeMajorCycleAlgorithm::subImageStore`
+constructs a `SimpleSIImageStore` from that subimage, and the constructor
+takes its coordinates from the PSF when one is present. The gridded
+sensitivity and PB then correspond to the saved PSF direction, though
+CASA writes them into the main image's coordinate system.
+
+On the three-channel natural `refim_alma_mosaic.ms` cube in #1062, change
+only whether `tclean` starts fresh or resumes a saved cube whose PSF is
+centred 7.5 arcsec away. When recomputing the PSF, CASA's residual, PB and
+weight image differ from the fresh run by 0.318, 0.167 and 0.337 NRMS.
+Replacing only the direction coordinate in a copy of the saved PSF makes
+all three products and the recomputed PSF agree exactly with the fresh
+run. Reusing the PSF with `calcpsf=False` preserves the saved PSF and its
+coordinates and does not trigger the defect.
+
+casa-rs recomputes the cube's PSF at the requested centre and records
+that direction in its WCS. The main products use the main image's
+geometry. The regression
+`reforming_a_mosaic_cube_psf_uses_the_requested_geometry` checks the
+PSF, beams, PB, weight, residual and sums on a cube restart.
+
 ## The cube Briggs weightor grids and looks up its density in different uvw frames
 
 - Date noted: 2026-10-15
@@ -833,6 +858,15 @@ for one field at its own centre, with or without `mosweight` (PSF NRMS
 3.6e-3, ten `.pb` mask pixels), where the standard gridder agrees to 1e-7;
 this mechanism does not explain it. The terminal density cell described
 under #789 has a separate cause.
+
+The EVLA `refim_mawproject.ms` alternate-PSF cube in #1062 also
+exercises per-channel Briggs density. The raw PSF NRMS is 0.01356,
+whether it uses the requested image centre or a separate PSF centre.
+Disabling per-channel density brings both PSFs below 1e-7. With
+per-channel density on, replaying the 13,608 CASA row weights for each
+centre independently brings both sets of eight image products within
+2.14e-6 NRMS, with exact masks and sums of weights. The native density
+grid and lookup still use the same frame.
 
 The exact external-table Venus cube in #818 uses `briggsbwtaper` and
 `mosweight=True`. CASA adds two guard planes at each end of the REST
@@ -3287,6 +3321,21 @@ uses the floor itself (`casa_simulation::simutil::analysis::fidelity`).
 The fidelity is the ratio of two images in Jy/beam. CASA's image expression
 copies its unit from the first image it names, so the fidelity is labelled
 Jy/beam. casa-rs writes it without a unit.
+
+## `simanalyze` deletes previous products before imaging preparation succeeds
+
+- Date noted: 2026-11-15
+- Status: CASA data-loss bug; casa-rs preserves inputs and previous products (#180)
+- Affected code: `casatasks/private/task_simanalyze.py` (CASA 6.7.6.14,
+  deletion of `<imagename>.image` and `<imagename>.model` before `imtclean`)
+
+A rerun with an invalid start model destroys the previous image/model before
+the imager can reject its units or resources. Selecting the previous
+`<imagename>.model` as `modelimage` deletes that selected input too.
+casa-rs refuses input/output collisions before mutation and uses the native
+imager's existing atomic publication. Failed preparation preserves prior
+products. `simanalyze_task_casa.rs` checks the colliding model and a K-unit
+start model, then verifies the previous image and model are unchanged.
 
 ## `statim` scales a Jy/beam image without a beam by the pixel area
 

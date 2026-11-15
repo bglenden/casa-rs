@@ -84,7 +84,7 @@ impl PreparedSpectralAxis<'_> {
 
 /// How a window reads, where a pass doesn't simply read every selected
 /// channel at every time.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct WindowRead {
     /// Its per-time frequency selection, for a time that reads only some of
     /// its channels ([`frequency_bands`]).
@@ -102,7 +102,7 @@ pub(super) struct WindowRead {
 }
 
 /// What a density over the whole selection counts of a window.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct WindowDensity {
     /// The channels some time reads, ascending.
     pub(super) channels: Vec<usize>,

@@ -1102,6 +1102,48 @@ def msconvert(
     """Convert between MeasurementSet v2 and MSv4, in either direction."""
     return _run("msconvert", _explicit(locals(), ('vis', 'outputvis', 'outformat', 'datagroups', 'partitionscheme', 'withpointing', 'padding', 'chunks', 'codec', 'nthreads', 'overwrite')))
 
+def simanalyze(
+    project: str = 'sim',
+    image: bool = True,
+    imagename: str = 'default',
+    skymodel: StrPath = '',
+    vis: str = 'default',
+    modelimage: str = '',
+    imsize: int | list[int] | tuple[int, ...] = [0, 0],
+    imdirection: str = '',
+    cell: str | list[str] | tuple[str, ...] = '',
+    interactive: bool = False,
+    niter: int = 0,
+    threshold: str = '0.1mJy',
+    weighting: Literal['briggs', 'briggsabs', 'briggsbwtaper', 'natural', 'radial', 'superuniform', 'uniform'] = 'natural',
+    mask: str | list[str] | tuple[str, ...] = [],
+    outertaper: str | list[str] | tuple[str, ...] = [],
+    pbcor: bool = True,
+    stokes: str = 'I',
+    featherimage: str = '',
+    analyze: bool = False,
+    showuv: bool = True,
+    showpsf: bool = True,
+    showmodel: bool = True,
+    showconvolved: bool = False,
+    showclean: bool = True,
+    showresidual: bool = False,
+    showdifference: bool = True,
+    showfidelity: bool = True,
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = 'both',
+    verbose: bool = False,
+    overwrite: bool = True,
+    dryrun: bool = False,
+    logfile: str = '',
+) -> Any:
+    """Image and analyze a simulated observation: CASA's simanalyze
+
+    CASA's ``simanalyze``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #980:
+    ``interactive``.
+    """
+    return _call_casa(simanalyze, locals())
+
 def tsdimaging(
     infiles: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
     outfile: StrPath = '',
@@ -1147,6 +1189,6 @@ def tsdimaging(
     """
     return _call_casa(tsdimaging, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'tsdimaging')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'tsdimaging']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging']

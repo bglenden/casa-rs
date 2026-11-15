@@ -207,14 +207,21 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 
 /// Only mosaic gridders use a separate PSF centre when they form the PSF.
 #[test]
-fn the_psf_phase_centre_is_used_by_single_term_mfs_mosaics() {
+fn the_psf_phase_centre_is_used_by_supported_mosaics() {
     let centre = "J2000 0rad 0rad";
     for gridder in ["mosaic", "mosaicft", "ftmosaic"] {
         let mfs = request(json!({"gridder": gridder, "psfphasecenter": centre}));
         assert_eq!(mfs.psfphasecenter.as_deref(), Some(centre));
         let cube =
-            refusal(json!({"gridder": gridder, "specmode": "cube", "psfphasecenter": centre}));
-        assert!(cube.to_string().contains("#1062"), "{cube}");
+            request(json!({"gridder": gridder, "specmode": "cube", "psfphasecenter": centre}));
+        assert_eq!(cube.psfphasecenter.as_deref(), Some(centre));
+        let taylor =
+            request(json!({"gridder": gridder, "deconvolver": "mtmfs", "psfphasecenter": centre}));
+        assert_eq!(taylor.psfphasecenter.as_deref(), Some(centre));
+        let one_term = refusal(json!({
+            "gridder": gridder, "deconvolver": "mtmfs", "nterms": 1, "psfphasecenter": centre
+        }));
+        assert!(one_term.to_string().contains("#1062"), "{one_term}");
     }
     assert_eq!(
         request(json!({"gridder": "standard", "psfphasecenter": centre})).psfphasecenter,
@@ -1302,6 +1309,24 @@ fn mvc_reads_output_depth_separately_from_input_selection() {
 fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     let accepted = request(json!({ "deconvolver": "mem", "niter": 1 }));
     accepted.validate().expect("standard Stokes I MFS MEM");
+    let briggs = request(json!({"deconvolver":"mem", "weighting":"briggs", "robust":0.5}));
+    assert_eq!(briggs.weighting, crate::Weighting::Briggs);
+    briggs.validate().expect("Briggs-weighted MEM");
+    let seeded = request(json!({"deconvolver":"mem", "startmodel":"start.im"}));
+    assert!(seeded.has_start_model());
+    seeded.validate().expect("MEM with an explicit start model");
+    let masked = request(json!({"deconvolver":"mem", "mask":"region.mask"}));
+    assert_eq!(
+        masked.mask_image.as_deref(),
+        Some(std::path::Path::new("region.mask"))
+    );
+    masked.validate().expect("MEM with a user mask image");
+    let pb = request(json!({"deconvolver":"mem", "usemask":"pb", "pbmask":0.0}));
+    pb.validate().expect("MEM with a primary-beam mask");
+    let intersection = request(json!({"deconvolver":"mem", "mask":"region.mask", "pbmask":0.2}));
+    intersection
+        .validate()
+        .expect("MEM with a user mask constrained by the beam");
     request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
         .validate()
         .expect("other solvers retain their scope");
@@ -1312,15 +1337,10 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"facets":2}),
         json!({"weighting":"uniform"}),
         json!({"usemask":"auto-multithresh"}),
-        json!({"pbmask":0.2}),
         json!({"nsigma":2.0}),
-        json!({"calcpsf":false}),
-        json!({"calcres":false}),
         json!({"savemodel":"modelcolumn"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
-        json!({"startmodel":"start.im"}),
-        json!({"mask":"mask.im"}),
     ] {
         let mut values = json!({"deconvolver":"mem", "niter":1});
         values
@@ -1337,6 +1357,12 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         .push(casa_imaging_model::PolarizationCoordinate::StokesQ);
     assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
     typed.stokes.pop();
-    typed.tclean_restart = true;
-    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
+    for calcpsf in [true, false] {
+        for calcres in [true, false] {
+            let mut continuing =
+                request(json!({"deconvolver":"mem", "calcpsf":calcpsf, "calcres":calcres}));
+            continuing.tclean_restart = true;
+            continuing.validate().expect("standard MEM continuation");
+        }
+    }
 }

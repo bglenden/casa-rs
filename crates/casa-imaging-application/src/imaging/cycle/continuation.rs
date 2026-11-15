@@ -180,16 +180,6 @@ impl Run<'_> {
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
-        // The residual each wave takes, read beside the pass.
-        let window = self.read_window(plan.residency);
-        let reading = self
-            .existing
-            .iter()
-            .chain(&self.outlier_products)
-            .map(|saved| saved.reading_bytes(window) + saved.images_bytes(window))
-            .max()
-            .unwrap_or_else(|| self.residual_bytes(window));
-        let _reading = self.admit("existing residual", reading)?;
         let major = self.reconcile(cycle, modes, false, false, plan)?;
         self.retain(&major, pass)?;
         Ok(major)
@@ -282,6 +272,39 @@ impl Run<'_> {
             }
             _ => self.total_channels(),
         }
+    }
+
+    /// Buffer costs that coexist with the image window during reconciliation.
+    /// A PSF-only pass supplies a saved or zero residual to that window,
+    /// and the main cube reads at most one alternate PSF plane at a time.
+    pub(super) fn pass_image_bytes(&self, modes: ModeSet) -> (u64, u64) {
+        let mut per_channel = self.stitch.pass_bytes_per_channel(modes.psf);
+        let mut besides = 0;
+        if modes.psf {
+            if let Some(super::SeparatePsf::Cube(_)) = &self.separate_psf {
+                let [nx, ny] = self.problem.geometry().domains()[0].shape().pixels();
+                besides += (nx * ny * size_of::<f32>()) as u64;
+            }
+            if !modes.data {
+                let (reader, payload) = self
+                    .existing
+                    .iter()
+                    .chain(&self.outlier_products)
+                    .map(|saved| {
+                        let reader = saved.reading_bytes(0);
+                        (
+                            reader,
+                            saved.reading_bytes(1) - reader + saved.images_bytes(1),
+                        )
+                    })
+                    .fold((0, self.residual_bytes(1)), |acc, next| {
+                        (acc.0.max(next.0), acc.1.max(next.1))
+                    });
+                besides += reader;
+                per_channel += payload;
+            }
+        }
+        (besides, per_channel)
     }
 
     /// Bytes a zero residual of `channels` channels holds.

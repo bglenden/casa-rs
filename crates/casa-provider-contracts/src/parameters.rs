@@ -28,9 +28,9 @@ pub const SPW_CONCEPT_ID: &str = "ms.selection.spw";
 pub const OVERWRITE_CONCEPT_ID: &str = "output.overwrite";
 
 /// The surfaces whose `overwrite` defaults to true, as CASA's do: CASA's
-/// `simobserve` replaces only the files it writes inside its own project
+/// simulation tasks replace only the files they write inside their project
 /// directory. Every other `overwrite` defaults to false (#931).
-pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 1] = ["simobserve"];
+pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 2] = ["simobserve", "simanalyze"];
 
 /// Stable semantic identity of a parameter concept.
 #[derive(
@@ -1437,9 +1437,13 @@ fn validate_reserved_name(
     surface: &str,
     errors: &mut Vec<ContractValidationError>,
 ) {
+    // Simulation analysis uses zero/empty geometry to inherit the sky model.
+    // Its CASA defaults differ from tclean's positive explicit geometry.
     let designated = match (surface, binding.name.as_str()) {
         ("tsdimaging", "imsize") => Some("single_dish.imsize"),
         ("tsdimaging", "cell") => Some("single_dish.cell"),
+        ("simanalyze", "imsize") => Some("simulation.analysis.imsize"),
+        ("simanalyze", "cell") => Some("simulation.analysis.cell"),
         (_, "imsize") => Some(IMSIZE_CONCEPT_ID),
         (_, "cell") => Some(CELL_CONCEPT_ID),
         (_, "field") => Some(FIELD_CONCEPT_ID),
@@ -2207,11 +2211,17 @@ mod tests {
 
     #[test]
     fn a_project_directory_surface_keeps_casas_overwrite_default() {
-        for (default, valid) in [(true, true), (false, false)] {
-            let mut bundle = overwrite_bundle(default);
-            let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-            definition.id = PROJECT_DIRECTORY_OVERWRITE_SURFACES[0].to_string();
-            assert_eq!(bundle.validate().is_ok(), valid, "default {default}");
+        for surface in PROJECT_DIRECTORY_OVERWRITE_SURFACES {
+            for (default, valid) in [(true, true), (false, false)] {
+                let mut bundle = overwrite_bundle(default);
+                let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+                definition.id = surface.to_string();
+                assert_eq!(
+                    bundle.validate().is_ok(),
+                    valid,
+                    "{surface}: default {default}"
+                );
+            }
         }
     }
 

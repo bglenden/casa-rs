@@ -2,8 +2,9 @@
 #![warn(missing_docs)]
 
 //! The command-line and task surface of casa-rs's simulation tasks:
-//! `simobserve` (simulation Phase 5c, #841), with `simanalyze` and
-//! `simalma` to come, on the shared task front end (#931).
+//! `simobserve` and single-array `simanalyze` (simulation Phases 5c/6,
+//! #841), on the shared task front end (#931). Multi-array/total-power
+//! orchestration and `simalma` remain on #841.
 //!
 //! As for the imager, the front end resolves the parameters through the
 //! provider-contracts catalog: command-line flags and a `--json-run` request
@@ -14,7 +15,11 @@
 //! configurations, and the measures data. A run's reply carries its
 //! [`SimobserveRunTaskResult`]; simobserve returns None, as CASA's does.
 
+mod analysis;
 mod task_contract;
+pub use analysis::{
+    simanalyze_front_end, simanalyze_protocol_descriptor, simanalyze_task_schema_bundle,
+};
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;

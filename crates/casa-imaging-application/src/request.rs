@@ -867,17 +867,25 @@ impl ImagingRequest {
 
     pub(crate) fn supports_separate_psf(&self) -> bool {
         matches!(self.gridder, Gridder::Mosaic { .. })
-            && self.specmode == SpecMode::Mfs
-            && self.deconvolver != Deconvolver::Mtmfs
             && self.outlierfile.is_none()
+            && match self.specmode {
+                SpecMode::Mfs if self.deconvolver == Deconvolver::Mtmfs => {
+                    self.nterms >= 2
+                        && self.mvc_output_channels.is_none()
+                        && !self.mvc_auto_channels
+                }
+                SpecMode::Mfs => true,
+                SpecMode::Cube => self.deconvolver != Deconvolver::Mtmfs,
+                SpecMode::Cubedata | SpecMode::Cubesource => false,
+            }
     }
 
-    /// A separately formed mosaic PSF uses the single-term MFS route.
+    /// The alternate PSF route reads the same selected observations as the main mosaic.
     pub(crate) fn validate_psf_phase_centre(&self) -> Result<(), InvalidRequest> {
         if self.calcpsf && self.uses_separate_psf() && !self.supports_separate_psf() {
             return Err(InvalidRequest {
                 parameters: "psfphasecenter",
-                reason: "a separate PSF centre is supported for a single-term MFS mosaic without outliers (#1062)",
+                reason: "a separate PSF centre is supported for a fixed MFS mosaic or a single-term cube mosaic without outliers (#1062)",
             });
         }
         Ok(())
@@ -889,22 +897,16 @@ impl ImagingRequest {
             && (self.specmode != SpecMode::Mfs
                 || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
                 || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
-                || self.weighting != Weighting::Natural
+                || !matches!(self.weighting, Weighting::Natural | Weighting::Briggs)
                 || self.vis.len() != 1
                 || self.outlierfile.is_some()
-                || self.has_start_model()
-                || self.tclean_restart
-                || !self.calcpsf
-                || !self.calcres
-                || self.usemask != UseMask::User
-                || self.mask_image.is_some()
-                || self.pbmask != 0.0
+                || !matches!(self.usemask, UseMask::User | UseMask::Pb)
                 || self.nsigma != 0.0
                 || self.savemodel != SaveModel::None)
         {
             return Err(InvalidRequest {
                 parameters: "deconvolver",
-                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural weighting and a user box mask; continuation and model-column writes wait for #1060",
+                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting and user or primary-beam masking; other modes and model-column writes wait for #1060",
             });
         }
         Ok(())

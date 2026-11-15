@@ -45,7 +45,7 @@ blanket scientific validation. See [TESTING.md](TESTING.md).
 | Tables and MeasurementSets | CASA-compatible storage managers, typed row/column/cell access, TaQL, MS selection and transformation, flag versions, and plotting/export data. |
 | Images and coordinates | Persistent images, masks, regions, statistics, moments, image arithmetic, regridding, FITS import/export, coordinate systems, units, and measures. |
 | Calibration and flagging | Native gain, bandpass, flux-scale, calibration application/generation, manual/clip/quack/tfcrop/rflag workflows, and diagnostic tasks. |
-| Simulation and import | CASA's `sm` simulator tool and `simobserve`, component lists, the ATM atmosphere model, VLA archive import, and MSv2/MSv4 conversion, with comparison harnesses against CASA. |
+| Simulation and import | CASA's `sm` simulator tool and `simobserve`, single-array `simanalyze` ([ALMA disk tutorial](docs/tutorial-parity/ppdisk-alma.md)), component lists, the ATM atmosphere model, VLA archive import, and MSv2/MSv4 conversion, with comparison harnesses against CASA. |
 | Imaging | Continuum and spectral cubes; standard, W-projection, mosaic, and AW-projection gridders; Högbom, Clark, multiscale, and MT-MFS deconvolution; masks, restoration, and primary-beam products. Not every combination is available. |
 | Python | In-process NumPy-compatible table/image access, generated task wrappers, shared parameter profiles, and numeric MeasurementSet plot documents. |
 

@@ -27,3 +27,7 @@ tempfile = "3"
 [[bin]]
 name = "simobserve"
 path = "src/main.rs"
+
+[[bin]]
+name = "simanalyze"
+path = "src/simanalyze.rs"

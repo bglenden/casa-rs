@@ -11130,6 +11130,424 @@
       "persistence_class": "profile"
     },
     {
+      "id": "simulation.analysis.image",
+      "semantic_revision": 1,
+      "casa_name": "image",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze image.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.imagename",
+      "semantic_revision": 1,
+      "casa_name": "imagename",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze imagename.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.vis",
+      "semantic_revision": 1,
+      "casa_name": "vis",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze vis.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.modelimage",
+      "semantic_revision": 1,
+      "casa_name": "modelimage",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze modelimage.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.imsize",
+      "semantic_revision": 1,
+      "casa_name": "imsize",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze imsize.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.imdirection",
+      "semantic_revision": 1,
+      "casa_name": "imdirection",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze imdirection.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.cell",
+      "semantic_revision": 1,
+      "casa_name": "cell",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": 2,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze cell.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.outertaper",
+      "semantic_revision": 1,
+      "casa_name": "outertaper",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze outertaper.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.featherimage",
+      "semantic_revision": 1,
+      "casa_name": "featherimage",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze featherimage.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.analyze",
+      "semantic_revision": 1,
+      "casa_name": "analyze",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze analyze.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showuv",
+      "semantic_revision": 1,
+      "casa_name": "showuv",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showuv.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showpsf",
+      "semantic_revision": 1,
+      "casa_name": "showpsf",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showpsf.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showmodel",
+      "semantic_revision": 1,
+      "casa_name": "showmodel",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showmodel.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showconvolved",
+      "semantic_revision": 1,
+      "casa_name": "showconvolved",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showconvolved.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showclean",
+      "semantic_revision": 1,
+      "casa_name": "showclean",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showclean.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showresidual",
+      "semantic_revision": 1,
+      "casa_name": "showresidual",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showresidual.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showdifference",
+      "semantic_revision": 1,
+      "casa_name": "showdifference",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showdifference.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showfidelity",
+      "semantic_revision": 1,
+      "casa_name": "showfidelity",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showfidelity.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.dryrun",
+      "semantic_revision": 1,
+      "casa_name": "dryrun",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze dryrun.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.logfile",
+      "semantic_revision": 1,
+      "casa_name": "logfile",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze logfile.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "single_dish.infiles",
       "semantic_revision": 1,
       "casa_name": "infiles",

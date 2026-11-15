@@ -114,7 +114,12 @@ fn simulation_figures_validate_payload_bounds_and_declared_destinations() {
 #[test]
 fn the_application_catalog_lists_every_launch_entry() {
     let applications = applications().expect("application catalog");
-    assert_eq!(applications.len(), 28);
+    assert_eq!(applications.len(), 29);
+    assert!(
+        applications
+            .iter()
+            .any(|application| application.id == "simanalyze")
+    );
     assert!(
         applications
             .iter()

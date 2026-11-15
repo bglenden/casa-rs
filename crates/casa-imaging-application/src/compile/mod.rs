@@ -314,7 +314,7 @@ pub(crate) fn prepare_with_view_hooks(
         &mut domains,
         (spectral.output_channels, reconstruction_planes),
         mvc_taylor.as_ref().and_then(|view| view.start.as_ref()),
-        context,
+        (context, surveyed),
         &mut deployment.publication.writer,
     )?;
     let geometry = geometry(request, &domains, &centre, &spectral);
@@ -322,7 +322,7 @@ pub(crate) fn prepare_with_view_hooks(
         request,
         &domains[0],
         &centre,
-        &spectral,
+        surveyed,
         context,
         &specification,
         &mut deployment.publication.writer,
@@ -1110,6 +1110,7 @@ fn deployment(
                     FrequencyRef::BARY | FrequencyRef::TOPO
                 ))
             .then_some(surveyed.reference),
+            saved_mem_model: request.deconvolver == Deconvolver::Mem && request.continued_model,
             writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
         },
         output_directories: domains

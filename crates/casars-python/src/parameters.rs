@@ -407,6 +407,7 @@ fn provider_invocation_with_originals(
         "imager" => Some(casars_imager::imager_protocol_descriptor()),
         "single_dish" => Some(casars_imager::single_dish::tsdimaging_task_schema_bundle().protocol),
         "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
+        "simanalyze" => Some(casars_simulation::simanalyze_protocol_descriptor()),
         _ => None,
     };
     Ok(InvocationView {

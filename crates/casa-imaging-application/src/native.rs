@@ -372,7 +372,7 @@ pub(crate) fn prepare(
     let psf_view = input
         .psf_view
         .zip(measures)
-        .map(|(view, measures)| psf::PsfRoute::new(view, measures, &route, &runtime))
+        .map(|(view, measures)| psf::PsfRoute::new(view, measures, (problem, &route), &runtime))
         .transpose()?;
     Ok(NativeRun {
         mvc_taylor,
@@ -1042,6 +1042,7 @@ fn publish_mvc_products(
         }),
         primary_beam_centres: publication.primary_beam_centres.clone(),
         vla_selection_store: None,
+        saved_mem_model: false,
         writer: publication.writer.with_coordinates(taylor_coordinates),
     };
     let (cube, cube_charge) = stage_products(
@@ -1140,7 +1141,7 @@ fn stage_products(
         scientific,
         masks: reconstruction_masks,
         facet_sum_weights,
-        mem_alpha: _,
+        mem_alpha,
         saved_psf_beams,
         outlier_psf_beams,
         vla_selection_hz,
@@ -1196,8 +1197,10 @@ fn stage_products(
         inputs = inputs.with_facet_sum_weights(&facet_sum_weights);
     }
     let mut planned = PlannedContinuumGeneration::new(&inputs, &controls)?;
-    if omit_uncreated_mvc_cube_model {
-        planned = planned.without_uncreated_mvc_cube_model();
+    // CASA writes the MEM model and its multipliers in takeOneStep.
+    // A residual refresh with no MEM step leaves the model untouched.
+    if omit_uncreated_mvc_cube_model || (publication.saved_mem_model && mem_alpha.is_none()) {
+        planned = planned.without_single_term_model();
     }
     if preserve_cube_residual {
         planned = planned.without_mvc_cube_residual();

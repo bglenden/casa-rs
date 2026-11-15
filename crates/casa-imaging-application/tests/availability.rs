@@ -571,6 +571,14 @@ fn mem_compiled_scope_cannot_bypass_the_task_guard() {
     on_cpu(&mem().compile()).expect("standard Stokes I MEM is available");
     on_cpu(
         &ProblemFixture {
+            weighting: WeightingScheme::Briggs { robust: 0.5 },
+            ..mem()
+        }
+        .compile(),
+    )
+    .expect("Briggs-weighted Stokes I MEM is available");
+    on_cpu(
+        &ProblemFixture {
             polarizations: vec![PolarizationCoordinate::StokesQ],
             ..ProblemFixture::standard()
         }

@@ -330,6 +330,19 @@
       "include_in_suite": true
     },
     {
+      "id": "simanalyze",
+      "launch": {
+        "executable": "simanalyze",
+        "cargo_package": "casars-simulation",
+        "override_env": "CASARS_SIMANALYZE_BIN"
+      },
+      "dataset_kinds": [
+        "image",
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
       "id": "tsdimaging",
       "launch": {
         "executable": "tsdimaging",

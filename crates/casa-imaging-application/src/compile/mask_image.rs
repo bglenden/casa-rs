@@ -22,7 +22,7 @@
 //!
 //! Each plane is reprojected onto the domain's direction grid through one
 //! pixel map the planes share ([`casa_imaging_deconvolution::MaskReprojection`]); a plane's
-//! support is its finite, non-zero pixels valid in the image's default
+//! support is its finite, positive pixels valid in the image's default
 //! pixel mask.
 
 use std::path::Path;
@@ -147,6 +147,44 @@ impl MaskImage {
             target_size,
             pixel_bytes,
             tile_bytes,
+        })
+    }
+
+    /// Whether the saved mask and output have the same direction grid.
+    pub(super) fn matches_direction_grid(&self) -> bool {
+        if self.axes.direction.map(|axis| self.axes.shape[axis]) != self.target_size
+            || self.source.projection() != self.target.projection()
+            || self.source.reference_direction().frame()
+                != self.target.reference_direction().frame()
+        {
+            return false;
+        }
+        if self.source == self.target {
+            return true;
+        }
+        // Reading the CASA header can round the same WCS differently. Use
+        // the displacement in pixels so this allowance cannot admit a shift.
+        let [nx, ny] = self.target_size.map(|size| size.saturating_sub(1) as f64);
+        let source = self.source.coordinate();
+        let target = self.target.coordinate();
+        [
+            [0.0, 0.0],
+            [nx, 0.0],
+            [0.0, ny],
+            [nx, ny],
+            [nx / 2.0, ny / 2.0],
+        ]
+        .into_iter()
+        .all(|pixel| {
+            target
+                .pixel_to_world(pixel)
+                .and_then(|world| source.world_to_pixel(world))
+                .is_ok_and(|mapped| {
+                    mapped
+                        .into_iter()
+                        .zip(pixel)
+                        .all(|(a, b)| (a - b).abs() <= 1e-7)
+                })
         })
     }
 
@@ -301,7 +339,7 @@ fn mask_axes(shape: &[usize], coordinates: &CoordinateSystem) -> Result<MaskAxes
 }
 
 /// The support of the direction plane of `image` at `start` of `shape`
-/// (one pixel along every other axis): its finite, non-zero pixels valid in
+/// (one pixel along every other axis): its finite, positive pixels valid in
 /// the default pixel mask, x-major. The plane's values, in index order, run
 /// over x with y fastest, whatever axes lie between.
 fn plane_support<T>(
@@ -316,7 +354,7 @@ where
     let mask = image.get_mask_slice(start, shape, &vec![1; shape.len()])?;
     let set = |value: &T| {
         let value: f64 = (*value).into();
-        value.is_finite() && value != 0.0
+        value.is_finite() && value > 0.0
     };
     Ok(match mask {
         Some(mask) => values

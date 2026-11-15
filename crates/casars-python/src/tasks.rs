@@ -308,7 +308,7 @@ fn plot_documents(
     stdout: &str,
     payload_bytes: u64,
 ) -> Result<Vec<casa_ms::plot_document::PlotFigure>, String> {
-    if surface_id != "simobserve" || returncode != 0 {
+    if !matches!(surface_id, "simobserve" | "simanalyze") || returncode != 0 {
         return Ok(Vec::new());
     }
     let TaskOutcome::Succeeded {

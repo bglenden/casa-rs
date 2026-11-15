@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Standard gridder, natural weighting, MFS: Hogbom, Clark and multiscale.
+//! Standard-gridder MFS with point, multiscale and maximum-entropy solvers.
 
 use casars_imager::ImagerRunReport;
 use serde_json::{Value, json};
 
 use super::fixture::{
-    CELL_ARCSEC, Component, Observation, ProductContract, Products, SpectralAxis, box_sum,
+    CELL_ARCSEC, Component, Observation, Product, ProductContract, Products, SpectralAxis, box_sum,
     component_pixel, fit_psf_main_lobe, off_source_rms, peak,
 };
 
@@ -215,4 +215,154 @@ fn standard_mfs_multiscale_recovers_the_extended_flux() {
         "model {gaussian_model_jy} Jy and restored {restored_jy} Jy do not bracket {} Jy",
         GAUSSIAN.flux_jy
     );
+}
+
+#[test]
+fn mem_uses_briggs_weighted_normal_images() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let briggs = json!({"weighting":"briggs", "robust":0.5, "niter":0});
+    let (_, dirty) = observation.image("briggs-dirty", briggs.clone());
+    let (_, natural) = observation.image("natural-dirty", json!({"niter":0}));
+    let mut mem = briggs;
+    mem["deconvolver"] = json!("mem");
+    mem["niter"] = json!(2);
+    mem["cyclefactor"] = json!(0.0001);
+    mem["minpsffraction"] = json!(0.0);
+    let (_, cleaned) = observation.image("briggs-mem", mem);
+    let psf = &cleaned.get(".psf").pixels;
+    let difference = |reference: &Products| {
+        psf.iter()
+            .zip(reference.get(".psf").pixels.iter())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0_f32, f32::max)
+    };
+    assert!(difference(&dirty) < 1e-6, "MEM uses the Briggs PSF");
+    assert!(
+        difference(&natural) > 1e-5,
+        "the fixture distinguishes the weights"
+    );
+    let weighted = cleaned.get(".sumwt").channel_values()[0];
+    let expected = dirty.get(".sumwt").channel_values()[0];
+    assert!((weighted / expected - 1.0).abs() < 1e-6);
+    assert!(weighted < natural.get(".sumwt").channel_values()[0]);
+    assert!(
+        cleaned
+            .get(".model")
+            .pixels
+            .iter()
+            .any(|&value| value > 0.0)
+    );
+}
+
+#[test]
+fn mem_updates_a_saved_model_only_when_it_solves() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let name = "mem-continuation";
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (_, seed) = observation.image(name, controls.clone());
+    let model = seed.get(".model");
+    let old_metadata = model.image.misc_info();
+    assert!(old_metadata.get("ALPHA").is_some());
+    assert!(old_metadata.get("BETA").is_some());
+    let model_path = observation.scratch(&format!("{name}.model"));
+    let psf_path = observation.scratch(&format!("{name}.psf"));
+    // A small sidelobe marker distinguishes reading the saved PSF from
+    // forming the same PSF again.
+    let marker = 0.0125;
+    write_saved_corner(&psf_path, marker);
+
+    controls["calcpsf"] = json!(false);
+    controls["niter"] = json!(0);
+    let (_, refresh) = observation.image(name, controls.clone());
+    assert!(
+        !refresh.suffixes().contains(".model"),
+        "keep the saved model"
+    );
+    assert_eq!(
+        Product::open(&psf_path).pixels[[0, 0]],
+        marker,
+        "reuse the saved PSF"
+    );
+    let residual_error = refresh
+        .get(".residual")
+        .pixels
+        .iter()
+        .zip(seed.get(".residual").pixels.iter())
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        residual_error < 1e-5,
+        "predict the saved model before refreshing"
+    );
+    let saved_model = Product::open(&model_path);
+    assert_eq!(saved_model.pixels, model.pixels);
+    assert_eq!(saved_model.image.misc_info(), old_metadata);
+
+    controls["niter"] = json!(2);
+    let (_, resumed) = observation.image(name, controls);
+    assert!(
+        resumed.suffixes().contains(".model"),
+        "publish an updated model"
+    );
+    let new_model = resumed.get(".model");
+    assert_ne!(new_model.pixels, model.pixels);
+    assert!(new_model.image.misc_info().get("ALPHA").is_some());
+    assert_eq!(Product::open(&psf_path).pixels[[0, 0]], marker);
+}
+
+fn write_saved_corner(path: &std::path::Path, value: f32) {
+    let mut image = casa_images::PagedImage::<f32>::open(path).unwrap();
+    image
+        .put_slice(
+            &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), value),
+            &[0, 0, 0, 0],
+        )
+        .unwrap();
+    image.save().unwrap();
+}
+
+#[test]
+fn mem_restart_reads_or_reforms_the_requested_normal_images() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let name = "mem-restart-normal-images";
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (_, seed) = observation.image(name, controls.clone());
+    let psf = observation.scratch(&format!("{name}.psf"));
+    let residual = observation.scratch(&format!("{name}.residual"));
+    let psf_marker = 0.0125;
+    let residual_marker = 0.1234;
+    write_saved_corner(&psf, psf_marker);
+    write_saved_corner(&residual, residual_marker);
+    controls["niter"] = json!(0);
+    controls["calcpsf"] = json!(false);
+    controls["calcres"] = json!(false);
+    observation.image(name, controls.clone());
+    assert_eq!(
+        Product::open(&psf).pixels[[0, 0]],
+        psf_marker,
+        "read the saved PSF"
+    );
+    assert_eq!(
+        Product::open(&residual).pixels[[0, 0]],
+        residual_marker,
+        "read the saved residual"
+    );
+
+    controls["calcpsf"] = json!(true);
+    controls["calcres"] = json!(true);
+    let (_, reformed) = observation.image(name, controls);
+    for suffix in [".psf", ".residual"] {
+        let actual = reformed.get(suffix).pixels[[0, 0]];
+        let expect = seed.get(suffix).pixels[[0, 0]];
+        assert!(
+            (actual - expect).abs() < 1e-6,
+            "reform {suffix} from the observations"
+        );
+    }
 }

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Standard gridder, natural weighting, MFS Hogbom under a user box mask and
-//! under CASA `auto-multithresh`.
+//! Masks in standard-gridder MFS CLEAN and MEM.
 
 use ndarray::Array2;
 use serde_json::json;
@@ -46,6 +45,89 @@ fn assert_point_recovered(model: &Array2<f32>, image: &Array2<f32>) {
             POINT.flux_jy
         );
     }
+}
+
+fn assert_mem_model_support(model: &Array2<f32>, mask: &Array2<f32>) {
+    let mut outside = model
+        .iter()
+        .zip(mask.iter())
+        .filter_map(|(&value, &support)| (support == 0.0).then_some(value));
+    let floor = outside.next().expect("the mask excludes pixels");
+    assert!(
+        floor > 0.0 && floor < 1e-6,
+        "the MEM mask limits the model to the positive floor"
+    );
+    assert!(
+        outside.all(|value| value == floor),
+        "the MEM mask limits the model to the positive floor"
+    );
+    assert!(model.iter().any(|&value| value > floor));
+}
+
+#[test]
+fn mem_uses_the_support_in_a_user_mask_image() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let [px, py] = component_pixel(POINT);
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0,
+        "mask":format!("{},{},{},{}",px-6,py-6,px+6,py+6)
+    });
+    let (_, region) = observation.image("mem-mask-region", controls.clone());
+    let path = observation.scratch("mem-mask-region.mask");
+    controls["mask"] = json!(path);
+    let (_, image) = observation.image("mem-mask-image", controls.clone());
+    let mask = &image.get(".mask").pixels;
+    assert_eq!(
+        *mask,
+        region.get(".mask").pixels,
+        "honor the supplied mask support"
+    );
+    let model = &image.get(".model").pixels;
+    assert_mem_model_support(model, mask);
+    for suffix in [".model", ".residual", ".image"] {
+        let error = image
+            .get(suffix)
+            .pixels
+            .iter()
+            .zip(region.get(suffix).pixels.iter())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            error < 1e-6,
+            "image mask and region should match for {suffix}"
+        );
+    }
+    let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let [x, y] = [px - 6, py - 6];
+    mask.put_slice(
+        &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), -1.0),
+        &[x, y, 0, 0],
+    )
+    .unwrap();
+    mask.save().unwrap();
+    drop(mask);
+    let (_, signed) = observation.image("mem-mask-signed", controls.clone());
+    let support = &signed.get(".mask").pixels;
+    assert_eq!(support[[x, y]], 0.0, "exclude a negative mask pixel");
+    assert_eq!(
+        support[[x + 1, y]],
+        1.0,
+        "retain the neighboring positive pixel"
+    );
+
+    let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let reference = mask.coordinates().coordinate(0).reference_pixel();
+    mask.set_reference_pixel(0, reference[0] + 0.5).unwrap();
+    mask.save().unwrap();
+    drop(mask);
+    let Err(reason) = observation.try_image("mem-mask-shifted", controls) else {
+        panic!("reject a mask that needs direction regridding");
+    };
+    assert!(
+        reason.contains("must use the output direction grid (#823)"),
+        "{reason}"
+    );
 }
 
 #[test]
@@ -147,6 +229,56 @@ fn usemask_pb_masks_the_published_pb_above_pbmask() {
         refused.contains("Need PB/Sensitivity/Weight image before a PB-based mask can be made"),
         "{refused}"
     );
+}
+
+#[test]
+fn mem_applies_the_primary_beam_to_the_requested_mask() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":0, "write_pb":true,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (_, dirty) = observation.image("mem-pb-dirty", controls.clone());
+    let mut positive: Vec<_> = dirty
+        .get(".pb")
+        .pixels
+        .iter()
+        .copied()
+        .filter(|&v| v > 0.0)
+        .collect();
+    positive.sort_by(f32::total_cmp);
+    let cutoff = positive[positive.len() / 2];
+    controls["niter"] = json!(2);
+    controls["pbmask"] = json!(cutoff);
+    controls["usemask"] = json!("pb");
+    let (_, pb_only) = observation.image("mem-pb-only", controls.clone());
+    controls["usemask"] = json!("user");
+    let (_, unrestricted) = observation.image("mem-pb-unnamed", controls.clone());
+    let middle = IMAGE_SIZE / 2;
+    controls["mask"] = json!(format!("0,0,{middle},{middle}"));
+    let (_, named) = observation.image("mem-pb-and-region", controls);
+
+    let beam = &pb_only.get(".pb").pixels;
+    let mask = &pb_only.get(".mask").pixels;
+    assert!(
+        mask.iter().any(|&v| v == 0.0) && mask.iter().any(|&v| v == 1.0),
+        "PB threshold produces partial MEM support"
+    );
+    for ((x, y), pb) in beam.indexed_iter() {
+        let above = *pb > cutoff;
+        assert_eq!(mask[[x, y]], f32::from(above), "MEM PB-only support");
+        assert_eq!(
+            named.get(".mask").pixels[[x, y]],
+            f32::from(above && x <= middle && y <= middle),
+            "MEM intersects its region with the PB"
+        );
+    }
+    assert!(
+        unrestricted.get(".mask").pixels.iter().all(|&v| v == 1.0),
+        "an unnamed user mask leaves MEM support unrestricted"
+    );
+    assert_mem_model_support(&pb_only.get(".model").pixels, mask);
+    assert_mem_model_support(&named.get(".model").pixels, &named.get(".mask").pixels);
 }
 
 #[test]

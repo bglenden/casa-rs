@@ -40,7 +40,7 @@ pub(crate) fn check_grid(
             if suffix.starts_with("sumwt") {
                 Ok(None)
             } else {
-                check_header(image, template, mosaic_psf.filter(|_| suffix == "psf"))
+                check_header(image, template, mosaic_psf)
                     .map(|alternate| alternate.then(|| image.coordinates().clone()))
             }
         }
@@ -77,7 +77,7 @@ fn check_header<T: ImagePixel>(
     Ok(false)
 }
 
-/// A single-term mosaic can have a PSF formed about a fixed J2000
+/// A mosaic can have a PSF formed about a fixed J2000
 /// direction of its own. Rebuild the expected direction at that reference
 /// and still check the actual projection, axes, poles and pixel geometry.
 fn use_saved_psf_reference(

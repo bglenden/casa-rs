@@ -6,7 +6,7 @@
 //! forms ([`crate::restart`]). Compile reads headers and the mask; the
 //! model and the normal-state images are read when the run uses them.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::RegridTemplate;
@@ -14,7 +14,7 @@ use casa_imaging_products::CasaImageWriter;
 use casa_imaging_runtime::{Demand, Reservation, admit};
 
 use super::domains::{DomainMask, PreparedImageDomain};
-use super::{PrepareError, StartModel};
+use super::{PrepareError, StartModel, Surveyed, psf_view};
 use crate::restart::{self, ExistingProducts, Family};
 use crate::{ImagingRequest, RunContext, UseMask};
 
@@ -39,14 +39,14 @@ pub(super) fn prepare(
     domains: &mut [PreparedImageDomain],
     (channels, reconstruction_planes): (usize, usize),
     mvc_start: Option<&super::MvcStart>,
-    context: &RunContext,
+    (context, surveyed): (&RunContext, &Surveyed<'_>),
     writer: &mut CasaImageWriter,
 ) -> Result<Continuation, PrepareError> {
     let (main, outliers) = domains.split_first_mut().expect("main image domain");
-    let mut continuation = read(request, main, channels, mvc_start, context)?;
+    let mut continuation = read(request, main, channels, mvc_start, context, surveyed)?;
     if request.tclean_restart && !outliers.is_empty() {
         for outlier in outliers {
-            let mut saved = read_domain(request, outlier, channels, None, context)?;
+            let mut saved = read_domain(request, outlier, channels, None, context, None)?;
             continuation.mask_resident.join(saved.mask_resident);
             continuation.outlier_models.push(saved.start_model.take());
             continuation.outlier_psfs.push(saved.existing.take());
@@ -82,6 +82,7 @@ fn read(
     channels: usize,
     mvc_start: Option<&super::MvcStart>,
     context: &RunContext,
+    surveyed: &Surveyed<'_>,
 ) -> Result<Continuation, PrepareError> {
     if !request.tclean_restart {
         restart::check_inputs(request, false)?;
@@ -94,7 +95,48 @@ fn read(
             existing: None,
         });
     }
-    read_domain(request, main, channels, mvc_start, context)
+    read_domain(request, main, channels, mvc_start, context, Some(surveyed))
+}
+
+fn check_restart_grid(
+    path: &Path,
+    suffix: &str,
+    (template, taylor_psf): (&RegridTemplate, &mut Option<RegridTemplate>),
+    request: &ImagingRequest,
+    domain: &PreparedImageDomain,
+    context: &RunContext,
+    surveyed: Option<&Surveyed<'_>>,
+) -> Result<Option<CoordinateSystem>, PrepareError> {
+    if suffix.starts_with("psf.tt") && request.supports_separate_psf() {
+        if let Some(grid) = taylor_psf {
+            return restart::check_grid(path, suffix, grid, None);
+        }
+        let coordinates = restart::check_grid(path, suffix, template, Some(domain.direction))?;
+        *taylor_psf = Some(RegridTemplate {
+            coordinates: coordinates
+                .as_ref()
+                .unwrap_or(&template.coordinates)
+                .clone(),
+            shape: template.shape.clone(),
+        });
+        return Ok(coordinates);
+    }
+    if suffix == "psf" && request.supports_separate_psf() {
+        if request.specmode == crate::SpecMode::Mfs {
+            return restart::check_grid(path, suffix, template, Some(domain.direction));
+        }
+        if let Some(surveyed) = surveyed {
+            let saved_cube_grid =
+                psf_view::saved_cube_grid(path, request, domain, surveyed, context)?;
+            return restart::check_grid(
+                path,
+                suffix,
+                saved_cube_grid.as_ref().unwrap_or(template),
+                None,
+            );
+        }
+    }
+    restart::check_grid(path, suffix, template, None)
 }
 
 fn read_domain(
@@ -103,6 +145,7 @@ fn read_domain(
     channels: usize,
     mvc_start: Option<&super::MvcStart>,
     context: &RunContext,
+    surveyed: Option<&Surveyed<'_>>,
 ) -> Result<Continuation, PrepareError> {
     let mut continuation = Continuation {
         start_model: None,
@@ -124,7 +167,7 @@ fn read_domain(
         coordinates: domain.coordinates.clone(),
         shape: vec![nx, ny, polarizations, planes],
     };
-    let saved_mosaic_psf = request.supports_separate_psf().then_some(domain.direction);
+    let mut taylor_psf = None;
     for path in restart::continuation_products(request, &domain.output)? {
         let suffix = restart::suffix(&domain.output, &path);
         if mvc_start.is_some() && suffix != "mask" && !restart::mvc_cube_product(&suffix) {
@@ -134,14 +177,24 @@ fn read_domain(
             // The Taylor view checked the mask's one-channel grid.
             None
         } else {
-            restart::check_grid(&path, &suffix, &template, saved_mosaic_psf)?
+            check_restart_grid(
+                &path,
+                &suffix,
+                (&template, &mut taylor_psf),
+                request,
+                domain,
+                context,
+                surveyed,
+            )?
         };
         if request.calcpsf
+            && request.specmode == crate::SpecMode::Mfs
             && !request.uses_separate_psf()
             && let Some(coordinates) = psf_coordinates
         {
-            // Without a separate PSF request CASA makes new samples in
-            // the existing image store, keeping its coordinates and beam.
+            // MFS forms new samples in the existing PSF image. A cube
+            // forms a new PSF in the requested geometry and publishes
+            // that geometry with it.
             let bytes = coordinates
                 .to_record()
                 .retained_heap_bytes()
