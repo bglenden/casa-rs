@@ -21,6 +21,7 @@
 //! | SFL  | Sanson-Flamsteed (sinusoidal) | `-SFL` |
 //! | PAR  | Parabolic | `-PAR` |
 //! | MOL  | Mollweide equal-area | `-MOL` |
+//! | PCO  | Polyconic | `-PCO` |
 //! | MER  | Mercator | `-MER` |
 //! | AIT  | Hammer-Aitoff | `-AIT` |
 //! | ZEA  | Zenithal equal-area | `-ZEA` |
@@ -64,6 +65,8 @@ pub enum ProjectionType {
     PAR,
     /// Mollweide equal-area projection.
     MOL,
+    /// Polyconic projection.
+    PCO,
     /// Mercator projection.
     MER,
     /// Hammer-Aitoff equal-area projection.
@@ -102,6 +105,7 @@ impl ProjectionType {
             "SFL" => Some(Self::SFL),
             "PAR" => Some(Self::PAR),
             "MOL" => Some(Self::MOL),
+            "PCO" => Some(Self::PCO),
             "MER" => Some(Self::MER),
             "AIT" => Some(Self::AIT),
             "ZEA" => Some(Self::ZEA),
@@ -124,6 +128,7 @@ impl ProjectionType {
             Self::SFL => "SFL",
             Self::PAR => "PAR",
             Self::MOL => "MOL",
+            Self::PCO => "PCO",
             Self::MER => "MER",
             Self::AIT => "AIT",
             Self::ZEA => "ZEA",
@@ -217,6 +222,7 @@ impl Projection {
             ProjectionType::SFL => project_sfl(phi, theta),
             ProjectionType::PAR => project_par(phi, theta),
             ProjectionType::MOL => project_mol(phi, theta),
+            ProjectionType::PCO => project_pco(phi, theta),
             ProjectionType::MER => project_mer(phi, theta),
             ProjectionType::AIT => project_ait(phi, theta),
             ProjectionType::ZEA => project_zea(phi, theta),
@@ -244,6 +250,7 @@ impl Projection {
             ProjectionType::SFL => deproject_sfl(x, y),
             ProjectionType::PAR => deproject_par(x, y),
             ProjectionType::MOL => deproject_mol(x, y),
+            ProjectionType::PCO => deproject_pco(x, y),
             ProjectionType::MER => deproject_mer(x, y),
             ProjectionType::AIT => deproject_ait(x, y),
             ProjectionType::ZEA => deproject_zea(x, y),
@@ -618,6 +625,91 @@ fn deproject_mol(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
 }
 
 // ---------------------------------------------------------------------------
+// PCO (polyconic)
+// ---------------------------------------------------------------------------
+
+// WCSLIB's small-angle switch and equator/pole tolerance, in radians.
+const PCO_EQUATOR_LIMIT: f64 = 1e-4 * DEG_TO_RAD;
+const PCO_ANGLE_TOLERANCE: f64 = 1e-12 * DEG_TO_RAD;
+
+/// Calabretta & Greisen (2002), §5.5.2. The half-angle expression
+/// for 1 - cos(a) preserves small offsets from the central meridian.
+fn project_pco(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta.abs() == FRAC_PI_2 {
+        return Ok((0.0, theta));
+    }
+    let (sine, cosine) = theta.sin_cos();
+    if theta.abs() < PCO_EQUATOR_LIMIT {
+        let x = phi * cosine;
+        return Ok((x, theta * (1.0 + x * x / 2.0)));
+    }
+    let a = phi * sine;
+    let cotangent = cosine / sine;
+    Ok((
+        cotangent * a.sin(),
+        theta + 2.0 * cotangent * (a / 2.0).sin().powi(2),
+    ))
+}
+
+fn deproject_pco(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let height = y.abs();
+    let (phi, theta) = if height < PCO_ANGLE_TOLERANCE {
+        (x, 0.0)
+    } else if (height - FRAC_PI_2).abs() < PCO_ANGLE_TOLERANCE {
+        (0.0, FRAC_PI_2)
+    } else {
+        let theta = pco_inverse_latitude(x, height)?;
+        let (sine, cosine) = theta.sin_cos();
+        let phi = (x * sine).atan2(cosine - (height - theta) * sine) / sine;
+        (phi, theta)
+    };
+    if phi.abs() <= PI + PCO_ANGLE_TOLERANCE {
+        Ok((phi.clamp(-PI, PI), theta.copysign(y)))
+    } else {
+        Err(CoordinateError::ConversionFailed(
+            "PCO deproject: point outside projection boundary".into(),
+        ))
+    }
+}
+
+/// Invert WCSLIB's circle equation after multiplying by sin(theta).
+/// The residual's derivative is (x² + (height - theta)² + 2) cos(theta),
+/// so the physical root is bracketed between the equator and the pole.
+fn pco_inverse_latitude(x: f64, height: f64) -> Result<f64, CoordinateError> {
+    let x_squared = x * x;
+    let estimate = height / (1.0 + x_squared / 2.0);
+    if height < PCO_EQUATOR_LIMIT {
+        return Ok(estimate);
+    }
+    let (mut low, mut high) = (0.0, height.min(FRAC_PI_2));
+    let mut theta = estimate.min(high);
+    for _ in 0..64 {
+        let (sine, cosine) = theta.sin_cos();
+        let offset = height - theta;
+        let radius_squared = x_squared + offset * offset;
+        let residual = radius_squared * sine - 2.0 * offset * cosine;
+        let slope = (radius_squared + 2.0) * cosine;
+        if residual.abs() <= PCO_ANGLE_TOLERANCE * slope || high - low <= PCO_ANGLE_TOLERANCE {
+            return Ok(theta);
+        }
+        if residual < 0.0 {
+            low = theta;
+        } else {
+            high = theta;
+        }
+        let next = theta - residual / slope;
+        theta = if low < next && next < high {
+            next
+        } else {
+            low.midpoint(high)
+        };
+    }
+    Err(CoordinateError::ConversionFailed(
+        "PCO deproject: latitude did not converge".into(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // MER (Mercator)
 // ---------------------------------------------------------------------------
 
@@ -890,6 +982,15 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    /// WCSLIB maps the equator directly and rejects longitude beyond ±π.
+    #[test]
+    fn polyconic_equator_is_direct_and_bounded() {
+        let projection = Projection::new(ProjectionType::PCO);
+        assert_eq!(projection.project(1.1, 0.0).unwrap(), (1.1, 0.0));
+        assert_eq!(projection.deproject(PI, 0.0).unwrap(), (PI, 0.0));
+        assert!(projection.deproject(PI + 1e-3, 0.0).is_err());
     }
 
     #[test]

@@ -610,8 +610,11 @@ impl<'a> Tclean<'a> {
             "MER", "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC",
             "CSC", "QSC", "HPX",
         ];
+        // CASA first constructs Projection(type) without any parameters.
+        // These names require a parameter at that point and throw.
+        const CASA_REQUIRED_PARAMETER: [&str; 5] = ["COP", "COE", "COD", "COO", "BON"];
         let name = self.text("projection")?;
-        if name != "NCP" && !CASACORE.contains(&name) {
+        if (name != "NCP" && !CASACORE.contains(&name)) || CASA_REQUIRED_PARAMETER.contains(&name) {
             return Err(TcleanRefusal::new(
                 "projection",
                 format!("Invalid projection code : {name}, as CASA's tclean refuses it"),

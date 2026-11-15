@@ -361,6 +361,7 @@ fn casa_values_become_the_request_casa_rs_runs() {
         ("SFL", Projection::Sfl),
         ("PAR", Projection::Par),
         ("MOL", Projection::Mol),
+        ("PCO", Projection::Pco),
         ("MER", Projection::Mer),
         ("AIT", Projection::Ait),
     ] {
@@ -647,6 +648,19 @@ fn values_casa_rs_cannot_honour_are_refused() {
             refusal(overrides.clone()).parameter,
             parameter,
             "{overrides}"
+        );
+    }
+}
+
+#[test]
+fn casa_refuses_projections_requiring_parameters_at_name_setup() {
+    for name in ["COP", "COE", "COD", "COO", "BON"] {
+        let error = refusal(json!({ "projection": name }));
+        assert_eq!(error.parameter, "projection");
+        assert!(
+            error
+                .message
+                .contains(&format!("Invalid projection code : {name}"))
         );
     }
 }

@@ -80,7 +80,7 @@ CASACORE_PROJECTIONS = {
 }
 CASA_RS_PROJECTIONS = {
     "SIN", "NCP", "AZP", "SZP", "AIR", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "PAR", "MOL",
-    "MER", "AIT",
+    "PCO", "MER", "AIT",
 }
 PROJECTION_ISSUE = 1101
 
@@ -412,6 +412,8 @@ class Refusals:
         if isinstance(projection, str):
             if projection != "NCP" and projection not in CASACORE_PROJECTIONS:
                 self.add("projection: not a casacore projection", PARITY)
+            elif projection in {"COP", "COE", "COD", "COO", "BON"}:
+                self.add(f"projection: CASA rejects {projection} at parameter-free name setup", PARITY)
             elif projection in {"ZPN", "CYP", "CEA"}:
                 self.add(f"projection: CASA rejects fixed zero parameters for {projection}", PARITY)
             elif projection not in CASA_RS_PROJECTIONS:
