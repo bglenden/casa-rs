@@ -192,3 +192,69 @@ pub(super) fn record_read(event: &tracing::Event<'_>, counter: &AtomicU64) {
         counter.store(read.admitted, Ordering::Relaxed);
     }
 }
+
+/// Fresh fields each regrid their own image while holding only the largest
+/// source's scratch alongside the first model generation.
+#[test]
+fn explicit_outlier_seeds_are_admitted_one_field_at_a_time() {
+    if !alone("outliers::explicit_outlier_seeds_are_admitted_one_field_at_a_time") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let ms = observation(root.path(), 6);
+    warm(&ms, root.path());
+    let define = |name: &str, outlier: &str, model: Option<&Path>| {
+        let path = root.path().join(name);
+        let seed = model.map_or_else(String::new, |model| {
+            format!("startmodel={}\n", model.display())
+        });
+        std::fs::write(
+            &path,
+            format!(
+                "imagename={}\nimsize=384\nphasecenter=J2000 18h00m00s -23d00m10s\n{seed}",
+                root.path().join(outlier).display()
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let initial = request(
+        &ms,
+        &root.path().join("initial-main"),
+        512,
+        json!({"niter":0, "outlierfile":define("initial.txt", "initial-outlier", None)}),
+    );
+    let mut breaches = Vec::new();
+    assert_eq!(
+        check(&mut breaches, "unseeded control", &initial, 1, AMPLE)
+            .outcome
+            .unwrap()
+            .major_cycle_count,
+        1
+    );
+
+    let main = root.path().join("initial-main.model");
+    let outlier = root.path().join("initial-outlier.model");
+    let expected = |path: &Path| {
+        let image = casa_images::PagedImage::<f32>::open(path).unwrap();
+        let template = casa_images::RegridTemplate {
+            coordinates: image.coordinates().clone(),
+            shape: image.shape().to_vec(),
+        };
+        casa_imaging_application::start_model_law::seeding_bytes(path, template).unwrap()
+    };
+    let largest = expected(&main).max(expected(&outlier));
+    let fresh = request(
+        &ms,
+        &root.path().join("fresh-main"),
+        512,
+        json!({"niter":0, "startmodel":main, "outlierfile":define("fresh.txt","fresh-outlier",Some(&outlier))}),
+    );
+    SEED_BYTES.store(0, Ordering::Relaxed);
+    let run = check(&mut breaches, "fresh outlier models", &fresh, 1, AMPLE);
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
+    assert_eq!(run.outcome.unwrap().major_cycle_count, 1);
+    let admitted = SEED_BYTES.load(Ordering::Relaxed);
+    eprintln!("fresh outlier model read: {admitted} B, largest field {largest} B");
+    assert_eq!(admitted, largest, "admit just one field's source scratch");
+}

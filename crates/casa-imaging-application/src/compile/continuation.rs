@@ -15,6 +15,7 @@ use casa_imaging_runtime::{Demand, Reservation, admit};
 
 use super::domains::{DomainMask, PreparedImageDomain};
 use super::{PrepareError, StartModel, Surveyed, psf_view};
+use crate::request::execution::{OUTLIER_START_MODELS_SCOPE, supports_outlier_start_models};
 use crate::restart::{self, ExistingProducts, Family};
 use crate::{ImagingRequest, RunContext, UseMask};
 
@@ -22,7 +23,7 @@ use crate::{ImagingRequest, RunContext, UseMask};
 pub(crate) struct Continuation {
     /// The earlier model, on the image's own grid.
     pub(crate) start_model: Option<StartModel>,
-    /// Saved outlier models in compiled domain order after the main image.
+    /// Saved or explicit outlier models in compiled domain order after the main image.
     pub(crate) outlier_models: Vec<Option<StartModel>>,
     pub(crate) outlier_psfs: Vec<Option<ExistingProducts>>,
     /// Existing mosaic PSF coordinates when CASA grids into that image.
@@ -43,6 +44,29 @@ pub(super) fn prepare(
     writer: &mut CasaImageWriter,
 ) -> Result<Continuation, PrepareError> {
     let (main, outliers) = domains.split_first_mut().expect("main image domain");
+    let field_seed = if outliers.is_empty() {
+        None
+    } else {
+        outliers
+            .iter()
+            .find_map(|domain| domain.outlier_start_model.as_ref())
+            .or_else(|| request.startmodel.iter().flatten().next())
+    };
+    if let Some(path) = field_seed {
+        if request.tclean_restart {
+            return Err(PrepareError::Restart {
+                path: path.clone(),
+                reason: "supplying a new outlier start model with saved products is not implemented (#944)"
+                    .into(),
+            });
+        }
+        if outliers.len() != 1 || !supports_outlier_start_models(request) {
+            return Err(PrepareError::StartModel {
+                path: path.clone(),
+                reason: OUTLIER_START_MODELS_SCOPE.into(),
+            });
+        }
+    }
     let mut continuation = read(request, main, channels, mvc_start, context, surveyed)?;
     if request.tclean_restart && !outliers.is_empty() {
         for outlier in outliers {
@@ -51,6 +75,24 @@ pub(super) fn prepare(
             continuation.outlier_models.push(saved.start_model.take());
             continuation.outlier_psfs.push(saved.existing.take());
         }
+    } else if field_seed.is_some() {
+        continuation.outlier_models = outliers
+            .iter()
+            .map(|domain| {
+                domain
+                    .outlier_start_model
+                    .as_ref()
+                    .map(|_| {
+                        StartModel::prepare(
+                            std::slice::from_ref(&domain.outlier_start_model),
+                            domain,
+                            request.stokes.len(),
+                            (reconstruction_planes, 1),
+                        )
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
     }
     if let Some(coordinates) = continuation.psf_coordinates.take() {
         writer.set_main_psf_coordinates(coordinates);

@@ -96,6 +96,9 @@ pub(super) struct PreparedImageDomain {
     /// The telescope of the selected observations.
     pub(super) telescope: String,
     pub(super) mask: DomainMask,
+    /// The outlier's resolved starting image. The main field takes the
+    /// request's startmodel list.
+    pub(super) outlier_start_model: Option<PathBuf>,
     /// CASA facets the first image field only (`SynthesisImager`'s
     /// `createFacetImageStoreList`); outliers are single.
     pub(super) facets: FacetLayout,
@@ -176,6 +179,7 @@ pub(super) fn prepare_domains(
             MaskPreparation::ForRun => request_mask(request, spectral, channels)?,
             MaskPreparation::GeometryOnly => DomainMask::FullPlane,
         },
+        outlier_start_model: None,
         facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
@@ -206,8 +210,18 @@ pub(super) fn prepare_domains(
                 outlier.cell_arcsec,
                 request.projection,
                 DirectionFrame::J2000,
-                [centre.longitude_rad(), centre.latitude_rad()],
+                [
+                    centre.longitude_rad().rem_euclid(std::f64::consts::TAU),
+                    centre.latitude_rad(),
+                ],
             );
+            // ImagerParameters copies the main record, then applies each
+            // outlier's keys. An empty value clears the inherited model.
+            let outlier_start_model = match outlier.start_model {
+                Some(path) if path.is_empty() => None,
+                Some(path) => Some(path.into()),
+                None => request.startmodel.first().cloned().flatten(),
+            };
             domains.push(PreparedImageDomain {
                 role: ImageDomainRole::Outlier(outlier.name),
                 output: outlier.output,
@@ -226,6 +240,7 @@ pub(super) fn prepare_domains(
                     MaskPreparation::ForRun => outlier.mask,
                     MaskPreparation::GeometryOnly => DomainMask::FullPlane,
                 },
+                outlier_start_model,
                 facets: FacetLayout::Single,
             });
         }

@@ -447,3 +447,148 @@ fn a_plane_without_weights_restores_its_start_model() {
         "the unweighted plane's beam covers {area} pixels, the largest beam {expected}"
     );
 }
+#[test]
+fn separate_outlier_start_models_resolve_flux_on_each_field() {
+    use casa_images::PagedImage;
+    use ndarray::{ArrayD, IxDyn};
+
+    let point = Component {
+        offset_px: [3, 0],
+        ..POINT
+    };
+    let observation = Observation::synthesise(&[("point", point)]);
+    let [longitude, latitude] = super::fixture::PHASE_CENTER_RAD;
+    let signed_longitude = longitude - std::f64::consts::TAU;
+    let centre = format!("J2000 {signed_longitude}rad {latitude}rad");
+    let run = |name: &str, main: &str, field_model: Option<&str>| {
+        let outlier = observation.scratch(&format!("{name}-outlier"));
+        let definition = observation.scratch(&format!("outliers-{name}.txt"));
+        let mut text = format!(
+            "imagename={}\nphasecenter={centre}\nimsize=[20,18]\n",
+            outlier.display()
+        );
+        if let Some(seed) = field_model {
+            text.push_str(&format!("startmodel={seed}\n"));
+        }
+        std::fs::write(&definition, text).unwrap();
+        observation.try_image(
+            name,
+            json!({
+                "imsize": [32,32], "niter":0, "deconvolver":"hogbom",
+                "phasecenter":centre, "outlierfile":definition, "startmodel":main,
+            }),
+        )
+    };
+
+    let (_, blank) = run("field-templates", "", None).unwrap();
+    let main = observation.scratch("field-templates.model");
+    let outlier = observation.scratch("field-templates-outlier.model");
+    for (path, pixels) in [
+        (&main, &[(3, 4, 0.5), (16, 16, 1.25), (18, 14, 0.75)][..]),
+        (&outlier, &[(10, 9, 3.0), (12, 7, 0.375)][..]),
+    ] {
+        let mut image = PagedImage::<f32>::open(path).unwrap();
+        let mut samples = ArrayD::zeros(IxDyn(image.shape()));
+        for &(x, y, flux) in pixels {
+            samples[[x, y, 0, 0]] = flux;
+        }
+        image.put_slice(&samples, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let path = |seed: &std::path::Path| seed.to_str().unwrap().to_owned();
+    let (main_seed, outlier_seed) = (path(&main), path(&outlier));
+    let assert_models = |name: &str, [outer, first, second]: [f32; 3]| {
+        for (suffix, [nx, ny], points) in [
+            (
+                "",
+                [32, 32],
+                [(3, 4, outer), (16, 16, first), (18, 14, second)],
+            ),
+            (
+                "-outlier",
+                [20, 18],
+                [(0, 0, 0.0), (10, 9, first), (12, 7, second)],
+            ),
+        ] {
+            let image =
+                PagedImage::<f32>::open(observation.scratch(&format!("{name}{suffix}.model")))
+                    .unwrap();
+            assert_eq!(image.shape(), [nx, ny, 1, 1]);
+            let actual = image.get().unwrap();
+            let mut expected = ArrayD::zeros(IxDyn(&[nx, ny, 1, 1]));
+            for (x, y, flux) in points {
+                expected[[x, y, 0, 0]] = flux;
+            }
+            assert!(
+                actual
+                    .iter()
+                    .zip(&expected)
+                    .all(|(a, b)| (*a - *b).abs() < 1e-6),
+                "{name}{suffix} did not get its field's model"
+            );
+        }
+    };
+    for (name, main, outlier, expected) in [
+        (
+            "separate-fields",
+            main_seed.as_str(),
+            Some(outlier_seed.as_str()),
+            [0.5, 3.0, 0.375],
+        ),
+        (
+            "inherited-field",
+            main_seed.as_str(),
+            None,
+            [0.5, 1.25, 0.75],
+        ),
+        ("blank-field", main_seed.as_str(), Some(""), [0.5, 0.0, 0.0]),
+        (
+            "outlier-no-main",
+            "",
+            Some(outlier_seed.as_str()),
+            [0.0, 3.0, 0.375],
+        ),
+    ] {
+        let (_, products) = run(name, main, outlier).unwrap();
+        assert_models(name, expected);
+        assert!(
+            difference(&blank, &products, ".residual") > 1e-3,
+            "{name}: seeds must affect prediction"
+        );
+    }
+
+    let outlier_psf =
+        PagedImage::<f32>::open(observation.scratch("separate-fields-outlier.psf")).unwrap();
+    let stored_lon = outlier_psf.coordinates().coordinate(0).reference_value()[0];
+    assert!(
+        (stored_lon - longitude).abs() < 1e-12,
+        "outlier header longitude {stored_lon}"
+    );
+    let Err(reason) = run("separate-fields", "", Some(&outlier_seed)) else {
+        panic!("a fresh outlier seed must not replace an existing model");
+    };
+    assert!(
+        reason.contains("supplying a new outlier start model with saved products"),
+        "{reason}"
+    );
+    assert_models("separate-fields", [0.5, 3.0, 0.375]);
+
+    let multi = observation.scratch("outliers-many.txt");
+    let definition: String = ["outlier-z", "outlier-a"]
+        .into_iter()
+        .map(|name| {
+            format!(
+                "imagename={}\nphasecenter={centre}\nimsize=[20,18]\nstartmodel={outlier_seed}\n",
+                observation.scratch(name).display()
+            )
+        })
+        .collect();
+    std::fs::write(&multi, definition).unwrap();
+    let Err(reason) = observation.try_image(
+        "guard-ambiguous-field-order",
+        json!({"imsize":[32,32],"niter":0,"deconvolver":"hogbom","phasecenter":centre,"outlierfile":multi,"startmodel":main_seed}),
+    ) else {
+        panic!("fresh seeds on more than one outlier require CASA's field order");
+    };
+    assert!(reason.contains("MFS with one outlier (#1105)"), "{reason}");
+}

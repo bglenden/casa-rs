@@ -21,6 +21,8 @@ pub(super) struct OutlierDomain {
     pub(super) cell_arcsec: [f64; 2],
     pub(super) phase_center: String,
     pub(super) mask: DomainMask,
+    /// An explicit empty value overrides the main field's default.
+    pub(super) start_model: Option<String>,
 }
 
 pub(super) fn read_outlier_domains(
@@ -140,6 +142,7 @@ fn compile_record(
         .transpose()?
         .unwrap_or(default_cell_arcsec);
     let phase_center = take_required(&mut fields, "phasecenter", ordinal)?;
+    let start_model = fields.remove("startmodel");
     let mask = fields
         .remove("mask")
         .filter(|value| !value.is_empty())
@@ -155,7 +158,7 @@ fn compile_record(
     admit_default(&mut fields, "deconvolver", &["", "hogbom"])?;
     admit_default(&mut fields, "wprojplanes", &["", "1"])?;
     // CASA lets these be empty; a value is a feature the slice lacks.
-    for unsupported in ["startmodel", "start", "width", "reffreq"] {
+    for unsupported in ["start", "width", "reffreq"] {
         if fields
             .get(unsupported)
             .is_some_and(|value| value.is_empty())
@@ -176,6 +179,7 @@ fn compile_record(
         cell_arcsec,
         phase_center,
         mask,
+        start_model,
     })
 }
 
