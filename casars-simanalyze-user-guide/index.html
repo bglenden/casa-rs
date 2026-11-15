@@ -713,9 +713,11 @@ difference, fidelity and image statistics.</p>
 
 <p>The <a href="../reference/task-parameters/">parameter reference</a> gives CASA's full
 signature and defaults. The single-array ALMA disk route is described in
-<a href="../tutorial-parity/ppdisk-alma/">the tutorial evidence</a>. Multi-array and
-total-power graphics follow the numerical work in the simulation programme;
-use <code>graphics="none"</code> for those calculation routes until that work lands.</p>
+<a href="../tutorial-parity/ppdisk-alma/">the tutorial evidence</a>. Multi-array and total-power graphics use the same native plot documents
+as the single-array route. <code>graphics="file"</code>, <code>"screen"</code>, <code>"both"</code> and
+<code>"none"</code> select the host's output policy. TP has an analysis figure and
+no interferometric PSF. Feathered figures retain the original synthesis
+PSF and CASA's original figure-name prefix.</p>
 <h2 id="input-selection-and-calculations">Input selection and calculations<a class="headerlink" href="#input-selection-and-calculations" title="Permanent link">&para;</a></h2>
 <p><code>vis="default"</code> discovers project MSs in sorted order and prefers their
 noisy counterparts. A previous <code>&lt;project&gt;.concat.ms</code> is excluded when the

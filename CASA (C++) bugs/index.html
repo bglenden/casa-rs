@@ -1890,6 +1890,19 @@ At the pointing's own direction, they agree to 1.2e-7 and 5.6e-8, and the
 clean matches iteration for iteration (900, model 1.7e-7). The mosaic of
 the same cube differs by 3.3e-3 under Briggs and agrees within 1e-6 under
 natural weighting.</p>
+<h3 id="simanalyze-tp-seed-and-feather-psf-displays">simanalyze TP seed and feather PSF displays<a class="headerlink" href="#simanalyze-tp-seed-and-feather-psf-displays" title="Permanent link">&para;</a></h3>
+<p>CASA 6.7.6.14 deletes <code>cell_asec</code> after SF TP gridding, then uses it to plot
+an interferometric PSF in the same invocation. A TP seed plus <code>showpsf=True</code>
+raises <code>UnboundLocalError</code>. The graphics oracle restores only that display
+scale from the selected image cell; native graphics use the PSF image's WCS.</p>
+<p>After feathering, CASA changes <code>imagename</code> to the feathered stem, then tries
+to open <code>&lt;stem&gt;.feather.psf</code>, which feather does not create. The oracle and
+native figures display the original synthesis PSF. Numerical imaging and
+feather calculations are unchanged.</p>
+<p>The simalma combination figure deletes existing flat and convolved model
+images as part of drawing its panels. Native plotting uses private copies
+for the summary calculation and preserves the numerical products, following
+the accepted simulation plan.</p>
 <h3 id="simalma-configuration-names-and-zero-minute-tp-exposures">simalma configuration names and zero-minute TP exposures<a class="headerlink" href="#simalma-configuration-names-and-zero-minute-tp-exposures" title="Permanent link">&para;</a></h3>
 <p>CASA 6.7.6.14's <code>task_simalma.py</code> records an unknown cycle as integer <code>-1</code>
 then compares it with string <code>'-1'</code>. A valid ALMA/ACA configuration whose

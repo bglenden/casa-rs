@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["simalma"],"struct":["SimalmaRequest"]};
+window.SIDEBAR_ITEMS = {"fn":["simalma","simalma_with_plots"],"struct":["SimalmaRequest"]};
