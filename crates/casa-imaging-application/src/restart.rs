@@ -394,9 +394,8 @@ fn check_saved_psf(prefix: &Path, family: Family, continuing: bool) -> Result<()
 }
 
 /// Whether a `calcres=False` run reads a residual: it continues on an
-/// earlier run whose residual exists. Without one a run of no iterations
-/// makes the PSF alone, and writes no residual, model or restored image,
-/// as CASA does.
+/// earlier run whose residual exists. A fresh PSF-only run can publish
+/// its start model independently of the residual.
 pub(crate) fn reads_residual(request: &ImagingRequest) -> bool {
     !request.calcres
         && request.tclean_restart
@@ -406,8 +405,8 @@ pub(crate) fn reads_residual(request: &ImagingRequest) -> bool {
             .all(|name| product_path(&request.imagename, name).exists())
 }
 
-/// Whether the run forms or reads a residual, and so writes the residual,
-/// the model and, with `restoration`, the restored image.
+/// Whether the run forms or reads a residual for the residual product
+/// and, with `restoration`, the restored image.
 pub(crate) fn has_residual(request: &ImagingRequest) -> bool {
     request.calcres || reads_residual(request)
 }
