@@ -150,6 +150,44 @@ impl MaskImage {
         })
     }
 
+    /// Whether the saved mask and output have the same direction grid.
+    pub(super) fn matches_direction_grid(&self) -> bool {
+        if self.axes.direction.map(|axis| self.axes.shape[axis]) != self.target_size
+            || self.source.projection() != self.target.projection()
+            || self.source.reference_direction().frame()
+                != self.target.reference_direction().frame()
+        {
+            return false;
+        }
+        if self.source == self.target {
+            return true;
+        }
+        // Reading the CASA header can round the same WCS differently. Use
+        // the displacement in pixels so this allowance cannot admit a shift.
+        let [nx, ny] = self.target_size.map(|size| size.saturating_sub(1) as f64);
+        let source = self.source.coordinate();
+        let target = self.target.coordinate();
+        [
+            [0.0, 0.0],
+            [nx, 0.0],
+            [0.0, ny],
+            [nx, ny],
+            [nx / 2.0, ny / 2.0],
+        ]
+        .into_iter()
+        .all(|pixel| {
+            target
+                .pixel_to_world(pixel)
+                .and_then(|world| source.world_to_pixel(world))
+                .is_ok_and(|mapped| {
+                    mapped
+                        .into_iter()
+                        .zip(pixel)
+                        .all(|(a, b)| (a - b).abs() <= 1e-7)
+                })
+        })
+    }
+
     /// Target pixels of one plane.
     fn target_plane(&self) -> u64 {
         (self.target_size[0] as u64).saturating_mul(self.target_size[1] as u64)

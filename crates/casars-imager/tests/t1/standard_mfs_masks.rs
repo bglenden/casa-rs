@@ -57,8 +57,9 @@ fn mem_uses_the_support_in_a_user_mask_image() {
         "mask":format!("{},{},{},{}",px-6,py-6,px+6,py+6)
     });
     let (_, region) = observation.image("mem-mask-region", controls.clone());
-    controls["mask"] = json!(observation.scratch("mem-mask-region.mask"));
-    let (_, image) = observation.image("mem-mask-image", controls);
+    let path = observation.scratch("mem-mask-region.mask");
+    controls["mask"] = json!(path);
+    let (_, image) = observation.image("mem-mask-image", controls.clone());
     let mask = &image.get(".mask").pixels;
     assert_eq!(
         *mask,
@@ -93,6 +94,18 @@ fn mem_uses_the_support_in_a_user_mask_image() {
             "image mask and region should match for {suffix}"
         );
     }
+    let mut mask = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let reference = mask.coordinates().coordinate(0).reference_pixel();
+    mask.set_reference_pixel(0, reference[0] + 0.5).unwrap();
+    mask.save().unwrap();
+    drop(mask);
+    let Err(reason) = observation.try_image("mem-mask-shifted", controls) else {
+        panic!("reject a mask that needs direction regridding");
+    };
+    assert!(
+        reason.contains("must use the output direction grid (#823)"),
+        "{reason}"
+    );
 }
 
 #[test]
