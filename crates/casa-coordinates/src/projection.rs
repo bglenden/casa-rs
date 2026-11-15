@@ -675,6 +675,8 @@ fn deproject_pco(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
 /// Invert WCSLIB's circle equation after multiplying by sin(theta).
 /// The residual's derivative is (x² + (height - theta)² + 2) cos(theta),
 /// so the physical root is bracketed between the equator and the pole.
+/// The exact central meridian has `theta = height`, avoiding WCSLIB's
+/// zero divided by zero in the first weighted division when `x == 0`.
 fn pco_inverse_latitude(x: f64, height: f64) -> Result<f64, CoordinateError> {
     let x_squared = x * x;
     let estimate = height / (1.0 + x_squared / 2.0);
@@ -985,12 +987,20 @@ mod tests {
     }
 
     /// WCSLIB maps the equator directly and rejects longitude beyond ±π.
+    /// The native inverse also gives finite worlds on the central meridian.
     #[test]
-    fn polyconic_equator_is_direct_and_bounded() {
+    fn polyconic_equator_and_central_meridian_are_finite() {
         let projection = Projection::new(ProjectionType::PCO);
         assert_eq!(projection.project(1.1, 0.0).unwrap(), (1.1, 0.0));
         assert_eq!(projection.deproject(PI, 0.0).unwrap(), (PI, 0.0));
         assert!(projection.deproject(PI + 1e-3, 0.0).is_err());
+        let offset = 24.0 * DEG_TO_RAD / 3600.0;
+        for latitude in [-offset, offset] {
+            assert_eq!(
+                projection.deproject(0.0, latitude).unwrap(),
+                (0.0, latitude)
+            );
+        }
     }
 
     #[test]

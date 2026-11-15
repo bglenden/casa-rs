@@ -66,6 +66,18 @@ def probe(ms, out, name, phasecenter=""):
         try:
             record = {key: plain(value) for key, value in cs.torecord()["direction0"].items()}
             worlds = [cs.toworld(pixel + [0, 0], "n")["numeric"][:2].tolist() for pixel in pixels]
+            if name == "PCO":
+                # WCSLIB pcox2s returns NaN at x=0 with a nonzero offset.
+                # Check the finite central-meridian worlds in the other direction.
+                for rows in (-3, 3):
+                    centre_x, centre_y = record["crpix"]
+                    pixel = [centre_x, centre_y + rows]
+                    world = cs.referencevalue()["numeric"]
+                    world[1] += rows * record["cdelt"][1]
+                    measured = cs.topixel(world)["numeric"][:2].tolist()
+                    assert all(abs(a - b) < 1e-7 for a, b in zip(measured, pixel))
+                    pixels = pixels + [pixel]
+                    worlds.append(world[:2].tolist())
         finally:
             cs.done()
     finally:

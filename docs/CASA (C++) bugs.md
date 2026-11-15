@@ -64,7 +64,8 @@ CASA behaviours casa-rs does not follow:
 [`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails),
 [`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row),
 [a projection name with spaces](#tclean-refuses-a-projection-name-with-spaces-round-it),
-[NCP on the celestial equator](#ncp-on-the-celestial-equator-places-every-pixel-at-nan).
+[NCP on the celestial equator](#ncp-on-the-celestial-equator-places-every-pixel-at-nan),
+[PCO coordinates on the central meridian](#pco-pixel-to-world-returns-nan-on-the-central-meridian).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -6066,3 +6067,27 @@ fractional, near-integer and partly clipped controls retain CASA's support.
 
 [Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
 [casacore's upper crossing bound](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/LRegions/LCPolygon.cc#L198-L208).
+
+## PCO pixel to world returns NaN on the central meridian
+
+- Date noted 2026-11-15
+- Status corrected in casa-rs (#1101, #1494)
+- Affected code WCSLIB 8.2.2 `pcox2s` in CASA 6.7.6.14
+
+Run `tclean` on `refim_twochan.ms` with `projection="PCO"`, a 100 × 100
+image, 8″ cells and phase centre `J2000 19:59:28.500 +40.43.37.50`. The dirty
+peak is at pixel [50, 53]. CASA's `coordsys.toworld` returns NaN in both
+sky coordinates there. Pixel [50, 50] and the off-meridian [50.001, 53]
+have finite coordinates. CASA's `coordsys.topixel` places the known
+sky direction, the reference longitude at the reference declination plus
+24″, at [50, 53]. CASA shows this behaviour when reading either a CASA
+or a casa-rs image with the same PCO record.
+
+At zero intermediate x, WCSLIB initializes both residuals to zero and
+divides one by their difference in the first weighted interval step.
+The native inverse solves for the same sky with a finite latitude. On
+the central meridian the projected latitude is the native latitude.
+The frozen PCO checks verify both offset signs using CASA's finite
+world-to-pixel direction and compare ordinary pixels in both directions.
+The projection and parameters remain CASA-readable and image products
+agree at the original tolerance. [WCSLIB 8.2.2 source](https://www.atnf.csiro.au/computing/software/wcs/wcslib-releases/wcslib-8.2.2.tar.bz2)
