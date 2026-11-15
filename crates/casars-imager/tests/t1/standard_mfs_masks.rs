@@ -228,6 +228,51 @@ fn usemask_pb_masks_the_published_pb_above_pbmask() {
 }
 
 #[test]
+fn mem_applies_the_primary_beam_to_the_requested_mask() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let mut controls = json!({"deconvolver":"mem","niter":0,"write_pb":true});
+    let (_, dirty) = observation.image("mem-pb-dirty", controls.clone());
+    let mut positive: Vec<_> = dirty
+        .get(".pb")
+        .pixels
+        .iter()
+        .copied()
+        .filter(|&v| v > 0.0)
+        .collect();
+    positive.sort_by(f32::total_cmp);
+    let cutoff = positive[positive.len() / 2];
+    controls["niter"] = json!(2);
+    controls["pbmask"] = json!(cutoff);
+    controls["usemask"] = json!("pb");
+    let (_, pb_only) = observation.image("mem-pb-only", controls.clone());
+    controls["usemask"] = json!("user");
+    let (_, unrestricted) = observation.image("mem-pb-unnamed", controls.clone());
+    let middle = IMAGE_SIZE / 2;
+    controls["mask"] = json!(format!("0,0,{middle},{middle}"));
+    let (_, named) = observation.image("mem-pb-and-region", controls);
+
+    let beam = &pb_only.get(".pb").pixels;
+    let mask = &pb_only.get(".mask").pixels;
+    assert!(
+        mask.iter().any(|&v| v == 0.0) && mask.iter().any(|&v| v == 1.0),
+        "PB threshold produces partial MEM support"
+    );
+    for ((x, y), pb) in beam.indexed_iter() {
+        let above = *pb > cutoff;
+        assert_eq!(mask[[x, y]], f32::from(above), "MEM PB-only support");
+        assert_eq!(
+            named.get(".mask").pixels[[x, y]],
+            f32::from(above && x <= middle && y <= middle),
+            "MEM intersects its region with the PB"
+        );
+    }
+    assert!(
+        unrestricted.get(".mask").pixels.iter().all(|&v| v == 1.0),
+        "an unnamed user mask leaves MEM support unrestricted"
+    );
+}
+
+#[test]
 fn auto_multithresh_masks_both_sources_and_confines_the_model() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
     let (summary, products) = observation.image(

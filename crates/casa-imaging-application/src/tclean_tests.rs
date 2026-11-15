@@ -1321,6 +1321,12 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         Some(std::path::Path::new("region.mask"))
     );
     masked.validate().expect("MEM with a user mask image");
+    let pb = request(json!({"deconvolver":"mem", "usemask":"pb", "pbmask":0.0}));
+    pb.validate().expect("MEM with a primary-beam mask");
+    let intersection = request(json!({"deconvolver":"mem", "mask":"region.mask", "pbmask":0.2}));
+    intersection
+        .validate()
+        .expect("MEM with a user mask constrained by the beam");
     request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
         .validate()
         .expect("other solvers retain their scope");
@@ -1331,7 +1337,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"facets":2}),
         json!({"weighting":"uniform"}),
         json!({"usemask":"auto-multithresh"}),
-        json!({"pbmask":0.2}),
         json!({"nsigma":2.0}),
         json!({"savemodel":"modelcolumn"}),
         json!({"vis":["a.ms","b.ms"]}),
