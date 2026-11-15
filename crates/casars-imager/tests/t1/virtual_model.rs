@@ -113,6 +113,43 @@ fn a_virtual_model_holds_the_gridded_final_model() {
     }
 }
 
+/// The record covers the channel used to solve the dense MEM model.
+#[test]
+fn mem_saves_a_virtual_model_for_the_selected_channel() {
+    let observation = Observation::synthesise_band(2, &[("point", POINT)]);
+    observation.image(
+        "mem-virtual",
+        json!({
+            "deconvolver": "mem", "niter": 2, "savemodel": "virtual",
+            "spw": "0:1", "cyclefactor": 0.0001, "minpsffraction": 0.0
+        }),
+    );
+    let ms = MeasurementSet::open(observation.measurement_set()).expect("open the MS");
+    assert!(
+        !ms.main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("MODEL_DATA")),
+        "saving the MEM virtual model adds no MODEL_DATA"
+    );
+    let entry = entry(&observation);
+    assert_eq!(entry.kind, VirtualModelKind::FtMachine);
+    assert_eq!(text(&entry, "name"), "GridFT");
+    assert_eq!(
+        entry.channel_selection,
+        [[0, 1, 1, 1]],
+        "only the MEM channel"
+    );
+    let grid = PagedImage::<Complex32>::open(text(&entry, "diskimage")).expect("the MEM grid");
+    let shape = grid.shape();
+    let origin = grid
+        .get_at(&[shape[0] / 2, shape[1] / 2, 0, 0])
+        .expect("the uv origin");
+    assert!(
+        origin.re > 0.0,
+        "the saved grid contains the solved MEM model"
+    );
+}
+
 /// Code 64 is LSRK in this table, not casacore's canonical Undefined.
 /// Saving the virtual model must use the mapped frequency frame.
 #[test]
