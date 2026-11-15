@@ -5,6 +5,7 @@
 mod feather;
 pub(crate) mod imaging;
 mod inputs;
+mod memory;
 mod plan;
 pub(crate) mod plots;
 mod preflight;
@@ -175,7 +176,7 @@ fn run(
         resources.policy(),
         &Demand {
             phase: "simulation image analysis",
-            memory: plan.analysis_bytes()?,
+            memory: plan.analysis_bytes(parameters.flag("analyze") || graphics)?,
         },
     )
     .map_err(failure)?;

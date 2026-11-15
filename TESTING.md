@@ -217,6 +217,17 @@ Python with the same `--test-file`, `--casatestdata` and `--out` arguments.
 The existing `simanalyze_regression.py` and `simalma_regression.py` cover the
 two full workflows; their completed comparisons can be reused.
 
+`cargo test -p casa-simulation --lib simanalyze::memory` checks the full-size
+combined case's admission geometry, axis-order handling and overflow refusal.
+Feather FFT workspace is charged per direction plane and reused over channels;
+flat-only completion does not reserve convolution or fidelity buffers.
+The original 1458×1458×1×128 combined case is also checked on the Mac mini with
+an explicit 13,130,571,776-byte reservation plus 128 MiB normal overhead, using
+the evidence-only policy procedure in `docs/agent-reference.md`. Its native
+products, including the feather cube, are read back with CASA C++. Preserve
+the raw upstream `.image0` assertion failure separately: the actual TP path
+is `.sd.image0`.
+
 **simobserve.** `cargo nextest run -p casa-simulation --test simobserve` runs
 the task end to end on a small array without CASA. Its agreement with CASA
 6.7.6's task is `tools/simulation/simobserve_parity.py`, run under CASA's

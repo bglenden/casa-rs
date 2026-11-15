@@ -28,7 +28,13 @@ impl Plan {
     pub(super) fn file(&self, suffix: &str) -> PathBuf {
         suffixed(&self.root, suffix)
     }
-    pub(super) fn analysis_bytes(&self) -> Result<u64, SimobserveError> {
+    pub(super) fn analysis_bytes(&self, full_analysis: bool) -> Result<u64, SimobserveError> {
+        if !full_analysis {
+            return super::memory::flat_images(
+                super::memory::ImageGrid::read(&self.model)?,
+                super::memory::ImageGrid::read(&self.file(".image"))?,
+            );
+        }
         let cells = |path: &Path| -> Result<u64, SimobserveError> {
             let image = PagedImage::<f32>::open(path).map_err(failure)?;
             image.shape().iter().try_fold(1u64, |count, &axis| {
