@@ -84,7 +84,8 @@ fn theta_0_for_projection(proj: &Projection) -> f64 {
         | ProjectionType::SFL
         | ProjectionType::AIT
         | ProjectionType::PAR
-        | ProjectionType::MOL => 0.0,
+        | ProjectionType::MOL
+        | ProjectionType::PCO => 0.0,
         _ => FRAC_PI_2, // zenithal projections
     }
 }
@@ -928,7 +929,7 @@ mod tests {
     const TOL: f64 = 1e-10;
 
     /// A projection whose reference lies on its native equator (CAR, SFL,
-    /// MER, AIT, PAR, MOL) takes its reference pixel to its reference direction south
+    /// MER, AIT, PAR, MOL, PCO) takes its reference pixel to its reference direction south
     /// of the celestial equator too, where WCSLIB's default native pole
     /// longitude is 180° and two native poles solve the rotation
     /// (Calabretta & Greisen 2002, eq. 8; LATPOLE picks the northern one).
@@ -941,6 +942,7 @@ mod tests {
             ProjectionType::AIT,
             ProjectionType::PAR,
             ProjectionType::MOL,
+            ProjectionType::PCO,
         ] {
             for latitude in [-1.2, -0.4, -0.05, -1e-9, 0.0, 1e-9, 0.05, 0.4, 1.2] {
                 let coord = DirectionCoordinate::new(

@@ -26,17 +26,18 @@ PIXELS = [[0.0, 0.0], [99.0, 99.0], [10.0, 80.0], [50.0, 50.0], [75.5, 20.25], [
 # the far hemisphere. The off-image pixels test both sides of the formula.
 AIR_PIXELS = PIXELS + [[54.35, 50.0], [54.38, 50.0], [30050.0, 20050.0], [50050.0, 50050.0]]
 PSEUDOCYLINDRICAL_PIXELS = PIXELS + [[30050.0, 25050.0], [-16950.0, -25950.0]]
+PCO_PIXELS = PIXELS + [[18050.0, 50.02], [18050.0, 50.06], [18050.0, 25050.0], [25832.0, 41000.0]]
 NAMES = ["SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "AIT", "MER", "AZP",
-         "SZP", "ZPN", "AIR", "CYP", "CEA", "PAR", "MOL", "tan", "ncp", " TAN", "XYZ"]
+         "SZP", "ZPN", "AIR", "CYP", "CEA", "PAR", "MOL", "COP", "COE", "COD", "COO", "BON", "PCO", "tan", "ncp", " TAN", "XYZ"]
 # The same images centred south of the celestial equator, where a projection
 # whose reference is on its native equator takes the native pole at 180°.
 SOUTH = "J2000 19:59:28.500 -40.44.01.50"
-SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER", "AZP", "SZP", "AIR", "PAR", "MOL"]
+SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER", "AZP", "SZP", "AIR", "PAR", "MOL", "PCO"]
 # And on the celestial equator, where the native pole of a projection whose
 # reference is on its native equator is the celestial north pole. NCP is
 # undefined there (its slant cot(dec) is infinite).
 EQUATOR = "J2000 19:59:28.500 +00.00.00.00"
-EQUATOR_NAMES = ["SIN", "TAN", "CAR", "SFL", "AIT", "MER", "PAR", "MOL"]
+EQUATOR_NAMES = ["SIN", "TAN", "CAR", "SFL", "AIT", "MER", "PAR", "MOL", "PCO"]
 
 
 def plain(value):
@@ -52,7 +53,12 @@ def probe(ms, out, name, phasecenter=""):
                          projection=name, niter=0, phasecenter=phasecenter)
     except Exception as error:  # CASA's refusal
         return {"refused": f"{type(error).__name__}: {error}"}
-    pixels = {"AIR": AIR_PIXELS, "PAR": PSEUDOCYLINDRICAL_PIXELS, "MOL": PSEUDOCYLINDRICAL_PIXELS}.get(name, PIXELS)
+    pixels = {
+        "AIR": AIR_PIXELS,
+        "PAR": PSEUDOCYLINDRICAL_PIXELS,
+        "MOL": PSEUDOCYLINDRICAL_PIXELS,
+        "PCO": PCO_PIXELS,
+    }.get(name, PIXELS)
     ia = casatools.image()
     ia.open(f"{image}.image")
     try:
@@ -60,6 +66,18 @@ def probe(ms, out, name, phasecenter=""):
         try:
             record = {key: plain(value) for key, value in cs.torecord()["direction0"].items()}
             worlds = [cs.toworld(pixel + [0, 0], "n")["numeric"][:2].tolist() for pixel in pixels]
+            if name == "PCO":
+                # WCSLIB pcox2s returns NaN at x=0 with a nonzero offset.
+                # Check the finite central-meridian worlds in the other direction.
+                for rows in (-3, 3):
+                    centre_x, centre_y = record["crpix"]
+                    pixel = [centre_x, centre_y + rows]
+                    world = cs.referencevalue()["numeric"]
+                    world[1] += rows * record["cdelt"][1]
+                    measured = cs.topixel(world)["numeric"][:2].tolist()
+                    assert all(abs(a - b) < 1e-7 for a, b in zip(measured, pixel))
+                    pixels = pixels + [pixel]
+                    worlds.append(world[:2].tolist())
         finally:
             cs.done()
     finally:

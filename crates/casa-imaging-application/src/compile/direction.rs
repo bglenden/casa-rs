@@ -967,6 +967,7 @@ mod tests {
             ("SFL", Projection::Sfl),
             ("PAR", Projection::Par),
             ("MOL", Projection::Mol),
+            ("PCO", Projection::Pco),
             ("MER", Projection::Mer),
             ("AIT", Projection::Ait),
         ];
@@ -981,6 +982,7 @@ mod tests {
             ("SFL", Projection::Sfl),
             ("PAR", Projection::Par),
             ("MOL", Projection::Mol),
+            ("PCO", Projection::Pco),
             ("AIT", Projection::Ait),
             ("MER", Projection::Mer),
         ];
@@ -991,6 +993,7 @@ mod tests {
             ("SFL", Projection::Sfl),
             ("PAR", Projection::Par),
             ("MOL", Projection::Mol),
+            ("PCO", Projection::Pco),
             ("AIT", Projection::Ait),
             ("MER", Projection::Mer),
         ];

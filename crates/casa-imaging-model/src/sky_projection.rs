@@ -47,6 +47,8 @@ pub enum Projection {
     Par,
     /// Mollweide equal-area, `MOL`.
     Mol,
+    /// Polyconic, `PCO`.
+    Pco,
     /// Mercator, `MER`.
     Mer,
     /// Hammer-Aitoff, `AIT`.
@@ -73,6 +75,7 @@ impl Projection {
             "SFL" => Self::Sfl,
             "PAR" => Self::Par,
             "MOL" => Self::Mol,
+            "PCO" => Self::Pco,
             "MER" => Self::Mer,
             "AIT" => Self::Ait,
             _ => return None,
@@ -98,6 +101,7 @@ impl Projection {
             Self::Sfl => ProjectionType::SFL,
             Self::Par => ProjectionType::PAR,
             Self::Mol => ProjectionType::MOL,
+            Self::Pco => ProjectionType::PCO,
             Self::Mer => ProjectionType::MER,
             Self::Ait => ProjectionType::AIT,
         };
@@ -143,6 +147,7 @@ impl Projection {
             Self::Sfl,
             Self::Par,
             Self::Mol,
+            Self::Pco,
             Self::Mer,
             Self::Ait,
         ]
@@ -163,13 +168,13 @@ impl Projection {
 
     /// Whether the projection is zenithal: its reference direction is its
     /// native pole, so the native pole's longitude is all a pole states.
-    /// Cylindrical and pseudocylindrical projections and `AIT` put
+    /// Cylindrical and pseudocylindrical projections, `PCO` and `AIT` put
     /// it on the native equator.
     #[must_use]
     pub const fn zenithal(self) -> bool {
         !matches!(
             self,
-            Self::Car | Self::Sfl | Self::Par | Self::Mol | Self::Mer | Self::Ait
+            Self::Car | Self::Sfl | Self::Par | Self::Mol | Self::Pco | Self::Mer | Self::Ait
         )
     }
 }
@@ -204,7 +209,7 @@ mod tests {
     use super::Projection;
     use crate::geometry::{DirectionCoordinateSpec, DirectionFrame, SkyDirection};
 
-    const ALL: [Projection; 15] = [
+    const ALL: [Projection; 16] = [
         Projection::Sin,
         Projection::Ncp,
         Projection::Azp,
@@ -218,6 +223,7 @@ mod tests {
         Projection::Sfl,
         Projection::Par,
         Projection::Mol,
+        Projection::Pco,
         Projection::Mer,
         Projection::Ait,
     ];
@@ -328,7 +334,10 @@ mod tests {
         assert_eq!(Projection::from_casa_name("AIR"), Some(Projection::Air));
         assert_eq!(Projection::from_casa_name("PAR"), Some(Projection::Par));
         assert_eq!(Projection::from_casa_name("MOL"), Some(Projection::Mol));
-        for other in ["tan", " TAN", "ncp", "azp", "air", "szp", "par", "mol"] {
+        assert_eq!(Projection::from_casa_name("PCO"), Some(Projection::Pco));
+        for other in [
+            "tan", " TAN", "ncp", "azp", "air", "szp", "par", "mol", "pco",
+        ] {
             assert_eq!(Projection::from_casa_name(other), None, "{other:?}");
         }
     }
