@@ -953,108 +953,100 @@
 <a href=#953 id=953 data-nosnippet>953</a>                .map(|value| value.as_f64().expect(<span class="string">"a number"</span>))
 <a href=#954 id=954 data-nosnippet>954</a>                .collect()
 <a href=#955 id=955 data-nosnippet>955</a>        };
-<a href=#956 id=956 data-nosnippet>956</a>        <span class="kw">let </span>north = [
-<a href=#957 id=957 data-nosnippet>957</a>            (<span class="string">"AZP"</span>, Projection::Azp),
-<a href=#958 id=958 data-nosnippet>958</a>            (<span class="string">"SZP"</span>, Projection::Szp),
-<a href=#959 id=959 data-nosnippet>959</a>            (<span class="string">"AIR"</span>, Projection::Air),
-<a href=#960 id=960 data-nosnippet>960</a>            (<span class="string">"SIN"</span>, Projection::Sin),
-<a href=#961 id=961 data-nosnippet>961</a>            (<span class="string">"NCP"</span>, Projection::Ncp),
-<a href=#962 id=962 data-nosnippet>962</a>            (<span class="string">"TAN"</span>, Projection::Tan),
-<a href=#963 id=963 data-nosnippet>963</a>            (<span class="string">"ARC"</span>, Projection::Arc),
-<a href=#964 id=964 data-nosnippet>964</a>            (<span class="string">"STG"</span>, Projection::Stg),
-<a href=#965 id=965 data-nosnippet>965</a>            (<span class="string">"ZEA"</span>, Projection::Zea),
-<a href=#966 id=966 data-nosnippet>966</a>            (<span class="string">"CAR"</span>, Projection::Car),
-<a href=#967 id=967 data-nosnippet>967</a>            (<span class="string">"SFL"</span>, Projection::Sfl),
-<a href=#968 id=968 data-nosnippet>968</a>            (<span class="string">"PAR"</span>, Projection::Par),
-<a href=#969 id=969 data-nosnippet>969</a>            (<span class="string">"MOL"</span>, Projection::Mol),
-<a href=#970 id=970 data-nosnippet>970</a>            (<span class="string">"PCO"</span>, Projection::Pco),
-<a href=#971 id=971 data-nosnippet>971</a>            (<span class="string">"MER"</span>, Projection::Mer),
-<a href=#972 id=972 data-nosnippet>972</a>            (<span class="string">"AIT"</span>, Projection::Ait),
-<a href=#973 id=973 data-nosnippet>973</a>        ];
-<a href=#974 id=974 data-nosnippet>974</a>        <span class="kw">let </span>south = [
-<a href=#975 id=975 data-nosnippet>975</a>            (<span class="string">"AZP"</span>, Projection::Azp),
-<a href=#976 id=976 data-nosnippet>976</a>            (<span class="string">"SZP"</span>, Projection::Szp),
-<a href=#977 id=977 data-nosnippet>977</a>            (<span class="string">"AIR"</span>, Projection::Air),
-<a href=#978 id=978 data-nosnippet>978</a>            (<span class="string">"SIN"</span>, Projection::Sin),
-<a href=#979 id=979 data-nosnippet>979</a>            (<span class="string">"NCP"</span>, Projection::Ncp),
-<a href=#980 id=980 data-nosnippet>980</a>            (<span class="string">"TAN"</span>, Projection::Tan),
-<a href=#981 id=981 data-nosnippet>981</a>            (<span class="string">"CAR"</span>, Projection::Car),
-<a href=#982 id=982 data-nosnippet>982</a>            (<span class="string">"SFL"</span>, Projection::Sfl),
-<a href=#983 id=983 data-nosnippet>983</a>            (<span class="string">"PAR"</span>, Projection::Par),
-<a href=#984 id=984 data-nosnippet>984</a>            (<span class="string">"MOL"</span>, Projection::Mol),
-<a href=#985 id=985 data-nosnippet>985</a>            (<span class="string">"PCO"</span>, Projection::Pco),
-<a href=#986 id=986 data-nosnippet>986</a>            (<span class="string">"AIT"</span>, Projection::Ait),
-<a href=#987 id=987 data-nosnippet>987</a>            (<span class="string">"MER"</span>, Projection::Mer),
-<a href=#988 id=988 data-nosnippet>988</a>        ];
-<a href=#989 id=989 data-nosnippet>989</a>        <span class="kw">let </span>equator = [
-<a href=#990 id=990 data-nosnippet>990</a>            (<span class="string">"SIN"</span>, Projection::Sin),
-<a href=#991 id=991 data-nosnippet>991</a>            (<span class="string">"TAN"</span>, Projection::Tan),
-<a href=#992 id=992 data-nosnippet>992</a>            (<span class="string">"CAR"</span>, Projection::Car),
-<a href=#993 id=993 data-nosnippet>993</a>            (<span class="string">"SFL"</span>, Projection::Sfl),
-<a href=#994 id=994 data-nosnippet>994</a>            (<span class="string">"PAR"</span>, Projection::Par),
-<a href=#995 id=995 data-nosnippet>995</a>            (<span class="string">"MOL"</span>, Projection::Mol),
-<a href=#996 id=996 data-nosnippet>996</a>            (<span class="string">"PCO"</span>, Projection::Pco),
-<a href=#997 id=997 data-nosnippet>997</a>            (<span class="string">"AIT"</span>, Projection::Ait),
-<a href=#998 id=998 data-nosnippet>998</a>            (<span class="string">"MER"</span>, Projection::Mer),
-<a href=#999 id=999 data-nosnippet>999</a>        ];
-<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="kw">let </span>cases = north
-<a href=#1001 id=1001 data-nosnippet>1001</a>            .into_iter()
-<a href=#1002 id=1002 data-nosnippet>1002</a>            .map(|case| (<span class="kw-2">&amp;</span>casa[<span class="string">"projections"</span>], case))
-<a href=#1003 id=1003 data-nosnippet>1003</a>            .chain(
-<a href=#1004 id=1004 data-nosnippet>1004</a>                south
-<a href=#1005 id=1005 data-nosnippet>1005</a>                    .into_iter()
-<a href=#1006 id=1006 data-nosnippet>1006</a>                    .map(|case| (<span class="kw-2">&amp;</span>casa[<span class="string">"south"</span>][<span class="string">"projections"</span>], case)),
-<a href=#1007 id=1007 data-nosnippet>1007</a>            )
-<a href=#1008 id=1008 data-nosnippet>1008</a>            .chain(
-<a href=#1009 id=1009 data-nosnippet>1009</a>                equator
-<a href=#1010 id=1010 data-nosnippet>1010</a>                    .into_iter()
-<a href=#1011 id=1011 data-nosnippet>1011</a>                    .map(|case| (<span class="kw-2">&amp;</span>casa[<span class="string">"equator"</span>][<span class="string">"projections"</span>], case)),
-<a href=#1012 id=1012 data-nosnippet>1012</a>            );
-<a href=#1013 id=1013 data-nosnippet>1013</a>        <span class="kw">for </span>(images, (name, projection)) <span class="kw">in </span>cases {
-<a href=#1014 id=1014 data-nosnippet>1014</a>            <span class="kw">let </span>entry = <span class="kw-2">&amp;</span>images[name];
-<a href=#1015 id=1015 data-nosnippet>1015</a>            <span class="kw">let </span>reference = numbers(<span class="kw-2">&amp;</span>entry[<span class="string">"crval_rad"</span>]);
-<a href=#1016 id=1016 data-nosnippet>1016</a>            <span class="kw">let </span>spec = direction_spec(
-<a href=#1017 id=1017 data-nosnippet>1017</a>                [<span class="number">100</span>, <span class="number">100</span>],
-<a href=#1018 id=1018 data-nosnippet>1018</a>                [<span class="number">8.0</span>, <span class="number">8.0</span>],
-<a href=#1019 id=1019 data-nosnippet>1019</a>                projection,
-<a href=#1020 id=1020 data-nosnippet>1020</a>                DirectionFrame::J2000,
-<a href=#1021 id=1021 data-nosnippet>1021</a>                [reference[<span class="number">0</span>], reference[<span class="number">1</span>]],
-<a href=#1022 id=1022 data-nosnippet>1022</a>            );
-<a href=#1023 id=1023 data-nosnippet>1023</a>            <span class="kw">let </span>coordinate = spec.coordinate();
-<a href=#1024 id=1024 data-nosnippet>1024</a>            <span class="macro">assert_eq!</span>(
-<a href=#1025 id=1025 data-nosnippet>1025</a>                coordinate.projection().name(),
-<a href=#1026 id=1026 data-nosnippet>1026</a>                entry[<span class="string">"projection"</span>].as_str().expect(<span class="string">"a name"</span>),
-<a href=#1027 id=1027 data-nosnippet>1027</a>                <span class="string">"{name}"
-<a href=#1028 id=1028 data-nosnippet>1028</a>            </span>);
-<a href=#1029 id=1029 data-nosnippet>1029</a>            <span class="macro">assert_eq!</span>(
-<a href=#1030 id=1030 data-nosnippet>1030</a>                coordinate.projection().parameters(),
-<a href=#1031 id=1031 data-nosnippet>1031</a>                numbers(<span class="kw-2">&amp;</span>entry[<span class="string">"projection_parameters"</span>]),
-<a href=#1032 id=1032 data-nosnippet>1032</a>                <span class="string">"{name}"
-<a href=#1033 id=1033 data-nosnippet>1033</a>            </span>);
-<a href=#1034 id=1034 data-nosnippet>1034</a>            <span class="kw">let </span>pixels = entry[<span class="string">"pixels"</span>].as_array().expect(<span class="string">"pixels"</span>);
-<a href=#1035 id=1035 data-nosnippet>1035</a>            <span class="kw">let </span>worlds = entry[<span class="string">"worlds_rad"</span>].as_array().expect(<span class="string">"worlds"</span>);
-<a href=#1036 id=1036 data-nosnippet>1036</a>            <span class="kw">for </span>(pixel, world) <span class="kw">in </span>pixels.iter().zip(worlds) {
-<a href=#1037 id=1037 data-nosnippet>1037</a>                <span class="kw">let </span>pixel = numbers(pixel);
-<a href=#1038 id=1038 data-nosnippet>1038</a>                <span class="kw">let </span>world = numbers(world);
-<a href=#1039 id=1039 data-nosnippet>1039</a>                <span class="kw">let </span>ours = coordinate
-<a href=#1040 id=1040 data-nosnippet>1040</a>                    .pixel_to_world([pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]])
-<a href=#1041 id=1041 data-nosnippet>1041</a>                    .expect(<span class="string">"a direction"</span>);
-<a href=#1042 id=1042 data-nosnippet>1042</a>                <span class="kw">let </span>longitude = (ours[<span class="number">0</span>] - world[<span class="number">0</span>] + std::f64::consts::PI)
-<a href=#1043 id=1043 data-nosnippet>1043</a>                    .rem_euclid(std::f64::consts::TAU)
-<a href=#1044 id=1044 data-nosnippet>1044</a>                    - std::f64::consts::PI;
-<a href=#1045 id=1045 data-nosnippet>1045</a>                <span class="macro">assert!</span>(
-<a href=#1046 id=1046 data-nosnippet>1046</a>                    longitude.abs() &lt; <span class="number">1e-12 </span>&amp;&amp; (ours[<span class="number">1</span>] - world[<span class="number">1</span>]).abs() &lt; <span class="number">1e-12</span>,
-<a href=#1047 id=1047 data-nosnippet>1047</a>                    <span class="string">"{name} {pixel:?}: {ours:?}, CASA {world:?}"
-<a href=#1048 id=1048 data-nosnippet>1048</a>                </span>);
-<a href=#1049 id=1049 data-nosnippet>1049</a>                <span class="kw">let </span>back = coordinate
-<a href=#1050 id=1050 data-nosnippet>1050</a>                    .world_to_pixel([world[<span class="number">0</span>], world[<span class="number">1</span>]])
-<a href=#1051 id=1051 data-nosnippet>1051</a>                    .expect(<span class="string">"a pixel"</span>);
-<a href=#1052 id=1052 data-nosnippet>1052</a>                <span class="macro">assert!</span>(
-<a href=#1053 id=1053 data-nosnippet>1053</a>                    (back[<span class="number">0</span>] - pixel[<span class="number">0</span>]).abs() &lt; <span class="number">1e-7 </span>&amp;&amp; (back[<span class="number">1</span>] - pixel[<span class="number">1</span>]).abs() &lt; <span class="number">1e-7</span>,
-<a href=#1054 id=1054 data-nosnippet>1054</a>                    <span class="string">"{name} {world:?}: {back:?}, CASA's {pixel:?}"
-<a href=#1055 id=1055 data-nosnippet>1055</a>                </span>);
-<a href=#1056 id=1056 data-nosnippet>1056</a>            }
-<a href=#1057 id=1057 data-nosnippet>1057</a>        }
-<a href=#1058 id=1058 data-nosnippet>1058</a>    }
-<a href=#1059 id=1059 data-nosnippet>1059</a>}
+<a href=#956 id=956 data-nosnippet>956</a>        <span class="kw">let </span>native_equator = [
+<a href=#957 id=957 data-nosnippet>957</a>            (<span class="string">"CAR"</span>, Projection::Car),
+<a href=#958 id=958 data-nosnippet>958</a>            (<span class="string">"SFL"</span>, Projection::Sfl),
+<a href=#959 id=959 data-nosnippet>959</a>            (<span class="string">"PAR"</span>, Projection::Par),
+<a href=#960 id=960 data-nosnippet>960</a>            (<span class="string">"MOL"</span>, Projection::Mol),
+<a href=#961 id=961 data-nosnippet>961</a>            (<span class="string">"PCO"</span>, Projection::Pco),
+<a href=#962 id=962 data-nosnippet>962</a>            (<span class="string">"TSC"</span>, Projection::Tsc),
+<a href=#963 id=963 data-nosnippet>963</a>            (<span class="string">"CSC"</span>, Projection::Csc),
+<a href=#964 id=964 data-nosnippet>964</a>            (<span class="string">"QSC"</span>, Projection::Qsc),
+<a href=#965 id=965 data-nosnippet>965</a>            (<span class="string">"MER"</span>, Projection::Mer),
+<a href=#966 id=966 data-nosnippet>966</a>            (<span class="string">"AIT"</span>, Projection::Ait),
+<a href=#967 id=967 data-nosnippet>967</a>        ];
+<a href=#968 id=968 data-nosnippet>968</a>        <span class="kw">let </span>north = [
+<a href=#969 id=969 data-nosnippet>969</a>            (<span class="string">"AZP"</span>, Projection::Azp),
+<a href=#970 id=970 data-nosnippet>970</a>            (<span class="string">"SZP"</span>, Projection::Szp),
+<a href=#971 id=971 data-nosnippet>971</a>            (<span class="string">"AIR"</span>, Projection::Air),
+<a href=#972 id=972 data-nosnippet>972</a>            (<span class="string">"SIN"</span>, Projection::Sin),
+<a href=#973 id=973 data-nosnippet>973</a>            (<span class="string">"NCP"</span>, Projection::Ncp),
+<a href=#974 id=974 data-nosnippet>974</a>            (<span class="string">"TAN"</span>, Projection::Tan),
+<a href=#975 id=975 data-nosnippet>975</a>            (<span class="string">"ARC"</span>, Projection::Arc),
+<a href=#976 id=976 data-nosnippet>976</a>            (<span class="string">"STG"</span>, Projection::Stg),
+<a href=#977 id=977 data-nosnippet>977</a>            (<span class="string">"ZEA"</span>, Projection::Zea),
+<a href=#978 id=978 data-nosnippet>978</a>        ];
+<a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">let </span>south = [
+<a href=#980 id=980 data-nosnippet>980</a>            (<span class="string">"AZP"</span>, Projection::Azp),
+<a href=#981 id=981 data-nosnippet>981</a>            (<span class="string">"SZP"</span>, Projection::Szp),
+<a href=#982 id=982 data-nosnippet>982</a>            (<span class="string">"AIR"</span>, Projection::Air),
+<a href=#983 id=983 data-nosnippet>983</a>            (<span class="string">"SIN"</span>, Projection::Sin),
+<a href=#984 id=984 data-nosnippet>984</a>            (<span class="string">"NCP"</span>, Projection::Ncp),
+<a href=#985 id=985 data-nosnippet>985</a>            (<span class="string">"TAN"</span>, Projection::Tan),
+<a href=#986 id=986 data-nosnippet>986</a>        ];
+<a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>equator = [(<span class="string">"SIN"</span>, Projection::Sin), (<span class="string">"TAN"</span>, Projection::Tan)];
+<a href=#988 id=988 data-nosnippet>988</a>        <span class="kw">let </span>cases = [
+<a href=#989 id=989 data-nosnippet>989</a>            (<span class="kw-2">&amp;</span>casa[<span class="string">"projections"</span>], north.as_slice()),
+<a href=#990 id=990 data-nosnippet>990</a>            (<span class="kw-2">&amp;</span>casa[<span class="string">"south"</span>][<span class="string">"projections"</span>], south.as_slice()),
+<a href=#991 id=991 data-nosnippet>991</a>            (<span class="kw-2">&amp;</span>casa[<span class="string">"equator"</span>][<span class="string">"projections"</span>], equator.as_slice()),
+<a href=#992 id=992 data-nosnippet>992</a>        ]
+<a href=#993 id=993 data-nosnippet>993</a>        .into_iter()
+<a href=#994 id=994 data-nosnippet>994</a>        .flat_map(|(images, additional)| {
+<a href=#995 id=995 data-nosnippet>995</a>            additional
+<a href=#996 id=996 data-nosnippet>996</a>                .iter()
+<a href=#997 id=997 data-nosnippet>997</a>                .copied()
+<a href=#998 id=998 data-nosnippet>998</a>                .chain(native_equator)
+<a href=#999 id=999 data-nosnippet>999</a>                .map(<span class="kw">move </span>|kind| (images, kind))
+<a href=#1000 id=1000 data-nosnippet>1000</a>        });
+<a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="kw">for </span>(images, (name, projection)) <span class="kw">in </span>cases {
+<a href=#1002 id=1002 data-nosnippet>1002</a>            <span class="kw">let </span>entry = <span class="kw-2">&amp;</span>images[name];
+<a href=#1003 id=1003 data-nosnippet>1003</a>            <span class="kw">let </span>reference = numbers(<span class="kw-2">&amp;</span>entry[<span class="string">"crval_rad"</span>]);
+<a href=#1004 id=1004 data-nosnippet>1004</a>            <span class="kw">let </span>spec = direction_spec(
+<a href=#1005 id=1005 data-nosnippet>1005</a>                [<span class="number">100</span>, <span class="number">100</span>],
+<a href=#1006 id=1006 data-nosnippet>1006</a>                [<span class="number">8.0</span>, <span class="number">8.0</span>],
+<a href=#1007 id=1007 data-nosnippet>1007</a>                projection,
+<a href=#1008 id=1008 data-nosnippet>1008</a>                DirectionFrame::J2000,
+<a href=#1009 id=1009 data-nosnippet>1009</a>                [reference[<span class="number">0</span>], reference[<span class="number">1</span>]],
+<a href=#1010 id=1010 data-nosnippet>1010</a>            );
+<a href=#1011 id=1011 data-nosnippet>1011</a>            <span class="kw">let </span>coordinate = spec.coordinate();
+<a href=#1012 id=1012 data-nosnippet>1012</a>            <span class="macro">assert_eq!</span>(
+<a href=#1013 id=1013 data-nosnippet>1013</a>                coordinate.projection().name(),
+<a href=#1014 id=1014 data-nosnippet>1014</a>                entry[<span class="string">"projection"</span>].as_str().expect(<span class="string">"a name"</span>),
+<a href=#1015 id=1015 data-nosnippet>1015</a>                <span class="string">"{name}"
+<a href=#1016 id=1016 data-nosnippet>1016</a>            </span>);
+<a href=#1017 id=1017 data-nosnippet>1017</a>            <span class="macro">assert_eq!</span>(
+<a href=#1018 id=1018 data-nosnippet>1018</a>                coordinate.projection().parameters(),
+<a href=#1019 id=1019 data-nosnippet>1019</a>                numbers(<span class="kw-2">&amp;</span>entry[<span class="string">"projection_parameters"</span>]),
+<a href=#1020 id=1020 data-nosnippet>1020</a>                <span class="string">"{name}"
+<a href=#1021 id=1021 data-nosnippet>1021</a>            </span>);
+<a href=#1022 id=1022 data-nosnippet>1022</a>            <span class="kw">let </span>pixels = entry[<span class="string">"pixels"</span>].as_array().expect(<span class="string">"pixels"</span>);
+<a href=#1023 id=1023 data-nosnippet>1023</a>            <span class="kw">let </span>worlds = entry[<span class="string">"worlds_rad"</span>].as_array().expect(<span class="string">"worlds"</span>);
+<a href=#1024 id=1024 data-nosnippet>1024</a>            <span class="kw">let </span>back_pixels = entry[<span class="string">"pixels_from_world"</span>].as_array().unwrap_or(pixels);
+<a href=#1025 id=1025 data-nosnippet>1025</a>            <span class="macro">assert_eq!</span>(pixels.len(), worlds.len());
+<a href=#1026 id=1026 data-nosnippet>1026</a>            <span class="macro">assert_eq!</span>(pixels.len(), back_pixels.len());
+<a href=#1027 id=1027 data-nosnippet>1027</a>            <span class="kw">for </span>((pixel, world), back_pixel) <span class="kw">in </span>pixels.iter().zip(worlds).zip(back_pixels) {
+<a href=#1028 id=1028 data-nosnippet>1028</a>                <span class="kw">let </span>pixel = numbers(pixel);
+<a href=#1029 id=1029 data-nosnippet>1029</a>                <span class="kw">let </span>world = numbers(world);
+<a href=#1030 id=1030 data-nosnippet>1030</a>                <span class="kw">let </span>ours = coordinate
+<a href=#1031 id=1031 data-nosnippet>1031</a>                    .pixel_to_world([pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]])
+<a href=#1032 id=1032 data-nosnippet>1032</a>                    .expect(<span class="string">"a direction"</span>);
+<a href=#1033 id=1033 data-nosnippet>1033</a>                <span class="kw">let </span>longitude = (ours[<span class="number">0</span>] - world[<span class="number">0</span>] + std::f64::consts::PI)
+<a href=#1034 id=1034 data-nosnippet>1034</a>                    .rem_euclid(std::f64::consts::TAU)
+<a href=#1035 id=1035 data-nosnippet>1035</a>                    - std::f64::consts::PI;
+<a href=#1036 id=1036 data-nosnippet>1036</a>                <span class="macro">assert!</span>(
+<a href=#1037 id=1037 data-nosnippet>1037</a>                    longitude.abs() &lt; <span class="number">1e-12 </span>&amp;&amp; (ours[<span class="number">1</span>] - world[<span class="number">1</span>]).abs() &lt; <span class="number">1e-12</span>,
+<a href=#1038 id=1038 data-nosnippet>1038</a>                    <span class="string">"{name} {pixel:?}: {ours:?}, CASA {world:?}"
+<a href=#1039 id=1039 data-nosnippet>1039</a>                </span>);
+<a href=#1040 id=1040 data-nosnippet>1040</a>                <span class="kw">let </span>back = coordinate
+<a href=#1041 id=1041 data-nosnippet>1041</a>                    .world_to_pixel([world[<span class="number">0</span>], world[<span class="number">1</span>]])
+<a href=#1042 id=1042 data-nosnippet>1042</a>                    .expect(<span class="string">"a pixel"</span>);
+<a href=#1043 id=1043 data-nosnippet>1043</a>                <span class="kw">let </span>expected = numbers(back_pixel);
+<a href=#1044 id=1044 data-nosnippet>1044</a>                <span class="macro">assert!</span>(
+<a href=#1045 id=1045 data-nosnippet>1045</a>                    (back[<span class="number">0</span>] - expected[<span class="number">0</span>]).abs() &lt; <span class="number">1e-7 </span>&amp;&amp; (back[<span class="number">1</span>] - expected[<span class="number">1</span>]).abs() &lt; <span class="number">1e-7</span>,
+<a href=#1046 id=1046 data-nosnippet>1046</a>                    <span class="string">"{name} {world:?}: {back:?}, CASA's {expected:?}"
+<a href=#1047 id=1047 data-nosnippet>1047</a>                </span>);
+<a href=#1048 id=1048 data-nosnippet>1048</a>            }
+<a href=#1049 id=1049 data-nosnippet>1049</a>        }
+<a href=#1050 id=1050 data-nosnippet>1050</a>    }
+<a href=#1051 id=1051 data-nosnippet>1051</a>}
 </code></pre></div></section></main></body></html>
