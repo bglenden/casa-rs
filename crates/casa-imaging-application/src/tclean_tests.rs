@@ -588,6 +588,7 @@ fn values_casa_rs_cannot_honour_are_refused() {
         ),
         (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#823"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
+        (json!({ "gridder": "awphpg" }), "gridder", "#1305"),
         // An mfs image's REST axis grids the data's frequencies as they are.
         (json!({ "outframe": "REST" }), "outframe", "#980"),
         // CASA reads a blank rest frequency as zero.

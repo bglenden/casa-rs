@@ -368,7 +368,8 @@ impl<'a> Tclean<'a> {
             other => {
                 // Other direction-dependent gridders remain tracked.
                 let issue = match other {
-                    "awphpg" | "imagemosaic" => 1071,
+                    "awphpg" => 1305,
+                    "imagemosaic" => 1071,
                     _ => 980,
                 };
                 return Err(TcleanRefusal::not_yet(
