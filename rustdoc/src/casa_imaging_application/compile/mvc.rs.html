@@ -295,7 +295,7 @@
 <a href=#295 id=295 data-nosnippet>295</a>        || request.outlierfile.is_some()
 <a href=#296 id=296 data-nosnippet>296</a>        || request.fitspw.is_some()
 <a href=#297 id=297 data-nosnippet>297</a>        || request.usemask != <span class="kw">crate</span>::UseMask::User
-<a href=#298 id=298 data-nosnippet>298</a>        || request.mask_image.is_some()
+<a href=#298 id=298 data-nosnippet>298</a>        || !request.mask_images.is_empty()
 <a href=#299 id=299 data-nosnippet>299</a>        || request.mask_polygon.is_some()
 <a href=#300 id=300 data-nosnippet>300</a>        || request.pbmask != <span class="number">0.0
 <a href=#301 id=301 data-nosnippet>301</a>        </span>|| request.outframe != FrequencyRef::LSRK
@@ -637,7 +637,7 @@
 <a href=#637 id=637 data-nosnippet>637</a>        other.usemask = <span class="kw">crate</span>::UseMask::Pb;
 <a href=#638 id=638 data-nosnippet>638</a>        <span class="macro">assert!</span>(check_execution_scope(<span class="kw-2">&amp;</span>other, <span class="number">1</span>).is_err());
 <a href=#639 id=639 data-nosnippet>639</a>        <span class="kw">let </span><span class="kw-2">mut </span>other = parent.clone();
-<a href=#640 id=640 data-nosnippet>640</a>        other.mask_image = <span class="prelude-val">Some</span>(<span class="string">"mask"</span>.into());
+<a href=#640 id=640 data-nosnippet>640</a>        other.mask_images = <span class="macro">vec!</span>[<span class="string">"mask"</span>.into()];
 <a href=#641 id=641 data-nosnippet>641</a>        <span class="macro">assert!</span>(check_execution_scope(<span class="kw-2">&amp;</span>other, <span class="number">1</span>).is_err());
 <a href=#642 id=642 data-nosnippet>642</a>        <span class="kw">let </span><span class="kw-2">mut </span>other = parent.clone();
 <a href=#643 id=643 data-nosnippet>643</a>        other.pbmask = <span class="number">0.1</span>;
