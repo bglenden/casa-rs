@@ -4,7 +4,7 @@
 <p>No input, multiple input sets, or a non-path input value.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.request" class="method"><a class="src rightside" href="../../src/casa_imaging_application/single_dish/parameters.rs.html#40-189">Source</a><h4 class="code-header">pub fn <a href="#method.request" class="fn">request</a>(
     &amp;self,
-    catalogue: &amp;Catalogue,
+    catalogue: &amp;<a class="struct" href="../../casa_observation/catalogue/struct.Catalogue.html" title="struct casa_observation::catalogue::Catalogue">Catalogue</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;(<a class="struct" href="struct.TotalPowerRequest.html" title="struct casa_imaging_application::single_dish::TotalPowerRequest">TotalPowerRequest</a>, <a class="struct" href="struct.TotalPowerProducts.html" title="struct casa_imaging_application::single_dish::TotalPowerProducts">TotalPowerProducts</a>), <a class="enum" href="enum.TotalPowerError.html" title="enum casa_imaging_application::single_dish::TotalPowerError">TotalPowerError</a>&gt;</h4></section></summary><div class="docblock"><p>Build the native request and publication policy without mutating inputs.</p>
 <h5 id="errors-1"><a class="doc-anchor" href="#errors-1">§</a>Errors</h5>
 <p>Invalid geometry, unavailable channel/antenna/window, or a mode outside

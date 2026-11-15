@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["predict","readantenna","session","simalma","simanalyze","simobserve","simutil"]};
+window.SIDEBAR_ITEMS = {"mod":["predict","readantenna","session","simalma","simanalyze","simobserve","simutil","synthetic"]};
