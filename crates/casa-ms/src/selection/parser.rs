@@ -5,12 +5,13 @@ use std::collections::BTreeSet;
 
 use casa_types::quanta::MvTime;
 
+use crate::selection::antenna_expr::regex::FullMatch;
 use crate::selection::syntax::{
     canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector, parse_numeric_range_endpoints,
 };
 use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
-use crate::subtables::{get_f64, has_column};
-use crate::{MeasurementSet, MsError, MsResult};
+use crate::subtables::{MsField, get_f64, has_column, optional_string};
+use crate::{MeasurementSet, MsError, MsResult, SubtableId};
 
 use crate::listobs::{ListObsOptions, format_float_compact};
 
@@ -61,12 +62,14 @@ pub(crate) fn selection_from_options(
     Ok(selection)
 }
 
-/// One FIELD row as the field selector reads it: its stored `NAME` and its
-/// `FLAG_ROW`. Row `i` of a slice of these is `FIELD_ID` `i`.
+/// One FIELD row as the field selector reads it.
+/// Row `i` of a slice of these is `FIELD_ID` `i`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldSelectorRow<'a> {
     /// The stored name; the selector compares it trimmed.
     pub name: &'a str,
+    /// The stored code. A quoted pattern uses it when no name matches.
+    pub code: Option<&'a str>,
     /// Whether the row is flagged: a flagged row matches no name or pattern,
     /// following `MSFieldIndex`, though a numeric ID still selects it.
     pub flagged: bool,
@@ -99,8 +102,9 @@ pub fn resolve_field_selector_rows(
 impl MeasurementSet {
     /// Resolve a field selector using FIELD metadata, without scanning MAIN.
     ///
-    /// Comma-separated IDs, inclusive numeric ranges, exact names and simple
-    /// `*` name patterns form a union, as CASA's `MSFieldGram` index list does.
+    /// Comma-separated IDs, inclusive numeric ranges, exact names, bare `*`
+    /// name patterns and double-quoted patterns form a union as in
+    /// CASA's `MSFieldGram` index list.
     /// The returned IDs are sorted and unique. Empty text returns an empty
     /// list, the selection builder's convention for selecting every field.
     ///
@@ -108,8 +112,9 @@ impl MeasurementSet {
     ///
     /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
     /// no FIELD row, or a nonempty selection resolving to no existing fields.
-    /// This resolver does not implement CASA's regex, quoted-name or comparison
-    /// expression forms, negative numeric IDs, or FIELD CODE/numeric-name fallback.
+    /// Slash-delimited regular expressions, comparisons, escaped or
+    /// concatenated quoted patterns, and bare CODE/numeric-name fallback
+    /// remain outside this resolver's scope.
     /// Numeric IDs are bounded by the FIELD row count before enumeration.
     /// Name matching trims stored names and
     /// excludes flagged FIELD rows, following `MSFieldIndex`.
@@ -117,23 +122,37 @@ impl MeasurementSet {
         if value.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let rows = field_selector_rows(self)?;
+        let rows = field_selector_rows(self, value.contains('"'))?;
         resolve_field_selector_rows(&borrow_field_rows(&rows), value)
     }
 }
 
-/// The FIELD table's names and flags, in row order.
-fn field_selector_rows(ms: &MeasurementSet) -> MsResult<Vec<(String, bool)>> {
-    let field = ms.field()?;
+/// The FIELD table's metadata in row order. Only quoted patterns need CODE.
+fn field_selector_rows(
+    ms: &MeasurementSet,
+    need_codes: bool,
+) -> MsResult<Vec<(String, Option<String>, bool)>> {
+    let table = ms
+        .subtable(SubtableId::Field)
+        .ok_or_else(|| MsError::MissingSubtable("FIELD".to_string()))?;
+    let field = MsField::new(table);
     (0..field.row_count())
-        .map(|row| Ok((field.name(row)?, field.flag_row(row)?)))
+        .map(|row| {
+            let code = if need_codes {
+                optional_string(table, row, "CODE")?
+            } else {
+                None
+            };
+            Ok((field.name(row)?, code, field.flag_row(row)?))
+        })
         .collect()
 }
 
-fn borrow_field_rows(rows: &[(String, bool)]) -> Vec<FieldSelectorRow<'_>> {
+fn borrow_field_rows(rows: &[(String, Option<String>, bool)]) -> Vec<FieldSelectorRow<'_>> {
     rows.iter()
-        .map(|(name, flagged)| FieldSelectorRow {
+        .map(|(name, code, flagged)| FieldSelectorRow {
             name,
+            code: code.as_deref(),
             flagged: *flagged,
         })
         .collect()
@@ -145,7 +164,7 @@ fn resolve_field_predicate(ms: &MeasurementSet, value: &str) -> MsResult<Option<
     if value.trim().is_empty() {
         return Ok(None);
     }
-    let rows = field_selector_rows(ms)?;
+    let rows = field_selector_rows(ms, value.contains('"'))?;
     resolve_field_predicate_rows(&borrow_field_rows(&rows), value).map(Some)
 }
 
@@ -168,10 +187,35 @@ fn parse_field_selector(
     value: &str,
 ) -> MsResult<(Vec<i32>, Vec<String>)> {
     let mut ranges = Vec::new();
+    let mut ids = Vec::new();
     let mut names = Vec::new();
-    for raw_part in value.split(',') {
+    let mut quoted = false;
+    let parts = value.split(|character| {
+        if character == '"' {
+            quoted = !quoted;
+        }
+        character == ',' && !quoted
+    });
+    for raw_part in parts {
         let part = raw_part.trim();
         if part.is_empty() {
+            if value.contains('"') {
+                return Err(MsError::InvalidInput(format!(
+                    "empty term in field selector {value:?}"
+                )));
+            }
+            continue;
+        }
+        if let Some(open) = part.strip_prefix('"') {
+            let pattern = open.strip_suffix('"').ok_or_else(|| {
+                MsError::InvalidInput(format!("unterminated quoted field selector {part:?}"))
+            })?;
+            if pattern.contains(['"', '\n', '\\']) {
+                return Err(MsError::InvalidInput(format!(
+                    "escaped or adjacent quoted patterns are not supported in FIELD selection (#54): {part:?}"
+                )));
+            }
+            ids.extend(resolve_quoted_field_pattern(fields, pattern)?);
             continue;
         }
         if part.contains(['"', '\'', '/', '<', '>', '?', '[', ']', '{', '}']) {
@@ -202,7 +246,6 @@ fn parse_field_selector(
         }
         names.push(part.to_string());
     }
-    let mut ids = Vec::new();
     if !ranges.is_empty() {
         let count = fields.len();
         if count > 0 {
@@ -215,6 +258,37 @@ fn parse_field_selector(
         }
     }
     Ok((ids, dedup_strings(names)))
+}
+
+/// CASA's QSTRING looks for unflagged, full NAME matches, then CODE matches.
+fn resolve_quoted_field_pattern(
+    fields: &[FieldSelectorRow<'_>],
+    pattern: &str,
+) -> MsResult<Vec<i32>> {
+    let matcher = FullMatch::compile_pattern(pattern).map_err(MsError::InvalidInput)?;
+    let mut ids: Vec<i32> = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| !field.flagged && matcher.matches(field.name.trim()))
+        .map(|(row, _)| row as i32)
+        .collect();
+    if ids.is_empty() {
+        ids.extend(
+            fields
+                .iter()
+                .enumerate()
+                .filter(|(_, field)| {
+                    !field.flagged && field.code.is_some_and(|code| matcher.matches(code))
+                })
+                .map(|(row, _)| row as i32),
+        );
+    }
+    if ids.is_empty() {
+        return Err(MsError::VersionError(format!(
+            "field selector pattern {pattern:?} did not match any FIELD rows"
+        )));
+    }
+    Ok(ids)
 }
 
 fn apply_antenna_selector(

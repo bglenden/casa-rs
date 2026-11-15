@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use casa_imaging_application::ImagingRequest;
 use casa_imaging_application::store_law::row_pointing;
+use casa_ms::{MeasurementSet, SubtableId};
+use casa_types::{ScalarValue, Value as TableValue};
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 
@@ -79,6 +81,17 @@ fn request(ms: &Path, imagename: PathBuf, selectors: &Value) -> ImagingRequest {
     imaging::request(values)
 }
 
+fn physical_rows(case: &Value) -> Vec<u64> {
+    let mut rows: Vec<_> = case["rows"]
+        .as_array()
+        .expect("the case's physical rows")
+        .iter()
+        .map(|row| row.as_u64().expect("a MAIN row"))
+        .collect();
+    rows.sort_unstable();
+    rows
+}
+
 #[test]
 fn every_selector_reads_casas_main_rows() {
     let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
@@ -88,13 +101,7 @@ fn every_selector_reads_casas_main_rows() {
     let ms = fixture(root.path());
     for name in CASES {
         let case = &oracle["cases"][name];
-        let mut expected = case["rows"]
-            .as_array()
-            .expect("the case's rows")
-            .iter()
-            .map(|row| row.as_u64().expect("a MAIN row"))
-            .collect::<Vec<_>>();
-        expected.sort_unstable();
+        let expected = physical_rows(case);
         let request = request(&ms, root.path().join(name), &case["selectors"]);
         let rows = row_pointing(&request, &imaging::context(request.resource_policy()));
         if expected.is_empty() {
@@ -126,4 +133,93 @@ fn every_selector_reads_casas_main_rows() {
             "{name}: {error}"
         );
     }
+}
+
+#[test]
+fn quoted_fields_read_casas_physical_rows() {
+    let root = tempfile::tempdir().expect("test root");
+    let vis = fixture(root.path());
+    let mut ms = MeasurementSet::open(&vis).expect("open the fixture");
+    let fields = ms.subtable_mut(SubtableId::Field).expect("FIELD");
+    for (column, row, value) in [
+        ("NAME", 0, "G55 East, ridge"),
+        ("NAME", 1, "G55  West"),
+        ("CODE", 0, "phase calibrator, G55"),
+        ("CODE", 1, "G55 East, ridge"),
+    ] {
+        fields
+            .cell_accessor_mut(row, column)
+            .unwrap()
+            .set(TableValue::Scalar(ScalarValue::String(value.to_owned())))
+            .unwrap();
+    }
+    ms.save().expect("write private FIELD metadata");
+    drop(ms);
+    let ms = MeasurementSet::open(&vis).expect("reopen the fixture");
+
+    // Stock CASA selects the same physical rows as these existing oracle
+    // cases on the input whose FIELD metadata was renamed above.
+    let oracle: Value = serde_json::from_str(ORACLE).expect("oracle JSON");
+    for (name, field, baseline, ids) in [
+        ("comma", r#""G55 East, ridge""#, "field_id", &[0][..]),
+        ("spaces", r#""G55  West""#, "field_glob", &[1][..]),
+        ("code", r#""phase calibrator, G55""#, "field_id", &[0][..]),
+        ("braces", r#""G55{ East*,  West}""#, "all", &[0, 1][..]),
+        ("mixed", r#"1,"G55 East, ridge""#, "all", &[0, 1][..]),
+    ] {
+        let request = request(&vis, root.path().join(name), &json!({"field": field}));
+        let rows = row_pointing(&request, &imaging::context(request.resource_policy()))
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let expected = physical_rows(&oracle["cases"][baseline]);
+        assert_eq!(rows.into_keys().collect::<Vec<_>>(), expected, "{name}");
+        assert_eq!(ms.resolve_field_selector(field).unwrap(), ids, "{name}");
+    }
+
+    for (field, reason) in [
+        (r#""G55 West""#, "did not match any FIELD rows"),
+        (r#""G55 East, ridge"#, "unterminated quoted field selector"),
+        (r#""G55 East, ridge","#, "empty term in field selector"),
+    ] {
+        let request = request(&vis, root.path().join("refused"), &json!({"field": field}));
+        let error = row_pointing(&request, &imaging::context(request.resource_policy()))
+            .expect_err("CASA refuses this field expression")
+            .to_string();
+        assert!(error.contains(reason), "{field:?}: {error}");
+    }
+
+    // With the matching NAME flagged, CASA instead finds field 1 by CODE.
+    drop(ms);
+    let mut ms = MeasurementSet::open(&vis).expect("reopen for the flagged case");
+    ms.subtable_mut(SubtableId::Field)
+        .unwrap()
+        .cell_accessor_mut(0, "FLAG_ROW")
+        .unwrap()
+        .set(TableValue::Scalar(ScalarValue::Bool(true)))
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let fallback = request(
+        &vis,
+        root.path().join("fallback"),
+        &json!({"field": r#""G55 East, ridge""#}),
+    );
+    let rows = row_pointing(&fallback, &imaging::context(fallback.resource_policy())).unwrap();
+    assert_eq!(
+        rows.into_keys().collect::<Vec<_>>(),
+        physical_rows(&oracle["cases"]["field_glob"]),
+        "flagged names do not shadow an unflagged code"
+    );
+    let flagged_code = request(
+        &vis,
+        root.path().join("flagged-code"),
+        &json!({"field": r#""phase calibrator, G55""#}),
+    );
+    assert!(
+        row_pointing(
+            &flagged_code,
+            &imaging::context(flagged_code.resource_policy())
+        )
+        .is_err(),
+        "a flagged code is refused"
+    );
 }

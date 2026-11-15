@@ -5,8 +5,8 @@ use std::path::{Component, Path};
 
 use casa_provider_contracts::{
     Constraint, NarrowingConstraint, NormalizationRule, PROJECT_TOKEN, ParameterConcept,
-    ParameterType, ParameterValue, SurfaceParameterBinding, validate_parameter_value,
-    validate_selector_capabilities,
+    ParameterType, ParameterValue, SelectorGrammar, SurfaceParameterBinding,
+    validate_parameter_value, validate_selector_capabilities,
 };
 use casa_types::quanta::{Quantity, Unit};
 use thiserror::Error;
@@ -336,7 +336,16 @@ fn apply_rule(
             grammar,
             capabilities,
         } => {
-            let value = map_strings(value, |value| Ok(normalize_selector(value)))?;
+            let value = map_strings(value, |value| {
+                // The FIELD grammar matches whitespace inside double quotes literally.
+                Ok(
+                    if *grammar == SelectorGrammar::Field && value.contains('"') {
+                        value.trim().to_owned()
+                    } else {
+                        normalize_selector(value)
+                    },
+                )
+            })?;
             validate_selector_capabilities(*grammar, &value, capabilities)
                 .map_err(NormalizationError::Constraint)?;
             Ok(value)
