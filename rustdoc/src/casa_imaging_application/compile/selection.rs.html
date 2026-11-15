@@ -524,14 +524,14 @@
 <a href=#524 id=524 data-nosnippet>524</a><span class="doccomment">/// The observation selection: the surveyed partitions and samples, and
 <a href=#525 id=525 data-nosnippet>525</a>/// `channels` per window with the window's whole frequency axis (CASA's
 <a href=#526 id=526 data-nosnippet>526</a>/// mosaic kernels select by the complete `CHAN_FREQ` and
-<a href=#527 id=527 data-nosnippet>527</a>/// `|CHAN_WIDTH[0]|`) and its factor to LSRK at its first visibility
-<a href=#528 id=528 data-nosnippet>528</a>/// buffer, from `lsrk_factors` ([`super::envelope::first_buffer_lsrk_factors`]),
+<a href=#527 id=527 data-nosnippet>527</a>/// `|CHAN_WIDTH[0]|`) and its beam frequency factor at its first visibility
+<a href=#528 id=528 data-nosnippet>528</a>/// buffer, from `beam_factors` ([`super::envelope::first_buffer_beam_factors`]),
 <a href=#529 id=529 data-nosnippet>529</a>/// and the per-time frequency selection of a window in `bands`
 <a href=#530 id=530 data-nosnippet>530</a>/// ([`super::frequency_bands`]).
 <a href=#531 id=531 data-nosnippet>531</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>observation_selection(
 <a href=#532 id=532 data-nosnippet>532</a>    survey: Survey,
 <a href=#533 id=533 data-nosnippet>533</a>    channels: <span class="kw-2">&amp;</span>WindowChannels,
-<a href=#534 id=534 data-nosnippet>534</a>    lsrk_factors: <span class="kw-2">&amp;</span>BTreeMap&lt;usize, f64&gt;,
+<a href=#534 id=534 data-nosnippet>534</a>    beam_factors: <span class="kw-2">&amp;</span>BTreeMap&lt;usize, [f64; <span class="number">2</span>]&gt;,
 <a href=#535 id=535 data-nosnippet>535</a>    reads: <span class="kw-2">&amp;</span><span class="kw">super</span>::spectral::WindowReads,
 <a href=#536 id=536 data-nosnippet>536</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ObservationSelection, PrepareError&gt; {
 <a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">let </span>spectral_windows = channels
@@ -549,10 +549,10 @@
 <a href=#549 id=549 data-nosnippet>549</a>                    SpectralWindowCoordinateCatalog::new(window.frequencies_hz.clone(), <span class="kw-2">*</span>width)
 <a href=#550 id=550 data-nosnippet>550</a>                })
 <a href=#551 id=551 data-nosnippet>551</a>                .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: <span class="kw-2">*</span>spw_id })<span class="question-mark">?</span>;
-<a href=#552 id=552 data-nosnippet>552</a>            <span class="kw">let </span>factor = lsrk_factors
+<a href=#552 id=552 data-nosnippet>552</a>            <span class="kw">let </span>factors = beam_factors
 <a href=#553 id=553 data-nosnippet>553</a>                .get(spw_id)
 <a href=#554 id=554 data-nosnippet>554</a>                .copied()
-<a href=#555 id=555 data-nosnippet>555</a>                .expect(<span class="string">"every selected window has its first-buffer factor"</span>);
+<a href=#555 id=555 data-nosnippet>555</a>                .expect(<span class="string">"every selected window has its first-buffer factors"</span>);
 <a href=#556 id=556 data-nosnippet>556</a>            SpectralWindowSelection::new(
 <a href=#557 id=557 data-nosnippet>557</a>                u32::try_from(<span class="kw-2">*</span>spw_id).expect(<span class="string">"SPW ids are nonnegative stored i32 values"</span>),
 <a href=#558 id=558 data-nosnippet>558</a>                channels
@@ -561,7 +561,7 @@
 <a href=#561 id=561 data-nosnippet>561</a>                    .collect(),
 <a href=#562 id=562 data-nosnippet>562</a>            )
 <a href=#563 id=563 data-nosnippet>563</a>            .with_coordinate_catalog(catalog)
-<a href=#564 id=564 data-nosnippet>564</a>            .with_first_buffer_lsrk_factor(factor)
+<a href=#564 id=564 data-nosnippet>564</a>            .with_first_buffer_beam_factors(factors)
 <a href=#565 id=565 data-nosnippet>565</a>            .map(|selection| <span class="kw">match </span>reads.get(spw_id) {
 <a href=#566 id=566 data-nosnippet>566</a>                <span class="prelude-val">Some</span>(read) =&gt; read_selection(selection, read),
 <a href=#567 id=567 data-nosnippet>567</a>                <span class="prelude-val">None </span>=&gt; selection,
