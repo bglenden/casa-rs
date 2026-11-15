@@ -119,6 +119,11 @@ pub enum PrepareError {
         /// Telescope whose saved default selects COMMONPB.
         telescope: String,
     },
+    /// A supplied joint-mosaic beam is admitted for one EVLA store.
+    #[error(
+        "tclean vptable: joint mosaic accepts a supplied circular beam for one EVLA MeasurementSet (#1307)"
+    )]
+    SavedMosaicBeamScope,
     /// `pblimit` is outside the primary-beam validity contract.
     #[error(transparent)]
     PrimaryBeamValidity(#[from] casa_imaging_model::ProductValidityPolicyError),

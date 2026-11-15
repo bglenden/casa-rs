@@ -257,6 +257,7 @@ pub(crate) fn batch_route(
             stores,
             batching,
             write_back,
+            mosaic_voltage_pattern: None,
         },
         reservation: opening,
     })
@@ -281,6 +282,7 @@ pub(crate) fn prepare(
         mut publication,
         aw_catalog,
         awp2,
+        mosaic_voltage_pattern,
     } = native;
     if let Some(existing) = &input.existing
         && let Some(beam) = existing.mosaic_beam()
@@ -357,7 +359,7 @@ pub(crate) fn prepare(
         .as_ref()
         .map(|_| Arc::clone(&input.observation.measures));
     let Admitted {
-        value: route,
+        value: mut route,
         reservation: source,
     } = batch_route(
         problem,
@@ -369,6 +371,7 @@ pub(crate) fn prepare(
         ),
         &runtime,
     )?;
+    route.mosaic_voltage_pattern = mosaic_voltage_pattern;
     let psf_view = input
         .psf_view
         .zip(measures)

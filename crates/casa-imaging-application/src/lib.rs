@@ -109,6 +109,7 @@ pub(crate) struct ApplicationNative {
     pub(crate) publication: ApplicationPublication,
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
     pub(crate) awp2: Option<Awp2Deployment>,
+    pub(crate) mosaic_voltage_pattern: Option<casa_numerics::PrimaryBeam>,
 }
 
 /// The AW catalog a run opens (`AwCatalog::open_casa`): a directory of CASA

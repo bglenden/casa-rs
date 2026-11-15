@@ -60,6 +60,8 @@ pub(crate) type PlaneBounds = Box<dyn Fn(PlaneRange) -> [f64; 2] + Send + Sync>;
 /// snapshot's order, the admitted batches, and the write-back of a run that
 /// writes visibilities.
 pub(crate) struct BatchRoute {
+    /// Supplied voltage definition for the mosaic's one dish class.
+    pub(crate) mosaic_voltage_pattern: Option<casa_numerics::PrimaryBeam>,
     pub(crate) stores: Vec<StoreRoute>,
     pub(crate) batching: Batching,
     pub(crate) write_back: Option<WriteBack>,
@@ -118,7 +120,7 @@ impl BatchRoute {
     /// aperture classes ([`GeometryPlan::aperture_classes`]) and where its
     /// windows and fields start.
     pub(crate) fn keys(&self) -> StoreKeys {
-        StoreKeys::new(
+        let mut keys = StoreKeys::new(
             self.stores
                 .iter()
                 .map(|store| store.observation().catalogue().as_ref()),
@@ -126,7 +128,9 @@ impl BatchRoute {
                 .iter()
                 .flat_map(|store| store.plan.aperture_classes())
                 .collect(),
-        )
+        );
+        keys.mosaic_voltage_pattern = self.mosaic_voltage_pattern;
+        keys
     }
 
     /// The write-back of a run that writes visibilities.

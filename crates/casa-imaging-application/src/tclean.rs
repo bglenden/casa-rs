@@ -597,28 +597,15 @@ impl<'a> Tclean<'a> {
         );
         self.projection()?;
         let vptable = self.text("vptable")?;
-        if modes.gridder == "mosaic" && !vptable.is_empty() {
-            return Err(TcleanRefusal::not_yet(
-                "vptable",
-                "a supplied beam with mosaic gridding",
-                1307,
-            ));
-        }
-        if modes.mvc && !vptable.is_empty() && matches!(modes.gridder, "standard" | "wproject") {
+        let accepts_vptable = matches!(modes.gridder, "standard" | "wproject" | "mosaic");
+        if modes.mvc && !vptable.is_empty() && accepts_vptable {
             return Err(TcleanRefusal::not_yet(
                 "vptable",
                 "a supplied beam with MVC",
                 1307,
             ));
         }
-        self.set(
-            "vptable",
-            if matches!(modes.gridder, "standard" | "wproject") {
-                vptable
-            } else {
-                ""
-            },
-        );
+        self.set("vptable", if accepts_vptable { vptable } else { "" });
         Ok(())
     }
 

@@ -485,7 +485,9 @@ fn kernel_set(
                 .map(|class| match class {
                     AntennaResponseClass::CasaAlma12m => AiryDish::casa_alma(12.0, geometry).into(),
                     AntennaResponseClass::CasaAca7m => AiryDish::casa_alma(7.0, geometry).into(),
-                    AntennaResponseClass::CasaEvla => PrimaryBeam::Evla,
+                    AntennaResponseClass::CasaEvla => {
+                        keys.mosaic_voltage_pattern.unwrap_or(PrimaryBeam::Evla)
+                    }
                     AntennaResponseClass::CasaAiry {
                         dish_diameter_m_bits,
                     } => AiryDish::casa_airy(f64::from_bits(*dish_diameter_m_bits)).into(),

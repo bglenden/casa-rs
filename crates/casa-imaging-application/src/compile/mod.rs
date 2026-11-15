@@ -904,6 +904,7 @@ pub(crate) struct Deployment {
     output_directories: Vec<PathBuf>,
     aw: Option<AwPlan>,
     awp2: Option<crate::Awp2Deployment>,
+    mosaic_voltage_pattern: Option<casa_numerics::PrimaryBeam>,
 }
 
 /// The run's runtime but for its device, which the compiled problem resolves
@@ -976,6 +977,7 @@ impl Deployment {
             },
             publication: self.publication,
             awp2: self.awp2,
+            mosaic_voltage_pattern: self.mosaic_voltage_pattern,
             aw_catalog: self
                 .aw
                 .map(|aw| aw.deploy((&host, &resource_policy)))
@@ -1155,6 +1157,7 @@ fn deployment(
             .map(|domain| parent(&domain.output))
             .collect(),
         awp2: awp2::plan(request, surveyed, &domains[0], context)?,
+        mosaic_voltage_pattern: vptable::prepare_mosaic(request, telescope, context)?,
         aw: match &request.gridder {
             Gridder::Awproject(aw) => Some(aw_plan(request, aw, surveyed, context)?),
             _ => None,
