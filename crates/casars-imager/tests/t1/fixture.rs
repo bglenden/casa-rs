@@ -11,11 +11,10 @@ use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_images::{GaussianBeam, PagedImage};
 use casa_imaging_application::store_law::compare_stores;
 use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
-use casa_ms::{
-    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
-    SyntheticCorruptionConfig, SyntheticField, SyntheticNoiseCorruption, SyntheticNoiseMode,
-    SyntheticObservationRequest, SyntheticSkyModel, SyntheticSpectralSetup, VisibilityDataColumn,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+use casa_ms::{MeasurementSet, VisibilityDataColumn};
+use casa_simulation::synthetic::{
+    AnalyticComponent, AnalyticSpectrum, Antenna, CorruptionConfig, Field, NoiseCorruption,
+    NoiseMode, ObservationRequest, SkyModel, SpectralSetup, generate, tutorial_vla_a_antennas,
 };
 use casa_types::{ArrayValue, Complex32};
 use casars_imager::{ImagerArtifact, ImagerRunReport, ImagingParameters, resolve_request, run};
@@ -101,14 +100,14 @@ pub struct Setup {
     /// `OBSERVATION.TELESCOPE_NAME`; selects the simulator's primary beam.
     pub telescope: String,
     /// The array.
-    pub antennas: Vec<SyntheticAntenna>,
+    pub antennas: Vec<Antenna>,
     /// Pointings `[ra, dec]` in radians observed round-robin per
     /// integration; empty for one field at [`PHASE_CENTER_RAD`].
     pub fields: Vec<[f64; 2]>,
     /// The spectral windows, observed simultaneously. The observation's
     /// channel, sample and noise helpers describe the first window, so
     /// they hold for one window only.
-    pub spectral_windows: Vec<SyntheticSpectralSetup>,
+    pub spectral_windows: Vec<SpectralSetup>,
     /// The geometry component offsets refer to and runs image.
     pub geometry: Geometry,
     /// Per-component (real and imaginary) visibility noise in Jy.
@@ -123,7 +122,7 @@ impl Setup {
             telescope: "VLA".to_string(),
             antennas: tutorial_vla_a_antennas(),
             fields: Vec::new(),
-            spectral_windows: vec![SyntheticSpectralSetup {
+            spectral_windows: vec![SpectralSetup {
                 name: "t1-qband".to_string(),
                 start_frequency_hz: START_FREQUENCY_HZ,
                 channel_width_hz: CHANNEL_WIDTH_HZ,
@@ -173,9 +172,9 @@ impl Component {
         ]
     }
 
-    fn analytic(self, name: &str, geometry: Geometry) -> SyntheticAnalyticComponent {
+    fn analytic(self, name: &str, geometry: Geometry) -> AnalyticComponent {
         let [l_rad, m_rad] = self.direction_cosines(geometry);
-        let spectrum = SyntheticAnalyticSpectrum {
+        let spectrum = AnalyticSpectrum {
             flux_jy: self.flux_jy,
             spectral_index: self.spectral_index,
             reference_frequency_hz: Some(REFERENCE_FREQUENCY_HZ),
@@ -188,7 +187,7 @@ impl Component {
         };
         let name = Some(name.to_string());
         match self.fwhm_px {
-            None => SyntheticAnalyticComponent::Point {
+            None => AnalyticComponent::Point {
                 name,
                 l_rad,
                 m_rad,
@@ -197,7 +196,7 @@ impl Component {
             Some(fwhm_px) => {
                 // A circular component, sized in x cells.
                 let fwhm_rad = fwhm_px * geometry.cell_rad()[0];
-                SyntheticAnalyticComponent::Gaussian {
+                AnalyticComponent::Gaussian {
                     name,
                     l_rad,
                     m_rad,
@@ -245,7 +244,7 @@ impl Observation {
     /// polarization.
     pub fn synthesise_polarized(
         setup: Setup,
-        polarization: casa_ms::SyntheticPolarizationSetup,
+        polarization: casa_simulation::synthetic::PolarizationSetup,
         components: &[(&str, Component)],
     ) -> Self {
         Self::synthesise_with(setup, Some(polarization), components)
@@ -253,35 +252,48 @@ impl Observation {
 
     fn synthesise_with(
         setup: Setup,
-        polarization: Option<casa_ms::SyntheticPolarizationSetup>,
+        polarization: Option<casa_simulation::synthetic::PolarizationSetup>,
         components: &[(&str, Component)],
     ) -> Self {
         let root = tempfile::tempdir().expect("T1 fixture directory");
         let measurement_set = root.path().join("t1.ms");
-        let mut request = SyntheticObservationRequest::vla_ppdisk(
+        let mut request = ObservationRequest::vla_ppdisk(
             root.path().join("unused.fits"),
             &measurement_set,
             setup.antennas,
         );
         request.telescope_name = setup.telescope;
+        if request.telescope_name == "EVLA" {
+            // Preserve this fixture's ideal, unblocked 25 m input aperture.
+            // The native EVLA default is CASA's frequency-dependent fitted beam.
+            request.vp_table =
+                Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/evla-ideal-25m.vp"));
+        }
         request.field_name = "t1".to_string();
         request.phase_center_rad = PHASE_CENTER_RAD;
         request.fields = setup
             .fields
             .iter()
             .enumerate()
-            .map(|(index, phase_center_rad)| SyntheticField {
+            .map(|(index, phase_center_rad)| Field {
                 name: format!("t1-{index}"),
                 phase_center_rad: *phase_center_rad,
             })
             .collect();
         request.duration_seconds = DURATION_SECONDS;
         request.integration_seconds = INTEGRATION_SECONDS;
+        // Freeze the input clock used by the recorded CASA T1 references.
+        // The old generator chose it implicitly through transit scheduling.
+        request.start_time_mjd_seconds = if request.telescope_name == "EVLA" {
+            4_895_229_545.653_382
+        } else {
+            4_895_229_545.733_246
+        };
         request.spectral_windows = setup.spectral_windows;
         if let Some(polarization) = polarization {
             request.polarization_setup = polarization;
         }
-        request.model = Some(SyntheticSkyModel::AnalyticComponents {
+        request.model = Some(SkyModel::AnalyticComponents {
             path: None,
             schema_version: Some(1),
             name: Some("t1-sky".to_string()),
@@ -290,18 +302,17 @@ impl Observation {
                 .map(|(name, component)| component.analytic(name, setup.geometry))
                 .collect(),
         });
-        request.corruption = Some(SyntheticCorruptionConfig {
+        request.corruption = Some(CorruptionConfig {
             seed: 20_261_007,
-            noise: Some(SyntheticNoiseCorruption {
-                mode: SyntheticNoiseMode::SimpleNoise,
+            noise: Some(NoiseCorruption {
+                mode: NoiseMode::SimpleNoise,
                 simplenoise_jy: setup.noise_jy,
             }),
             gain: None,
-            bandpass: None,
+
             leakage: None,
-            pointing: None,
         });
-        let report = generate_synthetic_observation_ms(&request).expect("synthesise T1 MS");
+        let report = generate(&request).expect("synthesise T1 MS");
         Self {
             phase_center_rad: request.phase_center_rad,
             channel_frequencies_hz: request.spectral_windows[0].channel_frequencies_hz(),

@@ -39,62 +39,19 @@ class NativePerformanceSummaryTests(unittest.TestCase):
             )
         )
 
-    def test_native_performance_summary_uses_reported_streamed_io_bytes(self) -> None:
-        native = {
-            "best_seconds": 20.0,
-            "size_bytes": 10_000_000_000,
-            "last_result": {
-                "report": {
-                    "timing": {
-                        "main_rows": {
-                            "data_io_bytes": 8_000_000_000,
-                            "data_io_write_millis": 4_000,
-                        }
-                    }
-                }
-            },
-        }
-
+    def test_native_performance_summary_reports_measured_session_time(self) -> None:
+        native = {"best_seconds": 20.0, "size_bytes": 10_000_000_000,
+                  "last_result": {"report": {"elapsed_seconds": 19.5}}}
         summary = bench_simobserve.native_performance_summary(native)
-
         self.assertEqual(summary["native_output_mb_per_second"], 500.0)
-        self.assertEqual(summary["data_io_mb_per_second"], 2000.0)
-        self.assertEqual(summary["data_io_bytes"], 8_000_000_000)
-        self.assertEqual(summary["data_io_write_millis"], 4_000.0)
-        self.assertEqual(
-            summary["stage_timing"]["stages_millis"]["data_io_write_millis"],
-            4_000.0,
-        )
+        self.assertIsNone(summary["data_io_mb_per_second"])
+        self.assertEqual(summary["stage_timing"]["total_millis"], 19_500.)
 
-    def test_stage_timing_summary_reports_prediction_gpu_candidate(self) -> None:
-        summary = bench_simobserve.stage_timing_summary(
-            {
-                "timing": {
-                    "total_millis": 1000,
-                    "validate_millis": 1,
-                    "setup_millis": 2,
-                    "metadata_millis": 3,
-                    "model_prepare_millis": 4,
-                    "save_millis": 5,
-                    "main_rows": {
-                        "uvw_and_row_setup_millis": 50,
-                        "prediction_millis": 600,
-                        "prediction_worker_wall_millis": 1200,
-                        "prediction_gather_millis": 20,
-                        "corruption_millis": 10,
-                        "data_io_enqueue_millis": 10,
-                        "data_io_finalize_millis": 10,
-                        "data_io_assemble_millis": 20,
-                        "data_io_write_millis": 30,
-                        "main_write_millis": 40,
-                    },
-                }
-            }
-        )
-
-        self.assertAlmostEqual(summary["prediction_fraction"], 0.6)
-        self.assertAlmostEqual(summary["streamed_io_fraction"], 0.07)
-        self.assertTrue(summary["gpu_candidate"])
+    def test_unavailable_writer_timing_cannot_pass_an_io_gate(self) -> None:
+        args = argparse.Namespace(require_native_throughput_mb_s=None,
+                                  require_data_io_throughput_mb_s=10.)
+        with self.assertRaisesRegex(bench_simobserve.BenchError, "bench_sustained_io"):
+            bench_simobserve.enforce_native_performance_targets(args, {"data_io_mb_per_second": None})
 
     def test_casa_relative_timing_reports_both_ratios(self) -> None:
         summary = bench_simobserve.casa_relative_timing(

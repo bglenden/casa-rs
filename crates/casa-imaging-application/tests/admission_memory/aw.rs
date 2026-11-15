@@ -4,9 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
-    SyntheticSkyModel, SyntheticSpectralSetup, generate_synthetic_observation_ms,
+use casa_simulation::synthetic::{
+    AnalyticComponent, AnalyticSpectrum, ObservationRequest, SkyModel, SpectralSetup, generate,
     tutorial_vla_a_antennas,
 };
 use serde_json::json;
@@ -396,23 +395,20 @@ pub(super) fn l_band_observation(
             *position = centre + (*position - centre) / 35.0;
         }
     }
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
-        root.join("unused.fits"),
-        &measurement_set,
-        antennas,
-    );
+    let mut request =
+        ObservationRequest::vla_ppdisk(root.join("unused.fits"), &measurement_set, antennas);
     request.telescope_name = telescope.to_string();
     request.duration_seconds = 3_600.0;
     request.integration_seconds = 60.0;
     if two_fields {
-        use casa_ms::simulation::SyntheticField;
+        use casa_simulation::synthetic::Field;
         let [ra, dec] = request.phase_center_rad;
         request.fields = vec![
-            SyntheticField {
+            Field {
                 name: request.field_name.clone(),
                 phase_center_rad: [ra, dec],
             },
-            SyntheticField {
+            Field {
                 name: "offset".to_string(),
                 phase_center_rad: [ra + 0.0005, dec + 0.0005],
             },
@@ -421,22 +417,22 @@ pub(super) fn l_band_observation(
     request.spectral_windows = frequencies_hz
         .iter()
         .enumerate()
-        .map(|(index, &frequency)| SyntheticSpectralSetup {
+        .map(|(index, &frequency)| SpectralSetup {
             name: format!("admission-lband-{index}"),
             start_frequency_hz: frequency,
             channel_width_hz: 8.0e6,
             channel_count: channels_per_window,
         })
         .collect();
-    request.model = Some(SyntheticSkyModel::AnalyticComponents {
+    request.model = Some(SkyModel::AnalyticComponents {
         path: None,
         schema_version: Some(1),
         name: Some("admission-aw".to_string()),
-        components: vec![SyntheticAnalyticComponent::Point {
+        components: vec![AnalyticComponent::Point {
             name: Some("point".to_string()),
             l_rad: 0.0,
             m_rad: 0.0,
-            spectrum: SyntheticAnalyticSpectrum {
+            spectrum: AnalyticSpectrum {
                 flux_jy: 1.0,
                 spectral_index: -0.7,
                 reference_frequency_hz: Some(1.5e9),
@@ -449,7 +445,7 @@ pub(super) fn l_band_observation(
             },
         }],
     });
-    generate_synthetic_observation_ms(&request).expect("synthesise the EVLA MS");
+    generate(&request).expect("synthesise the EVLA MS");
     measurement_set
 }
 

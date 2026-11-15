@@ -96,10 +96,6 @@ pub enum MsError {
         /// The bytes the budget allows.
         available: usize,
     },
-
-    /// Invalid input for native synthetic-observation generation.
-    #[error("synthetic observation input: {0}")]
-    SyntheticObservation(String),
 }
 
 /// Convenience type alias for MS operations.

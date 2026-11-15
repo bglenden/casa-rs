@@ -24,8 +24,6 @@
     "crates/casa-ms/src/msexplore.rs",
     "crates/casa-ms/src/plot.rs",
     "crates/casa-ms/src/selection.rs",
-    "crates/casa-ms/src/simulation.rs",
-    "crates/casa-ms/src/simulation_task.rs",
     "crates/casa-ms/src/spectral_selection.rs",
     "crates/casa-ms/src/transform.rs",
     "crates/casa-ms/src/visibility_buffer.rs",

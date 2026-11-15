@@ -11,13 +11,12 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open, open_update};
-use casa_ms::{
-    SyntheticAntenna, SyntheticField, SyntheticObservationRequest, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms,
-};
 use casa_observation::{
     AccessRequest, BatchBuffers, FieldId, FieldSelection, Grouping, Observation, PartitionId,
     PatchValues, ReadEvent, TimeRange, TimeSelection, TimeSplit, UpdateTarget, WritableRole,
+};
+use casa_simulation::synthetic::{
+    Antenna, Field, ObservationRequest, SpectralSetup, generate_unflagged,
 };
 use casa_types::measures::MjdHighPrec;
 use ndarray::Array3;
@@ -28,20 +27,20 @@ use super::{per_times, request, samples};
 /// each, over twelve times, and its MSv4 conversion in `chunk`-time
 /// chunks.
 pub(crate) fn mosaic(root: &Path, chunk: u64) -> (PathBuf, PathBuf) {
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         root.join("mosaic.ms"),
         vec![
-            SyntheticAntenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
-            SyntheticAntenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
-            SyntheticAntenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
+            Antenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
+            Antenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
+            Antenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
         ],
     );
     request.predict_model = false;
     request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
     request.duration_seconds = 115.0;
     request.integration_seconds = 10.0;
-    request.spectral_windows = vec![SyntheticSpectralSetup {
+    request.spectral_windows = vec![SpectralSetup {
         name: "band".to_string(),
         start_frequency_hz: 44.0e9,
         channel_width_hz: 2.0e6,
@@ -50,12 +49,12 @@ pub(crate) fn mosaic(root: &Path, chunk: u64) -> (PathBuf, PathBuf) {
     request.fields = [-0.45, -0.44, -0.43]
         .iter()
         .enumerate()
-        .map(|(index, dec)| SyntheticField {
+        .map(|(index, dec)| Field {
             name: format!("pointing{index}"),
             phase_center_rad: [1.23, *dec],
         })
         .collect();
-    generate_synthetic_observation_ms(&request).expect("simulate");
+    generate_unflagged(&request).expect("simulate");
     let v4 = root.join(format!("mosaic-{chunk}.ps.zarr"));
     to_msv4(
         &request.output_ms,

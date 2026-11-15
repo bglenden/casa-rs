@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_ms::{
-    MeasurementSet, SyntheticPolarizationBasis, SyntheticPolarizationSetup, SyntheticSpectralSetup,
-    VisibilityDataColumn, tutorial_vla_a_antennas,
+use casa_ms::{MeasurementSet, VisibilityDataColumn};
+use casa_simulation::synthetic::{
+    PolarizationBasis, PolarizationSetup, SpectralSetup, tutorial_vla_a_antennas,
 };
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde_json::json;
@@ -176,7 +176,7 @@ fn l_band_point(
             telescope: telescope.into(),
             antennas,
             fields,
-            spectral_windows: vec![SyntheticSpectralSetup {
+            spectral_windows: vec![SpectralSetup {
                 name: "awp2 L band".into(),
                 start_frequency_hz: 1.25e9,
                 channel_width_hz: 1e8,
@@ -185,8 +185,8 @@ fn l_band_point(
             geometry,
             noise_jy: 0.0,
         },
-        SyntheticPolarizationSetup {
-            basis: SyntheticPolarizationBasis::Circular,
+        PolarizationSetup {
+            basis: PolarizationBasis::Circular,
             correlation_count: 2,
             source_stokes_fractional_quv: [0.0; 3],
         },

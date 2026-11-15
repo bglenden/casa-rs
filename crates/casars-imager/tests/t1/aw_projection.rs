@@ -18,8 +18,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_logging::{CasaLogLayer, CasaPriority, MemorySink};
-use casa_ms::{SyntheticAntenna, SyntheticSpectralSetup, tutorial_vla_a_antennas};
-use casa_simulation_synthesis::{AiryPrimaryBeam, AiryVoltagePattern};
+use casa_numerics::AnnularApertureVoltageTable;
+use casa_simulation::synthetic::{Antenna, SpectralSetup, tutorial_vla_a_antennas};
 use ndarray::Array2;
 use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt;
@@ -72,7 +72,7 @@ pub(super) fn surface_text() -> String {
 
 /// The A-configuration pads drawn towards their centroid by
 /// [`CONFIGURATION_SHRINK`].
-fn compact_evla_antennas() -> Vec<SyntheticAntenna> {
+fn compact_evla_antennas() -> Vec<Antenna> {
     let mut antennas = tutorial_vla_a_antennas();
     let count = antennas.len() as f64;
     let centroid = antennas.iter().fold([0.0; 3], |sum, antenna| {
@@ -102,8 +102,8 @@ pub(super) fn setup() -> Setup {
 }
 
 /// One 8 MHz channel at `frequency_hz`.
-fn lband_window(name: &str, frequency_hz: f64) -> SyntheticSpectralSetup {
-    SyntheticSpectralSetup {
+fn lband_window(name: &str, frequency_hz: f64) -> SpectralSetup {
+    SpectralSetup {
         name: name.to_string(),
         start_frequency_hz: frequency_hz,
         channel_width_hz: 8.0e6,
@@ -130,16 +130,13 @@ fn local_peak(
 
 /// The off-axis point's flux as the simulator attenuates it: the injected
 /// flux times the power of the unblocked 25 m Airy disc an `EVLA`
-/// observation gets (`AiryVoltagePattern`). A standard-gridder control run
+/// observation gets (the analytic Airy law). A standard-gridder control run
 /// in this test's process measured the same value to 0.6 % (#741); the
 /// analytic value saves that run.
 fn attenuated_off_axis_jy() -> f64 {
     let [l_rad, m_rad] = OFF_AXIS.direction_cosines(GEOMETRY);
-    let voltage = AiryVoltagePattern::new(AiryPrimaryBeam {
-        dish_diameter_m: 25.0,
-        blockage_diameter_m: 0.0,
-    })
-    .evaluate_offsets(l_rad, m_rad, FREQUENCY_HZ);
+    let radius = l_rad.hypot(m_rad).to_degrees() * 60. * (FREQUENCY_HZ / 1e9);
+    let voltage = AnnularApertureVoltageTable::new(25., 0., 0.8564 * 60.).evaluate(radius);
     OFF_AXIS.flux_jy * f64::from(voltage).powi(2)
 }
 
@@ -151,29 +148,37 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
     let surface = observation.scratch("evla.surface");
     std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
     let catalog = observation.scratch("native-cf");
-    let (summary, products) = observation.image(
-        "aw",
-        json!({
-            "weighting": "natural",
-            "deconvolver": "hogbom",
-            "niter": 3000,
-            "threshold": format!("{THRESHOLD_JY}Jy"),
-            "gridder": "awproject",
-            "wprojplanes": W_PLANES,
-            "aw_cf_source": "native-evla",
-            "native_cf_cache": catalog,
-            "evla_surface": surface,
-            "native_cf_policy": "generate-missing",
-            "native_cf_working_size": 2048,
-            "native_cf_oversampling": 4,
-            "native_cf_cache_bytes": 2_147_483_648_u64,
-            "native_cf_maximum_cells": 128,
-            "cf_resident_mb": 512,
-            "normtype": "flatnoise",
-            "pbcor": true,
-            "write_pb": true,
-        }),
+    let controls = json!({
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 3000,
+        "threshold": format!("{THRESHOLD_JY}Jy"),
+        "gridder": "awproject",
+        "wprojplanes": W_PLANES,
+        "aw_cf_source": "native-evla",
+        "native_cf_cache": catalog,
+        "evla_surface": surface,
+        "native_cf_policy": "generate-missing",
+        "native_cf_working_size": 2048,
+        "native_cf_oversampling": 4,
+        "native_cf_cache_bytes": 2_147_483_648_u64,
+        "native_cf_maximum_cells": 128,
+        "cf_resident_mb": 512,
+        "normtype": "flatnoise",
+        "pbcor": true,
+        "write_pb": true,
+    });
+    let mut dirty_controls = controls.clone();
+    dirty_controls["niter"] = json!(0);
+    let (_, dirty) = observation.image("aw-dirty", dirty_controls);
+    let dirty_centre = dirty.get(".image.pbcor").pixels[GEOMETRY.pixel(CENTRE)];
+    eprintln!("AW dirty centre {dirty_centre} Jy");
+    assert!(
+        (f64::from(dirty_centre) - CENTRE.flux_jy).abs() < 0.03 * CENTRE.flux_jy,
+        "dirty centre PB-corrected flux {dirty_centre} Jy, injected {} Jy",
+        CENTRE.flux_jy
     );
+    let (summary, products) = observation.image("aw", controls);
     let geometry = observation.geometry();
     let noise_jy = observation.image_noise_jy();
     let image = products.get(".image");
@@ -247,30 +252,32 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
         "pb {pb_off_axis} at the off-axis point"
     );
     // Each point comes back at its pixel within a tenth of a cell. At the
-    // pointing both beams are one. The PB-corrected flux there holds to
-    // the thermal noise, the other point's uncleaned sidelobes, and CLEAN's
-    // redistribution under CASA's PSF rule: `AWProjectFT::findConvFunction`
+    // pointing both beams are one. CLEAN redistributes the model under
+    // CASA's PSF rule: `AWProjectFT::findConvFunction`
     // grids the PSF with the weight cell (`cfwts2_p`), whose transform
     // carries the PB² taper, while the flat-noise residual's response to a
-    // point is the untapered dirty beam. With this snapshot's elongated
-    // beam (a 0.13 tail eight cells along the major axis) the mismatch
-    // moves about 2 % of the model off the centre cell before the true
-    // residual falls under the threshold; the imaging-cell PSF, which
-    // CASA does not use, gives 0.9997 Jy here. Off axis the flux holds to
-    // the two beam models' disagreement.
+    // point is the untapered dirty beam. On this noisy input, CASA itself
+    // restores 0.968829 Jy and keeps 0.943514 Jy in the 13-pixel model box.
+    // The old 3% peak / 4% model bounds against injected flux fail in CASA
+    // too. Keep the 3% analytic dirty-response check above, and compare
+    // these finite CLEAN products directly with CASA to 1e-3 instead.
+    // tools/simulation/t1_fixture_imaging_oracle.py --case aw uses this
+    // same input MS and explicit surface; no native image is a reference.
     assert_eq!(centre_at, centre_pixel);
     assert_eq!(off_axis_at, off_axis_pixel);
     assert!(centre_offset.iter().all(|offset| offset.abs() < 0.1));
     assert!(off_axis_offset.iter().all(|offset| offset.abs() < 0.1));
-    assert!(
-        (f64::from(centre_peak) - CENTRE.flux_jy).abs() < 0.03 * CENTRE.flux_jy,
-        "centre PB-corrected peak {centre_peak} Jy, injected {} Jy",
-        CENTRE.flux_jy
-    );
-    assert!(
-        (model_centre_wide[0] - CENTRE.flux_jy).abs() < 0.04 * CENTRE.flux_jy,
-        "centre model {model_centre_wide:?} Jy in the 13 and 25 px boxes"
-    );
+    for (product, actual, casa) in [
+        ("centre restored", f64::from(centre_peak), 0.968_829_15),
+        ("off-axis restored", f64::from(off_axis_peak), 0.677_213_61),
+        ("13-pixel centre model", model_centre_wide[0], 0.943_513_89),
+        ("25-pixel centre model", model_centre_wide[1], 0.942_667_44),
+    ] {
+        assert!(
+            (actual - casa).abs() / CENTRE.flux_jy < 1.0e-3,
+            "{product} {actual} Jy, CASA {casa} Jy"
+        );
+    }
     assert!(
         residual_centre.abs() < 2.0 * THRESHOLD_JY,
         "centre residual {residual_centre} Jy"
@@ -810,7 +817,7 @@ fn aw_data_frame_cube_uses_the_casa_frequency_grid() {
 #[test]
 fn an_aw_cubic_cube_uses_the_cubic_stencil() {
     let setup = Setup {
-        spectral_windows: vec![SyntheticSpectralSetup {
+        spectral_windows: vec![SpectralSetup {
             channel_count: 6,
             ..lband_window("t1-lband-cubic", FREQUENCY_HZ)
         }],
@@ -908,7 +915,7 @@ fn an_aw_cubic_cube_uses_the_cubic_stencil() {
 #[test]
 fn an_aw_cube_nearest_samples_a_multichannel_window() {
     let setup = Setup {
-        spectral_windows: vec![SyntheticSpectralSetup {
+        spectral_windows: vec![SpectralSetup {
             channel_count: 2,
             ..lband_window("t1-lband-two-nearest", FREQUENCY_HZ)
         }],
@@ -956,7 +963,7 @@ fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
     use casa_types::measures::frequency::FrequencyRef;
 
     let setup = Setup {
-        spectral_windows: vec![SyntheticSpectralSetup {
+        spectral_windows: vec![SpectralSetup {
             channel_count: 3,
             ..lband_window("t1-lband-offset-linear", FREQUENCY_HZ)
         }],
@@ -1009,7 +1016,7 @@ fn tracked_aw_linear_cubes_preserve_supported_planes() {
     use casa_types::measures::frequency::FrequencyRef;
 
     let setup = Setup {
-        spectral_windows: vec![SyntheticSpectralSetup {
+        spectral_windows: vec![SpectralSetup {
             channel_count: 3,
             ..lband_window("t1-lband-tracked-linear", FREQUENCY_HZ)
         }],

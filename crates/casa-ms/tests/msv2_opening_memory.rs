@@ -12,13 +12,13 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
-use casa_ms::{
-    MeasurementSet, SyntheticField, SyntheticObservationRequest, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
-};
 use casa_observation::{
     AntennaId, Observation, ObservationError, PointingDirection, PointingRequest,
+};
+use casa_simulation::synthetic::{
+    Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
 };
 use casa_types::{ScalarValue, Value};
 
@@ -96,7 +96,7 @@ fn peak_of<T>(measured: impl FnOnce() -> T) -> (T, u64) {
 /// 351 baseline rows per integration.
 fn pointed_track(root: &Path, integrations: usize) -> PathBuf {
     let measurement_set = root.join("pointed.ms");
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
         tutorial_vla_a_antennas(),
@@ -104,11 +104,11 @@ fn pointed_track(root: &Path, integrations: usize) -> PathBuf {
     request.duration_seconds = 10.0 * integrations as f64;
     request.integration_seconds = 10.0;
     request.predict_model = false;
-    request.fields = vec![SyntheticField {
+    request.fields = vec![Field {
         name: request.field_name.clone(),
         phase_center_rad: request.phase_center_rad,
     }];
-    generate_synthetic_observation_ms(&request).expect("synthesise the MS");
+    generate_unflagged(&request).expect("synthesise the MS");
     measurement_set
 }
 
@@ -184,14 +184,13 @@ fn many_small_partitions_fit_the_retained_charge(root: &Path) {
     let path = root.join("many.ms");
     let mut antennas = tutorial_vla_a_antennas();
     antennas.truncate(2);
-    let mut request =
-        SyntheticObservationRequest::vla_ppdisk(root.join("unused.fits"), &path, antennas);
+    let mut request = ObservationRequest::vla_ppdisk(root.join("unused.fits"), &path, antennas);
     request.duration_seconds = 10_000.0;
     request.integration_seconds = 1.0;
     request.predict_model = false;
     request.allow_below_elevation_limit = true;
     request.row_workers = Some(1);
-    generate_synthetic_observation_ms(&request).expect("small-baseline track");
+    generate_unflagged(&request).expect("small-baseline track");
     let mut ms = MeasurementSet::open(&path).expect("edit partitions");
     for id in [
         casa_ms::SubtableId::Observation,

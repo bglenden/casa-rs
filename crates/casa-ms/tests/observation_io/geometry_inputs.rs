@@ -638,21 +638,21 @@ fn conversion() -> casa_ms::observation_io::convert::ConversionOptions {
 /// A two-window simulation of three antennas. The simulator writes each
 /// antenna's `FEED` row for window 0 only (#943).
 fn two_windows(root: &Path) -> std::path::PathBuf {
-    let mut request = casa_ms::SyntheticObservationRequest::vla_ppdisk(
+    let mut request = casa_simulation::synthetic::ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         root.join("two.ms"),
         vec![
-            casa_ms::SyntheticAntenna::vla(
+            casa_simulation::synthetic::Antenna::vla(
                 "VLA01",
                 "N01",
                 [-1_601_185.4, -5_041_977.5, 3_554_875.9],
             ),
-            casa_ms::SyntheticAntenna::vla(
+            casa_simulation::synthetic::Antenna::vla(
                 "VLA02",
                 "N02",
                 [-1_601_085.4, -5_041_977.5, 3_554_875.9],
             ),
-            casa_ms::SyntheticAntenna::vla(
+            casa_simulation::synthetic::Antenna::vla(
                 "VLA03",
                 "N03",
                 [-1_601_185.4, -5_041_877.5, 3_554_875.9],
@@ -665,14 +665,33 @@ fn two_windows(root: &Path) -> std::path::PathBuf {
     request.spectral_windows = [44.0e9, 45.0e9]
         .iter()
         .enumerate()
-        .map(|(index, start)| casa_ms::SyntheticSpectralSetup {
+        .map(|(index, start)| casa_simulation::synthetic::SpectralSetup {
             name: format!("band{index}"),
             start_frequency_hz: *start,
             channel_width_hz: 2.0e6,
             channel_count: 4,
         })
         .collect();
-    casa_ms::generate_synthetic_observation_ms(&request).expect("simulate");
+    casa_simulation::synthetic::generate_unflagged(&request).expect("simulate");
+    // This fixture starts with window-0-only receptors; Simulator writes
+    // valid wildcard FEED rows, so state the test's intended coverage.
+    edit_feed(&request.output_ms, Some(0), &[]);
+    // Separate observe calls for the windows create identical pointing rows.
+    // This conversion fixture specifies one sample per antenna and time.
+    let mut seen = std::collections::BTreeSet::new();
+    let duplicate: Vec<_> = pointing_rows(&request.output_ms)
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (!seen.insert((row.antenna, row.time_s.to_bits()))).then_some(index)
+        })
+        .collect();
+    let mut ms = MeasurementSet::open(&request.output_ms).unwrap();
+    ms.subtable_mut(SubtableId::Pointing)
+        .unwrap()
+        .remove_rows(&duplicate)
+        .unwrap();
+    ms.save().unwrap();
     request.output_ms
 }
 

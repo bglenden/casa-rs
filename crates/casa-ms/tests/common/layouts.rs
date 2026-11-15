@@ -6,10 +6,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use casa_ms::{
-    MeasurementSet, SyntheticObservationRequest, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
-};
+use casa_ms::MeasurementSet;
+use casa_simulation::synthetic::{ObservationRequest, generate_unflagged, tutorial_vla_a_antennas};
 use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions};
 use casa_types::{ArrayValue, PrimitiveType, Value};
 use num_complex::Complex32;
@@ -19,7 +17,7 @@ use num_complex::Complex32;
 /// integration, so 120 s gives 21,060 rows, more than a write batch.
 pub(crate) fn many_rows(root: &Path, label: &str, channels: usize, seconds: f64) -> PathBuf {
     let measurement_set = root.join(format!("{label}-{channels}-{seconds}.ms"));
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
         tutorial_vla_a_antennas(),
@@ -28,7 +26,7 @@ pub(crate) fn many_rows(root: &Path, label: &str, channels: usize, seconds: f64)
     request.integration_seconds = 2.0;
     request.spectral_windows[0].channel_count = channels;
     request.predict_model = false;
-    generate_synthetic_observation_ms(&request).expect("synthesise the write MS");
+    generate_unflagged(&request).expect("synthesise the write MS");
     measurement_set
 }
 

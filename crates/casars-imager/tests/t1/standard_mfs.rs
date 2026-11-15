@@ -180,9 +180,10 @@ fn standard_mfs_multiscale_recovers_the_extended_flux() {
     let (_, _, products) = assert_recovers_the_point("standard-mfs-multiscale", multiscale);
     // The 41-pixel box holds the Gaussian's 0.5 Jy to 1e-7. Cleaning stops
     // at 5 mJy/beam, so up to ~30 mJy (six beams of source at the threshold)
-    // stays in the residual: the model holds less than the injected flux and
-    // the restored image, which adds the residual back in clean-beam units,
-    // more. Both stay within 10%, and they bracket it.
+    // stays in the residual. Both model and restored flux stay within 10%.
+    // A noisy finite CLEAN need not bracket the injected flux: CASA 6.7.6.14
+    // also restores 0.497665 Jy on this input. Compare directly with its
+    // independently computed products below.
     let gaussian_model_jy = box_sum(
         &products.get(".model").pixels,
         component_pixel(GAUSSIAN),
@@ -210,11 +211,18 @@ fn standard_mfs_multiscale_recovers_the_extended_flux() {
             GAUSSIAN.flux_jy
         );
     }
-    assert!(
-        gaussian_model_jy < GAUSSIAN.flux_jy && GAUSSIAN.flux_jy < restored_jy,
-        "model {gaussian_model_jy} Jy and restored {restored_jy} Jy do not bracket {} Jy",
-        GAUSSIAN.flux_jy
-    );
+    // tools/simulation/t1_fixture_imaging_oracle.py --case multiscale runs CASA
+    // tclean on the same native input MS; no native images supply references.
+    for (product, actual, casa) in [
+        ("model", gaussian_model_jy, 0.483_791_939_904_325_1),
+        ("restored", restored_jy, 0.497_664_580_447_596),
+        ("residual", residual_jy, 0.013_874_676_717_472_766),
+    ] {
+        assert!(
+            (actual - casa).abs() / GAUSSIAN.flux_jy < 1.0e-3,
+            "Gaussian {product} flux {actual} Jy, CASA {casa} Jy"
+        );
+    }
 }
 
 #[test]

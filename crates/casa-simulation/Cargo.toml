@@ -15,6 +15,7 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+casa-logging = { path = "../casa-logging" }
 casa-atmosphere = { path = "../casa-atmosphere" }
 casa-calibration = { path = "../casa-calibration" }
 casa-components = { path = "../casa-components" }
@@ -37,6 +38,8 @@ casa-types = { path = "../casa-types" }
 ndarray.workspace = true
 num-complex.workspace = true
 serde_json = { version = "1", features = ["float_roundtrip"] }
+serde = { version = "1", features = ["derive"] }
+schemars = "0.8"
 tempfile = "3"
 thiserror.workspace = true
 tracing.workspace = true
@@ -47,3 +50,7 @@ casa-test-support = { path = "../casa-test-support" }
 flate2 = "1"
 tar = "0.4"
 tracing-subscriber.workspace = true
+
+[[bin]]
+name = "synthetic-ms"
+path = "bin/synthetic-ms.rs"

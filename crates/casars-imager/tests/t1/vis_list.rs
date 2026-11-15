@@ -11,7 +11,8 @@
 
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, SyntheticSpectralSetup, VisibilityDataColumn};
+use casa_ms::{MeasurementSet, VisibilityDataColumn};
+use casa_simulation::synthetic::SpectralSetup;
 use casa_types::{ArrayValue, Complex32};
 use ndarray::Array2;
 use serde_json::{Value, json};
@@ -33,7 +34,7 @@ const CHANNEL_WIDTH_HZ: f64 = 128.0e6;
 fn track(first: usize, channels: usize) -> Observation {
     let mut setup = Setup::vla_q_band(channels);
     setup.noise_jy = 0.0;
-    setup.spectral_windows = vec![SyntheticSpectralSetup {
+    setup.spectral_windows = vec![SpectralSetup {
         name: "t1-qband".to_string(),
         start_frequency_hz: 44.0e9 + first as f64 * CHANNEL_WIDTH_HZ,
         channel_width_hz: CHANNEL_WIDTH_HZ,
@@ -422,7 +423,7 @@ fn mosaic_track(windows: &[usize]) -> Observation {
     setup.noise_jy = 0.0;
     setup.spectral_windows = windows
         .iter()
-        .map(|window| SyntheticSpectralSetup {
+        .map(|window| SpectralSetup {
             name: format!("t1-mosaic-{window}"),
             start_frequency_hz: 50.0e9 + *window as f64 * 25.0e9,
             channel_width_hz: 2.0e9,
@@ -565,7 +566,7 @@ fn drifting(first_hz: f64, channels: usize, fields: bool) -> Observation {
     if fields {
         setup.fields = vec![Setup::pointing([0.0, 0.0]), Setup::pointing([0.0087, 0.0])];
     }
-    setup.spectral_windows = vec![SyntheticSpectralSetup {
+    setup.spectral_windows = vec![SpectralSetup {
         name: "narrow".to_string(),
         start_frequency_hz: 44.0e9 + first_hz,
         channel_width_hz: 2.0e3,
