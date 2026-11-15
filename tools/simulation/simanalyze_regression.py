@@ -88,6 +88,12 @@ def compare(casa, rust):
                 report["failures"].append(dict(image=source.name, nrms=error, masks_equal=masks))
             np.testing.assert_allclose(actual["reference"], expected["reference"], rtol=1e-12, atol=1e-12)
             np.testing.assert_allclose(actual["increment"], expected["increment"], rtol=1e-12, atol=1e-12)
+            if source.name.endswith(".fidelity"):
+                assert actual["unit"] == ""  # documented dimensionless ratio correction
+            elif source.name in ["m51c.sd.image", "m51c.aca.i.image"]:
+                assert (expected["unit"], actual["unit"]) == ("Jy/pixel", "Jy/beam")  # preserve caller seed units
+            else:
+                assert actual["unit"] == expected["unit"], (source.name, actual["unit"], expected["unit"])
             report["images"][source.name] = dict(nrms=error, masks_equal=masks, casa_unit=expected["unit"], native_unit=actual["unit"])
     return report
 
