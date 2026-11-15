@@ -96,10 +96,9 @@ fn summed_beam_power(x_px: f64) -> f64 {
         .sum()
 }
 
-#[test]
-fn an_evla_mosaic_recovers_the_sky_under_the_common_evla_beam() {
+fn evla_setup() -> Setup {
     let spacing_rad = f64::from(SPACING_PX) * GEOMETRY.cell_rad()[0];
-    let setup = Setup {
+    Setup {
         telescope: "EVLA".to_string(),
         antennas: evla_antennas(),
         fields: vec![
@@ -115,8 +114,13 @@ fn an_evla_mosaic_recovers_the_sky_under_the_common_evla_beam() {
         }],
         geometry: GEOMETRY,
         noise_jy: NOISE_JY,
-    };
-    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE), ("east", EAST)]);
+    }
+}
+
+#[test]
+fn an_evla_mosaic_recovers_the_sky_under_the_common_evla_beam() {
+    let observation =
+        Observation::synthesise_setup(evla_setup(), &[("centre", CENTRE), ("east", EAST)]);
     let (summary, products) = observation.image(
         "evla-mosaic",
         json!({
@@ -196,4 +200,55 @@ fn an_evla_mosaic_recovers_the_sky_under_the_common_evla_beam() {
         "east PB-corrected peak {east_peak} Jy, injected {} Jy",
         EAST.flux_jy
     );
+}
+
+#[test]
+fn a_supplied_evla_beam_changes_joint_mosaic_weights_and_images() {
+    let table =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/evla-ideal-25m.vp");
+    let observation =
+        Observation::synthesise_setup(evla_setup(), &[("centre", CENTRE), ("east", EAST)]);
+    let mut controls = json!({
+        "gridder": "mosaic", "weighting": "natural", "field": "0,1,2",
+        "phasecenter": "1", "niter": 0, "pbcor": true, "write_pb": true, "pblimit": -0.2
+    });
+    let (_, default) = observation.image("default-evla", controls.clone());
+    controls["vptable"] = json!(table);
+    let (_, supplied) = observation.image("supplied-evla", controls);
+    observation.assert_product_contract(
+        &supplied,
+        &ProductContract {
+            inventory: &[
+                ".image",
+                ".image.pbcor",
+                ".model",
+                ".pb",
+                ".psf",
+                ".residual",
+                ".sumwt",
+                ".weight",
+            ],
+            spectral: SpectralAxis::BandCentre,
+            natural: true,
+            pblimit: 0.2,
+            uncorrected_masks: false,
+        },
+    );
+    for name in [".weight", ".pb", ".residual"] {
+        let baseline = &default.get(name).pixels;
+        let modified = &supplied.get(name).pixels;
+        let scale = baseline
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0_f32, f32::max);
+        let change = baseline
+            .iter()
+            .zip(modified)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            change > 1e-3 * scale,
+            "{name}: saved-beam change {change}, default peak {scale}"
+        );
+    }
 }

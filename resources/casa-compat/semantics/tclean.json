@@ -385,7 +385,7 @@
     },
     "vptable": {
       "status": "Partial",
-      "scope": "Standard and W projection use circular Gaussian or Airy records from a CASA VPManager table for the primary beam, mask support and PB correction. Saved COMMONPB entries, joint mosaic weights and MVC with a supplied table remain scoped refusals (#1307). AW gridders use their aperture or cache beams.",
+      "scope": "Standard and W projection use circular Gaussian or Airy records from a CASA VPManager table for the primary beam, mask support and PB correction. Joint mosaic gridding and sensitivity also use these records for one EVLA MeasurementSet (#1307). Saved COMMONPB entries, other supplied joint-mosaic tables and MVC with a supplied table are refused. AW gridders use their aperture or cache beams.",
       "evidence": [
         "signature",
         "reader"

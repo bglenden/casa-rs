@@ -22,12 +22,13 @@ struct KeyBase {
 
 /// The keys of a run's stores: the aperture classes of them all, and where
 /// each store's window and field keys start.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct StoreKeys {
     /// Every store's aperture classes in dish order: a row's antenna types
     /// index them. CASA's `HetArrayConvFunc::findAntennaSizes` adds the
     /// dishes of each MeasurementSet it meets to those of the ones before.
     pub(crate) dish_classes: Vec<AntennaResponseClass>,
+    pub(crate) mosaic_voltage_pattern: Option<casa_numerics::PrimaryBeam>,
     bases: Vec<KeyBase>,
 }
 
@@ -72,6 +73,7 @@ impl StoreKeys {
             .collect();
         Self {
             dish_classes,
+            mosaic_voltage_pattern: None,
             bases,
         }
     }
