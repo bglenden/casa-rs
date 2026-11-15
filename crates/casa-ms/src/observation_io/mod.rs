@@ -78,6 +78,9 @@ pub struct OpenOptions {
     pub group_closure: GroupClosure,
     /// How an MSv2 is partitioned; see [`PartitionScheme`].
     pub partition_scheme: PartitionScheme,
+    /// Probe spectral weight availability before the optional field or scan
+    /// splits. Imaging keeps one weight extent across the resulting grids.
+    pub weight_spectrum_unsplit: bool,
     /// Interpret an incomplete MSv2 frequency descriptor as CASA's
     /// visibility iterator does: use the row's `MEAS_FREQ_REF` for its
     /// channel frame. General measure metadata retains its own reference.

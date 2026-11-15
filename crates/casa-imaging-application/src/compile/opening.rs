@@ -84,6 +84,7 @@ pub(crate) fn open_observation(
                 path,
                 &OpenOptions {
                     partition_scheme,
+                    weight_spectrum_unsplit: partition_scheme.fields,
                     visibility_frequency_frame: true,
                     ..OpenOptions::default()
                 },
