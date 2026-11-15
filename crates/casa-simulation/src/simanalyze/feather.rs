@@ -54,22 +54,10 @@ pub(super) fn combine(
         }
         PagedImage::<f32>::open(&target).map_err(failure)?;
     }
-    let cells = |path: &std::path::Path| -> Result<u64, SimobserveError> {
-        PagedImage::<f32>::open(path)
-            .map_err(failure)?
-            .shape()
-            .iter()
-            .try_fold(1u64, |cells, &axis| {
-                cells
-                    .checked_mul(axis as u64)
-                    .ok_or_else(|| failure("feather dimensions overflow"))
-            })
-    };
-    let memory = cells(&high)?
-        .checked_mul(128)
-        .and_then(|high| cells(&low).ok()?.checked_mul(32)?.checked_add(high))
-        .and_then(|bytes| bytes.checked_add(64 << 20))
-        .ok_or_else(|| failure("feather memory overflows"))?;
+    let memory = super::memory::feather(
+        super::memory::ImageGrid::read(&high)?,
+        super::memory::ImageGrid::read(&low)?,
+    )?;
     let _memory = admit(
         resources.host(),
         resources.policy(),

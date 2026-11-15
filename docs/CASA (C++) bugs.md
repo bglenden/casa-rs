@@ -3370,8 +3370,14 @@ omits `.sd`: `task_simanalyze` writes `tpimage = project + '.sd.image'` and
 `temp_out = tpimage + '0'`. The compact native counterpart checks the actual
 IF/TP products and compares the feathered image to the existing independent
 CASA fixture at 1e-3 NRMS. Its original 1458-pixel, 128-channel dimensions
-need over 13 GB for native TP scaling/regridding and are refused when the
-host's resource budget cannot hold them (#1493).
+need a 13.13 GB native TP scaling/regridding reservation. With that reservation
+explicitly authorized on the 24 GiB Mac mini, the full case now completes
+including feathering, at a measured 12.50 GB peak process footprint (#1493).
+The simulation wrapper charges reused FFT scratch per direction plane and
+reserves only flat-image work when analysis and graphics are disabled;
+the earlier cube-wide scratch charges incorrectly requested 43.6 GB for
+feathering. CASA C++ reads all six full-size/intermediate products and their
+defined pixels are finite. The raw obsolete-path assertion remains unchanged.
 
 ## `simanalyze` changes a caller's seed-image unit in place
 
