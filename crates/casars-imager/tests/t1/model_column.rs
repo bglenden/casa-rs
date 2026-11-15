@@ -7,7 +7,7 @@ use casa_ms::{MeasurementSet, VisibilityDataColumn};
 use casa_types::{ArrayValue, Complex32, Value};
 use serde_json::json;
 
-use super::fixture::{Component, Observation, box_sum, component_pixel};
+use super::fixture::{Component, Observation, Product, box_sum, component_pixel};
 
 const POINT: Component = Component {
     offset_px: [24, 16],
@@ -65,6 +65,63 @@ fn model_column_predicts_the_deconvolved_sky_at_every_sample() {
         "gain {gain:?}, injected/model flux {expected}"
     );
     assert!(gain[1].abs() < 5.0e-3, "gain {gain:?} has a phase");
+}
+
+#[test]
+fn fresh_prediction_publishes_the_start_model_without_a_residual() {
+    let seed = Observation::synthesise_band(2, &[("point", POINT)]);
+    let (_, products) = seed.image(
+        "seed",
+        json!({ "deconvolver": "hogbom", "niter": 2, "savemodel": "modelcolumn" }),
+    );
+    let model_path = seed.scratch("seed.model");
+    let expected_model = &products.get(".model").pixels;
+    let expected_visibilities = seed.data_and_model();
+    assert!(expected_model.iter().any(|value| *value > 0.0));
+    let psf_only = Observation::synthesise_band(2, &[("point", POINT)]);
+    psf_only.image(
+        "unseeded-psf",
+        json!({ "niter": 0, "calcpsf": true, "calcres": false, "restoration": false }),
+    );
+    assert!(!psf_only.scratch("unseeded-psf.model").exists());
+
+    for (solver, saver) in [
+        ("hogbom", "modelcolumn"),
+        ("mem", "modelcolumn"),
+        ("hogbom", "none"),
+    ] {
+        let replay = Observation::synthesise_band(2, &[("point", POINT)]);
+        let (_, products) = replay.image(
+            "prediction",
+            json!({
+                "deconvolver": solver,
+                "startmodel": model_path,
+                "niter": 0,
+                "calcpsf": true,
+                "calcres": false,
+                "restoration": false,
+                "savemodel": saver,
+            }),
+        );
+        assert_eq!(
+            &products.get(".model").pixels,
+            expected_model,
+            "{solver}, {saver}"
+        );
+        assert!(!replay.scratch("prediction.residual").exists());
+        assert!(!replay.scratch("prediction.image").exists());
+        assert_eq!(&Product::open(&model_path).pixels, expected_model);
+        if saver == "modelcolumn" {
+            let visibilities = replay.data_and_model();
+            assert_eq!(visibilities.len(), expected_visibilities.len());
+            for ((data, model), (expected_data, expected_model)) in
+                visibilities.iter().zip(&expected_visibilities)
+            {
+                assert_eq!(data, expected_data);
+                assert!((model - expected_model).norm() < 1e-5, "{solver}");
+            }
+        }
+    }
 }
 
 #[test]

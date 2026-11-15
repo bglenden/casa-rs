@@ -391,20 +391,20 @@ fn requested_products(
     let mtmfs = request.deconvolver == Deconvolver::Mtmfs;
     // CASA's `restoration=False` neither restores nor PB-corrects, so it
     // writes no `.image`, `.image.pbcor` or spectral index
-    // (`task_tclean.py`, `SIImageStoreMultiTerm::restore`). A
-    // `calcres=False` run with no residual to read makes the PSF alone: no
-    // residual, model or restored image (`SDAlgorithmBase::restore` needs
-    // a residual).
+    // (`task_tclean.py`, `SIImageStoreMultiTerm::restore`). With
+    // `calcres=False`, a saved residual supplies the residual product and
+    // allows restoration (`SDAlgorithmBase::restore` needs a residual).
     let residual = crate::restart::has_residual(request);
     let restored = request.restoration && residual;
     let mut products = vec![ProductKind::Psf];
     if residual {
         products.push(ProductKind::Residual);
     }
-    // CASA makes the model when the minor cycle, the restoration or a
-    // start model needs it: tclean sets up no deconvolver for `niter=0`
-    // with `restoration=False`, and nothing else writes one.
-    if residual && (minor_cycle || restored || request.has_start_model() || force_model) {
+    // `SIImageStore::setModelImageOne` copies or regrids a start model
+    // into the output model independently of residual formation. The
+    // minor cycle, restoration and other model-producing modes use the
+    // normal state of a residual.
+    if request.has_start_model() || (residual && (minor_cycle || restored || force_model)) {
         products.push(ProductKind::Model);
     }
     if restored {
