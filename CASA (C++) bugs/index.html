@@ -6494,6 +6494,34 @@ numeric-zero controls. The positive-duration regression checks the full
 curve and transit against the independent CASA control, and the bar's
 width against the analytic 40 seconds. This corrects the default call and
 the intended quantity input without changing the elevation calculation.</p>
+<h2 id="tsdimaging-crashes-after-gridding-an-empty-pointing-table"><code>tsdimaging</code> crashes after gridding an empty POINTING table<a class="headerlink" href="#tsdimaging-crashes-after-gridding-an-empty-pointing-table" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-15</li>
+<li>Status: corrected in the native task (#938 part 2)</li>
+<li>Affected code: CASA 6.7.6.14 <code>task_tsdimaging.set_beam_size</code></li>
+</ul>
+<p>With the POINTING rows removed from the total-power oracle's MS, CASA grids
+from the FIELD direction and writes both image products. Its subsequent
+raster-sampling step raises <code>ValueError: not enough values to unpack
+(expected 2, got 0)</code>, leaving the image without the normal weight mask.
+The native task completes the FIELD fallback, writes the weight-median mask,
+and leaves the restoring beam unset when there is no measurable raster.
+<code>tsdimaging_pointing_oracle.py</code> retains the raw exception and raw image, then
+calls CASA's unchanged <code>do_weight_mask</code> as a completion control. Native image
+and weight agree with that control to 2.1e-7 normalized RMS.</p>
+<h2 id="tsdimagings-empty-antenna-selector-can-include-cross-correlations"><code>tsdimaging</code>'s empty antenna selector can include cross-correlations<a class="headerlink" href="#tsdimagings-empty-antenna-selector-can-include-cross-correlations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-15</li>
+<li>Status: the accepted simulation core selects autocorrelations (#938)</li>
+<li>Affected code: CASA 6.7.6.14 <code>task_tsdimaging</code> data selection</li>
+</ul>
+<p>CASA forwards an empty antenna selection to the imager without the <code>&amp;&amp;&amp;</code>
+autocorrelation restriction; a nonempty antenna receives that restriction.
+Later beam estimation explicitly selects autocorrelations. The native
+single-dish task consistently grids autocorrelations, including when the
+antenna parameter is empty. A cross-correlation is not a total-power
+spectrum. This follows the approved core's autocorrelations-only decision;
+interferometric imaging remains the separate tclean operator.</p>
 
 
 

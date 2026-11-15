@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TotalPowerError"],"fn":["grid_observation","image_from_parameters","image_observation","publish_total_power"],"struct":["PublishedTotalPower","TotalPowerOutcome","TotalPowerParameters","TotalPowerProducts","TotalPowerRequest"]};

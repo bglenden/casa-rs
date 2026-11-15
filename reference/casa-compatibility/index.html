@@ -2084,6 +2084,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tsdimaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tsdimaging
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6704,6 +6715,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tsdimaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tsdimaging
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9686,6 +9708,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">22</td>
 <td style="text-align: right;">0</td>
 </tr>
+<tr>
+<td>tsdimaging</td>
+<td>tsdimaging</td>
+<td>yes</td>
+<td style="text-align: right;">33</td>
+<td style="text-align: right;">33</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">13</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
 </tbody>
 </table>
 <h2 id="tasks">Tasks<a class="headerlink" href="#tasks" title="Permanent link">&para;</a></h2>
@@ -12241,6 +12274,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>b2c468423b839c4decf02c719a9b8977cfe338e6</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psfcutoff-cases.json --backend cpu --precision f64, plus controlled restart probes and T1.5/T2 comparisons</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-psfcutoff-1140-20261105.json</code>.</li>
+</ul>
+<h3 id="tsdimaging">tsdimaging<a class="headerlink" href="#tsdimaging" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/tsdimaging.py</code>, 33 parameters</li>
+<li>Implementation: <code>casatasks/private/task_tsdimaging.py</code>, <code>tsdimaging</code> (line 930): 0 return statements, 2 raise statements</li>
+<li>Called with its defaults in an empty directory, CASA raises <code>IndexError</code>: list index out of range</li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>Accepted only at CASA's default until #938: <code>field</code>, <code>scan</code>, <code>timerange</code>, <code>outframe</code>, <code>mode</code>, <code>veltype</code>, <code>specmode</code>, <code>interpolation</code>, <code>pointingcolumn</code>, <code>convertfirst</code>, <code>projection</code>, <code>stokes</code>, <code>clipminmax</code></li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 33, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
 <p>Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (<code>crates/casars-python/python/tests/data/casa_&lt;class&gt;_signatures.json</code>), which the Python tests hold the classes to. A reviewed class has a file under <code>resources/casa-compat/semantics/tools/</code> giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (<code>simulator</code>, <code>componentlist</code>, <code>measures</code>, <code>quanta</code> and <code>simutil</code>) are reviewed in #1053, and <code>image</code>, <code>coordsys</code>, <code>table</code>, <code>msmetadata</code> and <code>ms</code> in #1025.</p>

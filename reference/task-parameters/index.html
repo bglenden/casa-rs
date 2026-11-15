@@ -709,6 +709,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tsdimaging-tsdimaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tsdimaging (tsdimaging)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1346,6 +1357,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tsdimaging-tsdimaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tsdimaging (tsdimaging)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1374,9 +1396,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 582</li>
-<li>Surfaces: 28 (28 task, 0 session)</li>
-<li>Surface bindings: 823</li>
+<li>Concepts: 598</li>
+<li>Surfaces: 29 (29 task, 0 session)</li>
+<li>Surface bindings: 856</li>
 </ul>
 <table>
 <thead>
@@ -1613,6 +1635,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>simanalyze</code></td>
 <td style="text-align: right;">32</td>
 <td>Image and analyze a simulated observation: CASA's simanalyze</td>
+</tr>
+<tr>
+<td><a href="#surface-tsdimaging">Tsdimaging</a><br><code>tsdimaging</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>single_dish</code></td>
+<td style="text-align: right;">33</td>
+<td>Grid total-power spectra by pointing into a CASA image and weight image.</td>
 </tr>
 </tbody>
 </table>
@@ -8841,6 +8871,293 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>""</code>; optional</td>
 <td>Analysis</td>
 <td>CASA simanalyze logfile.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-tsdimaging"></a></p>
+<h2 id="tsdimaging-tsdimaging">Tsdimaging (<code>tsdimaging</code>)<a class="headerlink" href="#tsdimaging-tsdimaging" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Imaging</li>
+<li>Provider family: <code>single_dish</code></li>
+<li>Summary: Grid total-power spectra by pointing into a CASA image and weight image.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>infiles</code></td>
+<td><code>single_dish.infiles@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's infiles.</td>
+</tr>
+<tr>
+<td><code>outfile</code></td>
+<td><code>parameter.outfile@r1</code></td>
+<td><code>path (image)</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>Output image.</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Imaging</td>
+<td>Replace an existing output file</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>CASA field selector, one per MeasurementSet or one for all</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers, one per MeasurementSet or one for all</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r3</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>CASA antenna (baseline) selection, exact text, one per MeasurementSet or one for all</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r3</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>Syntax-preserving numeric scan selection, one per MeasurementSet or one for all</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>"OBSERVE_TARGET#ON_SOURCE"</code>; optional</td>
+<td>Imaging</td>
+<td>Intent selector, one per MeasurementSet or one for all</td>
+</tr>
+<tr>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r3</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>CASA time selection, exact text, one per MeasurementSet or one for all</td>
+</tr>
+<tr>
+<td><code>outframe</code></td>
+<td><code>parameter.outframe@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>Spectral frame of a cube's output axis</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td><code>single_dish.mode@r1</code></td>
+<td><code>string</code></td>
+<td><code>"channel"</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's mode.</td>
+</tr>
+<tr>
+<td><code>nchan</code></td>
+<td><code>regridms.nchan@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Imaging</td>
+<td>Number of channels of the regridded spectral axis; -1 for all.</td>
+</tr>
+<tr>
+<td><code>start</code></td>
+<td><code>single_dish.start@r1</code></td>
+<td><code>variant</code></td>
+<td><code>0</code>; optional</td>
+<td>Imaging</td>
+<td>Native channel start or a spectral quantity.</td>
+</tr>
+<tr>
+<td><code>width</code></td>
+<td><code>single_dish.width@r1</code></td>
+<td><code>variant</code></td>
+<td><code>1</code>; optional</td>
+<td>Imaging</td>
+<td>Native channel width or a spectral quantity.</td>
+</tr>
+<tr>
+<td><code>veltype</code></td>
+<td><code>parameter.veltype@r3</code></td>
+<td><code>string</code></td>
+<td><code>"radio"</code>; optional</td>
+<td>Imaging</td>
+<td>Velocity convention of a cube's velocity start and axis</td>
+</tr>
+<tr>
+<td><code>specmode</code></td>
+<td><code>parameter.specmode@r4</code></td>
+<td><code>choice (6 values)</code></td>
+<td><code>"cube"</code>; optional</td>
+<td>Imaging</td>
+<td>MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame</td>
+</tr>
+<tr>
+<td><code>interpolation</code></td>
+<td><code>parameter.interpolation@r1</code></td>
+<td><code>choice (4 values)</code></td>
+<td><code>"linear"</code>; optional</td>
+<td>Imaging</td>
+<td>Spectral interpolation mode for cube gridding</td>
+</tr>
+<tr>
+<td><code>pointingcolumn</code></td>
+<td><code>single_dish.pointingcolumn@r1</code></td>
+<td><code>string</code></td>
+<td><code>"direction"</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's pointingcolumn.</td>
+</tr>
+<tr>
+<td><code>convertfirst</code></td>
+<td><code>single_dish.convertfirst@r1</code></td>
+<td><code>string</code></td>
+<td><code>"never"</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's convertfirst.</td>
+</tr>
+<tr>
+<td><code>projection</code></td>
+<td><code>parameter.projection@r2</code></td>
+<td><code>string</code></td>
+<td><code>"SIN"</code>; optional</td>
+<td>Imaging</td>
+<td>Spherical projection of the image's direction axes.</td>
+</tr>
+<tr>
+<td><code>imsize</code></td>
+<td><code>single_dish.imsize@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's imsize.</td>
+</tr>
+<tr>
+<td><code>cell</code></td>
+<td><code>single_dish.cell@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's cell.</td>
+</tr>
+<tr>
+<td><code>phasecenter</code></td>
+<td><code>tclean.phasecenter@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>Image centre: a direction, 'TRACKFIELD', an ephemeris, or a field id; empty for the first selected field.</td>
+</tr>
+<tr>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
+<td><code>string</code></td>
+<td><code>"I"</code>; optional</td>
+<td>Imaging</td>
+<td>Stokes selector.</td>
+</tr>
+<tr>
+<td><code>gridfunction</code></td>
+<td><code>single_dish.gridfunction@r1</code></td>
+<td><code>string</code></td>
+<td><code>"BOX"</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's gridfunction.</td>
+</tr>
+<tr>
+<td><code>convsupport</code></td>
+<td><code>single_dish.convsupport@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's convsupport.</td>
+</tr>
+<tr>
+<td><code>truncate</code></td>
+<td><code>single_dish.truncate@r1</code></td>
+<td><code>variant</code></td>
+<td><code>-1</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's truncate.</td>
+</tr>
+<tr>
+<td><code>gwidth</code></td>
+<td><code>single_dish.gwidth@r1</code></td>
+<td><code>variant</code></td>
+<td><code>-1</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's gwidth.</td>
+</tr>
+<tr>
+<td><code>jwidth</code></td>
+<td><code>single_dish.jwidth@r1</code></td>
+<td><code>variant</code></td>
+<td><code>-1</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's jwidth.</td>
+</tr>
+<tr>
+<td><code>clipminmax</code></td>
+<td><code>single_dish.clipminmax@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's clipminmax.</td>
+</tr>
+<tr>
+<td><code>minweight</code></td>
+<td><code>single_dish.minweight@r1</code></td>
+<td><code>float</code></td>
+<td><code>0.1</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's minweight.</td>
+</tr>
+<tr>
+<td><code>brightnessunit</code></td>
+<td><code>single_dish.brightnessunit@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>CASA tsdimaging's brightnessunit.</td>
+</tr>
+<tr>
+<td><code>restfreq</code></td>
+<td><code>tclean.restfreq@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>""</code>; optional</td>
+<td>Imaging</td>
+<td>Rest frequencies of a cube's velocity axis; empty for the source's.</td>
 </tr>
 </tbody>
 </table>
