@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Standard gridder, natural weighting, MFS Hogbom with the final model
+//! Standard-gridder MFS with the final model
 //! predicted into `MODEL_DATA`.
 
 use casa_ms::{MeasurementSet, VisibilityDataColumn};
@@ -65,6 +65,64 @@ fn model_column_predicts_the_deconvolved_sky_at_every_sample() {
         "gain {gain:?}, injected/model flux {expected}"
     );
     assert!(gain[1].abs() < 5.0e-3, "gain {gain:?} has a phase");
+}
+
+#[test]
+fn mem_writes_the_solved_and_replayed_model_prediction() {
+    let observation = Observation::synthesise_band(2, &[("point", POINT)]);
+    let controls = json!({
+        "deconvolver":"mem", "niter":2, "savemodel":"modelcolumn",
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (run, _) = observation.image("mem-column", controls.clone());
+    assert!(
+        run.visibility_products.is_some(),
+        "MEM must write its prediction"
+    );
+    let solved = observation.data_and_model();
+    assert!(solved.iter().any(|(_, model)| model.im.abs() > 0.01));
+
+    let replay = Observation::synthesise_band(2, &[("point", POINT)]);
+    let mut controls = controls;
+    controls["niter"] = json!(0);
+    controls["startmodel"] = json!(observation.scratch("mem-column.model"));
+    let (run, _) = replay.image("mem-column-replay", controls.clone());
+    assert!(
+        run.visibility_products.is_some(),
+        "MEM must write its prediction"
+    );
+    let predicted = replay.data_and_model();
+    assert_eq!(predicted.len(), solved.len());
+    for ((data, model), (replay_data, replay_model)) in solved.iter().zip(&predicted) {
+        assert_eq!(data, replay_data);
+        assert!((model - replay_model).norm() < 1e-5);
+    }
+    let marker = Complex32::new(17.0, -3.0);
+    let mut ms = MeasurementSet::open(replay.measurement_set()).unwrap();
+    let column = VisibilityDataColumn::ModelData;
+    let ArrayValue::Complex32(mut model) = ms.data_column(column).unwrap().get(0).unwrap().clone()
+    else {
+        panic!("a complex MODEL_DATA cell");
+    };
+    model.fill(marker);
+    ms.main_table_mut()
+        .cell_accessor_mut(0, "MODEL_DATA")
+        .unwrap()
+        .set(Value::Array(ArrayValue::Complex32(model)))
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    controls["spw"] = json!("0:0");
+    replay.image("mem-column-selected", controls);
+    let ms = MeasurementSet::open(replay.measurement_set()).unwrap();
+    let ArrayValue::Complex32(model) = ms.data_column(column).unwrap().get(0).unwrap().clone()
+    else {
+        panic!("a complex MODEL_DATA cell");
+    };
+    for hand in 0..2 {
+        assert_ne!(model[[hand, 0]], marker, "write the selected channel");
+        assert_eq!(model[[hand, 1]], marker, "keep the unselected channel");
+    }
 }
 
 /// CASA's standard direct GridFT applies the OR of correlation flags to

@@ -900,11 +900,11 @@ impl ImagingRequest {
                 || !matches!(self.weighting, Weighting::Natural | Weighting::Briggs)
                 || self.vis.len() != 1
                 || self.outlierfile.is_some()
-                || self.savemodel != SaveModel::None)
+                || !matches!(self.savemodel, SaveModel::None | SaveModel::ModelColumn))
         {
             return Err(InvalidRequest {
                 parameters: "deconvolver",
-                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting; other modes and model-column writes wait for #1060",
+                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural or Briggs weighting; other modes and virtual model writes wait for #1060",
             });
         }
         Ok(())

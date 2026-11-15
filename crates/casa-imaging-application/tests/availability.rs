@@ -579,6 +579,14 @@ fn mem_compiled_scope_cannot_bypass_the_task_guard() {
     .expect("Briggs-weighted Stokes I MEM is available");
     on_cpu(
         &ProblemFixture {
+            model_column_write: ModelColumnWrite::SelectedSamples,
+            ..mem()
+        }
+        .compile(),
+    )
+    .expect("MEM can write MODEL_DATA");
+    on_cpu(
+        &ProblemFixture {
             polarizations: vec![PolarizationCoordinate::StokesQ],
             ..ProblemFixture::standard()
         }
@@ -615,10 +623,6 @@ fn mem_compiled_scope_cannot_bypass_the_task_guard() {
         },
         ProblemFixture {
             sources: 2,
-            ..mem()
-        },
-        ProblemFixture {
-            model_column_write: ModelColumnWrite::SelectedSamples,
             ..mem()
         },
         mem().with_primary_beam(InstrumentModel::CasaAca7mInterferometricDirectPbV1),

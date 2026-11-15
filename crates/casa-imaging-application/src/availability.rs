@@ -6,9 +6,9 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, DensityCells, FrequencyFrame, InstrumentResponse, PolarizationCoordinate,
-    ProductKind, ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability,
-    SpectralFrameAnchor, SpectralKernel, WeightingScheme,
+    CompiledProblem, DensityCells, FrequencyFrame, InstrumentResponse, MsColumnKind,
+    PolarizationCoordinate, ProductKind, ReconstructionAlgorithm, ReconstructionBasis,
+    RequiredCapability, SpectralFrameAnchor, SpectralKernel, WeightingScheme,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -226,11 +226,12 @@ pub fn check(
             WeightingScheme::Natural | WeightingScheme::Briggs { .. }
         )
         || problem.observation().sources().len() != 1
-        || !problem
+        || problem
             .observation_transaction()
             .write_set()
             .visibility_columns()
-            .is_empty())
+            .iter()
+            .any(|access| access.column() != MsColumnKind::ModelData))
     {
         unsupported.push(Unsupported::MemScope);
     }
