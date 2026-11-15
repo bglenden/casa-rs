@@ -114,10 +114,9 @@ fn a_taylor_basis_reconstructs_any_polarization() {
     }
 }
 
-/// Standard and mosaic kernels image polarized Taylor families.
-/// W projection waits for #1112.
+/// Standard, mosaic and W-projection kernels image polarized Taylor families.
 #[test]
-fn a_polarized_taylor_basis_grids_with_standard_and_mosaic_kernels() {
+fn a_polarized_taylor_basis_grids_with_standard_mosaic_and_w_kernels() {
     let taylor = |polarizations: Vec<PolarizationCoordinate>| ProblemFixture {
         basis: ReconstructionBasis::Taylor { terms: 2 },
         algorithm: ReconstructionAlgorithm::Mtmfs {
@@ -146,10 +145,7 @@ fn a_polarized_taylor_basis_grids_with_standard_and_mosaic_kernels() {
             .measurement_equation
             .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
         on_cpu(&mosaic(polarizations).compile()).expect("a polarized mosaic Taylor basis runs");
-        assert_exactly_unsupported(
-            on_cpu(&w.compile()),
-            [Unsupported::PolarizedTaylorKernelSet],
-        );
+        on_cpu(&w.compile()).expect("a polarized W-projection Taylor basis runs");
     }
     on_cpu(&mosaic(vec![PolarizationCoordinate::StokesI]).compile())
         .expect("a Stokes I mosaic Taylor basis runs");
@@ -227,7 +223,26 @@ fn aw_projection_runs_on_the_cpu_pass() {
         products: fixture.products.clone(),
         ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
     };
+    let polarized_taylor = ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        polarizations: vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesV,
+        ],
+        measurement_equation: fixture.measurement_equation,
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
+    };
     on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
+    assert_exactly_unsupported(
+        on_cpu(&polarized_taylor.compile()),
+        [Unsupported::PolarizedTaylorKernelSet],
+    );
+
     // An AW cube keeps each plane's weight image as its sensitivity (#719).
     on_cpu(&cube.compile()).expect("AW projection runs per plane of a cube");
     // Its convolution functions are laid out on one axis (#841 Phase 6b).

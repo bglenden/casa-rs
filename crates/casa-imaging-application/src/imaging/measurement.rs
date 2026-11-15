@@ -211,9 +211,12 @@ pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
     kernel_set_kind(problem) == KernelSetKind::Standard
 }
 
-/// Whether the problem grids with the analytic mosaic kernel set.
-pub(crate) fn mosaic_kernel_set(problem: &CompiledProblem) -> bool {
-    kernel_set_kind(problem) == KernelSetKind::Mosaic
+/// Whether the installed gridder images polarized Taylor families.
+pub(crate) fn polarized_taylor_kernel_set(problem: &CompiledProblem) -> bool {
+    matches!(
+        kernel_set_kind(problem),
+        KernelSetKind::Standard | KernelSetKind::Mosaic | KernelSetKind::WPlanes
+    )
 }
 
 /// Whether the Metal backend grids the problem's kernel set: the standard
