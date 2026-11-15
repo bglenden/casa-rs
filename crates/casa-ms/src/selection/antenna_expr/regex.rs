@@ -12,9 +12,13 @@
 //! The ECMAScript result is then translated to the `regex` crate's syntax
 //! and matched over bytes with Unicode disabled, as `std::regex` over
 //! `char` matches bytes. ECMAScript features the `regex` crate lacks
-//! (backreferences, lookahead) are refused rather than approximated.
+//! are refused except for FIELD lookahead, which uses a bounded byte matcher.
 
 use regex::bytes::{Regex, RegexBuilder};
+
+// User-supplied lookahead uses a VM with a bounded program and the
+// engine's default backtracking limit. Ordinary selectors keep the existing engine.
+const FIELD_LOOKAHEAD_INSTRUCTIONS: usize = 1 << 16;
 
 /// A compiled casacore regex that answers `String::matches`: whether the
 /// whole of a string matches.
@@ -29,9 +33,11 @@ impl FullMatch {
     /// casacore's `AipsError("Error in regex ...")` (`Regex.cc:55-57`) or an
     /// ECMAScript feature this port does not support.
     pub(in crate::selection) fn compile(casacore_regex: &str) -> Result<Self, String> {
-        let ecma = to_ecma(casacore_regex.as_bytes());
-        let body = ecma_to_rust(&ecma)
-            .map_err(|reason| format!("Error in regex {casacore_regex}: {reason}"))?;
+        let (body, _) = translate(casacore_regex, false)?;
+        Self::compile_body(casacore_regex, &body)
+    }
+
+    fn compile_body(casacore_regex: &str, body: &str) -> Result<Self, String> {
         RegexBuilder::new(&format!(r"\A(?:{body})\z"))
             .unicode(false)
             .build()
@@ -50,6 +56,45 @@ impl FullMatch {
     pub(in crate::selection) fn matches(&self, text: &str) -> bool {
         self.0.is_match(text.as_bytes())
     }
+}
+
+/// Match a FIELD name or CODE with the same whole-string byte semantics.
+pub(in crate::selection) enum FieldRegex {
+    Regular(FullMatch),
+    Lookahead(fancy_regex::Regex),
+}
+
+impl FieldRegex {
+    pub(in crate::selection) fn compile(pattern: &str, slash_regex: bool) -> Result<Self, String> {
+        if !slash_regex {
+            return FullMatch::compile_pattern(pattern).map(Self::Regular);
+        }
+        let (body, has_lookahead) = translate(pattern, true)?;
+        if !has_lookahead {
+            return FullMatch::compile_body(pattern, &body).map(Self::Regular);
+        }
+        fancy_regex::RegexBuilder::new(&format!(r"\A(?:{body})\z"))
+            .bytes_mode(fancy_regex::BytesMode::Ascii)
+            .unicode_mode(false)
+            .max_prog_size(FIELD_LOOKAHEAD_INSTRUCTIONS)
+            .delegate_size_limit(10 * 1024 * 1024)
+            .build()
+            .map(Self::Lookahead)
+            .map_err(|error| format!("Error in regex {pattern}: {error}"))
+    }
+
+    pub(in crate::selection) fn matches(&self, text: &str) -> Result<bool, fancy_regex::Error> {
+        match self {
+            Self::Regular(matcher) => Ok(matcher.matches(text)),
+            Self::Lookahead(matcher) => matcher.is_match(text.as_bytes()),
+        }
+    }
+}
+
+fn translate(text: &str, allow_lookahead: bool) -> Result<(String, bool), String> {
+    let ecma = to_ecma(text.as_bytes());
+    ecma_to_rust(&ecma, allow_lookahead)
+        .map_err(|reason| format!("Error in regex {text}: {reason}"))
 }
 
 /// `Regex::fromPattern` (`casa/Utilities/Regex.cc:228-367`): a shell-style
@@ -218,8 +263,9 @@ pub(super) fn to_ecma(rx: &[u8]) -> Vec<u8> {
 /// Every literal byte is written as `\xHH`, so no character is read as a
 /// `regex`-crate operator ECMAScript does not have (`&&`, `--`, `~~` in a
 /// class, `\<` and `\>` assertions). ECMAScript `.` excludes `\n` and `\r`.
-fn ecma_to_rust(ecma: &[u8]) -> Result<String, &'static str> {
+fn ecma_to_rust(ecma: &[u8], allow_lookahead: bool) -> Result<(String, bool), &'static str> {
     let mut out = String::with_capacity(4 * ecma.len());
+    let mut has_lookahead = false;
     let mut i = 0;
     while i < ecma.len() {
         let c = ecma[i];
@@ -233,7 +279,15 @@ fn ecma_to_rust(ecma: &[u8]) -> Result<String, &'static str> {
                     out.push_str("(?:");
                     i += 2;
                 } else if ecma.get(i) == Some(&b'?') {
-                    return Err("lookahead groups are not supported");
+                    let assertion = ecma.get(i + 1).copied();
+                    if allow_lookahead && let Some(kind @ (b'=' | b'!')) = assertion {
+                        out.push_str("(?");
+                        out.push(kind as char);
+                        has_lookahead = true;
+                        i += 2;
+                    } else {
+                        return Err("unsupported ECMAScript group");
+                    }
                 } else {
                     out.push('(');
                 }
@@ -243,7 +297,7 @@ fn ecma_to_rust(ecma: &[u8]) -> Result<String, &'static str> {
             _ => push_byte(&mut out, c),
         }
     }
-    Ok(out)
+    Ok((out, has_lookahead))
 }
 
 /// Whether the translation so far ends inside an open `{n,m}` repetition,
@@ -371,4 +425,22 @@ const POSIX_CLASSES: &[&str] = &[
 fn push_byte(out: &mut String, byte: u8) {
     use std::fmt::Write as _;
     let _ = write!(out, "\\x{byte:02X}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn field_lookahead_refuses_an_oversized_vm_program() {
+        let pattern = "(?=A)(?!B)".repeat(FIELD_LOOKAHEAD_INSTRUCTIONS / 2);
+        let error = FieldRegex::compile(&pattern, true)
+            .err()
+            .expect("the FIELD lookahead program exceeds its instruction limit");
+        assert!(
+            error.contains("too complex"),
+            "{:.200}",
+            &error[error.len().saturating_sub(200)..]
+        );
+    }
 }

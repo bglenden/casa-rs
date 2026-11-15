@@ -5,7 +5,7 @@ use std::{borrow::Cow, collections::BTreeMap};
 
 use casa_types::quanta::MvTime;
 
-use crate::selection::antenna_expr::regex::FullMatch;
+use crate::selection::antenna_expr::regex::FieldRegex;
 use crate::selection::syntax::{canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector};
 use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
 use crate::subtables::{MsField, get_f64, has_column, optional_string};
@@ -110,8 +110,8 @@ impl MeasurementSet {
     ///
     /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
     /// no FIELD row, or a nonempty selection resolving to no existing fields.
-    /// The shared regex engine refuses lookaround. Escapes outside a
-    /// delimited pattern are also refused.
+    /// Slash regexes support positive and negative lookahead. Escapes
+    /// outside a delimited pattern are refused.
     /// An out-of-range numeric ID tries its decimal text as a name or code.
     /// Only the FIELD rows themselves bound numeric range enumeration.
     /// Name matching trims stored names and
@@ -224,9 +224,9 @@ fn resolve_field_predicate_rows(
         }
         let matching = field_ids_by_name_or_code(
             fields,
-            |value| value == name,
-            |code| code.trim_matches(' ') == name,
-        );
+            |value| Ok(value == name),
+            |code| Ok(code.trim_matches(' ') == name),
+        )?;
         if matching.is_empty() {
             return Err(MsError::VersionError(format!(
                 "field selector name {name:?} did not match any FIELD rows"
@@ -404,17 +404,13 @@ fn resolve_field_pattern(
     pattern: &str,
     regex: bool,
 ) -> MsResult<Vec<i32>> {
-    let matcher = if regex {
-        FullMatch::compile(pattern)
-    } else {
-        FullMatch::compile_pattern(pattern)
-    }
-    .map_err(MsError::InvalidInput)?;
-    let ids = field_ids_by_name_or_code(
-        fields,
-        |name| matcher.matches(name),
-        |code| matcher.matches(code),
-    );
+    let matcher = FieldRegex::compile(pattern, regex).map_err(MsError::InvalidInput)?;
+    let matches = |text: &str| {
+        matcher.matches(text).map_err(|error| {
+            MsError::InvalidInput(format!("matching FIELD regex {pattern:?}: {error}"))
+        })
+    };
+    let ids = field_ids_by_name_or_code(fields, matches, matches)?;
     if ids.is_empty() {
         return Err(MsError::VersionError(format!(
             "field selector pattern {pattern:?} did not match any field names or codes"
@@ -425,25 +421,29 @@ fn resolve_field_pattern(
 
 fn field_ids_by_name_or_code(
     fields: &[FieldSelectorRow<'_>],
-    matches_name: impl Fn(&str) -> bool,
-    matches_code: impl Fn(&str) -> bool,
-) -> Vec<i32> {
+    matches_name: impl Fn(&str) -> MsResult<bool>,
+    matches_code: impl Fn(&str) -> MsResult<bool>,
+) -> MsResult<Vec<i32>> {
     let rows = fields
         .iter()
         .enumerate()
         .filter(|(_, field)| !field.flagged);
-    let mut ids: Vec<_> = rows
-        .clone()
-        .filter(|(_, field)| matches_name(field.name.trim_matches(' ')))
-        .map(|(row, _)| row as i32)
-        .collect();
-    if ids.is_empty() {
-        ids.extend(
-            rows.filter(|(_, field)| field.code.is_some_and(&matches_code))
-                .map(|(row, _)| row as i32),
-        );
+    let mut ids = Vec::new();
+    for (row, field) in rows.clone() {
+        if matches_name(field.name.trim_matches(' '))? {
+            ids.push(row as i32);
+        }
     }
-    ids
+    if ids.is_empty() {
+        for (row, field) in rows {
+            if let Some(code) = field.code
+                && matches_code(code)?
+            {
+                ids.push(row as i32);
+            }
+        }
+    }
+    Ok(ids)
 }
 
 fn apply_antenna_selector(
