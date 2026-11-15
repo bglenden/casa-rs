@@ -536,13 +536,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "veltype",
             "#1096",
         ),
-        // A source-frame cube's per-channel density, mosaic or not.
-        (
-            json!({ "specmode": "cubesource", "weighting": "briggsbwtaper",
-                    "gridder": "mosaic" }),
-            "perchanweightdensity",
-            "#980",
-        ),
         (
             json!({ "gridder": "wproject", "wprojplanes": -1, "facets": 2 }),
             "facets",
@@ -869,6 +862,40 @@ fn mosweight_holds_for_every_density() {
         crate::Weighting::Radial
     );
     assert!(mosweight(cube("natural", true)));
+}
+
+/// The single-MS bandwidth-tapered moving mosaic shares the existing
+/// per-field cube density route. Other source-frame mosaic density
+/// combinations still need their own parity evidence.
+#[test]
+fn a_moving_mosaic_with_bandwidth_taper_uses_per_field_density() {
+    let values = json!({
+        "gridder": "mosaic", "specmode": "cubesource", "nchan": 10,
+        "weighting": "briggsbwtaper",
+    });
+    let read = request(values.clone());
+    assert_eq!(read.specmode, SpecMode::Cubesource);
+    assert_eq!(read.weighting, crate::Weighting::Briggsbwtaper);
+    assert!(read.perchanweightdensity);
+    assert!(matches!(
+        read.gridder,
+        crate::Gridder::Mosaic {
+            mosweight: true,
+            ..
+        }
+    ));
+
+    for (parameter, value) in [
+        ("mosweight", json!(false)),
+        ("gridder", json!("standard")),
+        ("weighting", json!("uniform")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let error = refusal(unsupported);
+        assert_eq!(error.parameter, "perchanweightdensity", "{parameter}");
+        assert!(error.message.contains("#980"));
+    }
 }
 
 /// `restoringbeam` as `SynthesisParamsDeconv::fromRecord` reads it: one
