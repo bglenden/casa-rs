@@ -1399,6 +1399,27 @@ real 1.145408
             plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
         )
 
+    def test_mosaic_conjbeams_reaches_the_benchmark(self) -> None:
+        manifest_path = (
+            run_workload.WORKLOAD_DIR / "t53-mosaic-mfs-alma-representative.json"
+        )
+        for setting, expected in (("true", "1"), ("false", "0")):
+            with self.subTest(conjbeams=setting):
+                manifest = run_workload.load_manifest(manifest_path)
+                run_workload.apply_imaging_overrides(manifest, [f"conjbeams={setting}"])
+                run_workload.validate_workload_manifest(manifest)
+                plan = run_workload.build_plan(
+                    manifest_path=manifest_path,
+                    manifest=manifest,
+                    repeats_override=None,
+                    run_label_override=None,
+                    storage_label_override=None,
+                    dry_run=True,
+                )
+                self.assertEqual(
+                    expected, plan["command"]["env"]["IMAGER_BENCH_CONJBEAMS"]
+                )
+
     def test_faceted_widefield_plan_preserves_exact_command_controls(self) -> None:
         manifest_path = (
             run_workload.WORKLOAD_DIR / "issue518-t32-vla-faceted-clean.json"

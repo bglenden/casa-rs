@@ -4413,8 +4413,10 @@ def _validate_cross_fields(
         )
 
     aw_control_fields = {"aterm", "psterm", "wbawp", "conjbeams"}
-    aw_surface_requested = bool(aw_control_fields & set(imaging))
-    if aw_surface_requested:
+    requested_aw_controls = aw_control_fields & imaging.keys()
+    if imaging.get("gridder") == "mosaic":
+        requested_aw_controls.discard("conjbeams")
+    if requested_aw_controls:
         missing = sorted(aw_control_fields - set(imaging))
         if missing:
             raise ContractError(

@@ -658,6 +658,8 @@ def build_plan(
     prepared_aw_output_prefix = os.environ.get(
         "CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX"
     )
+    if "conjbeams" in imaging:
+        env["IMAGER_BENCH_CONJBEAMS"] = boolean_env_value(imaging, "conjbeams", False)
     if prepared_aw_casa_cache:
         env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"] = prepared_aw_casa_cache
     if native_aw_cf_cache:
@@ -683,7 +685,6 @@ def build_plan(
             "aterm": "IMAGER_BENCH_ATERM",
             "psterm": "IMAGER_BENCH_PSTERM",
             "wbawp": "IMAGER_BENCH_WBAWP",
-            "conjbeams": "IMAGER_BENCH_CONJBEAMS",
             "computepastep": "IMAGER_BENCH_COMPUTEPASTEP",
             "rotatepastep": "IMAGER_BENCH_ROTATEPASTEP",
             "pointingoffsetsigdev": "IMAGER_BENCH_POINTINGOFFSETSIGDEV",

@@ -241,18 +241,14 @@ esac
 is_true() {
   [[ "$1" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]
 }
-# casars-imager grids AW with conjugate beams and mosaic without them, and
-# its tclean conjbeams must say so (#720, #721). CASA runs the same unless
-# told otherwise: on for AW, tclean's default (off) for every other gridder.
+# Keep the benchmark defaults on for AW and off for other gridders.
+# Explicit conjbeams applies to both CASA and casars-imager.
 if [[ -z "$conjbeams" ]]; then
   if [[ "$rust_gridder" == "awproject" ]]; then
     conjbeams=1
   else
     conjbeams=0
   fi
-elif [[ "$rust_gridder" == "mosaic" ]] && is_true "$conjbeams"; then
-  echo "error: IMAGER_BENCH_CONJBEAMS=$conjbeams: casars-imager's mosaic gridder has no conjugate beams (#720)" >&2
-  exit 2
 fi
 if [[ -n "$prepared_aw_casa_cache" && -n "$native_aw_cf_cache" ]]; then
   echo "error: set one AW convolution-function source: IMAGER_BENCH_PREPARED_AW_CASA_CACHE or IMAGER_BENCH_NATIVE_AW_CF_CACHE" >&2
