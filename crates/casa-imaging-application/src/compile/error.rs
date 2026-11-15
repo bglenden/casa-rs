@@ -110,6 +110,9 @@ pub enum PrepareError {
     /// direction-dependent image response, or controls they cannot apply.
     #[error(transparent)]
     ImageResponse(#[from] casa_imaging_products::ProductsError),
+    /// The supplied CASA VPManager table did not provide a supported beam.
+    #[error("tclean vptable: {0}")]
+    VoltagePattern(#[from] casa_ms::voltage_pattern::VoltagePatternError),
     /// `pblimit` is outside the primary-beam validity contract.
     #[error(transparent)]
     PrimaryBeamValidity(#[from] casa_imaging_model::ProductValidityPolicyError),

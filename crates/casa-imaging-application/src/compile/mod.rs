@@ -41,6 +41,7 @@ mod stores;
 mod survey;
 mod time_selection;
 mod virtual_selection;
+mod vptable;
 
 pub(crate) use mvc::{CompiledTaylorView, MvcSavedPsf, MvcStart, TaylorView};
 pub(crate) use opening::OpenedStore;
@@ -60,7 +61,7 @@ use casa_imaging_model::{
 use casa_imaging_operator::{AwCatalog, AwIndexing, NativeCacheLock};
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, CasaImageWriter, ContinuumProductControls, MinorCycleImageResponse,
-    PrimaryBeamCentres,
+    PrimaryBeamCentres, SavedRadialPrimaryBeam,
 };
 use casa_imaging_runtime::Admitted;
 use casa_ms::PhaseCentreEphemeris;
@@ -256,7 +257,13 @@ pub(crate) fn prepare_with_view_hooks(
         (&observation_info, object_name),
         domains::MaskPreparation::ForRun,
     )?;
-    let primary_beam = primary_beam_model(request, catalogue, &survey.pb_antennas)?;
+    let saved_radial_primary_beam =
+        vptable::prepare(request, &observation_info.telescope, context)?;
+    let primary_beam = if saved_radial_primary_beam.is_some() {
+        Some(AnalyticPrimaryBeamModel::SavedRadial)
+    } else {
+        primary_beam_model(request, catalogue, &survey.pb_antennas)?
+    };
     let primary_beam_centres = match primary_beam {
         None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
         Some(_) => Some(primary_beam_centres(&domains, &stores, &centre)?),
@@ -268,6 +275,7 @@ pub(crate) fn prepare_with_view_hooks(
         &domains,
         primary_beam,
         primary_beam_centres,
+        saved_radial_primary_beam,
     )?;
     let instrument = instrument::scientific_instrument_model(
         &request.gridder,
@@ -1101,6 +1109,7 @@ fn deployment(
     domains: &[PreparedImageDomain],
     primary_beam: Option<AnalyticPrimaryBeamModel>,
     primary_beam_centres: Option<PrimaryBeamCentres>,
+    saved_radial_primary_beam: Option<Admitted<SavedRadialPrimaryBeam>>,
 ) -> Result<Deployment, PrepareError> {
     let parent = |path: &Path| {
         path.parent()
@@ -1128,6 +1137,7 @@ fn deployment(
         publication: ApplicationPublication {
             controls,
             primary_beam_centres,
+            saved_radial_primary_beam,
             vla_selection_store: (primary_beam == Some(AnalyticPrimaryBeamModel::CasaVlaBand)
                 && request.specmode == SpecMode::Cube
                 && matches!(

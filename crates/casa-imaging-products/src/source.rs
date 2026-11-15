@@ -16,7 +16,7 @@ use casa_imaging_model::{
 };
 
 use crate::AnalyticPrimaryBeamModel;
-use crate::analytic_beam::AnalyticPrimaryBeam;
+use crate::analytic_beam::{AnalyticPrimaryBeam, SavedRadialPrimaryBeam};
 
 /// Where an analytic primary beam is centred on each image domain: the
 /// pixel position `[x, y]` of every selected field's phase direction.
@@ -40,6 +40,7 @@ pub struct ContinuumProductInputs<'a> {
     reconstruction_mask: Option<&'a ReconstructionMask>,
     domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
     primary_beam_centres: Option<&'a PrimaryBeamCentres>,
+    saved_radial_primary_beam: Option<&'a SavedRadialPrimaryBeam>,
     taylor_primary_beam: Option<&'a [f32]>,
     taylor_residual_sum_weight: Option<f64>,
     cube_taylor_primary_beam: Option<&'a [f32]>,
@@ -117,6 +118,7 @@ impl<'a> ContinuumProductInputs<'a> {
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
             primary_beam_centres: None,
+            saved_radial_primary_beam: None,
             taylor_primary_beam: None,
             taylor_residual_sum_weight: None,
             cube_taylor_primary_beam: None,
@@ -446,6 +448,17 @@ impl<'a> ContinuumProductInputs<'a> {
         self
     }
 
+    /// Bind the same supplied voltage lookup used by minor-cycle masks.
+    #[must_use]
+    pub fn with_saved_radial_primary_beam(mut self, beam: &'a SavedRadialPrimaryBeam) -> Self {
+        self.saved_radial_primary_beam = Some(beam);
+        self
+    }
+
+    pub(crate) fn has_saved_radial_primary_beam(&self) -> bool {
+        self.saved_radial_primary_beam.is_some()
+    }
+
     /// Select the legacy VLA aperture at `frequency_hz`, while evaluating
     /// it at each output plane's own frequency.
     ///
@@ -467,7 +480,13 @@ impl<'a> ContinuumProductInputs<'a> {
         &self,
         model: AnalyticPrimaryBeamModel,
     ) -> Option<AnalyticPrimaryBeam<'a>> {
-        AnalyticPrimaryBeam::bind(self.problem, model, self.primary_beam_centres).map(|beam| {
+        AnalyticPrimaryBeam::bind(
+            self.problem,
+            model,
+            self.primary_beam_centres,
+            self.saved_radial_primary_beam,
+        )
+        .map(|beam| {
             self.vla_selection_hz.map_or(beam, |frequency| {
                 beam.with_vla_selection_frequency(frequency)
             })

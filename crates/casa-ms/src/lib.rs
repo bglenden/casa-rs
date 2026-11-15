@@ -77,6 +77,7 @@ pub mod transform;
 pub mod validate;
 pub mod virtual_model;
 pub mod visibility_buffer;
+pub mod voltage_pattern;
 pub mod write_session;
 
 #[cfg(test)]

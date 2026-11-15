@@ -17,6 +17,7 @@ use casa_imaging_model::{
     CompiledProblem, ImageDomainRole, ProductSupportComparison, ReconstructionBasis,
 };
 use casa_numerics::{AnnularApertureVoltageTable, EvlaBand, EvlaPowerPattern, VlaBand};
+use casa_numerics::{BeamPattern, PrimaryBeam};
 
 use crate::error::ProductsError;
 use crate::plan::AnalyticPrimaryBeamModel;
@@ -27,15 +28,34 @@ use crate::source::PrimaryBeamCentres;
 /// [`AnalyticPrimaryBeam::pb`] returns.
 pub const ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL: u64 = size_of::<f32>() as u64;
 
+/// The circular voltage lookup read from a supplied CASA VPManager table.
+pub struct SavedRadialPrimaryBeam(BeamPattern);
+
+impl SavedRadialPrimaryBeam {
+    /// Tabulate one admitted Gaussian or Airy voltage law for this run.
+    #[must_use]
+    pub fn new(beam: PrimaryBeam) -> Self {
+        Self(beam.pattern())
+    }
+}
+
+impl std::fmt::Debug for SavedRadialPrimaryBeam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SavedRadialPrimaryBeam")
+            .finish_non_exhaustive()
+    }
+}
+
 /// The beam laws an analytic primary beam takes.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BeamLaw {
+#[derive(Debug, Clone, Copy)]
+enum BeamLaw<'a> {
     /// CASA's common EVLA beam ([`AnalyticPrimaryBeamModel::CasaEvlaCommon`]).
     EvlaCommon,
     /// CASA's legacy VLA beams ([`AnalyticPrimaryBeamModel::CasaVlaBand`]).
     VlaBand,
     /// An ALMA or ACA Airy beam.
     Airy(CasaAlmaAiry),
+    Saved(&'a SavedRadialPrimaryBeam),
 }
 
 /// One run's analytic primary beam: the model its products and minor cycle
@@ -48,7 +68,7 @@ enum BeamLaw {
 #[derive(Debug, Clone, Copy)]
 pub struct AnalyticPrimaryBeam<'a> {
     problem: &'a CompiledProblem,
-    law: BeamLaw,
+    law: BeamLaw<'a>,
     model: AnalyticPrimaryBeamModel,
     centres: Option<&'a PrimaryBeamCentres>,
     vla_selection_hz: Option<f64>,
@@ -74,8 +94,12 @@ impl<'a> AnalyticPrimaryBeam<'a> {
         problem: &'a CompiledProblem,
         model: AnalyticPrimaryBeamModel,
         centres: Option<&'a PrimaryBeamCentres>,
+        saved: Option<&'a SavedRadialPrimaryBeam>,
     ) -> Result<Option<Self>, ProductsError> {
-        let Some(beam) = Self::bind(problem, model, centres) else {
+        if model == AnalyticPrimaryBeamModel::SavedRadial && saved.is_none() {
+            return Err(ProductsError::InvalidControls);
+        }
+        let Some(beam) = Self::bind(problem, model, centres, saved) else {
             return Ok(None);
         };
         assert!(
@@ -98,12 +122,14 @@ impl<'a> AnalyticPrimaryBeam<'a> {
         problem: &'a CompiledProblem,
         model: AnalyticPrimaryBeamModel,
         centres: Option<&'a PrimaryBeamCentres>,
+        saved: Option<&'a SavedRadialPrimaryBeam>,
     ) -> Option<Self> {
         let law = match model {
             AnalyticPrimaryBeamModel::CasaEvlaCommon => BeamLaw::EvlaCommon,
             AnalyticPrimaryBeamModel::CasaVlaBand => BeamLaw::VlaBand,
             AnalyticPrimaryBeamModel::CasaAlma12mAiry => BeamLaw::Airy(CasaAlmaAiry::ALMA_12M),
             AnalyticPrimaryBeamModel::CasaAca7mAiry => BeamLaw::Airy(CasaAlmaAiry::ACA_7M),
+            AnalyticPrimaryBeamModel::SavedRadial => BeamLaw::Saved(saved?),
             AnalyticPrimaryBeamModel::MosaicSensitivity => return None,
         };
         Some(Self {
@@ -204,6 +230,14 @@ impl<'a> AnalyticPrimaryBeam<'a> {
                         frequency_hz,
                         &table,
                     );
+                })
+            }
+            BeamLaw::Saved(beam) => {
+                let pattern = beam.0.at_frequency(frequency_hz);
+                summed_beams(shape, &centres, |plane, centre| {
+                    add_radial_power(plane, shape, centre, increment_rad, frequency_hz, |r| {
+                        pattern.power(r)
+                    });
                 })
             }
         })
@@ -364,18 +398,14 @@ fn add_evla_common_power(
     frequency_hz: f64,
     pattern: EvlaPowerPattern,
 ) {
-    let increment_deg = increment_rad.map(f64::to_degrees);
-    let frequency_factor = 60.0 * frequency_hz / 1.0e9;
-    for x in 0..shape[0] {
-        let rx2 = ((x as f64 - centre[0]) * increment_deg[0]).powi(2) as f32;
-        for y in 0..shape[1] {
-            let ry2 = ((y as f64 - centre[1]) * increment_deg[1]).powi(2) as f32;
-            // PBMath1D::apply stores squared degree offsets and scaled radius
-            // as Float. Rounding before the table lookup matters at bin edges.
-            let radius_arcmin_ghz = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
-            values[x * shape[1] + y] += pattern.power(f64::from(radius_arcmin_ghz));
-        }
-    }
+    add_radial_power(
+        values,
+        shape,
+        centre,
+        increment_rad,
+        frequency_hz,
+        |radius| pattern.power(radius),
+    );
 }
 
 /// One of CASA's common Airy beams of ALMA's dishes (`PBMath::initByTelescope`
@@ -420,18 +450,36 @@ fn add_annular_aperture_power(
     frequency_hz: f64,
     table: &AnnularApertureVoltageTable,
 ) {
+    add_radial_power(
+        values,
+        shape,
+        centre,
+        increment_rad,
+        frequency_hz,
+        |radius| {
+            let voltage = table.evaluate(radius);
+            voltage * voltage
+        },
+    );
+}
+
+/// Add a circular beam with PBMath1D's Float radius rounding before lookup.
+fn add_radial_power(
+    values: &mut [f32],
+    shape: [usize; 2],
+    centre: [f64; 2],
+    increment_rad: [f64; 2],
+    frequency_hz: f64,
+    power: impl Fn(f64) -> f32,
+) {
     let increment_deg = increment_rad.map(f64::to_degrees);
     let frequency_factor = 60.0 * frequency_hz / 1.0e9;
     for x in 0..shape[0] {
-        let pixel_x = x as f64 - centre[0];
-        let rx2 = (pixel_x * increment_deg[0]).powi(2) as f32;
+        let rx2 = ((x as f64 - centre[0]) * increment_deg[0]).powi(2) as f32;
         for y in 0..shape[1] {
-            let pixel_y = y as f64 - centre[1];
-            let ry2 = (pixel_y * increment_deg[1]).powi(2) as f32;
-            let radius_arcmin_ghz =
-                (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32 as f64;
-            let voltage = table.evaluate(radius_arcmin_ghz);
-            values[x * shape[1] + y] += voltage * voltage;
+            let ry2 = ((y as f64 - centre[1]) * increment_deg[1]).powi(2) as f32;
+            let radius = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
+            values[x * shape[1] + y] += power(f64::from(radius));
         }
     }
 }
@@ -466,6 +514,7 @@ fn primary_beam_frequency_supported(model: AnalyticPrimaryBeamModel, frequency_h
         AnalyticPrimaryBeamModel::CasaAlma12mAiry
         | AnalyticPrimaryBeamModel::CasaAca7mAiry
         | AnalyticPrimaryBeamModel::MosaicSensitivity => true,
+        AnalyticPrimaryBeamModel::SavedRadial => frequency_hz.is_finite() && frequency_hz > 0.0,
     }
 }
 

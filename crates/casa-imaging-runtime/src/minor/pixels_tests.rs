@@ -70,6 +70,7 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
             &problem,
             AnalyticPrimaryBeamModel::CasaEvlaCommon,
             Some(&centres),
+            None,
         )
         .unwrap()
         .unwrap();

@@ -503,14 +503,20 @@ pub(crate) fn run(
         .map(|store| vla_selection_frequency(problem, &route, store));
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
-        Some(model) => {
-            AnalyticPrimaryBeam::new(problem, model, publication.primary_beam_centres.as_ref())?
-                .map(|beam| {
-                    vla_selection_hz.map_or(beam, |frequency| {
-                        beam.with_vla_selection_frequency(frequency)
-                    })
-                })
-        }
+        Some(model) => AnalyticPrimaryBeam::new(
+            problem,
+            model,
+            publication.primary_beam_centres.as_ref(),
+            publication
+                .saved_radial_primary_beam
+                .as_ref()
+                .map(|beam| &beam.value),
+        )?
+        .map(|beam| {
+            vla_selection_hz.map_or(beam, |frequency| {
+                beam.with_vla_selection_frequency(frequency)
+            })
+        }),
         None => None,
     };
     let separate_psf = psf_view
@@ -1041,6 +1047,7 @@ fn publish_mvc_products(
             publication.controls.preserving_weighted_residuals(bytes)
         }),
         primary_beam_centres: publication.primary_beam_centres.clone(),
+        saved_radial_primary_beam: None,
         vla_selection_store: None,
         saved_mem_model: false,
         writer: publication.writer.with_coordinates(taylor_coordinates),
@@ -1192,6 +1199,9 @@ fn stage_products(
     }
     if let Some(centres) = publication.primary_beam_centres.as_ref() {
         inputs = inputs.with_primary_beam_centres(centres);
+    }
+    if let Some(beam) = &publication.saved_radial_primary_beam {
+        inputs = inputs.with_saved_radial_primary_beam(&beam.value);
     }
     if !facet_sum_weights.is_empty() {
         inputs = inputs.with_facet_sum_weights(&facet_sum_weights);

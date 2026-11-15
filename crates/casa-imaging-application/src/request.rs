@@ -111,6 +111,9 @@ pub struct ImagingRequest {
     /// Fixed direction for a mosaic PSF formed separately from the main image.
     #[serde(default, deserialize_with = "optional")]
     pub psfphasecenter: Option<String>,
+    /// CASA VPManager table for the analytic imaging primary beam.
+    #[serde(deserialize_with = "optional")]
+    pub vptable: Option<PathBuf>,
     /// First selected channel when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_start: Option<usize>,

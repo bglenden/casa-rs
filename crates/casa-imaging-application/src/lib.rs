@@ -151,6 +151,8 @@ pub(crate) struct Awp2Deployment {
 pub(crate) struct ApplicationPublication {
     pub(crate) controls: ContinuumProductControls,
     pub(crate) primary_beam_centres: Option<casa_imaging_products::PrimaryBeamCentres>,
+    pub(crate) saved_radial_primary_beam:
+        Option<casa_imaging_runtime::Admitted<casa_imaging_products::SavedRadialPrimaryBeam>>,
     /// Store whose observatory anchors the cube's LSRK beam selection.
     pub(crate) vla_selection_store: Option<usize>,
     /// An existing MEM model can stay on disk when the minor cycle leaves it unchanged.

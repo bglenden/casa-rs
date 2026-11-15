@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
-use casa_tables::{Table, TableOptions};
+use casa_ms::voltage_pattern::{VoltagePatternTable, radial_pattern};
 use casa_types::{
     RecordValue, ScalarValue, Value,
     quanta::{Quantity, Unit},
@@ -91,20 +91,6 @@ fn reserve(session: &Simulator, memory: u64) -> SimulatorResult<Reservation> {
     .map_err(SimulatorError::admission)
 }
 
-fn table_bytes(path: &Path) -> SimulatorResult<u64> {
-    let rows = Table::rows_on_disk(path).map_err(raised)? as u64;
-    let mut bytes = rows.saturating_mul(4096).saturating_add(64 << 10);
-    // Record fields and decoded scalars require more space than their wire
-    // representation. Only the two small VPManager tables are inspected.
-    for entry in std::fs::read_dir(path).map_err(raised)? {
-        let metadata = entry.map_err(raised)?.metadata().map_err(raised)?;
-        if metadata.is_file() {
-            bytes = bytes.saturating_add(metadata.len().saturating_mul(4));
-        }
-    }
-    Ok(bytes)
-}
-
 /// Preserve how VPManager resolved the record: standard VLA patterns carry
 /// band squint, while custom records choose common-beam mosaic kernels.
 #[derive(Clone)]
@@ -145,35 +131,14 @@ pub(super) fn squint_mount(session: &Simulator) -> SimulatorResult<bool> {
 }
 
 pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<ResolvedBeam> {
-    let _root_memory = reserve(session, table_bytes(path)?)?;
-    let table = Table::open(TableOptions::new(path)).map_err(raised)?;
-    let Some(Value::TableRef(reference)) = table.keywords().get("VPLIST_DEFAULTS") else {
-        return Err(raised("missing VPLIST_DEFAULTS subtable"));
-    };
-    let defaults_path = path.join(reference);
-    let _defaults_memory = reserve(session, table_bytes(&defaults_path)?)?;
-    let defaults = Table::open(TableOptions::new(defaults_path)).map_err(raised)?;
+    let _root_memory = reserve(
+        session,
+        VoltagePatternTable::reading_bytes(path).map_err(raised)?,
+    )?;
+    let table = VoltagePatternTable::open(path).map_err(raised)?;
+    let _defaults_memory = reserve(session, table.defaults_reading_bytes().map_err(raised)?)?;
     let telescope = session.observing_telescope();
-    let mut selected = None;
-    for row in 0..defaults.row_count() {
-        let name = defaults
-            .cell_accessor(row, "tel_and_anttype")
-            .and_then(|cell| cell.scalar())
-            .map_err(raised)?;
-        if matches!(name, ScalarValue::String(name) if name == telescope) {
-            let ScalarValue::Int32(index) = defaults
-                .cell_accessor(row, "vplistnum")
-                .and_then(|cell| cell.scalar())
-                .map_err(raised)?
-            else {
-                return Err(raised("VPLIST_DEFAULTS.vplistnum is not an integer"));
-            };
-            selected = Some(*index);
-        }
-    }
-    let selected =
-        selected.ok_or_else(|| raised(format!("no default for telescope {telescope}")))?;
-    if selected == -1 {
+    let Some(record) = table.default_record(telescope).map_err(raised)? else {
         return PrimaryBeam::for_telescope(telescope, session.reference_frequency_hz())
             .map(|pattern| ResolvedBeam {
                 pattern: BeamSource::Configured(pattern),
@@ -185,15 +150,7 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
                     "default simulation beam for {telescope} (#1297)"
                 ))
             });
-    }
-    let index = usize::try_from(selected).map_err(raised)?;
-    if index >= table.row_count() {
-        return Err(raised("VPLIST_DEFAULTS selects an absent beam"));
-    }
-    let record = table
-        .cell_accessor(index, "pbdescription")
-        .and_then(|cell| cell.record())
-        .map_err(raised)?;
+    };
     let squint = if session.squint
         && let Some(Value::Record(direction)) = record.get("squintdir")
     {
@@ -366,44 +323,5 @@ fn from_record(record: &RecordValue) -> SimulatorResult<PrimaryBeam> {
             "simulation voltage-pattern table shape {name} (#1297)"
         )));
     }
-    let ghz = quantity(record, "reffreq", "GHz")?;
-    let radius = quantity(record, "maxrad", "arcmin")? * ghz;
-    if !ghz.is_finite() || ghz <= 0. || !radius.is_finite() || radius <= 0. {
-        return Err(raised(
-            "reference frequency and support must be finite and positive",
-        ));
-    }
-    match name {
-        "AIRY" => {
-            let diameter = quantity(record, "dishdiam", "m")?;
-            let blockage = quantity(record, "blockagediam", "m")?;
-            if !diameter.is_finite()
-                || diameter <= 0.
-                || !blockage.is_finite()
-                || blockage < 0.
-                || blockage >= diameter
-            {
-                return Err(raised("invalid dish or blockage diameter"));
-            }
-            Ok(PrimaryBeam::Airy {
-                dish_diameter_m: diameter,
-                blockage_diameter_m: blockage,
-                maximum_radius_arcmin_ghz: radius,
-            })
-        }
-        "GAUSS" => {
-            let width = quantity(record, "halfwidth", "arcmin")? * ghz;
-            if !width.is_finite() || width <= 0. {
-                return Err(raised("Gaussian HWHM must be finite and positive"));
-            }
-            Ok(PrimaryBeam::Gaussian {
-                half_width_arcmin_ghz: width,
-                maximum_radius_arcmin_ghz: radius,
-                is_voltage: boolean(record, "isthisvp")?,
-            })
-        }
-        name => Err(SimulatorError::not_yet_implemented(format!(
-            "simulation voltage-pattern table shape {name} (#1297)"
-        ))),
-    }
+    radial_pattern(record).map_err(raised)
 }

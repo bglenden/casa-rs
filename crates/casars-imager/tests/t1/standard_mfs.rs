@@ -460,3 +460,50 @@ fn mem_stops_at_the_noise_threshold_before_solving() {
             .all(|&value| value == 0.0)
     );
 }
+
+#[test]
+fn a_saved_telescope_beam_changes_standard_and_w_primary_beam_correction() {
+    let table = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../casa-simulation/tests/data/sm_squint/custom_gaussian.vp");
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let pixel = [16, 16];
+    for (gridder, planes) in [("standard", 1), ("wproject", 8)] {
+        let controls = json!({
+            "gridder": gridder, "wprojplanes": planes, "niter": 0,
+            "write_pb": true, "pbcor": true, "pblimit": -0.2
+        });
+        let (_, default) = observation.image(&format!("{gridder}-default-beam"), controls.clone());
+        let mut saved = controls;
+        saved["vptable"] = json!(table);
+        let (_, supplied) = observation.image(&format!("{gridder}-supplied-beam"), saved);
+        let pb = supplied.get(".pb");
+        let extent = pb.pixels.dim().0;
+        let dx = (extent / 2 - pixel[0]) as f64 * CELL_ARCSEC;
+        let dy = (extent / 2 - pixel[1]) as f64 * CELL_ARCSEC;
+        let radius = dx.hypot(dy) / 60.0 * (pb.channel_frequency_hz(0) / 1e9);
+        // The CASA table stores a 10 arcmin power half-width and a 100
+        // arcmin outer radius at 1.4 GHz. PBMath1D takes the lower of the
+        // two enclosing Float samples.
+        let spacing = 140.0 / 9999.0;
+        let sampled_radius = (radius / spacing).floor() * spacing;
+        let expected = (-(sampled_radius / 14.0).powi(2)).exp2();
+        let actual = pb.pixels[pixel];
+        assert!(
+            (f64::from(actual) - expected).abs() <= 1e-6,
+            "{gridder}: {actual} vs {expected}"
+        );
+        assert!((actual - default.get(".pb").pixels[pixel]).abs() > 1e-3);
+        let image = supplied.get(".image").pixels[pixel];
+        assert!((supplied.get(".image.pbcor").pixels[pixel] - image / actual).abs() < 1e-6);
+        for name in [".psf", ".residual", ".sumwt"] {
+            for (a, b) in supplied
+                .get(name)
+                .pixels
+                .iter()
+                .zip(default.get(name).pixels.iter())
+            {
+                assert!((a - b).abs() < 1e-6, "{gridder} {name}: {a} vs {b}");
+            }
+        }
+    }
+}
