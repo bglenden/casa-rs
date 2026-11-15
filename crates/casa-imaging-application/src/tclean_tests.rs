@@ -1312,6 +1312,15 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
     let briggs = request(json!({"deconvolver":"mem", "weighting":"briggs", "robust":0.5}));
     assert_eq!(briggs.weighting, crate::Weighting::Briggs);
     briggs.validate().expect("Briggs-weighted MEM");
+    for weighting in ["uniform", "superuniform", "radial", "briggsabs"] {
+        request(json!({"deconvolver":"mem", "weighting":weighting, "noise":"1Jy"}))
+            .validate()
+            .unwrap_or_else(|error| panic!("MEM with {weighting}: {error}"));
+    }
+    assert_eq!(
+        refusal(json!({"deconvolver":"mem", "weighting":"briggsbwtaper"})).parameter,
+        "weighting"
+    );
     let seeded = request(json!({"deconvolver":"mem", "startmodel":"start.im"}));
     assert!(seeded.has_start_model());
     seeded.validate().expect("MEM with an explicit start model");
@@ -1335,7 +1344,6 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         json!({"specmode":"cube", "nchan":2}),
         json!({"gridder":"wproject", "wprojplanes":4}),
         json!({"facets":2}),
-        json!({"weighting":"uniform"}),
         json!({"savemodel":"virtual"}),
         json!({"vis":["a.ms","b.ms"]}),
         json!({"outlierfile":"outliers.txt"}),
@@ -1366,6 +1374,8 @@ fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
         .push(casa_imaging_model::PolarizationCoordinate::StokesQ);
     assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
     typed.stokes.pop();
+    typed.weighting = crate::Weighting::Briggsbwtaper;
+    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
     for calcpsf in [true, false] {
         for calcres in [true, false] {
             let mut continuing =
