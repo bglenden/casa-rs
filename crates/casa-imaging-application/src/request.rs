@@ -822,7 +822,7 @@ impl ImagingRequest {
         {
             return invalid(
                 "mask_image, mask_box",
-                "a sky polygon stands alone; an image mask list can combine an image with pixel regions covering all planes (#823)",
+                "a sky region stands alone; an image mask list can combine an image with pixel regions covering all planes (#823)",
             );
         }
         if !(0.0..1.0).contains(&self.pbmask) {

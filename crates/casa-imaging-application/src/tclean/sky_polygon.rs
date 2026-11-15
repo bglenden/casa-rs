@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::TcleanRefusal;
 
-/// An unqualified CRTF polygon, with angular direction vertices in radians.
+/// An unqualified CRTF sky region encoded as angular polygon vertices in radians.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct MaskPolygon {
     pub(crate) vertices: Arc<[[f64; 2]]>,
@@ -15,19 +15,28 @@ pub(crate) struct MaskPolygon {
     pub(crate) j2000: bool,
 }
 
-pub(super) fn parse_polygon(text: &str) -> Result<Option<MaskPolygon>, TcleanRefusal> {
+pub(super) fn parse_sky_region(text: &str) -> Result<Option<MaskPolygon>, TcleanRefusal> {
     let mut lines = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .peekable();
-    if !lines.clone().any(|line| line.starts_with("poly")) {
+    // A pixel rectangle keeps the existing CRTF pixel-box path.
+    let Some(shape) = lines.clone().find_map(|line| {
+        if line.starts_with("poly") {
+            Some("poly")
+        } else if line.starts_with("box") && !line.contains("pix") {
+            Some("box")
+        } else {
+            None
+        }
+    }) else {
         return Ok(None);
-    }
+    };
     let refuse = || {
         TcleanRefusal::not_yet(
             "mask",
-            "CRTF polygon masks take one sky polygon with the image's frame or coord=J2000",
+            "CRTF sky masks take one polygon or box with the image's frame or coord=J2000",
             823,
         )
     };
@@ -44,7 +53,7 @@ pub(super) fn parse_polygon(text: &str) -> Result<Option<MaskPolygon>, TcleanRef
     }
     let mut rest = lines
         .next()
-        .and_then(|line| line.strip_prefix("poly"))
+        .and_then(|line| line.strip_prefix(shape))
         .map(str::trim_start)
         .and_then(|line| line.strip_prefix('['))
         .ok_or_else(refuse)?;
@@ -85,7 +94,19 @@ pub(super) fn parse_polygon(text: &str) -> Result<Option<MaskPolygon>, TcleanRef
         }
         rest = tail.trim_start().strip_prefix(',').ok_or_else(refuse)?;
     }
-    if vertices.len() < 3 {
+    if shape == "box" {
+        let &[[longitude0, latitude0], [longitude1, latitude1]] = vertices.as_slice() else {
+            return Err(refuse());
+        };
+        // AnnRectBox uses AnnPolygon::_initCorners in the input sky frame.
+        // Projection of all four corners follows on the image grid.
+        vertices = vec![
+            [longitude0, latitude0],
+            [longitude1, latitude0],
+            [longitude1, latitude1],
+            [longitude0, latitude1],
+        ];
+    } else if vertices.len() < 3 {
         return Err(refuse());
     }
     Ok(Some(MaskPolygon {
@@ -105,8 +126,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn angular_box_supplies_four_corners_in_the_input_frame() {
+        let polygon = parse_sky_region("box [[128deg,-22deg],[124deg,-19deg]]")
+            .unwrap()
+            .unwrap();
+        let expected = [
+            [128.0_f64, -22.0],
+            [124.0, -22.0],
+            [124.0, -19.0],
+            [128.0, -19.0],
+        ];
+        assert_eq!(polygon.vertices.len(), expected.len());
+        for (index, (actual, desired)) in polygon.vertices.iter().zip(expected).enumerate() {
+            let desired = desired.map(f64::to_radians);
+            assert!(
+                (actual[0] - desired[0]).abs() < 1e-15,
+                "corner {index} longitude"
+            );
+            assert!(
+                (actual[1] - desired[1]).abs() < 1e-15,
+                "corner {index} latitude"
+            );
+        }
+        assert!(
+            parse_sky_region("box[[8pix,4pix],[20pix,19pix]]")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn crtf_longitude_respects_explicit_degrees_and_hours() {
-        let polygon = parse_polygon("poly [[10d00m00s,20deg],[00h40m00s,21deg],[11deg,20deg]]")
+        let polygon = parse_sky_region("poly [[10d00m00s,20deg],[00h40m00s,21deg],[11deg,20deg]]")
             .unwrap()
             .unwrap();
         for vertex in &polygon.vertices[..2] {

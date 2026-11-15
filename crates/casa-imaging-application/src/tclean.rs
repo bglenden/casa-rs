@@ -1268,7 +1268,7 @@ fn user_mask<'a>(entries: &[&'a str]) -> Result<UserMask<'a>, TcleanRefusal> {
 }
 
 fn region_mask<'a>(text: &str) -> Result<UserMask<'a>, TcleanRefusal> {
-    if let Some(polygon) = sky_polygon::parse_polygon(text)? {
+    if let Some(polygon) = sky_polygon::parse_sky_region(text)? {
         Ok(UserMask {
             polygon: Some(polygon),
             ..UserMask::default()
