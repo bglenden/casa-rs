@@ -6,7 +6,7 @@ use casars_imager::ImagerRunReport;
 use serde_json::{Value, json};
 
 use super::fixture::{
-    CELL_ARCSEC, Component, Observation, ProductContract, Products, SpectralAxis, box_sum,
+    CELL_ARCSEC, Component, Observation, Product, ProductContract, Products, SpectralAxis, box_sum,
     component_pixel, fit_psf_main_lobe, off_source_rms, peak,
 };
 
@@ -252,4 +252,70 @@ fn mem_uses_briggs_weighted_normal_images() {
             .iter()
             .any(|&value| value > 0.0)
     );
+}
+
+#[test]
+fn mem_updates_a_saved_model_only_when_it_solves() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let name = "mem-continuation";
+    let mut controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let (_, seed) = observation.image(name, controls.clone());
+    let model = seed.get(".model");
+    let old_metadata = model.image.misc_info();
+    assert!(old_metadata.get("ALPHA").is_some());
+    assert!(old_metadata.get("BETA").is_some());
+    let model_path = observation.scratch(&format!("{name}.model"));
+    let psf_path = observation.scratch(&format!("{name}.psf"));
+    let mut psf = casa_images::PagedImage::<f32>::open(&psf_path).unwrap();
+    // A small sidelobe marker distinguishes reading the saved PSF from
+    // forming the same PSF again.
+    let marker = 0.0125;
+    psf.put_slice(
+        &ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), marker),
+        &[0, 0, 0, 0],
+    )
+    .unwrap();
+    psf.save().unwrap();
+    drop(psf);
+
+    controls["calcpsf"] = json!(false);
+    controls["niter"] = json!(0);
+    let (_, refresh) = observation.image(name, controls.clone());
+    assert!(
+        !refresh.suffixes().contains(".model"),
+        "keep the saved model"
+    );
+    assert_eq!(
+        Product::open(&psf_path).pixels[[0, 0]],
+        marker,
+        "reuse the saved PSF"
+    );
+    let residual_error = refresh
+        .get(".residual")
+        .pixels
+        .iter()
+        .zip(seed.get(".residual").pixels.iter())
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        residual_error < 1e-5,
+        "predict the saved model before refreshing"
+    );
+    let saved_model = Product::open(&model_path);
+    assert_eq!(saved_model.pixels, model.pixels);
+    assert_eq!(saved_model.image.misc_info(), old_metadata);
+
+    controls["niter"] = json!(2);
+    let (_, resumed) = observation.image(name, controls);
+    assert!(
+        resumed.suffixes().contains(".model"),
+        "publish an updated model"
+    );
+    let new_model = resumed.get(".model");
+    assert_ne!(new_model.pixels, model.pixels);
+    assert!(new_model.image.misc_info().get("ALPHA").is_some());
+    assert_eq!(Product::open(&psf_path).pixels[[0, 0]], marker);
 }

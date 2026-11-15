@@ -444,12 +444,11 @@ impl PlannedContinuumGeneration {
         })
     }
 
-    /// Omit the channel-basis cube model that MVC has not created when its
-    /// initial convergence check stops before the first minor cycle. Other
-    /// product roles and the order and identifiers of retained members stay
-    /// unchanged.
+    /// Leave a single-term model unpublished. MVC may stop before it creates
+    /// a cube model, and a MEM continuation may leave its saved model
+    /// unchanged. Restoration still uses the model in the run's state.
     #[must_use]
-    pub fn without_uncreated_mvc_cube_model(mut self) -> Self {
+    pub fn without_single_term_model(mut self) -> Self {
         let mut members = self.members.into_vec();
         members.retain(|member| {
             !matches!(

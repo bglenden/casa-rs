@@ -1110,6 +1110,7 @@ fn deployment(
                     FrequencyRef::BARY | FrequencyRef::TOPO
                 ))
             .then_some(surveyed.reference),
+            saved_mem_model: request.deconvolver == Deconvolver::Mem && request.continued_model,
             writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
         },
         output_directories: domains
