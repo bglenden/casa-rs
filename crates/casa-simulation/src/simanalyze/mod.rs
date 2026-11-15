@@ -6,7 +6,7 @@ mod feather;
 pub(crate) mod imaging;
 mod inputs;
 mod plan;
-mod plots;
+pub(crate) mod plots;
 mod preflight;
 mod total_power;
 
@@ -76,7 +76,7 @@ impl Parameters<'_> {
 /// Invalid parameters, missing inputs, unsupported input metadata or selections,
 /// resource admission or native imaging/analysis failures.
 pub fn simanalyze(request: &SimanalyzeRequest) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, None)
+    run(request, None, false)
 }
 
 /// As [`simanalyze`], with complete native plot arrays in the caller's file.
@@ -87,12 +87,20 @@ pub fn simanalyze_with_plots(
     request: &SimanalyzeRequest,
     payload: &Path,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, Some(payload))
+    run(request, Some(payload), false)
+}
+
+pub(crate) fn simanalyze_append_plots(
+    request: &SimanalyzeRequest,
+    payload: &Path,
+) -> Result<SimanalyzeOutcome, SimobserveError> {
+    run(request, Some(payload), true)
 }
 
 fn run(
     request: &SimanalyzeRequest,
     payload: Option<&Path>,
+    append: bool,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
     let resources = request.resources;
     charge_process_caches(resources.host(), resources.policy()).map_err(failure)?;
@@ -193,7 +201,8 @@ fn run(
     }
     if graphics {
         if let Some(payload) = payload {
-            outcome.plots = plots::prepare(&parameters, &plan, &model_flat, payload, resources)?;
+            outcome.plots =
+                plots::prepare(&parameters, &plan, &model_flat, payload, resources, append)?;
         } else {
             outcome
                 .warnings

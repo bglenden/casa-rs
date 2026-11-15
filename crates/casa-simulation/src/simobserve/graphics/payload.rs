@@ -27,6 +27,18 @@ impl Payload {
         })
     }
 
+    pub(crate) fn append(path: &Path) -> Result<Self, SimobserveError> {
+        let file = OpenOptions::new()
+            .append(true)
+            .open(path)
+            .map_err(failure)?;
+        let bytes = file.metadata().map_err(failure)?.len();
+        Ok(Self {
+            file: BufWriter::new(file),
+            bytes,
+        })
+    }
+
     pub(crate) const fn position(&self) -> u64 {
         self.bytes
     }
@@ -82,6 +94,30 @@ pub(crate) fn view(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn composed_writers_keep_earlier_views_and_standalone_writers_replace() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut first = Payload::open(file.path()).unwrap();
+        let a = first.values([1., 2.]).unwrap();
+        assert_eq!(a.offset_bytes, 0);
+        first.finish().unwrap();
+        let mut second = Payload::append(file.path()).unwrap();
+        let b = second.values([3.]).unwrap();
+        assert_eq!(b.offset_bytes, 16);
+        assert_eq!(second.finish().unwrap(), 24);
+        let values = std::fs::read(file.path())
+            .unwrap()
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|bytes| f64::from_le_bytes(*bytes))
+            .collect::<Vec<_>>();
+        assert_eq!(values, [1., 2., 3.]);
+        let mut replacement = Payload::open(file.path()).unwrap();
+        replacement.values([4.]).unwrap();
+        assert_eq!(replacement.finish().unwrap(), 8);
+    }
 
     #[test]
     fn payload_bytes_are_little_endian_at_the_declared_offsets() {

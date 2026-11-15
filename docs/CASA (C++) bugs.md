@@ -900,6 +900,23 @@ clean matches iteration for iteration (900, model 1.7e-7). The mosaic of
 the same cube differs by 3.3e-3 under Briggs and agrees within 1e-6 under
 natural weighting.
 
+### simanalyze TP seed and feather PSF displays
+
+CASA 6.7.6.14 deletes `cell_asec` after SF TP gridding, then uses it to plot
+an interferometric PSF in the same invocation. A TP seed plus `showpsf=True`
+raises `UnboundLocalError`. The graphics oracle restores only that display
+scale from the selected image cell; native graphics use the PSF image's WCS.
+
+After feathering, CASA changes `imagename` to the feathered stem, then tries
+to open `<stem>.feather.psf`, which feather does not create. The oracle and
+native figures display the original synthesis PSF. Numerical imaging and
+feather calculations are unchanged.
+
+The simalma combination figure deletes existing flat and convolved model
+images as part of drawing its panels. Native plotting uses private copies
+for the summary calculation and preserves the numerical products, following
+the accepted simulation plan.
+
 ### simalma configuration names and zero-minute TP exposures
 
 CASA 6.7.6.14's `task_simalma.py` records an unknown cycle as integer `-1`

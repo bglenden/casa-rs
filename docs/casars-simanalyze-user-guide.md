@@ -21,9 +21,11 @@ simanalyze(project="m51c", image=True,
 
 The [parameter reference](reference/task-parameters.md) gives CASA's full
 signature and defaults. The single-array ALMA disk route is described in
-[the tutorial evidence](tutorial-parity/ppdisk-alma.md). Multi-array and
-total-power graphics follow the numerical work in the simulation programme;
-use `graphics="none"` for those calculation routes until that work lands.
+[the tutorial evidence](tutorial-parity/ppdisk-alma.md). Multi-array and total-power graphics use the same native plot documents
+as the single-array route. `graphics="file"`, `"screen"`, `"both"` and
+`"none"` select the host's output policy. TP has an analysis figure and
+no interferometric PSF. Feathered figures retain the original synthesis
+PSF and CASA's original figure-name prefix.
 
 ## Input selection and calculations
 

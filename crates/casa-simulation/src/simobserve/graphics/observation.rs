@@ -145,6 +145,14 @@ pub(crate) fn uv_panel(
         xmax = xmax.max(u.abs());
         ymax = ymax.max(v.abs());
     }
+    // Matplotlib expands an all-zero coordinate to +/-0.05, then adds
+    // its 5% autoscale margin. TP's zero-spacing panel follows that range.
+    if xmax == 0. {
+        xmax = 0.05;
+    }
+    if ymax == 0. {
+        ymax = 0.05;
+    }
     let mut output = panel(
         "uv",
         "",

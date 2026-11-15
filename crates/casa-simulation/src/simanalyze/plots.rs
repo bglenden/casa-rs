@@ -16,10 +16,15 @@ pub(super) fn prepare(
     model_flat: &Path,
     output: &Path,
     resources: SessionResources,
+    append: bool,
 ) -> Result<Vec<PlotFigure>, SimobserveError> {
-    let mut payload = Payload::open(output)?;
+    let mut payload = if append {
+        Payload::append(output)?
+    } else {
+        Payload::open(output)?
+    };
     let mut plots = Vec::new();
-    if p.flag("image") {
+    if p.flag("image") && !plan.inputs.synthesis.is_empty() {
         plots.push(image_figure(p, plan, model_flat, &mut payload, resources)?);
     }
     if p.flag("analyze")
@@ -93,9 +98,14 @@ fn analysis_figure(
         let frequency = model.coordinates().coordinate(2).reference_value()[0] / 1e9;
         selected.push(observation::uv_panel(&plan.ms, frequency, payload)?);
     }
-    if p.flag("showpsf") {
-        let mut psf = image::image_panel(&plan.file(".psf"), payload, resources, true)?;
-        psf.title = plan.file(".psf").display().to_string();
+    if p.flag("showpsf") && !plan.inputs.synthesis.is_empty() {
+        let path = if plan.stem.ends_with(".feather") {
+            plan.root.with_extension("psf")
+        } else {
+            plan.file(".psf")
+        };
+        let mut psf = image::image_panel(&path, payload, resources, true)?;
+        psf.title = path.display().to_string();
         selected.push(psf);
     }
     for (flag, path, statistics) in [
@@ -106,6 +116,9 @@ fn analysis_figure(
         ("showdifference", plan.file(".diff"), true),
         ("showfidelity", plan.file(".fidelity"), false),
     ] {
+        if flag == "showresidual" && !path.exists() {
+            continue;
+        }
         if p.flag(flag) {
             selected.push(statim(&path, statistics, payload, resources)?);
         }
@@ -142,7 +155,7 @@ fn analysis_figure(
     Ok(None)
 }
 
-fn statim(
+pub(crate) fn statim(
     path: &Path,
     statistics: bool,
     payload: &mut Payload,
@@ -171,7 +184,7 @@ fn range(panel: &PlotDocumentPanel) -> [f64; 2] {
         })
         .expect("image range")
 }
-fn identify(panel: &mut PlotDocumentPanel, index: usize) {
+pub(crate) fn identify(panel: &mut PlotDocumentPanel, index: usize) {
     panel.id = format!("panel-{index}");
     for (i, layer) in panel.layers.iter_mut().enumerate() {
         layer.id = format!("panel-{index}-layer-{i}");
@@ -181,8 +194,21 @@ fn identify(panel: &mut PlotDocumentPanel, index: usize) {
     }
 }
 fn figure(p: &Parameters<'_>, plan: &Plan, suffix: &str, document: PlotDocument) -> PlotFigure {
+    let stem = if !p.flag("image") || plan.inputs.synthesis.is_empty() {
+        plan.directory
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        plan.stem
+            .strip_suffix(".feather")
+            .unwrap_or(&plan.stem)
+            .to_owned()
+    };
     PlotFigure {
-        output_file: matches!(p.text("graphics"), "file" | "both").then(|| plan.file(suffix)),
+        output_file: matches!(p.text("graphics"), "file" | "both")
+            .then(|| plan.directory.join(format!("{stem}{suffix}"))),
         show: matches!(p.text("graphics"), "screen" | "both"),
         document,
     }
