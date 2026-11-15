@@ -426,7 +426,14 @@ impl MainRows {
                 .seconds_since(sample / batch.samples_per_time(), origin);
             let preserved = stored.and_then(|stored| stored.sample(sample));
             let sample_weights = weights.index_axis(Axis(0), sample);
-            let acquisition = acquired(sample_weights)?;
+            // A real MSv2 row can have NaN weights (for example after
+            // flagging). Its stored row, rather than its statistics, proves
+            // its existence and carries channel-varying spectra unchanged.
+            let acquisition = if stored.is_some() {
+                preserved.is_some()
+            } else {
+                acquired(sample_weights)?
+            };
             if !acquisition && self.padding == PaddingRows::Omitted {
                 continue;
             }

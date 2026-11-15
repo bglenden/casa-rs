@@ -129,10 +129,26 @@ def main(public, work, fixtures):
     tb.putcol("SIGMA", tb.getcol("SIGMA") * 1.7)
     tb.putcell("FLAG_ROW", 0, True)
     tb.putcell("FLAG", 0, np.zeros_like(tb.getcell("FLAG", 0)))
+    for column in ["WEIGHT", "WEIGHT_SPECTRUM"]:
+        value = tb.getcell(column, 0)
+        value[:] = np.nan
+        tb.putcell(column, 0, value)
+    # A stored spectrum need not equal its row summary in every channel.
+    value = tb.getcell("WEIGHT_SPECTRUM", 1)
+    value[:, 1] *= 1.5
+    tb.putcell("WEIGHT_SPECTRUM", 1, value)
     tb.close()
     tb.open(str(late / "OBSERVATION"), nomodify=False)
     tb.putcol("TIME_RANGE", tb.getcol("TIME_RANGE") + 1000.)
     tb.close()
+    for path in [inputs / "weighted.ms", late]:
+        tb.open(str(path))
+        centre = float(np.min(tb.getcol("TIME")))
+        tb.close()
+        tb.open(str(path / "FEED"), nomodify=False)
+        tb.putcol("TIME", np.repeat(centre, tb.nrows()))
+        tb.putcol("INTERVAL", np.repeat(2000., tb.nrows()))
+        tb.close()
     cases = {
         "pair": dict(vis=["twelve.ms", "seven.ms"], visweightscale=[4., .34]),
         "reversed": dict(vis=["seven.ms", "twelve.ms"], visweightscale=[.34, 4.]),

@@ -14,6 +14,45 @@ fn integer(row: &RecordValue, name: &str) -> Result<i32, ObservationError> {
     }
 }
 
+fn real(row: &RecordValue, name: &str) -> Result<f64, ObservationError> {
+    match row.get(name) {
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Ok(*value),
+        _ => Err(request_error(format!("FEED {name} is not float64"))),
+    }
+}
+
+/// MSFeedColumns::matchFeed extends a matching row when its old validity
+/// does not cover the incoming one. An old zero interval means unlimited.
+fn merge_validity(
+    output: &mut casa_tables::Table,
+    target: usize,
+    old: &RecordValue,
+    incoming: &RecordValue,
+) -> Result<(), ObservationError> {
+    let old_time = real(old, "TIME")?;
+    let new_time = real(incoming, "TIME")?;
+    let old_interval = real(old, "INTERVAL")?;
+    let old_half = if old_interval == 0.0 {
+        5.0e17
+    } else {
+        old_interval / 2.0
+    };
+    let new_half = real(incoming, "INTERVAL")? / 2.0;
+    let offset = new_time - old_time;
+    if -old_half <= offset - new_half && old_half >= offset + new_half {
+        return Ok(());
+    }
+    let centre = old_time + offset / 2.0;
+    let interval = 2.0 * (old_half.max(offset + new_half) - offset / 2.0);
+    for (column, value) in [("TIME", centre), ("INTERVAL", interval)] {
+        output
+            .row_accessor_mut()
+            .set_cell(target, column, Value::Scalar(ScalarValue::Float64(value)))
+            .map_err(storage)?;
+    }
+    Ok(())
+}
+
 pub(super) fn preserve(
     ms: &mut MeasurementSet,
     inputs: &[Input],
@@ -59,6 +98,7 @@ pub(super) fn preserve(
                 }
                 matched = true;
                 if *assigned {
+                    merge_validity(output, target, &target_row, row)?;
                     continue;
                 }
                 for column in ["TIME", "INTERVAL"] {

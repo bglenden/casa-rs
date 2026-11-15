@@ -16,6 +16,13 @@ ordering, omitting pointing, and raw flags/uncertainty spectra. HISTORY is
 task-specific and checked separately. Empty string vectors are treated as
 empty metadata.
 
+The weighted input pair also retains a real flagged row with NaN weights,
+varies one spectrum channel independently of its row summary, and has
+matching feeds whose overlapping 2000-second validity intervals are 1000
+seconds apart. CASA's reference keeps every row and merges feed coverage to
+3000 seconds. These cases cover the three findings from the implementation's
+single independent review.
+
 The simulated inputs also carry SIGMA_SPECTRUM. CASA scales the first input's
 SIGMA but omits its SIGMA_SPECTRUM scaling. The actual CASA references remain
 unaltered; a named correction records the first input's row count and weight

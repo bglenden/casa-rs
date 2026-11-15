@@ -13,10 +13,14 @@ concat(vis=["simulation.12m.ms", "simulation.7m.ms"],
 
 The simulation subset sorts inputs by their earliest integration, keeps each
 weight factor with its input, merges the standard catalogues, offsets scans,
-and writes every acquired MAIN row. It preserves pointing names, targets and
+and writes every stored MAIN row, including flagged rows with NaN weights.
+It preserves pointing names, targets and
 tracking flags, static feed validity, unused antennas' feeds, source-model
 records, separate row/element flags, stored sigma and uncertainty spectra.
-Weights multiply by their factor; sigma divides by its square root.
+Weights multiply by their factor; sigma divides by its square root. Stored
+spectra may vary by channel. Matching static feeds combine validity as CASA
+does. Both sigma representations scale for every input; CASA omits the first
+input's SIGMA_SPECTRUM scaling, a documented correction.
 
 An existing `concatvis` is the first input and is replaced atomically after
 the complete result is prepared. If it is also in `vis`, it must be the
@@ -40,7 +44,7 @@ The committed CASA fixtures exercise the public task and compare MAIN and
 every standard subtable, including independently changed sigma, raw row flags,
 pointing metadata and both input orders. They also check failed append
 preservation and unchanged input HISTORY. FEED row order is compared by its
-antenna/feed/window keys; longitudes modulo one turn; unspecified optional
+antenna/feed/window keys and SOURCE by source/window; longitudes modulo one turn; unspecified optional
 positions and empty provenance vectors as unstated metadata. A dangling CASA
 processor reference is corrected to -1, as described in
 [`CASA (C++) bugs.md`](CASA%20(C%2B%2B)%20bugs.md).
@@ -50,3 +54,15 @@ upstream concat tests 1 and 2. The recipe and independent comparison are in
 `scripts/concat_parity/`; the small fixture generator is `task_oracle.py`.
 The global-allocation law in `creation_plan_memory.rs` covers the production
 writer, including long pointing names and large source-model records.
+
+On the full CASA 6.7.6-14 inputs, direct native concatenation and both
+CASA/native append directions preserve all 443,772 m51c rows: DATA,
+CORRECTED_DATA, MODEL_DATA, weights, sigma, flags, UVW and time auxiliaries
+agree exactly. Upstream concat tests 1 and 2 retain 95,256 and 71,442 rows;
+DATA and weight spectra have normalized RMS 0, with sigma differences below
+1.2e-7 relative. Subtable values agree within direction/time rounding.
+
+The initial three-run serial release median for m51c was 2.19 s native and
+0.166 s CASA. This is a performance limitation: the existing bounded writer
+rewrites all inputs, while CASA copies the first MS and appends. Improving
+that creation/append path remains a non-blocking performance idea.
