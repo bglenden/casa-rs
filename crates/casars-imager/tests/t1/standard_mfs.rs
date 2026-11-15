@@ -2,6 +2,8 @@
 
 //! Standard-gridder MFS with point, multiscale and maximum-entropy solvers.
 
+use casa_coordinates::CoordinateModel;
+use casa_types::measures::direction::DirectionRef;
 use casars_imager::{ImagerCleanStopReason, ImagerRunReport};
 use serde_json::{Value, json};
 
@@ -129,6 +131,46 @@ pub(super) fn assert_recovers_the_point(
         "off-source residual RMS {residual_rms_jy} Jy, thermal {noise_jy} Jy"
     );
     (observation, summary, products)
+}
+
+/// CASA 6.7.6.14's ICRS conversion of the fixture's J2000 centre
+/// anchors the same sky while preserving the literal frame in the image.
+#[test]
+fn tclean_preserves_an_explicit_icrs_phase_centre() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let icrs = [-1.570_794_108_997_614_3, -0.401_423_821_764_203];
+    let phasecenter = format!("ICRS {}rad {}rad", icrs[0], icrs[1]);
+    let (_, products) = observation.image(
+        "fixed-icrs",
+        json!({"phasecenter": phasecenter, "niter": 0}),
+    );
+    let product = products.get(".image");
+    let CoordinateModel::Direction(direction) = product.image.coordinates().coordinate(0) else {
+        panic!("image coordinate 0 is not a direction coordinate");
+    };
+    assert_eq!(direction.direction_ref(), DirectionRef::ICRS);
+    for (actual, expected) in product
+        .image
+        .coordinates()
+        .coordinate(0)
+        .reference_value()
+        .iter()
+        .zip(icrs)
+    {
+        let difference = (actual - expected + std::f64::consts::PI)
+            .rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        assert!(
+            difference.abs() < 1e-12,
+            "ICRS reference {actual}, expected {expected}"
+        );
+    }
+    let (_, source_pixel, offset) = peak(&product.pixels);
+    assert_eq!(source_pixel, component_pixel(POINT));
+    assert!(
+        offset.iter().all(|value| value.abs() < 0.1),
+        "source offset {offset:?} px"
+    );
 }
 
 #[test]

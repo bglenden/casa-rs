@@ -176,7 +176,7 @@
     },
     "phasecenter": {
       "status": "Implemented",
-      "scope": "Numeric text is split into phasecenter_field; other text becomes phasecenter direction; empty means unset.",
+      "scope": "Numeric text selects the phase center field. An explicit J2000, B1950 or ICRS literal supplies the main image's frame and two angles. Empty text uses the selected field direction.",
       "evidence": [
         "signature",
         "reader"

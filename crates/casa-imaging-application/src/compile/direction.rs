@@ -17,6 +17,7 @@ use casa_imaging_products::PrimaryBeamCentres;
 use casa_ms::{EphemerisBudget, PhaseCentreEphemeris};
 use casa_observation::Catalogue;
 use casa_types::measures::{
+    MeasFrame,
     direction::{DirectionRef, MDirection},
     epoch::MEpoch,
     frequency::FrequencyRef,
@@ -74,8 +75,14 @@ pub(super) fn resolve_centre(
             latitude,
         ))
     };
-    let (law, ephemeris, main_direction) = match request.phasecenter.as_deref() {
-        None => {
+    let (law, ephemeris, main_direction) = match (
+        request.phasecenter.as_deref(),
+        request
+            .phasecenter
+            .as_deref()
+            .and_then(main_phase_center_reference),
+    ) {
+        (None, _) => {
             let field_direction = field_reference_direction(
                 survey,
                 field_id,
@@ -89,30 +96,15 @@ pub(super) fn resolve_centre(
                 field_direction,
             )
         }
-        Some(text)
-            if matches!(
-                text.split_ascii_whitespace().next(),
-                Some("J2000" | "B1950")
-            ) =>
-        {
-            let requested = parse_phase_center_direction(text)?;
-            stored_phase = MDirection::from_angles(
-                requested.longitude_rad(),
-                requested.latitude_rad(),
-                if requested.frame() == DirectionFrame::B1950 {
-                    DirectionRef::B1950
-                } else {
-                    DirectionRef::J2000
-                },
-            );
+        (Some(text), Some(reference)) => {
+            let [longitude, latitude] = parse_phase_center_angles(text)?;
+            stored_phase = MDirection::from_angles(longitude, latitude, reference);
             let frame =
                 engine.spectral_frame_observatory_direction(anchor_time, stored_phase.clone())?;
-            let converted = stored_phase.convert_to(DirectionRef::J2000, &frame)?;
-            let (longitude, latitude) = converted.as_angles();
-            let direction = SkyDirection::new(DirectionFrame::J2000, longitude, latitude);
+            let direction = j2000_phase_direction(&stored_phase, &frame)?;
             (PhaseCentreLaw::Fixed(direction), None, direction)
         }
-        Some("TRACKFIELD") => {
+        (Some("TRACKFIELD"), None) => {
             let ephemeris = PhaseCentreEphemeris::tracked_fields(
                 catalogue,
                 survey
@@ -127,7 +119,7 @@ pub(super) fn resolve_centre(
                 direction,
             )
         }
-        Some(text) => {
+        (Some(text), None) => {
             let ephemeris = named_ephemeris(text, survey, engine)?;
             let direction = ephemeris_direction(text, &ephemeris)?;
             (
@@ -397,9 +389,8 @@ fn field_reference_direction(
 }
 
 /// The image's reference direction and the frame it records: ICRS at the
-/// anchor time for a moving source, the field's stored direction in its
-/// own frame when the request names no centre, else the J2000 phase
-/// centre.
+/// anchor time for a moving source, or the original frame of an admitted
+/// literal or the selected field's stored direction for a fixed source.
 fn image_centre(
     request: &ImagingRequest,
     engine: &casa_ms::derived::engine::MsCalEngine,
@@ -415,12 +406,11 @@ fn image_centre(
             DirectionFrame::Icrs,
         ));
     }
-    let fixed_literal = request.phasecenter.as_deref().is_some_and(|text| {
-        matches!(
-            text.split_ascii_whitespace().next(),
-            Some("J2000" | "B1950")
-        )
-    });
+    let fixed_literal = request
+        .phasecenter
+        .as_deref()
+        .and_then(main_phase_center_reference)
+        .is_some();
     let centre = if (request.phasecenter.is_none() || fixed_literal)
         && matches!(
             stored_phase.refer(),
@@ -680,24 +670,61 @@ const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
     }
 }
 
-/// A CASA phase-centre literal `J2000/B1950 <lon> <lat>`, with sexagesimal,
-/// degree or radian angles.
+/// Express the fixed tracking direction in the planner's J2000 frame.
+fn j2000_phase_direction(
+    direction: &MDirection,
+    frame: &MeasFrame,
+) -> Result<SkyDirection, PrepareError> {
+    let converted = direction.convert_to(DirectionRef::J2000, frame)?;
+    let (longitude, latitude) = converted.as_angles();
+    Ok(SkyDirection::new(
+        DirectionFrame::J2000,
+        longitude,
+        latitude,
+    ))
+}
+
+/// The frame of a fixed literal in the main image's phasecenter. A bare
+/// ICRS token takes CASA's source-name route and is refused there.
+fn main_phase_center_reference(text: &str) -> Option<DirectionRef> {
+    let mut pieces = text.split_ascii_whitespace();
+    match pieces.next()? {
+        "J2000" => Some(DirectionRef::J2000),
+        "B1950" => Some(DirectionRef::B1950),
+        "ICRS" if pieces.next().is_some() => Some(DirectionRef::ICRS),
+        _ => None,
+    }
+}
+
+/// A fixed `J2000/B1950 <lon> <lat>` literal used by the existing alternate
+/// PSF and outlier paths, with sexagesimal, degree or radian angles.
 pub(super) fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, PrepareError> {
-    let parts = text.split_whitespace().collect::<Vec<_>>();
-    if parts.len() != 3 || !matches!(parts[0].to_ascii_uppercase().as_str(), "J2000" | "B1950") {
+    let frame = match text.split_whitespace().next() {
+        Some(frame) if frame.eq_ignore_ascii_case("J2000") => DirectionFrame::J2000,
+        Some(frame) if frame.eq_ignore_ascii_case("B1950") => DirectionFrame::B1950,
+        _ => {
+            return Err(PrepareError::PhaseCentreSyntax {
+                text: text.to_string(),
+            });
+        }
+    };
+    let [longitude, latitude] = parse_phase_center_angles(text)?;
+    Ok(SkyDirection::new(frame, longitude, latitude))
+}
+
+fn parse_phase_center_angles(text: &str) -> Result<[f64; 2], PrepareError> {
+    let mut parts = text.split_whitespace();
+    let (Some(_), Some(longitude), Some(latitude), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
         return Err(PrepareError::PhaseCentreSyntax {
             text: text.to_string(),
         });
-    }
-    Ok(SkyDirection::new(
-        if parts[0].eq_ignore_ascii_case("B1950") {
-            DirectionFrame::B1950
-        } else {
-            DirectionFrame::J2000
-        },
-        parse_phase_center_angle(parts[1], true)?,
-        parse_phase_center_angle(parts[2], false)?,
-    ))
+    };
+    Ok([
+        parse_phase_center_angle(longitude, true)?,
+        parse_phase_center_angle(latitude, false)?,
+    ])
 }
 
 fn parse_phase_center_angle(text: &str, longitude: bool) -> Result<f64, PrepareError> {
@@ -806,6 +833,33 @@ mod tests {
         let expected_dec = (40.0 + 55.0 / 60.0 + 58.543 / 3600.0) * std::f64::consts::PI / 180.0;
         assert!((direction.longitude_rad() - expected_ra).abs() < 1.0e-14);
         assert!((direction.latitude_rad() - expected_dec).abs() < 1.0e-14);
+    }
+
+    #[test]
+    fn an_explicit_icrs_phase_centre_is_a_fixed_main_direction() {
+        let text = "ICRS -1.0494884409453524rad 0.7108217103529783rad";
+        assert_eq!(main_phase_center_reference(text), Some(DirectionRef::ICRS));
+        assert_eq!(
+            parse_phase_center_angles(text).unwrap(),
+            [-1.0494884409453524, 0.7108217103529783],
+        );
+        let [longitude, latitude] = parse_phase_center_angles(text).unwrap();
+        let raw = MDirection::from_angles(longitude, latitude, DirectionRef::ICRS);
+        let tracking = j2000_phase_direction(&raw, &MeasFrame::new()).unwrap();
+        assert_eq!(tracking.frame(), DirectionFrame::J2000);
+        // CASA's J2000 direction that was converted to the ICRS literal.
+        let ra_error = (tracking.longitude_rad() + 1.0494882958398402 + std::f64::consts::PI)
+            .rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        assert!(ra_error.abs() < 1e-12);
+        assert!((tracking.latitude_rad() - 0.7108216989007741).abs() < 1e-12);
+        assert_eq!(main_phase_center_reference("ICRS"), None);
+        assert_eq!(main_phase_center_reference("ICRS "), None);
+        assert!(matches!(
+            parse_phase_center_angles("ICRS 19:59:28.500"),
+            Err(PrepareError::PhaseCentreSyntax { .. })
+        ));
+        assert!(parse_phase_center_direction(text).is_err());
     }
 
     #[test]
