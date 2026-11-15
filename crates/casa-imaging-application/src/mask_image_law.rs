@@ -42,11 +42,14 @@ impl Input {
         self.0.retained_bytes()
     }
 
-    /// Read the mask plane by plane into its plan.
+    /// Read the mask into its plan with optional pixel boxes before and after it.
     ///
     /// # Errors
     /// Pixel I/O or reprojection fails.
-    pub fn read(self) -> Result<ReconstructionMaskPlan, crate::PrepareError> {
-        self.0.read()
+    pub fn read(
+        self,
+        regions: [&[[i64; 4]]; 2],
+    ) -> Result<ReconstructionMaskPlan, crate::PrepareError> {
+        self.0.read(regions)
     }
 }

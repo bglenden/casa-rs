@@ -35,6 +35,7 @@ use casa_imaging_model::DirectionCoordinateSpec;
 use ndarray::{ArrayView2, ArrayViewD, Axis, Ix2};
 
 use super::PrepareError;
+use super::domains::paint_mask_box;
 
 /// The bound on the tiles a mask image's read caches, as a restart's CLEAN
 /// mask is read.
@@ -283,16 +284,25 @@ impl MaskImage {
     }
 
     /// The plan of the mask on the target grid: each source plane read and
-    /// its support reprojected, one plane at a time.
-    pub(crate) fn read(self) -> Result<ReconstructionMaskPlan, PrepareError> {
+    /// its support reprojected, one plane at a time. The pixel regions
+    /// before and after the image paint those same held planes.
+    pub(crate) fn read(
+        self,
+        [before, after]: [&[[i64; 4]]; 2],
+    ) -> Result<ReconstructionMaskPlan, PrepareError> {
         let held = self.held;
         let cells = self.target_size[0] * self.target_size[1];
-        let mut support = Vec::with_capacity(cells * held.count());
+        let mut support = vec![false; cells * held.count()];
         let sampling = self.sampling()?;
         for channel in 0..held.channels() {
             for stokes in 0..held.polarizations() {
                 let (start, shape) = self.axes.plane(channel, stokes);
-                let target = (&sampling, self.target_size, &mut support);
+                let offset = (channel * held.polarizations() + stokes) * cells;
+                let plane = &mut support[offset..offset + cells];
+                for bounds in before {
+                    paint_mask_box(plane, self.target_size, *bounds);
+                }
+                let target = (&sampling, self.target_size, &mut *plane);
                 match &self.image {
                     RealImage::Float32(image) => {
                         append_plane_support(image, &start, &shape, self.axes.direction, target)?;
@@ -300,6 +310,9 @@ impl MaskImage {
                     RealImage::Float64(image) => {
                         append_plane_support(image, &start, &shape, self.axes.direction, target)?;
                     }
+                }
+                for bounds in after {
+                    paint_mask_box(plane, self.target_size, *bounds);
                 }
             }
         }
@@ -362,7 +375,7 @@ pub(super) fn reproject_image_mask(
     target_size: [usize; 2],
     planes: TargetPlanes<'_>,
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
-    MaskImage::open(path, target, target_size, planes)?.read()
+    MaskImage::open(path, target, target_size, planes)?.read([&[], &[]])
 }
 
 /// Where the direction, Stokes and spectral axes of an image of `shape`
@@ -425,7 +438,7 @@ fn append_plane_support<T>(
     start: &[usize],
     shape: &[usize],
     direction: [usize; 2],
-    (sampling, target, support): (&MaskSampling, [usize; 2], &mut Vec<bool>),
+    (sampling, target, support): (&MaskSampling, [usize; 2], &mut [bool]),
 ) -> Result<(), PrepareError>
 where
     T: ImagePixel + Into<f64> + Copy,
@@ -443,29 +456,30 @@ where
             0.0
         }
     };
-    let positive = |value: f64| value.is_finite() && value > 0.0;
+    // fillMask adds the signed image to the accumulated 0/1 mask before
+    // thresholding. A selected pixel with image value -1 therefore clears.
+    let accumulate =
+        |selected, value: f64| value.is_finite() && value > if selected { -1.0 } else { 0.0 };
     let source_shape = [values.nrows(), values.ncols()];
     if matches!(sampling, MaskSampling::Aligned) {
-        for x in 0..target[0] {
-            for y in 0..target[1] {
-                support.push(positive(sample(x, y)));
+        for (x, row) in support.chunks_exact_mut(target[1]).enumerate() {
+            for (y, selected) in row.iter_mut().enumerate() {
+                *selected = accumulate(*selected, sample(x, y));
             }
         }
     } else {
-        for x in 0..target[0] {
-            for y in 0..target[1] {
+        for (x, row) in support.chunks_exact_mut(target[1]).enumerate() {
+            for (y, selected) in row.iter_mut().enumerate() {
                 let at = sampling.source_pixel([x, y], target[1]);
-                let value = linear_sample(source_shape, at, |i, j| Some(sample(i, j)));
-                support.push(value.is_some_and(|value| {
-                    // CASA's mask lattice stores Float before fillMask
-                    // thresholds it. Native Float64 masks keep their precision.
-                    if size_of::<T>() == size_of::<f32>() {
-                        let value = value as f32;
-                        value.is_finite() && value > 0.0
-                    } else {
-                        positive(value)
-                    }
-                }));
+                let value =
+                    linear_sample(source_shape, at, |i, j| Some(sample(i, j))).unwrap_or_default();
+                // CASA stores Float before thresholding. Float64 input keeps its precision.
+                let value = if size_of::<T>() == size_of::<f32>() {
+                    f64::from(value as f32)
+                } else {
+                    value
+                };
+                *selected = accumulate(*selected, value);
             }
         }
     }

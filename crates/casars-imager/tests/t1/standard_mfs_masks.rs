@@ -153,6 +153,70 @@ fn mem_uses_the_support_in_a_user_mask_image() {
 }
 
 #[test]
+fn mask_image_and_regions_follow_casa_list_order() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let [x, y] = component_pixel(POINT);
+    observation.image(
+        "image-mask-seed",
+        json!({
+            "deconvolver": "hogbom", "niter": 1,
+            "mask": format!("{},{},{},{}", x - 3, y - 3, x + 2, y + 2),
+        }),
+    );
+    let path = observation.scratch("image-mask-seed.mask");
+    let mut image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    for (column, value) in [(x + 3, -1.0), (x + 4, -0.5)] {
+        let pixel = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1, 1, 1, 1]), value);
+        image.put_slice(&pixel, &[column, y + 2, 0, 0]).unwrap();
+    }
+    image.save().unwrap();
+    drop(image);
+
+    let region = format!(
+        "box[[{}pix,{}pix],[{}pix,{}pix]]",
+        x + 1,
+        y + 1,
+        x + 4,
+        y + 4,
+    );
+    let file = observation.scratch("extension.crtf");
+    std::fs::write(&file, format!("#CRTFv0\n{region}\n")).unwrap();
+    for (name, entries, image_last) in [
+        ("mask-file-after-image", json!([path, file]), false),
+        ("mask-inline-before-image", json!([region, path]), true),
+    ] {
+        let (_, products) = observation.image(
+            name,
+            json!({"deconvolver": "hogbom", "niter": 2, "mask": entries}),
+        );
+        let mask = &products.get(".mask").pixels;
+        for ((i, j), value) in mask.indexed_iter() {
+            let image_support = (x - 3..=x + 2).contains(&i) && (y - 3..=y + 2).contains(&j);
+            let region_support = (x + 1..=x + 4).contains(&i) && (y + 1..=y + 4).contains(&j);
+            // CASA adds the signed mask to the current 0/1 support. -1
+            // clears an earlier region pixel, while -0.5 leaves it in.
+            let cancelled = image_last && (i, j) == (x + 3, y + 2);
+            assert_eq!(
+                *value,
+                f32::from((image_support || region_support) && !cancelled),
+                "{name} at [{i}, {j}]"
+            );
+        }
+        assert_model_inside(&products.get(".model").pixels, mask);
+    }
+    let Err(reason) = observation.try_image(
+        "mask-range-with-image",
+        json!({"niter": 1, "mask": [path, format!("{region}, range=[0pix,0pix]")]}),
+    ) else {
+        panic!("a ranged region in a mask list is still unsupported");
+    };
+    assert!(
+        reason.contains("pixel regions covering all planes (#823)"),
+        "{reason}"
+    );
+}
+
+#[test]
 fn box_mask_confines_the_model_and_leaves_the_masked_out_source() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
     let [px, py] = component_pixel(POINT);

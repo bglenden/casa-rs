@@ -120,7 +120,8 @@ fn measure(
     channels: usize,
     polarizations: usize,
     target: Option<DirectionCoordinateSpec>,
-) -> (ReconstructionMaskPlan, String, u64) {
+    regions: [&[[i64; 4]]; 2],
+) -> (ReconstructionMaskPlan, String, u64, u64) {
     let mut input = Input::open(path, channels, polarizations).unwrap();
     if let Some(target) = target {
         input = input.with_target_direction(target);
@@ -131,7 +132,7 @@ fn measure(
     let baseline = LIVE.load(Ordering::Relaxed);
     BASELINE.store(baseline, Ordering::Relaxed);
     MEASURING.store(true, Ordering::Relaxed);
-    let plan = input.read().unwrap();
+    let plan = input.read(regions).unwrap();
     MEASURING.store(false, Ordering::Relaxed);
     let peak = PEAK.load(Ordering::Relaxed);
     let held = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
@@ -142,7 +143,7 @@ fn measure(
     if held > retained {
         breaches += &format!("{}: plan held {held}, kept {retained}", path.display());
     }
-    (plan, breaches, reading)
+    (plan, breaches, reading, peak)
 }
 
 /// A cube Stokes I mask of 32 channels read onto a full-polarization cube
@@ -161,7 +162,7 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
     let continuum = root.path().join("continuum-iquv.mask");
     write_mask(&continuum, 4, 1, |index| index[0] < 32 * (index[2] + 1));
     let mut breaches = String::new();
-    let (plan, breach, _) = measure(&cube, channels, 4, None);
+    let (plan, breach, _, _) = measure(&cube, channels, 4, None, [&[], &[]]);
     breaches += &breach;
     let ReconstructionMaskPlan::Reprojected {
         planes, support, ..
@@ -175,7 +176,7 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
         let count = plane.iter().filter(|set| **set).count();
         assert_eq!(count, (16 + 4 * channel) * 64, "channel {channel}");
     }
-    let (plan, breach, aligned) = measure(&continuum, 8, 4, None);
+    let (plan, breach, aligned, _) = measure(&continuum, 8, 4, None, [&[], &[]]);
     breaches += &breach;
     let ReconstructionMaskPlan::Reprojected {
         planes, support, ..
@@ -204,12 +205,33 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 90.0],
     );
-    let (plan, breach, mapped) = measure(&continuum, 8, 4, Some(target));
+    let (plan, breach, mapped, mapped_peak) = measure(&continuum, 8, 4, Some(target), [&[], &[]]);
     breaches += &breach;
     assert_eq!(
         mapped - aligned,
         (SIDE * SIDE * size_of::<[f64; 2]>()) as u64
     );
     assert!(matches!(plan, ReconstructionMaskPlan::Reprojected { .. }));
+    let left = SIDE as i64 - 2;
+    let boxes = [&[[left, 2, left, 2]][..], &[[left, 4, left, 4]][..]];
+    let (plan, breach, mixed, mixed_peak) = measure(&continuum, 8, 4, Some(target), boxes);
+    breaches += &breach;
+    assert_eq!(mixed, mapped);
+    assert!(
+        mixed_peak <= mapped_peak,
+        "mixed mask heap peaked at {mixed_peak} bytes, compared with {mapped_peak} for the image"
+    );
+    let ReconstructionMaskPlan::Reprojected {
+        planes, support, ..
+    } = plan
+    else {
+        panic!("a mask image is reprojected");
+    };
+    assert_eq!(planes, MaskPlanes::new(1, 4).unwrap());
+    assert_eq!(support.len(), planes.count() * SIDE * SIDE);
+    for plane in support.as_chunks::<{ SIDE * SIDE }>().0 {
+        assert!(plane[(SIDE - 2) * SIDE + 2]);
+        assert!(plane[(SIDE - 2) * SIDE + 4]);
+    }
     assert!(breaches.is_empty(), "{breaches}");
 }

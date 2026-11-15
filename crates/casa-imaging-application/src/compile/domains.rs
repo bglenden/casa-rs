@@ -46,6 +46,8 @@ pub(super) enum DomainMask {
         path: PathBuf,
         /// Limit MEM to the shared tangent grid verified for image-mask import (#823).
         require_shared_tangent_grid: bool,
+        /// Inclusive pixel boxes before and after the image in the mask list.
+        regions: [Vec<[i64; 4]>; 2],
     },
     /// Support over the domain's own grid: each plane x-major, plane after
     /// plane (channel-major), shared along an axis of one plane.
@@ -298,10 +300,17 @@ fn request_mask(
             },
             previous: None,
         },
-        (UseMask::User, Some(path)) => named(DomainMask::Image {
-            path: path.clone(),
-            require_shared_tangent_grid: request.deconvolver == crate::Deconvolver::Mem,
-        }),
+        (UseMask::User, Some(path)) => {
+            let (before, after) = request
+                .mask_box
+                .split_at(request.mask_regions_before_image.unwrap_or(0));
+            named(DomainMask::Image {
+                path: path.clone(),
+                require_shared_tangent_grid: request.deconvolver == crate::Deconvolver::Mem,
+                regions: [before, after]
+                    .map(|boxes| boxes.iter().map(|region| region.corners).collect()),
+            })
+        }
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
@@ -357,22 +366,32 @@ fn channel_box_support(
 ) -> Arc<[bool]> {
     let plane = nx * ny;
     let mut support = vec![false; plane * channels];
+    for (corners, span) in boxes {
+        for channel in span.clone().take_while(|channel| *channel < channels) {
+            let channel_support = &mut support[channel * plane..(channel + 1) * plane];
+            paint_mask_box(channel_support, [nx, ny], *corners);
+        }
+    }
+    support.into()
+}
+
+/// Paint an inclusive pixel box, clipped to the target plane.
+pub(super) fn paint_mask_box(
+    support: &mut [bool],
+    [nx, ny]: [usize; 2],
+    [x0, y0, x1, y1]: [i64; 4],
+) {
     let clip = |a: i64, b: i64, extent: usize| {
         let (low, high) = (a.min(b).max(0), a.max(b).min(extent as i64 - 1));
         (low <= high).then_some(low as usize..=high as usize)
     };
-    for ([x0, y0, x1, y1], span) in boxes {
-        let (Some(xs), Some(ys)) = (clip(*x0, *x1, nx), clip(*y0, *y1, ny)) else {
-            continue;
-        };
-        for channel in span.clone().filter(|channel| *channel < channels) {
-            for x in xs.clone() {
-                let row = channel * plane + x * ny;
-                support[row + ys.start()..=row + ys.end()].fill(true);
-            }
-        }
+    let (Some(xs), Some(ys)) = (clip(x0, x1, nx), clip(y0, y1, ny)) else {
+        return;
+    };
+    for x in xs {
+        let row = x * ny;
+        support[row + ys.start()..=row + ys.end()].fill(true);
     }
-    support.into()
 }
 
 /// The channels `first..=last` a spectral range masks on an image of
@@ -468,6 +487,7 @@ fn mask_plan(
         DomainMask::Image {
             path,
             require_shared_tangent_grid,
+            regions,
         } => {
             let coordinate_of = |kind| {
                 domain
@@ -505,7 +525,7 @@ fn mask_plan(
                 },
             )?;
             let retained = image.retained_bytes();
-            let plan = image.read()?;
+            let plan = image.read(regions.each_ref().map(Vec::as_slice))?;
             charge.retain(retained);
             resident.join(charge);
             plan

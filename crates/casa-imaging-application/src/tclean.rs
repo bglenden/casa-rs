@@ -130,7 +130,7 @@ impl ImagingRequest {
 fn tclean_parameter(field: &str) -> &str {
     match field {
         "phasecenter_field" => "phasecenter",
-        "mask_box" | "mask_image" | "explicit_empty_mask" => "mask",
+        "mask_box" | "mask_image" | "mask_regions_before_image" | "explicit_empty_mask" => "mask",
         "minor_cycle_length" => "cycleniter",
         other => other,
     }
@@ -1117,7 +1117,14 @@ impl<'a> Tclean<'a> {
                 boxes.join(";")
             },
         );
-        self.set("mask_image", image.unwrap_or("none"));
+        if let Some(MaskImageEntry { path, before }) = image {
+            self.set("mask_image", path);
+            if !boxes.is_empty() {
+                self.set("mask_regions_before_image", before);
+            }
+        } else {
+            self.set("mask_image", "none");
+        }
         Ok(())
     }
 
@@ -1174,13 +1181,43 @@ fn velocity_convention(text: &str) -> Result<&'static str, TcleanRefusal> {
     }
 }
 
-/// tclean's user mask: CRTF pixel boxes (`box[[10pix,10pix],[20pix,20pix]]`,
-/// inclusive), in the text or in a region file, or casa-rs's `x0,y0,x1,y1`
-/// boxes, as `x0,y0,x1,y1` texts, or one mask image. The items are read as
-/// one text, so that a command line's comma-separated list (`--mask
-/// box[[1pix,1pix],[4pix,4pix]]`) reads as the regions it names. A mask
-/// image is a directory, as every CASA image is; a file is a region file.
-fn user_mask<'a>(entries: &[&'a str]) -> Result<(Vec<String>, Option<&'a str>), TcleanRefusal> {
+struct MaskImageEntry<'a> {
+    path: &'a str,
+    before: usize,
+}
+
+/// tclean's user mask: pixel regions, a CASA mask image, or both. The
+/// image's index in the compiled boxes preserves the list order for
+/// signed mask values. Consecutive text fragments are joined because
+/// the CLI can split a region at its commas.
+fn user_mask<'a>(
+    entries: &[&'a str],
+) -> Result<(Vec<String>, Option<MaskImageEntry<'a>>), TcleanRefusal> {
+    let multiple_images = || TcleanRefusal::not_yet("mask", "more than one mask image", 980);
+    if entries.len() > 1
+        && let Some((index, &image)) = entries
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| std::path::Path::new(entry).is_dir())
+    {
+        let after = &entries[index + 1..];
+        if after
+            .iter()
+            .any(|entry| std::path::Path::new(entry).is_dir())
+        {
+            return Err(multiple_images());
+        }
+        let mut boxes = mask_region_entries(&entries[..index])?;
+        let before = boxes.len();
+        boxes.extend(mask_region_entries(after)?);
+        return Ok((
+            boxes,
+            Some(MaskImageEntry {
+                path: image,
+                before,
+            }),
+        ));
+    }
     let text = entries.join(",");
     if text.contains('[') {
         return Ok((crtf_pixel_boxes(&text)?, None));
@@ -1191,18 +1228,32 @@ fn user_mask<'a>(entries: &[&'a str]) -> Result<(Vec<String>, Option<&'a str>), 
     match entries {
         [] => Ok((Vec::new(), None)),
         [region] if std::path::Path::new(region).is_file() => {
-            let text = std::fs::read_to_string(region).map_err(|error| {
-                TcleanRefusal::new("mask", format!("read the region file {region:?}: {error}"))
-            })?;
-            Ok((crtf_pixel_boxes(&text)?, None))
+            Ok((crtf_pixel_boxes(&read_region_file(region)?)?, None))
         }
-        [image] => Ok((Vec::new(), Some(image))),
-        _ => Err(TcleanRefusal::not_yet(
-            "mask",
-            "more than one mask image",
-            980,
-        )),
+        [path] => Ok((Vec::new(), Some(MaskImageEntry { path, before: 0 }))),
+        _ => Err(multiple_images()),
     }
+}
+
+fn read_region_file(path: &str) -> Result<String, TcleanRefusal> {
+    std::fs::read_to_string(path).map_err(|error| {
+        TcleanRefusal::new("mask", format!("read the region file {path:?}: {error}"))
+    })
+}
+
+fn mask_region_entries(entries: &[&str]) -> Result<Vec<String>, TcleanRefusal> {
+    let mut text = String::new();
+    for entry in entries {
+        if std::path::Path::new(entry).is_file() {
+            text.push('\n');
+            text.push_str(&read_region_file(entry)?);
+            text.push('\n');
+        } else {
+            text.push_str(entry);
+            text.push(',');
+        }
+    }
+    crtf_pixel_boxes(&text)
 }
 
 /// casa-rs's `x0,y0,x1,y1` boxes separated by `;`, if `text` is that.
