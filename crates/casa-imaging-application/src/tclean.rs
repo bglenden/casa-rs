@@ -1117,7 +1117,7 @@ impl<'a> Tclean<'a> {
                 boxes.join(";")
             },
         );
-        if let Some((path, before)) = image {
+        if let Some(MaskImageEntry { path, before }) = image {
             self.set("mask_image", path);
             if !boxes.is_empty() {
                 self.set("mask_regions_before_image", before);
@@ -1181,13 +1181,18 @@ fn velocity_convention(text: &str) -> Result<&'static str, TcleanRefusal> {
     }
 }
 
+struct MaskImageEntry<'a> {
+    path: &'a str,
+    before: usize,
+}
+
 /// tclean's user mask: pixel regions, a CASA mask image, or both. The
 /// image's index in the compiled boxes preserves the list order for
 /// signed mask values. Consecutive text fragments are joined because
 /// the CLI can split a region at its commas.
 fn user_mask<'a>(
     entries: &[&'a str],
-) -> Result<(Vec<String>, Option<(&'a str, usize)>), TcleanRefusal> {
+) -> Result<(Vec<String>, Option<MaskImageEntry<'a>>), TcleanRefusal> {
     let multiple_images = || TcleanRefusal::not_yet("mask", "more than one mask image", 980);
     if entries.len() > 1
         && let Some((index, &image)) = entries
@@ -1205,7 +1210,13 @@ fn user_mask<'a>(
         let mut boxes = mask_region_entries(&entries[..index])?;
         let before = boxes.len();
         boxes.extend(mask_region_entries(after)?);
-        return Ok((boxes, Some((image, before))));
+        return Ok((
+            boxes,
+            Some(MaskImageEntry {
+                path: image,
+                before,
+            }),
+        ));
     }
     let text = entries.join(",");
     if text.contains('[') {
@@ -1219,7 +1230,7 @@ fn user_mask<'a>(
         [region] if std::path::Path::new(region).is_file() => {
             Ok((crtf_pixel_boxes(&read_region_file(region)?)?, None))
         }
-        [image] => Ok((Vec::new(), Some((image, 0)))),
+        [path] => Ok((Vec::new(), Some(MaskImageEntry { path, before: 0 }))),
         _ => Err(multiple_images()),
     }
 }

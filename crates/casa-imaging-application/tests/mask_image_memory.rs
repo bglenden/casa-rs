@@ -228,7 +228,8 @@ fn a_mask_image_is_read_plane_by_plane_within_its_charge() {
         panic!("a mask image is reprojected");
     };
     assert_eq!(planes, MaskPlanes::new(1, 4).unwrap());
-    for plane in support.chunks_exact(SIDE * SIDE) {
+    assert_eq!(support.len(), planes.count() * SIDE * SIDE);
+    for plane in support.as_chunks::<{ SIDE * SIDE }>().0 {
         assert!(plane[(SIDE - 2) * SIDE + 2]);
         assert!(plane[(SIDE - 2) * SIDE + 4]);
     }
