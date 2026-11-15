@@ -356,6 +356,7 @@ pub(crate) fn run(
                 mvc.and_then(|view| view.start)
                     .is_some_and(|start| start.projection_beams.is_some()),
             )
+            .map_err(|error| run.explain_empty_taylor_pass(error))
         },
     )?;
     let mut outcome = ImagingOutcome::initial(major, &run);

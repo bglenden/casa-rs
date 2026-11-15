@@ -68,6 +68,15 @@ pub(crate) enum ImagingError {
     /// A minor cycle failed.
     #[error(transparent)]
     Minor(#[from] MinorCycleRunError),
+    /// The ordinary Taylor flag rule discarded every channel because
+    /// the first selected correlation is fully flagged.
+    #[error(
+        "MT-MFS cannot image this selection: the first selected correlation {correlation:?} is fully flagged. Ordinary Stokes imaging discards a channel when any selected correlation is flagged. Image the surviving correlations in a separate MeasurementSet."
+    )]
+    FirstTaylorCorrelationFlagged {
+        /// The first selected correlation.
+        correlation: casa_types::Correlation,
+    },
     /// A normal state could not be assembled.
     #[error(transparent)]
     Normal(#[from] NormalStateError),

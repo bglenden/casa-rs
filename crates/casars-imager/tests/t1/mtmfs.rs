@@ -686,3 +686,68 @@ fn check_signed_taylor_moments(gridder: &str) {
         }
     }
 }
+
+/// An entirely flagged first hand removes every channel under the ordinary
+/// Stokes flag rule, even when the other three hands have useful data.
+#[test]
+fn taylor_imaging_explains_the_fully_flagged_first_correlation() {
+    use casa_ms::MeasurementSet;
+    use casa_types::{ArrayValue, Value};
+
+    let observation = Observation::synthesise_polarized(
+        Setup::vla_q_band(4),
+        PolarizationSetup {
+            basis: PolarizationBasis::Linear,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.2, 0.3, 0.4],
+        },
+        &[("point", POINT)],
+    );
+    let controls = json!({"deconvolver": "mtmfs", "nterms": 2, "stokes": "IQUV"});
+    let (_, images) = observation.image("all-hands", controls.clone());
+    assert!(abs_peak(&stokes_plane(&images.get(".image.tt0").values(), 0)) > 0.0);
+
+    let change_flags = |correlation: Option<usize>| {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+        for row in 0..ms.row_count() {
+            let ArrayValue::Bool(mut flags) = ms.flag_column().get(row).unwrap().clone() else {
+                panic!("boolean FLAG");
+            };
+            flags.fill(correlation.is_none());
+            if let Some(correlation) = correlation {
+                flags
+                    .index_axis_mut(ndarray::Axis(0), correlation)
+                    .fill(true);
+            }
+            ms.main_table_mut()
+                .cell_accessor_mut(row, "FLAG")
+                .unwrap()
+                .set(Value::Array(ArrayValue::Bool(flags)))
+                .unwrap();
+        }
+        ms.save().unwrap();
+    };
+    change_flags(Some(0));
+    let error = observation
+        .try_image("first-flagged", controls.clone())
+        .err()
+        .expect("ordinary Stokes imaging must refuse");
+    assert!(
+        error.contains("first selected correlation XX is fully flagged"),
+        "{error}"
+    );
+    assert!(!observation.scratch("first-flagged.psf.tt0").exists());
+
+    for (name, correlation) in [("last-flagged", Some(3)), ("all-flagged", None)] {
+        change_flags(correlation);
+        let other = observation
+            .try_image(name, controls.clone())
+            .err()
+            .expect("the joint flag rule rejects every channel");
+        assert!(
+            other.contains("the major-cycle pass placed no sample"),
+            "{other}"
+        );
+        assert!(!other.contains("first selected correlation"), "{other}");
+    }
+}
