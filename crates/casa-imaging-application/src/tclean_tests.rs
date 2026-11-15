@@ -359,6 +359,8 @@ fn casa_values_become_the_request_casa_rs_runs() {
         ("ZEA", Projection::Zea),
         ("CAR", Projection::Car),
         ("SFL", Projection::Sfl),
+        ("PAR", Projection::Par),
+        ("MOL", Projection::Mol),
         ("MER", Projection::Mer),
         ("AIT", Projection::Ait),
     ] {
@@ -650,10 +652,17 @@ fn values_casa_rs_cannot_honour_are_refused() {
 }
 
 #[test]
-fn zpn_requires_a_nonzero_coefficient_in_casa() {
-    let error = refusal(json!({ "projection": "ZPN" }));
-    assert_eq!(error.parameter, "projection");
-    assert!(error.message.contains("ZPN requires a nonzero coefficient"));
+fn fixed_projection_parameters_that_casa_refuses_are_invalid() {
+    for (name, reason) in [
+        ("ZPN", "ZPN requires a nonzero coefficient"),
+        ("CYP", "CYP requires a nonzero cylinder radius"),
+        ("CEA", "CEA requires a positive scale parameter"),
+    ] {
+        let error = refusal(json!({ "projection": name }));
+        assert_eq!(error.parameter, "projection");
+        assert!(error.message.contains("Invalid parameter value"), "{error}");
+        assert!(error.message.contains(reason), "{error}");
+    }
 }
 
 #[test]

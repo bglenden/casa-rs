@@ -43,6 +43,10 @@ pub enum Projection {
     Car,
     /// Sanson-Flamsteed, `SFL`.
     Sfl,
+    /// Parabolic, `PAR`.
+    Par,
+    /// Mollweide equal-area, `MOL`.
+    Mol,
     /// Mercator, `MER`.
     Mer,
     /// Hammer-Aitoff, `AIT`.
@@ -67,6 +71,8 @@ impl Projection {
             "ZEA" => Self::Zea,
             "CAR" => Self::Car,
             "SFL" => Self::Sfl,
+            "PAR" => Self::Par,
+            "MOL" => Self::Mol,
             "MER" => Self::Mer,
             "AIT" => Self::Ait,
             _ => return None,
@@ -90,6 +96,8 @@ impl Projection {
             Self::Zea => ProjectionType::ZEA,
             Self::Car => ProjectionType::CAR,
             Self::Sfl => ProjectionType::SFL,
+            Self::Par => ProjectionType::PAR,
+            Self::Mol => ProjectionType::MOL,
             Self::Mer => ProjectionType::MER,
             Self::Ait => ProjectionType::AIT,
         };
@@ -133,6 +141,8 @@ impl Projection {
             Self::Zea,
             Self::Car,
             Self::Sfl,
+            Self::Par,
+            Self::Mol,
             Self::Mer,
             Self::Ait,
         ]
@@ -153,11 +163,14 @@ impl Projection {
 
     /// Whether the projection is zenithal: its reference direction is its
     /// native pole, so the native pole's longitude is all a pole states.
-    /// The others (cylindrical `CAR` and `MER`, pseudo-cylindrical `SFL`,
-    /// conventional `AIT`) put it on the native equator.
+    /// Cylindrical and pseudocylindrical projections and `AIT` put
+    /// it on the native equator.
     #[must_use]
     pub const fn zenithal(self) -> bool {
-        !matches!(self, Self::Car | Self::Sfl | Self::Mer | Self::Ait)
+        !matches!(
+            self,
+            Self::Car | Self::Sfl | Self::Par | Self::Mol | Self::Mer | Self::Ait
+        )
     }
 }
 
@@ -191,7 +204,7 @@ mod tests {
     use super::Projection;
     use crate::geometry::{DirectionCoordinateSpec, DirectionFrame, SkyDirection};
 
-    const ALL: [Projection; 13] = [
+    const ALL: [Projection; 15] = [
         Projection::Sin,
         Projection::Ncp,
         Projection::Azp,
@@ -203,6 +216,8 @@ mod tests {
         Projection::Zea,
         Projection::Car,
         Projection::Sfl,
+        Projection::Par,
+        Projection::Mol,
         Projection::Mer,
         Projection::Ait,
     ];
@@ -311,7 +326,9 @@ mod tests {
         assert_eq!(Projection::from_casa_name("AZP"), Some(Projection::Azp));
         assert_eq!(Projection::from_casa_name("SZP"), Some(Projection::Szp));
         assert_eq!(Projection::from_casa_name("AIR"), Some(Projection::Air));
-        for other in ["tan", " TAN", "ncp", "azp", "air", "szp"] {
+        assert_eq!(Projection::from_casa_name("PAR"), Some(Projection::Par));
+        assert_eq!(Projection::from_casa_name("MOL"), Some(Projection::Mol));
+        for other in ["tan", " TAN", "ncp", "azp", "air", "szp", "par", "mol"] {
             assert_eq!(Projection::from_casa_name(other), None, "{other:?}");
         }
     }
