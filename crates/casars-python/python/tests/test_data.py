@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from shutil import copytree
 import subprocess
 import sys
 import tarfile
@@ -159,6 +160,27 @@ def test_image_reads_and_writes(tmp_path: Path) -> None:
     image.put_slice(replacement, (0, 0, 0))
     reread = image.get_slice((0, 0, 0), (2, 2, 1))
     np.testing.assert_array_equal(reread, replacement)
+
+
+def test_linearmosaic_writes_flux_and_coverage(tmp_path: Path) -> None:
+    fixture_root = _create_fixtures(tmp_path)
+    pointing_path = fixture_root / "direction_fixture.image"
+    beam_path = tmp_path / "pointing.pb"
+    copytree(pointing_path, beam_path)
+    pointing = Image.open(pointing_path)
+    beam = Image.open(beam_path, writable=True)
+    start = (0,) * len(pointing.shape)
+    beam.put_slice(np.full(pointing.shape, 0.5, dtype=np.float32), start)
+    output = tmp_path / "mosaic.image"
+    weight = tmp_path / "mosaic.weight"
+
+    data.linearmosaic([(pointing_path, beam_path)], template=pointing_path,
+                      output=output, output_weight=weight)
+
+    np.testing.assert_array_equal(Image.open(output).get_slice(start, pointing.shape),
+                                  2.0 * pointing.get_slice(start, pointing.shape))
+    np.testing.assert_array_equal(Image.open(weight).get_slice(start, pointing.shape),
+                                  np.full(pointing.shape, 0.25, dtype=np.float32))
 
 
 def test_table_reads_and_writes(tmp_path: Path) -> None:
