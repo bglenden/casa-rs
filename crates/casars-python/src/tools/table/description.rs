@@ -7,7 +7,7 @@ use casa_tables::{StoredTableDescription, Table, TableOptions};
 use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 
-use super::state::{Fail, Open, State, no_table, no_table_specified};
+use super::state::{Fail, State, no_table, no_table_specified};
 use super::{PyTableTool, flag, values};
 use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
@@ -40,8 +40,8 @@ fn hypercolumns(private: &RecordValue, owner: &Path) -> Result<CasaValue, Fail> 
     Ok(CasaValue::record(result))
 }
 
-fn reference_description(open: &Open) -> Result<StoredTableDescription, Fail> {
-    let root = open.table.simple_reference_root()?.ok_or_else(|| {
+fn reference_description(root_table_ref: &Table) -> Result<StoredTableDescription, Fail> {
+    let root = root_table_ref.simple_reference_root()?.ok_or_else(|| {
         Fail::Unsupported(
             "table.getdesc for this reference table is not yet implemented in casa-rs (#1028)"
                 .into(),
@@ -63,35 +63,52 @@ impl State {
             no_table_specified(log);
             return Ok(CasaValue::empty_record());
         };
-        let description = if open.table.is_reference_table()? {
-            reference_description(open)?
+        let root = open.root();
+        let description = if root.table.is_reference_table()? {
+            reference_description(&root.table)?
         } else {
-            match open.table.stored_table_description()? {
-            Some(description) => description,
-            None if open.table.is_memory() => StoredTableDescription {
-                declared_managers: open.table.schema().into_iter().flat_map(|schema| schema.columns()).map(|column| {
-                    let (kind, group) = if open.memory_added_columns.contains(column.name()) { ("MemoryStMan", "MSMTAB") } else { ("StandardStMan", "StandardStMan") };
-                    (column.name().to_string(), kind.into(), group.into())
-                }).collect(),
-                private_keywords: RecordValue::default(),
-            },
-            None => return Err(Fail::Unsupported("table.getdesc for concatenated tables is not yet implemented in casa-rs (#1028)".into())),
-        }
+            match root.table.stored_table_description()? {
+                Some(description) => description,
+                None if root.table.is_memory() => StoredTableDescription {
+                    declared_managers: root
+                        .table
+                        .schema()
+                        .into_iter()
+                        .flat_map(|schema| schema.columns())
+                        .map(|column| {
+                            let (kind, group) = if root.memory_added_columns.contains(column.name())
+                            {
+                                ("MemoryStMan", "MSMTAB")
+                            } else {
+                                ("StandardStMan", "StandardStMan")
+                            };
+                            (column.name().to_string(), kind.into(), group.into())
+                        })
+                        .collect(),
+                    private_keywords: RecordValue::default(),
+                },
+                None => {
+                    return Err(Fail::Unsupported(
+                        "table.getdesc for concatenated tables is not yet implemented in casa-rs (#1028)".into(),
+                    ));
+                }
+            }
         };
         let mut fields = vec![
             (
                 "_define_hypercolumn_".to_string(),
-                hypercolumns(&description.private_keywords, &open.name)?,
+                hypercolumns(&description.private_keywords, &root.name)?,
             ),
             (
                 "_keywords_".to_string(),
-                values::record(open.table.keywords(), &open.name),
+                values::record(root.table.keywords(), &root.name),
             ),
             (
                 "_private_keywords_".to_string(),
-                values::record(&description.private_keywords, &open.name),
+                values::record(&description.private_keywords, &root.name),
             ),
         ];
+        drop(root);
         for (name, declared_type, declared_group) in description.declared_managers {
             let mut column = self.getcoldesc(&name, log)?;
             if !actual && let CasaValue::Record(ref mut parts) = column {

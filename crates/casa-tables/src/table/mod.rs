@@ -25,6 +25,7 @@ use crate::table_impl::TableImpl;
 mod cache_paths;
 mod columns;
 mod description;
+mod dm_info;
 mod generated_array;
 mod incremental_check;
 mod io;
@@ -913,6 +914,8 @@ pub struct TableOptions {
     path: PathBuf,
     data_manager: DataManagerKind,
     data_manager_group: Option<String>,
+    casacore_default_ssm: bool,
+    preserve_ssm_group_name: bool,
     endian_format: EndianFormat,
     tile_shape: Option<Vec<usize>>,
 }
@@ -926,6 +929,8 @@ impl TableOptions {
             path: path.as_ref().to_path_buf(),
             data_manager: DataManagerKind::default(),
             data_manager_group: None,
+            casacore_default_ssm: false,
+            preserve_ssm_group_name: false,
             endian_format: EndianFormat::default(),
             tile_shape: None,
         }
@@ -951,6 +956,21 @@ impl TableOptions {
     /// `TableLogSink`, that use a conventional group name (`"SSM"`).
     pub fn with_data_manager_group(mut self, group: impl Into<String>) -> Self {
         self.data_manager_group = Some(group.into());
+        self
+    }
+
+    /// Uses casacore's zero-argument `StandardStMan` 32-row bucket sizing and
+    /// binds the manager name from the group instead of `"SSM"`.
+    pub fn with_casacore_default_ssm(mut self, enabled: bool) -> Self {
+        self.casacore_default_ssm = enabled;
+        self.preserve_ssm_group_name = enabled;
+        self
+    }
+
+    /// Binds a `StandardStMan` manager's stored name from `data_manager_group`
+    /// while preserving `casacore_default_ssm` bucket sizing independently.
+    pub(crate) fn with_preserved_ssm_group_name(mut self, enabled: bool) -> Self {
+        self.preserve_ssm_group_name = enabled;
         self
     }
 
@@ -985,6 +1005,11 @@ impl TableOptions {
     /// Returns the data manager that will be used when saving.
     pub fn data_manager(&self) -> DataManagerKind {
         self.data_manager
+    }
+
+    /// Returns whether casacore's zero-argument `StandardStMan` layout is used.
+    pub fn casacore_default_ssm(&self) -> bool {
+        self.casacore_default_ssm
     }
 
     /// Returns the endian format that will be used when saving.

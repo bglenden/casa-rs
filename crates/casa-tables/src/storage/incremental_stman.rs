@@ -99,6 +99,7 @@ thread_local! {
 struct IsmHeader {
     bucket_size: u32,
     nr_buckets: u32,
+    pers_cache_size: u32,
     big_endian: bool,
     io_order: ByteOrder,
 }
@@ -169,7 +170,7 @@ fn parse_ism_header(file: &mut (impl Read + Seek)) -> Result<IsmHeader, StorageE
 
     let bucket_size = buf.read_u32()?;
     let nr_buckets = buf.read_u32()?;
-    let _pers_cache_size = buf.read_u32()?;
+    let pers_cache_size = buf.read_u32()?;
     let _uniq_nr = buf.read_u32()?;
     let _nr_free_buckets = buf.read_u32()?;
     let _first_free_bucket = buf.read_i32()?;
@@ -178,6 +179,7 @@ fn parse_ism_header(file: &mut (impl Read + Seek)) -> Result<IsmHeader, StorageE
     Ok(IsmHeader {
         bucket_size,
         nr_buckets,
+        pers_cache_size,
         big_endian,
         io_order,
     })
@@ -200,6 +202,34 @@ fn parse_ism_dm_blob(data: &[u8]) -> Result<String, StorageError> {
 /// `table.dat`; `None` for a blob that does not parse.
 pub(crate) fn dm_name_from_blob(data: &[u8]) -> Option<String> {
     parse_ism_dm_blob(data).ok()
+}
+
+/// The `SPEC` record of an `IncrementalStMan` manager (`ISMBase::dataManagerSpec`).
+pub(crate) fn ism_spec(
+    table_path: &Path,
+    dm_seq_nr: u32,
+) -> Result<casa_types::RecordValue, StorageError> {
+    let data_path = table_path.join(format!("{}{dm_seq_nr}", super::TABLE_DATA_FILE_PREFIX));
+    let mut file = File::open(&data_path)?;
+    let header = parse_ism_header(&mut file)?;
+    let bucket_size = i32::try_from(header.bucket_size)
+        .map_err(|_| StorageError::FormatMismatch("ISM bucket size exceeds i32".into()))?;
+    let pers_cache_size = i32::try_from(header.pers_cache_size)
+        .map_err(|_| StorageError::FormatMismatch("ISM cache size exceeds i32".into()))?;
+    Ok(casa_types::RecordValue::new(vec![
+        casa_types::RecordField::new(
+            "BUCKETSIZE",
+            casa_types::Value::Scalar(ScalarValue::Int32(bucket_size)),
+        ),
+        casa_types::RecordField::new(
+            "MaxCacheSize",
+            casa_types::Value::Scalar(ScalarValue::Int32(pers_cache_size)),
+        ),
+        casa_types::RecordField::new(
+            "PERSCACHESIZE",
+            casa_types::Value::Scalar(ScalarValue::Int32(pers_cache_size)),
+        ),
+    ]))
 }
 
 // ---------------------------------------------------------------------------

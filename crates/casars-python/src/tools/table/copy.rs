@@ -387,8 +387,11 @@ fn put_rows(table: &mut Table, start: usize, rows: Rows) -> Result<(), Fail> {
 
 /// The change `copyrows` makes to the output table: `rows` put from `start`,
 /// the table written again in full as it is laid out.
-fn put_in_full(rows: Rows, start: usize) -> impl FnOnce(&mut Table) -> Result<Persist, Fail> {
-    move |table| {
+fn put_in_full(
+    rows: Rows,
+    start: usize,
+) -> impl FnOnce(&mut Table, Option<&[usize]>) -> Result<Persist, Fail> {
+    move |table, _| {
         if rows.columns.is_empty() {
             return Ok(Persist::Nothing);
         }
@@ -422,8 +425,8 @@ impl Plan {
 /// The change `copyrows` makes to a table copied onto itself when
 /// [`Plan::reads_what_it_wrote`]: each row is read as it stands when its turn
 /// comes, then put.
-fn put_in_order(plan: Plan) -> impl FnOnce(&mut Table) -> Result<Persist, Fail> {
-    move |table| {
+fn put_in_order(plan: Plan) -> impl FnOnce(&mut Table, Option<&[usize]>) -> Result<Persist, Fail> {
+    move |table, _| {
         if plan.shared.is_empty() {
             return Ok(Persist::Nothing);
         }
@@ -443,18 +446,24 @@ fn put_in_order(plan: Plan) -> impl FnOnce(&mut Table) -> Result<Persist, Fail> 
 /// number beyond it is refused.
 fn plan(
     source: &Table,
+    source_row_map: Option<&[usize]>,
     target: &Table,
     start_in: i64,
     start_out: i64,
     count: i64,
 ) -> Result<Plan, Fail> {
-    let rows = super::read::rows(
-        source.row_count(),
+    let source_nrows = source_row_map.map_or_else(|| source.row_count(), <[usize]>::len);
+    let view_rows = super::read::rows(
+        source_nrows,
         start_in,
         count,
         1,
         "TableProxy::TableProxy::copyRows: no such row",
     )?;
+    let rows = match source_row_map {
+        Some(map) => view_rows.into_iter().map(|row| map[row]).collect(),
+        None => view_rows,
+    };
     let nrows = target.row_count();
     let start = usize::try_from(start_out).unwrap_or(nrows);
     if start > nrows {
@@ -514,20 +523,35 @@ impl State {
         }
         self.synchronize()?;
         let source = self.open.as_ref().expect("checked above");
-        if same_directory(out_path, &source.name) {
+        if same_directory(out_path, &source.root_name) {
             return self.copyrows_onto_itself(start_in, start_out, count, log);
         }
         // CASA opens the output for update with this table's lock options,
         // the option `auto`.
-        let request = LockRequest {
-            option: Some("auto".to_string()),
-            interval: Some(source.lock.interval()),
-            maxwait: Some(source.lock.maxwait()),
+        let request = {
+            let source_root = source.root();
+            LockRequest {
+                option: Some("auto".to_string()),
+                interval: Some(source_root.lock.interval()),
+                maxwait: Some(source_root.lock.maxwait()),
+            }
         };
-        let mut output = State::new(Some(Open::attach(out, &request, true)?));
-        let wanted = output.open.as_ref().expect("just opened");
-        let plan = plan(&source.table, &wanted.table, start_in, start_out, count)?;
-        let rows = read_rows(&source.table, &plan.shared, &plan.rows)?;
+        let output_open = Open::attach(out, &request, true)?;
+        let src_row_map = source.row_map.clone();
+        let src_root = source.root();
+        let wanted_root = output_open.root();
+        let plan = plan(
+            &src_root.table,
+            src_row_map.as_deref(),
+            &wanted_root.table,
+            start_in,
+            start_out,
+            count,
+        )?;
+        let rows = read_rows(&src_root.table, &plan.shared, &plan.rows)?;
+        drop(wanted_root);
+        drop(src_root);
+        let mut output = State::new(Some(output_open));
         let target = Target::Structure("TableCopy::copyRows");
         output.write_with(target, log, put_in_full(rows, plan.start))
     }
@@ -542,14 +566,23 @@ impl State {
         count: i64,
         log: &mut Vec<LogLine>,
     ) -> Reply {
+        if self.open.as_ref().is_some_and(Open::is_view) {
+            return Err(Fail::Unsupported(
+                "table.copyrows onto a selectrows view is not yet implemented in casa-rs (#1028)"
+                    .into(),
+            ));
+        }
         self.make_writable()?;
-        let table = &self.open.as_ref().expect("checked above").table;
-        let plan = plan(table, table, start_in, start_out, count)?;
+        let open = self.open.as_ref().expect("checked above");
+        let root = open.root();
+        let plan = plan(&root.table, None, &root.table, start_in, start_out, count)?;
         let target = Target::Structure("TableCopy::copyRows");
         if plan.reads_what_it_wrote() {
+            drop(root);
             return self.write_with(target, log, put_in_order(plan));
         }
-        let rows = read_rows(table, &plan.shared, &plan.rows)?;
+        let rows = read_rows(&root.table, &plan.shared, &plan.rows)?;
+        drop(root);
         self.write_with(target, log, put_in_full(rows, plan.start))
     }
 
@@ -560,13 +593,26 @@ impl State {
         let Some(open) = self.open.as_ref() else {
             return Ok(());
         };
-        if open.writable {
-            return Ok(());
-        }
-        let name = open.name.display().to_string();
-        let mut reopened = Open::attach(&name, &open.lock.request(), true)?;
-        reopened.last_modify_counter = open.last_modify_counter;
-        self.open = Some(reopened);
+        let (name, request, last_modify_counter) = {
+            let root = open.root();
+            if root.writable {
+                return Ok(());
+            }
+            (
+                root.name.display().to_string(),
+                root.lock.request(),
+                root.last_modify_counter,
+            )
+        };
+        let mut fresh = Open::attach_root(&name, &request, true)?;
+        fresh.last_modify_counter = last_modify_counter;
+        let mut root = open.root();
+        root.table = fresh.table;
+        root.writable = true;
+        root.lock = fresh.lock;
+        root.keyword_epoch = fresh.keyword_epoch;
+        root.seen_keyword_epoch = fresh.seen_keyword_epoch;
+        root.last_modify_counter = fresh.last_modify_counter;
         Ok(())
     }
 
@@ -579,10 +625,11 @@ impl State {
         same: bool,
     ) -> Result<Method, Fail> {
         let open = self.open.as_ref().expect("a table is open");
+        let root = open.root();
         let rewrite = request.value_copy || request.no_rows;
         // CASA's two tools share one table and its write lock; here the
         // second tool would have to take a write lock the first holds.
-        if same && open.writable && open.lock.permanent() {
+        if same && root.writable && root.lock.permanent() {
             return Err(Fail::Unsupported(
                 "table.copy onto the name of a table open for update under permanent locking \
                  is not yet implemented in casa-rs: the two tools would share one write lock \
@@ -593,7 +640,7 @@ impl State {
         // casacore's `RefTable::deepCopy` makes a table of its own of a
         // reference table whenever `deep` is given; a plain copy of one
         // stays a reference table, and is the directory copied.
-        if open.table.is_reference_table()? && (request.deep || rewrite) {
+        if (open.is_view() || root.table.is_reference_table()?) && (request.deep || rewrite) {
             return Err(Fail::Unsupported(
                 "table.copy of a reference table with deep, valuecopy or norows (which makes a \
                  table of its own of it) is not yet implemented in casa-rs (#1028)"
@@ -613,16 +660,16 @@ impl State {
                 open.name.display()
             )));
         }
-        let options = open.table.single_stman_aipsio_options()?.ok_or_else(|| {
+        let options = root.table.single_rewrite_options()?.ok_or_else(|| {
             Fail::Unsupported(
                 "table.copy with values or without rows of a table that is not one \
-                 StManAipsIO group (without a manager name of its own) is not yet \
+                 StManAipsIO group (or one StandardStMan group) is not yet \
                  implemented in casa-rs: casa-tables cannot write other storage managers \
                  afresh (#1028)"
                     .to_string(),
             )
         })?;
-        if has_subtables(&open.table) {
+        if has_subtables(&root.table) {
             return Err(Fail::Unsupported(
                 "table.copy with values or without rows of a table with subtables is not \
                  yet implemented in casa-rs (#1028)"
@@ -643,9 +690,14 @@ impl State {
         let mut in_use = false;
         registry::for_each_other(self.id, |tool| {
             in_use |= tool.is_none_or(|tool| {
-                tool.open
-                    .as_ref()
-                    .is_some_and(|open| same_directory(&open.name, target))
+                tool.open.as_ref().is_some_and(|open| {
+                    same_directory(&open.name, target)
+                        || same_directory(&open.root_name, target)
+                        || open
+                            .plain_paths
+                            .iter()
+                            .any(|path| same_directory(path, target))
+                })
             });
         });
         if in_use {
@@ -689,12 +741,29 @@ impl State {
         }
         self.synchronize()?;
         let open = self.open.as_ref().expect("checked above");
+        if open.is_view() {
+            return Err(Fail::Unsupported(
+                "table.copy of a selectrows view is not yet implemented in casa-rs (#1028)"
+                    .to_string(),
+            ));
+        }
         let target = std::path::absolute(&request.new_name).map_err(io_failure)?;
         let same = same_directory(&target, &open.name);
         if !same {
             refuse_nested(&target, &open.name)?;
+            for protected in &open.plain_paths {
+                if same_directory(&target, protected) {
+                    return Err(Fail::Runtime(format!(
+                        "Invalid Table operation: Cannot copy/rename; target table {} is still \
+                         open (is in the table cache)",
+                        target.display()
+                    )));
+                }
+                refuse_nested(&target, protected)?;
+            }
         }
         let method = self.copy_method(request, endian, same)?;
+        let open = self.open.as_ref().expect("checked above");
         if !same {
             check_target(&target)?;
             self.refuse_open_target(&target)?;
@@ -705,6 +774,7 @@ impl State {
                 )));
             }
         }
+        let root = open.root();
         match method {
             Method::Keep => {}
             Method::Directory => replace_with(&target, |staging| {
@@ -713,9 +783,9 @@ impl State {
             Method::Rewrite(options, no_rows) => replace_with(&target, |staging| {
                 let options = options.with_path(staging);
                 if no_rows {
-                    open.table.shallow_copy(options)?;
+                    root.table.shallow_copy(options)?;
                 } else {
-                    open.table.deep_copy(options)?;
+                    root.table.deep_copy(options)?;
                 }
                 Ok(())
             })?,
@@ -724,10 +794,11 @@ impl State {
         // copy has its lock options and can write if it can. (CASA shares
         // one table between the two tools, locks held included.)
         let (lock, writable) = if same {
-            (open.lock.request(), open.writable)
+            (root.lock.request(), root.writable)
         } else {
             (LockRequest::default(), false)
         };
+        drop(root);
         Open::attach(&target.display().to_string(), &lock, writable)
     }
 }

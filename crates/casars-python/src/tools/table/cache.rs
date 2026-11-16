@@ -15,8 +15,9 @@ use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
 
 fn add_open(open: &Open, names: &mut BTreeMap<PathBuf, bool>) -> Result<(), Fail> {
-    let locked = open.table.has_lock(LockType::Read) || open.table.has_lock(LockType::Write);
-    for name in open.table.cache_plain_table_paths()? {
+    let root = open.root();
+    let locked = root.table.has_lock(LockType::Read) || root.table.has_lock(LockType::Write);
+    for name in root.table.cache_plain_table_paths()? {
         names
             .entry(name)
             .and_modify(|held| *held |= locked)

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Table creation, using the same descriptions as `addcols` (#1028).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use casa_tables::{Table, TableError, TableInfo, TableOptions, TableSchema};
+use casa_tables::{DataManagerKind, Table, TableError, TableInfo, TableOptions, TableSchema};
 use casa_types::Value;
 use pyo3::prelude::*;
 
@@ -14,10 +14,26 @@ use super::copy::{
 };
 use super::keyword_value::{Data, Incoming, Wide};
 use super::new_column;
-use super::state::{Fail, LockRequest, LockSettings, Open, State};
+use super::state::{Fail, LockRequest, LockSettings, Open, RootOpen, State};
 use super::write_structure::default_row;
 use super::{PyTableTool, integer, lock_request, record_fields, text};
 use crate::convert::value::CasaValue;
+
+/// Scratch table path generated as casacore does (`<cwd>/tab<pid>_<counter>`).
+pub(super) fn scratch_name() -> PathBuf {
+    static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let candidate = format!(
+            "tab{}_{}",
+            std::process::id(),
+            NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed)
+        );
+        if !Path::new(&candidate).exists() {
+            return std::path::absolute(Path::new(&candidate))
+                .unwrap_or_else(|_| PathBuf::from(candidate));
+        }
+    }
+}
 
 struct CreateRequest {
     name: String,
@@ -29,11 +45,10 @@ struct CreateRequest {
     dminfo: Vec<(String, Incoming)>,
 }
 
-/// The single unnamed AipsIO group is the one layout the writer can both
-/// create and update without changing the requested manager.
-fn supported_dminfo(info: &[(String, Incoming)], schema: &TableSchema) -> bool {
+/// Single-group layouts accepted by `table.create` with an explicit `dminfo`.
+fn supported_dminfo(info: &[(String, Incoming)], schema: &TableSchema) -> Option<DataManagerKind> {
     let [(_, Incoming::Record(manager))] = info else {
-        return false;
+        return None;
     };
     let get = |name: &str| {
         manager
@@ -44,22 +59,28 @@ fn supported_dminfo(info: &[(String, Incoming)], schema: &TableSchema) -> bool {
     if manager
         .iter()
         .any(|(key, _)| !["TYPE", "NAME", "COLUMNS", "SPEC", "SEQNR"].contains(&key.as_str()))
-        || get("TYPE").and_then(Incoming::text) != Some("StManAipsIO")
-        || get("NAME").and_then(Incoming::text) != Some("")
         || !matches!(get("SPEC"), Some(Incoming::Record(fields)) if fields.is_empty())
         || get("SEQNR").is_some_and(|value| value.scalar_integer() != Some(0))
     {
-        return false;
+        return None;
     }
+    let kind = match (
+        get("TYPE").and_then(Incoming::text),
+        get("NAME").and_then(Incoming::text),
+    ) {
+        (Some("StManAipsIO"), Some("")) => DataManagerKind::StManAipsIO,
+        (Some("StandardStMan"), Some("StandardStMan")) => DataManagerKind::StandardStMan,
+        _ => return None,
+    };
     let Some(Incoming::Wide(Wide {
         shape: Some(shape),
         data: Data::Texts(names),
     })) = get("COLUMNS")
     else {
-        return false;
+        return None;
     };
     if shape.len() != 1 {
-        return false;
+        return None;
     }
     let mut requested = names.clone();
     let mut actual: Vec<_> = schema
@@ -69,7 +90,7 @@ fn supported_dminfo(info: &[(String, Incoming)], schema: &TableSchema) -> bool {
         .collect();
     requested.sort();
     actual.sort();
-    requested == actual
+    (requested == actual).then_some(kind)
 }
 
 impl State {
@@ -156,18 +177,7 @@ impl State {
             ));
         }
         if request.name.is_empty() {
-            static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
-            loop {
-                let candidate = format!(
-                    "tab{}_{}",
-                    std::process::id(),
-                    NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed)
-                );
-                if !Path::new(&candidate).exists() {
-                    request.name = candidate;
-                    break;
-                }
-            }
+            request.name = scratch_name().display().to_string();
         }
         request.description.sort_by(|a, b| a.0.cmp(&b.0));
         let mut columns = Vec::new();
@@ -189,13 +199,20 @@ impl State {
         }
         let schema = TableSchema::new(columns.iter().map(|column| column.schema.clone()).collect())
             .map_err(|error| Fail::from(TableError::from(error)))?;
-        if !request.dminfo.is_empty()
-            && (request.memory || !supported_dminfo(&request.dminfo, &schema))
-        {
+        let dm_kind = if request.dminfo.is_empty() {
+            DataManagerKind::StandardStMan
+        } else if request.memory {
             return Err(Fail::Unsupported(
                 "table.create with this dminfo is not yet implemented in casa-rs (#1028)".into(),
             ));
-        }
+        } else {
+            supported_dminfo(&request.dminfo, &schema).ok_or_else(|| {
+                Fail::Unsupported(
+                    "table.create with this dminfo is not yet implemented in casa-rs (#1028)"
+                        .into(),
+                )
+            })?
+        };
         let mut table = if request.memory {
             Table::with_schema_memory(schema)
         } else {
@@ -220,7 +237,7 @@ impl State {
                 option: Some("permanent".into()),
                 ..LockRequest::default()
             })?;
-            self.open = Some(Open {
+            self.open = Some(Open::from_root(RootOpen {
                 table,
                 name: target.clone(),
                 writable: true,
@@ -229,7 +246,8 @@ impl State {
                 last_modify_counter: 0,
                 keyword_epoch: super::registry::keyword_epoch(&target),
                 seen_keyword_epoch: 0,
-            });
+                created_in_this_handle: true,
+            }));
             return Ok(CasaValue::Bool(true));
         }
         check_target(&target)?;
@@ -241,14 +259,20 @@ impl State {
             )));
         }
         replace_with(&target, |staging| {
-            table.save(TableOptions::new(staging).with_endian_format(endian))?;
+            let mut options = TableOptions::new(staging)
+                .with_data_manager(dm_kind)
+                .with_endian_format(endian);
+            if dm_kind == DataManagerKind::StandardStMan {
+                options = options
+                    .with_data_manager_group("StandardStMan")
+                    .with_casacore_default_ssm(true);
+            }
+            table.save(options)?;
             Ok(())
         })?;
-        self.open = Some(Open::attach(
-            &target.display().to_string(),
-            &request.lock,
-            true,
-        )?);
+        let attached = Open::attach(&target.display().to_string(), &request.lock, true)?;
+        attached.root().created_in_this_handle = true;
+        self.open = Some(attached);
         Ok(CasaValue::Bool(true))
     }
 }

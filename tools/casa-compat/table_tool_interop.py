@@ -291,7 +291,8 @@ STRUCTURE_TABLES = (
     "shrink_user.table", "shrink_permanent.table", "tiled_multi.table",
     "copy_plain.table", "copy_values_big.table", "copy_rows.table", "copy_self.table",
     "copy_ms.ms", "casa_copy_values.table", "casa_copyrows.table", "casa_copy_ms.ms",
-    "created_aips.table", "casa_created_aips.table", "casa_created_default.table",
+    "created_aips.table", "created_default.table", "casa_created_aips.table",
+    "casa_created_default.table",
 )
 
 #: What the structural calls do to the MeasurementSet's main table, by name:
@@ -474,6 +475,7 @@ def command_structure_write(fixture, ms, out_dir, out_json):
     tool.copy(str((out_dir / "copy_ms.ms").resolve())).done()
     tool.done()
     create_interop_table(tools.table, out_dir / "created_aips.table", aipsio=True)
+    create_interop_table(tools.table, out_dir / "created_default.table", aipsio=False)
     write_json(out_json, structure_dumps(tools.table, out_dir))
 
 

@@ -382,9 +382,11 @@ mod casacore_tiled_order_tests;
 mod selected_tiles;
 use selected_tiles::{SelectedTiles, copy_pixels};
 mod shape_cube;
+mod spec;
 #[cfg(test)]
 mod split_axis0_tests;
 use shape_cube::{DirectShapeCubeWriter, ShapeCubeWorkingSet};
+pub(crate) use spec::tiled_spec;
 mod tile_columns;
 use tile_columns::{
     TileColumns, bound_tile_layout, in_tile_order, rows_reached, tile_columns, tile_target,

@@ -1,7 +1,11 @@
 """Safety and persistence laws for table creation (#1028)."""
 
+import shutil
+import sys
+import tarfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from casars import tools
@@ -160,4 +164,92 @@ def test_multitable_move_restores_inputs_if_writing_output_fails(tmp_path: Path)
     assert not (tmp_path / "joined").exists()
     assert tool.open(str(path))
     assert tool.getcell("id", 0) == 42
+    tool.done()
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+CASA_TABLES_DATA = REPO_ROOT / "crates/casa-tables/tests/data"
+
+
+def test_create_default_manager_and_dminfo_specs(tmp_path: Path) -> None:
+    """Default `create` picks StandardStMan (`IndexLength: 0` before close, `130`
+    in `casa-rs` SSMIndex v2 after reopen), updates `getdminfo()` after
+    `removecols`, and exposes CASA-compatible `SPEC`s across Standard,
+    Incremental, and Tiled storage managers (#1028)."""
+    created = tmp_path / "default_ssm.table"
+    tool = tools.table()
+    assert tool.create(
+        str(created),
+        {"id": {"valueType": "int"}, "extra": {"valueType": "double"}},
+        nrow=2,
+    )
+    live = tool.getdminfo()["*1"]
+    assert live["TYPE"] == "StandardStMan"
+    assert live["NAME"] == "StandardStMan"
+    assert live["COLUMNS"].tolist() == ["extra", "id"]
+    assert live["SPEC"] == {
+        "BUCKETSIZE": 384,
+        "IndexLength": 0,
+        "MaxCacheSize": 2,
+        "PERSCACHESIZE": 2,
+    }
+    assert tool.close()
+
+    assert tool.open(str(created), nomodify=False)
+    reopened = tool.getdminfo()["*1"]
+    assert reopened["SPEC"] == {
+        "BUCKETSIZE": 384,
+        "IndexLength": 130,
+        "MaxCacheSize": 2,
+        "PERSCACHESIZE": 2,
+    }
+    assert tool.removecols(["extra"])
+    assert tool.getdminfo()["*1"]["COLUMNS"].tolist() == ["id"]
+    tool.done()
+
+    ism_copy = tmp_path / "ism"
+    shutil.copytree(CASA_TABLES_DATA / "ism_variable_shapes", ism_copy)
+    assert tool.open(str(ism_copy))
+    ism = tool.getdminfo()["*1"]
+    assert ism["TYPE"] == "IncrementalStMan"
+    assert ism["SPEC"] == {"BUCKETSIZE": 32768, "MaxCacheSize": 1, "PERSCACHESIZE": 1}
+    tool.done()
+
+    tiled_data_copy = tmp_path / "tiled_data"
+    shutil.copytree(CASA_TABLES_DATA / "tiled_data_stman/little", tiled_data_copy)
+    assert tool.open(str(tiled_data_copy))
+    tsm_data = tool.getdminfo()["*1"]
+    assert tsm_data["TYPE"] == "TiledDataStMan"
+    assert tsm_data["SPEC"]["DEFAULTTILESHAPE"].tolist() == []
+    assert tsm_data["SPEC"]["HYPERCUBES"]["*1"]["BucketSize"] == 24
+    assert tsm_data["SPEC"]["HYPERCUBES"]["*1"]["CellShape"].tolist() == [2, 3]
+    assert tsm_data["SPEC"]["HYPERCUBES"]["*1"]["ID"] == {"id": 10}
+    assert tsm_data["SPEC"]["HYPERCUBES"]["*2"]["BucketSize"] == 48
+    tool.done()
+
+    tiled_col_copy = tmp_path / "tiled_col"
+    shutil.copytree(CASA_TABLES_DATA / "tiled_tile_order/column_nodef/little", tiled_col_copy)
+    assert tool.open(str(tiled_col_copy))
+    tsm_col = tool.getdminfo()["*1"]
+    assert tsm_col["TYPE"] == "TiledColumnStMan"
+    assert tsm_col["SPEC"]["DEFAULTTILESHAPE"].tolist() == [2, 3, 2]
+    assert tsm_col["SPEC"]["HYPERCUBES"]["*1"]["BucketSize"] == 194
+    assert tsm_col["SPEC"]["HYPERCUBES"]["*1"]["CellShape"].tolist() == [2, 3]
+    assert tsm_col["SPEC"]["HYPERCUBES"]["*1"]["CubeShape"].tolist() == [2, 3, 3]
+    tool.done()
+
+    ms_dir = tmp_path / "ms"
+    with tarfile.open(REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz") as arc:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        arc.extractall(ms_dir, **extract)
+    assert tool.open(str(ms_dir / "mssel_test_small.ms"))
+    by_name = {dm["NAME"]: dm for dm in tool.getdminfo().values()}
+    flag_cat = by_name["TiledFlagCategory"]
+    assert flag_cat["TYPE"] == "TiledShapeStMan"
+    assert flag_cat["SPEC"]["HYPERCUBES"] == {}
+    assert flag_cat["SPEC"]["IndexSize"] == 0
+    tiled_data = by_name["TiledDATA"]
+    assert set(tiled_data["SPEC"]["HYPERCUBES"]) == {"*1", "*2"}
+    assert tiled_data["SPEC"]["IndexSize"] == 8
+    assert np.array_equal(tiled_data["SPEC"]["DEFAULTTILESHAPE"], [1, 4, 32768])
     tool.done()

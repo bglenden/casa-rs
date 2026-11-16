@@ -67,7 +67,7 @@ use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
     read_ssm_required_scalar_columns_rows, read_ssm_required_scalar_columns_rows_reusing,
     read_ssm_scalar_column_rows, write_ssm_file, write_ssm_file_column_sources,
-    write_ssm_file_indexed,
+    write_ssm_file_indexed, write_ssm_file_with_options,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -761,6 +761,8 @@ impl CompositeStorage {
         virtual_bindings: &[virtual_engine::VirtualColumnBinding],
         dm_kind: crate::table::DataManagerKind,
         dm_group_name: Option<&str>,
+        casacore_default_ssm: bool,
+        preserve_ssm_group_name: bool,
         big_endian: bool,
         tile_shape: Option<&[usize]>,
     ) -> Result<(), StorageError> {
@@ -899,7 +901,22 @@ impl CompositeStorage {
                     .filter(|c| !virtual_columns.contains(&c.col_name))
                     .cloned()
                     .collect();
-                dm_data = write_ssm_file(&data_path, &stored_col_descs, rows_for_data, big_endian)?;
+                dm_data = if casacore_default_ssm || preserve_ssm_group_name {
+                    write_ssm_file_with_options(
+                        &data_path,
+                        &stored_col_descs,
+                        rows_for_data,
+                        big_endian,
+                        casacore_default_ssm,
+                        if preserve_ssm_group_name {
+                            dm_group_name.unwrap_or("StandardStMan")
+                        } else {
+                            "SSM"
+                        },
+                    )?
+                } else {
+                    write_ssm_file(&data_path, &stored_col_descs, rows_for_data, big_endian)?
+                };
                 let mut table_dat = if has_virtual {
                     TableDatContents::from_snapshot_with_virtual(
                         schema,

@@ -39,7 +39,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("addrows", &[param("nrow", K::Int, Int(1))], R::Any, Yes),
-    method("browse", &[], R::Any, No),
+    method("browse", &[], R::Any, Yes),
     method(
         "calc",
         &[
@@ -540,7 +540,7 @@ const METHODS: &[Method] = &[
             param("name", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setmaxcachesize",
@@ -570,7 +570,7 @@ const METHODS: &[Method] = &[
         "summary",
         &[param("recurse", K::Bool, Bool(false))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "taql",

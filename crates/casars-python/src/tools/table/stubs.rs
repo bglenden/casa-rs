@@ -15,12 +15,6 @@ use super::{PyTableTool, stub};
 )]
 impl PyTableTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn browse(&self) -> PyResult<Py<PyAny>> {
-        stub("browse")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (expr, prefix = None, showtaql = None), text_signature = "($self, expr, prefix='using style base0, endincl, fortranorder', showtaql=False)")]
     fn calc(
         &self,
@@ -110,22 +104,6 @@ impl PyTableTool {
         exclude: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("row")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (rownrs, name = None), text_signature = "($self, rownrs, name='')")]
-    fn selectrows(
-        &self,
-        rownrs: &Bound<'_, PyAny>,
-        name: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("selectrows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (recurse = None), text_signature = "($self, recurse=False)")]
-    fn summary(&self, recurse: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("summary")
     }
 
     /// Not yet implemented in casa-rs.

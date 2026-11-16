@@ -196,7 +196,7 @@ impl State {
         log: &mut Vec<crate::tools::LogLine>,
         change: impl FnOnce(&mut Table) -> Result<(), Fail>,
     ) -> Reply {
-        self.write_with(target, log, move |table| {
+        self.write_with(target, log, move |table, _| {
             change(table).map(|()| Persist::Metadata)
         })
     }
@@ -206,14 +206,16 @@ impl State {
         &mut self,
         target: Target,
         log: &mut Vec<crate::tools::LogLine>,
-        change: impl FnOnce(&mut Table) -> Result<Persist, Fail>,
+        change: impl FnOnce(&mut Table, Option<&[usize]>) -> Result<Persist, Fail>,
     ) -> Reply {
-        let Some(open) = self.open.as_mut() else {
+        let Some(open) = self.open.as_ref() else {
             no_table(log);
             return Ok(CasaValue::Bool(false));
         };
         let name = open.name.display().to_string();
-        if !open.writable {
+        let row_map = open.row_map.clone();
+        let mut root = open.root();
+        if !root.writable {
             if matches!(target, Target::Cells) {
                 return Ok(CasaValue::Bool(false));
             }
@@ -234,34 +236,44 @@ impl State {
             });
         }
         // A memory table has no disk or lock file; changes stay in its handle.
-        if open.table.is_memory() {
-            change(&mut open.table)?;
+        if root.table.is_memory() {
+            change(&mut root.table, row_map.as_deref())?;
             return Ok(CasaValue::Bool(true));
         }
-        let automatic = open.lock.automatic();
+        if root.table.is_reference_table()? {
+            return Err(Fail::Unsupported(
+                "writing through an opened reference table is not yet implemented in casa-rs \
+                 (#1028)"
+                    .to_string(),
+            ));
+        }
+        let automatic = root.lock.automatic();
+        let attempts = root.lock.attempts();
         if automatic {
-            if !open.table.lock(LockType::Write, open.lock.attempts())? {
+            if !root.table.lock(LockType::Write, attempts)? {
                 return runtime(format!("Table {name} could not be write locked"));
             }
-        } else if !open.table.has_lock(LockType::Write) {
+        } else if !root.table.has_lock(LockType::Write) {
             return runtime(format!(
                 "ColumnSet::doLock: table {name} should be locked when using UserLocking"
             ));
         }
         // Whether the change wrote itself and the handle holds what it wrote.
         let mut written = false;
-        let saved = change(&mut open.table).and_then(|persist| match persist {
+        let saved = change(&mut root.table, row_map.as_deref()).and_then(|persist| match persist {
             Persist::Nothing => Ok(()),
             Persist::Done => {
                 written = true;
                 Ok(())
             }
-            Persist::Metadata => open
+            Persist::Metadata => root
                 .table
-                .save_metadata_only(TableOptions::new(&open.name))
+                .save_metadata_only(TableOptions::new(&root.name))
                 .map_err(Fail::from),
-            Persist::Rows { column, rows } => {
-                let partial = open
+            Persist::Rows { column, mut rows } => {
+                rows.sort_unstable();
+                rows.dedup();
+                let partial = root
                     .table
                     .prepare_write()
                     .save_selected_rows(&[column.as_str()], &rows);
@@ -275,8 +287,8 @@ impl State {
                     Err(TableError::Storage(message))
                         if message.starts_with("partial in-place save does not support") =>
                     {
-                        match open.table.single_stman_aipsio_options()? {
-                            Some(options) => open.table.save(options).map_err(Fail::from),
+                        match root.table.single_rewrite_options()? {
+                            Some(options) => root.table.save(options).map_err(Fail::from),
                             None => Err(Fail::from(TableError::Storage(message))),
                         }
                     }
@@ -303,12 +315,12 @@ impl State {
         // would read the row count last published, which a removal of rows
         // has lowered.
         let reloaded = if saved.is_err() || (!automatic && !written) {
-            open.table.resync_or_discard().map_err(Fail::from)
+            root.table.resync_or_discard().map_err(Fail::from)
         } else {
             Ok(())
         };
         let released = if automatic {
-            open.table
+            root.table
                 .unlock_metadata_only_or_discard()
                 .map_err(Fail::from)
         } else {

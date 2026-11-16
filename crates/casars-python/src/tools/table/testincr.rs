@@ -21,7 +21,9 @@ impl PyTableTool {
                 return Ok(CasaValue::Bool(false));
             }
             let result = state.synchronize().and_then(|()| {
-                Ok(state.open.as_ref().unwrap().table.check_incremental_layout(&column)?)
+                let open = state.open.as_ref().unwrap();
+                let root = open.root();
+                Ok(root.table.check_incremental_layout(&column)?)
             });
             let valid = match result {
                 Ok(IncrementalLayoutCheck::NotIncremental) => {

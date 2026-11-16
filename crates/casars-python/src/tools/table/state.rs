@@ -4,8 +4,8 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
 use pyo3::PyErr;
@@ -148,10 +148,11 @@ impl LockSettings {
     }
 }
 
-/// A table `open` attached.
-pub(super) struct Open {
+/// The underlying opened table and lock/metadata state shared between a
+/// root `table` handle and any `selectrows` views created from it.
+pub(super) struct RootOpen {
     pub(super) table: Table,
-    /// The table's absolute path, as `name()` gives it.
+    /// The root table's absolute path.
     pub(super) name: PathBuf,
     pub(super) writable: bool,
     pub(super) lock: LockSettings,
@@ -162,11 +163,87 @@ pub(super) struct Open {
     pub(super) last_modify_counter: u32,
     pub(super) keyword_epoch: Arc<AtomicU64>,
     pub(super) seen_keyword_epoch: u64,
+    /// `True` while this handle is the one that called `create()`, before any
+    /// reopen or `resync()`: casacore leaves `StandardStMan`'s `IndexLength`
+    /// as `0` until the table is opened from disk.
+    pub(super) created_in_this_handle: bool,
+}
+
+/// A table `open` attached, or a `selectrows` view sharing its root.
+pub(super) struct Open {
+    pub(super) root: Arc<Mutex<RootOpen>>,
+    /// The handle's own path as `name()` reports it (`root.name` for a plain
+    /// open, a scratch name for a transient `selectrows`, or the saved
+    /// `RefTable` path for `selectrows(..., name=...)`).
+    pub(super) name: PathBuf,
+    /// Cached `root.name` so registry scans never take `root`'s mutex.
+    pub(super) root_name: PathBuf,
+    /// Cached plain table paths resolved from disk (`cache_plain_table_paths`),
+    /// kept outside `root`'s mutex so cache/target checks cover opened `RefTable`s.
+    pub(super) plain_paths: Vec<PathBuf>,
+    pub(super) is_memory: bool,
+    /// Present on a `selectrows` view: maps view row indices `0..len` to row
+    /// indices in `root.table`.
+    pub(super) row_map: Option<Vec<usize>>,
 }
 
 impl Open {
-    /// The table at `name` opened under `request`'s lock options.
-    pub(super) fn attach(name: &str, request: &LockRequest, writable: bool) -> Result<Self, Fail> {
+    pub(super) fn from_root(root: RootOpen) -> Self {
+        let name = root.name.clone();
+        let plain_paths = root.table.cache_plain_table_paths().unwrap_or_default();
+        let is_memory = root.table.is_memory();
+        Self {
+            root: Arc::new(Mutex::new(root)),
+            name: name.clone(),
+            root_name: name,
+            plain_paths,
+            is_memory,
+            row_map: None,
+        }
+    }
+
+    pub(super) fn view(&self, name: PathBuf, row_map: Vec<usize>) -> Self {
+        Self {
+            root: Arc::clone(&self.root),
+            name,
+            root_name: self.root_name.clone(),
+            plain_paths: self.plain_paths.clone(),
+            is_memory: self.is_memory,
+            row_map: Some(row_map),
+        }
+    }
+
+    pub(super) fn root(&self) -> MutexGuard<'_, RootOpen> {
+        self.root.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn is_view(&self) -> bool {
+        self.row_map.is_some()
+    }
+
+    pub(super) fn nrows(&self) -> usize {
+        self.row_map
+            .as_ref()
+            .map_or_else(|| self.root().table.row_count(), Vec::len)
+    }
+
+    pub(super) fn translate_row(&self, row: usize) -> usize {
+        self.row_map.as_ref().map_or(row, |map| map[row])
+    }
+
+    pub(super) fn translate_rows(&self, rows: &[usize]) -> Vec<usize> {
+        match &self.row_map {
+            Some(map) => rows.iter().map(|&row| map[row]).collect(),
+            None => rows.to_vec(),
+        }
+    }
+
+    /// The root handle opened at `name` under `request`'s lock options.
+    pub(super) fn attach_root(
+        name: &str,
+        request: &LockRequest,
+        writable: bool,
+    ) -> Result<RootOpen, Fail> {
         let lock = LockSettings::from_request(request)?;
         let path = Path::new(name);
         if !path.exists() {
@@ -183,7 +260,7 @@ impl Open {
         let seen_keyword_epoch = keyword_epoch.load(Ordering::Acquire);
         let table = Table::open_with_lock(TableOptions::new(path), options)?;
         let name = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-        Ok(Self {
+        Ok(RootOpen {
             table,
             name,
             writable,
@@ -192,7 +269,13 @@ impl Open {
             last_modify_counter: 0,
             keyword_epoch,
             seen_keyword_epoch,
+            created_in_this_handle: false,
         })
+    }
+
+    /// The table at `name` opened under `request`'s lock options.
+    pub(super) fn attach(name: &str, request: &LockRequest, writable: bool) -> Result<Self, Fail> {
+        Self::attach_root(name, request, writable).map(Self::from_root)
     }
 }
 
@@ -264,23 +347,24 @@ impl State {
     /// released. Refresh an already-held lock after a component-list keyword
     /// write in this process; a write lock and its changes are kept.
     pub(super) fn synchronize(&mut self) -> Result<(), Fail> {
-        if let Some(open) = self.open.as_mut() {
-            if open.lock.reads_lock() {
-                open.table.lock(LockType::Read, 0)?;
+        if let Some(open) = self.open.as_ref() {
+            let mut root = open.root();
+            if root.lock.reads_lock() {
+                root.table.lock(LockType::Read, 0)?;
             }
-            let epoch = open.keyword_epoch.load(Ordering::Acquire);
-            if epoch != open.seen_keyword_epoch {
-                let already_locked = open.table.has_lock(LockType::Read);
-                if !already_locked && !open.table.lock(LockType::Read, 0)? {
+            let epoch = root.keyword_epoch.load(Ordering::Acquire);
+            if epoch != root.seen_keyword_epoch {
+                let already_locked = root.table.has_lock(LockType::Read);
+                if !already_locked && !root.table.lock(LockType::Read, 0)? {
                     return Err(Fail::Runtime(
                         "Cannot lock table to refresh keywords".into(),
                     ));
                 }
-                open.table.resync_locked()?;
+                root.table.resync_locked()?;
                 if !already_locked {
-                    open.table.unlock_metadata_only()?;
+                    root.table.unlock_metadata_only()?;
                 }
-                open.seen_keyword_epoch = epoch;
+                root.seen_keyword_epoch = epoch;
             }
         }
         Ok(())
@@ -288,15 +372,16 @@ impl State {
 
     /// `lockoptions()`: the settings the table was opened with.
     pub(super) fn lock_settings(&self) -> Option<(&'static str, f64, i64)> {
-        self.open
-            .as_ref()
-            .map(|open| (open.lock.option, open.lock.interval, open.lock.maxwait))
+        self.open.as_ref().map(|open| {
+            let root = open.root();
+            (root.lock.option, root.lock.interval, root.lock.maxwait)
+        })
     }
 
     /// `haslock(write)`.
     pub(super) fn has_lock(&self, write: bool) -> bool {
         self.open.as_ref().is_some_and(|open| {
-            open.table.has_lock(if write {
+            open.root().table.has_lock(if write {
                 LockType::Write
             } else {
                 LockType::Read
@@ -306,7 +391,7 @@ impl State {
 
     /// `lock(write, nattempts)`: whether the lock is held afterwards.
     pub(super) fn lock(&mut self, write: bool, nattempts: u32) -> Result<bool, Fail> {
-        let Some(open) = self.open.as_mut() else {
+        let Some(open) = self.open.as_ref() else {
             return Ok(false);
         };
         let kind = if write {
@@ -314,16 +399,16 @@ impl State {
         } else {
             LockType::Read
         };
-        Ok(open.table.lock(kind, nattempts)?)
+        Ok(open.root().table.lock(kind, nattempts)?)
     }
 
     /// `unlock()`: releases the lock. Only table metadata is flushed, so a
     /// table's storage managers stay as they are.
     pub(super) fn unlock(&mut self) -> Result<bool, Fail> {
-        let Some(open) = self.open.as_mut() else {
+        let Some(open) = self.open.as_ref() else {
             return Ok(false);
         };
-        open.table.unlock_metadata_only()?;
+        open.root().table.unlock_metadata_only()?;
         Ok(true)
     }
 }

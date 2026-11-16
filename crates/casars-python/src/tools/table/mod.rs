@@ -129,7 +129,7 @@ pub(crate) fn define_component_keyword(
 const ISSUE: u32 = 1028;
 
 /// The Python logger CASA's `tb` messages go to.
-const LOGGER: &str = "casars.tools.table";
+pub(super) const LOGGER: &str = "casars.tools.table";
 
 /// A method casa-rs does not implement yet.
 fn stub(method: &str) -> PyResult<Py<PyAny>> {
