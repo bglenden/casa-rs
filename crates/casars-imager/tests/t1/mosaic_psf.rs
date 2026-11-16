@@ -4,6 +4,7 @@
 
 use casa_coordinates::{Coordinate, CoordinateModel};
 use casa_images::PagedImage;
+use casa_types::measures::direction::DirectionRef;
 use serde_json::json;
 
 use super::fixture::{Component, Observation, Product, Setup};
@@ -96,11 +97,10 @@ fn check_alternate_psf(cube: bool) {
     }
 }
 
-#[test]
-fn a_tracked_mosaic_forms_and_reuses_a_fixed_alternate_psf() {
+fn tracked_evla() -> Observation {
     let mut setup = Setup::vla_q_band(4);
     setup.telescope = "EVLA".to_owned();
-    let observation = super::ephemeris::following_body(Observation::synthesise_setup(
+    super::ephemeris::following_body(Observation::synthesise_setup(
         setup,
         &[(
             "point",
@@ -111,7 +111,12 @@ fn a_tracked_mosaic_forms_and_reuses_a_fixed_alternate_psf() {
                 spectral_index: 0.0,
             },
         )],
-    ));
+    ))
+}
+
+#[test]
+fn a_tracked_mosaic_forms_and_reuses_a_fixed_alternate_psf() {
+    let observation = tracked_evla();
     let [longitude, latitude] = Setup::pointing([12.0_f64.to_radians() / 3600.0, 0.0]);
     let alternate = format!("J2000 {longitude}rad {latitude}rad");
     let mut controls = json!({
@@ -171,6 +176,38 @@ fn a_tracked_mosaic_forms_and_reuses_a_fixed_alternate_psf() {
         reason.contains("more than one selected native channel"),
         "{reason}"
     );
+}
+
+#[test]
+fn a_tracked_cube_reuses_a_saved_psf_with_equal_coordinates_in_another_frame() {
+    let observation = tracked_evla();
+    let mut controls = json!({
+        "gridder": "mosaic", "weighting": "natural", "phasecenter": "TRACKFIELD",
+        "specmode": "cube", "outframe": "LSRK", "nchan": 2, "start": 0, "width": 1,
+        "imsize": 192, "cell": "0.5arcsec", "pblimit": -0.2, "write_pb": true, "niter": 0
+    });
+    let (_, ordinary) = observation.image("tracked-cube", controls.clone());
+    let CoordinateModel::Direction(main) =
+        ordinary.get(".residual").image.coordinates().coordinate(0)
+    else {
+        panic!("the main image has a direction coordinate");
+    };
+    assert_eq!(main.direction_ref(), DirectionRef::ICRS);
+    let [longitude, latitude] = [main.reference_value()[0], main.reference_value()[1]];
+    controls["psfphasecenter"] = json!(format!("J2000 {longitude}rad {latitude}rad"));
+    let (_, seeded) = observation.image("alternate-cube", controls.clone());
+    let CoordinateModel::Direction(psf) = seeded.get(".psf").image.coordinates().coordinate(0)
+    else {
+        panic!("the PSF has a direction coordinate");
+    };
+    assert_eq!(psf.direction_ref(), DirectionRef::J2000);
+    assert_eq!(psf.reference_value(), main.reference_value());
+
+    controls.as_object_mut().unwrap().remove("psfphasecenter");
+    controls["calcpsf"] = json!(false);
+    let (_, resumed) = observation.image("alternate-cube", controls);
+    assert_same(resumed.get(".image"), seeded.get(".image"), ".image");
+    assert!(!resumed.suffixes().contains(".psf"));
 }
 
 fn taylor_setup() -> (Observation, serde_json::Value, String) {

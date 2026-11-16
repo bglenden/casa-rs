@@ -221,10 +221,11 @@ pub(super) fn saved_cube_grid(
     }
     let values = saved.reference_value();
     let main_values = main.coordinates.coordinate(0).reference_value();
-    if values
-        .iter()
-        .zip(main_values)
-        .all(|(a, b)| (a - b).abs() <= 1e-13)
+    if main.direction.reference_direction().frame() == DirectionFrame::J2000
+        && values
+            .iter()
+            .zip(main_values)
+            .all(|(a, b)| (a - b).abs() <= 1e-13)
     {
         return Ok(None);
     }
