@@ -411,14 +411,18 @@ fn clone_corrected_tiles(
         return Ok(false);
     }
     let shape_phase = crate::timing::Phase::start("export_check_corrected_cells");
-    for row in 0..table.row_count() {
-        if !table
-            .array_shape(row, "CORRECTED_DATA")
-            .map_err(fail)?
+    let rows = (0..table.row_count()).collect::<Vec<_>>();
+    let shapes = table
+        .column_accessor("CORRECTED_DATA")
+        .map_err(fail)?
+        .array_shapes_uncached(&rows)
+        .map_err(fail)?;
+    if shapes.iter().any(|shape| {
+        !shape
+            .as_ref()
             .is_some_and(|shape| shape.len() == 2 && shape.iter().all(|n| *n > 0))
-        {
-            return Ok(false);
-        }
+    }) {
+        return Ok(false);
     }
     drop(shape_phase);
     let _clone_phase = crate::timing::Phase::start("export_clone_tiles");

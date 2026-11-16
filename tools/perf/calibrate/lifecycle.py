@@ -47,6 +47,7 @@ def main():
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--repeats', type=int, default=5)
+    parser.add_argument('--case', help='measure only this workflow label')
     args = parser.parse_args()
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
     os.environ['CASA_RS_CALIBRATION_TIMING'] = '1'
@@ -88,6 +89,10 @@ def main():
             ('fluxscale_append','fluxscale',dict(vis=vis,caltable=str(gain),reference=['FLUX'],transfer=['PHASE'],append=True)),
             ('corrected_export','split',dict(vis=vis,datacolumn='corrected')),
         ]
+        if args.case:
+            cases = [case for case in cases if case[0] == args.case]
+            if not cases:
+                parser.error(f'unknown workflow label: {args.case}')
         # An attainable warm-cache read/write baseline on this same filesystem.
         block = bytearray(64 * 1024 * 1024)
         disk = root / 'throughput.bin'
