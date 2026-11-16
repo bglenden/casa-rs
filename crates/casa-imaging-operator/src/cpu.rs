@@ -48,6 +48,15 @@ pub struct CpuBackend {
     prediction_hold: CellHold,
 }
 
+/// Borrowed model and routing data that stays fixed throughout a block.
+struct PredictionGrid<'a, T: GridScalar> {
+    layout: &'a AccumulatorLayout,
+    cells: &'a [Complex<T>],
+    terms: std::ops::Range<usize>,
+    routes: [&'a [Vec<Option<u8>>]; 2],
+    divide: bool,
+}
+
 impl CpuBackend {
     /// A backend with empty scratch buffers.
     #[must_use]
@@ -189,8 +198,9 @@ impl CpuBackend {
     ) {
         let npol = block.npol;
         assert_eq!(out.len(), block.len() * npol, "prediction output length");
+        let grid = self.prediction_grid::<T>(cf, model, npol);
         for (index, placement) in block.placements.iter().enumerate() {
-            self.predict_sample::<T>(cf, model, placement, npol);
+            self.predict_sample(cf, &grid, placement);
             let phasor = Complex64::from_polar(1.0, -placement.phase);
             for (vpol, target) in out[index * npol..(index + 1) * npol].iter_mut().enumerate() {
                 *target = narrow(self.prediction[vpol] * phasor);
@@ -220,11 +230,12 @@ impl CpuBackend {
         let terms = layout
             .term_range(Mode::Data)
             .expect("residual gridding needs the data terms");
+        let grid = self.prediction_grid::<T>(cf, model, npol);
         self.residual.resize(npol, Complex32::default());
         // A clipped spread's block, as `grid`'s.
         let mut scratch = Vec::new();
         for (index, placement) in block.placements.iter().enumerate() {
-            self.predict_sample::<T>(cf, model, placement, npol);
+            self.predict_sample(cf, &grid, placement);
             let values = block.values_of(index);
             let weights = block.weights_of(index);
             for vpol in 0..npol {
@@ -288,6 +299,33 @@ impl CpuBackend {
         }
     }
 
+    /// Prepare the borrowed model and scratch once for a prediction block.
+    fn prediction_grid<'a, T: GridScalar>(
+        &mut self,
+        cf: &'a dyn ConvolutionFunctionSet,
+        model: &'a PreparedModelGrids,
+        npol: usize,
+    ) -> PredictionGrid<'a, T> {
+        let layout = model.layout();
+        let divide = cf.normalisation() == KernelNormalisation::KernelSum;
+        self.prediction.resize(npol, Complex64::default());
+        if divide {
+            self.norms.resize(npol, Complex64::default());
+        }
+        PredictionGrid {
+            layout,
+            cells: T::cells(model.storage()),
+            terms: layout
+                .term_range(Mode::Data)
+                .expect("model grids hold the data terms"),
+            routes: [
+                cf.mueller().table(false, true),
+                cf.mueller().table(true, true),
+            ],
+            divide,
+        }
+    }
+
     /// Fill `self.prediction` with the raw prediction `P` per visibility
     /// polarization (no phase-centre phasor) for one placement:
     /// `Σ_t s^t Σ_{gpol,m} Σ conj(tap'_m) · model[t][gpol]`, divided once by
@@ -298,15 +336,16 @@ impl CpuBackend {
     fn predict_sample<T: GridScalar>(
         &mut self,
         cf: &dyn ConvolutionFunctionSet,
-        model: &PreparedModelGrids,
+        model: &PredictionGrid<'_, T>,
         placement: &Placement,
-        npol: usize,
     ) {
-        let layout = model.layout();
-        let cells = T::cells(model.storage());
-        let terms = layout
-            .term_range(Mode::Data)
-            .expect("model grids hold the data terms");
+        let PredictionGrid {
+            layout,
+            cells,
+            terms,
+            routes,
+            divide,
+        } = model;
         let Self {
             powers,
             prediction,
@@ -315,6 +354,7 @@ impl CpuBackend {
             prediction_hold,
             ..
         } = self;
+        prediction.fill(Complex64::default());
         let taps = cf.prediction_taps(placement.cf, prediction_hold);
         let location = layout
             .geometry()
@@ -322,8 +362,6 @@ impl CpuBackend {
         if !layout.geometry().fits(location, taps.half_support()) {
             // `GridToData` skips a row whose prediction cell overruns the
             // grid; its model visibility stays zero.
-            prediction.clear();
-            prediction.resize(npol, Complex64::default());
             return;
         }
         let w_positive = placement.prediction_w_positive;
@@ -331,21 +369,19 @@ impl CpuBackend {
         let origin_shift = u8::from(
             placement.gradient != [0.0; 2] && cf.pointing_origin_shift(placement.cf, false),
         );
-        let table = cf.mueller().table(w_positive, true);
+        let table = routes[usize::from(w_positive)];
         let plane = layout.planes().local(placement.plane);
-        let divide = cf.normalisation() == KernelNormalisation::KernelSum;
         spectral_powers(powers, placement.spectral, terms.len());
-        prediction.clear();
-        prediction.resize(npol, Complex64::default());
-        norms.clear();
-        norms.resize(npol, Complex64::default());
+        if *divide {
+            norms.fill(Complex64::default());
+        }
         for (gpol, row) in table.iter().enumerate() {
             gathered.clear();
             for (vpol, mueller_plane) in row.iter().enumerate() {
                 let Some(mueller) = *mueller_plane else {
                     continue;
                 };
-                if divide {
+                if *divide {
                     // `accumulateFromGrid.inc` conjugates the prediction tap
                     // for w ≤ 0 and sums that same tap into its norm: the
                     // forward norm carries the opposite conjugation from
@@ -375,7 +411,7 @@ impl CpuBackend {
                 prediction[vpol] += sum;
             }
         }
-        if divide {
+        if *divide {
             for (prediction, norm) in prediction.iter_mut().zip(norms.iter()) {
                 *prediction = if *norm == Complex64::default() {
                     Complex64::default()
