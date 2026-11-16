@@ -140,6 +140,15 @@ On the native `calibrate` workflow, it also permits replacing its scientific
 output (including corrected-data exports); without it an existing output is
 refused. Report collisions are checked before the scientific operation runs.
 
+Reports cannot overlap scientific inputs or outputs, including prior calibration
+tables and gain-curve sources. Append retains additional local keyword subtables.
+
+Scientific publication reserves the destination across processes. An interrupted
+writer leaves its reservation and staging or backup directories beside the
+product; a later writer refuses them. Inspect those directories and recover the
+prior product before removing the reservation and retrying. Append refuses
+symbolic-link subtables rather than risking their loss during replacement.
+
 ## Current limitations
 
 - there is not yet a dedicated `setjy` task

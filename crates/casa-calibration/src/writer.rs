@@ -88,7 +88,7 @@ impl<'a> CalibrationTableWriter<'a> {
         Ok(Self::staged(measurement_set, descriptor, output, mode))
     }
 
-    fn staged(
+    pub(crate) fn staged(
         measurement_set: &'a MeasurementSet,
         descriptor: CalibrationTableDescriptor<'_>,
         output: CalibrationOutput,
@@ -285,7 +285,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("interrupted or concurrent write")
+                .contains("another writer or interrupted publication")
         );
     }
 }

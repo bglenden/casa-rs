@@ -339,3 +339,136 @@ fn append_refuses_a_missing_parameter_column_without_changing_the_table() {
     assert!(error.to_string().contains("missing CPARAM"), "{error}");
     assert_eq!(snapshot(&output), before);
 }
+
+#[test]
+fn restarted_process_refuses_another_process_backup_and_reservation() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let output = dir.path().join("g.cal");
+    solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
+    let backup = dir.path().join(".g.cal.casa-rs-replaced-previous-process");
+    std::fs::rename(&output, &backup).unwrap();
+    let before = snapshot(&backup);
+    // Simulate termination after the old product was moved aside. A fresh
+    // process must refuse even when an older writer left no reservation.
+    for reserved in [false, true] {
+        let reservation = dir.path().join(".g.cal.casa-rs-reservation");
+        if reserved {
+            std::fs::create_dir(&reservation).unwrap();
+        }
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_calibrate"))
+            .args(["gencal", "--vis"])
+            .arg(&ms)
+            .arg("--caltable")
+            .arg(&output)
+            .args(["--caltype", "opac", "--parameter", "0.1", "--no-save-last"])
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("interrupted"));
+        assert!(!output.exists());
+        assert_eq!(snapshot(&backup), before);
+        assert_eq!(reservation.exists(), reserved);
+    }
+}
+
+#[test]
+fn reports_cannot_overwrite_prior_tables_or_gaincurve_sources() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let prior = dir.path().join("prior.cal");
+    solve(&ms, gain(&prior), CalibrationOutputMode::Replace).unwrap();
+    let output = dir.path().join("new.cal");
+    let before = snapshot(&prior);
+    let ms_before = snapshot(&ms);
+    for surface in ["gaincal", "bandpass", "applycal", "gencal"] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_calibrate"));
+        command.args([surface, "--vis"]).arg(&ms);
+        if matches!(surface, "gaincal" | "bandpass") {
+            command.args(["--refant", "0"]);
+        }
+        if surface != "applycal" {
+            command.arg("--caltable").arg(&output);
+        }
+        if surface == "gencal" {
+            command
+                .args(["--caltype", "gceff", "--gaincurve-table"])
+                .arg(&prior);
+        } else {
+            command.arg("--gaintable").arg(&prior);
+        }
+        let result = command
+            .args(["--overwrite", "--no-save-last", "--output"])
+            .arg(prior.join("table.dat"))
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("overlaps"),
+            "{surface}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!output.exists());
+        assert_eq!(snapshot(&prior), before);
+        assert_eq!(snapshot(&ms), ms_before);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn export_symlink_parent_is_resolved_before_parent_components() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let alias = dir.path().join("alias");
+    std::os::unix::fs::symlink(ms.join("ANTENNA"), &alias).unwrap();
+    let before = snapshot(&ms);
+    // The library takes filesystem paths directly; CLI path normalization
+    // otherwise folds the parent component before the provider sees it.
+    let result = export_corrected_data(&ExportCorrectedDataRequest {
+        input_ms: ms.clone(),
+        output_ms: alias.join("../nested-output.ms"),
+        selection: MsSelection::new(),
+    });
+    assert!(matches!(
+        result,
+        Err(ExportCorrectedDataError::SameInputOutput { .. })
+    ));
+    assert_eq!(snapshot(&ms), before);
+}
+
+#[test]
+fn append_preserves_custom_keyword_subtables() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let output = dir.path().join("g.cal");
+    solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
+    let provenance = output.join("PROVENANCE");
+    let mut extra = Table::with_schema(
+        casa_tables::TableSchema::new(vec![casa_tables::ColumnSchema::scalar(
+            "ORIGIN",
+            casa_types::PrimitiveType::Float64,
+        )])
+        .unwrap(),
+    );
+    extra
+        .add_row(RecordValue::new(vec![casa_types::RecordField::new(
+            "ORIGIN",
+            Value::Scalar(ScalarValue::Float64(42.0)),
+        )]))
+        .unwrap();
+    extra.save(TableOptions::new(&provenance)).unwrap();
+    let mut main = table(&output);
+    main.keywords_mut()
+        .upsert("PROVENANCE", Value::table_ref("PROVENANCE"));
+    main.save(TableOptions::new(&output)).unwrap();
+    let before = rows(&provenance);
+    let row_count = main.row_count();
+    drop(main);
+    solve(&ms, gain(&output), CalibrationOutputMode::Append).unwrap();
+    assert_eq!(table(&output).row_count(), row_count * 2);
+    assert_eq!(
+        table(&output).keywords().get("PROVENANCE"),
+        Some(&Value::table_ref("PROVENANCE"))
+    );
+    assert_eq!(rows(&provenance), before);
+}

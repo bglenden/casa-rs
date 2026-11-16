@@ -623,7 +623,12 @@ fn write_scaled_output(
     incremental: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<(), FluxScaleError> {
-    if crate::paths::overlap(input_root, output_root) {
+    if crate::paths::overlap(input_root, output_root).map_err(|e| {
+        FluxScaleError::PrepareOutput {
+            path: output_root.display().to_string(),
+            reason: e.to_string(),
+        }
+    })? {
         return Err(FluxScaleError::PrepareOutput {
             path: output_root.display().to_string(),
             reason: "input_table and output_table must differ".to_string(),

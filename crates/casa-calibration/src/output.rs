@@ -27,6 +27,17 @@ pub(crate) struct CalibrationOutput {
     pub(crate) staging: PathBuf,
     mode: CalibrationOutputMode,
     table_type: &'static str,
+    _reservation: Reservation,
+}
+
+/// A destination-wide claim survives a killed writer. Only its owner removes it.
+#[derive(Debug)]
+struct Reservation(PathBuf);
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir(&self.0);
+    }
 }
 
 impl CalibrationOutput {
@@ -61,6 +72,38 @@ impl CalibrationOutput {
             path: path.display().to_string(),
             reason,
         };
+        let destination = crate::paths::normalized(path).map_err(|e| fail(e.to_string()))?;
+        let path = destination.as_path();
+        let parent = path
+            .parent()
+            .ok_or_else(|| fail("output path must name a table".to_string()))?;
+        fs::create_dir_all(parent).map_err(|e| fail(e.to_string()))?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| fail("output path must name a table".to_string()))?
+            .to_string_lossy();
+        let reservation = parent.join(format!(".{name}.casa-rs-reservation"));
+        fs::create_dir(&reservation).map_err(|e| {
+            fail(format!(
+                "cannot reserve {}: another writer or interrupted publication may exist: {e}",
+                reservation.display()
+            ))
+        })?;
+        let reservation = Reservation(reservation);
+        for entry in fs::read_dir(parent).map_err(|e| fail(e.to_string()))? {
+            let entry = entry.map_err(|e| fail(e.to_string()))?;
+            let entry_name = entry.file_name();
+            let entry_name = entry_name.to_string_lossy();
+            if ["casa-rs-incomplete", "casa-rs-replaced"]
+                .iter()
+                .any(|kind| entry_name.starts_with(&format!(".{name}.{kind}-")))
+            {
+                return Err(fail(format!(
+                    "interrupted publication at {}; preserve and recover the prior product before retrying",
+                    entry.path().display()
+                )));
+            }
+        }
         if path.exists() {
             if mode == CalibrationOutputMode::Create {
                 return Err(fail(
@@ -69,18 +112,14 @@ impl CalibrationOutput {
             }
             validate_destination(path, table_type)?;
         }
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::create_dir_all(parent).map_err(|e| fail(e.to_string()))?;
         let staging = sibling(path, "casa-rs-incomplete")?;
         fs::create_dir(&staging).map_err(|e| fail(format!("cannot reserve staging path {} (an interrupted or concurrent write may exist): {e}", staging.display())))?;
         Ok(Self {
-            destination: path.to_path_buf(),
+            destination,
             staging,
             mode,
             table_type,
+            _reservation: reservation,
         })
     }
 
@@ -196,5 +235,17 @@ mod tests {
             std::fs::read(destination.join("table.dat")).unwrap(),
             original
         );
+    }
+
+    #[test]
+    fn destination_reservation_is_shared_by_writers_and_released_by_its_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.cal");
+        let first = CalibrationOutput::prepare(&path, CalibrationOutputMode::Create).unwrap();
+        assert!(CalibrationOutput::prepare(&path, CalibrationOutputMode::Create).is_err());
+        assert!(dir.path().join(".out.cal.casa-rs-reservation").is_dir());
+        drop(first);
+        assert!(!dir.path().join(".out.cal.casa-rs-reservation").exists());
+        assert!(CalibrationOutput::prepare(&path, CalibrationOutputMode::Create).is_ok());
     }
 }

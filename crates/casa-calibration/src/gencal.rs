@@ -185,6 +185,9 @@ pub(crate) fn gencal_with_output_mode(
     request: &GencalRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
+    // Reserve before reading prior parameters, so concurrent updates cannot
+    // both accumulate from the same old product and silently lose a correction.
+    let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
     let ms = MeasurementSet::open(&request.measurement_set).map_err(|source| {
         GencalError::OpenMeasurementSet {
             path: request.measurement_set.display().to_string(),
@@ -203,7 +206,7 @@ pub(crate) fn gencal_with_output_mode(
         crate::output::validate_destination(&request.output_table, "Calibration")?;
         accumulate_parameters(request, &mut rows)?;
     }
-    write_float_caltable(&ms, request, &rows, mode)
+    write_float_caltable(&ms, request, &rows, output, mode)
 }
 
 /// SolvableVisCal::setSpecify loads existing parameters; specify adds real
@@ -439,6 +442,7 @@ fn write_float_caltable(
     ms: &MeasurementSet,
     request: &GencalRequest,
     rows: &[PriorCalRow],
+    output: crate::output::CalibrationOutput,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
     let schema = TableSchema::new(vec![
@@ -458,7 +462,7 @@ fn write_float_caltable(
     ])
     .expect("valid gencal caltable schema");
     let subtype = request.caltype.table_subtype();
-    let mut writer = CalibrationTableWriter::with_mode(
+    let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
             output: &request.output_table,
@@ -473,8 +477,9 @@ fn write_float_caltable(
             include_polarization_basis: true,
             time_extra_precision_column: None,
         },
+        output,
         mode,
-    )?;
+    );
 
     for row in rows {
         let len = row.fparam.len();
@@ -987,7 +992,7 @@ fn bool_column(values: &[bool]) -> ArrayValue {
     )
 }
 
-fn default_vla_gaincurve_table() -> Option<PathBuf> {
+pub(crate) fn default_vla_gaincurve_table() -> Option<PathBuf> {
     if let Ok(path) = env::var("CASA_RS_VLA_GAINCURVES") {
         return Some(PathBuf::from(path));
     }

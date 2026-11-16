@@ -628,8 +628,8 @@ def gaincal(
     CASA's ``gaincal``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
     ``intent``, ``uvrange``, ``preavg``, ``refantmode``, ``normtype``,
-    ``solmode``, ``rmsthresh``, ``corrdepflags``, ``append``,
-    ``splinetime``, ``npointaver``, ``phasewrap``.
+    ``solmode``, ``rmsthresh``, ``corrdepflags``, ``splinetime``,
+    ``npointaver``, ``phasewrap``.
     """
     return _call_casa(gaincal, locals())
 
@@ -679,8 +679,8 @@ def bandpass(
 
     CASA's ``bandpass``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
-    ``intent``, ``uvrange``, ``solint``, ``corrdepflags``, ``append``,
-    ``fillgaps``, ``visnorm``, ``maskcenter``.
+    ``intent``, ``uvrange``, ``solint``, ``corrdepflags``, ``fillgaps``,
+    ``visnorm``, ``maskcenter``.
     """
     return _call_casa(bandpass, locals())
 
@@ -709,8 +709,8 @@ def fluxscale(
 
     CASA's ``fluxscale``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
-    ``listfile``, ``append``, ``antenna``, ``timerange``, ``scan``,
-    ``fitorder``, ``display``.
+    ``listfile``, ``antenna``, ``timerange``, ``scan``, ``fitorder``,
+    ``display``.
     """
     return _call_casa(fluxscale, locals())
 

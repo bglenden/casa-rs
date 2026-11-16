@@ -131,7 +131,12 @@ pub(crate) fn export_corrected_data_with_overwrite(
     request: &ExportCorrectedDataRequest,
     overwrite: bool,
 ) -> Result<ExportCorrectedDataReport, ExportCorrectedDataError> {
-    if crate::paths::overlap(&request.input_ms, &request.output_ms) {
+    if crate::paths::overlap(&request.input_ms, &request.output_ms).map_err(|e| {
+        ExportCorrectedDataError::PrepareOutput {
+            path: request.output_ms.display().to_string(),
+            reason: e.to_string(),
+        }
+    })? {
         return Err(ExportCorrectedDataError::SameInputOutput {
             path: request.input_ms.display().to_string(),
         });

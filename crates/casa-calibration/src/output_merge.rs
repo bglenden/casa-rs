@@ -6,7 +6,7 @@ use std::path::Path;
 use casa_tables::{Table, TableOptions};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
-use crate::{CalibrationTableWriteError, constants::STANDARD_SUBTABLE_KEYWORDS};
+use crate::CalibrationTableWriteError;
 
 /// Materialize the sorted rows, rather than saving a reference table: the
 /// published product must own its data after the staging directory is renamed.
@@ -138,13 +138,7 @@ pub(crate) fn append_legacy(
             .map_err(|e| invalid(stage, e.to_string()))?;
     }
     append(old, new, source)?;
-    if source.join("CAL_HISTORY").exists() {
-        let target = stage.join("CAL_HISTORY");
-        if target.exists() {
-            std::fs::remove_dir_all(&target).map_err(|e| invalid(stage, e.to_string()))?;
-        }
-        copy_tree(&source.join("CAL_HISTORY"), &target)?;
-    }
+    preserve_subtables(source, stage)?;
     descriptors
         .save(TableOptions::new(stage.join("CAL_DESC")))
         .map_err(|e| invalid(stage, e.to_string()))
@@ -226,10 +220,20 @@ pub(crate) fn preserve_subtables(
     source: &Path,
     stage: &Path,
 ) -> Result<(), CalibrationTableWriteError> {
-    for name in STANDARD_SUBTABLE_KEYWORDS {
-        let from = source.join(name);
-        if from.exists() {
-            let to = stage.join(name);
+    for entry in std::fs::read_dir(source).map_err(|e| invalid(source, e.to_string()))? {
+        let entry = entry.map_err(|e| invalid(source, e.to_string()))?;
+        let kind = entry
+            .file_type()
+            .map_err(|e| invalid(source, e.to_string()))?;
+        if kind.is_symlink() {
+            return Err(invalid(
+                source,
+                "cannot safely append a product containing symbolic links; prior product is unchanged",
+            ));
+        }
+        if kind.is_dir() {
+            let from = entry.path();
+            let to = stage.join(entry.file_name());
             if to.exists() {
                 std::fs::remove_dir_all(&to).map_err(|e| invalid(stage, e.to_string()))?;
             }
@@ -246,7 +250,16 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), CalibrationTableWriteEr
         if entry.file_name() == "table.lock" {
             continue;
         }
-        if entry.path().is_dir() {
+        let kind = entry
+            .file_type()
+            .map_err(|e| invalid(source, e.to_string()))?;
+        if kind.is_symlink() {
+            return Err(invalid(
+                source,
+                "cannot safely copy a symbolic-link subtable; prior product is unchanged",
+            ));
+        }
+        if kind.is_dir() {
             copy_tree(&entry.path(), &target.join(entry.file_name()))?;
         } else {
             std::fs::copy(entry.path(), target.join(entry.file_name()))

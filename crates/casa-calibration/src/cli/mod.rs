@@ -66,7 +66,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     // Checked before the task runs, so a refused report changes nothing.
     if let Some(path) = report.output.as_deref() {
         refuse_existing_report(path, report.overwrite)?;
-        refuse_report_in_product(path, &request)?;
+        refuse_report_in_product(path, &request, task)?;
     }
     if task.surface() == "fluxscale"
         && let CalibrationTaskRequest::FluxScale(scale) = &request
@@ -109,25 +109,73 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 fn refuse_report_in_product(
     path: &Path,
     request: &CalibrationTaskRequest,
+    task: &TaskInvocation<'_>,
 ) -> Result<(), TaskFailure> {
-    let products: Vec<&Path> = match request {
-        CalibrationTaskRequest::SolveGain(r) => vec![&r.measurement_set, &r.output_table],
-        CalibrationTaskRequest::SolveBandpass(r) => vec![&r.measurement_set, &r.output_table],
-        CalibrationTaskRequest::Gencal(r) => vec![&r.measurement_set, &r.output_table],
-        CalibrationTaskRequest::FluxScale(r) => vec![&r.input_table, &r.output_table],
-        CalibrationTaskRequest::ExportCorrectedData(r) => vec![&r.input_ms, &r.output_ms],
-        CalibrationTaskRequest::ExecuteApply(r) => vec![&r.measurement_set],
-        _ => Vec::new(),
-    };
-    if products
-        .iter()
-        .any(|product| crate::paths::overlap(path, product))
+    let mut products = scientific_paths(request);
+    if task.surface() == "fluxscale"
+        && let Some(vis) = task.text("vis")?
     {
-        return Err(
-            TaskFailure::validation("report path overlaps a scientific product").at("output"),
-        );
+        products.push(vis.into());
+    }
+    if matches!(task.surface(), "applycal" | "gaincal" | "bandpass")
+        && task.flag("docallib")?
+        && let Some(callib) = task.text("callib")?
+    {
+        products.push(callib.into());
+    }
+    for product in products {
+        if crate::paths::overlap(path, &product)
+            .map_err(|e| TaskFailure::validation(e.to_string()).at("output"))?
+        {
+            return Err(
+                TaskFailure::validation("report path overlaps a scientific product").at("output"),
+            );
+        }
     }
     Ok(())
+}
+
+fn scientific_paths(request: &CalibrationTaskRequest) -> Vec<std::path::PathBuf> {
+    let (mut paths, chain) = match request {
+        CalibrationTaskRequest::SolveGain(r) => (
+            vec![r.measurement_set.clone(), r.output_table.clone()],
+            r.prior_calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::SolveBandpass(r) => (
+            vec![r.measurement_set.clone(), r.output_table.clone()],
+            r.prior_calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::ExecuteApply(r) => (
+            vec![r.measurement_set.clone()],
+            r.calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::PlanApply(r) => (
+            vec![r.measurement_set.clone()],
+            r.calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::Summary(r) => (r.paths.clone(), &[][..]),
+        CalibrationTaskRequest::Stats(r) => (vec![r.path.clone()], &[][..]),
+        CalibrationTaskRequest::FluxScale(r) => {
+            (vec![r.input_table.clone(), r.output_table.clone()], &[][..])
+        }
+        CalibrationTaskRequest::ExportCorrectedData(r) => {
+            (vec![r.input_ms.clone(), r.output_ms.clone()], &[][..])
+        }
+        CalibrationTaskRequest::Gencal(r) => {
+            let mut paths = vec![r.measurement_set.clone(), r.output_table.clone()];
+            if r.caltype == crate::GencalType::Gceff
+                && let Some(source) = r
+                    .gaincurve_table
+                    .clone()
+                    .or_else(crate::gencal::default_vla_gaincurve_table)
+            {
+                paths.push(source);
+            }
+            (paths, &[][..])
+        }
+    };
+    paths.extend(chain.iter().map(|table| table.path.clone()));
+    paths
 }
 
 /// What `surface` returns for `result`, as CASA's task of that name does;

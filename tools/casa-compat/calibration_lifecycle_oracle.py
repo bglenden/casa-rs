@@ -142,6 +142,30 @@ def run(root: Path, native_bin: Path) -> dict:
         evidence['cases'].append(f'{name} append-to-absent native creation (documented CASA defect)')
 
 
+    # MAIN may reference user-added local subtables. Both implementations
+    # must keep them readable after appending and replacing the old directory.
+    for function, engine in [(casa.gaincal, 'casa'), (native.gaincal, 'native')]:
+        path = root / f'custom-subtable.{engine}.cal'
+        args = dict(vis=str(vis), caltable=str(path), refant='A0', minsnr=0.0, minblperant=2)
+        function(**args)
+        extra = path / 'PROVENANCE'
+        tool = table()
+        tool.create(str(extra), {'ORIGIN': {'valueType': 'double'}}, nrow=1)
+        tool.putcell('ORIGIN', 0, 42.0)
+        tool.close()
+        tool.open(str(path), nomodify=False)
+        tool.putkeyword('PROVENANCE', 'Table: ' + str(extra))
+        tool.close()
+        function(append=True, **args)
+        tool.open(str(path))
+        reference = str(tool.getkeyword('PROVENANCE')).removeprefix('Table: ')
+        tool.close()
+        assert Path(reference).resolve() == extra.resolve()
+        tool.open(reference)
+        assert tool.getcell('ORIGIN', 0) == 42.0
+        tool.close()
+    evidence['cases'].append('append retains custom keyword subtable, independently read by CASA')
+
     # Removing the parameter column makes a genuinely incompatible schema.
     paths = [root/f'bad-schema.{engine}.cal' for engine in ['casa','native']]
     for function,path in zip([casa.gaincal,native.gaincal],paths):
